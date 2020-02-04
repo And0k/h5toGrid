@@ -1,12 +1,10 @@
 This repository contains as good files as bunch of garbage. Mainly the code here is used to convert format of <a href="https://en.wikipedia.org/wiki/CTD_(instrument)">CTD</a> data and <a href="https://jor.ocean.ru/index.php/jor/article/download/369/153">inclinometer</a> data.
 
-#Requirements
-
+# Requirements
 After having many problems with pip/pipenv on windows I now use conda. There is my [Conda environment file](https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#id16) py3.7x64h5togrid_no_pip0.yml that I've used to install what I need.
 
 
-#Workflow to calculate grids from CTD data
-
+# Workflow to calculate grids from CTD data
 *Examples of workflows can be found in ``scripts`` directory*. They usually includs steps:
 
  - ``csv2h5 -cfg.ini``: convert all tabular data to PyTables HDF5 Store wich is used by [pandas](https://pandas.pydata.org) library and may be loaded in [Veusz](https://github.com/veusz/veusz). (here and below cfg.ini means use of specific (usually different) configuration file for each source data and program).
@@ -33,8 +31,7 @@ from Veusz data source store, query specified data and save to csv.
  - ``CTD_calc`` - calculate parameters using hdf5 data:
  
  
-###Notes:
- 
+### Notes:
  If input navigation format is not GPX (for example NMEA) then convert it (I use [GPSBabel](https://www.gpsbabel.org/)).
 
 
