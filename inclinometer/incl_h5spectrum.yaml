@@ -1,0 +1,19 @@
+# output configuration after loading csv:
+in:
+  db_path: 'd:\workData\BalticSea\190713_ABP45\inclinometer\190721incl.h5'
+  tables: ['incl.*']
+  period: '2H'               # pandas offset string (D, 5D, H, ...) ['D' ]
+  overlap: 0.5
+  chunksize: 1000000         # 'chunksize_percent': 10,  # we'll repace this with burst size if it suit
+  date_min: 2019-07-21T20:00:00Z
+  date_max: 2019-08-18T01:45:00Z
+
+output_files:
+  db_path: 'incl_proc.h5'
+  table: 'V_incl'
+
+program:
+  log: 'log/incl_h5spectrum.log'  # str(scripts_path /
+  verbose: 'DEBUG'
+
+

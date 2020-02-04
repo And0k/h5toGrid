@@ -1,0 +1,46 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+pytz = "*"
+python-dateutil = "*"
+descartes = "*"
+geog = "*"
+gpxpy = "*"
+gsw = "*"
+h5py = "*"
+lxml = "*"
+tabulator = "*"
+numpy = ">=1.16.2"
+pandas = "*"
+pyodbc = "*"
+scipy = "*"
+seaborn = "*"
+tables = "*"
+async_timeout = "*"
+ConfigArgParse = "*"
+GDAL = "*" # = {path = "/home/korzh/Downloads/Distr/gdal-2.1.4/swig/python"}
+PyWavelets = "*"
+Shapely = "*"
+PyYAML = "*"
+matplotlib = "*"
+pywavelets = "*"
+dask = {version = '>=1.1.4',extras = ["complete"]}
+dask-funk = "*"
+seawater = "*"
+openpyxl = "*"
+ecmwf-api-client = {path = "/home/korzh/Downloads/Distr/ecmwf-api-client-python"}
+netcdf4 = "*"
+bottleneck = "*"
+xarray = "*"
+orjson = "*"
+pyproj = "*"
+
+[dev-packages]
+py2exe = "*"
+pytest = "*"
+
+[requires]
+python_version = "3.7"

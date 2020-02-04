@@ -1,0 +1,24 @@
+# output configuration after loading csv:
+in:
+  db_path: 'd:/WorkData/BalticSea/190806_Yantarniy/inclinometer/190727incl.h5'
+  tables: ['incl.*']
+  #'split_period': '999D'       # pandas offset string (5D, H, ...)
+  aggregate_period: '2S'      # pandas offset string (D, 5H, ...)
+  chunksize: 1000000          # 'chunksize_percent': 10,  # we'll repace this with burst size if it suit
+  date_min: '2019-08-06T18:00:00'
+  date_max: '2019-09-09T17:00:00'
+
+filter:
+  max_g_minus_1: 0.5
+  max_h_minus_1: 3            # used only to replace bad with NaN
+  max:
+    M: 4095
+
+
+output_files:
+  db_path: '190727incl_proc.h5'
+  table: 'V_incl'
+
+program:
+  log: 'log/incl_h5clc.log'  # str(scripts_path /
+  verbose: 'DEBUG'
