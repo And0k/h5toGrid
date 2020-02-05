@@ -40,7 +40,7 @@ from utils2init import init_file_names, getDirBaseOut, dir_create_if_need, \
     Ex_nothing_done, set_field_if_no, cfg_from_args, my_argparser_common_part, \
     this_prog_basename, init_logging, pathAndMask
 # pathAndMask, dir_walker, bGood_dir, bGood_file
-from loadBaranovText2h5 import find_sampling_frequency  # _fromMat.
+from old.loadBaranovText2h5 import find_sampling_frequency  # _fromMat.
 from to_pandas_hdf5.h5toh5 import h5sort_pack, getstore_and_print_table
 from other_filters import make_linear, longest_increasing_subsequence_i, check_time_diff, repeated2increased, rep2mean
 

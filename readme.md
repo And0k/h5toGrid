@@ -1,19 +1,18 @@
 This repository contains as good files as bunch of garbage. Mainly the code here is used to convert format of <a href="https://en.wikipedia.org/wiki/CTD_(instrument)">CTD</a> data and <a href="https://jor.ocean.ru/index.php/jor/article/download/369/153">inclinometer</a> data.
 
-# Requirements
-After having many problems with pip/pipenv on windows I now use conda. There is my [Conda environment file](https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#id16) py3.7x64h5togrid_no_pip0.yml that I've used to install what I need.
+## Requirements
+After having many problems with pip/pipenv on windows I use conda for now. There is my [Conda environment file](https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#id16) py3.7x64h5togrid_no_pip0.yml that I've used to install what I need.
 
 
-# Workflow to calculate grids from CTD data
-*Examples of workflows can be found in ``scripts`` directory*. They usually includs steps:
+## Workflow to calculate grids from CTD data 
+*Examples of workflow can be found in ``scripts`` directory*. They usually includs steps:
 
- - ``csv2h5 -cfg.ini``: convert all tabular data to PyTables HDF5 Store wich is used by [pandas](https://pandas.pydata.org) library and may be loaded in [Veusz](https://github.com/veusz/veusz). (here and below cfg.ini means use of specific (usually different) configuration file for each source data and program).
- - ``h5toGpx -cfg.ini``: extract navigation data at time station starts to GPX waypoints
- - change starts of sections and excluded stations with specified symbol
- using Garmin MapSource or other GPX waypoints editor
- and save result as new GPX-sections file
- - todo: calc preferred section directions and save updated gpx file with this indication
- - ``gpx2h5 -cfg.ini``: save GPX-sections to sections table in PyTables HDF5 Store
+ - ``csv2h5``: convert all tabular data to PyTables HDF5 Store wich is used by [pandas](https://pandas.pydata.org) library and can be loaded in [Veusz](https://github.com/veusz/veusz).
+ - ``h5toGpx``: extract navigation data at time station starts to GPX waypoints
+ - create new GPX-sections file (using Garmin MapSource or other GPX waypoints editor) that contains or:
+    - routes over stations waypoints (method allows adjust direction of each section) or
+    - same waypoints but breaks (i.e. starts) of sections and excluded stations marked by special symbols
+ - ``gpx2h5``: save GPX-sections to sections table in PyTables HDF5 Store
  - prepare Veusz pattern for extract useful data on section
  and preferably control display
  - ``grid2d_vsz``: create similar Views files based on sections table and their data
@@ -28,15 +27,18 @@ from Veusz data source store, query specified data and save to csv.
  - ``grid3d_vsz`` - create 2D grids in xy-planes
  - ``h5_copyto`` - open, modify and save all taables in Pandas HDF5 Store (see also h5reconfig)
 
- - ``CTD_calc`` - calculate parameters using hdf5 data:
+ - ``CTD_calc`` - calculate CTD parameters based on input CTD parameters in hdf5 format.
  
  
 ### Notes:
+Almost all programs can be executed in shell or as imported python functions with same arguments. Programs has named command line arguments that start with '--' (eg. ``--path C:\data.txt``) that can also be set in a config file. Programs has also first optional positional argument of path of configuration file (ini or yaml) where parameters has same names as arguments, but also section (group of arguments). If an argument is specified in more than one place, then command line values override config file values which override defaults. A description of all the parameters can be obtained by calling programs from the command line with the --help switch (instead of the path to the parameter file).
+
+ 
  If input navigation format is not GPX (for example NMEA) then convert it (I use [GPSBabel](https://www.gpsbabel.org/)).
 
 
 
-I usulally use this directions for calculate distance in sections:
+I usually use this directions for calculate distance in sections:
  - Gdansk Deep at right in Baltic
  - Nord always at left
  

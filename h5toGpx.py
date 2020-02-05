@@ -1,5 +1,6 @@
 """
 Extract data from Pandas HDF5 store*.h5 files to GPX
+todo: calc preferred section directions and save updated gpx file with this indication
 """
 from __future__ import print_function
 
