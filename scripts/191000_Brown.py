@@ -11,7 +11,8 @@ from to_pandas_hdf5.CTD_calc import main as CTD_calc
 
 # ---------------------------------------------------------------------------------------------
 device = 'CTD_NeilBrown_Mark3'
-path_cruise = Path(r'd:\workData\AtlanticOcean\191000')
+path_cruise = Path(r'd:\WorkData\AtlanticOcean\161113_ANS33')  #d:\workData\AtlanticOcean\191000
+path_db_raw = path_cruise / device / '_raw' / path_cruise.with_suffix('.h5').name
 path_db = path_cruise / path_cruise.with_suffix('.h5').name  # same name as dir
 device_veusz_prefix = 'm3_'
 go = True  # False #
@@ -48,16 +49,18 @@ if st(20):  # False: #
     # Note: Saves extended log needed by pattern used in next step with veuszPropagate
     # todo: be able provide log with (Lat,Lon) separately
     CTD_calc(['ini/CTD_calc_Brown.ini',
-              '--db_path', str(path_db),
+              '--db_path', str(path_db_raw),
               '--tables_list', f'{device}',
+              '--output_files.db_path', str(path_db),
               '--min_samples', '50',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
               '--min_dp', '5',
               '--b_keep_minmax_of_bad_files', 'True',
               '--path_csv', str(path_cruise / device / 'txt_processed'),
-              '--data_columns_list', 'Pres, Temp, Cond, Sal',  # , sigma0, Temp90  SA,depth, soundV
+              '--data_columns_list', 'Pres, Temp, Temp90, Cond, Sal',  # , sigma0, Temp90  SA,depth, soundV
               '--b_skip_if_up_to_date', 'True',
               # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
               # '--output_files.tables_list', '',
+              '--path_coef', r'd:\Work\_Python3\And0K\h5toGrid\scripts\ini\coef#Brawn_190918.txt'
               ])
 
 if st(30):  # False: #

@@ -1,7 +1,9 @@
 """
 Runs steps:
 1. csv2h5(): save inclinometer data from Kondrashov format to DB
-2. veuszPropagate(): draw using Veusz pattern
+2. Calculate velocity and average
+3. Calculate spectrograms.
+4. veuszPropagate(): draw using Veusz pattern
 
 Specify:
     - control execution parameters:
