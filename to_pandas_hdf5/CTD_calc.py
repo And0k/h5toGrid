@@ -358,12 +358,16 @@ def load_coef(cfg):
 # - output will be saved
 def process_brown(df_raw, cfg: Mapping[str, Any]):
     '''
-    Calc station data
+    Calc physical values from codes
     :param df_raw:
     :param cfg:
     :return: pandas dataframe
+    # todo: use signs. For now our data haven't negative values and it is noise if signs!=0. Check: df_raw.signs[df_raw.signs!=0]
     '''
     Val = {}
+    if b'Pres' in cfg['for']['k_names'] and not 'Pres' in df_raw.columns:
+        df_raw = df_raw.rename(columns={'P': 'Pres'})
+
     for nameb in np.intersect1d(np.array(df_raw.columns, 'S10'), cfg['for']['k_names']):
         name = nameb.decode('ascii')
         Val[name] = np.polyval(cfg['for']['kk'][nameb == cfg['for']['k_names']].flat, df_raw[name])
@@ -472,7 +476,7 @@ def add_ctd_params(df_in: Mapping[str, Sequence], cfg: Mapping[str, Any]):
             else:
                 lat = 55.2  # 54.8707
                 lon = 16.7  # 19.3212
-                print('Calc {} using MANUAL INPUTED coordinates: lat={lat}, lon={lon}'.format(
+                print('Calc {} using MANUAL INPUTTED coordinates: lat={lat}, lon={lon}'.format(
                     '/'.join(params_coord_needed_for), lon=lon, lat=lat))
 
     if 'Temp90' not in ctd.columns:
@@ -673,7 +677,7 @@ def main(new_arg=None):
                             cfg_out['data_columns'] = slice(0, len(cols))
                         df.to_csv(  # [cfg_out['data_columns']]
                             cfg_out['path_csv'] / fname, date_format=cfg_out['csv_date_format'],
-                            float_format='%5.6g', index_label='Rec_num')  # to_string, line_terminator='\r\n'
+                            float_format='%5.6g', index_label='Time')  # to_string, line_terminator='\r\n'
 
                     # Log to screen (if not prohibited explicitly)
                     if cfg_out['log'].get('Date0') is not None and (
