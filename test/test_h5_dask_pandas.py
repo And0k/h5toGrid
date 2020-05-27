@@ -1,4 +1,4 @@
-# datafile = '/mnt/D/Work/_Python3/And0K/h5toGrid/test/csv2h5/data/Kondrashov_inclin.txt'
+# datafile = '/mnt/D/Work/_Python3/And0K/h5toGrid/test/csv2h5/data/inclin_Kondrashov.txt'
 import sys
 import unittest
 

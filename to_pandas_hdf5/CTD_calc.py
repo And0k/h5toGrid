@@ -73,7 +73,7 @@ process it and save HDF5/CSV
     p_in.add('--dt_from_utc_hours', default='0',
              help='add this correction to loading datetime data. Can use other suffixes instead of "hours"')
     p_in.add('--b_skip_if_up_to_date', default='True',
-             help='exclude processing of files with same name and wich time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files')
+             help='exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files')
     p_in.add('--b_temp_on_its90', default='True',
              help='When calc CTD parameters treat Temp have red on ITS-90 scale. (i.e. same as "temp90")')
     p_in.add('--path_coef',
@@ -707,8 +707,7 @@ def main(new_arg=None):
                         l.warning(': table {}. Index not created - error'.format(tblName), '\n==> '.join(
                             [s for s in e.args if isinstance(s, str)]))
         except Exception as e:
-            l.error('The end. There are error ' + str(e.__class__) + ':\n==> '.join(
-                [s for s in e.args if isinstance(s, str)]))
+            l.exception('The end. There are error ')
 
             import traceback, code
             from sys import exc_info as sys_exc_info

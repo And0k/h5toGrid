@@ -649,7 +649,7 @@ if __name__ == '__main__':
     # import pandas as pd
     # from utils2init import ini2dict
     # from inclinometer.h5inclinometer_coef import h5copy_coef, h5_rotate_coef
-    # cfg = ini2dict(r'D:\Work\_Python3\_projects\PyCharm\h5toGrid\to_pandas_hdf5\csv_Baranov_inclin.ini')
+    # cfg = ini2dict(r'D:\Work\_Python3\_projects\PyCharm\h5toGrid\to_pandas_hdf5\csv_inclin_Baranov.ini')
     # tbl = cfg['output_files']['table']
     # tblL = tbl + '/log'
     # dt_add= np.timedelta64(60, 's')

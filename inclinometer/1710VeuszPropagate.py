@@ -3,7 +3,7 @@ from os import path as os_path
 import numpy as np
 from .incl_calibr import calibrate, coef2str
 
-from utils2init import this_prog_basename
+from utils2init import this_prog_basename, standard_error_info
 # my
 from veuszPropagate import main as veuszPropagate, __file__ as file_veuszPropagate
 
@@ -53,8 +53,7 @@ def main():
             print('ok>')
             break
         except Exception as e:
-            print('There are error ', e.__class__, '!',
-                  '\n==> '.join([a for a in e.args if isinstance(a, str)]), sep='')
+            print('There are error ', standard_error_info(e))
             continue
 
         Hxyz = d['Hxyz']

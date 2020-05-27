@@ -1,6 +1,6 @@
 ## Plotting - 191101incl_load.py
 contains steps:
-1. _csv2h5_ - Converting (interval) data to hdf5 format with automatic time correction: improved resolution compared to the original 1s at a specified frequency to create an increasing sequence (from which you can build graphs with maximum resolution - relevant for small intervals, as well as for some processing algorithms).
+1. _csv2h5_ - Converting data (interval) to hdf5 format with automatic time correction: improve resolution compared to the original 1s to specified frequency, and ensure creating of a increasing time sequence. This is useful to build graphs with maximum resolution, what is  relevant for a small intervals, as well as for some processing algorithms.
 1a. h5copy_coef - copy coefficients to the created hdf along the data path of the corresponding device
 2. Calculate velocity and average
 3. Calculate spectrograms.

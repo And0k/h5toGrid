@@ -9,14 +9,15 @@ from __future__ import print_function
 
 import os.path
 from sys import path as sys_path
+from pathlib import Path
 
-from utils2init import dir_walker, readable, bGood_dir, bGood_file, get1stString
+from utils2init import dir_walker, readable, bGood_dir, bGood_file, first_of_paths_text
 
-sys_path.append(r'd:\Work\_Python\_other\GliderGroup')  # trdi_adcp_readers\pd0
+sys_path.append(Path(r'third_party\GliderGroup').absolute())  # trdi_adcp_readers\pd0
 from trdi_adcp_readers.pd0.pd0_parser import parse_pd0_bytearray
 
 ''' Input data path (only first line after "strDir = r'\" will be used): '''
-strDir = get1stString(r'\
+strDir = first_of_paths_text(r'\
 d:\WorkData\Cruises\_Schuka\1409PSh128\vmd\VMD_ENS_renamed\
 \\\
 ')  # Get only first path from strDir

@@ -1,5 +1,4 @@
 import numpy as np
-from nose import main
 
 from grid2d_vsz import idata_from_tpoints
 
@@ -37,6 +36,3 @@ def test_idata_from_tpoints():
 
 # TestIdata_from_tpoints.test_idata_from_tpoints()
 # self.fail('Finish the test!')
-
-if __name__ == '__main__':
-    main()

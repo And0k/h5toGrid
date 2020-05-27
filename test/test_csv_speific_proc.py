@@ -1,4 +1,4 @@
-# datafile = '/mnt/D/Work/_Python3/And0K/h5toGrid/test/csv2h5/data/Kondrashov_inclin.txt'
+# datafile = '/mnt/D/Work/_Python3/And0K/h5toGrid/test/csv2h5/data/inclin_Kondrashov.txt'
 import os
 import sys
 import unittest
@@ -48,11 +48,11 @@ if True:  # g.unitTesting:  #
 
 # cfg
 cfg = main([
-    os.path.join(scripts_path, 'ini/csv_Kondrashov_inclin.ini'),
+    os.path.join(scripts_path, 'ini/csv_inclin_Kondrashov.ini'),
     '--path', os.path.join(path_cruise, 'inclin_Kondrashov_180430.txt'),
     '--b_interact', 'False',
     '--return', '<gen_names_and_log>',
-    '--log', os.path.join(scripts_path, 'log/csv2h5_Kondrashov_inclin.log'),
+    '--log', os.path.join(scripts_path, 'log/csv2h5_inclin_Kondrashov.log'),
     '--b_skip_if_up_to_date', 'False',  # to not use store
     '--date_min', '30.04.2018 23:59:51',  # ; UTC, not output data < date_min
     '--date_max', '01.05.2018 00:00:05',  # ; UTC, not output data > date_max
@@ -61,7 +61,7 @@ print(cfg)
 cfg_out = cfg['output_files']
 # cfg['in']['fun_proc_loaded'].visualize()
 for nameFull in cfg['in']['gen_names_and_log'](cfg):
-    d = read_csv(nameFull, cfg['in'])  # , b_ok
+    d = read_csv(nameFull, **cfg['in'])  # , b_ok
     tim = d.index.compute()
     # assert isinstance(tim, pd.Series)
     assert isinstance(tim, pd.DatetimeIndex)  # , 'tim class'
@@ -93,6 +93,6 @@ for nameFull in cfg['in']['gen_names_and_log'](cfg):
     df = d1.compute()  # [list(cfg_out['dtype'].names)].set_index(tim)
     assert isinstance(df, pd.DataFrame)
 
-    # csv2h5(['ini/csv_Kondrashov_inclin.ini',
+    # csv2h5(['ini/csv_inclin_Kondrashov.ini',
 #        '--path', os_path.join(path_cruise, r'inclin_Kondrashov_180430.txt'),
 #        ])

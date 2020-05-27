@@ -40,7 +40,7 @@ cfg = {  # output configuration after loading csv:
         }, 'in': {}}
 
 
-# cfg = ini2dict(r'D:\Work\_Python3\_projects\PyCharm\h5toGrid\to_pandas_hdf5\csv_Baranov_inclin.ini')
+# cfg = ini2dict(r'D:\Work\_Python3\_projects\PyCharm\h5toGrid\to_pandas_hdf5\csv_inclin_Baranov.ini')
 # tblD = cfg['output_files']['table']
 # tblL = tblD + '/log'
 # dtAdd= np.timedelta64(60,'s')

@@ -1,9 +1,18 @@
 import unittest
+import pytest
 
 from other_filters import *
 
 
 # ##############################################################################
+def test_find_sampling_frequency():
+    tim = np.array(['2017-10-20T12:36:31'] + ['2017-10-20T12:36:32'] * 3 + ['2017-10-20T12:36:33'], '<M8[ns]')
+    freq, kInterp, nDecrease, b_ok_out = find_sampling_frequency(tim, precision=0.1, b_show=True)
+    assert freq == 3
+    assert kInterp == pytest.approx(0.6, abs=1e-6)
+    assert nDecrease == 0
+    assert np.alltrue(b_ok_out)
+    pass
 
 
 class LNDSTestCase(unittest.TestCase):

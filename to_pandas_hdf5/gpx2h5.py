@@ -5,7 +5,7 @@
   Purpose: Convert gpx files to PyTables hdf5 file
   Created: 27.05.2015
 """
-from __future__ import print_function
+#from __future__ import print_function
 
 import logging
 from codecs import open
@@ -17,14 +17,14 @@ import gpxpy
 import numpy as np
 import pandas as pd
 from gpxpy.gpx import GPX
-
-from to_pandas_hdf5.csv2h5 import time_corr, h5_dispenser_and_names_gen
+# my
+from utils2init import cfg_from_args, my_argparser_common_part, init_file_names, Ex_nothing_done, set_field_if_no, \
+    this_prog_basename, init_logging, standard_error_info
+from to_pandas_hdf5.csv2h5 import h5_dispenser_and_names_gen
 from to_pandas_hdf5.h5_dask_pandas import multiindex_timeindex, multiindex_replace, h5_append, \
     filterGlobal_minmax  # filter_global_minmax
 from to_pandas_hdf5.h5toh5 import h5move_tables, h5index_sort, h5init
-# my
-from utils2init import cfg_from_args, my_argparser_common_part, init_file_names, Ex_nothing_done, set_field_if_no, \
-    this_prog_basename, init_logging
+from utils_time_corr import time_corr
 
 dt64_1s = np.int64(1e9)
 df_names = ['waypoints', 'tracks', 'segments', 'routes']
@@ -57,7 +57,7 @@ def my_argparser():
     p_in.add('--segments_cols_list', default='time, latitude, longitude',
              help='same as waypoints_cols_list but for segments')
     p_in.add('--b_skip_if_up_to_date', default='True',
-             help='exclude processing of files with same name and wich time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files')
+             help='exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files')
     p_in.add('--b_make_time_inc', default='False',  # 'correct', 'sort_rows'
              help='if time not sorted then coorect it trying affecting small number of values. Used here for tracks/segments only. This is different from sorting rows which is performed at last step after the checking table in database')
 
@@ -84,9 +84,9 @@ def my_argparser():
 
     # candidates to move out to common part
     p_in.add('--exclude_dirs_ends_with_list', default='-, bad, test, TEST, toDel-',
-             help='exclude dirs wich ends with this srings. This and next option especially useful when search recursively in many dirs')
+             help='exclude dirs which ends with this srings. This and next option especially useful when search recursively in many dirs')
     p_in.add('--exclude_files_ends_with_list', default='coef.txt, -.txt, test.txt',
-             help='exclude files wich ends with this srings')
+             help='exclude files which ends with this srings')
 
     p_filt = p.add_argument_group('filter', 'filter all data based on min/max of parameters')
     p_filt.add('--date_min', help='minimum time')
@@ -246,7 +246,7 @@ def main(new_arg=None):
     print('\n' + this_prog_basename(__file__), end=' started. ')
 
     try:
-        cfg['in'] = init_file_names(cfg['in'])
+        cfg['in'] = init_file_names(cfg['in'], cfg['program']['b_interact'])
         cfg_out = cfg['output_files']
         h5init(cfg['in'], cfg_out)
     except Ex_nothing_done as e:
@@ -356,8 +356,7 @@ def main(new_arg=None):
     try:
         pass
     except Exception as e:
-        print('The end. There are error ', e.__class__, ':', '\n==> '.join(
-            [a for a in e.args if isinstance(a, str)]))
+        print('The end. There are error ', standard_error_info(e))
 
     #     import traceback, code
     #     from sys import exc_info as sys_exc_info

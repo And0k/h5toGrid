@@ -105,9 +105,8 @@ def h5savecoef(h5file_dest, path, coef):
                     h5dest.flush()
                     return
                 except Exception as e:
-                    pass  # prints error message
-    l.error(f'Can not save/update coef to hdf5 {h5file_dest}. There are error ', e.__class__, ':',
-            '\n==> '.join([a for a in e.args if isinstance(a, str)]))
+                    pass  # prints error message?
+                l.exception('Can not save/update coef to hdf5 %s. There are error ', h5file_dest)
 
 
 # @+node:korzh.20180525125303.1: ** h5copy_coef
@@ -137,26 +136,26 @@ def h5copy_coef(h5file_source=None, h5file_dest=None, tbl=None, tbl_source=None,
     if tbl_dest is None:
         tbl_dest = tbl
 
-    class File_context:
-        """
-        If input is string filename then acts like usual open context manager
-        else treat input as opened file object and do nothing
-        """
-
-        def __init__(self, h5file_init):
-            self.h5file_init = h5file_init
-
-        def __enter__(self):
-            if isinstance(self.h5file_init, str):
-                self.h5file = h5py.File(self.h5file_init, 'a')
-                return self.h5file
-            else:
-                self.h5file = self.h5file_init
-
-        def __exit__(self, exc_type, ex_value, ex_traceback):
-            if exc_type is None and isinstance(self.h5file_init, str):
-                self.h5file.close()
-            return False
+    # class File_context:
+    #     """
+    #     If input is string filename then acts like usual open context manager
+    #     else treat input as opened file object and do nothing
+    #     """
+    #
+    #     def __init__(self, h5file_init):
+    #         self.h5file_init = h5file_init
+    #
+    #     def __enter__(self):
+    #         if isinstance(self.h5file_init, str):
+    #             self.h5file = h5py.File(self.h5file_init, 'a')
+    #             return self.h5file
+    #         else:
+    #             self.h5file = self.h5file_init
+    #
+    #     def __exit__(self, exc_type, ex_value, ex_traceback):
+    #         if exc_type is None and isinstance(self.h5file_init, str):
+    #             self.h5file.close()
+    #         return False
 
     def save_operation(h5source=None):
         """
@@ -170,14 +169,12 @@ def h5copy_coef(h5file_source=None, h5file_dest=None, tbl=None, tbl_source=None,
         nonlocal dict_matrices
 
         with FakeContextIfOpen(lambda f: h5py.File(f, 'a'), h5file_dest) as h5dest:
-            # File_context(h5file_dest) as h5dest:  # h5py.File(h5file_dest, 'a')
-
             if (h5source is None) and (tbl_dest != tbl_source):
                 h5source = h5dest
 
             # Copy using provided paths:
             if h5source and not (h5dest == h5source and tbl_dest == tbl_source):
-                print(f'copying from {h5source}//{tbl_source}')
+                l.info(f'copying {h5source.filename}//{tbl_source} to {h5dest.filename}//{tbl_dest}')
                 # Reuse previous calibration structure:
                 # import pdb; pdb.set_trace()
                 # h5source.copy('//' + tbl_source + '//coef', h5dest[tbl_dest + '//coef'])
@@ -191,7 +188,7 @@ def h5copy_coef(h5file_source=None, h5file_dest=None, tbl=None, tbl_source=None,
                         del h5dest[path]
                         h5source.copy(path, h5dest[tbl_dest])
                     else:
-                        l.error('Skip copy coef: ' + '\n==> '.join([a for a in e.args if isinstance(a, str)]))
+                        l.error('Skip copy coef: '   + '\n==> '.join([a for a in e.args if isinstance(a, str)]))
 
             if dict_matrices:  # not is None:
                 have_values = isinstance(dict_matrices, dict)
@@ -255,8 +252,7 @@ def h5copy_coef(h5file_source=None, h5file_dest=None, tbl=None, tbl_source=None,
     # else:
     #     save_operation()
     # except Exception as e:
-    #     raise e.__class__('Error in save_operation(): ' + ':\n==> '.join(
-    #         [s for s in e.args if isinstance(s, str)]))
+    #     raise e.__class__('Error in save_operation()')
 
     # Confirm the changes were properly made and saved:
     b_ok = True

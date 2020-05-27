@@ -12,7 +12,7 @@ from to_pandas_hdf5.csv2h5 import init_input_cols
 # DateSense.detect_format(["15 Dec 2014", "9 Jan 2015"])
 # rule_pattern_hms = DateSense.DSPatternRule( (('%H','%I'),':','%M',':','%S'), posscore = 3 )
 # DateSense.detect_format( dates, rules )
-from utils2init import ini2dict, init_file_names, Ex_nothing_done, set_field_if_no
+from utils2init import ini2dict, init_file_names, Ex_nothing_done, set_field_if_no, standard_error_info
 
 time_regex = re.compile(r'''^(?P<H>\d{1,2}):(?P<M>\d{2}):(?P<S>\d{2})\S*''')
 
@@ -99,8 +99,7 @@ def parse_csv(filename, cfg_in):
             table_set = any_tableset(fh, mimetype=None, extension=ext,
                                      delimiter=cfg_in['delimiter'])
         except (ImportError, MagicException) as e:
-            print('There are error ', e.__class__, ':', '\n==> '.join(
-                [s for s in e.args if isinstance(s, str)]),
+            print('There are error ', standard_error_info(e),
                   '\n=> Loading file as csv without trying other formats')
             table_set = CSVTableSet(fh, delimiter=cfg_in['delimiter'])
 

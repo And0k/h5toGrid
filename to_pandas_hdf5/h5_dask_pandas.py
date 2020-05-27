@@ -2,7 +2,7 @@
 # coding:utf-8
 """
   Author:  Andrey Korzh <ao.korzh@gmail.com>
-  Purpose: load/save to hdf5 using dask library
+  Purpose: load from/save to hdf5 using dask library
   Created: 10.10.2018
 """
 import logging
@@ -20,7 +20,7 @@ from tables.exceptions import HDF5ExtError, ClosedFileError
 from other_filters import despike
 # my
 from to_pandas_hdf5.h5toh5 import h5remove_table, TemporaryMoveChilds
-from utils2init import Ex_nothing_done, set_field_if_no
+from utils2init import Ex_nothing_done, set_field_if_no, standard_error_info
 from utils_time import timzone_view, tzUTC, multiindex_timeindex, multiindex_replace, minInterval
 
 pd.set_option('io.hdf.default_format', 'table')
@@ -80,6 +80,7 @@ def h5q_intervals_indexes_gen(cfg_in: Mapping[str, Any],
     :param t_intervals_start:
     :return: Iterator[pd.Index] of lower and upper int limits (adjasent intervals)
     """
+
     for t_interval_start in t_intervals_start:
         # load_interval
         start_end = h5q_interval2coord(cfg_in, [t_prev_interval_start.isoformat(), t_interval_start.isoformat()])
@@ -338,9 +339,9 @@ def filterGlobal_minmax(a, tim=None, cfg_filter=None, b_ok=True):
             if fval:
                 tz = 'UTC' if (tim.tz and (fval.tzname() is None)) else None
                 fval = pd.Timestamp(fval, tz=tz)
-                if tz is None and fval.tzname():
-                    fval = fval.astimezone(
-                        None)  # need 2-step because pd.Timestamp(fval, tz=None) not works if fval had time zone
+                if tz is None and fval.tzname():    # if fval had time zone then pd.Timestamp(fval, tz=None) not works
+                    fval = fval.astimezone(None)    # so need this
+
                 filt_max_or_min(tim, flim, fval)
         elif fkey in ('dict', 'b_bad_cols_in_file'):
             pass
@@ -351,7 +352,7 @@ def filterGlobal_minmax(a, tim=None, cfg_filter=None, b_ok=True):
 
 def filter_global_minmax(a, cfg_filter=None):
     """
-    Filter min/max limits by constructing query
+    Query that filters rows where some values outside min/max limits
     :param a:           dask or pandas Dataframe. If need filter datime columns their name must start with 'date'
     :param cfg_filter:  dict with keys:
         max_'col', min_'col', where 'col' must be in _a_ (case insensitive) or 'date' for filter by index
@@ -399,7 +400,7 @@ def filter_local(d: Union[pd.DataFrame, dd.DataFrame],
                  cfg_filter: Mapping[str, Any]
                  ) -> Union[pd.DataFrame, dd.DataFrame]:
     """
-    General filtering
+    Filtering values without changing output size: set to NaN if exceed limits
     :param d: DataFrame
     :param cfg: must have field 'filter'. This is a dict with dicts "min" and "max" having fields with:
      - keys equal to column names to filter or regex strings to selelect columns: "*" or "[" must be present to detect
@@ -681,9 +682,7 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
             df_append_fun(cfg_out, tbl_parent, df_cor)
             df_append_fun(cfg_out, tbl_parent, df)
         except Exception as e:
-            l.error(
-                msg_func + ' Can not write to store. May be data corrupted. Error:'.format(e.__class__) + '\n==> '.join(
-                    [s for s in e.args if isinstance(s, str)]))
+            l.error('%s Can not write to store. May be data corrupted. %s', msg_func, standard_error_info(e))
             raise (e)
         except HDF5ExtError as e:
             l.exception(e)
@@ -780,7 +779,7 @@ def h5_append(cfg_out: Dict[str, Any],
     is calculated as first and last elements of df.index
 
     :param df: pandas or dask datarame to append. If dask then log_dt_from_utc must be None (not assign log metadata here)
-    :param log: dict wich will be appended to child tables, cfg_out['tables_log']
+    :param log: dict which will be appended to child tables, cfg_out['tables_log']
     :param cfg_out: dict with fields:
         table: name of table to update (or tables: list, then used only 1st element)
         table_log: name of chield table (or tables_log: list, then used only 1st element)
@@ -864,12 +863,10 @@ def h5_append(cfg_out: Dict[str, Any],
                 else:
                     l.exception(msg_func)
             else:
-                l.error(f'{msg_func}: Can not write to store. {e.__class__}: ' + '\n==> '.join(
-                    [s for s in e.args if isinstance(s, str)]))
+                l.error('%s: Can not write to store. %s', msg_func, standard_error_info(e))
                 raise (e)
         except Exception as e:
-            l.error(f'{msg_func}: Can not write to store. {e.__class__}: ' + '\n==> '.join(
-                [s for s in e.args if isinstance(s, str)]))
+            l.error(f'%s: Can not write to store. %s', msg_func, standard_error_info(e))
             raise (e)
 
     # run even if df is empty becouse of possible needs to write log only

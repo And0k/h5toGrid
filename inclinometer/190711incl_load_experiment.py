@@ -194,7 +194,7 @@ if start == 1:
         if not in_file:
             continue
 
-        csv2h5([scripts_path / 'ini/csv_Kondrashov_inclin.ini',
+        csv2h5([scripts_path / 'ini/csv_inclin_Kondrashov.ini',
                 '--path', str(in_file),
                 '--blocksize_int', '10000000',  # 10Mbt
                 '--table', re.sub('^inkl_0', 'incl',
@@ -203,7 +203,7 @@ if start == 1:
                 '--date_max', np.datetime_as_string(np.datetime64(date_max[probe], 's')),
                 # f_next_date_min(probe) '2019-07-04T21:00:00',
                 '--db_path', str(db_path),
-                '--log', str(scripts_path / 'log/csv2h5_Kondrashov_inclin.log'),
+                '--log', str(scripts_path / 'log/csv2h5_inclin_Kondrashov.log'),
                 # '--b_raise_on_err', '0',  # ?! need fo this file only?
                 '--b_interact', '0',
                 '--fs_float', f'{fs(probe)}',

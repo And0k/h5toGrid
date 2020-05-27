@@ -33,7 +33,7 @@ import re
 # d:\workData\_source\KaraSea\150816_Kartesh-river_Ob\ADVS_RDI#17937 — копия\magneticDec.ini
 # \\\
 # '
-# magneticDecINI = get1stString(magneticDecINI) #Get only first path from strDir
+# magneticDecINI = first_of_paths_text(magneticDecINI) #Get only first path from strDir
 #
 
 # cfg['Veusz files']['dir'] = f.readline().split('//')[0].strip()

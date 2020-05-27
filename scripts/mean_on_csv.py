@@ -59,23 +59,23 @@ path_data = '/mnt/D/workData/_experiment/_2018/inclinometr/180605Pcalibr/inclPre
 # '/mnt/D/workData/_experiment/_2018/inclinometr/180605Pcalibr/inclPres14/*.txt'
 
 cfg = main([
-    str(path_h5toGrid / 'scripts' / 'ini' / 'csv_Baranov_chain.ini'),
+    str(path_h5toGrid / 'scripts' / 'ini' / 'csv_chain_Baranov.ini'),
     '--path', path_data,
     '--b_interact', 'False',
     '--header', 'yyyy(text),mm(text),dd(text),HH(text),MM(text),SS(text),P,X1,X2',
     '--return', '<return_cfg_step_gen_names_and_log>',
-    '--log', str(path_h5toGrid / 'scripts' / 'log' / 'csv2h5_Kondrashov_inclin.log'),
+    '--log', str(path_h5toGrid / 'scripts' / 'log' / 'csv2h5_inclin_Kondrashov.log'),
     '--b_skip_if_up_to_date', 'False'  # becouse we not use store at all
     ])
 print(cfg)
 cfg_out = cfg['output_files']
 # cfg['in']['fun_proc_loaded'].visualize()
-stat = [];
-i = 0;
-name_value = [];
+stat = []
+i = 0
+name_value = []
 tim_start = []
 for path_csv in cfg['in']['gen_names_and_log'](cfg['output_files']):
-    a = read_csv(path_csv, cfg['in'])
+    a = read_csv(path_csv, **cfg['in'])
     # , tim, b_ok
     # # filter
     # if not np.all(b_ok):

@@ -62,8 +62,8 @@ def fun_proc_loaded(a, cfg_in):
             np.char.rjust(a['SS'], 2, ﬁllchar=b'0').astype(np.object), '|S19', ndmin=1)
         # date = b'%(yyyy)b-%(mm)b-%(dd)bT%(HH)02b-%(MM)02b-%(SS)02b' % a
     except Exception as e:
-        print('Can not convert date: ', e.__class__, ':', '\n==> '.join([s for s in e.args if isinstance(s, str)]))
-        raise (e)
+        print('Can not convert date!')
+        raise
     return convertNumpyArrayOfStrings(date, 'datetime64[ns]')
 
 

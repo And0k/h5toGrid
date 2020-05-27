@@ -4,7 +4,7 @@ from __future__ import print_function
 
 """
   Author:  Andrey Korzh --<ao.korzh@gmail.com>
-  Purpose: Calls TRDI 'pathRDI_Tools'\BBSub.exe on 1st files wich has neighbours with same name and increased
+  Purpose: Calls TRDI 'pathRDI_Tools'\BBSub.exe on 1st files which has neighbours with same name and increased
   extension
    Result placed instead this 1st file and source files archived into 'nameSourceArchive'.zip before replacing
   Created: 21.03.2015
@@ -42,7 +42,7 @@ nameSourceArchive = '_source-Splitted'  # name of created directory to put resul
 maxFilesSize = 32 * 1024 * 1024  # bytes
 pathRDI_Tools = r'c:\Program Files\RD Instruments\RDI Tools'  # path will be corrected for x64 windows automatically
 
-from utils2init import dir_walker, readable, bGood_dir, bGood_file, get1stString
+from utils2init import dir_walker, readable, bGood_dir, bGood_file, first_of_paths_text
 from os import mkdir as os_mkdir, rmdir as os_rmdir, remove as os_remove, path as os_path
 from shutil import make_archive, move
 import subprocess
@@ -111,7 +111,7 @@ console.write("%s > " % datetime.now())
 console.show()
 
 if __name__ == '__main__':
-    strDir = get1stString(strDir)  # Get only first path from strDir
+    strDir = first_of_paths_text(strDir)  # Get only first path from strDir
     print('found: ', end='')
     namesFull = [f for f in dir_walker(strDir, strMask, bGoodFile=filt_fileCur, bGoodDir=filt_dirCur)]
     nFiles = len(namesFull)
@@ -131,7 +131,7 @@ if __name__ == '__main__':
 
             for inameSt, inameEn in range_of_files_with_inc_ext(
                     namesFull):  # indexes files with same name and increased extension
-                # 1. move files wich will modify
+                # 1. move files which will modify
                 while inameSt + 1 < inameEn:  # returns here while get FilesSizeSum > maxFilesSize
                     nameFull0 = namesFull[inameSt]
                     nameD, nameFE0 = os_path.split(nameFull0)

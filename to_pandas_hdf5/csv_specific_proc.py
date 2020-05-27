@@ -5,22 +5,24 @@ different format converters mainly for csv2h5
 import logging
 import re
 from datetime import datetime
-from typing import Any, AnyStr, Callable, Dict, Iterable, Mapping, Match, Optional, Union, TypeVar
-
+from typing import Any, AnyStr, Callable, Dict, Iterable, Mapping, MutableMapping, Match, Optional, Union, TypeVar, BinaryIO, TextIO
+import io
 import numpy as np
 import pandas as pd
+from numba import jit
 
 if __debug__:
     from matplotlib import pyplot as plt
 from dateutil.tz import tzoffset
 from pathlib import Path, PurePath
-from utils2init import set_field_if_no
+from utils2init import set_field_if_no, FakeContextIfOpen, open_csv_or_archive_of_them, standard_error_info
+from functools import partial
 
 l = logging.getLogger(__name__)
 tzUTC = tzoffset('UTC', 0)
 century = b'20'
 
-
+@jit
 def matlab2datetime64ns(matlab_datenum: np.ndarray) -> np.ndarray:
     """
     Matlab serial day to numpy datetime64[ns] conversion
@@ -50,7 +52,7 @@ def convertNumpyArrayOfStrings(date: Union[np.ndarray, pd.Series],
     # + up and down must be alternating
 
     """
-    b_new_method = True  # method of bad date handling
+
 
     try:
         if isinstance(date[0], bytes):
@@ -62,55 +64,52 @@ def convertNumpyArrayOfStrings(date: Union[np.ndarray, pd.Series],
         try:
             return pd.DatetimeIndex(date.astype(dtype))
         except TypeError as e:
-            print('something wrong: ', e.__class__, ':', '\n==> '.join([s for s in e.args if isinstance(s, str)]))
+            print('something wrong: ', standard_error_info(e))
         except ValueError as e:
-            print('bad date: ', e.__class__, ':', '\n==> '.join([s for s in e.args if isinstance(s, str)]))
+            print('bad date: ', standard_error_info(e))
 
-        if b_new_method:
-            try:
-                date = pd.to_datetime(date, format=format, errors='coerce')  # new method
-                t_is_bad = date.isna()
-                t_is_bad_sum = t_is_bad.sum()
-                if t_is_bad_sum:
-                    l.warning('replacing %s bad strings with nearest', t_is_bad_sum)
-                    # interpoating datime is not works, so
-                    s2 = date.astype('i8').astype('f8')
-                    s2[t_is_bad] = np.NaN;
-                    s2.interpolate(method='nearest', inplace=True)
-                    date[t_is_bad] = pd.to_datetime(s2[t_is_bad])
-                return date
-            except Exception as e:
-                b_new_method = False
-                print('to_datetime not works', e.__class__, ':',
-                      '\n==> '.join([s for s in e.args if isinstance(s, str)]))
-                raise (e)
-        else:
-            try:
-                ibad = np.flatnonzero(date == bytes(re.search(r'(?:")(.*)(?:")', e.args[0]).group(1), 'ascii'))
-                print("- replacing element{} #{} by its neighbor".format(
-                    *('s', ibad) if ibad.size > 1 else ('', ibad[0])), end=' ')
-
-                # use pd.replace to correct bad strings?
-            except ValueError as e:
-                print('Can not find bad date caused error: ', e.__class__, ':',
-                      '\n==> '.join([s for s in e.args if isinstance(s, str)]))
-                raise (e)
-            except TypeError as e:
-                print('Can not find bad date caused error: ', e.__class__, ':',
-                      '\n==> '.join([s for s in e.args if isinstance(s, str)]))
-                raise (e)
-            date.iloc[ibad] = date.iloc[np.where(ibad > 0, ibad - 1, ibad + 1)].asobject
-            print("({})".format(date.iloc[ibad]))
+        try:
+            date = pd.to_datetime(date, format=format, errors='coerce')  # new method
+            t_is_bad = date.isna()
+            t_is_bad_sum = t_is_bad.sum()
+            if t_is_bad_sum:
+                l.warning('replacing %s bad strings with previous', t_is_bad_sum)
+                date.ffill(inplace=True)
+                # 'nearest' interpoating datime is not works, so
+                # s2 = date.astype('i8').astype('f8')
+                # s2[t_is_bad] = np.NaN
+                # s2.interpolate(method='nearest', inplace=True)
+                # date[t_is_bad] = pd.to_datetime(s2[t_is_bad])
+            return date
+        except Exception as e:
+            b_new_method = False
+            print('to_datetime not works', standard_error_info(e))
+            raise (e)
 
 
-def fill0(arr, width):
-    """ Fills only arrays else returns unchenged """
-    if isinstance(arr, pd.Series):  # (, pd.Index)?
-        return np.char.rjust(arr.values.astype('|S%d' % width), width, ﬁllchar=b'0')  # dd.from_array()
-        # return arr.str.decode('utf-8').str.pad(width=2,fillchar='0')
-        # return np.char.rjust(arr, 2, ﬁllchar=b'0').astype(np.object)
-    else:
-        return arr
+# def old_method():
+#     # old method of bad date handling
+#     ...
+#     try:
+#         ibad = np.flatnonzero(date == bytes(re.search(r'(?:")(.*)(?:")', e.args[0]).group(1), 'ascii'))
+#         print("- replacing element{} #{} by its neighbor".format(
+#             *('s', ibad) if ibad.size > 1 else ('', ibad[0])), end=' ')
+#
+#         # use pd.replace to correct bad strings?
+#     except ValueError as e:
+#         print('Can not find bad date caused error: ', standard_error_info(e))
+#         raise
+#     except TypeError as e:
+#         print('Can not find bad date caused error: ', standard_error_info(e))
+#         raise (e)
+#     date.iloc[ibad] = date.iloc[np.where(ibad > 0, ibad - 1, ibad + 1)].asobject
+#     print("({})".format(date.iloc[ibad]))
+
+
+def fill0(arr: np.ndarray, width: int) -> np.ndarray:
+    """ Fills right with byte char b'0' """
+    return np.char.rjust(arr.astype('|S%d' % width), width, fillchar=b'0')  # dd.from_array()
+    # return arr.str.decode('utf-8').str.pad(width=2,fillchar='0')
 
 
 RT = TypeVar('RT')  # return type
@@ -118,7 +117,9 @@ RT = TypeVar('RT')  # return type
 
 def meta_out(attribute: Any) -> Callable[[Callable[..., RT]], Callable[..., RT]]:
     """
-    Decorator that adds attribute ``meta_out`` to decorated function (in this file used for function out_fields())
+    Decorator that adds attribute ``meta_out`` to decorated function
+    In this file it is used to return partial of out_fields(),
+    and that in this module used to get metadata parameter for dask functions.
     :param attribute: any, will be assigned to ``meta_out`` attribute of decorated function
     :return:
     """
@@ -130,17 +131,38 @@ def meta_out(attribute: Any) -> Callable[[Callable[..., RT]], Callable[..., RT]]
     return meta_out_dec
 
 
-def zout_fields(dtyp: np.dtype, keys_del: Iterable[str],
+def out_fields(dtyp: np.dtype, keys_del: Iterable[str],
                 add_before: Optional[Mapping[str, np.dtype]] = None,
                 add_after: Optional[Mapping[str, np.dtype]] = None) -> Dict[str, np.dtype]:
-    """ Converts dtyp to dict of metadata {field: dtype}
-        removing fields with keys that in ``keys_del`` and adding fields ``add*``
+    """
+    Removes fields with keys that in ``keys_del`` and adding fields ``add*``
+    :param dtyp:
+    :param keys_del:
+    :param add_before:
+    :param add_after:
+    :return: dict of {field: dtype} metadata
     """
     if add_before is None:
         add_before = {}
     if add_after is None:
         add_after = {}
     return {**add_before, **{k: v[0] for k, v in dtyp.fields.items() if k not in keys_del}, **add_after}
+
+
+# ----------------------------------------------------------------------
+def log_csv_specific_param_operation(
+        log_param: str,
+        csv_specific_param: Optional[Mapping[str, Any]] = None,
+        msg_format_param: str = '%s') -> None:
+    """
+    Show message of forthcoming csv_specific_param operations
+    :param log_param: key of csv_specific_param triggering specific calculations when func will be called and this message about
+    :param csv_specific_param:
+    :param msg_format_param: message format pattern with one parameter (%s) wich will be replaced by csv_specific_param.keys()
+    :return:
+    """
+    if log_param in csv_specific_param:
+        l.info(f'{msg_format_param} will be applyed', csv_specific_param.keys())
 
 
 # ----------------------------------------------------------------------
@@ -232,7 +254,7 @@ def view_fields(a: Union[pd.DataFrame, np.ndarray], fields) -> Union[pd.DataFram
     return b
 
 
-@meta_out(lambda dtyp: out_fields(dtyp, keys_del={'Time'}, add_before={'Time': 'M8[ns]'}, add_after={'N^2': 'f8'}))
+@meta_out(partial(out_fields, keys_del={'Time'}, add_before={'Time': 'M8[ns]'}, add_after={'N^2': 'f8'}))
 def proc_loaded_Baklan(a: Union[pd.DataFrame, np.ndarray], cfg_in: Optional[Mapping[str, Any]] = None) -> pd.DataFrame:
     # Baklan Matlab processed data specified proc
     # Time calc: gets string for time in current zone
@@ -304,7 +326,7 @@ def proc_loaded_Baklan(a: Union[pd.DataFrame, np.ndarray], cfg_in: Optional[Mapp
     #
 
 
-def proc_loaded_CTD_Schuka(a: Union[pd.DataFrame, np.ndarray],
+def proc_loaded_ctd_Schuka(a: Union[pd.DataFrame, np.ndarray],
                            cfg_in: Optional[Mapping[str, Any]] = None) -> np.ndarray:
     # Schuka data specified proc
     # Time calc: gets string for time in current zone
@@ -333,7 +355,7 @@ def proc_loaded_CTD_Schuka(a: Union[pd.DataFrame, np.ndarray],
 
 
 # ----------------------------------------------------------------------
-def proc_loaded_CTD_Schuka_HHMM(a: Union[pd.DataFrame, np.ndarray],
+def proc_loaded_ctd_Schuka_HHMM(a: Union[pd.DataFrame, np.ndarray],
                                 cfg_in: Optional[Mapping[str, Any]] = None) -> np.ndarray:
     # Schuka data #2 specified proc
     # Time calc: gets string for time in current zone
@@ -422,7 +444,7 @@ def deg_min_float_as_text2deg(degmin):
 
 
 # 'yyyy', 'mm', 'dd', 'HH', 'MM', 'SS'
-@meta_out(lambda dtyp: out_fields(dtyp, keys_del={'date', 'Lat_NS', 'Lon_WE'}, add_before={'Time': 'M8[ns]'}))
+@meta_out(partial(out_fields, keys_del={'date', 'Lat_NS', 'Lon_WE'}, add_before={'Time': 'M8[ns]'}))
 def proc_loaded_nav_supervisor(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
                                csv_specific_param: Optional[Mapping[str, Any]] = None) -> pd.DataFrame:
     """
@@ -498,7 +520,7 @@ def proc_loaded_nav_supervisor(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mappi
 
 
 # ----------------------------------------------------------------------
-def proc_loaded_Baranov_chain(a: Union[pd.DataFrame, np.ndarray],
+def proc_loaded_chain_Baranov(a: Union[pd.DataFrame, np.ndarray],
                               cfg_in: Optional[Mapping[str, Any]] = None,
                               csv_specific_param: Optional[Mapping[str, Any]] = None) -> pd.DatetimeIndex:
     """
@@ -532,8 +554,20 @@ def proc_loaded_Baranov_chain(a: Union[pd.DataFrame, np.ndarray],
     return convertNumpyArrayOfStrings(date, 'datetime64[ns]')  # convert ISO8601 date strings
 
 
-@meta_out(lambda dtyp: out_fields(dtyp, keys_del={'yyyy', 'mm', 'dd', 'HH', 'MM', 'SS'}, add_before={'Time': 'M8[ns]'}))
-def proc_loaded_Kondrashov_inclin(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any] = None,
+
+# njit not works for "isinstance(arr, pd.Series)" and np.add.reduce()
+def concat_to_iso8601(a: pd.DataFrame) -> np.ndarray:  #pd.Series, Mapping[str, np.ndarray]
+    """
+    Concatenate date/time parts to get iso8601 strings
+    :param a: pd.DataFrame with columns 'yyyy', 'mm', 'dd', 'HH', 'MM', 'SS' having byte strings
+    :return:  series of byte strings of time in iso8601 format
+    """
+    return np.add.reduce([a['yyyy'], b'-'] + [fill0(arr, width=2) if isinstance(arr, pd.Series) else arr for arr in (
+        a['mm'], b'-', a['dd'], b'T', a['HH'], b':', a['MM'], b':', a['SS'])])
+
+
+@meta_out(partial(out_fields, keys_del={'yyyy', 'mm', 'dd', 'HH', 'MM', 'SS'}, add_before={'Time': 'M8[ns]'}))
+def proc_loaded_inclin_Kondrashov(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any] = None,
                                   csv_specific_param: Optional[Mapping[str, Any]] = None) -> pd.DataFrame:
     """
     Specified prep&proc of navigation data from Kondrashov inclinometres:
@@ -563,9 +597,6 @@ def proc_loaded_Kondrashov_inclin(a: Union[pd.DataFrame, np.ndarray], cfg_in: Ma
     #         additive += arr
     #     return additive
 
-    def concat_to_iso8601():
-        return np.add.reduce([a['yyyy'], b'-'] + [fill0(arr, width=2) for arr in (
-            a['mm'], b'-', a['dd'], b'T', a['HH'], b':', a['MM'], b':', a['SS'])])
 
         # # Trying pandas is not saccesful:
         # return pd.Series([b''] * a.shape[0]).apply(
@@ -579,11 +610,12 @@ def proc_loaded_Kondrashov_inclin(a: Union[pd.DataFrame, np.ndarray], cfg_in: Ma
         #     meta= ('date', '|S19'))  # , shape=a.shape[0], dtype='S19'
 
     try:
-        date = concat_to_iso8601()  # .compute() #da.from_delayed(, (a.shape[0],), '|S19') #, ndmin=1)
+        date = concat_to_iso8601(a)  # .compute() #da.from_delayed(, (a.shape[0],), '|S19') #, ndmin=1)
         # date = b'%(yyyy)b-%(mm)b-%(dd)bT%(HH)02b-%(MM)02b-%(SS)02b' % a
     except Exception as e:
-        print('Can not convert date: ', e.__class__, ':', '\n==> '.join([s for s in e.args if isinstance(s, str)]))
+        l.exception('Can not convert date: ')
         raise e
+    tim_index = convertNumpyArrayOfStrings(date, 'datetime64[ns]')  # a['Time']
 
     if csv_specific_param is not None:
         key = 'invert_magnitometr'
@@ -596,10 +628,7 @@ def proc_loaded_Kondrashov_inclin(a: Union[pd.DataFrame, np.ndarray], cfg_in: Ma
         elif csv_specific_param:
             l.info(f'unknown key(s) in csv_specific_param')
 
-    # out_fields(cfg_in['dtype'], keys_del, add)
-    tim_index = convertNumpyArrayOfStrings(date, 'datetime64[ns]')  # a['Time']
-    # return convertNumpyArrayOfStrings(date, 'datetime64[ns]')
-    return a.assign(Time=tim_index).loc[:, list(proc_loaded_Kondrashov_inclin.meta_out(cfg_in['dtype_out']).keys())]
+    return a.assign(Time=tim_index).loc[:, list(proc_loaded_inclin_Kondrashov.meta_out(cfg_in['dtype_out']).keys())]
 
 
 def proc_loaded_nav_HYPACK(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any]) -> pd.DatetimeIndex:
@@ -637,7 +666,7 @@ def proc_loaded_nav_HYPACK(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[s
     return t
 
 
-def f_repl_by_dict(replist) -> Callable[[Match[AnyStr]], AnyStr]:  # , repldictvalues={None: b''}
+def f_repl_by_dict(replist: Iterable[AnyStr], binary_str=True) -> Callable[[Match[AnyStr]], AnyStr]:  # , repldictvalues={None: b''}
     """
     Returns fuction ``fsub()`` that returns replacement using ``regex.sub()``. ``fsub(line)`` uses multiple altenative
     search groups, specified by ``replist``, it uses last found or returns source ``line`` if no match.
@@ -647,8 +676,9 @@ def f_repl_by_dict(replist) -> Callable[[Match[AnyStr]], AnyStr]:  # , repldictv
     # ?, last group can have name (default name is None) which must be in repldictvalues.keys to use it for rep last group
     #:param repldictvalues: dict: key name of group, value: by what to replace. Default {None: b''} that is delete group from source
 
-    # This is closure to close scope of definitions for this replacing function.
-    regex = re.compile(b'|'.join(x for x in replist))  # re.escape()
+    # This is closure to close scope of definitions for replfunc() replacing function.
+    # "or" list:
+    regex = re.compile((b'|' if binary_str else '|').join(x for x in replist))  # re.escape()
 
     def replfunc(match):
         """
@@ -659,7 +689,7 @@ def f_repl_by_dict(replist) -> Callable[[Match[AnyStr]], AnyStr]:  # , repldictv
         if match.lastgroup:
             return match.group(match.lastgroup)  # regex.sub(replfunc, match.string)
         else:
-            return b''
+            return b'' if binary_str else ''
         # return repldictvalues[match.lastgroup]
 
         # re.sub('\g<>'.(match.lastgroup), repldictvalues[match.lastgroup])
@@ -683,34 +713,51 @@ def f_repl_by_dict(replist) -> Callable[[Match[AnyStr]], AnyStr]:  # , repldictv
     return fsub
 
 
-def rep_in_file(in_file,
+def rep_in_file(in_file: Union[str, PurePath, BinaryIO, TextIO],
                 out_file,
                 f_replace: Callable[[bytes], bytes],
                 header_rows=0,
                 block_size=None,
                 min_out_length=2,
-                f_replace_in_header: Optional[Callable[[bytes], bytes]] = None) -> int:
+                f_replace_in_header: Optional[Callable[[bytes], bytes]] = None,
+                binary_mode=True) -> int:
     """
     Replacing text in a file, applying f_replace
-    :param in_file: str/Path, file name to read from
+    :param in_file: str/Path or opened file handle, file to read from
     :param out_file: str/Path, file name to write here
-    :param f_replace: bytes = function(bytes)
+    :param f_replace: bytes = function(bytes) or str = function(str) if binary_mode=False
     :param header_rows: int/range copy rows, if range and range[0]>0 remove rows till range[0] then copy till range[-1]
     :param block_size: int or None, if None - reads line by line else size in bytes
     :param min_out_length: int, do not write lines which length is lesser
-    :param f_replace_in_header: bytes = function(bytes). function to make replacements only in header  todo: Not Implemented
+    :param f_replace_in_header: bytes = function(bytes) or str = function(str) if binary_mode=False. function to make replacements only in header  todo: Not Implemented
     :return: None
     """
-    in_file = PurePath(in_file)
+
+
+    try:
+        in_file_path = Path(in_file)
+        if not in_file_path.is_file():
+            print(f'{in_file_path} not found')
+            return None
+
+    except TypeError:  # have opened file handle
+        in_file_path = Path(in_file.name)  # losts abs path for archives so
+        # next check will be filed, but we not writing to archives so it's safe.
+
+    l.warning('preliminary correcting csv file %s by removing irregular rows, writing to %s.',
+        in_file_path.name, out_file)
+
+    # Check if we modyfing input file
     out_file = Path(out_file)
-    if in_file == out_file:
-        # temporary out file and final output files:
+    if in_file_path == out_file:
+        # Modyfing input file -> temporary out file and final output files:
         out_file, out_file_original = out_file.with_suffix(f'{out_file.suffix}.bak'), out_file
     else:
         out_file_original = ''
 
     sum_deleted = 0
-    with open(in_file, 'rb') as fin, open(out_file, 'wb') as fout:
+    with FakeContextIfOpen(lambda x: open(x, 'rb' if binary_mode else 'r'), in_file) as fin,\
+         open(out_file, 'wb' if binary_mode else 'w') as fout:
         if isinstance(header_rows, range):
             for row in range(header_rows[0]):
                 # removing rows
@@ -730,13 +777,13 @@ def rep_in_file(in_file,
                 newline = f_replace(line)
                 if len(newline) > min_out_length:  # newline != rb'\n':
                     fout.write(newline)
-                else:
+                else:  # after correcting line is bad
                     sum_deleted += 1
         else:
             # replacing blocks
             for block in iter(lambda: fin.read(block_size), b''):
                 block = f_replace(block)
-                if block != b'':
+                if block != (b'' if binary_mode else ''):
                     fout.write(block)
 
     if out_file_original:
@@ -745,43 +792,82 @@ def rep_in_file(in_file,
     return sum_deleted
 
 
-def mod_incl_name(in_file):
-    """ Change name of corrected (regular table format) csv file of raw inclinometer data"""
-    in_file = Path(in_file)
-    out_file = in_file.with_name(re.sub(r'inkl_?0*(\d{2})', r'incl\1', in_file.name.lower()))
+def mod_incl_name(in_file: Union[str, PurePath]):
+    """ Change name of corrected (regular table format) csv file of raw inclinometer/wavegage data"""
+    in_file = PurePath(in_file)
+    out_file = in_file.with_name(re.sub('((?P<i>inkl)|w)_0*(?P<n>\d\d)',
+                                        lambda m: f"{'incl' if m.group('i') else 'w'}{m.group('n')}",
+                                        in_file.name.lower()
+                                        ))  # r'inkl_?0*(\d{2})', r'incl\1'
     return out_file
 
 
-def correct_kondrashov_txt(in_file: Union[str, PurePath]) -> Path:
+def correct_kondrashov_txt(in_file: Union[str, Path, BinaryIO, TextIO],
+                           out_file:Optional[Path]=None,
+                            out_dir:Optional[PurePath]=None
+                           ) -> Path:
     """
     Replaces bad strings in csv file and writes corrected file which named by replacing 'inkl_0' by 'incl' in in_file
-    :param in_file:
+    :param in_file: file name or file-like object of csv file or csv file opened in arhive that RarFile.open() returns
+    :param out_file: full output file name. If None _out_dir_ is trying to use, name of output file is generated by mod_incl_name(in_file.name)
+    :param out_dir: output dir, if None try the out dir is dir of in_file, but
+        Note: in opened archives it may not contain original path info (they may be temporary arhives).
+
     :return: name of file to write.
-    """
+
+    Supported _in_file_ format examples:
     # 2018,4,30,23,59,53,-1088,-640,-15648,-14,74,556,7.82,5.50
     # 2018,12,1,0,0,0,-544,-1136,-15568,-44,90,550,7.82,5.50
-    fsub = f_repl_by_dict([
+    """
+
+    is_opened = isinstance(in_file, (io.TextIOBase, io.RawIOBase))
+    msg_in_file = in_file
+
+    # Set _out_file_ name if not yet
+    if out_file:
+        pass
+    elif out_dir:
+        name_maybe_with_sub_dir = mod_incl_name((Path(in_file) if isinstance(in_file, str) else in_file).name)
+        out_file = out_dir / Path(name_maybe_with_sub_dir).name  # flattens archive subdirs
+    else: # autofind out path
+        # handle opened files too
+
+        # Set out file dir based on in_file dir
+        if is_opened:
+            # handle opened files from archive too
+            inf = getattr(in_file, '_inf', None)
+            if inf:
+                in_file_path = Path(inf.volume_file)
+                out_file = mod_incl_name(in_file_path.parent / in_file.name)     # exclude archive name in out path
+                in_file_path /= in_file.name                       # archive name+name / in_file.name for logging
+            else:
+                # cmd_contained_path_of_archive = getattr(in_file, '_cmd', None)  # deprechate
+                # if cmd_contained_path_of_archive:
+                #     # archive path+name
+                #     in_file_path = Path([word for word in cmd_contained_path_of_archive if (len(word)>3 and word[-4]=='.')][0])
+                #     # here '.' used to find path word (of arhive with extension .rar)
+                #     out_file = mod_incl_name(in_file_path.parent / in_file.name)     # exclude archive name in out path
+                #     in_file_path /= in_file.name                       # archive name+name / in_file.name for logging
+                # else:
+                in_file_path = Path(in_file.name)
+                out_file = mod_incl_name(in_file_path)
+
+        msg_in_file = in_file_path.name
+
+    if out_file.is_file():
+        l.warning(f'skipping of pre-correcting csv file {msg_in_file} to {out_file.name}: destination exist')
+        return out_file
+
+    binary_mode = False if isinstance(in_file, io.TextIOBase) else True
+    fsub = f_repl_by_dict([x if binary_mode else bytes.decode(x) for x in (
         b'^(?P<use>20\d{2}(,\d{1,2}){5}(,\-?\d{1,6}){6}(,\d{1,2}\.\d{2})(,\-?\d{1,3}\.\d{2})).*',
-        b'^.+'])
+        b'^.+')], binary_str=binary_mode)
     # {'use': b'\g<use>'})  # $ not works without \r\n so it is useless
     # b'((?!2018)^.+)': '', b'( RS)(?=\r\n)': ''
     # '^Inklinometr, S/N 008, ABIORAS, Kondrashov A.A.': '',
     # '^Start datalog': '',
     # '^Year,Month,Day,Hour,Minute,Second,Ax,Ay,Az,Mx,My,Mz,Battery,Temp':
-
-    in_file = Path(in_file)
-    out_file = mod_incl_name(in_file)
-
-    if out_file.is_file():
-        l.warning(f'skipping of pre-correcting csv file {in_file.name} to {out_file}: destination exist')
-        return out_file
-    elif not in_file.is_file():
-        print(f'{in_file} not found')
-        return None
-    else:
-        l.warning('preliminary correcting csv file {} by removing irregular rows, writing to {}.'.format(
-            in_file.name, str(out_file)))
-    sum_deleted = rep_in_file(in_file, out_file, fsub, header_rows=3)
+    sum_deleted = rep_in_file(in_file, out_file, fsub, header_rows=3, binary_mode=binary_mode)
 
     if sum_deleted:
         l.warning('{} bad line deleted'.format(sum_deleted))
@@ -789,7 +875,7 @@ def correct_kondrashov_txt(in_file: Union[str, PurePath]) -> Path:
     return out_file
 
 
-@meta_out(lambda dtyp: out_fields(dtyp, keys_del={'Date', 'Time'}, add_before={'Time': 'M8[ns]'}))
+@meta_out(partial(out_fields, keys_del={'Date', 'Time'}, add_before={'Time': 'M8[ns]'}))
 def proc_loaded_sea_and_sun_corr_s(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
                                    csv_specific_param: Optional[Mapping[str, Any]] = None) -> pd.DataFrame:
     """
@@ -858,7 +944,9 @@ def proc_loaded_sea_and_sun_corr_s(a: Union[pd.DataFrame, np.ndarray], cfg_in: M
         proc_loaded_sea_and_sun_corr_s.meta_out(cfg_in['dtype_out']).keys())]
 
 
-def correct_baranov_txt(in_file: Union[str, PurePath]) -> Path:
+def correct_baranov_txt(in_file: Union[str, PurePath],
+                        out_file:Optional[PurePath]=None,
+                        out_dir:Optional[PurePath]=None) -> Path:
     """
     Replaces bad strings in csv file and writes corrected file which named by replacing 'W_0' by 'w' in in_file
     :param in_file:
@@ -874,7 +962,12 @@ def correct_baranov_txt(in_file: Union[str, PurePath]) -> Path:
     # that will be checked and deleted
 
     in_file = Path(in_file)
-    out_file = in_file.with_name(re.sub(r'W_?0*(\d{2})', r'w\1', in_file.name))
+    if out_file:
+        pass
+    elif out_dir:
+        out_file = out_dir / mod_incl_name(in_file.name)
+    else: # autofind out path
+        out_file = in_file.with_name(mod_incl_name(in_file.name))  # re.sub(r'W_?0*(\d{2})', r'w\1', in_file.name)
 
     if out_file.is_file():
         l.warning(f'skipping of pre-correcting csv file {in_file.name} to {out_file}: destination exist')

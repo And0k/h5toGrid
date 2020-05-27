@@ -4,7 +4,7 @@ from __future__ import print_function
 
 """
   Author:  Andrey Korzh --<ao.korzh@gmail.com>
-  Purpose: Convert XML files wich contains backuped SMS messages from GPS tracker to GPX tracks
+  Purpose: Convert XML files which contains backuped SMS messages from GPS tracker to GPX tracks
   Created: 26.02.2016
 """
 import re
@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 import gpxpy.gpx as GPX
 # from codecs import
 
-from utils2init import Ex_nothing_done, cfg_from_args, my_argparser_common_part, this_prog_basename, init_logging
+from utils2init import Ex_nothing_done, cfg_from_args, my_argparser_common_part, this_prog_basename, init_logging, standard_error_info
 
 if __name__ == '__main__':
     l = None  # see main(): l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
@@ -272,11 +272,13 @@ def main(new_arg=None, **kwargs):
     except Ex_nothing_done as e:
         print(e.message)
     except Exception as e:
-        msg_option = 'The end. There are error ', e.__class__, ':', '\n==> '.join(
-            [s for s in e.args if isinstance(s, str)])
+        msg_option = f'The end. There are error {standard_error_info(e)}'
         print(msg_option)
-
-        l.error((e.msg if hasattr(e, 'msg') else '') + msg_option)
+        try:
+            err_msg = e.msg
+            l.error(' '.join([err_msg, msg_option]))
+        except AttributeError:
+            l.error(msg_option)
     finally:
         f.close()
         try:

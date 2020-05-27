@@ -24,7 +24,7 @@ loadRDCP_INI = os_path.join(os_path.dirname(sys.argv[0]), 'loadRDCP.ini')
 # d:\workData\_source\KaraSea\150816_Kartesh-river_Ob\ADVS_RDI#17937 — копия\magneticDec.ini
 # \\\
 # '
-# loadRDCP_INI = get1stString(loadRDCP_INI) #Get only first path from strDir
+# loadRDCP_INI = first_of_paths_text(loadRDCP_INI) #Get only first path from strDir
 #
 cfg = ini2dict(loadRDCP_INI)
 strCmdPattern = ' '.join((cfg['Geomag']['path'], cfg['Geomag']['pathmodel'], '{0} D M{1} {2} {3}'))

@@ -86,11 +86,11 @@ to Pandas HDF5 store*.h5
     p_in.add('--b_search_in_subdirs', default='True',
              help='search in subdirectories, used if mask or only dir in path (not full path)')
     p_in.add('--exclude_dirs_ends_with_list', default='toDel, -, bad, test, TEST',
-             help='exclude dirs wich ends with this srings. This and next option especially useful when search recursively in many dirs')
+             help='exclude dirs which ends with this srings. This and next option especially useful when search recursively in many dirs')
     p_in.add('--exclude_files_ends_with_list', default='coef.txt, -.txt, test.txt',
-             help='exclude files wich ends with this srings')
+             help='exclude files which ends with this srings')
     p_in.add('--b_skip_if_up_to_date', default='True',
-             help='exclude processing of files with same name and wich time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files')
+             help='exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files')
     p_in.add('--dt_from_utc_hours', default='0',
              help='add this correction to loading datetime data. Can use other suffixes instead of "hours"')
     p_in.add('--header',
@@ -167,7 +167,7 @@ def init_input_cols(cfg_in=None):
         Append/modify dictionary cfg_in for parameters of numpy.loadtxt function and later pandas save to hdf5.
     :param cfg_in: dictionary, may has fields:
         header (required) - comma/space separated string. Column names in source file data header
-        (as in Veusz standard imput dialog), used to find cfg_in['cols'] if last is not cpecified
+        (as in Veusz standard input dialog), used to find cfg_in['cols'] if last is not cpecified
         dtype - type of data in column (as in Numpy loadtxt)
         converters - dict (see "converters" in Numpy loadtxt) or function(cfg_in) to make dict here
         cols_load - list of used column names
@@ -912,7 +912,7 @@ def h5_append(store, df, log, cfg_out, log_dt_from_utc=pd.Timedelta(0), tim=None
             
     :param store: hdf5 file where to append
     :param df: pandas or dask datarame to append. If dask then log_dt_from_utc must be None (not assign log metadata here)
-    :param log: dict wich will be appended to chield table, cfg_out['table_log']
+    :param log: dict which will be appended to chield table, cfg_out['table_log']
     :param cfg_out: dict with fields:
         table: name of table to update (or tables: list, then used only 1st element)
         table_log: name of chield table (or tables_log: list, then used only 1st element)
@@ -1215,7 +1215,7 @@ def h5index_sort(cfg_out, out_storage_name=None, in_storages=None, tables=None):
 # ##############################################################################
 # ___________________________________________________________________________
 
-def read_csv(nameFull, cfg_in):
+def read_csv(nameFull, **cfg_in):
     """
     Read csv in dask dataframe and then time correction with arguments defined in cfg_in fields
     :param nameFull:
@@ -1370,24 +1370,24 @@ def main(new_arg=None):
         # cfg['in']['fun_proc_loaded']= proc_loaded_IdrRedas
     elif cfg['in']['cfgFile'].endswith('nav_supervisor') or cfg['in']['cfgFile'].endswith('meteo'):
         cfg['in']['fun_proc_loaded'] = delayed(to_pandas_hdf5.csv_specific_proc.proc_loaded_nav_supervisor)
-    elif cfg['in']['cfgFile'].endswith('CTD_Schuka'):
-        cfg['in']['fun_proc_loaded'] = delayed(to_pandas_hdf5.csv_specific_proc.proc_loaded_CTD_Schuka)
-    elif cfg['in']['cfgFile'].endswith('CTD_Schuka_HHMM'):
-        cfg['in']['fun_proc_loaded'] = delayed(to_pandas_hdf5.csv_specific_proc.proc_loaded_CTD_Schuka_HHMM)
+    elif cfg['in']['cfgFile'].endswith('ctd_Schuka'):
+        cfg['in']['fun_proc_loaded'] = delayed(to_pandas_hdf5.csv_specific_proc.proc_loaded_ctd_Schuka)
+    elif cfg['in']['cfgFile'].endswith('ctd_Schuka_HHMM'):
+        cfg['in']['fun_proc_loaded'] = delayed(to_pandas_hdf5.csv_specific_proc.proc_loaded_ctd_Schuka_HHMM)
     elif cfg['in']['cfgFile'].endswith('csv_log'):
         cfg['in']['fun_proc_loaded'] = delayed(to_pandas_hdf5.csv_specific_procproc_loaded_csv_log)
-    elif cfg['in']['cfgFile'].endswith('ISO_time'):
+    elif cfg['in']['cfgFile'].endswith('csv_iso_time'):
         # more prepare for time in standard ISO 8601 format
         cfg['in']['converters'] = {cfg['in']['coltime']: lambda txtYY_M_D_h_m_s_f: np.array(
             '20{0:02.0f}-{1:02.0f}-{2:02.0f}T{3:02.0f}:{4:02.0f}:{5:02.0f}.{6:02.0f}0'.format(
                 *np.array(np.fromstring(txtYY_M_D_h_m_s_f, dtype=np.uint8, sep=','), dtype=np.uint8)),
             dtype='datetime64[ns]')}  # - np.datetime64('2009-01-01T00:00:00', dtype='datetime64[ns]')
-    elif cfg['in']['cfgFile'].endswith('Baranov_chain') or cfg['in']['cfgFile'].endswith('Baranov_inclin'):
-        cfg['in']['fun_proc_loaded'] = delayed(to_pandas_hdf5.csv_specific_proc.proc_loaded_Baranov_chain)
+    elif cfg['in']['cfgFile'].endswith('chain_Baranov') or cfg['in']['cfgFile'].endswith('inclin_Baranov'):
+        cfg['in']['fun_proc_loaded'] = delayed(to_pandas_hdf5.csv_specific_proc.proc_loaded_chain_Baranov)
     elif cfg['in']['cfgFile'].endswith('csv_Baklan'):
         cfg['in']['fun_proc_loaded'] = delayed(to_pandas_hdf5.csv_specific_proc.proc_loaded_Baklan)
-    elif cfg['in']['cfgFile'].endswith('Kondrashov_inclin'):
-        cfg['in']['fun_proc_loaded'] = delayed(to_pandas_hdf5.csv_specific_proc.proc_loaded_Kondrashov_inclin)
+    elif cfg['in']['cfgFile'].endswith('inclin_Kondrashov'):
+        cfg['in']['fun_proc_loaded'] = delayed(to_pandas_hdf5.csv_specific_proc.proc_loaded_inclin_Kondrashov)
 
     # Prepare cpecific format loading and writing
     cfg['in'] = init_input_cols(cfg['in'])
@@ -1468,7 +1468,7 @@ def main(new_arg=None):
         store, dfLogOld = h5temp_open(cfg_out)
         for path_csv in gen_names_and_log(cfg_out, store, dfLogOld):
             # Loading and processing data
-            d, b_ok = read_csv([path_csv], cfg['in'])
+            d, b_ok = read_csv([path_csv], **cfg['in'])
 
             # filter
             if not np.all(b_ok):

@@ -20,6 +20,7 @@ import xarray as xr
 # from mne.time_frequency.multitaper import _compute_mt_params
 from matplotlib import pyplot as plt
 from scipy import signal
+from numba import jit
 
 # pd.set_option('io.hdf.default_format','table')
 # from matplotlib import pyplot as plt, rcParams
@@ -37,21 +38,21 @@ sys.path.append(str(scripts_path.parent.resolve()))
 # from scripts.incl_calibr import calibrate, calibrate_plot, coef2str
 # from other_filters import despike, rep2mean
 
-from utils2init import Ex_nothing_done, init_logging, cfg_from_args, init_file_names, my_argparser_common_part
+from utils2init import Ex_nothing_done, init_logging, cfg_from_args, init_file_names, my_argparser_common_part, call_with_valid_kwargs
 from utils_time import intervals_from_period, pd_period_to_timedelta
 from to_pandas_hdf5.h5toh5 import h5init, h5select
 from to_pandas_hdf5.h5_dask_pandas import h5_load_range_by_coord, filter_local
 # h5q_intervals_indexes_gen
 from inclinometer.incl_h5clc import incl_calc_velocity_nodask, my_argparser, h5_names_gen, filt_data_dd
 
-# path_mne = Path(r'd:\Work\_Python3\And0K\h5toGrid\other\mne')
-# sys.path.append(str(path_mne.parent.resolve()))
+path_mne = Path(r'd:\Work\_Python3\And0K\h5toGrid\other\mne')
+sys.path.append(str(path_mne)) #.parent.resolve()
 # sep = ';' if sys.platform == 'win32' else ':'
 # os_environ['PATH'] += f'{sep}{path_mne}'
 # multitaper = import_file(path_mne / 'time_frequency', 'multitaper')
 
 
-from other.mne.time_frequency import multitaper
+from third_party.mne.time_frequency import multitaper
 
 prog = 'incl_h5spectrum'  # this_prog_basename(__file__)
 version = '0.1.1'
@@ -104,17 +105,17 @@ def my_argparser(varargs=None):
 
     p_proc = p.add_argument_group('proc', 'Processing parameters')
     p_proc.add('--split_period',
-               help='pandas offset string (5D, H, ...) to process and output in separate blocks. Use big values to not split',
+               help='pandas offset string (5D, H, ...) to process and output in separate blocks. Number of spectrums is split_period/overlap_float. Use big values to not split',
                default='100Y')
     p_proc.add('--overlap_float',
-               help='period overlap ratio [0, 1): 0 - no overlap. For default dt_interval it will be set to 0.5')
+               help='period overlap ratio [0, 1): 0 - no overlap. 0.5 for default dt_interval')
     p_proc.add('--time_intervals_center_list',
                help='list of intervals centers that need to process. Used only if if period is not used')
     p_proc.add('--dt_interval_hours',
                help='time range of each interval. By default will be set to the split_period in units of suffix (hours+minutes)')
     p_proc.add('--dt_interval_minutes')
 
-    p_proc.add('--fmin_float',
+    p_proc.add('--fmin_float',  # todo: separate limits for different parameters
                help='min output frequency to calc')
     p_proc.add('--fmax_float',
                help='max output frequency to calc')
@@ -130,8 +131,8 @@ def my_argparser(varargs=None):
 
     return (p)
 
-
-def _psd_from_mt_adaptive(x_mt, eigvals, freq_mask, max_iter=150,
+#@jit failed for n_signals, n_tapers, n_freqs = x_mt.shape and not defined weights
+def _psd_from_mt_adaptive(x_mt: np.ndarray, eigvals, freq_mask, max_iter=150,
                           return_weights=False):
     r"""Use iterative procedure to compute the PSD from tapered spectra.
 
@@ -239,7 +240,7 @@ def _psd_from_mt_adaptive(x_mt, eigvals, freq_mask, max_iter=150,
     else:
         return psd
 
-
+@jit
 def _psd_from_mt(x_mt, weights):
     """Compute PSD from tapered spectra.
 
@@ -262,23 +263,25 @@ def _psd_from_mt(x_mt, weights):
     return psd
 
 
-def gen_intervals(starts_time, dt_interval):
+def gen_intervals(starts_time: Union[np.ndarray, pd.Series], dt_interval: Any) -> Iterator[Tuple[Any, Any]]:
     for t_start_end in zip(starts_time, starts_time + dt_interval):
         yield t_start_end
 
 
 def h5q_starts2coord(
         cfg_in: Mapping[str, Any],
-        starts_time: Optional[Sequence[Union[str, pd.Timestamp]]] = None,
+        starts_time: Optional[Union[np.ndarray, pd.Series, list]] = None,
         dt_interval: Optional[timedelta] = None
         ) -> pd.Index:
     """
     Edge coordinates of index range query
     As it is nealy part of h5toh5.h5select() may be depreshiated? See Note
-    :param dt_interval: array or list with strings convertable to pandas.Timestamp
+    :param starts_time: array or list with strings convertable to pandas.Timestamp
+    :param dt_interval: pd.TimeDelta
     :param: cfg_in, dict with fields:
         db_path, str
         table, str
+        time_intervals_start, to use instead _starts_time_ if it is None
     :return: ``qstr_range_pattern`` edge coordinates
     Note: can use instead:
     >>> from to_pandas_hdf5.h5toh5 import h5select
@@ -338,7 +341,7 @@ def h5_velocity_by_intervals_gen(cfg: Mapping[str, Any], cfg_out: Mapping[str, A
         # variant 1. genereate ragular intervals (may be with overlap)
         def gen_loaded(tbl):
             cfg['in']['table'] = tbl
-            # To obtain ``t_intervals_start`` used in query inside gen_data_filtered_on_intervals(cfg_out, cfg)
+            # To obtain ``t_intervals_start`` used in query inside gen_data_on_intervals(cfg_out, cfg)
             # we copy its content here:
             t_prev_interval_start, t_intervals_start = intervals_from_period(
                 **cfg['in'], period=cfg['proc']['split_period'])
@@ -454,8 +457,8 @@ def psd_mt_params(length, bandwidth, low_bias, adaptive, n_times=0, dt=None, fs=
 
     return prm
 
-
-def psd_mt(x, dpss, weights, dt, n_fft, freq_mask, adaptive_if_can=None, eigvals=None, **kwargs):
+#@jit filed with even for x.any() and np.atleast_2d(x)
+def psd_mt(x, dpss, weights, dt, n_fft, freq_mask, adaptive_if_can=None, eigvals=None):
     """
     Compute power spectral density (PSD) using a multi-taper method.
     :param x: array, shape=(..., n_times). The data to compute PSD from.
@@ -466,7 +469,6 @@ def psd_mt(x, dpss, weights, dt, n_fft, freq_mask, adaptive_if_can=None, eigvals
     :param freq_mask: bool array
     :param adaptive_if_can: bool,
     :param eigvals:  - required if ``adaptive_if_can``
-    :param kwargs:
     :return psd: ndarray, shape (..., n_freqs). The PSDs. All dimensions up to the last will be the same as ``x`` input.
 
     See Also
@@ -475,8 +477,9 @@ def psd_mt(x, dpss, weights, dt, n_fft, freq_mask, adaptive_if_can=None, eigvals
     mne.psd_array_multitaper - base code. Here psd is separated from dpss calculation unlike in mne
     mne._mt_spectra(x, dpss, fs)[0]
     """
-    if isinstance(x, pd.Series):
-        x = x.values
+
+    if not x.any():  # (x!=0).sum() > N?   fast return for if no data
+        return np.full((1, freq_mask.sum()), np.nan)
     x = np.atleast_2d(x)
     x = x.reshape(-1, x.shape[-1])
 
@@ -494,23 +497,22 @@ def psd_mt(x, dpss, weights, dt, n_fft, freq_mask, adaptive_if_can=None, eigvals
     if freq_mask[-1] and x.shape[1] % 2 == 0:
         x_mt[:, :, -1] /= np.sqrt(2.)
     if not adaptive_if_can:
-        psd = weights * x_mt
-        psd *= psd.conj()  # same to abs(psd)**2
-        psd = psd.real.sum(axis=-2)
+        psds = weights * x_mt
+        psds *= psds.conj()  # same to abs(psd)**2
+        psd = psds.real.sum(axis=-2)
         psd *= 2 / (weights * weights.conj()).real.sum(axis=-2)
     else:
+        # # from mne.parallel import parallel_func
+        # # from mne.time_frequency.multitaper import _psd_from_mt_adaptive
+        # psds = list(
+        #     _psd_from_mt_adaptive(x, eigvals, np.ones((sum(freq_mask),), dtype=np.bool))
+        #      # x already masked so we put all ok mask
+        #            for x in np.array_split(x_mt, 1)
+        #            )
+        # psd = np.concatenate(psds)
+        psd = _psd_from_mt_adaptive(x_mt, eigvals, np.ones((freq_mask.sum(),), dtype=np.bool))
 
-        # from mne.parallel import parallel_func
-        # from mne.time_frequency.multitaper import _psd_from_mt_adaptive
-        out = list(_psd_from_mt_adaptive(
-            x, eigvals,
-            np.ones((sum(freq_mask),), dtype=np.bool)
-            )  # x already masked so we put all ok mask
-                   for x in np.array_split(x_mt, 1)
-                   )
-        psd = np.concatenate(out)
-
-    # make output units V^2/Hz:  (like mne.mne.time_frequency.psd_array_multitaper option normalization = 'full')
+        # make output units V^2/Hz:  (like mne.mne.time_frequency.psd_array_multitaper option normalization = 'full')
     psd *= dt
     return psd
 
@@ -520,16 +522,16 @@ def psd_calc(df, fs, freqs, adaptive=None, b_plot=False, **kwargs):
     Compute Power Spectral Densities (PSDs) of df.Ve/Vn using multitaper method
     :param df: dataframe with Ve and Vn
     :param b_plot:
-    :param kwargs:
+    :param kwargs: psd_mt kwargs
     :return:
     """
 
-    psdm_Ve = psd_mt(df.Ve, **kwargs)[0, :]
-    psdm_Vn = psd_mt(df.Vn, **kwargs)[0, :]
+    psdm_Ve = psd_mt(df.Ve.to_numpy(), **kwargs)[0, :]
+    psdm_Vn = psd_mt(df.Vn.to_numpy(), **kwargs)[0, :]
 
     if False:
         ## high level mne functions recalcs windows each time
-        from other.mne.time_frequency import psd_array_multitaper
+        from third_party.mne.time_frequency import psd_array_multitaper
         multitaper.warn = l.warning
         psdm_Ve, freq = psd_array_multitaper(df.Ve, sfreq=fs, adaptive=adaptive,
                                              normalization='length')  # fmin=0, fmax=0.5,
@@ -673,11 +675,10 @@ def main(new_arg=None, **kwargs):
     nv_vars_for_tbl = {}
     tbl_prev = ''
     itbl = 0
-    cols = []
     for df, tbl_in, dataname in h5_velocity_by_intervals_gen(cfg, cfg_out):
         tbl = tbl_in.replace('incl', '_i')
         # _, (df, tbl, dataname) in h5_dispenser_and_names_gen(cfg, cfg_out, fun_gen=h5_velocity_by_intervals_gen):
-        len_data_cur = len(df)
+        len_data_cur = df.shape[0]
         if tbl_prev != tbl:
             itbl += 1
             l.info('%s: len=%s', dataname, len_data_cur)
@@ -686,33 +687,37 @@ def main(new_arg=None, **kwargs):
         # Prepare
         if prm['length'] is None:
             # 1st time
-            prm['length'] = df.shape[0]
-            prm.update(
-                psd_mt_params(**prm, dt=float(np.median(np.diff(df.index.values))) / 1e9))
+            prm['length'] = len_data_cur
+            prm.update(psd_mt_params(**prm, dt=float(np.median(np.diff(df.index.values))) / 1e9))
             nc_psd.createDimension('freq', len(prm['freqs']))
             # nv_... - variables to be used as ``NetCDF variables``
             nv_freq = nc_psd.createVariable('freq', 'f4', ('freq',), zlib=True)
             nv_freq[:] = prm['freqs']
-
-        elif prm['length'] is not None and prm['length'] != len_data_cur:
+            check_fs = 1e9/np.median(np.diff(df.index.values)).item()
+            if prm.get('fs'):
+                np.testing.assert_almost_equal(prm['fs'], check_fs, decimal=7, err_msg='', verbose=True)
+            else:
+                prm['fs'] = check_fs
+        elif prm['length'] != len_data_cur:
             prm['length'] = len_data_cur
             try:
                 prm['dpss'], prm['eigvals'], prm['adaptive_if_can'] = \
                     multitaper._compute_mt_params(prm['length'], prm['fs'], prm['bandwidth'],
                                                   prm['low_bias'], prm['adaptive'])
             except (ModuleNotFoundError, ValueError) as e:
-                # l.error() already reported as multitaper.warn is reassignred to l.warning
+                # l.error() already reported as multitaper.warn is reassignred to l.warning()
                 prm['eigvals'] = np.int32([0])
             prm['weights'] = np.sqrt(prm['eigvals'])[np.newaxis, :, np.newaxis]
             # l.warning('new length (%s) is different to last (%s)', len_data_cur, prm['length'])
-        # ds_psd = psd_calc(df, prm)
+
         if not tbl in nc_psd.groups:
             nc_tbl = nc_psd.createGroup(tbl)
+            cols = set()
             if 'Pressure' in df.columns:
-                cols.append('Pressure')
+                cols.add('Pressure')
                 nc_tbl.createVariable('Pressure', 'f4', ('time', 'freq',), zlib=True)
             if 'Ve' in df.columns:
-                cols.extend(['Ve', 'Vn'])
+                cols.update(['Ve', 'Vn'])
                 nc_tbl.createVariable('Ve', 'f4', ('time', 'freq',), zlib=True)
                 nc_tbl.createVariable('Vn', 'f4', ('time', 'freq',), zlib=True)
             nc_tbl.createVariable('time_start', 'f8', ('time',), zlib=True)
@@ -721,19 +726,18 @@ def main(new_arg=None, **kwargs):
         nc_tbl.variables['time_start'][out_row], nc_tbl.variables['time_end'][out_row] = df.index[[0, -1]].values
 
         # Calculate
-        if np.any(prm['eigvals']):
+        if prm['eigvals'].any():
             for var_name in cols:
-                # nc_tbl.variables['Ve'][out_row, :] = psd_mt(df.Ve, **prm)[0, :]
-                nc_tbl.variables[var_name][out_row, :] = psd_mt(df[var_name], **prm)[0, :]
+                nc_tbl.variables[var_name][out_row, :] = call_with_valid_kwargs(psd_mt, df[var_name].to_numpy(), **prm)[0, :]
             if np.datetime64(time_good_min, 'ns') > df.index[
                 0].to_numpy():  # use values to not deal with tz-naive/aware timestamps
                 time_good_min = df.index[0]
             if np.datetime64(time_good_max.value, 'ns') < df.index[-1].to_numpy():
                 time_good_max = df.index[-1]
         else:
-            for var in nc_tbl.variables.values():
-                # nc_tbl.variables['Ve'][out_row, :] = np.NaN
-                var[out_row, :] = np.NaN
+            for var_name in cols:
+                nc_tbl.variables[var_name][out_row, :] = np.NaN
+
         out_row += 1
 
         # if cfg_out['save_proc_tables']:

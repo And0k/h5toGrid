@@ -26,7 +26,7 @@ from dateutil.tz import tzlocal, tzoffset
 from to_pandas_hdf5.h5toh5 import h5log_names_gen, h5find_tables
 # my
 from utils2init import my_argparser_common_part, cfg_from_args, this_prog_basename, init_file_names, dir_from_cfg, \
-    init_logging, Ex_nothing_done, import_file
+    init_logging, Ex_nothing_done, import_file, standard_error_info
 
 # Globals
 to_mytz_offset = tzoffset(None, -tzlocal()._dst_offset.total_seconds())
@@ -97,9 +97,9 @@ file based on vsz pattern
 
     # candidates to move out to common part
     p_in.add('--exclude_dirs_ends_with_list', default='-, bad, test, TEST, toDel-',
-             help='exclude dirs wich ends with this srings. This and next option especially useful when search recursively in many dirs')
+             help='exclude dirs which ends with this srings. This and next option especially useful when search recursively in many dirs')
     p_in.add('--exclude_files_ends_with_list', default='coef.txt, -.txt, test.txt',
-             help='exclude files wich ends with this srings')
+             help='exclude files which ends with this srings')
 
     p_prog = p.add_argument_group('program', 'program behaviour')
     p_prog.add('--export_timeout_s_float', default='0',
@@ -128,7 +128,7 @@ def veusz_data(veusze, prefix: str, suffix_prior: str = '') -> Dict[str, Any]:
     :param veusze: Veusz embedded object
     :param prefix: string, include in output only datasets which name starts with this
     :param suffix_prior: string, if several datasets filtered by prefix diff only with this suffix, out only thouse which name ends with this, but rename keys to exclude (to be without) this suffix
-    Returns: dict with found dataset wich keys are its names excluding prefix and suffix
+    Returns: dict with found dataset which keys are its names excluding prefix and suffix
     """
     names = veusze.GetDatasets()
     prefixlen = len(prefix)
@@ -285,7 +285,7 @@ def export_images(veusze, cfg_out, suffix, b_skip_if_exists=False):
             try:
                 veusze.Export(str(file_name), page=i - 1, dpi=dpi)
             except Exception as e:
-                l.error('Exporting error %s: %s', e.__class__, '\n==> '.join([a for a in e.args if isinstance(a, str)]))
+                l.error('Exporting error', exc_info=True)
             l.debug('%s,', i)
 
 
@@ -374,8 +374,7 @@ def veusze_commands(veusze, cfg_in, file_name_r):
             try:
                 eval("veusze." + eval_str)  # compile(, '', 'eval') or [], 'eval')
             except Exception as e:
-                l.error('error to eval "{}" - {}: {}'.format(eval_str, e.__class__,
-                                                             '\n==> '.join([a for a in e.args if isinstance(a, str)])))
+                l.error('error to eval "%s" - %s', exc_info=True)
     # veusze.AddCustom('constant', u'fileDataSource', f"u'{file_name_r}'", mode='replace')
 
 
@@ -434,8 +433,7 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
             try:
                 b_closed = veusze.IsClosed()
             except Exception as e:
-                l.error('IsClosed() error {}: {}'.format(
-                    e.__class__, '\n==> '.join([a for a in e.args if isinstance(a, str)])))
+                l.error('IsClosed() error', exc_info=True)
                 b_closed = True
             if b_closed:
                 veusze = None
@@ -555,8 +553,7 @@ def co_send_data(gen_veusz_and_logs, cfg, cor_savings):
             print('Ok>')
             break
         except Exception as e:
-            print('There are error ', e.__class__, '!',
-                  '\n==> '.join([a for a in e.args if isinstance(a, str)]), sep='')
+            print('There are error ', standard_error_info(e))
             continue
 
         # ... do some calcuations to prepare custom_expressions ...
@@ -696,8 +693,7 @@ def main(new_arg=None, veusze=None):
     try:
         pass
     except Exception as e:
-        print('The end. There are error ', e.__class__, ':', '\n==> '.join(
-            [a for a in e.args if isinstance(a, str)]))
+        print('The end. There are error ', standard_error_info(e))
         return  # or raise FileNotFoundError?
     finally:
         if cfg['async']['loop']:

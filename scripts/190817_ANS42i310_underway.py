@@ -95,7 +95,7 @@ if st(30):  # False: #
                          # '--b_images_only', 'True'
                          ])
 
-if start <= 40 and False:  #: # may not comment always because can not delete same time more than once
+if st(40) and False:  #: # may not comment always because can not delete same time more than once
     # Deletng bad runs from DB:
     import pandas as pd
 

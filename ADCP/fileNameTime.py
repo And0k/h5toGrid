@@ -13,10 +13,10 @@ from shutil import move
 
 import numpy as np
 
-from to_pandas_hdf5.csv2h5 import init_input_cols, time_corr
-from utils2init import ini2dict, init_file_names, Ex_nothing_done
+from to_pandas_hdf5.csv2h5 import init_input_cols
+from utils2init import ini2dict, init_file_names, Ex_nothing_done, standard_error_info
 from utils_time import timzone_view
-
+from utils_time_corr import time_corr
 
 def proc_loaded_ADCP_WH(a, cfg_in):
     pass
@@ -146,8 +146,7 @@ if __name__ == '__main__':
                                   invalid_raise=False)  # ,autostrip= True
                 # warnings.warn("Mean of empty slice.", RuntimeWarning)
             except Exception as e:
-                print(e.__class__, ':', '\n==> '.join([a for a in e.args if isinstance(
-                    a, str)]), ' - Bad file. skip!\n')
+                print(*standard_error_info(e), ' - Bad file. skip!\n')
                 continue
         else:
             try:
@@ -213,8 +212,7 @@ if __name__ == '__main__':
     try:
         pass
     except Exception as e:
-        print('The end. There are error ', e.__class__, ':', '\n==> '.join(
-            [s for s in e.args if isinstance(s, str)]))
+        print('The end. There are error ', standard_error_info(e))
 
         import traceback, code
         from sys import exc_info as sys_exc_info

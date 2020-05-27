@@ -28,7 +28,7 @@ warnings.simplefilter("ignore", category=NaturalNameWarning)
 # my
 from other_filters import inearestsorted, inearestsorted_around, check_time_diff
 from utils2init import set_field_if_no, pathAndMask, dir_create_if_need, getDirBaseOut, FakeContextIfOpen, \
-    Ex_nothing_done
+    Ex_nothing_done, standard_error_info
 from utils_time import multiindex_timeindex
 
 pd.set_option('io.hdf.default_format', 'table')
@@ -159,7 +159,7 @@ def getstore_and_print_table(fname, strProbe):
         try:
             pprint.pprint(store.get_storer(strProbe).group.table)
         except AttributeError as e:
-            print('Error {}: '.format(e.__class__), '\n==> '.join([s for s in e.args if isinstance(s, str)]))
+            print('Error', standard_error_info(e))
             print('Checking all root members:')
             nodes = store.root.__members__
             for n in nodes:
@@ -167,8 +167,7 @@ def getstore_and_print_table(fname, strProbe):
                 try:
                     pprint.pprint(store.get_storer(n))
                 except Exception as e:
-                    print('{}: '.format(e.__class__), '\n==> '.join(
-                        [s for s in e.args if isinstance(s, str)]))
+                    print(n, 'error!', standard_error_info(e))
     # return store
 
 
@@ -228,7 +227,7 @@ def h5sort_pack(h5_source_fullpath, h5_cumulative, table_node, arguments=None, a
                 print('restart: ')
                 ptrepack()
         except Exception as ee:
-            print('Error {}: '.format(ee.__class__), '\n==> '.join([s for s in ee.args if isinstance(s, str)]))
+            print('Error ', standard_error_info(ee))
             print('- creating index not success.')
             # try without --propindexes yet?
             raise e
@@ -467,7 +466,7 @@ def h5temp_open(cfg_out: Dict[str, Any]) -> Optional[pd.DataFrame]:
                                     cfg_out['db_path_temp']), tbl)
 
                 except HDF5ExtError as e:
-                    # print('processing all source data... - no table with previous data')
+                    l.warning(e.args[0])   # print('processing all source data... - no table with previous data')
                     cfg_out['b_skip_if_up_to_date'] = False
                 except Exception as e:
                     print('processing all source data... - no previous data (output table {}): {}'.format(
@@ -499,13 +498,14 @@ def h5temp_open(cfg_out: Dict[str, Any]) -> Optional[pd.DataFrame]:
         else:
             df_log = None
             if not cfg_out['b_use_old_temporary_tables']:  # Remove existed tables to write
-                name_prev = ''
-                for tbl in sorted(cfg_out['tables'] + cfg_out['tables_log']):
-                    if len(name_prev) < len(tbl) and tbl.startswith(name_prev) and tbl[len(name_prev)] == '/':
-                        continue  # parent of this nested have deleted on previous iteration
+                name_prev = ''                                # used to filter already deleted children (how speed up?)
+                for tbl in sorted(cfg_out['tables'] + cfg_out['tables_log'] ):
+                    if len(name_prev) < len(tbl) and tbl.startswith(name_prev) and tbl[len(name_prev)] == '/':  # filter
+                        continue                              # parent of this nested have deleted on previous iteration
                     for i in range(1, 4):
                         try:
                             h5remove_table(cfg_out, tbl)
+                            name_prev = tbl
                             break
                         except ClosedFileError as e:  # file is not open
                             l.error('wating {}s (/3) because of error: {}'.format(i, str(e)))
@@ -665,8 +665,7 @@ def h5remove_duplicates(cfg, cfg_table_keys):
                                 cfg['db'].append(tbl, dfs[tbl], data_columns=True, index=False,
                                                  chunksize=cfg['chunksize'])
                     except Exception as e:
-                        print(': table {} not recorded because of error when removing duplicates'.format(tbl))
-                        print('{}: '.format(e.__class__), '\n==> '.join([s for s in e.args if isinstance(s, str)]))
+                        l.exception('Table %s not recorded because of error when removing duplicates', tbl)
                         # cfg['db'][tbl].drop_duplicates(keep='last', inplace=True) #returns None
     else:
         l.info('Not need remove duplicates. ')
@@ -806,8 +805,7 @@ def h5index_sort(cfg_out,
                     l.warning('None table {} in {}'.format(tbl, store.filename))
                     continue
             except TypeError as e:
-                l.warning('Can not access table {}. {}:'.format(tbl, e.__class__) + '\n==> '.join(
-                    [s for s in e.args if isinstance(s, str)]))
+                l.exception('Can not access table %s', tbl)
                 continue
             # store.close()
             if df.index.is_monotonic:
@@ -921,9 +919,7 @@ def h5del_obsolete(cfg_out: Mapping[str, Any],
                     L = cfg_out['db'].remove(tbl, where=qstr)
                     print('{} in table/{} in log'.format(L, Ln))
             except NotImplementedError as e:
-                print('Can not delete: ', e.__class__, ':', '\n==> '.join(
-                    [s for s in e.args if isinstance(s, str)]))
-                print('So removing full tables {} & {}'.format(tbl, tbl_log))
+                l.exception('Can not delete obsolete rows, so removing full tables %s & %s', tbl, tbl_log)
                 cfg_out['db'].remove(tbl_log)
                 cfg_out['db'].remove(tbl)
                 bExistOk = False

@@ -7,7 +7,7 @@ from h5toGpx import init_gpx_symbols_fun, save_to_gpx, my_argparser as h5toGpx_p
 from to_pandas_hdf5.csv_specific_proc import convertNumpyArrayOfStrings
 from to_pandas_hdf5.h5toh5 import h5select
 # my:
-from utils2init import init_file_names, cfg_from_args, this_prog_basename, Ex_nothing_done
+from utils2init import init_file_names, cfg_from_args, this_prog_basename, Ex_nothing_done, standard_error_info
 
 
 def my_argparser():
@@ -52,7 +52,7 @@ def filename2date(inF):
             a['SS'].astype(np.object), '|S19', ndmin=1)
         # date = b'%(yyyy)b-%(mm)b-%(dd)bT%(HH)02b-%(MM)02b-%(SS)02b' % a
     except Exception as e:
-        print('Can not convert date: ', e.__class__, ':', '\n==> '.join([s for s in e.args if isinstance(s, str)]))
+        print('Can not convert date: ', standard_error_info(e))
         raise e
     return convertNumpyArrayOfStrings(date, 'datetime64[ns]')
 

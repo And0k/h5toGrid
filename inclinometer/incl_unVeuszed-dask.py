@@ -49,7 +49,7 @@ cfg = {  # output configuration after loading csv:
         }, 'in': {}}
 
 
-# cfg = ini2dict(r'D:\Work\_Python3\_projects\PyCharm\h5toGrid\to_pandas_hdf5\csv_Baranov_inclin.ini')
+# cfg = ini2dict(r'D:\Work\_Python3\_projects\PyCharm\h5toGrid\to_pandas_hdf5\csv_inclin_Baranov.ini')
 # tblD = cfg['output_files']['table']
 # tblL = tblD + '/log'
 # dtAdd= np.timedelta64(60,'s')
@@ -135,7 +135,7 @@ def poly_load_apply(x, pattern_path_of_poly, pattern_format_arg):
 # @+<<more declarations>>
 # @+node:korzh.20180602082319.1: ** <<more declarations>>
 from incinometer.h5inclinometer_coef import h5_save_coef
-from utils2init import Ex_nothing_done
+from utils2init import Ex_nothing_done, standard_error_info
 
 # input:
 cfg['output_files']['table'] = 'incl10'  # 'inkl09' # 'inclPres11' #4
@@ -431,8 +431,7 @@ try:
         Ah_old = h5source[tblD + '//coef//H//A'].value
         Ch = h5source[tblD + '//coef//H//C'].value
 except Exception as e:
-    print('{}: {} - Can not load coef. Using default!\n'.format(e.__class__, '\n==> '.join([
-        m for m in e.args if isinstance(m, str)])))
+    print(standard_error_info(e), '- Can not load coef. Using default!\n')
     Ah_old = np.float64([[1, 0, 0], [0, 1, 0], [0, 0, 1]])  # /500.0
     Ag_old = np.float64([[1, 0, 0], [0, 1, 0], [0, 0, 1]]) / 16384.0
     Cg = np.float64([[0, 0, 0]])
@@ -642,12 +641,7 @@ for t_interval_start in t_intervals_start:
             from veusz import embed as veusz_embed
             # import embed
         except (ImportError, ModuleNotFoundError) as e:
-            print('{}: {} - Can not load module "{}". Trying add to sys.path first...\n'.format(e.__class__,
-                                                                                                '\n==> '.join([
-                                                                                                    m for m in e.args if
-                                                                                                    isinstance(m,
-                                                                                                               str)]),
-                                                                                                'embed'))
+            print(standard_error_info(e), '- Can not load module "embed". Trying add to sys.path first...')
             # python3 will require this
             if cfg['program']['veusz_path'] not in sys.path:
                 sys.path = [cfg['program']['veusz_path']] + sys.path

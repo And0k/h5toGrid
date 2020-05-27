@@ -20,7 +20,7 @@ import numpy as np
 import ogr
 import pandas as pd
 import pyproj  # import geog
-from descartes import PolygonPatch
+from third_party.descartes.patch import PolygonPatch  # !Check!
 from gsw import distance as gsw_distance  # from gsw.gibbs.earth  import distance
 # from scipy.ndimage import gaussian_filter1d
 from scipy import interpolate, diff
@@ -33,7 +33,7 @@ from other_filters import rep2mean, is_works, too_frequent_values, waveletSmooth
 from to_pandas_hdf5.CTD_calc import add_ctd_params
 from to_pandas_hdf5.h5toh5 import h5select
 # my
-from utils2init import init_logging, Ex_nothing_done
+from utils2init import init_logging, Ex_nothing_done, standard_error_info
 from utils_time import datetime_fun, timzone_view, multiindex_timeindex
 from veuszPropagate import load_vsz_closure, export_images  # , veusz_data
 
@@ -720,8 +720,7 @@ try:  # try get griddata_by_surfer() function reqwirements
                              OutFmt=constants.srfGridFmtS7,
                              BlankOutsideHull=True, InflateHull=dist_etrap)
 except Exception as e:
-    l.error('\nCan not initialiase Surfer.Application! %s: %s', e.__class__,
-            '\n==> '.join([a for a in e.args if isinstance(a, str)]))
+    l.error('\nCan not initialiase Surfer.Application! %s', standard_error_info(e))
 
 
     def griddata_by_surfer(ctd, outFnoE_pattern=r'%TEMP%\xyz{}', xCol='Lon', yCol='Lat', zCols=2,
@@ -1220,8 +1219,7 @@ def main(new_arg=None):
                         cfg['output_files']['data_columns'] + ['depth'])
                         }})
                 except Exception as e:
-                    l.exception('\nCTD depth calculation error - assigning it to "Pres" insted!')
-                    # {}: {}.format(e.__class__, '\n==> '.join([a for a in e.args if isinstance(a, str)])))
+                    l.exception('\nCTD depth calculation error - assigning it to "Pres" insted! %s')
                     ctd['depth'] = ctd.Pres.abs()
 
                 # Add full resolution bottom profile to section from navigation['DepEcho']
@@ -1796,8 +1794,7 @@ def main(new_arg=None):
                                 # , dpi= 200
                                 pass
                             except Exception as e:
-                                l.error('\nCan not draw contour! ', e.__class__, ':', '\n==> '.join(
-                                    [a for a in e.args if isinstance(a, str)]), exc_info=1)
+                                l.error('\nCan not draw contour! ', exc_info=1)
                         # gdal_drv_grid.Register()
                         fileOut_grd = cfg['output_files']['path'] / interp_method_subdir / (
                                 stem_time + label_param + '.grd')

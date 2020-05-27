@@ -7,7 +7,7 @@ After having many problems with pip/pipenv on windows I use conda for now. There
 ## Workflow to calculate grids from CTD data 
 *Examples of workflow can be found in ``scripts`` directory*. They usually includs steps:
 
- - ``csv2h5``: convert all tabular data to PyTables HDF5 Store wich is used by [pandas](https://pandas.pydata.org) library and can be loaded in [Veusz](https://github.com/veusz/veusz).
+ - ``csv2h5``: convert all tabular data to PyTables HDF5 Store which is used by [pandas](https://pandas.pydata.org) library and can be loaded in [Veusz](https://github.com/veusz/veusz).
  - ``h5toGpx``: extract navigation data at time station starts to GPX waypoints
  - create new GPX-sections file (using Garmin MapSource or other GPX waypoints editor) that contains or:
     - routes over stations waypoints (method allows adjust direction of each section) or

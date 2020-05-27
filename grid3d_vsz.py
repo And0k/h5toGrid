@@ -27,6 +27,7 @@ from veuszPropagate import load_vsz_closure
 from grid2d_vsz import sec_edges, write_grd_fun, griddata_by_surfer
 # idata_from_tpoints, runs_ilast_good, track_b_invert
 from utils_time import timzone_view
+from utils2init import standard_error_info
 
 # ##############################################################################
 startSectionN = 1  # 1 Debug: skipped sections!!!!
@@ -240,8 +241,7 @@ try:
                             plt.close()
                             pass
                         except Exception as e:
-                            print('\nCan no draw contour! ', e.__class__, ':', '\n==> '.join(
-                                [a for a in e.args if isinstance(a, str)]))
+                            print('\nCan no draw contour! ', standard_error_info(e))
                     # gdal_drv_grid.Register()
 
                     write_grd_this_geotransform(fileFN + '.grd', z)
@@ -249,6 +249,5 @@ try:
                     bFirst = False
 
 except Exception as e:
-    print('\nError! ', e.__class__, ':', '\n==> '.join(
-        [a for a in e.args if isinstance(a, str)]))
+    print('\nError! ', standard_error_info(e))
     raise e

@@ -12,12 +12,13 @@ from to_pandas_hdf5.CTD_calc import main as CTD_calc
 # ---------------------------------------------------------------------------------------------
 device = 'CTD_NeilBrown_Mark3'
 path_cruise = Path(r'd:\WorkData\AtlanticOcean\161113_ANS33')  #d:\workData\AtlanticOcean\191000
-path_db_raw = path_cruise / device / '_raw' / path_cruise.with_suffix('.h5').name
+path_raw = path_cruise / device / '_raw/bin/Realterm'
+path_db_raw = path_raw.parent.parent / path_cruise.with_suffix('.h5').name
 path_db = path_cruise / path_cruise.with_suffix('.h5').name  # same name as dir
 device_veusz_prefix = 'm3_'
 go = True  # False #
 
-start = 20
+start = 10
 end = 20  # 10000
 
 
@@ -32,9 +33,9 @@ def st(current):
 if st(10):  # False: #
     # Save CTD_SST_48Mc Underway to DB
     bin2h5(['ini/bin_Brown.ini',
-            '--path', str(path_cruise / device / '_raw' / '2019*[0-9].bin'),
+            '--path', str(path_raw / '[0-9]*.bin'),  #'2019*[0-9].bin'
             # \CTD_NeilBrown_Mark3\_raw\20191013_170300.bin
-            '--db_path', str(path_db),
+            '--db_path', str(path_db_raw),
             # '--dt_from_utc_hours', '0',
             # '--header', 'Number,Date(text),Time(text),Pres,Temp,Sal,O2,O2ppm,SIGMA,Cond,Vbatt,SVel',
             # '--cols_not_use_list', 'Number,SIGMA,Vbatt,SVel',

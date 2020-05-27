@@ -26,9 +26,9 @@ import configparser
 import configargparse
 import re
 from pathlib import Path, PurePath
-
+import io
 from functools import wraps
-from typing import Any, Callable, Dict, Mapping, Optional, Tuple, Union, TypeVar
+from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional, Iterable, Iterator, BinaryIO, TextIO, TypeVar, Tuple, Union
 import logging
 
 A = TypeVar('A')
@@ -73,6 +73,11 @@ def fallible(*exceptions, logger=None) \
         return wrapped
 
     return fwrap
+
+
+def standard_error_info(e):
+    msg_trace = '\n==> '.join((s for s in e.args if isinstance(s, str)))
+    return f'{e.__class__}: {msg_trace}'
 
 
 class Ex_nothing_done(Exception):
@@ -188,11 +193,11 @@ def dir_from_cfg(cfg, key_dir):
 # print(fname, end=' ')
 # yield (DataDirName, fname)
 
-def get1stString(manyRows):
-    # Get only first path from manyRows
-    iSt = min(manyRows.find(r':', 3) - 1, manyRows.find(r'\\', 3)) + 2
-    iEn = min(manyRows.find(r':', iSt) - 1, manyRows.find(r'\\', iSt))
-    return manyRows[iSt - 2:iEn].rstrip('\\\n\r ')
+def first_of_paths_text(paths):
+    # Get only first path from paths text
+    iSt = min(paths.find(r':', 3) - 1, paths.find(r'\\', 3)) + 2
+    iEn = min(paths.find(r':', iSt) - 1, paths.find(r'\\', iSt))
+    return paths[iSt - 2:iEn].rstrip('\\\n\r ')
 
 
 def set_field_if_no(dictlike, dictfield, value=None):
@@ -332,7 +337,7 @@ def cfgfile2dict(arg_source: Union[Mapping[str, Any], str, PurePath, None] = Non
                     with open(cfg_file, 'r', encoding='cp1251') as f:
                         config.read(cfg_file)
                 except FileNotFoundError:
-                    print('Ini file "{}" not found, continue...'.format(cfg_file))
+                    print('Ini file "{}" not found, continue...'.format(cfg_file))  # todo: l.warning
                     config = {}
 
     elif isinstance(arg_source, dict):
@@ -480,7 +485,7 @@ def ini2dict(arg_source=None):
     Removes suffics type indicators but keep prefiх.
     prefiх/suffics type indicators (following/precieded with "_"):
         b
-        chars - to list of chars, use string "\ \" to specify space char
+        chars - to list of chars, use string "\\ \\" to specify space char
         time
         dt (prefix only) with suffixes: ... , minutes, hours, ... - to timedelta
         list, (names - not recommended) - splitted on ',' but if first is "'" then on "'," - to allow "," char, then all "'" removed.
@@ -917,7 +922,7 @@ def generator_good_between(i_start=None, i_end=None):
         yield True
 
 
-def init_file_names(cfg_files: Mapping[str, Any], b_interact=True, path_field=None):
+def init_file_names(cfg_files: MutableMapping[str, Any], b_interact=True, path_field=None):
     """
       Fill cfg_files filds of file names: {'path', 'filemask', 'ext'}
     which are not specified.
@@ -1351,7 +1356,7 @@ class FakeContextIfOpen:
     If input is filename then acts like usual open context manager:
     closes handle returned by fn_open_file()
     Else do nothing: treat input as already opened file object,
-    also act the same if returned handle is None
+    also act is the same if returned handle is None
     """
 
     def __init__(self, fn_open_file, file):
@@ -1359,10 +1364,9 @@ class FakeContextIfOpen:
         self.fn_open_file = fn_open_file
 
     def __enter__(self):
-        if isinstance(self.file, (str, PurePath)):
-            self.handle = self.fn_open_file(self.file)
-        else:
-            self.handle = self.file
+        self.handle = (
+            self.fn_open_file(self.file) if isinstance(self.file, (str, PurePath)) else
+            self.file)
         return self.handle
 
     def __exit__(self, exc_type, ex_value, ex_traceback):
@@ -1373,6 +1377,59 @@ class FakeContextIfOpen:
             self.handle.close()
         return False
 
+
+def open_csv_or_archive_of_them(filename: Union[PurePath, Iterable[Union[Path, str]]], binary_mode=False,
+                                pattern=None, encoding=None) -> Iterator[Union[TextIO, BinaryIO]]:
+    """
+    Opens and yields files from archive with name filename or from list of filenames in context manager (autoclosing).
+    Note: Allows stop iteration over files in archive by assigning True to next() in consumer of generator
+    Note: to can unrar the unrar.exe must be in path or set rarfile.UNRAR_TOOL
+    :param filename: archive with '.rar'/'.zip' suffix or file name or Iterable of file names
+    :param pattern: Unix shell style file pattern in the archive - should include directories if need search inside (for example place "*" at beginning)
+    :return:
+    Note: RarFile anyway opens in binary mode
+    """
+    read_mode = 'rb' if binary_mode else 'r'
+    ArcFile = None
+    if filename.suffix == '.zip':
+        from zipfile import ZipFile as ArcFile
+    elif filename.suffix == '.rar':
+        import rarfile
+        ArcFile = rarfile.RarFile
+        try:  # only try increase peformance
+            # Configure RarFile Temp file size: keep ~1Gbit free, always take at least ~20Mbit
+            io.DEFAULT_BUFFER_SIZE = max(io.DEFAULT_BUFFER_SIZE, 8192*16)  # decrease the operations number as we are working with big files
+            import tempfile, psutil
+            rarfile.HACK_SIZE_LIMIT = max(20_000_000,
+                                          psutil.disk_usage(Path(tempfile.gettempdir()).drive).free - 1_000_000_000
+                                          )
+        except:
+            pass
+    if ArcFile:
+        with ArcFile(filename, mode='r') as arc_file:
+            for text_file in arc_file.infolist():
+                if pattern and not fnmatch(text_file.filename, pattern):
+                    continue
+                # RarFile need opening in mode 'r' but it opens in binary_mode:
+                with arc_file.open(text_file.filename, mode='r' if filename.suffix == '.rar' else read_mode) as f:
+                    break_flag = yield (f if binary_mode else io.TextIOWrapper(
+                        f, encoding=encoding, errors='replace', line_buffering=True))  #, newline=None
+                    if break_flag:
+                        print(f'exiting after openined archived file "{text_file.filename}":')
+                        print(arc_file.getinfo(text_file))
+                        break
+
+    elif hasattr(filename, '__iter__') and not isinstance(filename, (str, bytes)):
+        for text_file in filename:
+            if pattern and not fnmatch(text_file, pattern):
+                continue
+            with open(text_file, mode=read_mode) as f:
+                yield f
+    else:
+        if pattern and not fnmatch(filename, pattern):
+            return
+        with open(filename, mode=read_mode) as f:
+            yield f
 
 def path_on_drive_d(path_str: str = '/mnt/D',
                     drive_win32: str = 'D:',
@@ -1397,36 +1454,51 @@ def import_file(path: PurePath, module_name: str):
     """
     from importlib import util
 
+    f = (path / module_name).with_suffix('.py')
     try:
-        f = (path / module_name).with_suffix('.py')
         spec = util.spec_from_file_location(module_name, f)
         mod = util.module_from_spec(spec)
 
         spec.loader.exec_module(mod)
-    except Exception as e:
-        print('{}: {} - Can not load module here {}. Skipping!\n'.format(e.__class__, '\n==> '.join([
-            m for m in e.args if isinstance(m, str)]), f))
-        mod = None
-    except ModuleNotFoundError as e:
-        print('{}: {} - Can not load module here {}. Skipping!\n'.format(e.__class__, '\n==> '.join([
-            m for m in e.args if isinstance(m, str)]), f))
+    except ModuleNotFoundError as e:  #(Exception),
+        print(standard_error_info(e), '\n- Can not load module', f, 'here . Skipping!')
         mod = None
     return mod
 
 
-def st(current: int, start: int, end: int, go: Optional[bool] = True) -> bool:
+def st(current: int) -> bool:
     """
     Says if need to execute current step.
     Note: executs >= one step beginnig from ``start``
-    :param start, end: int, step control limits
-    :param current: step
-    :param go: skip if False
-    :return desision: True => execute current st, False => skip
+    Attributes: start: int, end: int, go: Optional[bool] = True:
+    start, end: int, step control limits
+    go: skip if False
+
+    :param current: step~
+    :return desision: True if start <= current <= max(start, end)): allows one step if end <= start
+    True => execute current st, False => skip
     """
-    if (start <= current <= max(start, end)) and go:
+    if (st.start <= current <= max(st.start, st.end)) and st.go:
         print(f'step {current}')
         return True
     return False
+
+st.start = 0
+st.end = 1e9  # big value
+st.go = True
+
+
+def call_with_valid_kwargs(func: Callable[[Any], Any], *args, **kwargs):
+    """
+    Calls func with extracted valid arguments from kwargs
+    inspired by https://stackoverflow.com/a/9433836
+    :param func: function you're calling
+    :param args:
+    :param kwargs:
+    :return:
+    """
+    valid_keys = kwargs.keys() & func.__code__.co_varnames[len(args):func.__code__.co_argcount]
+    return func(*args, **{k: kwargs[k] for k in valid_keys})
 
 
 """

@@ -411,8 +411,7 @@ def main(new_arg=None, **kwargs):
         else:
             print('done nothing')
     except Exception as e:
-        print('The end. There are error ', e.__class__, ':', '\n==> '.join(
-            [s for s in e.args if isinstance(s, str)]))
+        l.exception('The end. There are error ')
 
         import traceback, code
         from sys import exc_info as sys_exc_info

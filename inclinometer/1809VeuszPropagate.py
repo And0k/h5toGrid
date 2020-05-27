@@ -85,8 +85,7 @@ def main():
                 print('ok>')
                 break
             # except Exception as e:
-            #     print('There are error: ', e.__class__, '!',
-            #           '\n==> '.join([a for a in e.args if isinstance(a, str)]), sep='')
+            #     print('There are error: ', standard_error_info(e))
             #     break  # continue
             probe = log['fileName'][:log['fileName'].find('_')]
             if not cfg['output_files']['b_images_only']:
