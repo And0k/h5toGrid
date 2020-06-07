@@ -17,13 +17,13 @@ import sys
 from functools import wraps
 from pathlib import Path
 from time import sleep
-from typing import Any, Callable, Iterator, Mapping, Optional, Sequence, Tuple, List, Union, TypeVar
+from typing import Any, Callable, Dict, Iterator, Iterable, Mapping, MutableMapping, Optional, Sequence, Tuple, List, Union, TypeVar
 
 import dask.array as da
 import dask.dataframe as dd
 import numpy as np
 import pandas as pd
-from numba import jit, njit, types, objmode, generated_jit
+from numba import njit, prange, cfunc, types, objmode, generated_jit
 from numba.extending import overload
 from dask.diagnostics import ProgressBar
 
@@ -41,7 +41,7 @@ from utils_time import intervals_from_period, pd_period_to_timedelta
 from to_pandas_hdf5.h5toh5 import h5init, h5find_tables, h5remove_table, h5move_tables
 from to_pandas_hdf5.h5_dask_pandas import h5_append, h5q_intervals_indexes_gen, h5_load_range_by_coord, i_bursts_starts, \
     filt_blocks_da, filter_global_minmax, filter_local
-from to_pandas_hdf5.csv2h5 import h5_dispenser_and_names_gen
+from to_pandas_hdf5.csv2h5 import h5_dispenser_and_names_gen, h5_close
 from other_filters import rep2mean
 from inclinometer.h5inclinometer_coef import rot_matrix_x, rotate_y
 
@@ -127,19 +127,23 @@ def my_argparser(varargs=None):
     p_out.add('--output_files.db_path', help='hdf5 store file path')
     p_out.add('--table',
               help='table name in hdf5 store to write data. If not specified then will be generated on base of path of input files. Note: "*" is used to write blocks in autonumbered locations (see dask to_hdf())')
-    p_out.add('--not_joined_csv_path',
-              help='path to save csv files with proced velocity for each probe individually')
+    p_out.add('--csv_path',
+              help='path to save csv files with proced velocity (each probe individually)')
     p_out.add('--not_joined_h5_path',
               help='If something then saving proced velocity for each probe individually to output_files.db_path. Todo: use this settings to can save in other path')
     p_out.add('--csv_date_format', default='%Y-%m-%d %H:%M:%S.%f',
               help='Format of date column in csv files. Can use float or string representations')
+    p_out.add('--b_all_to_one_col',
+              help='concatenate all data in same columns in out db, both separated and joined csv data will be wrote')
+    p_out.add('--csv_columns_list',
+              help='if not empty then when save csv use only specified columns here')
 
     p_proc = p.add_argument_group('proc', 'Processing parameters')
     p_proc.add('--calc_version', default='trigonometric(incl)',
                help='string: variant of processing Vabs(inclination):',
                choices=['trigonometric(incl)', 'polynom(force)'])
     p_proc.add('--max_incl_of_fit_deg_float',
-               help='Finds point where g(x) = Vabs(inclination) became bend down and replaces after g with line so after max_incl_of_fit_deg {\Delta}^{2}y ≥ 0 for x > max_incl_of_fit_deg')
+               help='Finds point where g(x) = Vabs(inclination) became bend down and replaces after g with line so after max_incl_of_fit_deg {\\Delta}^{2}y ≥ 0 for x > max_incl_of_fit_deg')
 
 
 
@@ -191,8 +195,9 @@ def f_roll(Gxyz):
     """
     return np.arctan2(Gxyz[1, :], Gxyz[2, :])
 
-@jit
-def fIncl_rad2force(incl_rad):
+
+#@njit - removed because numba gets long bytecode dump without messages/errors
+def fIncl_rad2force(incl_rad: np.ndarray):
     """
     Theoretical force from inclination
     :param incl_rad:
@@ -205,13 +210,13 @@ def fIncl_rad2force(incl_rad):
 def fIncl_deg2force(incl_deg):
     return fIncl_rad2force(np.radians(incl_deg))
 
-@jit
+# no @jit - polyval not supported
 def fVabsMax0(x_range, y0max, coefs):
     """End point of good interpolation"""
     x0 = x_range[np.flatnonzero(np.polyval(coefs, x_range) > y0max)[0]]
     return (x0, np.polyval(coefs, x0))
 
-@jit
+# no @jit - polyval not supported
 def fVabs_from_force(force, coefs, vabs_good_max=0.5):
     """
 
@@ -228,7 +233,6 @@ def fVabs_from_force(force, coefs, vabs_good_max=0.5):
     # last force of good polynom fitting
     x0, v0 = fVabsMax0(np.arange(1, 4, 0.01), vabs_good_max, coefs)
 
-    @jit
     def v_normal(x):
         """
             After end point of good polinom fitting use linear function
@@ -243,7 +247,6 @@ def fVabs_from_force(force, coefs, vabs_good_max=0.5):
     incl_range0 = np.linspace(0, incl_good_min, 15)
     force_range0 = fIncl_rad2force(incl_range0)
 
-    @jit
     def v_linear(x):
         """
         Linear(incl) function crossed (0,0) and 1st good polinom fitting force = 0.25
@@ -265,18 +268,67 @@ def fVabs_from_force(force, coefs, vabs_good_max=0.5):
     """
 
 
-def v_abs_from_incl(incl_rad, coefs, calc_version='trigonometric(incl)', max_incl_of_fit_deg=None):
+@njit(fastmath=True)
+def trigonometric_series_sum(r, coefs):
+    """
+
+    :param r:
+    :param coefs: array of even length
+    :return:
+    Not jitted version was:
+    def trigonometric_series_sum(r, coefs):
+        return coefs[0] + np.nansum(
+            [(a * np.cos(nr) + b * np.sin(nr)) for (a, b, nr) in zip(
+                coefs[1::2], coefs[2::2], np.arange(1, len(coefs) / 2)[:, None] * r)],
+            axis=0)
+    """
+    out = np.empty_like(r)
+    out[:] = coefs[0]
+    for n in prange(1, (len(coefs)+1) // 2):
+        a = coefs[n * 2 - 1]
+        b = coefs[n * 2]
+        nr = n * r
+        out += (a * np.cos(nr) + b * np.sin(nr))
+    return out
+
+@njit(fastmath=True)
+def rep_if_bad(checkit, replacement):
+    return checkit if (checkit and np.isfinite(checkit)) else replacement
+
+@njit(fastmath=True)
+def f_linear_k(x0, g, g_coefs):
+    replacement = np.float64(10)
+    return min(rep_if_bad(np.diff(g(x0 - np.float64([0.01, 0]), g_coefs)).item() / 0.01, replacement),
+               replacement)
+
+@njit(fastmath=True)
+def f_linear_end(g, x, x0, g_coefs):
+    g0 = g(x0, g_coefs)
+    return np.where(x < x0, g(x, g_coefs), g0 + (x - x0) * f_linear_k(x0, g, g_coefs))
+
+@njit(fastmath=True)
+def v_trig(r, coefs):
+    squared = np.sin(r) / trigonometric_series_sum(r, coefs)
+    # with np.errstate(invalid='ignore'):  # removes warning of comparison with NaN
+    # return np.sqrt(squared, where=squared > 0, out=np.zeros_like(squared)) to can use njit replaced with:
+    return np.where(squared > 0, np.sqrt(squared), 0)
+
+
+def v_abs_from_incl(incl_rad: np.ndarray, coefs: Sequence, calc_version='trigonometric(incl)', max_incl_of_fit_deg=None) -> np.ndarray:
     """
     Vabs = np.polyval(coefs, Gxyz)
 
     :param incl_rad:
-    :param coefs:
-    :param calc_version:
+    :param coefs: coefficients.
+    Note: for 'trigonometric(incl)' option if not max_incl_of_fit_deg then it is in last coefs element
+    :param calc_version: 'polynom(force)' if this str or len(coefs)<=4 else if 'trigonometric(incl)' uses trigonometric_series_sum()
     :param max_incl_of_fit_deg:
     :return:
     """
-    if calc_version == 'polynom(force)':
-        l.warning('Old coefs method polynom(force)')
+    if len(coefs)<=4 or calc_version == 'polynom(force)':
+        l.warning('Old coefs method "polynom(force)"')
+        if not len(incl_rad):   # need for numba njit error because of dask calling with empty arg to check type if no meta?
+            return incl_rad     # empty of same type as input
         force = fIncl_rad2force(incl_rad)
         return fVabs_from_force(force, coefs)
 
@@ -287,29 +339,10 @@ def v_abs_from_incl(incl_rad, coefs, calc_version='trigonometric(incl)', max_inc
             max_incl_of_fit = np.radians(coefs[-1])
             coefs = coefs[:-1]
 
-        def rep_if_bad(checkit, replacement):
-            return checkit if (any(checkit) and any(np.isfinite(checkit))) else replacement
-
-        def f_linear_k(x0, g, g_coefs):
-            return min(rep_if_bad(np.diff(g([x0 - 0.01, x0], g_coefs)) / 0.01, 10), 10)
-
-        def f_linear_end(g, x, x0, g_coefs):
-            g0 = g(x0, g_coefs)
-            return np.where(x < x0, g(x, g_coefs), g0 + (x - x0) * f_linear_k(x0, g, g_coefs))
-
-        def trigonometric_series_sum(r, coefs):
-            return coefs[0] + np.nansum([
-                (a * np.cos(nr) + b * np.sin(nr)) for (a, b, nr) in zip(
-                    coefs[1::2], coefs[2::2], np.arange(1, len(coefs) / 2)[:, None] * r)],
-                axis=0)
-
-        def v_trig(r, coefs):
-            squared = np.sin(r) / trigonometric_series_sum(r, coefs)
-            # with np.errstate(invalid='ignore'):  # removes warning of comparison with NaN
-            return np.sqrt(squared, where=squared > 0, out=np.zeros_like(squared))
-
-        with np.errstate(invalid='ignore'):  # removes warning of comparison with NaN
-            return f_linear_end(g=v_trig, x=incl_rad, x0=max_incl_of_fit, g_coefs=coefs)
+        with np.errstate(invalid='ignore'):                         # removes warning of comparison with NaN
+            return f_linear_end(g=v_trig, x=incl_rad,
+                                x0=np.atleast_1d(max_incl_of_fit),
+                                g_coefs=np.float64(coefs))          # atleast_1d, float64 is to can use njit
     else:
         raise NotImplementedError(f'Bad calc method {calc_version}', )
 
@@ -426,8 +459,7 @@ def incl_calc_velocity_nodask(
     # fInclination = lambda Gxyz: np.arctan2(np.sqrt(np.sum(np.square(Gxyz[:-1, :]), 0)), Gxyz[2, :])
 
     try:
-        Gxyz = fG(a.loc[:, ('Ax', 'Ay', 'Az')].to_numpy().T, Ag,
-                  Cg)  # lengths=True gets MemoryError   #.to_dask_array()?, dd.from_pandas?
+        Gxyz = fG(a.loc[:, ('Ax', 'Ay', 'Az')].to_numpy().T, Ag, Cg)  # lengths=True gets MemoryError   #.to_dask_array()?, dd.from_pandas?
         # .rechunk((1800, 3))
         # filter
         GsumMinus1 = da.linalg.norm(Gxyz, axis=0) - 1  # should be close to zero
@@ -460,10 +492,11 @@ def incl_calc_velocity_nodask(
         l.exception('Error in incl_calc_velocity():')
         raise
 
+
 @njit
 def recover_x__sympy_lambdify(y, z, Ah, Ch, mean_Hsum):
     """
-    
+    After sympy added abs() under sqrt() to exclude comlex values
     :param y: 
     :param z: 
     :param Ah: 
@@ -477,8 +510,10 @@ def recover_x__sympy_lambdify(y, z, Ah, Ch, mean_Hsum):
     [a20, a21, a22] = Ah[2]
     [c00, c10, c20] = np.ravel(Ch)
     return (
-                   a00 ** 2 * c00 + a00 * a01 * c10 - a00 * a01 * y + a00 * a02 * c20 - a00 * a02 * z + a10 ** 2 * c00 + a10 * a11 * c10 - a10 * a11 * y + a10 * a12 * c20 - a10 * a12 * z + a20 ** 2 * c00 + a20 * a21 * c10 - a20 * a21 * y + a20 * a22 * c20 - a20 * a22 * z - np.sqrt(
-               -a00 ** 2 * a11 ** 2 * c10 ** 2 + 2 * a00 ** 2 * a11 ** 2 * c10 * y - a00 ** 2 * a11 ** 2 * y ** 2 - 2 * a00 ** 2 * a11 * a12 * c10 * c20 + 2 * a00 ** 2 * a11 * a12 * c10 * z + 2 * a00 ** 2 * a11 * a12 * c20 * y - 2 * a00 ** 2 * a11 * a12 * y * z - a00 ** 2 * a12 ** 2 * c20 ** 2 + 2 * a00 ** 2 * a12 ** 2 * c20 * z - a00 ** 2 * a12 ** 2 * z ** 2 - a00 ** 2 * a21 ** 2 * c10 ** 2 + 2 * a00 ** 2 * a21 ** 2 * c10 * y - a00 ** 2 * a21 ** 2 * y ** 2 - 2 * a00 ** 2 * a21 * a22 * c10 * c20 + 2 * a00 ** 2 * a21 * a22 * c10 * z + 2 * a00 ** 2 * a21 * a22 * c20 * y - 2 * a00 ** 2 * a21 * a22 * y * z - a00 ** 2 * a22 ** 2 * c20 ** 2 + 2 * a00 ** 2 * a22 ** 2 * c20 * z - a00 ** 2 * a22 ** 2 * z ** 2 + a00 ** 2 * mean_Hsum ** 2 + 2 * a00 * a01 * a10 * a11 * c10 ** 2 - 4 * a00 * a01 * a10 * a11 * c10 * y + 2 * a00 * a01 * a10 * a11 * y ** 2 + 2 * a00 * a01 * a10 * a12 * c10 * c20 - 2 * a00 * a01 * a10 * a12 * c10 * z - 2 * a00 * a01 * a10 * a12 * c20 * y + 2 * a00 * a01 * a10 * a12 * y * z + 2 * a00 * a01 * a20 * a21 * c10 ** 2 - 4 * a00 * a01 * a20 * a21 * c10 * y + 2 * a00 * a01 * a20 * a21 * y ** 2 + 2 * a00 * a01 * a20 * a22 * c10 * c20 - 2 * a00 * a01 * a20 * a22 * c10 * z - 2 * a00 * a01 * a20 * a22 * c20 * y + 2 * a00 * a01 * a20 * a22 * y * z + 2 * a00 * a02 * a10 * a11 * c10 * c20 - 2 * a00 * a02 * a10 * a11 * c10 * z - 2 * a00 * a02 * a10 * a11 * c20 * y + 2 * a00 * a02 * a10 * a11 * y * z + 2 * a00 * a02 * a10 * a12 * c20 ** 2 - 4 * a00 * a02 * a10 * a12 * c20 * z + 2 * a00 * a02 * a10 * a12 * z ** 2 + 2 * a00 * a02 * a20 * a21 * c10 * c20 - 2 * a00 * a02 * a20 * a21 * c10 * z - 2 * a00 * a02 * a20 * a21 * c20 * y + 2 * a00 * a02 * a20 * a21 * y * z + 2 * a00 * a02 * a20 * a22 * c20 ** 2 - 4 * a00 * a02 * a20 * a22 * c20 * z + 2 * a00 * a02 * a20 * a22 * z ** 2 - a01 ** 2 * a10 ** 2 * c10 ** 2 + 2 * a01 ** 2 * a10 ** 2 * c10 * y - a01 ** 2 * a10 ** 2 * y ** 2 - a01 ** 2 * a20 ** 2 * c10 ** 2 + 2 * a01 ** 2 * a20 ** 2 * c10 * y - a01 ** 2 * a20 ** 2 * y ** 2 - 2 * a01 * a02 * a10 ** 2 * c10 * c20 + 2 * a01 * a02 * a10 ** 2 * c10 * z + 2 * a01 * a02 * a10 ** 2 * c20 * y - 2 * a01 * a02 * a10 ** 2 * y * z - 2 * a01 * a02 * a20 ** 2 * c10 * c20 + 2 * a01 * a02 * a20 ** 2 * c10 * z + 2 * a01 * a02 * a20 ** 2 * c20 * y - 2 * a01 * a02 * a20 ** 2 * y * z - a02 ** 2 * a10 ** 2 * c20 ** 2 + 2 * a02 ** 2 * a10 ** 2 * c20 * z - a02 ** 2 * a10 ** 2 * z ** 2 - a02 ** 2 * a20 ** 2 * c20 ** 2 + 2 * a02 ** 2 * a20 ** 2 * c20 * z - a02 ** 2 * a20 ** 2 * z ** 2 - a10 ** 2 * a21 ** 2 * c10 ** 2 + 2 * a10 ** 2 * a21 ** 2 * c10 * y - a10 ** 2 * a21 ** 2 * y ** 2 - 2 * a10 ** 2 * a21 * a22 * c10 * c20 + 2 * a10 ** 2 * a21 * a22 * c10 * z + 2 * a10 ** 2 * a21 * a22 * c20 * y - 2 * a10 ** 2 * a21 * a22 * y * z - a10 ** 2 * a22 ** 2 * c20 ** 2 + 2 * a10 ** 2 * a22 ** 2 * c20 * z - a10 ** 2 * a22 ** 2 * z ** 2 + a10 ** 2 * mean_Hsum ** 2 + 2 * a10 * a11 * a20 * a21 * c10 ** 2 - 4 * a10 * a11 * a20 * a21 * c10 * y + 2 * a10 * a11 * a20 * a21 * y ** 2 + 2 * a10 * a11 * a20 * a22 * c10 * c20 - 2 * a10 * a11 * a20 * a22 * c10 * z - 2 * a10 * a11 * a20 * a22 * c20 * y + 2 * a10 * a11 * a20 * a22 * y * z + 2 * a10 * a12 * a20 * a21 * c10 * c20 - 2 * a10 * a12 * a20 * a21 * c10 * z - 2 * a10 * a12 * a20 * a21 * c20 * y + 2 * a10 * a12 * a20 * a21 * y * z + 2 * a10 * a12 * a20 * a22 * c20 ** 2 - 4 * a10 * a12 * a20 * a22 * c20 * z + 2 * a10 * a12 * a20 * a22 * z ** 2 - a11 ** 2 * a20 ** 2 * c10 ** 2 + 2 * a11 ** 2 * a20 ** 2 * c10 * y - a11 ** 2 * a20 ** 2 * y ** 2 - 2 * a11 * a12 * a20 ** 2 * c10 * c20 + 2 * a11 * a12 * a20 ** 2 * c10 * z + 2 * a11 * a12 * a20 ** 2 * c20 * y - 2 * a11 * a12 * a20 ** 2 * y * z - a12 ** 2 * a20 ** 2 * c20 ** 2 + 2 * a12 ** 2 * a20 ** 2 * c20 * z - a12 ** 2 * a20 ** 2 * z ** 2 + a20 ** 2 * mean_Hsum ** 2)
+        a00 ** 2 * c00 + a00 * a01 * c10 - a00 * a01 * y + a00 * a02 * c20 - a00 * a02 * z + a10 ** 2 * c00 +
+        a10 * a11 * c10 - a10 * a11 * y + a10 * a12 * c20 - a10 * a12 * z + a20 ** 2 * c00 + a20 * a21 * c10 -
+        a20 * a21 * y + a20 * a22 * c20 - a20 * a22 * z - np.sqrt(np.abs(
+               -a00 ** 2 * a11 ** 2 * c10 ** 2 + 2 * a00 ** 2 * a11 ** 2 * c10 * y - a00 ** 2 * a11 ** 2 * y ** 2 - 2 * a00 ** 2 * a11 * a12 * c10 * c20 + 2 * a00 ** 2 * a11 * a12 * c10 * z + 2 * a00 ** 2 * a11 * a12 * c20 * y - 2 * a00 ** 2 * a11 * a12 * y * z - a00 ** 2 * a12 ** 2 * c20 ** 2 + 2 * a00 ** 2 * a12 ** 2 * c20 * z - a00 ** 2 * a12 ** 2 * z ** 2 - a00 ** 2 * a21 ** 2 * c10 ** 2 + 2 * a00 ** 2 * a21 ** 2 * c10 * y - a00 ** 2 * a21 ** 2 * y ** 2 - 2 * a00 ** 2 * a21 * a22 * c10 * c20 + 2 * a00 ** 2 * a21 * a22 * c10 * z + 2 * a00 ** 2 * a21 * a22 * c20 * y - 2 * a00 ** 2 * a21 * a22 * y * z - a00 ** 2 * a22 ** 2 * c20 ** 2 + 2 * a00 ** 2 * a22 ** 2 * c20 * z - a00 ** 2 * a22 ** 2 * z ** 2 + a00 ** 2 * mean_Hsum ** 2 + 2 * a00 * a01 * a10 * a11 * c10 ** 2 - 4 * a00 * a01 * a10 * a11 * c10 * y + 2 * a00 * a01 * a10 * a11 * y ** 2 + 2 * a00 * a01 * a10 * a12 * c10 * c20 - 2 * a00 * a01 * a10 * a12 * c10 * z - 2 * a00 * a01 * a10 * a12 * c20 * y + 2 * a00 * a01 * a10 * a12 * y * z + 2 * a00 * a01 * a20 * a21 * c10 ** 2 - 4 * a00 * a01 * a20 * a21 * c10 * y + 2 * a00 * a01 * a20 * a21 * y ** 2 + 2 * a00 * a01 * a20 * a22 * c10 * c20 - 2 * a00 * a01 * a20 * a22 * c10 * z - 2 * a00 * a01 * a20 * a22 * c20 * y + 2 * a00 * a01 * a20 * a22 * y * z + 2 * a00 * a02 * a10 * a11 * c10 * c20 - 2 * a00 * a02 * a10 * a11 * c10 * z - 2 * a00 * a02 * a10 * a11 * c20 * y + 2 * a00 * a02 * a10 * a11 * y * z + 2 * a00 * a02 * a10 * a12 * c20 ** 2 - 4 * a00 * a02 * a10 * a12 * c20 * z + 2 * a00 * a02 * a10 * a12 * z ** 2 + 2 * a00 * a02 * a20 * a21 * c10 * c20 - 2 * a00 * a02 * a20 * a21 * c10 * z - 2 * a00 * a02 * a20 * a21 * c20 * y + 2 * a00 * a02 * a20 * a21 * y * z + 2 * a00 * a02 * a20 * a22 * c20 ** 2 - 4 * a00 * a02 * a20 * a22 * c20 * z + 2 * a00 * a02 * a20 * a22 * z ** 2 - a01 ** 2 * a10 ** 2 * c10 ** 2 + 2 * a01 ** 2 * a10 ** 2 * c10 * y - a01 ** 2 * a10 ** 2 * y ** 2 - a01 ** 2 * a20 ** 2 * c10 ** 2 + 2 * a01 ** 2 * a20 ** 2 * c10 * y - a01 ** 2 * a20 ** 2 * y ** 2 - 2 * a01 * a02 * a10 ** 2 * c10 * c20 + 2 * a01 * a02 * a10 ** 2 * c10 * z + 2 * a01 * a02 * a10 ** 2 * c20 * y - 2 * a01 * a02 * a10 ** 2 * y * z - 2 * a01 * a02 * a20 ** 2 * c10 * c20 + 2 * a01 * a02 * a20 ** 2 * c10 * z + 2 * a01 * a02 * a20 ** 2 * c20 * y - 2 * a01 * a02 * a20 ** 2 * y * z - a02 ** 2 * a10 ** 2 * c20 ** 2 + 2 * a02 ** 2 * a10 ** 2 * c20 * z - a02 ** 2 * a10 ** 2 * z ** 2 - a02 ** 2 * a20 ** 2 * c20 ** 2 + 2 * a02 ** 2 * a20 ** 2 * c20 * z - a02 ** 2 * a20 ** 2 * z ** 2 - a10 ** 2 * a21 ** 2 * c10 ** 2 + 2 * a10 ** 2 * a21 ** 2 * c10 * y - a10 ** 2 * a21 ** 2 * y ** 2 - 2 * a10 ** 2 * a21 * a22 * c10 * c20 + 2 * a10 ** 2 * a21 * a22 * c10 * z + 2 * a10 ** 2 * a21 * a22 * c20 * y - 2 * a10 ** 2 * a21 * a22 * y * z - a10 ** 2 * a22 ** 2 * c20 ** 2 + 2 * a10 ** 2 * a22 ** 2 * c20 * z - a10 ** 2 * a22 ** 2 * z ** 2 + a10 ** 2 * mean_Hsum ** 2 + 2 * a10 * a11 * a20 * a21 * c10 ** 2 - 4 * a10 * a11 * a20 * a21 * c10 * y + 2 * a10 * a11 * a20 * a21 * y ** 2 + 2 * a10 * a11 * a20 * a22 * c10 * c20 - 2 * a10 * a11 * a20 * a22 * c10 * z - 2 * a10 * a11 * a20 * a22 * c20 * y + 2 * a10 * a11 * a20 * a22 * y * z + 2 * a10 * a12 * a20 * a21 * c10 * c20 - 2 * a10 * a12 * a20 * a21 * c10 * z - 2 * a10 * a12 * a20 * a21 * c20 * y + 2 * a10 * a12 * a20 * a21 * y * z + 2 * a10 * a12 * a20 * a22 * c20 ** 2 - 4 * a10 * a12 * a20 * a22 * c20 * z + 2 * a10 * a12 * a20 * a22 * z ** 2 - a11 ** 2 * a20 ** 2 * c10 ** 2 + 2 * a11 ** 2 * a20 ** 2 * c10 * y - a11 ** 2 * a20 ** 2 * y ** 2 - 2 * a11 * a12 * a20 ** 2 * c10 * c20 + 2 * a11 * a12 * a20 ** 2 * c10 * z + 2 * a11 * a12 * a20 ** 2 * c20 * y - 2 * a11 * a12 * a20 ** 2 * y * z - a12 ** 2 * a20 ** 2 * c20 ** 2 + 2 * a12 ** 2 * a20 ** 2 * c20 * z - a12 ** 2 * a20 ** 2 * z ** 2 + a20 ** 2 * mean_Hsum ** 2))
            ) / (a00 ** 2 + a10 ** 2 + a20 ** 2)
 
 
@@ -523,13 +558,21 @@ def recover_magnetometer_x(Mcnts, Ah, Ch, cfg_filter, len_data):
             #                  mean_Hsum - da.square(Ah[2, 2] * (rep2mean_da(Mcnts[2,:], Mcnts[2,:] > 0) - Ch[2])) -
             #                               da.square(Ah[1, 1] * (rep2mean_da(Mcnts[1,:], Mcnts[1,:] > 0) - Ch[1]))
             #                               )
-            Mcnts_x_recover = recover_x__sympy_lambdify(Mcnts[1, :], Mcnts[2, :], Ah, Ch, mean_Hsum=mean_HsumMinus1 + 1)
+
+
+            #Mcnts_x_recover = recover_x__sympy_lambdify(Mcnts[1, :], Mcnts[2, :], Ah, Ch, mean_Hsum=mean_HsumMinus1 + 1)
+            # replaced to this to use numba:
+            Mcnts_x_recover = da.map_blocks(recover_x__sympy_lambdify, Mcnts[1, :], Mcnts[2, :],
+                                            Ah=Ah, Ch=Ch, mean_Hsum=mean_HsumMinus1 + 1, dtype=np.float64, meta=np.float64([]))
 
             Mcnts_list[0] = da.where(need_recover_mask, Mcnts_x_recover, Mcnts[0, :])
             bad &= ~need_recover_mask
 
             # other points recover by interp
-            Mcnts_list[0] = rep2mean_da(Mcnts_list[0], ~bad)
+            Mcnts_list[0] = da.from_array(rep2mean_da2np(Mcnts_list[0], ~bad), chunks=Mcnts_list[0].chunks,
+                                          name='Mcnts_list[0]')
+        else:
+            Mcnts_list[0] = Mcnts[0, :]
 
         l.debug('interpolating magnetometer data using neighbor points separately for each channel...')
         need_recover_mask = da.ones_like(HsumMinus1)  # here save where Vdir can not recover
@@ -538,20 +581,18 @@ def recover_magnetometer_x(Mcnts, Ah, Ch, cfg_filter, len_data):
             if (ch != 'x') or not need_recover:
                 Mcnts_list[i] = Mcnts[i, :]
             bad = da.isnan(Mcnts_list[i])
-            sleep(cfg_filter['sleep_s'])
+            #sleep(cfg_filter['sleep_s'])
             n_bad = bad.sum(axis=0).compute()  # exits with "Process finished with exit code -1073741819 (0xC0000005)"!
             if n_bad:
                 n_good = HsumMinus1.shape[0] - n_bad
-                l.info(f'channel {ch}: good points: {n_good}, bad points: {n_bad}')
                 if n_good / n_bad > 0.01:
-                    if n_bad:
-                        Mcnts_list[i] = rep2mean_da(Mcnts_list[i], ~bad)
+                    l.info(f'channel {ch}: bad points: {n_bad} - recovering using nearest good points ({n_good})')
+                    Mcnts_list[i] = da.from_array(rep2mean_da2np(Mcnts_list[i], ~bad), chunks=Mcnts_list[0].chunks,
+                                                  name=f'Mcnts_list[{ch}]-all_is_finite')
                 else:
+                    l.warning(f'channel {ch}: bad points: {n_bad} - will not recover because too small good points ({n_good})')
                     Mcnts_list[i] = np.NaN + da.empty_like(HsumMinus1)
                     need_recover_mask[bad] = False
-                    l.warning('- will not recover')
-            else:
-                Mcnts_list[i] = Mcnts[i, :]
 
         Mcnts = da.vstack(Mcnts_list)
         Hxyz = fG(Mcnts, Ah, Ch)  # #x.rechunk({0: -1, 1: 'auto'}, block_size_limit=1e8)
@@ -565,7 +606,8 @@ def recover_magnetometer_x(Mcnts, Ah, Ch, cfg_filter, len_data):
 
 def rep2mean_da(y: da.Array, bOk=None, x=None) -> da.Array:
     """
-
+    Interpolates bad values (inverce of bOk) in each dask block.
+    Note: can leave NaNs if no good data in block
     :param y:
     :param bOk:
     :param x:
@@ -576,7 +618,55 @@ def rep2mean_da(y: da.Array, bOk=None, x=None) -> da.Array:
 >>> g2 = g.map_blocks(myfunc)
 >>> result = da.overlap.trim_internal(g2, {0: 2, 1: 2})     # todo it
     """
-    return da.map_blocks(rep2mean, y, bOk, x, dtype=np.float64)
+    return y.map_blocks(rep2mean, bOk, x, dtype=np.float64, meta=np.float64([]))
+
+
+def rep2mean_da2np(y: da.Array, bOk=None, x=None) -> np.ndarray:
+    """
+    same as rep2mean_da but also replaces bad block values with constant (rep2mean_da can not repldace bad if no good)
+    :param y:
+    :param bOk:
+    :param x: None, other not implemented
+    :return: numpy array of np.float64 values
+
+    """
+
+    y_last = None
+    y_out_list = []
+    for y_bl, b_ok in zip(y.blocks, (da.isfinite(y) & bOk).blocks):
+        y_bl, ok_bl = da.compute(y_bl, b_ok)
+        y_bl = rep2mean(y_bl, ok_bl)
+        ok_in_replaced = np.isfinite(y_bl[~ok_bl])
+        if not ok_in_replaced.all():            # have bad
+            assert not ok_in_replaced.any()     # all is bad
+            if y_last:                          # This only useful to keep infinite/nan values considered ok:
+                y_bl[~ok_bl] = y_last          # keeps y[b_ok] unchanged - but no really good b_ok if we here
+            print('continue search good data...')
+        else:
+            y_last = y_bl[-1]                  # no more y_last can be None
+        y_out_list.append(y_bl)
+    n_bad_from_start = y.numblocks[0] - len(y_out_list)  # should be 0 if any good in first block
+    for k in range(n_bad_from_start):
+        y_out_list[k][:] = y_out_list[n_bad_from_start+1][0]
+    return np.hstack(y_out_list)
+
+    # # This little simpler version not keeps infinite values considered ok:
+    # y_rep = rep2mean_da(y, bOk, x)
+    # y_last = None
+    # y_out_list = []
+    # for y_bl in y_rep.blocks:
+    #     y_bl = y_bl.compute()
+    #     ok_bl = np.isfinite(y_bl)
+    #     if not ok_bl.all():
+    #         if y_last:
+    #             y_bl[~ok_bl] = y_last
+    #     else:
+    #         y_last = y_bl[-1]                  # no more y_last can be None
+    #     y_out_list.append(y_bl)
+    # n_bad_from_start = len(y.blocks) - len(y_out_list)
+    # for k in range(n_bad_from_start):
+    #     y_out_list[k][:] = y_out_list[n_bad_from_start+1][0]
+    # return np.hstack(y_out_list)
 
 
 def incl_calc_velocity(a: dd.DataFrame,
@@ -651,9 +741,12 @@ def incl_calc_velocity(a: dd.DataFrame,
 
             # Velocity absolute value
 
-            Vabs = da.map_blocks(v_abs_from_incl, incl_rad, kVabs, cfg_proc['calc_version'],
-                                 cfg_proc['max_incl_of_fit_deg'], dtype=np.float64)  # , chunks=GsumMinus1.chunks
-
+            #Vabs = da.map_blocks(incl_rad, kVabs, )  # , chunks=GsumMinus1.chunks
+            Vabs = incl_rad.map_blocks(v_abs_from_incl,
+                                       coefs=kVabs,
+                                       calc_version=cfg_proc['calc_version'],
+                                       max_incl_of_fit_deg=cfg_proc['max_incl_of_fit_deg'],
+                                       dtype=np.float64, meta=np.float64([]))
             # Vabs = np.polyval(kVabs, np.where(bad, np.NaN, Gxyz))
             # Vn = Vabs * np.cos(np.radians(Vdir))
             # Ve = Vabs * np.sin(np.radians(Vdir))
@@ -951,16 +1044,75 @@ def h5_append_to(dfs: Union[pd.DataFrame, dd.DataFrame],
         print('No data.', end=' ')
 
 
-def dd_to_csv(d: dd.DataFrame, cfg, suffix='', b_single_file=True):
+def gen_variables(cfg: MutableMapping[str, Any], fun_gen=h5_names_gen
+            ) -> Iterator[Tuple[dd.DataFrame, np.array]]:
+    """
+    Wraps h5_dispenser_and_names_gen() to deal with many db_paths, tables, dates_min and dates_max
+    :param cfg: dict with fields:
+        db_path: str/path of real path or multiple paths joined by '|' to be splitted in list cfg['db_paths'],
+        tables,
+        dates_min,
+        dates_max
+    :param fun_gen:
+    :return: dict with plural named keys having list values
+    """
+
+    names_many_to_one = {
+        'db_paths': 'db_path',
+        'tables': 'table',
+        'dates_min': 'date_min',
+        'dates_max': 'date_max'}
+
+    def gen_sources_dict(cfg_in: MutableMapping[str, Union[str, list]]) -> Iterator[Dict[str, str]]:
+        """
+        Generate dicts with values of one str from dict having values of lists of str
+        :param cfg_in: dict with plural named keys having list values and may be singular named keys to fall back to
+        :return: dict with singular named keys and str values
+        """
+        if '|' in str(cfg_in['db_path']):
+            cfg_in['db_paths'] = [Path(p) for p in str(cfg_in['db_path']).split('|')]
+
+        cfg_in_lists = {}
+        for k, v in names_many_to_one.items():
+            if k in cfg_in:
+                cfg_in_lists[v] = cfg_in[k] if not isinstance(cfg_in[k], str) and isinstance(cfg_in[k], Iterable) else [cfg_in[k]]
+        # dict of lists
+        for v in zip(*cfg_in_lists.values()):
+            yield dict(zip(cfg_in_lists, v))
+
+    cfg_in_copy = cfg['in'].copy()
+    n = 1
+    for d_source in gen_sources_dict(cfg_in_copy):
+        cfg['in'].update(d_source)
+        cfg['in']['tables'] = [cfg['in']['table']]              # for h5_dispenser_and_names_gen()
+        for itbl, (tbl, coefs) in h5_dispenser_and_names_gen(cfg, cfg['output_files'], fun_gen=fun_gen, b_close_at_end=False):
+            l.info('%s. %s: ', n, tbl)  # itbl
+            cfg['in']['table'] = tbl                            # for gen_data_on_intervals()
+            for d, i_burst in gen_data_on_intervals(cfg):
+                assert i_burst == 0                             # this is not a cycle
+                cfg['in']['tables'] = cfg_in_copy['tables']     # recover (seems not need now but may be for future use)
+                yield n, tbl, coefs, d
+                n += 1
+
+    cfg['in'] = cfg_in_copy                                     # recover (seems not need now but may be for future use)
+
+
+def dd_to_csv(d: dd.DataFrame, cfg: Mapping[str, Any], suffix='', b_single_file=True):
     """
     Save to csv
     :param d:
-    :param cfg:
+    :param cfg: must have field 'output_files' with fields:
+        'csv_path'
+        'csv_date_format' - If callable then create "Date" column by calling it (dd.index), retain index only if "Time" in 'csv_columns'. If string use it as format for index (Time) column
+        'csv_columns'
     :param suffix:
     :param b_single_file:
     :return:
     """
     cfg_out = cfg['output_files']
+    if cfg_out['csv_path'] is None:
+        return
+    l.info('Saving csv: %s', '1 file' if b_single_file else f'{d.npartitions} files')
 
     def name_that_replaces_asterisk(i_partition):
         return f'{d.divisions[i_partition]:%y%m%d_%H%M}'
@@ -969,7 +1121,7 @@ def dd_to_csv(d: dd.DataFrame, cfg, suffix='', b_single_file=True):
     def combpath(dir_or_prefix, s):
         return str(dir_or_prefix / s) if dir_or_prefix.is_dir() else f'{dir_or_prefix}{s}'
 
-    filename_csv = combpath(cfg_out['not_joined_csv_path'],
+    filename_csv = combpath(cfg_out['csv_path'],
                             '{}bin{}'.format(
                                 name_that_replaces_asterisk(0),
                                 str(cfg['in']['aggregate_period']).lower()  # lower seconds: S -> s
@@ -977,16 +1129,16 @@ def dd_to_csv(d: dd.DataFrame, cfg, suffix='', b_single_file=True):
                             ) + f"_{suffix.replace('incl', 'i')}.csv"
     with ProgressBar():
         d_csv = d.round({'Vdir': 4, 'inclination': 4, 'Pressure': 3})
-        # if not cfg_out.get('all_to_one_col'):
+        # if not cfg_out.get('b_all_to_one_col'):
         #     d_csv.rename(columns=map_to_suffixed(d.columns, suffix))
         if callable(cfg_out['csv_date_format']):
-            arg_csv = {'index': 'Time' in cfg_out.get('columns', []),
-                       'columns': cfg_out.get('columns', d_csv.columns.insert(0, 'Date'))
+            arg_csv = {'index': 'Time' in cfg_out.get('csv_columns', []),
+                       'columns': cfg_out.get('csv_columns', d_csv.columns.insert(0, 'Date'))
                        }
             d_csv['Date'] = d_csv.map_partitions(lambda df: cfg_out['csv_date_format'](df.index))
         else:
             arg_csv = {'date_format': cfg_out['csv_date_format'],
-                       'columns': cfg_out.get('columns')
+                       'columns': cfg_out.get('csv_columns')
                        }
 
         if progress is not None:
@@ -1011,7 +1163,7 @@ def main(new_arg=None, **kwargs):
     elif cfg['program']['return'] == '<cfg_from_args>':  # to help testing
         return cfg
     l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
-    l.info('Started %s(aggregete_period=%s)', this_prog_basename(__file__), cfg['in']['aggregate_period'])
+    l.info('Started %s(aggregete_period=%s)', this_prog_basename(__file__), cfg['in']['aggregate_period'] or 'None')
     # l = logging.getLogger(prog)
     try:
         pass
@@ -1041,7 +1193,7 @@ def main(new_arg=None, **kwargs):
     set_field_if_no(cfg_out, 'not_joined_h5_path', not cfg['in']['aggregate_period'])
 
     def map_to_suffixed(names, tbl):
-        suffix = tbl[0] + re.match('[^\d_]*(\d*).*', tbl).group(1)
+        suffix = tbl[0] + re.match(r'[^\d_]*(\d*).*', tbl).group(1)
         return {col: f'{col}_{suffix}' for col in names}
 
     for lim in ['min', 'max']:
@@ -1053,55 +1205,16 @@ def main(new_arg=None, **kwargs):
 
     log = {}
     dfs_all_list = []
+    dfs_all_log = []
+    dfs_all: Optional[pd.DataFrame] = None
     cfg_out['tables_have_wrote'] = []
-
-    def gen_variables(cfg: Mapping[str, Any], fun_gen=h5_names_gen
-                ) -> Iterator[Tuple[dd.DataFrame, np.array]]:
-
-        names_many_to_one = {
-            'db_paths': 'db_path',
-            'tables': 'table',
-            'dates_min': 'date_min',
-            'dates_max': 'date_max'}
-
-        def gen_sources_dict(cfg_in):
-            if '|' in str(cfg_in['db_path']):
-                cfg_in['db_paths'] = [Path(p) for p in str(cfg_in['db_path']).split('|')]
-
-            cfg_in_lists = {}
-            for k, v in names_many_to_one.items():
-                if k in cfg_in:
-                    cfg_in_lists[v] = cfg_in[k] if isinstance(cfg_in[k], list) else [cfg_in[k]]
-            # dict of lists
-            for v in zip(*cfg_in_lists.values()):
-                yield dict(zip(cfg_in_lists, v))
-
-        cfg_in_copy = cfg['in'].copy()
-        # for k in names_many_to_one.keys():
-
-
-        n = 1
-        for d_source in gen_sources_dict(cfg_in_copy):
-            cfg['in'].update(d_source)
-            cfg['in']['tables'] = [cfg['in']['table']]  # actully this is used in h5_dispenser_and_names_gen()
-            for itbl, (tbl, coefs) in h5_dispenser_and_names_gen(cfg, cfg_out, fun_gen=h5_names_gen):
-                l.info('%s. %s: ', n, tbl)  #itbl
-                for d, i_burst in gen_data_on_intervals(cfg):
-                    assert i_burst == 0  # this is not a cycle
-                    cfg['in']['tables'] = cfg_in_copy['tables']  # recover: not need but may be for future use
-                    yield n, tbl, coefs, d
-                    n += 1
-
-        cfg['in'] = cfg_in_copy  # recover: not need but may be for future use
-
-    n_tables = len(cfg['in']['tables'])  # can be done only before gen_variables() that deletes cfg['in']['tables']
 
     # for itbl, (tbl, coefs) in h5_dispenser_and_names_gen(cfg, cfg_out, fun_gen=h5_names_gen):
     #     l.info('{}. {}: '.format(itbl, tbl))
     #     cfg['in']['table'] = tbl  # to get data by gen_intervals()
     #     for d, i_burst in (gen_data_on_intervals if False else gen_data_on_intervals_from_many_sources)(cfg):
     #         assert i_burst == 0  # this is not a cycle
-    for itbl, tbl, coefs, d in gen_variables (cfg, fun_gen=h5_names_gen):
+    for itbl, tbl, coefs, d in gen_variables(cfg, fun_gen=h5_names_gen):
         d = filter_local(d, cfg['filter'])  # d[['Mx','My','Mz']] = d[['Mx','My','Mz']].mask(lambda x: x>=4096)
 
         # Zeroing
@@ -1149,10 +1262,7 @@ def main(new_arg=None, **kwargs):
                 if tables_wrote_now:
                     cfg_out['tables_have_wrote'].append(tables_wrote_now)
 
-        if cfg_out['not_joined_csv_path']:
-            b_single_file = bool(cfg['in']['aggregate_period'] or not cfg_out['split_period'])
-            l.info('Saving csv: %s', '1 file' if b_single_file else f'{d.npartitions} files')
-            dd_to_csv(d, cfg, tbl, b_single_file)
+        dd_to_csv(d, cfg, tbl, bool(cfg['in']['aggregate_period'] or not cfg_out['split_period']))
 
 
         if cfg['in']['aggregate_period']:  # data have index of same period
@@ -1161,34 +1271,51 @@ def main(new_arg=None, **kwargs):
                 cols_save = [c for c in cols_out_allow if c in d.columns]
                 sleep(cfg['filter']['sleep_s'])
                 Vne = d[cols_save].compute()  # MemoryError((1, 12400642), dtype('float64'))
-                if not cfg_out.get('all_to_one_col'):
-                    Vne = Vne.rename(columns=map_to_suffixed(cols_save, tbl), inplace=True)
+                if not cfg_out.get('b_all_to_one_col'):
+                    Vne.rename(columns=map_to_suffixed(cols_save, tbl), inplace=True)
                 dfs_all_list.append(Vne)
+                dfs_all_log.append(tbl)
             except Exception as e:
                 l.exception('Can not cumulate result! ')
                 raise
                 # todo: if low memory do it separately loading from temporary tables in chanks
 
-        # Combined data to hdf5
-        if itbl == n_tables and cfg['in']['aggregate_period']:
-            dfs_all = pd.concat(dfs_all_list, sort=True, axis=(0 if cfg_out.get('all_to_one_col') else 1))
-            # after last cycle inside "for". Need here because of actions when exit generator
-            tables_wrote_now = h5_append_to(dfs_all, cfg_out_table, cfg_out, msg='Saving accumulated data',
-                                            print_ok='.')
-            if tables_wrote_now:
-                cfg_out['tables_have_wrote'].append(tables_wrote_now)
-
-            if cfg_out.get('all_to_one_col'):
-                dd_to_csv(
-                    dd.from_pandas(dfs_all, chunksize=500000)
-                        .resample(rule=cfg['in']['aggregate_period'])
-                        .first()
-                        .fillna(0),  # inserts zeros in holes
-                    cfg, suffix=','.join(cfg['in']['tables'])
-                    )
-
         gc.collect()  # frees many memory. Helps to not crash
-    new_storage_names = h5move_tables(cfg_out, cfg_out['tables_have_wrote'])
+
+
+    # Combined data to hdf5
+    if cfg['in']['aggregate_period']:
+        dfs_all = pd.concat(dfs_all_list, sort=True, axis=(0 if cfg_out.get('b_all_to_one_col') else 1))
+        dfs_all_log = pd.DataFrame([df.index[[0,-1]].to_list() for df in dfs_all_list],
+                                   columns=['Date0', 'DateEnd'])\
+            .set_index('Date0')\
+            .assign(table_name=dfs_all_log)\
+            .sort_index()
+        tables_wrote_now = h5_append_to(dfs_all, cfg_out_table, cfg_out, log=dfs_all_log, msg='Saving accumulated data',
+                                        print_ok='.')
+        if tables_wrote_now:
+            cfg_out['tables_have_wrote'].append(tables_wrote_now)
+
+
+    # close temporary output store
+    h5_close(cfg_out)
+
+    try:
+        new_storage_names = h5move_tables(cfg_out, cfg_out['tables_have_wrote'])
+    except Ex_nothing_done as e:
+        l.warning('Tables not moved')
+
+
+    if dfs_all is not None and cfg_out.get('b_all_to_one_col'):
+        # Save to 1 combined csv with regular time interval filling absent values with 0
+        dd_to_csv(
+            dd.from_pandas(dfs_all, chunksize=500000)
+                .resample(rule=cfg['in']['aggregate_period'])
+                .first()
+                .fillna(0),  # inserts zeros in holes
+            cfg, suffix=','.join(cfg['in']['tables'])
+            )
+
     print('Ok.', end=' ')
     # h5index_sort(cfg_out, out_storage_name= cfg_out['db_base']+'-resorted.h5', in_storages= new_storage_names)
     # dd_out = dd.multi.concat(dfs_list, axis=1)
@@ -1197,7 +1324,7 @@ def main(new_arg=None, **kwargs):
 if __name__ == '__main__':
     main()
 
-"""
+r"""
 
     dfs_all = pd.merge_asof(dfs_all, Vne, left_index=True, right_index=True,
                   tolerance=pd.Timedelta(cfg['in']['aggregate_period'] or '1ms'),

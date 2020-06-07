@@ -41,14 +41,19 @@ import inclinometer.incl_h5clc as incl_h5clc
 import inclinometer.incl_h5spectrum as incl_h5spectrum
 import veuszPropagate
 from utils_time import pd_period_to_timedelta
-from utils2init import path_on_drive_d, init_logging, open_csv_or_archive_of_them, st
+from utils2init import path_on_drive_d, init_logging, open_csv_or_archive_of_them, st, set_field_if_no
 
 # l = logging.getLogger(__name__)
 l = init_logging(logging, None, None, 'INFO')
 
-# from dask.cache import Cache
-# cache = Cache(2e9)  # Leverage two gigabytes of memory
-# cache.register()    # Turn cache on globally
+if True:  # False. Experimental speedup but takes memory
+    from dask.cache import Cache
+    cache = Cache(2e9)  # Leverage two gigabytes of memory
+    cache.register()    # Turn cache on globally
+if False:  # False. True
+    l.warning('using "synchronous" scheduler for debugging')
+    import dask
+    dask.config.set(scheduler='synchronous')
 
 # Directory where inclinometer data will be stored
 path_cruise = path_on_drive_d(r'd:\WorkData\BalticSea\200514_Pregolya,Lagoon-inclinometer'
@@ -101,26 +106,25 @@ dir_incl = '' if 'inclinometer' in str(path_cruise) else 'inclinometer'
 if not db_name:  # then name by cruise dir:
     db_name = re.match('(^[\d_]*).*', (path_cruise.parent if dir_incl else path_cruise).name
                        ).group(1).strip('_') + 'incl.h5'  # group(0) if db name == cruise dir name
-db_path = path_cruise / db_name  # _z  '190210incl.h5' 'ABP44.h5'
-
+db_path = path_cruise / db_name  # _z  '190210incl.h5' 'ABP44.h5', / '200514incl_experiment.h5'
 # dafault and specific to probe limits (use i_proc_file instead probe if many files for same probe)
 date_min = defaultdict(
     lambda: '2020-05-14T13:00', {
- 5: '2020-05-14T12:33:30',
- 9: '2020-05-14T12:24:40',
- 7: '2020-05-14T12:15:40',
- 3: '2020-05-14T12:02:50',
-13: '2020-05-14T11:49:00',
+# 13: '2020-05-14T11:49:00',
+# 3: '2020-05-14T12:02:50',
+# 7: '2020-05-14T12:15:40',
+# 9: '2020-05-14T12:24:40',
+# 5: '2020-05-14T12:33:30'
 })
 #  '2020-03-17T13:00','2019-12-10T13:00','2020-01-17T13:00''2019-08-07T14:10:00''2019-11-19T16:00''2019-11-19T12:30''2019-11-08T12:20' 2019-11-08T12:00 '2019-11-06T12:35''2019-11-06T10:50''2019-07-16T17:00:00' 2019-06-20T14:30:00  '2019-07-21T20:00:00', #None,
 # 0: #'2019-08-07T16:00:00' '2019-08-17T18:00', 0: '2018-04-18T07:15',# 1: '2018-05-10T15:00',
 
 date_max = defaultdict(lambda: 'now', {
-13: '2020-05-14T12:02',
-3: '2020-05-14T12:15',
-7: '2020-05-14T12:24',
-9: '2020-05-14T12:33',
-5: '2020-05-14T12:42',
+# 13: '2020-05-14T12:02',
+# 3: '2020-05-14T12:15',
+# 7: '2020-05-14T12:24',
+# 9: '2020-05-14T12:33',
+# 5: '2020-05-14T12:42',
 })
 # '2019-12-26T16:00','2020-01-17T17:00''2019-09-09T17:00:00', #'2019-12-04T00:00', # 20T14:00 # '2019-11-19T14:30',  '2019-11-06T13:34','2019-11-06T12:20' '2019-08-31T16:38:00' '2019-07-19T17:00:00', # '2019-08-18T01:45:00', # None,
 # 0:  # '2019-09-09T17:00:00' '2019-09-06T04:00:00' '2019-08-27T02:00', 0: '2018-05-07T11:55', # 1: '2018-05-30T10:30',
@@ -222,7 +226,7 @@ if st(1):  # Can not find additional not corrected files for same probe if alrea
 # Calculate velocity and average
 if st(2):
     # if aggregate_period_s is None then not average and write to *_proc_noAvg.h5 else loading from that h5 and writing to _proc.h5
-    for aggregate_period_s in [None, 2, 600, 3600 if 'w' in prefix else 7200]:  # !300,  [None], [2, 600, 7200], [3600]
+    for aggregate_period_s in [None, 2, 600, 7200]:  #  # 600,  [None], [None, 2, 600, 3600 if 'w' in prefix else 7200], [3600]
         if aggregate_period_s is None:
             db_path_in = db_path
             db_path_out = db_path.with_name(f'{db_path.stem}_proc_noAvg.h5')
@@ -233,13 +237,13 @@ if st(2):
         args = [Path(incl_h5clc.__file__).with_name(f'incl_h5clc_{db_path.stem}.yaml'),
                 # if no such file all settings are here
                 '--db_path', str(db_path_in),
-                '--tables_list', 'w\d*',  #incl.*| !  'incl.*|w\d*'  inclinometers or wavegauges w\d\d # 'incl09',
+                '--tables_list', 'incl.*',  #!   'incl.*|w\d*'  inclinometers or wavegauges w\d\d # 'incl09',
                 '--aggregate_period', f'{aggregate_period_s}S' if aggregate_period_s else '',
                 '--date_min', datetime64_str(date_min[0]),  # '2019-08-18T06:00:00',
                 '--date_max', datetime64_str(date_max[0]),  # '2019-09-09T16:31:00',  #17:00:00
                 '--output_files.db_path', str(db_path_out),
                 '--table', f'V_incl_bin{aggregate_period_s}' if aggregate_period_s else 'V_incl',
-                '--verbose', 'DEBUG',
+                '--verbose', 'INFO',  #'DEBUG' get many numba messages
                 # '--calc_version', 'polynom(force)',  # depreshiated
                 # '--chunksize', '20000',
                 # '--not_joined_h5_path', f'{db_path.stem}_proc.h5',
@@ -248,7 +252,7 @@ if st(2):
 
             args += (
                 ['--max_dict', 'M[xyz]:4096',
-                 # Note: for Baranov's prog 4096 is not suited!
+                 # Note: for Baranov's prog 4096 is not suited
                  # '--timerange_zeroing_dict', "incl19: '2019-11-10T13:00:00', '2019-11-10T14:00:00'\n,"  # not works - use kwarg
                  # '--timerange_zeroing_list', '2019-08-26T04:00:00, 2019-08-26T05:00:00'
                 ] if prefix == 'incl' else
@@ -259,7 +263,20 @@ if st(2):
             kwarg = {}
         # csv splitted by 1day (default for no avg) and monolit csv if aggregate_period_s==600
         if aggregate_period_s in [None, 300, 600]:
-            args += ['--not_joined_csv_path', str(db_path.parent / 'csv')]
+            args += ['--csv_path', str(db_path.parent / 'csv')]
+
+
+        # If need all data to be combined one after one:
+        # set_field_if_no(kwarg, 'in', {})
+        # kwarg['in'].update({
+        #
+        #         'tables': [f'incl{i:0>2}' for i in date_min.keys() if i!=0],
+        #         'dates_min': date_min.values(),  # in table list order
+        #         'dates_max': date_max.values(),  #
+        #         })
+        # set_field_if_no(kwarg, 'output_files', {})
+        # kwarg['output_files'].update({'b_all_to_one_col': 'True'})
+
 
         incl_h5clc.main(args, **kwarg)
 

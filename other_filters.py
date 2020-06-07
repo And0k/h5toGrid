@@ -17,17 +17,17 @@ l = logging.getLogger(__name__)
 
 dt64_1s = np.int64(1e9)
 
-@jit
+@njit
 def mad(data, axis=None):
     """Instead this can use: from statsmodels.robust import mad  # or use pd.DataFrame().mad()"""
     return np.mean(np.absolute(data - np.mean(data, axis)), axis)
 
 # from scipy.signal import find_peaks_cwt
 # -----------------------------------------------------------------
-@jit
+@njit
 def rep2mean(y, bOk=None, x=None):
     """
-    Replays bad indexes in y by means of numpy.interp
+    Replaces bad indexes in y using numpy.interp()
     :param y:
     :param bOk: logical not of bad indexes
     :param x: same length as y or None
@@ -42,18 +42,20 @@ def rep2mean(y, bOk=None, x=None):
             bBad = np.logical_not(bOk)
             y[bBad] = np.interp(x[bBad], x[bOk], y[bOk])
             return y
-    except ValueError:  # array of sample points is empty
+    except Exception:  # ValueError:  # array of sample points is empty - replaced for numba
         b = np.isfinite(y)
         if np.sum(b if bOk is None else (b & bOk)) == 0:
+            print('rep2mean can not replace NaNs')
             return y + np.NaN  # (np.NaN if bOk is None else
-        else:  # may be 1 good point?
-            return np.where(bOk, 0, np.NaN)
+        else:  # may be 1 good point? - return constant
+            print('rep2mean: strange condition on Exception!')
+            return np.where(bOk, y[b & bOk], np.NaN)
     # def rep2mean(x, bOk):
     # old= lambda x, bOk: np.interp(np.arange(len(x)), np.flatnonzero(bOk), x[bOk], np.NaN,np.NaN)
 
 #    x[~bOk]= np.interp(np.arange(len(x)), np.flatnonzero(bOk), x[bOk], np.NaN,np.NaN)
 
-@jit
+@njit
 def bSpike1point(a, max_spyke):
     diffX = np.diff(a)
 
@@ -64,7 +66,7 @@ def bSpike1point(a, max_spyke):
     return bSingleSpike_1(diffX < -max_spyke, diffX > max_spyke)
     # to do: try bOk[-1] = True; bOk = np.logical_or(bOk, np.roll(bOk, 1))
 
-@jit
+@njit
 def bSpike1pointUp(a, max_spyke):
     diffX = np.diff(a)
 
@@ -72,7 +74,7 @@ def bSpike1pointUp(a, max_spyke):
         np.logical_and(np.append(bBadU, True), np.hstack((True, bBadD)))  # spyke up
     return bSingleSpike_1(diffX < -max_spyke, diffX > max_spyke)
 
-@jit
+@njit
 def move2GoodI(GoodIndIn, bBad, side='left'):
     """
     moves indices to keep its number and relative position when removed masked data
@@ -114,7 +116,7 @@ def move2GoodI(GoodIndIn, bBad, side='left'):
     #         if f:
     #             ind_out[k]= f - s[f]
 
-@jit
+@njit
 def contiguous_regions(b_ok):
     """
     Finds contiguous True regions of the boolean array "b_ok"
@@ -126,7 +128,7 @@ def contiguous_regions(b_ok):
     d = np.ediff1d(np.int8(b_ok), to_begin=b_ok[0], to_end=b_ok[-1])  # b_ok.astype(int)
     return np.flatnonzero(d).reshape((-1, 2))
 
-@jit
+@njit
 def find_smallest_elem_as_big_as(seq, subseq, elem):
     """
     Returns the index of the smallest element in subsequence as big as seq[elem].
@@ -150,7 +152,7 @@ def find_smallest_elem_as_big_as(seq, subseq, elem):
 
     return high
 
-@jit
+@njit
 def longest_increasing_subsequence_i(seq):
     """
     Finds the longest increasing subseq in sequence using dynamic
@@ -314,7 +316,7 @@ def longest_increasing_subsequence_i(seq):
 #
 #
 
-@jit
+@njit
 def longest_increasing_subsequence_i___worked_very_long(seq):
     """
     Returns indexes of the longest subsequence (non-contiguous) of seq that is
@@ -426,7 +428,7 @@ def repeated2increased(t: np.ndarray, freq: float, b_increased: Optional[np.ndar
 
     return t + t_add
 
-@jit
+@njit
 def rep2mean_with_const_freq_ends(y, b_ok, freq):
     b_bad = ~b_ok
     x = np.flatnonzero(b_bad)
@@ -440,7 +442,7 @@ def rep2mean_with_const_freq_ends(y, b_ok, freq):
         y = repeated2increased(y, freq, b_bad)
     return y
 
-@jit
+@njit
 def make_linear(tim: np.int64, freq: float, dt_big_hole=None) -> True:
     """
     Corrects tim values (implicitly) by make them linear increasing but excluding big holes
@@ -458,7 +460,7 @@ def make_linear(tim: np.int64, freq: float, dt_big_hole=None) -> True:
     # uses global dt64_1s = np.int64(1e9)
 
     if __debug__:
-        l.debug('Linearise time (between big holes) using reference frequency %g ', freq)
+        print('Linearise time (between big holes) using reference frequency', freq)  # can not simply njit(l.debug())
 
     dt0 = np.int64(dt64_1s / freq)  # int64, delta time of 1 count
     # Convert/set time values in int64 units
@@ -481,6 +483,7 @@ def make_linear(tim: np.int64, freq: float, dt_big_hole=None) -> True:
 
     # i_st_hole[ 0]= -1
     # i_st_hole[-1]-= 1
+    @njit
     def i_j_yi_yj_yec_yee(i, j, y):
         """
         Some values for processing each hole in cycle of for_tim(): i,j,y[i],y[j-1],aproximated_y[j-1] using dt, y[j-1] - aproximated_y[j-1]
@@ -505,7 +508,7 @@ def make_linear(tim: np.int64, freq: float, dt_big_hole=None) -> True:
     #     for i,j in zip(i_st_hole[:-1], i_st_hole[1:]):
     #         yield i_j_yi_yj_yec_yee(i, j, t)
     #     #return (i, j, yi, yj, yend_clc, yend_err)
-
+    @njit
     def for_tim(i_st_h, t: np.int64, b_allow_shift_back=True):
         """
         Holes processing in ``t``. Implicitly modifies t
@@ -594,7 +597,7 @@ def make_linear(tim: np.int64, freq: float, dt_big_hole=None) -> True:
 
     return True  # tim
 
-@jit
+@njit
 def is_works(s):
     """
     Regions where data is changing
@@ -608,7 +611,7 @@ def is_works(s):
 
     return np.pad(b, (1, 0), 'edge')
 
-@jit
+@njit
 def mode(a):
     """
     stackoverflow.com/questions/6252280/find-the-most-frequent-number-in-a-numpy-vector
@@ -701,7 +704,7 @@ def doppler(x):
             raise ValueError("Domain of doppler is x in (0,1]")
     return np.sqrt(x * (1 - x)) * np.sin((2.1 * np.pi) / (x + .05))
 
-@jit
+@njit
 def blocks(x):
     """
     Piecewise constant function with jumps at t.
@@ -713,7 +716,7 @@ def blocks(x):
     h = np.array([[4, -5, 3, -4, 5, -4.2, 2.1, 4.3, -3.1, 2.1, -4.2]]).T
     return 3.655606 * np.sum(h * K(x - t), axis=0)
 
-@jit
+@njit
 def bumps(x):
     """
     A sum of bumps with locations t at the same places as jumps in blocks.
@@ -726,7 +729,7 @@ def bumps(x):
     w = np.array([[.005, .005, .006, .01, .01, .03, .01, .01, .005, .008, .005]]).T
     return np.sum(h * K((x - t) / w), axis=0)
 
-@jit
+@njit
 def heavisine(x):
     """
     Sinusoid of period 1 with two jumps at t = .3 and .72
@@ -841,7 +844,7 @@ def waveletSmooth(y, wavelet="db4", level=1, ax=None, label=None, x=None, color=
 
 # -------------------------------------------------------------------------
 # Despiking
-@jit
+@njit
 def rolling_window(x, block):
     """
     :param x:
@@ -852,7 +855,7 @@ def rolling_window(x, block):
     strides = x.strides + (x.strides[-1],)
     return np.lib.stride_tricks.as_strided(x, shape=shape, strides=strides, writeable=False)
 
-@jit
+@njit
 def despike(x: np.ndarray,
             offsets: Tuple[int, ...] = (2, 20),
             blocks: int = 10,
@@ -927,7 +930,7 @@ def despike(x: np.ndarray,
 
     return y, ax
 
-@jit
+@njit
 def closest_node(node, nodes):
     """
     see also inearestsorted()
@@ -941,7 +944,7 @@ def closest_node(node, nodes):
     dist_2 = np.einsum('ij,ij->j', deltas, deltas)
     return np.argmin(dist_2)
 
-@jit
+@njit
 def inearestsorted(array, values):
     """
     Find nearest values in sorted numpy array
@@ -974,7 +977,7 @@ def inearestsorted(array, values):
 #             idx_nearest = idx_sorted[idx]
 #     return idx_nearest
 
-@jit
+@njit
 def inearestsorted_around(array, values):
     """
     Find nearest values before and after of each values in sorted numpy array
@@ -992,7 +995,7 @@ def inearestsorted_around(array, values):
     idx2 = idx2[np.ediff1d(idx2, to_end=1) > 0]  # remove repeated
     return idx2
 
-@jit
+@njit
 def search_sorted_closest(sorted_array, value):
     """
     simpler version of inearestsorted() for scalar value
@@ -1172,7 +1175,7 @@ def find_sampling_frequency(tim: np.ndarray,
     n_increased = b_ok.sum()
     if n_increased < 2:
         with objmode():
-            l.warning('can not find freq where Time have 2 increased values')
+            l.warning('can not find freq where Time have lass than 2 increased values')
         freq = np.NaN
         b_ok_out = np.ones(1, dtype=np.bool_)
         return freq, kInterp, nDecrease, b_ok_out

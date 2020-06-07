@@ -55,16 +55,16 @@ def convertNumpyArrayOfStrings(date: Union[np.ndarray, pd.Series],
 
 
     try:
-        if isinstance(date[0], bytes):
-            date = date.str.decode('utf-8',
-                                   errors='replace')  # convert 'bytes' to 'strings' needed for pd.to_datetime()
+        if isinstance(date.iat[0] if isinstance(date, pd.Series) else date[0], bytes):
+            # convert 'bytes' to 'strings' needed for pd.to_datetime()
+            date = date.str.decode('utf-8', errors='replace')
     except Exception as e:
         pass
     while True:
         try:
             return pd.DatetimeIndex(date.astype(dtype))
         except TypeError as e:
-            print('something wrong: ', standard_error_info(e))
+            print('date strings converting to %s error: ' % dtype, standard_error_info(e))
         except ValueError as e:
             print('bad date: ', standard_error_info(e))
 

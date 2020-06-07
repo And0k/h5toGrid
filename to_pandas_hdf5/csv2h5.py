@@ -535,11 +535,24 @@ def read_csv(nameFull: Sequence[Union[str, Path]],
     meta_time = pd.Series([], name='Time', dtype='M8[ns]')  # np.dtype('datetime64[ns]')
     meta_time_index = pd.DatetimeIndex([], dtype='datetime64[ns]', name='Time')
     meta_df_with_time_col = cfg_in['cols_load']
+    meta2 = {'Time': 'M8[ns]', 'b_ok': np.bool8}
+    # meta2.time = meta2.time.astype('M8[ns]')
+    # meta2.b_ok = meta2.b_ok.astype(np.bool8)
+
+    def time_corr_df(t, cfg_in):
+        """Convert tuple returned by time_corr() to dataframe
+        """
+        return pd.DataFrame.from_dict(OrderedDict(zip(meta2.keys(), utils_time_corr.time_corr(t, cfg_in))))
+        # return pd.DataFrame.from_items(zip(meta2.keys(), time_corr(t, cfg_in)))
+        # pd.Series()
+
+    n_overlap = 2 * int(np.ceil(cfg_in['fs'])) if cfg_in.get('fs') else 50
 
     # Process ddf and get date in ISO string or numpy standard format
     cfg_in['file_stem'] = Path(nameFull[0]).stem  # may be need in func below to extract date
+    date = None
     try:
-        date_delayed = None
+        #date_delayed = None
         try:
             if not getattr(cfg_in['fun_proc_loaded'], 'meta_out', None) is None:
                 # fun_proc_loaded() will return not only date column but full data dataframe. Go to exception handler
@@ -558,47 +571,44 @@ def read_csv(nameFull: Sequence[Union[str, Path]],
                 cfg_in['fun_proc_loaded'](*args, **kwargs)), cfg_in, meta=meta_time)  # meta_time_index
             # date = date.to_series()
         except (TypeError, Exception) as e:
-            # fun_proc_loaded retuns tuple (date, a)
-            changing_size = False  # ? True  # ?
-            if changing_size:
-                date_delayed, a = delayed(cfg_in['fun_proc_loaded'], nout=2)(ddf, cfg_in)
-                # if isinstance(date, tuple):
-                #     date, a = date
-                # if isinstance(a, pd.DataFrame):
-                #     a_is_dask_df = False
-                # else:chunksize=cfg_in['blocksize']
-                ddf_len = len(ddf)
-                counts_divisions = list(range(1, int(ddf_len / cfg_in.get('decimate_rate', 1)), cfg_in['blocksize']))
-                counts_divisions.append(ddf_len)
-                ddf = dd.from_delayed(a, divisions=(0, counts_divisions))
-                date = dd.from_delayed(date_delayed, meta=meta_time_index, divisions=counts_divisions)
-                date = dd.from_dask_array(date.values, index=ddf.index)
-                # date = dd.from_pandas(date.to_series(index=), chunksize=cfg_in['blocksize'], )
-                # _pandas(date, chunksize=cfg_in['blocksize'], name='Time')
-            else:  # getting df having time col
-                meta_out = cfg_in['fun_proc_loaded'].meta_out
-                meta_out = meta_out(cfg_in['dtype']) if callable(meta_out) else None
-                ddf = ddf.map_partitions(cfg_in['fun_proc_loaded'], cfg_in, meta=meta_out)
-                date = ddf.Time
+            # # fun_proc_loaded retuns tuple (date, a)
+            # changing_size = False  # ? True  # ?
+            # if changing_size:
+            #     date_delayed, a = delayed(cfg_in['fun_proc_loaded'], nout=2)(ddf, cfg_in)
+            #     ddf_len = len(ddf)
+            #     counts_divisions = list(range(1, int(ddf_len / cfg_in.get('decimate_rate', 1)), cfg_in['blocksize']))
+            #     counts_divisions.append(ddf_len)
+            #     ddf = dd.from_delayed(a, divisions=(0, counts_divisions))
+            #     date = dd.from_delayed(date_delayed, meta=meta_time_index, divisions=counts_divisions)
+            #     date = dd.from_dask_array(date.values, index=ddf.index)
+            #     # date = dd.from_pandas(date.to_series(index=), chunksize=cfg_in['blocksize'], )
+            #     # _pandas(date, chunksize=cfg_in['blocksize'], name='Time')
+            # else:
+            # getting df having time col
+            meta_out = cfg_in['fun_proc_loaded'].meta_out
+            meta_out = meta_out(cfg_in['dtype']) if callable(meta_out) else None
+
+            l.info('processing csv data with time correction%s...' %
+                   f' in {ddf.npartitions} blocks' if ddf.npartitions > 1 else '')
+            # initialisation for utils_time_corr.time_corr():
+            utils_time_corr.tim_min_save = pd.Timestamp('now', tz='UTC')
+            utils_time_corr.tim_max_save = pd.Timestamp(0, tz='UTC')
+
+            def fun_proc_loaded_and_time_corr_df(df, cfg_in):
+                """fun_proc_loaded() then time_corr()
+                """
+                df_out = cfg_in['fun_proc_loaded'](df, cfg_in)
+                return df_out.assign(**dict(zip(meta2.keys(), utils_time_corr.time_corr(df_out.Time, cfg_in))))
+
+            #ddf = ddf.map_partitions(cfg_in['fun_proc_loaded'], cfg_in, meta=meta_out)
+            ddf = ddf.map_overlap(fun_proc_loaded_and_time_corr_df, before=n_overlap, after=n_overlap,
+                            cfg_in=cfg_in, meta={**meta_out, **meta2})
     except IndexError:
         print('no data?')
         return None, None
         # add time shift specified in configuration .ini
 
-    n_overlap = 2 * int(np.ceil(cfg_in['fs'])) if cfg_in.get('fs') else 50
-    # reset_index().set_index('index').
-    meta2 = {'Time': 'M8[ns]', 'b_ok': np.bool8}
 
-    #     pd.DataFrame(columns=('Time', 'b_ok'))
-    # meta2.time = meta2.time.astype('M8[ns]')
-    # meta2.b_ok = meta2.b_ok.astype(np.bool8)
-
-    def time_corr_df(t, cfg_in):
-        """convert tuple returned by time_corr() to dataframe"""
-
-        return pd.DataFrame.from_dict(OrderedDict(zip(meta2.keys(), utils_time_corr.time_corr(t, cfg_in))))
-        # return pd.DataFrame.from_items(zip(meta2.keys(), time_corr(t, cfg_in)))
-        # pd.Series()
 
     # date.rename('time').to_series().reset_index().compute()
     # date.to_series().repartition(divisions=ddf.divisions[1])
@@ -612,35 +622,38 @@ def read_csv(nameFull: Sequence[Union[str, Path]],
     da.overlap.map_overlap(date.values, time_corr_ar, depth=n_overlap)
     '''
 
-    l.info(*('time correction in %s blocks...', date.npartitions) if date.npartitions>1 else
-    ('time correction...',))
-    utils_time_corr.tim_min_save = pd.Timestamp('now', tz='UTC')  # initialisation for time_corr_df()
-    utils_time_corr.tim_max_save = pd.Timestamp(0, tz='UTC')
-    df_time_ok = date.map_overlap(time_corr_df, before=n_overlap, after=n_overlap, cfg_in=cfg_in, meta=meta2)
-    # .to_series()
-    # if __debug__:
-    #     c = df_time_ok.compute()
-    # tim = date.compute().get_values()
-    # tim, b_ok = time_corr(tim, cfg_in)
+    if date is None:
+        df_time_ok = ddf[['Time', 'b_ok']]
+    else:
+        l.info(*('time correction in %s blocks...', date.npartitions) if date.npartitions>1 else
+        ('time correction...',))
+        utils_time_corr.tim_min_save = pd.Timestamp('now', tz='UTC')  # initialisation for time_corr_df()
+        utils_time_corr.tim_max_save = pd.Timestamp(0, tz='UTC')
+        df_time_ok = date.map_overlap(time_corr_df, before=n_overlap, after=n_overlap, cfg_in=cfg_in, meta=meta2)
 
-    # return None, None
-    # if len(ddf) == 1:  # size
-    #     ddf = ddf[np.newaxis]
+        # .to_series()
+        # if __debug__:
+        #     c = df_time_ok.compute()
+        # tim = date.compute().get_values()
+        # tim, b_ok = time_corr(tim, cfg_in)
 
-    # npartitions = ddf.npartitions
-    # ddf = ddf.reset_index().set_index('index')
-    # col_temp = set(ddf.columns).difference(cfg_in['dtype_out'].names).pop()
+        # return None, None
+        # if len(ddf) == 1:  # size
+        #     ddf = ddf[np.newaxis]
 
-    # ddf.index is not unique!
-    # if col_temp:
-    #      # ddf[col_temp].compute().is_unique # Index.is_monotonic_increasing()
-    #     # ddf[col_temp] = ddf[col_temp].map_partitions(lambda s, t: t[s.index], tim, meta=meta)
-    try:
-        pass  # df_time_ok = df_time_ok.persist()  # triggers all csv_specific_proc computations
-    except Exception as e:
-        l.exception('Can not speed up by persist, doing something that can trigger error to help it identificate...')
-        df_time_ok = time_corr_df(
-            (date_delayed if date_delayed is not None else date).compute(), cfg_in=cfg_in)
+        # npartitions = ddf.npartitions
+        # ddf = ddf.reset_index().set_index('index')
+        # col_temp = set(ddf.columns).difference(cfg_in['dtype_out'].names).pop()
+
+        # ddf.index is not unique!
+        # if col_temp:
+        #      # ddf[col_temp].compute().is_unique # Index.is_monotonic_increasing()
+        #     # ddf[col_temp] = ddf[col_temp].map_partitions(lambda s, t: t[s.index], tim, meta=meta)
+        try:
+            pass  # df_time_ok = df_time_ok.persist()  # triggers all csv_specific_proc computations
+        except Exception as e:
+            l.exception('Can not speed up by persist, doing something that can trigger error to help it identificate...')
+            df_time_ok = time_corr_df(date.compute(), cfg_in=cfg_in)  #date_delayed if date_delayed is not None else date
 
     # df_time_ok.compute(scheduler='single-threaded')
     if isinstance(df_time_ok, dd.DataFrame):
@@ -839,10 +852,44 @@ def h5_names_gen(cfg: Mapping[str, Any], cfg_out: Mapping[str, Any]) -> Iterator
                 flog.writelines('\n' + strLog)  # + nameFE + '\t' +
 
 
+
+def h5_close(cfg_out: Mapping[str, Any]):
+    """
+    Closes cfg_out['db'] store, removes duplicates (if need) and creates indexes
+    :param cfg_out: dict, to remove duplicates it must have 'b_remove_duplicates': True
+    :return: None
+    """
+    try:
+        print('')
+        cfg_table_keys = ['tables_have_wrote'] if ('tables_have_wrote' in cfg_out) else ('tables', 'tables_log')
+        if cfg_out['b_remove_duplicates']:
+            h5remove_duplicates(cfg_out, cfg_table_keys=cfg_table_keys)
+        create_indexes(cfg_out, cfg_table_keys)
+    except Exception as e:
+        l.exception('\nError of adding data to temporary store: ')
+
+        import traceback, code
+        from sys import exc_info as sys_exc_info
+        tb = sys_exc_info()[2]  # type, value,
+        traceback.print_exc()
+        last_frame = lambda tb=tb: last_frame(tb.tb_next) if tb.tb_next else tb
+        frame = last_frame().tb_frame
+        ns = dict(frame.f_globals)
+        ns.update(frame.f_locals)
+        code.interact(local=ns)
+    finally:
+        cfg_out['db'].close()
+        if cfg_out['db'].is_open:
+            print('Wait store closing...')
+            sleep(2)
+        cfg_out['db'] = None
+        return
+
+
 def h5_dispenser_and_names_gen(cfg: Mapping[str, Any],
                                cfg_out: Optional[Mapping] = None,
-                               fun_gen: Callable[[Mapping[str, Any], Mapping[str, Any]], Iterator[Any]] = h5_names_gen
-                               ) -> Iterator[Tuple[int, Any]]:
+                               fun_gen: Callable[[Mapping[str, Any], Mapping[str, Any]], Iterator[Any]] = h5_names_gen,
+                               b_close_at_end: Optional[bool] = True) -> Iterator[Tuple[int, Any]]:
     """
     Prepares HDF5 store to insert/update data and yields fun_gen(...) outputs:
         - Opens DB (see h5temp_open() requirements)
@@ -895,31 +942,8 @@ def h5_dispenser_and_names_gen(cfg: Mapping[str, Any],
     except Exception as e:
         l.exception('\nError preparing data:')
     finally:
-        try:
-            print('')
-            cfg_table_keys = ['tables_have_wrote'] if ('tables_have_wrote' in cfg_out) else ('tables', 'tables_log')
-            if cfg_out['b_remove_duplicates']:
-                h5remove_duplicates(cfg_out, cfg_table_keys=cfg_table_keys)
-            create_indexes(cfg_out, cfg_table_keys)
-        except Exception as e:
-            l.exception('\nError of adding data to temporary store: ')
-
-            import traceback, code
-            from sys import exc_info as sys_exc_info
-            tb = sys_exc_info()[2]  # type, value,
-            traceback.print_exc()
-            last_frame = lambda tb=tb: last_frame(tb.tb_next) if tb.tb_next else tb
-            frame = last_frame().tb_frame
-            ns = dict(frame.f_globals)
-            ns.update(frame.f_locals)
-            code.interact(local=ns)
-        finally:
-            cfg_out['db'].close()
-            if cfg_out['db'].is_open:
-                print('Wait store closing...')
-                sleep(2)
-            cfg_out['db'] = None
-            return
+        if b_close_at_end:
+            h5_close(cfg_out)
 
 
 def get_fun_proc_loaded_converters(cfg_in: Mapping[str, Any]):

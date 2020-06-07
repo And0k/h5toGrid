@@ -12,14 +12,9 @@ import pandas as pd
 drive_d = Path('D:/' if sys.platform == 'win32' else '/mnt/D')  # allows to run on both my Linux and Windows systems:
 scripts_path = drive_d.joinpath('Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))  # os.getcwd()
-from to_pandas_hdf5.csv2h5 import main as csv2h5
-from to_pandas_hdf5.csv_specific_proc import correct_kondrashov_txt, rep_in_file, correct_baranov_txt
-from to_pandas_hdf5.h5_dask_pandas import h5q_interval2coord
-from inclinometer.h5inclinometer_coef import h5copy_coef
 import inclinometer.incl_h5clc as incl_h5clc
 import inclinometer.incl_h5spectrum as incl_h5spectrum
 import veuszPropagate
-from utils_time import pd_period_to_timedelta
 from utils2init import path_on_drive_d, init_logging, open_csv_or_archive_of_them, st
 
 # l = logging.getLogger(__name__)
@@ -45,8 +40,11 @@ timeranges = [
     [['2019-07-21T20:00:00', '2019-08-18T01:45:00']],
     [['2019-08-18T06:30:00', '2019-08-26T15:50:00']],
     ]
+
+
 #Path(p).relative_to(path_ref)
 paths_db_in = [(path_ref / p).resolve().parent.with_name(Path(p).name.replace('_proc','')) for p in paths_cruise]  #path_on_drive_d() f'{db_path.stem}_proc_noAvg.h5'
+
 probes = [14, 5, 4]
 
 prefix = 'incl'  # 'incl' or 'w'  # table name prefix in db and in raw files (to find raw fales name case will be UPPER anyway): 'incl' - inclinometer, 'w' - wavegauge
@@ -102,12 +100,12 @@ if st(2):
                 'dates_min': [timeranges[iprobe][0][0] for iprobe in range(len(probes))],  # '2019-08-18T06:00:00',
                 'dates_max': [timeranges[iprobe][0][1] for iprobe in range(len(probes))],  # '2019-09-09T16:31:00',  #17:00:00
                 }, 'output_files': {
-                'all_to_one_col': True,
+                'b_all_to_one_col': True,
                 'csv_date_format': lambda t: (t - m_TimeStart_csv) / np.timedelta64(1, 'h'),
-                'columns': ['Date', 'Ve', 'Vn']
+                'csv_columns': ['Date', 'Ve', 'Vn']
                 }}
         # csv splitted by 1day (default for no avg) and monolit csv if aggregate_period_s==600
         if aggregate_period_s is not None:
-            args += ['--not_joined_csv_path', str(db_path_out.parent / 'csv')]
+            args += ['--csv_path', str(db_path_out.parent / 'csv')]
 
         incl_h5clc.main(args, **kwarg)
