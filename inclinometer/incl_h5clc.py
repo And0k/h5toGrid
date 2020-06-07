@@ -1104,7 +1104,7 @@ def dd_to_csv(d: dd.DataFrame, cfg: Mapping[str, Any], suffix='', b_single_file=
     :param cfg: must have field 'output_files' with fields:
         'csv_path'
         'csv_date_format' - If callable then create "Date" column by calling it (dd.index), retain index only if "Time" in 'csv_columns'. If string use it as format for index (Time) column
-        'csv_columns'
+        'csv_columns': optional
     :param suffix:
     :param b_single_file:
     :return:
@@ -1138,7 +1138,7 @@ def dd_to_csv(d: dd.DataFrame, cfg: Mapping[str, Any], suffix='', b_single_file=
             d_csv['Date'] = d_csv.map_partitions(lambda df: cfg_out['csv_date_format'](df.index))
         else:
             arg_csv = {'date_format': cfg_out['csv_date_format'],
-                       'columns': cfg_out.get('csv_columns')
+                       'columns': cfg_out.get('csv_columns') or None
                        }
 
         if progress is not None:

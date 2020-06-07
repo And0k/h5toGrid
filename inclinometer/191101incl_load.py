@@ -226,7 +226,7 @@ if st(1):  # Can not find additional not corrected files for same probe if alrea
 # Calculate velocity and average
 if st(2):
     # if aggregate_period_s is None then not average and write to *_proc_noAvg.h5 else loading from that h5 and writing to _proc.h5
-    for aggregate_period_s in [None, 2, 600, 7200]:  #  # 600,  [None], [None, 2, 600, 3600 if 'w' in prefix else 7200], [3600]
+    for aggregate_period_s in [None, 300, 600]:  # 2,, 7200  # 600,  [None], [None, 2, 600, 3600 if 'w' in prefix else 7200], [3600]
         if aggregate_period_s is None:
             db_path_in = db_path
             db_path_out = db_path.with_name(f'{db_path.stem}_proc_noAvg.h5')
