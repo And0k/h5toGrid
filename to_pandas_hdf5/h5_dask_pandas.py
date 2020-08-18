@@ -43,7 +43,7 @@ def h5q_interval2coord(cfg_in: Mapping[str, Any],
     Note: can use instead:
     >>> from to_pandas_hdf5.h5toh5 import h5select
     ... with pd.HDFStore(cfg_in['db_path'], mode='r') as store:
-    ...     df = h5select(store, cfg_in['table'], columns=None, query_range_lims=cfg_in['timerange'])
+    ...     df, bbad = h5select(store, cfg_in['table'], columns=None, query_range_lims=cfg_in['timerange'])
 
     """
 
@@ -245,7 +245,7 @@ def i_bursts_starts(tim, dt_between_blocks=None) -> Tuple[np.array, int]:
     dtime = np.diff(tim)
 
     # Checking time is increasing
-    dt_zero = np.timedelta64(0, dtype=dtime.dtype)
+    dt_zero = np.timedelta64(0)
     if np.any(dtime <= dt_zero):
         l.warning('Not increased time detected (%d+%d, first at %d)!',
                   np.sum(dtime < dt_zero), np.sum(dtime == dt_zero), np.flatnonzero(dtime <= dt_zero)[0])
@@ -275,7 +275,7 @@ def i_bursts_starts(tim, dt_between_blocks=None) -> Tuple[np.array, int]:
 
 
 # ----------------------------------------------------------------------
-def filterGlobal_minmax(a, tim=None, cfg_filter=None, b_ok=True):
+def filterGlobal_minmax(a, tim=None, cfg_filter=None, b_ok=True) -> pd.Series:
     """
     Filter min/max limits
     :param a:           numpy record array or Dataframe
@@ -523,12 +523,14 @@ def export_df_to_csv(df, cfg_out, add_subdir='', add_suffix=''):
     print('Ok')
 
 
-def h5_append_dummy_row(df, freq=None, tim=None):
+def h5_append_dummy_row(df: Union[pd.DataFrame, dd.DataFrame],
+                        freq=None,
+                        tim: Optional[Sequence[Any]] = None) -> Union[pd.DataFrame, dd.DataFrame]:
     """
     Add row of NaN with index value that will between one of last data and one of next data start
     :param df: dataframe
-    :param freq: frequency to calc index. If logically equal to False, then will be calculated using
-     time of 2 previous rows
+    :param freq: frequency to calc index. If logically equal to False, then will be calculated using tim
+    :param tim: sequence having in last elements time of 2 last rows
     :return: appended dataframe
     """
     if tim is not None:
@@ -554,7 +556,7 @@ def h5_append_dummy_row(df, freq=None, tim=None):
                 else:
                     same_types = False
 
-    df_dummy = pd.DataFrame(dict_dummy, columns=df.columns.values, index=ind_new, dtype=tip0 if same_types else None)
+    df_dummy = pd.DataFrame(dict_dummy, columns=df.columns.values, index=ind_new, dtype=tip0 if same_types else None).rename_axis('Time')
 
     if isinstance(df, dd.DataFrame):
         return dd.concat([df, df_dummy], axis=0, interleave_partitions=True)  # buggish dask not always can append
@@ -608,10 +610,11 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
         b_correct_cols = True
         l.error(f'{msg} => Adding columns...')
         # raise e #?
-    elif error_info_list[0].startswith('invalid combinate of [values_axes] on appending data') or \
-            error_info_list[0].startswith('invalid combinate of [non_index_axes] on appending data'):
+    elif error_info_list[0].startswith('invalid combination of [values_axes] on appending data') or \
+            error_info_list[0].startswith('invalid combination of [non_index_axes] on appending data'):
+        # old pandas version has word "combinate" insted of "combination"!
         b_correct_cols = True
-        l.error(f'{msg} => Adding columns...')
+        l.error(f'{msg} => Adding columns/convering type...')
     else:  # Can only append to Tables - need resave?
         l.error(f'{msg} => Can not handle this error!')
         raise e
@@ -668,7 +671,15 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
                     # todo: correct str length
                     pass
                 else:
-                    df_cor[col] = df_cor[col].astype(df[col].dtype)
+                    try:
+                        dtype_max = np.result_type(df_cor[col].dtype, df[col].dtype)
+                        if df[col].dtype != dtype_max:
+                            df[col] = df[col].astype(dtype_max)
+                        if df_cor[col].dtype != dtype_max:
+                            df_cor[col] = df_cor[col].astype(dtype_max)
+                    except e:
+                        l.exception('Col "%s" have not numpy dtype?', col)
+                        df_cor[col] = df_cor[col].astype(df[col].dtype)
                     # pd.api.types.infer_dtype(df_cor.loc[df_cor.index[0], col], df.loc[df.index[0], col])
         # Update store data
         try:

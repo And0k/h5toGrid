@@ -1,8 +1,17 @@
 from pathlib import PurePath
-from typing import Mapping, Any, Optional
+from typing import Mapping, Any, Optional, Union
 
 import numpy as np
 import pandas as pd
+
+import matplotlib
+try:
+    matplotlib.use(
+        'Qt5Agg')  # must be before importing plt (rases error after although documentation sed no effect)
+    matplotlib.interactive(False)
+except ImportError:
+    print('matplotlib can not import Qt5Agg backend - may be errors in potting')
+    pass
 from matplotlib import pyplot as plt
 
 from other_filters import find_sampling_frequency, longest_increasing_subsequence_i, rep2mean, repeated2increased, \
@@ -11,11 +20,16 @@ from utils2init import dir_create_if_need
 from utils_time import l, datetime_fun
 #from to_pandas_hdf5.h5_dask_pandas import filter_global_minmax
 
+
+
 tim_min_save: pd.Timestamp     # can only decrease in time_corr(), set to pd.Timestamp('now', tz='UTC') before call
 tim_max_save: pd.Timestamp     # can only increase in time_corr(), set to pd.Timestamp(0, tz='UTC') before call
-def time_corr(date, cfg_in: Mapping[str, Any], b_make_time_inc: Optional[bool] = True, path_save_image='time_corr'):
+def time_corr(date: Union[pd.Series, pd.Index, np.ndarray],
+              cfg_in: Mapping[str, Any],
+              b_make_time_inc: Optional[bool] = True,
+              path_save_image='time_corr'):
     """
-    :param date: numpy datetime64 or array text in ISO 8601 format
+    :param date: numpy np.ndarray elements may be datetime64 or text in ISO 8601 format
     :param cfg_in: dict with fields:
     - dt_from_utc: correct time by adding this constant
     - fs: sampling frequency
@@ -29,6 +43,8 @@ def time_corr(date, cfg_in: Mapping[str, Any], b_make_time_inc: Optional[bool] =
     Note: convert to UTC time if ``date`` in text format, propely formatted for conv.
     todo: use Kalman filter?
     """
+    if not date.size:
+        return pd.DatetimeIndex([]), np.bool_([])
     if __debug__:
         l.debug('time_corr (time correction) started')
     if cfg_in.get('dt_from_utc'):
@@ -54,20 +70,22 @@ def time_corr(date, cfg_in: Mapping[str, Any], b_make_time_inc: Optional[bool] =
         else:
             try:
                 if isinstance(date, pd.Series):
-                    tim = date - np.timedelta64(cfg_in['dt_from_utc'])
+                    tim = pd.to_datetime(date - np.timedelta64(cfg_in['dt_from_utc']), utc=True)
+
                 else:
                     tim = pd.to_datetime(date.astype('datetime64[ns]') - np.timedelta64(
                         pd.Timedelta(cfg_in['dt_from_utc'])), utc=True)  # hours=Hours_from_UTC
             except OverflowError:  # still need??
                 tim = pd.to_datetime(
                     datetime_fun(np.subtract, tim.values,
-                                 np.timedelta64(cfg_in['dt_from_utc'])), type_of_operation='<M8[ms]')
-        # tim+= np.timedelta64(pd.Timedelta(hours=hours_from_utc_f)) #?
+                                 np.timedelta64(cfg_in['dt_from_utc'])), type_of_operation='<M8[ms]', utc=True)
+            # tim+= np.timedelta64(pd.Timedelta(hours=hours_from_utc_f)) #?
     else:
         if (not isinstance(date, pd.Series)) and (not isinstance(date, np.datetime64)):
             date = date.astype('datetime64[ns]')
         tim = pd.to_datetime(date, utc=True)  # .tz_localize('UTC')tz_convert(None)
-        hours_from_utc_f = 0
+        #hours_from_utc_f = 0
+
 
     if cfg_in.get('date_min'):
         # Skip processing if data out of filtering range
@@ -78,24 +96,55 @@ def time_corr(date, cfg_in: Mapping[str, Any], b_make_time_inc: Optional[bool] =
         tim_min_save = min(tim_min_save, tim_min)
         tim_max_save = max(tim_max_save, tim_max)
 
-        if (tim_min > pd.Timestamp(cfg_in['date_max'], tz='UTC') or
-            tim_max < pd.Timestamp(cfg_in['date_min'], tz='UTC')):  # tim.iat[0], iat[-1] is less safier
-            tim[:]= pd.NA
-            return tim, np.ones_like(tim, dtype=bool)   # mark out of range as good values
+        # set time to special values keeping it sorted for dask and mark out of range as good values
+        if tim_max < pd.Timestamp(cfg_in['date_min'], tz='UTC'):
+            tim[:] = pd.Timestamp(cfg_in['date_min'], tz='UTC') - np.timedelta64(1, 'ns')  # pd.NaT                      # ns-resolution maximum year
+            return tim, np.ones_like(tim, dtype=bool)
+        elif cfg_in.get('date_max') and tim_min > pd.Timestamp(cfg_in['date_max'], tz='UTC'):
+            tim[:] = pd.Timestamp(cfg_in['date_max'], tz='UTC') + np.timedelta64(1, 'ns')  # pd.Timestamp('2262-01-01')  # ns-resolution maximum year
+            return tim, np.ones_like(tim, dtype=bool)
+        else:
+            it_se = np.flatnonzero(
+                (tim >= pd.Timestamp(cfg_in['date_min'], tz='UTC')) &
+                (tim <= pd.Timestamp(cfg_in.get('date_max'), tz='UTC')) )[[0,-1]]
+            it_se[1] += 1
+            tim = tim[slice(*it_se)]
+            # tim.clip(lower=pd.Timestamp(cfg_in['date_min'], tz='UTC') - np.timedelta64(1, 'ns'),
+            #          upper=pd.Timestamp(cfg_in['date_max'], tz='UTC') + np.timedelta64(1, 'ns'),
+            #          inplace=True)
 
-    b_ok_in = date.notna()
-    n_bad_in = (~b_ok_in).sum()
-    if n_bad_in and cfg_in.get('keep_input_nans'):
-        tim = tim[b_ok_in]
+
+    b_ok_in = tim.notna()
+    n_bad_in = b_ok_in.size - b_ok_in.sum()
+    if n_bad_in:
+        if cfg_in.get('keep_input_nans'):
+            tim = tim[b_ok_in]
         try:
-            b_ok_in = b_ok_in.values
-        except AttributeError:  # numpy.ndarray' object has no attribute 'values'
-            pass  # if date is not Timeseries but DatetimeIndex we already have array
+            b_ok_in = b_ok_in.to_numpy()
+        except AttributeError:
+            pass  # we already have numpy array
 
+
+    t = tim.to_numpy(np.int64)
     if b_make_time_inc or ((b_make_time_inc is None) and cfg_in.get('b_make_time_inc')) and tim.size > 1:
         # Check time resolution and increase if needed to avoid duplicates
-        t = tim.values.view(np.int64)  # 'datetime64[ns]'
-        freq, n_same, nDecrease, b_ok = find_sampling_frequency(t, precision=6, b_show=False)
+        if n_bad_in and not cfg_in.get('keep_input_nans'):
+            t = np.int64(rep2mean(t, bOk=b_ok_in))
+        freq, n_same, n_decrease, b_ok = find_sampling_frequency(t, precision=6, b_show=False)
+        if freq:
+            cfg_in['fs_last'] = freq  # fallback freq to get value for next files on fail
+        elif cfg_in['fs_last']:
+            l.warning('Using fallback (last) sampling frequency fs = %s', cfg_in['fs_last'])
+            freq = cfg_in['fs_last']
+        elif cfg_in.get('fs'):
+            l.warning('Ready to use specified sampling frequency fs = %s', cfg_in['fs'])
+            freq = cfg_in['fs']
+        elif cfg_in.get('fs_old_method'):
+            l.warning('Ready to use specified sampling frequency fs_old_method = %s', cfg_in['fs_old_method'])
+            freq = cfg_in['fs_old_method']
+        else:
+            l.warning('Ready to set sampling frequency to default value: fs = 1Hz')
+            freq = 1
 
         # # show linearity of time # plt.plot(date)
         # fig, axes = plt.subplots(1, 1, figsize=(18, 12))
@@ -105,7 +154,7 @@ def time_corr(date, cfg_in: Mapping[str, Any], b_make_time_inc: Optional[bool] =
         # fig.savefig(os_path.join(cfg_in['dir'], cfg_in['file_stem'] + 'time-time_linear,s' + '.png'))
         # plt.close(fig)
 
-        if nDecrease > 0:
+        if n_decrease > 0:
             # Excude elements
 
             # if True:
@@ -124,11 +173,11 @@ def time_corr(date, cfg_in: Mapping[str, Any], b_make_time_inc: Optional[bool] =
             #             break
             # if k > 0:  # success?
             #     t = rep2mean(t, bOk=b_ok)
-            #     freq, n_same, nDecrease, b_same_prev = find_sampling_frequency(t, precision=6, b_show=False)
+            #     freq, n_same, n_decrease, b_same_prev = find_sampling_frequency(t, precision=6, b_show=False)
             #     # print(np.flatnonzero(b_bad))
             # else:
             #     t = tim.values.view(np.int64)
-            # if nDecrease > 0:  # fast method is not success
+            # if n_decrease > 0:  # fast method is not success
             # take time:i
             # l.warning(Fast method is not success)
 
@@ -143,12 +192,12 @@ def time_corr(date, cfg_in: Mapping[str, Any], b_make_time_inc: Optional[bool] =
             t = np.int64(rep2mean(t, bOk=b_ok))
 
             idel = np.flatnonzero(np.logical_not(b_ok))  # to show what is done
-            b_ok = np.ediff1d(t, to_end=True) > 0  # updation for next step
+            b_ok = np.ediff1d(t, to_end=True) > 0  # adaption for next step
 
             msg = f'Filtered time: {len(idel)} values interpolated'
-            l.warning('decreased time (%d times) is detected! %s', nDecrease, msg)
+            l.warning('decreased time (%d times) is detected! %s', n_decrease, msg)
             # plt can hang.
-            plt.figure('Decreasing time corr');
+            plt.figure('Decreasing time corr')
             plt.title(msg)
             plt.plot(idel, tim.iloc[idel], '.m')
             plt.plot(np.arange(t.size), tim, 'r')
@@ -157,7 +206,7 @@ def time_corr(date, cfg_in: Mapping[str, Any], b_make_time_inc: Optional[bool] =
                 if not PurePath(path_save_image).is_absolute():
                     path_save_image = PurePath(cfg_in['path']).with_name(path_save_image)
                     dir_create_if_need(path_save_image)
-                fig_name = path_save_image / '{:%y%m%d_%H%M}-{:%H%M}.png'.format(*tim.iloc[[0, -1]])
+                fig_name = path_save_image / '{:%y%m%d_%H%M}-{:%H%M}.png'.format(*(tim_min, tim_max) if cfg_in.get('date_min') else tim.iloc[[0, -1]])
                 plt.savefig(fig_name)
                 l.info(' - figure saved to %s', fig_name)
             try:
@@ -167,10 +216,10 @@ def time_corr(date, cfg_in: Mapping[str, Any], b_make_time_inc: Optional[bool] =
                 l.exception('can not show plot in dask?')
 
         if n_same > 0 and cfg_in.get('fs') and not cfg_in.get('fs_old_method'):
-            # This is most simple operation that showld be done usually for CTD
-            t = repeated2increased(t, cfg_in['fs'], b_ok if nDecrease else None)
+            # This is most simple operation that should be done usually for CTD
+            t = repeated2increased(t, cfg_in['fs'], b_ok if n_decrease else None)
             tim = pd.to_datetime(t, utc=True)
-        elif n_same > 0 or nDecrease > 0:
+        elif n_same > 0 or n_decrease > 0:
             # Increase time resolution by recalculating all values using constant frequency
             if cfg_in.get('fs_old_method'):
                 l.warning('Linearize time interval using povided freq = %fHz (determined: %f)',
@@ -179,30 +228,39 @@ def time_corr(date, cfg_in: Mapping[str, Any], b_make_time_inc: Optional[bool] =
             else:  # constant freq = filtered mean
                 l.warning('Linearize time interval using medean* freq = %fHz determined', freq)
 
-            # # Check if we can simply use linear increasing values
-            # freq2= np.float64(dt64_1s)*t.size/(t[-1]-t[0])
-            # freqErr= abs(freq - freq2)/freq
-            # if freqErr < 0.1: #?
-            #     t = np.linspace(t[0], t[-1], t.size)
-            #     #print(str(round(100*freqErr,1)) + '% error in frequency estimation. May be data gaps. Use unstable algoritm to correct')
-            #     #t= time_res1s_inc(t, freq)
-            # else: # if can not than use special algorithm:
-            tim_before = pd.to_datetime(t, utc=True)
-            make_linear(t, freq)  # will change t and tim
-            tim = pd.to_datetime(t, utc=True)  # not need allways?
-            bbad = check_time_diff(tim_before, tim.values, dt_warn=pd.Timedelta(minutes=2),
-                                   mesage='Big time diff after corr: difference [min]:')
-            if np.any(bbad):
-                pass
+            if freq <= 1:
+                l.warning('Typically data resolution is sufficient for this frequency. Not linearizing')
+            else:
+                # # Check if we can simply use linear increasing values
+                # freq2= np.float64(dt64_1s)*t.size/(t[-1]-t[0])
+                # freqErr= abs(freq - freq2)/freq
+                # if freqErr < 0.1: #?
+                #     t = np.linspace(t[0], t[-1], t.size)
+                #     #print(str(round(100*freqErr,1)) + '% error in frequency estimation. May be data gaps. Use unstable algoritm to correct')
+                #     #t= time_res1s_inc(t, freq)
+                # else: # if can not than use special algorithm:
+                tim_before = pd.to_datetime(t, utc=True)
+                make_linear(t, freq)  # will change t and tim
+                bbad = check_time_diff(tim_before, t.view('M8[ns]'), dt_warn=pd.Timedelta(minutes=2),
+                                       mesage='Big time diff after corr: difference [min]:')
+                if np.any(bbad):
+                    pass
 
         dt = np.ediff1d(t, to_begin=1)
         b_ok = dt > 0
         # check all is ok
         # tim.is_unique , len(np.flatnonzero(tim.duplicated()))
         b_decrease = dt < 0  # with set of first element as increasing
-        nDecrease = b_decrease.sum()
-        if nDecrease > 0:
-            l.warning('decreased time remains - {} masked!'.format(nDecrease))
+        n_decrease = b_decrease.sum()
+        if n_decrease > 0:
+            l.warning(
+                'Decreased time remained (%d) are masked!%s%s',
+                n_decrease,
+                '\n'.join('->'.join('{:%y.%m.%d %H:%M:%S.%f%z}'.format(_) for _ in tim[se].to_numpy()) for se in
+                         np.flatnonzero(b_decrease)[:3, None] + np.int32([-1, 0])),
+                '...' if n_decrease > 3 else ''
+                )
+
             b_ok &= ~b_decrease
 
         b_same_prev = np.ediff1d(t, to_begin=1) == 0  # with set of first element as changing
@@ -222,22 +280,25 @@ def time_corr(date, cfg_in: Mapping[str, Any], b_make_time_inc: Optional[bool] =
             if msg:
                 l.warning('%s is detected! - interp ', msg)
 
-        if n_same > 0 or nDecrease > 0:
-            # tim = pd.to_datetime(
-            #     rep2mean(t, bOk=np.logical_not(b_same_prev if nDecrease==0 else (b_same_prev | b_decrease))), utc=True)
-            b_bad = b_same_prev if nDecrease == 0 else (b_same_prev | b_decrease)
-            tim = pd.to_datetime(rep2mean_with_const_freq_ends(t, ~b_bad, freq), utc=True)
+        if n_same > 0 or n_decrease > 0:
+            # rep2mean(t, bOk=np.logical_not(b_same_prev if n_decrease==0 else (b_same_prev | b_decrease)))
+            b_bad = b_same_prev if n_decrease == 0 else (b_same_prev | b_decrease)
+            t = rep2mean_with_const_freq_ends(t, ~b_bad, freq)
 
     else:
         l.debug('time not nessesary to be sorted')
         b_ok = np.ones(tim.size, np.bool8)
-
+    # make initial shape: paste back NaNs
     if n_bad_in and cfg_in.get('keep_input_nans'):
         # place initially bad elements back
-        t = np.NaN + np.empty_like(b_ok_in)
-        t[b_ok_in] = tim
-        tim = pd.to_datetime(t)
+        t, t_in = (np.NaN + np.empty_like(b_ok_in)), t
+        t[b_ok_in] = t_in
         b_ok_in[b_ok_in] = b_ok
         b_ok = b_ok_in
+    # make initial shape: pad with constants of config. limits where data was removed because input is beyond this limits
+    if cfg_in.get('date_min') and np.any(it_se != np.int64([0, date.size])):
+        pad_width = (it_se[0], date.size - it_se[1])
+        t = np.pad(t, pad_width, constant_values=np.array((cfg_in['date_min'], cfg_in['date_max']), 'M8[ns]'))
+        b_ok = np.pad(b_ok, pad_width, constant_values=True)
 
-    return tim, b_ok
+    return pd.to_datetime(t, utc=True), b_ok

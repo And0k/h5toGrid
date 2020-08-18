@@ -115,14 +115,13 @@ process it and save HDF5/CSV
 
 def extractRuns(P: Sequence, cfg_extract_runs: Mapping[str, Any]) -> Tuple[List[int], List[int]]:
     '''
-    Extract runs
-    :param P: z coordinate - negative is below
+    Extract runs based on length and amplitude of intervals with sign of gradient(P)
+    :param P: z coordinate - negative is below surface
     :param cfg_extract_runs: dict with fields:
         min_samples
         min_dp
     :return: [imin,imax]
-    todo: replace with famouse line simplification algorithm
-            or repeat function with result replacing finding of dP
+    todo: replace with one based on famous line simplification algorithm
 #                          min_samples
 #surface -----------------|-|----+---------------
 #          x     x         x     |                
@@ -193,7 +192,7 @@ def extractRuns(P: Sequence, cfg_extract_runs: Mapping[str, Any]) -> Tuple[List[
         # Deleting extremums only if not terminal:
         bok |= bok2  # print(repr(np.vstack((bt, bok, bok2, iex, np.int64(pex))).T))
         bbad = ~bok
-        # Deleting not terminal opposit extremums near deleted extremums:
+        # Deleting not terminal opposite extremums near deleted extremums:
         # near:
         b_near = np.logical_or(np.hstack((False, bbad[:-1])), np.hstack((bbad[1:], False)))
         bbad |= np.logical_and(b_near, ~bok)
@@ -326,7 +325,7 @@ def CTDrunsExtract(P: np.ndarray,
                 iminmax = iminmax[:, bok]
         else:
             l.warning('no runs!')
-
+            return np.int64([[],[]])
         # N= min(len(imax), len(imin))
         # iminMax = [imin, imax]
     else:
@@ -394,14 +393,17 @@ def log_runs(df_raw: pd.DataFrame,
     """
 
     if log is None:
+        print('not updating log')
         log = {'fileName': None,
                'fileChangeTime': None}
     else:
         log.clear()
     imin, imax = CTDrunsExtract(
-        df_raw[cfg['extract_runs']['cols'][0]],
+        df_raw[cfg['extract_runs']['cols'][0]].values,
         df_raw.index.values,
         cfg['extract_runs'])
+    if not len(imin):
+        return pd.DataFrame(data=None, columns=df_raw.columns, index=df_raw.index[[]])  # empty dataframe
     df_log_st = df_raw.asof(df_raw.index[imin], subset=cfg['extract_runs']['cols']).add_suffix('_st')
     df_log_en = df_raw.asof(df_raw.index[imax], subset=cfg['extract_runs']['cols']).add_suffix('_en')
     log.update(  # pd.DataFrame(, index=df_log_st.index).rename_axis('Date0')
@@ -417,11 +419,12 @@ def log_runs(df_raw: pd.DataFrame,
     set_field_if_no(cfg['in'], 'table_nav', 'navigation')
     set_field_if_no(cfg['output_files'], 'dt_search_nav_tolerance', pd.Timedelta(minutes=2))
 
-    dfNpoints = h5select(  # all starts then all ends in row
-        cfg['in']['db'], cfg['in']['table_nav'], columns=['Lat', 'Lon', 'DepEcho'],
+    dfNpoints, dt = h5select(  # all starts then all ends in row
+        cfg['in']['db'], cfg['in']['table_nav'], columns=['Lat', 'Lon', 'DepEcho', 'Speed', 'Course'],
         time_points=df_log_st.index.append(df_log_en.index),
         dt_check_tolerance=cfg['output_files']['dt_search_nav_tolerance']
         )
+    dfNpoints['nearestNav'.format(cfg['output_files']['dt_search_nav_tolerance'])] = dt.astype('m8[s]').view(np.int64)
     # todo: allow filter for individual columns. solution: use multiple calls for columns that need filtering with appropriate query_range_pattern argument of h5select()
 
     df_edges_items_list = [df_edge.add_suffix(sfx).items() for sfx, df_edge in (
@@ -431,8 +434,9 @@ def log_runs(df_raw: pd.DataFrame,
     for st_en in zip(*df_edges_items_list):
         for name, series in st_en:
             log_update[name] = series.values
-    log.keys()
     log.update(log_update)
+    print('updating log:', log)
+
 
     # log.update(**dict([(i[0], i[1].values) for st_en in zip(
     #     *(dfNpoints.iloc[sl].add_suffix(sfx).items() for sfx, sl in (
@@ -450,34 +454,37 @@ def log_runs(df_raw: pd.DataFrame,
     #     rows_filtered=imin - np.append(0, imax[:-1]) #rows up from previous down (or start)
     # )
     # adding nothing to main table:
-    return pd.DataFrame(data=None, columns=df_raw.columns, index=df_raw.index[[]])
+    return pd.DataFrame(data=None, columns=df_raw.columns, index=df_raw.index[[]])    # empty dataframe
     # df_raw.ix[[]] gets random error - bug in pandas
 
 
-def add_ctd_params(df_in: Mapping[str, Sequence], cfg: Mapping[str, Any]):
+def add_ctd_params(df_in: Mapping[str, Sequence], cfg: Mapping[str, Any], lon=16.7, lat=55.2):
     """
     Calculate all parameters from 'sigma0', 'depth', 'soundV', 'SA' that is specified in cfg['output_files']['data_columns']
-    :param df_in: DataFrame with columns 'Pres', 'Temp'
+    :param df_in: DataFrame with columns:
+     'Pres', 'Temp90' or 'Temp', and may be others:
+     'Lat', 'Lon': to use instead cfg['in']['lat'] and lat and -//- lon
     :param cfg: dict with fields:
         ['output_files']['data_columns'] - list of columns in output dataframe
         ['in'].['b_temp_on_its90'] - optional
-
+    :param lon:  # 54.8707   # least priority values
+    :param lon:  # 19.3212
     :return: DataFrame with only columns specified in cfg['output_files']['data_columns']
     """
     ctd = df_in
     params_to_calc = set(cfg['output_files']['data_columns']).difference(ctd.columns)
-    params_coord_needed_for = params_to_calc.intersection(('depth', 'sigma0'))
+    params_coord_needed_for = params_to_calc.intersection(('depth', 'sigma0', 'SA', 'soundV'))  # need for all cols?
     if any(params_coord_needed_for):
         # todo: load from nav:
-        if not 'Lat' in ctd.columns:
+        if np.any(ctd.get('Lat')):
+            lat = ctd['Lat']
+            lon = ctd['Lon']
+        else:
             if 'lat' in cfg['in']:
                 lat = cfg['in']['lat']
                 lon = cfg['in']['lon']
             else:
-                lat = 55.2  # 54.8707
-                lon = 16.7  # 19.3212
-                print('Calc {} using MANUAL INPUTTED coordinates: lat={lat}, lon={lon}'.format(
-                    '/'.join(params_coord_needed_for), lon=lon, lat=lat))
+                print('Calc', '/'.join(params_coord_needed_for), f'using MANUAL INPUTTED coordinates: lat={lat}, lon={lon}')
 
     if 'Temp90' not in ctd.columns:
         if cfg['in'].get('b_temp_on_its90'):
@@ -485,14 +492,13 @@ def add_ctd_params(df_in: Mapping[str, Sequence], cfg: Mapping[str, Any]):
         else:
             ctd['Temp90'] = gsw.conversions.t90_from_t68(df_in['Temp'])
 
-    ctd['SA'] = gsw.SA_from_SP(ctd['Sal'], ctd['Pres'], lat=ctd.get('Lat', lat),
-                               lon=ctd.get('Lon', lon))  # or Sstar_from_SP() for Baltic where SA=S*
+    ctd['SA'] = gsw.SA_from_SP(ctd['Sal'], ctd['Pres'], lat=lat, lon=lon)  # or Sstar_from_SP() for Baltic where SA=S*
     # Val['Sal'] = gsw.SP_from_C(Val['Cond'], Val['Temp'], Val['P'])
     if 'soundV' in params_to_calc:
         ctd['soundV'] = gsw.sound_speed_t_exact(ctd['SA'], ctd['Temp90'], ctd['Pres'])
 
     if 'depth' in params_to_calc:
-        ctd['depth'] = np.abs(gsw.z_from_p(np.abs(ctd['Pres']), ctd.get('Lat', lat)))
+        ctd['depth'] = np.abs(gsw.z_from_p(np.abs(ctd['Pres']), lat))
     if 'sigma0' in params_to_calc:
         CT = gsw.CT_from_t(ctd['SA'], ctd['Temp90'], ctd['Pres'])
         ctd['sigma0'] = gsw.sigma0(ctd['SA'], CT)
@@ -577,7 +583,7 @@ def main(new_arg=None):
         cfg_out['b_log_ready'] = True  # to not apdate time range in h5_append()
         # not affect main data table and switch off not compatible options:
         cfg_out['tables'] = []
-        cfg_out['b_skip_if_up_to_date'] = False
+        cfg_out['b_skip_if_up_to_date'] = False  # todo: If False check it: need delete all previous result of CTD_calc() or set min_time > its last log time. True not implemented?
         cfg['program']['b_log_display'] = False  # can not display multiple rows log
         # cfg_out['log']['Date0'] = timzone_view(df_raw.index[0], log_dt_from_utc)
         if 'b_save_images' in cfg['extract_runs']:
@@ -653,13 +659,16 @@ def main(new_arg=None):
                         cfg['in']['lat'] = np.nanmean((r.Lat_st, r.Lat_en))
                         cfg['in']['lon'] = np.nanmean((r.Lon_st, r.Lon_en))
                     df = func_in_cycle(df_raw, cfg=cfg)
-
-                    # filter
-                    df, _ = set_filterGlobal_minmax(df, cfg['filter'], cfg_out['log'])
-                    if not isinstance(cfg_out['log']['rows'], int):
+                    if df.size:  # size is zero means save only log but not data
+                        # filter, updates cfg_out['log']['rows']
+                        df, _ = set_filterGlobal_minmax(df, cfg['filter'], cfg_out['log'])
+                    if 'rows' not in cfg_out['log']:
+                        l.warning('no data!')
+                        continue
+                    elif not isinstance(cfg_out['log']['rows'], int):  # list means save only log but not data
                         print(
                             'runs lengths, initial fitered counts: {rows}, {rows_filtered}'.format_map(cfg_out['log']))
-                    elif cfg_out['log']['rows']:  # isinstance(cfg_out['log']['rows'], int) and
+                    else:  # isinstance(cfg_out['log']['rows'], int) and
                         print('filtered out {rows_filtered}, remains {rows}'.format_map(cfg_out['log']))
                         if cfg_out['log']['rows']:
                             print('.', end='')

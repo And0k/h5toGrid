@@ -1,0 +1,24 @@
+
+in:
+  path_cruise: d:\WorkData\_experiment\_2019\inclinometer\200807_Schukas
+  raw_subdir: mag_components_calibration  #_Experiment.rar
+  probes: []
+  probes_prefix: incl_b
+  raw_pattern: "*{prefix:}{number:0>2}*.[tT][xX][tT]"
+
+#  timerange_zeroing_dict:
+#    incl14: [2020-07-10T21:31:00, 2020-07-10T21:39:00]
+  db_coefs: incl_b.h5
+
+filter:
+  date_min: {0: 22.10.2018 12:30:00}
+  date_max: {0: now}
+
+out:
+  db_name: 200807_calibr-lab-b.h5
+  aggregate_period_s: [None, 2, 600, 7200]
+
+
+program:
+  step_start: 1
+  step_end: 1

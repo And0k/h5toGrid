@@ -6,7 +6,7 @@ import pywt
 
 from scipy.ndimage.filters import gaussian_filter1d
 import pandas as pd
-from numba import jit, njit, objmode
+from numba import njit, objmode, typed
 
 if __debug__:
     import matplotlib
@@ -17,7 +17,7 @@ l = logging.getLogger(__name__)
 
 dt64_1s = np.int64(1e9)
 
-@njit
+#@njit: Invalid use of <function mean>) with argument "axis"
 def mad(data, axis=None):
     """Instead this can use: from statsmodels.robust import mad  # or use pd.DataFrame().mad()"""
     return np.mean(np.absolute(data - np.mean(data, axis)), axis)
@@ -34,22 +34,30 @@ def rep2mean(y, bOk=None, x=None):
     :return:
     """
     if bOk is None:
-        bOk = np.logical_not(np.isnan(y))
+        b = np.logical_not(np.isnan(y))  # numba KeyError: 'Failed in nopython mode pipeline (step: ensure IR is legal prior to lowering)\n"more than one definition for \'bOk\'"'
+    else:
+        b = bOk
     try:
         if x is None:
-            return np.interp(np.arange(len(y)), np.flatnonzero(bOk), y[bOk])
+            x_bad = np.arange(len(y), dtype=np.float_)
+            x_ok = np.flatnonzero(b.astype(np.float_))
+            y_ok = np.extract(b, y)  # y[bOk]
+            return np.interp(x_bad, x_ok, y_ok)
         else:
-            bBad = np.logical_not(bOk)
-            y[bBad] = np.interp(x[bBad], x[bOk], y[bOk])
+            bBad = np.logical_not(b)
+            y[bBad] = np.interp(x[bBad], x[b], y[b])
             return y
-    except Exception:  # ValueError:  # array of sample points is empty - replaced for numba
+    except Exception:  # ValueError as e:  # array of sample points is empty - replaced for numba
+        #l.exception('rep2mean error')
         b = np.isfinite(y)
-        if np.sum(b if bOk is None else (b & bOk)) == 0:
+        if bOk is not None:
+            b = np.logical_and(b, bOk)
+        if b.sum() == 0:
             print('rep2mean can not replace NaNs')
             return y + np.NaN  # (np.NaN if bOk is None else
         else:  # may be 1 good point? - return constant
             print('rep2mean: strange condition on Exception!')
-            return np.where(bOk, y[b & bOk], np.NaN)
+            return np.where(bOk if bOk is not None else b, y[b], np.NaN)
     # def rep2mean(x, bOk):
     # old= lambda x, bOk: np.interp(np.arange(len(x)), np.flatnonzero(bOk), x[bOk], np.NaN,np.NaN)
 
@@ -74,7 +82,7 @@ def bSpike1pointUp(a, max_spyke):
         np.logical_and(np.append(bBadU, True), np.hstack((True, bBadD)))  # spyke up
     return bSingleSpike_1(diffX < -max_spyke, diffX > max_spyke)
 
-@njit
+#@njit: "searchsorted with argument(s) ... ValueError: Invalid value given for 'side': unicode_type"
 def move2GoodI(GoodIndIn, bBad, side='left'):
     """
     moves indices to keep its number and relative position when removed masked data
@@ -129,7 +137,7 @@ def contiguous_regions(b_ok):
     return np.flatnonzero(d).reshape((-1, 2))
 
 @njit
-def find_smallest_elem_as_big_as(seq, subseq, elem):
+def find_smallest_elem_as_big_as(seq: np.ndarray, subseq: typed.List, elem) -> int:
     """
     Returns the index of the smallest element in subsequence as big as seq[elem].
 
@@ -153,11 +161,11 @@ def find_smallest_elem_as_big_as(seq, subseq, elem):
     return high
 
 @njit
-def longest_increasing_subsequence_i(seq):
+def longest_increasing_subsequence_i(seq: np.ndarray):
     """
     Finds the longest increasing subseq in sequence using dynamic
     programming and binary search (per http://en.wikipedia.org/wiki/Longest_increasing_subsequence).
-    :param seq: sequence
+    :param seq: sequence of supported type for numba
     :return: subseq indexes of seq
 
     This is O(n log n) optimized_dynamic_programming_solution from
@@ -169,12 +177,12 @@ def longest_increasing_subsequence_i(seq):
     # elements themselves.
 
     # This list will always be sorted.
-    smallest_end_to_subseq_of_length = []
+    smallest_end_to_subseq_of_length = typed.List()
 
-    # This array goes along with sequence (not
-    # smallest_end_to_subseq_of_length).  Following the corresponding element
-    # in this array repeatedly will generate the desired subsequence.
-    parent = [None] * l
+    # This array goes along with sequence (not smallest_end_to_subseq_of_length).
+    # Following the corresponding element in this array repeatedly will generate
+    # the desired subsequence.
+    parent = -np.ones(l, np.int32)  # [None] * l
 
     for elem in range(l):
         # We're iterating through sequence in order, so if elem is bigger than the
@@ -203,18 +211,20 @@ def longest_increasing_subsequence_i(seq):
             # because a subsequence of length 1 has no parent.  Otherwise, its parent
             # is the subsequence one shorter, which we just added onto.
             if location_to_replace != 0:
-                parent[elem] = (smallest_end_to_subseq_of_length[location_to_replace - 1])
+                parent[elem] = smallest_end_to_subseq_of_length[location_to_replace - 1]
 
     # Generate the longest increasing subsequence by backtracking through parent.
-    result = []
+
     icur_parent = smallest_end_to_subseq_of_length[-1]
 
     if False:  # if need its values
-        while icur_parent is not None:
+        result = typed.List()  #np.float64
+        while icur_parent != -1: # is not None:
             result.append(seq[icur_parent])
             icur_parent = parent[icur_parent]
     else:  # if need its indices
-        while icur_parent is not None:
+        result = typed.List()
+        while icur_parent != -1:
             result.append(icur_parent)
             icur_parent = parent[icur_parent]
 
@@ -442,8 +452,8 @@ def rep2mean_with_const_freq_ends(y, b_ok, freq):
         y = repeated2increased(y, freq, b_bad)
     return y
 
-@njit
-def make_linear(tim: np.int64, freq: float, dt_big_hole=None) -> True:
+#@njit
+def make_linear(tim: np.int64, freq: float, dt_big_hole=None) -> bool:
     """
     Corrects tim values (implicitly) by make them linear increasing but excluding big holes
 
@@ -458,38 +468,40 @@ def make_linear(tim: np.int64, freq: float, dt_big_hole=None) -> True:
 
     """
     # uses global dt64_1s = np.int64(1e9)
-
-    if __debug__:
-        print('Linearise time (between big holes) using reference frequency', freq)  # can not simply njit(l.debug())
-
     dt0 = np.int64(dt64_1s / freq)  # int64, delta time of 1 count
     # Convert/set time values in int64 units
     if dt_big_hole is None:
         dt_big_hole = np.int64(float(2 * dt64_1s) / min(1, freq))
     else:
         dt_big_hole = np.int64(dt_big_hole.total_seconds()) * dt64_1s
+
+    if __debug__:
+        print('Linearise time using reference frequency', freq, '(between holes >', round(dt_big_hole/dt64_1s, 2), 's)')
+
     # find big holes and add at start and end
     d = np.ediff1d(tim, to_begin=dt_big_hole + 1, to_end=dt_big_hole + 1)  # how value changed
     i_st_hole = np.flatnonzero(d > dt_big_hole)  # starts of big holes
     n_holes = i_st_hole.size - 2
     if n_holes:
         i_st_maxhole = i_st_hole[np.argmax(d[i_st_hole])]
-        l.warning('{} holes > {}s in time found: rows {}{}! Max hole={}s at {}'.format(
-            n_holes, dt_big_hole / dt64_1s,
-            i_st_hole[1:(1 + min(n_holes, 10))],
-            '' if n_holes > 10 else '... ',
-                     d[i_st_maxhole] / dt64_1s, i_st_maxhole)
-            )
+        with objmode:
+            l.warning('{} holes > {}s in time found: rows {}{}! Max hole={}s at {}'.format(
+                n_holes, dt_big_hole / dt64_1s,
+                i_st_hole[1:(1 + min(n_holes, 10))],
+                '' if n_holes > 10 else '... ',
+                         d[i_st_maxhole] / dt64_1s, i_st_maxhole)
+                )
 
     # i_st_hole[ 0]= -1
     # i_st_hole[-1]-= 1
-    @njit
-    def i_j_yi_yj_yec_yee(i, j, y):
+    #@njit  # Untyped global name 'njit': cannot determine Numba type of <class 'function'>
+    def i_j_yi_yj_yec_yee(i, j, y, dt0=dt0):
         """
         Some values for processing each hole in cycle of for_tim(): i,j,y[i],y[j-1],aproximated_y[j-1] using dt, y[j-1] - aproximated_y[j-1]
         :param i: current index
         :param j: last index + 1 (i.e. start of next interval), useful as it will be used for end of slice
         :param y: time
+        :param dt0: int64, delta time of 1 count
         :return: (i, j, y[i], y[j], yend_clc, yend_err) where:
             yend_clc: calculated last time
             yend_err: difference between calculated and given last time = (yj - yend_clc)
@@ -508,8 +520,8 @@ def make_linear(tim: np.int64, freq: float, dt_big_hole=None) -> True:
     #     for i,j in zip(i_st_hole[:-1], i_st_hole[1:]):
     #         yield i_j_yi_yj_yec_yee(i, j, t)
     #     #return (i, j, yi, yj, yend_clc, yend_err)
-    @njit
-    def for_tim(i_st_h, t: np.int64, b_allow_shift_back=True):
+    #@njit
+    def for_tim(i_st_h, t, b_allow_shift_back=True, dt0=dt0):
         """
         Holes processing in ``t``. Implicitly modifies t
         :param i_st_h:
@@ -518,7 +530,7 @@ def make_linear(tim: np.int64, freq: float, dt_big_hole=None) -> True:
         :return:
         :prints: '`'/'.' when correcting small/big nonlinearity in interval
         """
-        nonlocal dt0
+        #nonlocal dt0  # to not search the local namespace first numba not implements
         for iSt, iEn, tSt, tEn, tEn_calc, tEn_err in zip(*
                                                          i_j_yi_yj_yec_yee(i_st_h[:-1], i_st_h[1:], t)):
             tEn_err_abs = abs(tEn_err)
@@ -538,6 +550,7 @@ def make_linear(tim: np.int64, freq: float, dt_big_hole=None) -> True:
                     # Reimplemented repeated2increased(t[iSt:iEn], freq, bOk)
                     # todo: remove duplicated code
                     # add increasing trend (equal to period dt0/counts) where time is not change
+                    # Note: The algorithm can make some decreased (by value < dt0) elements!
                     dt_cur = np.ediff1d(t[iSt:iEn], to_begin=1)
                     bOk = (dt_cur > 0)
                     t_add = np.arange(tSt, tEn_calc, dt0, np.int64)  # uniform incremented sequence
@@ -597,21 +610,22 @@ def make_linear(tim: np.int64, freq: float, dt_big_hole=None) -> True:
 
     return True  # tim
 
-@njit
-def is_works(s):
+#@njit: Invalid use of <function diff> with argument(s) of type(s): (array(float64, 1d, A)) TypingError: Internal error at <numba.typeinfer.CallConstraint object at 0x000001F83B761B08> reshape() supports contiguous array only
+def is_works(s, noise=0):
     """
     Regions where data is changing
     :param s:
+    :param noise: minimum adjasent data changing when working
     :return:
     """
-    b = np.diff(s) != 0
+    b = np.abs(np.diff(s)) > noise
     for stride in [16, 32]:
-        bnext = (np.diff(s[::stride]) != 0).repeat(stride)
+        bnext = (np.abs(np.diff(s[::stride])) > noise).repeat(stride)
         b[:bnext.size] = np.logical_or(b[:bnext.size], bnext)
 
     return np.pad(b, (1, 0), 'edge')
 
-@njit
+#@njit: TypeError: np_unique() got an unexpected keyword argument 'return_index'
 def mode(a):
     """
     stackoverflow.com/questions/6252280/find-the-most-frequent-number-in-a-numpy-vector
@@ -623,7 +637,7 @@ def mode(a):
     mode = a[index]
     return index, mode
 
-@njit
+#@njit: TypeError: np_unique() got an unexpected keyword argument 'return_index'
 def too_frequent_values(a, max_portion_allowed=0.5):
     """
     Find ubnormal frequent (bad) values in data and return musk where it is
@@ -643,8 +657,8 @@ def too_frequent_values(a, max_portion_allowed=0.5):
         for i, m in zip(i_uniq[use_uniq], m_all):
             bbad[a == m] = True
 
-        print('too_frequent_values detected: [', ','.join(['{:.3g}'.format(m) for m in m_all]),
-            f'] (last alternates {bad_portion[m_all.size - 1]:.1g}%)', sep='')  #l.info()
+        print('too_frequent_values detected: ', np.around(m_all, 3),  #'[' ','.join(['{:.3g}'.format(m) for m in m_all] ']'
+            '(last alternates', np.around(bad_portion[m_all.size - 1], 1), '%')  #l.info()
     else:
         if __debug__:
             i = np.argmax(n_uniq)
@@ -844,7 +858,7 @@ def waveletSmooth(y, wavelet="db4", level=1, ax=None, label=None, x=None, color=
 
 # -------------------------------------------------------------------------
 # Despiking
-@njit
+#@njit  TypeError: as_strided() got an unexpected keyword argument 'writeable'
 def rolling_window(x, block):
     """
     :param x:
@@ -855,7 +869,7 @@ def rolling_window(x, block):
     strides = x.strides + (x.strides[-1],)
     return np.lib.stride_tricks.as_strided(x, shape=shape, strides=strides, writeable=False)
 
-@njit
+#@njit: gaussian_filter1d() not supported
 def despike(x: np.ndarray,
             offsets: Tuple[int, ...] = (2, 20),
             blocks: int = 10,
@@ -869,11 +883,12 @@ def despike(x: np.ndarray,
     :param block: filter window width
     :param ax: if not None then plots source and x averaged(blocks) on provided ax
     :param label: if not None then allow plots. If bool(label) result will be plotted with label legend
-    :param std_smooth_sigma:
+    :param std_smooth_sigma: gaussian smooth parameter, if not None std will be smoothed before multiply to offset and compare to |data - <data>|.
     :param x_plot: x data to plot y
     :return y: x with spikes replaced by NaNs
     """
-
+    if not len(offsets):
+        return x, ax
     offsets_blocks = np.broadcast(offsets, blocks)
     # instead of using NaNs because of numpy warnings on compare below
     y = np.ma.fix_invalid(x,
@@ -916,21 +931,18 @@ def despike(x: np.ndarray,
         if __debug__:
             n_filtered.append(y.mask.sum())
             if ax is not None:
-                with objmode():
-                    ax.plot(x_plot, mean, color=colors[i % 3], alpha=0.3,
-                            label=(label if label is not None else '') + f'_mean({block})')
+                ax.plot(x_plot, mean, color=colors[i % 3], alpha=0.3,
+                        label='{}_mean({})'.format(label if label is not None else '', block))
     y = np.ma.filled(y, fill_value=np.NaN)
     if __debug__:
         print('despike(offsets=', offsets, ', blocks=', blocks, ') deletes', n_filtered, ' points')
         if ax is not None:
-            with objmode():
-                ax.plot(x_plot, y, color='g',
-                        label=f'despike{blocks}{offsets}({label})')
-                ax.set_xlim((0, len(y)))
+            ax.plot(x_plot, y, color='g', label=f'despike{blocks}{offsets}({label})')
+            ax.set_xlim((0, len(y)))
 
     return y, ax
 
-@njit
+#@njit: Use of unsupported NumPy function 'numpy.einsum' or unsupported use of the function
 def closest_node(node, nodes):
     """
     see also inearestsorted()
@@ -944,7 +956,7 @@ def closest_node(node, nodes):
     dist_2 = np.einsum('ij,ij->j', deltas, deltas)
     return np.argmin(dist_2)
 
-@njit
+#@njit "Invalid use of function searchsorted with argument(s) of type(s): (array(datetime64[ns], 1d, C), array(datetime64[ns], 1d, C))"
 def inearestsorted(array, values):
     """
     Find nearest values in sorted numpy array
@@ -977,7 +989,7 @@ def inearestsorted(array, values):
 #             idx_nearest = idx_sorted[idx]
 #     return idx_nearest
 
-@njit
+#@njit: Invalid use of Function(<function searchsorted at 0x0000021673822E58>) with argument(s) of type(s): (array(datetime64[ns], 1d, C), array(datetime64[ns], 1d, C))
 def inearestsorted_around(array, values):
     """
     Find nearest values before and after of each values in sorted numpy array
@@ -1014,16 +1026,17 @@ def search_sorted_closest(sorted_array, value):
     return inav_close
 
 
-def check_time_diff(t_queried: Union[pd.Series, np.ndarray],
-                    t_found: Union[pd.Series, np.ndarray],
+def check_time_diff(t_queried: Union[pd.Series, np.ndarray], t_found: Union[pd.Series, np.ndarray],
                     dt_warn: Union[pd.Timedelta, np.timedelta64],
-                    mesage: str = 'Bad nav. data coverage: difference to nearest point in time [min]:') -> np.ndarray:
+                    mesage: str = 'Bad nav. data coverage: difference to nearest point in time [min]:',
+                    return_diffs: bool = False) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
     """
     Check time difference between found and requested time points and prints info if big difference is found
     :param t_queried: pandas TimeSeries or numpy array of 'datetime64[ns]'
     :param t_found:   pandas TimeSeries or numpy array of 'datetime64[ns]'
     :param dt_warn: pd.Timedelta - prints info about bigger differences found only
-    :return: mask where time difference is bigger than ``dt_warn``
+    :param return_diffs: if True also returns time differences (t_found - t_queried_values, 'timedelta64[ns]')
+    :return: mask where time difference is bigger than ``dt_warn`` and time differences if return_diffs=True
     """
     try:
         if not np.issubdtype(t_queried.dtype, np.dtype('datetime64[ns]')):  # isinstance(, ) pd.Ti
@@ -1042,7 +1055,7 @@ def check_time_diff(t_queried: Union[pd.Series, np.ndarray],
                 np.flatnonzero(bbad), t_queried[bbad], np.where(dT[bbad].astype(np.int64) < 0, '-', '+'),
                 np.abs(dT[bbad]) / np.timedelta64(1, 's'))])
         l.warning(mesage)
-    return (bbad)
+    return (bbad, dT) if return_diffs else bbad
 
 
 # ##############################################################################
@@ -1119,34 +1132,34 @@ def find_sampling_frequency(tim: np.ndarray,
     :param tim: time, Note: bad time values (NaT) will be indicated as inversions!
     :param precision: If tim in int64 nanoseconds then set precision in [log10(s)]
     :param b_show:
-    :return: (freq, kInterp, nDecrease, b_ok):
+    :return: (freq, n_same, n_decrease, b_ok):
         freq: frequency, Hz
-        kInterp: number of nonincreased elements found
-        nDecrease: number of decreased elements found
+        n_same: number of nonincreased elements found
+        n_decrease: number of decreased elements found
         b_ok_out: bool_, increased elements mask of size tim
 
-       Prints nDecrease ' time inversions detected!'
-       and kInterp '% nonincreased'
+       Prints n_decrease ' time inversions detected!'
+       and n_same '% nonincreased'
     """
 
     # diff(tim) should be approcsimately constant but can have some big spykes and many zeros
     # We have tipically the folowing time difference dt between counts:
-    #  dt
-    #     |             |             |
-    #  0 _|____|____|___|____|____|___|_
-    #    ............................... counts
+    # ^ dt
+    # |    |             |             |
+    # | 0 _|____|____|___|____|____|___|_
+    #     ............................... counts
     #    xx          xxxx          xxxx - what we should exclude to average all other dt*
-    # where zeros because bad data resolutions and big values bcause of data recorded in packets
+    # where zeros because bad data resolutions and big values because of data recorded in packets
     #
     # *If time generated by device start of packet is measured exactly
-    nDecrease = 0
-    kInterp = 0
+    n_decrease = 0
+    n_same = 0
     if tim.size < 2:
         with objmode():
             l.warning('can not find freq')
         freq = np.NaN
         b_ok_out = np.ones(1, dtype=np.bool_)
-        return freq, kInterp, nDecrease, b_ok_out
+        return freq, n_same, n_decrease, b_ok_out
 
     dt = np.ediff1d(tim.view(np.int64), to_end=0)
     b_ok_out = dt >= 0
@@ -1154,8 +1167,8 @@ def find_sampling_frequency(tim: np.ndarray,
     bBad = dt < 0
     bAnyDecreased = bBad.any()
     if bAnyDecreased:
-        nDecrease = bBad.sum()
-        print(nDecrease, 'time inversions detected!')
+        n_decrease = bBad.sum()
+        print(n_decrease, 'time inversions detected!')
         # ignore all this:
         # - may be splitted different data in backward order
         # - may be this data with different frequencies
@@ -1167,49 +1180,56 @@ def find_sampling_frequency(tim: np.ndarray,
         bAnyDecreased = bBad.any()
         if bAnyDecreased:
             dt = dt[~bBad]
-            nDecrease = bBad.sum()
-            print(nDecrease, 'time inversions that are not single spykes!')
+            n_decrease = bBad.sum()
+            print(n_decrease, 'time inversions that are not single spykes!')
 
     # Find freq
     b_ok = dt > 0  # all increased positions
     n_increased = b_ok.sum()
     if n_increased < 2:
         with objmode():
-            l.warning('can not find freq where Time have lass than 2 increased values')
+            l.warning("Can't find freq if Time have less than 2 increased values!")
         freq = np.NaN
         b_ok_out = np.ones(1, dtype=np.bool_)
-        return freq, kInterp, nDecrease, b_ok_out
+        return freq, n_same, n_decrease, b_ok_out
 
-    n_not_increased = dt.size - n_increased
-    if n_not_increased > 0:
-        kInterp = n_not_increased / np.float64(dt.size)
-        print(round(100 * kInterp, 1), '% nonincreased...')
-    iSt = np.flatnonzero(b_ok)  # where time increased (allowed by time resolution)
-    dtInc = dt[b_ok]
-    bGoodSt = dtInc < (dtInc.mean() + dt64_1s * 10 ** precision)    # where time is changed but not packets starts
+    n_same = dt.size - n_increased
+    if n_same > 0:
+        n_same_r = n_same / np.float64(dt.size)
+        print(round(100 * n_same_r, 1), '% nonincreased...')
 
-    # number of elements between increased elements excluding packets starts:
-    dSt = np.diff(iSt)[bGoodSt[:-1] & bGoodSt[1:]]
-    bGoodSt[-1] = False                                 # starts of nonincreased areas excluding last that could be cut
-    iFr = np.float64(dt64_1s) * dSt / dt[iSt[bGoodSt]]  # Hz, frequencies between
-    medFr = np.median(iFr)                              # get only most frequently used tim period
-    stdFr = iFr.std()
-    bGood = np.logical_and(medFr - stdFr * 3 < iFr, iFr < medFr + stdFr * 3)  # filtConstraints(iFr, minVal= medFr/3, maxVal= medFr*3)
+
+    # where time is increased (allowed by time resolution)
+    i_inc = np.flatnonzero(b_ok)
+    # number of elements between increased elements
+    di_inc = np.ediff1d(i_inc, 0)  # areas lengths, last is unknown is set to 0 but value will not be used
+    # not packets starts mask
+    dt_f = dt[b_ok]
+    b_f = dt_f < (dt_f.mean() + dt64_1s * 10 ** precision)
+    # exclude diffs corresponding to packets and also diffs to their starts & from ends because their starts and duration may be not in sync with time diffs of small resolution we dealing:
+    b_f[1:] &= b_f[:-1]
+    b_f[:-1] &= b_f[1:]
+    b_f[-1] = False  # excluding last area which length is unknown (could be cut)
+
+    freqs = np.float64(dt64_1s) * (di_inc / dt_f)[b_f]  # Hz, frequencies between
+    medFr = np.median(freqs)                              # get only most frequently used tim period
+    stdFr = freqs.std()
+    bGood = np.logical_and(medFr - stdFr * 3 < freqs, freqs < medFr + stdFr * 3)  # filtConstraints(freqs, minVal= medFr/3, maxVal= medFr*3)
 
     # mean(median smothed frequency of data) with frequency range [med_dt/3, med_dt*3]:
     if bGood.sum() > 1:
-        iFr = iFr[bGood]
-    freq = iFr.mean()
+        freqs = freqs[bGood]
+    freq = freqs.mean()
     freq = round(freq, int(max(precision, int(np.log10(freq)))))  # never round to 0
     if b_show:
         print('freq =', freq, 'Hz')
-    return freq, kInterp, nDecrease, b_ok_out
+    return freq, n_same, n_decrease, b_ok_out
 
 
 """
     dt64_1s = np.int64(1e9)
-    nDecrease = 0
-    kInterp = 0
+    n_decrease = 0
+    n_same_r = 0
     if Time.size < 2:
         freq = np.NaN
         b_ok = np.ones(1, dtype=np.bool_)
@@ -1221,8 +1241,8 @@ def find_sampling_frequency(tim: np.ndarray,
             bBad[~bBad] = dt < 0
             bAnyDecreased = np.any(bBad)
             if bAnyDecreased:
-                nDecrease = np.sum(bBad)
-                print(str(nDecrease) + ' time inversions detected!')
+                n_decrease = np.sum(bBad)
+                print(str(n_decrease) + ' time inversions detected!')
                 # ignore all this:
                 # - may be splitted different data in backward order
                 # - may be this data with different frequencies
@@ -1233,28 +1253,28 @@ def find_sampling_frequency(tim: np.ndarray,
             else:
                 break
         b_ok[bBad] = False
-        n_not_increased = np.size(dt) - np.sum(b_ok)
-        bAnyNonIncreased = n_not_increased > 0
+        n_same = np.size(dt) - np.sum(b_ok)
+        bAnyNonIncreased = n_same > 0
         if bAnyNonIncreased:
-            kInterp = np.float64(n_not_increased) / np.float64(dt.size)
-            print(str(round(100 * kInterp, 1)) + '% nonincreased elements considered')
-        iSt = np.flatnonzero(~bBad[b_ok&~bBad])  # where time increased (allowed by time resolution)
-        dtInc = dt[dt>0]
-        bGoodSt = dtInc < (dtInc.mean() + dt64_1s * 10 ** precision)  # not packet starts in iSt array
+            n_same_r = np.float64(n_same) / np.float64(dt.size)
+            print(str(round(100 * n_same_r, 1)) + '% nonincreased elements considered')
+        i_inc = np.flatnonzero(~bBad[b_ok&~bBad])  # where time increased (allowed by time resolution)
+        dt_f = dt[dt>0]
+        b_f = dt_f < (dt_f.mean() + dt64_1s * 10 ** precision)  # not packet starts in i_inc array
         # number of elements between increased elements excluding packets starts:
-        dSt = np.diff(np.hstack((-1, iSt)))[bGoodSt]
-        iFr = np.float64(dt64_1s) * dSt / dt[iSt[bGoodSt]]  # Hz, frequencies between
-        medFr = np.median(iFr)  # get only most frequently used Time period
-        stdFr = np.std(iFr)
-        bGood = np.logical_and(medFr - stdFr * 3 < iFr,
-                               iFr < medFr + stdFr * 3)  # filtConstraints(iFr, minVal= medFr/3, maxVal= medFr*3)
+        di_inc = np.diff(np.hstack((-1, i_inc)))[b_f]
+        freqs = np.float64(dt64_1s) * di_inc / dt[i_inc[b_f]]  # Hz, frequencies between
+        medFr = np.median(freqs)  # get only most frequently used Time period
+        stdFr = np.std(freqs)
+        bGood = np.logical_and(medFr - stdFr * 3 < freqs,
+                               freqs < medFr + stdFr * 3)  # filtConstraints(freqs, minVal= medFr/3, maxVal= medFr*3)
 
         # mean(median smothed frequency of data) with frequency range [med_dt/3, med_dt*3]:
         if np.sum(bGood) > 1:
-            iFr = iFr[bGood]
-        freq = np.mean(iFr)
+            freqs = freqs[bGood]
+        freq = np.mean(freqs)
         freq = np.round(freq, int(max(precision, np.fix(np.log10(freq)))))  # never round to 0
     if b_show:
         print('freq = ' + str(freq) + 'Hz')
-    return freq, kInterp, nDecrease, b_ok
+    return freq, n_same_r, n_decrease, b_ok
 """

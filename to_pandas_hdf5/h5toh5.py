@@ -275,7 +275,7 @@ def h5sel_interpolate(i_queried, store, tbl_name, columns=None, time_points=None
     :param method: see pandas interpolate but most likely only 'linear' is relevant for 2 closest points
     :return: pandas Dataframe with out_cols columns
     """
-
+    l.info('time interpolating...')
     df = store.select(tbl_name, where=i_queried, columns=columns)
     if not (isinstance(time_points, pd.DatetimeIndex) or isinstance(time_points, pd.Timestamp)):
         t = time_points = pd.DatetimeIndex(time_points, tz=df.index.tz)  # to_datetime(t).tz_localize(tzinfo)
@@ -286,7 +286,7 @@ def h5sel_interpolate(i_queried, store, tbl_name, columns=None, time_points=None
     # except TypeError as e:  # if Cannot join tz-naive with tz-aware DatetimeIndex
     #     new_index = timzone_view(df.index, dt_from_utc=0) | pd.Index(timzone_view(time_points, dt_from_utc=0))
 
-    df_interp_s = df.reindex(new_index).interpolate(method=method, )  # why not works ﬁll_value=new_index[[0,-1]]?
+    df_interp_s = df.reindex(new_index).interpolate(method=method, )  # why not works fill_value=new_index[[0,-1]]?
     df_interp = df_interp_s.loc[t]
     return df_interp
 
@@ -299,7 +299,7 @@ def h5select(store: pd.HDFStore,
              query_range_lims: Optional[Union[np.ndarray, pd.Series, Sequence[int]]] = None,
              query_range_pattern="index>=Timestamp('{}') & index<=Timestamp('{}')",
              time_ranges=None,
-             interpolate='linear') -> pd.DataFrame:
+             interpolate='linear') -> Union[pd.DataFrame, Tuple[pd.DataFrame, np.ndarray]]:
     """
     Get hdf5 data with index near time points or between time ranges, optionly in specified query range
     for less memory loading
@@ -309,10 +309,11 @@ def h5select(store: pd.HDFStore,
     :param time_points: array of values numpy.dtype('datetime64[ns]') to return rows with closest index. If None then uses time_ranges
     :param time_ranges: array of values to return rows with index between. Used if time_points is None
     :param dt_check_tolerance: pd.Timedelta, display warning if found index far from requested values
-    :param query_range_lims: optional limits to reduce size of intermediate loading index
+    :param query_range_lims: data range if no time_ranges nor time_points, for time_points can be used to reduce size of intermediate loading index
     :param query_range_pattern: optional format pattern for query_range_lims
     :param interpolate: str: see pandas interpolate. If not interpolate, then return closest points
-    :return: pandas Dataframe
+    :return: (df, bbad): df - table of found points, bbad - boolean array returned by other_filters.check_time_diff() or
+              df - dataframe of query_range_lims if no time_ranges nor time_points
     """
     # h5select(store, cfg['in']['table_nav'], ['Lat', 'Lon', 'DepEcho'], dfL.index, query_range_lims=(dfL.index[0], dfL['DateEnd'][-1]), query_range_pattern=cfg['process']['dt_search_nav_tolerance'])
     q_time = time_ranges if time_points is None else time_points
@@ -323,7 +324,7 @@ def h5select(store: pd.HDFStore,
         except TypeError:  # not numpy 'datetime64[ns]'
             q_time = q_time.values
     else:
-        df = store.select(tbl_name, where=query_range_pattern.format(*query_range_lims), columns=columns)
+        df = store.select(tbl_name, where=query_range_pattern.format(*query_range_lims) if query_range_pattern else None, columns=columns)
         return df
 
     # Get index only and find indexes of data
@@ -333,19 +334,31 @@ def h5select(store: pd.HDFStore,
     if time_ranges:  # fill indexes inside itervals
         i_queried = np.hstack(np.arange(*se) for se in zip(i_queried[:-1], i_queried[1:] + 1))
 
-    bbad = check_time_diff(t_queried=q_time, t_found=df0.index[i_queried].values,
-                           dt_warn=dt_check_tolerance)
+    bbad, dt = check_time_diff(t_queried=q_time, t_found=df0.index[i_queried].values, dt_warn=dt_check_tolerance, return_diffs=True)
 
     if any(bbad) and interpolate:
         i_queried = inearestsorted_around(df0.index.values, q_time)
         i_queried += i_start
-        df = h5sel_interpolate(i_queried, store, tbl_name, columns=None, time_points=q_time, method='linear')
+        df = h5sel_interpolate(i_queried, store, tbl_name, columns=columns, time_points=q_time, method='linear')
     else:
         i_queried += i_start
         df = store.select(tbl_name, where=i_queried, columns=columns)
 
-    return df
+    return df, dt
+    # df_list = []
+    # for t_interval in (lambda x=iter(t_intervals): zip(x, x))():
+    #     df_list.append(h5select(
+    #         store, table, query_range_lims=t_interval,
+    #         interpolate=None, query_range_pattern=query_range_pattern
+    #         )[0])
+    # df = pd.concat(df_list, copy=False)
 
+    # with pd.HDFStore(cfg['in']['db_path'], mode='r') as storeIn:
+    #     try:  # Sections
+    #         df = storeIn[cfg['in']['table_sections']]  # .sort()
+    #     except KeyError as e:
+    #         l.error('Sections not found in {}!'.format(cfg['in']['db_path']))
+    #         raise e
 
 def h5find_tables(store: pd.HDFStore, pattern_tables: str, parent_name=None) -> List[str]:
     """
@@ -419,11 +432,8 @@ def h5temp_open(cfg_out: Dict[str, Any]) -> Optional[pd.DataFrame]:
         try:  # open temporary output file
             if os_path.isfile(cfg_out['db_path_temp']):
                 cfg_out['db'] = pd.HDFStore(cfg_out['db_path_temp'])
-
                 if not cfg_out['b_use_old_temporary_tables']:
-                    for tbl in (cfg_out['tables'] + cfg_out['tables_log']):
-                        if tbl:  # cfg_out['db']?:
-                            h5remove_table(cfg_out, tbl)
+                    h5remove_tables(cfg_out)
         except IOError as e:
             print(e)
 
@@ -442,7 +452,7 @@ def h5temp_open(cfg_out: Dict[str, Any]) -> Optional[pd.DataFrame]:
                                     h5sort_pack(cfg_out['db_path'], os_path.basename(
                                         cfg_out['db_path_temp']), tbl)
                                 else:
-                                    raise HDF5ExtError('Table {} not exist'.format(tbl))
+                                    raise HDF5ExtError(f'Table {tbl} does not exist')
                             except HDF5ExtError as e:
                                 if tbl in storeOut.root.__members__:
                                     print('Node exist but store is not conforms Pandas')
@@ -498,24 +508,7 @@ def h5temp_open(cfg_out: Dict[str, Any]) -> Optional[pd.DataFrame]:
         else:
             df_log = None
             if not cfg_out['b_use_old_temporary_tables']:  # Remove existed tables to write
-                name_prev = ''                                # used to filter already deleted children (how speed up?)
-                for tbl in sorted(cfg_out['tables'] + cfg_out['tables_log'] ):
-                    if len(name_prev) < len(tbl) and tbl.startswith(name_prev) and tbl[len(name_prev)] == '/':  # filter
-                        continue                              # parent of this nested have deleted on previous iteration
-                    for i in range(1, 4):
-                        try:
-                            h5remove_table(cfg_out, tbl)
-                            name_prev = tbl
-                            break
-                        except ClosedFileError as e:  # file is not open
-                            l.error('wating {}s (/3) because of error: {}'.format(i, str(e)))
-                            sleep(i)
-                        # except HDF5ExtError as e:
-                        #     break  # nothing to remove
-                    else:
-                        l.error('not successed => Reopening...')
-                        cfg_out['db'] = pd.HDFStore(cfg_out['db_path_temp'])
-                        h5remove_table(cfg_out, tbl)
+                h5remove_tables(cfg_out)
 
     except HDF5ExtError as e:
         if cfg_out['db']:
@@ -573,6 +566,34 @@ def h5remove_table(cfg_out, node: Optional[str] = None):
         except KeyError:
             raise HDF5ExtError('Can not remove table "{}"'.format(node))
 
+
+def h5remove_tables(cfg_out):
+    """
+    Removes tables and tables_log from db with retrying if error. Flashes operations
+    :param cfg_out: with fields:
+    - tables, tables_log: tables names
+    - db: hdf5 store
+    :return:
+    """
+    name_prev = ''  # used to filter already deleted children (how speed up?)
+    for tbl in sorted(cfg_out['tables'] + cfg_out['tables_log']):
+        if len(name_prev) < len(tbl) and tbl.startswith(name_prev) and tbl[len(name_prev)] == '/':  # filter
+            continue  # parent of this nested have deleted on previous iteration
+        for i in range(1, 4):
+            try:
+                h5remove_table(cfg_out, tbl)
+                name_prev = tbl
+                break
+            except ClosedFileError as e:  # file is not open
+                l.error('wating %s (/3) because of error: %s', i, str(e))
+                sleep(i)
+            # except HDF5ExtError as e:
+            #     break  # nothing to remove
+        else:
+            l.error('not successed => Reopening...')
+            cfg_out['db'] = pd.HDFStore(cfg_out['db_path_temp'])
+            h5remove_table(cfg_out, tbl)
+    cfg_out['db'].flush()
 
 # ----------------------------------------------------------------------
 class TemporaryMoveChilds:
@@ -718,15 +739,24 @@ def h5move_tables(cfg_out, tbl_names=None):
     else:
         raise Ex_nothing_done('no tables to move')
 
-    # Check if table to write have different columns (why? - h5sort_pack not removes columns metaddata?)
+    # Check if table to write is ok
     with pd.HDFStore(cfg_out['db_path']) as store, pd.HDFStore(cfg_out['db_path_temp']) as store_in:
-        if (tbl in store) and (tbl in store_in) and store[tbl] is not None:
-            if set(store[tbl].columns) != set(store_in[tbl].columns):
-                l.warning(
-                    'removing %s table from %s having different columns. Note: checking implemented only for 1st table!',
-                    cfg_out['tables'][0], cfg_out['db_path'])
-                cfg_out['db'] = store
-                h5remove_table(cfg_out, cfg_out['tables'][0])
+        try:
+            out_is_bad = (not ((tbl in store) and (tbl in store_in))) or store[tbl] is None
+        except TypeError:
+            out_is_bad = True
+
+        if out_is_bad:
+            l.warning('Removing %s table %s because it is not pandas', cfg_out['tables'][0], cfg_out['db_path'])
+        elif set(store[tbl].columns) != set(store_in[tbl].columns):
+            # Out table have different columns (why? - h5sort_pack not removed columns metaddata?)
+            out_is_bad = True
+            l.warning(
+                'removing %s table from %s having different columns. Note: checking implemented only for 1st table!',
+                cfg_out['tables'][0], cfg_out['db_path'])
+        if out_is_bad:
+            cfg_out['db'] = store
+            h5remove_table(cfg_out, cfg_out['tables'][0])
 
     for tbl in tables:
         try:

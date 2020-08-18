@@ -71,7 +71,7 @@ try:
         except KeyError as e:
             print('Sections not found in DataBase')
             raise e
-        iStEn, b_navp_all_exclude, ddist_all = sec_edges(df_points, cfg['gpx'])
+        iStEn, b_navp_all_exclude, _ = sec_edges(df_points, cfg['gpx'])
         dfpExclude = df_points[b_navp_all_exclude]
         df_points = df_points[~b_navp_all_exclude]
 

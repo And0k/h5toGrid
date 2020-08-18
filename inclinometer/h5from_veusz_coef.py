@@ -12,7 +12,7 @@ import logging
 import re
 import sys
 from pathlib import Path
-
+from datetime import datetime
 import h5py
 import numpy as np
 import pandas as pd
@@ -22,7 +22,6 @@ sys.path.append(str(Path(__file__).parent.parent.resolve()))
 from utils2init import cfg_from_args, this_prog_basename, init_file_names, init_logging, Ex_nothing_done, \
     set_field_if_no, \
     path_on_drive_d
-from veuszPropagate import my_argparser, load_to_veusz, load_vsz_closure, ge_names, __file__ as file_veuszPropagate
 import veuszPropagate
 from inclinometer.h5inclinometer_coef import h5copy_coef
 from inclinometer.incl_calibr import channel_cols
@@ -48,7 +47,7 @@ def main(new_arg=None):
     :return:
     """
     global l
-    p = my_argparser()
+    p = veuszPropagate.my_argparser()
     p_groups = {g.title: g for g in p._action_groups if
                 g.title.split(' ')[-1] != 'arguments'}  # skips special argparse groups
     p_groups['in'].add(
@@ -72,6 +71,8 @@ def main(new_arg=None):
         help='regex to extract hdf5 table name from to Veusz file name (last used "\D*\d*")'
         # ? why not simly specify table name?
         )
+    # todo:  "b_update_existed" arg will be used here for exported images. Check whether False works or prevent open vsz
+
     cfg = cfg_from_args(p, new_arg)
 
     if not Path(cfg['program']['log']).is_absolute():
@@ -83,6 +84,7 @@ def main(new_arg=None):
         return cfg
 
     l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+    veuszPropagate.l = l
     print('\n' + this_prog_basename(__file__), 'started', end=' ')
     if cfg['output_files']['b_images_only']:
         print('in images only mode.')
@@ -102,14 +104,15 @@ def main(new_arg=None):
     except Ex_nothing_done as e:
         print(e.message)
         return  # or raise FileNotFoundError?
-
+    if not cfg['output_files']['export_dir']:
+        cfg['output_files']['export_dir'] = Path(cfg['output_files']['path']).parent
     if cfg['program']['before_next'] and 'restore_config' in cfg['program']['before_next']:
         cfg['in_saved'] = cfg['in'].copy()
     # cfg['loop'] = asyncio.get_event_loop()
     # cfg['export_timeout_s'] = 600
 
-    veuszPropagate.load_vsz = load_vsz_closure(cfg['program']['veusz_path'])
-    gen_veusz_and_logs = load_to_veusz(ge_names(cfg), cfg, None)
+    veuszPropagate.load_vsz = veuszPropagate.load_vsz_closure(cfg['program']['veusz_path'])
+    gen_veusz_and_logs = veuszPropagate.load_to_veusz(veuszPropagate.ge_names(cfg), cfg, None)
 
     names_get = ['Inclination_mean_use1', 'logVext1_m__s']  # \, 'Inclination_mean_use2', 'logVext2_m__s'
     names_get_fits = ['fit']  # , 'fit2'
@@ -152,7 +155,7 @@ def main(new_arg=None):
             h5copy_coef(None, cfg['output_files']['path'], table,
                         dict_matrices={f'//coef//Vabs{i}': coef_list,
                                        f'//coef//date': np.float64(
-                                           [np.NaN, np.datetime64(pd.datetime.now()).astype(np.int64)])})
+                                           [np.NaN, np.datetime64(datetime.now()).astype(np.int64)])})
             # h5savecoef(cfg['output_files']['path'], path=f'//{table}//coef//Vabs{i}', coef=coef_list)
             txt_results[names_get_txt_results[i]][table] = str(coef)
 
@@ -193,6 +196,9 @@ def main(new_arg=None):
 
         # veusze.Root['fitV(inclination)']['grid1']['graph2'][name_out].function.val
         print(vsz_data)
+        veuszPropagate.export_images(veusze, cfg['output_files'], f"_{log['out_name']}",
+         b_skip_if_exists=not cfg['output_files']['b_update_existed'])
+
         # vsz_data = veusz_data(veusze, cfg['in']['data_yield_prefix'])
         # # caller do some processing of data and gives new cfg:
         # cfgin_update = yield(vsz_data, log)  # to test run veusze.Save('-.vsz')
@@ -238,7 +244,7 @@ if __name__ == '__main__':
     #     cfg_out_db_path = Path(cfg_in['path']).parent / cfg_out_db_path
     # d:\workData\_experiment\_2018\inclinometr\180731_KTI\*.vsz
 
-    main([str(Path(file_veuszPropagate).with_name('veuszPropagate.ini')),
+    main([str(Path(veuszPropagate.__file__).with_name('veuszPropagate.ini')),
           '--data_yield_prefix', 'Inclination',
           '--path', str(cfg_in['path']),
           '--pattern_path', str(cfg_in['path']),

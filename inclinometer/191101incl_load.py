@@ -41,7 +41,7 @@ import inclinometer.incl_h5clc as incl_h5clc
 import inclinometer.incl_h5spectrum as incl_h5spectrum
 import veuszPropagate
 from utils_time import pd_period_to_timedelta
-from utils2init import path_on_drive_d, init_logging, open_csv_or_archive_of_them, st, set_field_if_no
+from utils2init import path_on_drive_d, init_logging, open_csv_or_archive_of_them, st
 
 # l = logging.getLogger(__name__)
 l = init_logging(logging, None, None, 'INFO')
@@ -50,16 +50,19 @@ if True:  # False. Experimental speedup but takes memory
     from dask.cache import Cache
     cache = Cache(2e9)  # Leverage two gigabytes of memory
     cache.register()    # Turn cache on globally
-if False:  # False. True
+if False:  #  True:  # False:  #
     l.warning('using "synchronous" scheduler for debugging')
     import dask
     dask.config.set(scheduler='synchronous')
 
 # Directory where inclinometer data will be stored
-path_cruise = path_on_drive_d(r'd:\WorkData\BalticSea\200514_Pregolya,Lagoon-inclinometer'
+path_cruise = path_on_drive_d(r'd:\WorkData\BalticSea\200628_Pregolya,Lagoon-inclinometer'
                               )
 
 r"""
+d:\WorkData\BalticSea\200630_AI55\inclinometer
+d:\WorkData\_experiment\_2019\inclinometer\200610_tank_ex[4,5,7,9,10,11][3,12,13,14,15,16,19]
+d:\WorkData\BalticSea\200514_Pregolya,Lagoon-inclinometer
 d:\WorkData\BalticSea\200317_Pregolya,Lagoon-inclinometer
 d:\WorkData\BalticSea\191210_Pregolya,Lagoon-inclinometer
 d:\WorkData\_experiment\_2019\inclinometer\200117_tank[23,30,32]
@@ -95,21 +98,18 @@ dt_from_utc = defaultdict(
 )
 """
 # Pattern modifier to search row data in archives under _row subdir. Set to '' if data unpacked.
-raw_archive_name = 'Преголя и залив №3.rar'  # 'Преголя и залив №2.rar'
+raw_archive_name = 'INKL_009.rar'
+# 'Преголя и залив №4.rar', 'INKL_014.ZIP', 'экс2кти100620.zip' 'Преголя и залив №3.rar' 'Преголя и залив №2.rar'
+
 # Note: Not affects steps 2, 3, set empty list to load all:
-probes = []  # 7, 23, 30, 32  [3, 13] [7][12,19,14,15,7,11,4,9]  [11, 9, 10, 5, 13, 16] range(1, 20)  #[2]   #  [29, 30, 33][3, 16, 19]   # [4, 14]  #  [9] #[1,4,5,7,11,12]  # [17, 18] # range(30, 35) #  # [10, 14] [21, 23] #   [25,26]  #, [17, 18]
+probes = []  # 14, 7, 23, 30, 32  [3, 13] [7][12,19,14,15,7,11,4,9]  [11, 9, 10, 5, 13, 16] range(1, 20)  #[2]   #  [29, 30, 33][3, 16, 19]   # [4, 14]  #  [9] #[1,4,5,7,11,12]  # [17, 18] # range(30, 35) #  # [10, 14] [21, 23] #   [25,26]  #, [17, 18]
 # set None for auto:
 db_name = None  # '191210incl.h5'  # 191224incl 191108incl.h5 190806incl#29,30,33.h5 190716incl 190806incl 180418inclPres
-prefix = 'incl'  # 'incl' or 'w'  # table name prefix in db and in raw files (to find raw fales name case will be UPPER anyway): 'incl' - inclinometer, 'w' - wavegauge
 
-dir_incl = '' if 'inclinometer' in str(path_cruise) else 'inclinometer'
-if not db_name:  # then name by cruise dir:
-    db_name = re.match('(^[\d_]*).*', (path_cruise.parent if dir_incl else path_cruise).name
-                       ).group(1).strip('_') + 'incl.h5'  # group(0) if db name == cruise dir name
-db_path = path_cruise / db_name  # _z  '190210incl.h5' 'ABP44.h5', / '200514incl_experiment.h5'
-# dafault and specific to probe limits (use i_proc_file instead probe if many files for same probe)
+# dafault and specific to probe limits (use "i_proc_file" index instead "probe" if many files for same probe)
 date_min = defaultdict(
-    lambda: '2020-05-14T13:00', {
+    lambda: '2020-06-28T18:00', {
+#'2020-06-28T15:30','2020-06-30T22:00','2020-05-14T13:00'
 # 13: '2020-05-14T11:49:00',
 # 3: '2020-05-14T12:02:50',
 # 7: '2020-05-14T12:15:40',
@@ -119,7 +119,8 @@ date_min = defaultdict(
 #  '2020-03-17T13:00','2019-12-10T13:00','2020-01-17T13:00''2019-08-07T14:10:00''2019-11-19T16:00''2019-11-19T12:30''2019-11-08T12:20' 2019-11-08T12:00 '2019-11-06T12:35''2019-11-06T10:50''2019-07-16T17:00:00' 2019-06-20T14:30:00  '2019-07-21T20:00:00', #None,
 # 0: #'2019-08-07T16:00:00' '2019-08-17T18:00', 0: '2018-04-18T07:15',# 1: '2018-05-10T15:00',
 
-date_max = defaultdict(lambda: 'now', {
+date_max = defaultdict(lambda: '2020-07-27T09:00', {  # 'now'
+# '2020-06-28T16:30','2020-07-13T14:10'
 # 13: '2020-05-14T12:02',
 # 3: '2020-05-14T12:15',
 # 7: '2020-05-14T12:24',
@@ -129,13 +130,18 @@ date_max = defaultdict(lambda: 'now', {
 # '2019-12-26T16:00','2020-01-17T17:00''2019-09-09T17:00:00', #'2019-12-04T00:00', # 20T14:00 # '2019-11-19T14:30',  '2019-11-06T13:34','2019-11-06T12:20' '2019-08-31T16:38:00' '2019-07-19T17:00:00', # '2019-08-18T01:45:00', # None,
 # 0:  # '2019-09-09T17:00:00' '2019-09-06T04:00:00' '2019-08-27T02:00', 0: '2018-05-07T11:55', # 1: '2018-05-30T10:30',
 
-
 # Run steps (inclusive):
-st.start = 2  # 1
-st.end = 2
+st.start = 2 # 1
+st.end = 1 # 3
 st.go = True  # False #
 
+prefix = 'incl'  # 'incl' or 'w'  # table name prefix in db and in raw files (to find raw fales name case will be UPPER anyway): 'incl' - inclinometer, 'w' - wavegauge
 
+dir_incl = '' if 'inclinometer' in str(path_cruise) else 'inclinometer'
+if not db_name:  # then name by cruise dir:
+    db_name = re.match('(^[\d_]*).*', (path_cruise.parent if dir_incl or path_cruise.name.startswith('inclinometer') else path_cruise).name
+                       ).group(1).strip('_') + 'incl.h5'  # group(0) if db name == cruise dir name
+db_path = path_cruise / db_name  # _z  '190210incl.h5' 'ABP44.h5', / '200514incl_experiment.h5'
 # ---------------------------------------------------------------------------------------------
 def fs(probe, name):
     if 'w' in name.lower():  # Baranov's wavegauge electronic
@@ -147,16 +153,16 @@ def fs(probe, name):
     return 4.8
 
 
-def datetime64_str(time_str: Optional[str] = None) -> str:
+def datetime64_str(time_str: Optional[str] = None) -> np.ndarray:
     """
-    Reformat time_str to ISO 8601 or to 'NaT'
+    Reformat time_str to ISO 8601 or to 'NaT'. Used here for input in funcs that converts str to numpy.datetime64
     :param time_str: May be 'NaT'
-    :return: string formatted by numpy. This makes it is accepted for input to funcs that converts str to numpy.datetime64.
+    :return: ndarray of strings (tested for 1 element only) formatted by numpy.
     """
     return np.datetime_as_string(np.datetime64(time_str, 's'))
 
 
-probes = probes or range(1, 40)  # sets default range, specify your values before line ---
+probes = probes or range(9, 40)  # sets default range, specify your values before line ---
 if st(1):  # Can not find additional not corrected files for same probe if already have any corrected in search path (move them out if need)
     i_proc_probe = 0  # counter of processed probes
     i_proc_file = 0  # counter of processed files
@@ -226,7 +232,7 @@ if st(1):  # Can not find additional not corrected files for same probe if alrea
 # Calculate velocity and average
 if st(2):
     # if aggregate_period_s is None then not average and write to *_proc_noAvg.h5 else loading from that h5 and writing to _proc.h5
-    for aggregate_period_s in [None, 300, 600]:  # 2,, 7200  # 600,  [None], [None, 2, 600, 3600 if 'w' in prefix else 7200], [3600]
+    for aggregate_period_s in [None, 2, 600, 3600 if 'w' in prefix else 7200]:  # 2,, 7200  # 300, 600,  [None], [None, 2, 600, 3600 if 'w' in prefix else 7200], [3600]
         if aggregate_period_s is None:
             db_path_in = db_path
             db_path_out = db_path.with_name(f'{db_path.stem}_proc_noAvg.h5')
@@ -258,7 +264,7 @@ if st(2):
                 ] if prefix == 'incl' else
                 ['--bad_p_at_bursts_starts_peroiod', '1H',
                 ])
-            kwarg = {}  # 'in': {'timerange_zeroing': {'incl19': ['2019-11-14T06:30:00', '2019-11-14T06:50:00']}}
+            kwarg = {'in': {'timerange_zeroing': {'incl14': ['2020-07-10T21:31:00', '2020-07-10T21:39:00']}}}  #{} {'incl14': ['2019-11-14T06:30:00', '2019-11-14T06:50:00']}}}
         else:
             kwarg = {}
         # csv splitted by 1day (default for no avg) and monolit csv if aggregate_period_s==600

@@ -2,7 +2,7 @@
 # coding:utf-8
 """
   Author:  Andrey Korzh <ao.korzh@gmail.com>
-  Purpose: Convert (multiple) csv and alike text files to pandas hdf5 store with
+  Purpose: Convert (multiple) csv and alike text files to vaex hdf5 store with
            addition of log table
   Created: 26.02.2016
   Modified: 20.12.2019
@@ -21,8 +21,6 @@ from typing import Any, Callable, Iterator, Mapping, Optional, Sequence, Tuple, 
 import numpy as np
 import pandas as pd
 import vaex
-from clize import run, converters, parameters
-from sigtools.wrappers import decorator
 
 from utils2init import init_file_names, Ex_nothing_done, set_field_if_no, cfg_from_args, my_argparser_common_part, \
     this_prog_basename, init_logging, standard_error_info
@@ -561,92 +559,96 @@ def get_fun_proc_loaded_converters(
 import hydra
 from omegaconf import DictConfig
 
-@decorator
-def with_prog_config(
-        wrapped,
-        return_: parameters.one_of('<cfg_from_args>', '<gen_names_and_log>', '<end>')='<end>',
-        # b_interact=False,
-        # verbose=:
-        **kwargs):
-    """
-    overwrite command line arguments with program and in
-    :param wrapped:
-    :param return_: parameters.one_of('<cfg_from_args>', '<gen_names_and_log>', '<end>')='<end>',
-    :param in_:
-    :return:
-    """
-    global l
+try:
+    from clize import run, converters, parameters
+    from sigtools.wrappers import decorator
 
-    @hydra.main(config_path='to_pandas_hdf5/csv2h5_ini/csv2h5_vaex.yml')
-    def main_cfg(cfg: DictConfig):
+    @decorator
+    def with_prog_config(
+            wrapped,
+            return_: parameters.one_of('<cfg_from_args>', '<gen_names_and_log>', '<end>')='<end>',
+            # b_interact=False,
+            # verbose=:
+            **kwargs):
+        """
+        overwrite command line arguments with program and in
+        :param wrapped:
+        :param return_: parameters.one_of('<cfg_from_args>', '<gen_names_and_log>', '<end>')='<end>',
+        :param in_:
+        :return:
+        """
         global l
 
-        # cfg = cfg_from_args(my_argparser(), **kwargs)
-        if not cfg or not cfg['program'].get('return'):
-            print('Can not initialise')
+        @hydra.main(config_path='to_pandas_hdf5/csv2h5_ini/csv2h5_vaex.yml')
+        def main_cfg(cfg: DictConfig):
+            global l
+
+            # cfg = cfg_from_args(my_argparser(), **kwargs)
+            if not cfg or not cfg['program'].get('return'):
+                print('Can not initialise')
+                return cfg
+            elif cfg['program']['return'] == '<cfg_from_args>':  # to help testing
+                return cfg
+
+            l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+            print('\n' + this_prog_basename(__file__), end=' started. ')
+            try:
+                cfg['in'] = init_file_names(cfg['in'], cfg['program']['b_interact'])
+            except Ex_nothing_done as e:
+                print(e.message)
+                return ()
+
             return cfg
-        elif cfg['program']['return'] == '<cfg_from_args>':  # to help testing
-            return cfg
 
-        l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
-        print('\n' + this_prog_basename(__file__), end=' started. ')
-        try:
-            cfg['in'] = init_file_names(cfg['in'], cfg['program']['b_interact'])
-        except Ex_nothing_done as e:
-            print(e.message)
-            return ()
+        def wrap(**kwargs):
+            return wrapped(**main_cfg(kwargs))
 
-        return cfg
-
-    def wrap(**kwargs):
-        return wrapped(**main_cfg(kwargs))
-
-    return wrap
+        return wrap
 
 
-@decorator
-def with_in_config(
-        wrapped,
-        fun_proc_loaded=None,
-        **kwargs):
-    """
-        :param fun_proc_loaded: function(df: Dataframe, cfg_in: Optional[Mapping[str, Any]] = None) -> Dataframe/DateTimeIndex: to update/calculate new parameters from loaded data  before filtering. If output is Dataframe then function should have meta_out attribute which is Callable[[np.dtype, Iterable[str], Mapping[str, dtype]], Dict[str, np.dtype]]
-    """
+    @decorator
+    def with_in_config(
+            wrapped,
+            fun_proc_loaded=None,
+            **kwargs):
+        """
+            :param fun_proc_loaded: function(df: Dataframe, cfg_in: Optional[Mapping[str, Any]] = None) -> Dataframe/DateTimeIndex: to update/calculate new parameters from loaded data  before filtering. If output is Dataframe then function should have meta_out attribute which is Callable[[np.dtype, Iterable[str], Mapping[str, dtype]], Dict[str, np.dtype]]
+        """
 
 
-    def wrap(**kwargs):
-        # Prepare loading and writing specific to format
-        kwargs['in']['fun_proc_loaded'] = get_fun_proc_loaded_converters(**kwargs['in'])
-        kwargs['in'] = init_input_cols(**kwargs['in'])
+        def wrap(**kwargs):
+            # Prepare loading and writing specific to format
+            kwargs['in']['fun_proc_loaded'] = get_fun_proc_loaded_converters(**kwargs['in'])
+            kwargs['in'] = init_input_cols(**kwargs['in'])
 
-        return wrapped(**kwargs)
-
-
-    return wrap
-
-@with_in_config
-def main(cfg):
-    """
-    :param new_arg: list of strings, command line arguments
-
-    Note: if new_arg=='<cfg_from_args>' returns cfg but it will be None if argument
-     argv[1:] == '-h' or '-v' passed to this code
-    argv[1] is cfgFile. It was used with cfg files:
-        'csv2h5_nav_supervisor.ini'
-        'csv2h5_IdrRedas.ini'
-        'csv2h5_Idronaut.ini'
-
-    :return:
-    """
+            return wrapped(**kwargs)
 
 
+        return wrap
+
+    @with_in_config
+    def main(cfg):
+        """
+        :param new_arg: list of strings, command line arguments
+
+        Note: if new_arg=='<cfg_from_args>' returns cfg but it will be None if argument
+         argv[1:] == '-h' or '-v' passed to this code
+        argv[1] is cfgFile. It was used with cfg files:
+            'csv2h5_nav_supervisor.ini'
+            'csv2h5_IdrRedas.ini'
+            'csv2h5_Idronaut.ini'
+
+        :return:
+        """
 
 
+    def version():
+        """Show the version"""
+        return 'version {0}'.format(VERSION)
 
-def version():
-    """Show the version"""
-    return 'version {0}'.format(VERSION)
 
+    if __name__ == '__main__':
+        run(main, alt=version)
 
-if __name__ == '__main__':
-    run(main, alt=version)
+except ModuleNotFoundError as e:
+    print(standard_error_info(e))

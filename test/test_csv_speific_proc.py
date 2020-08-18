@@ -1,16 +1,16 @@
 # datafile = '/mnt/D/Work/_Python3/And0K/h5toGrid/test/csv2h5/data/inclin_Kondrashov.txt'
 import os
 import sys
-import unittest
-
+import unittest, pytest
+from functools import partial
 from to_pandas_hdf5.csv2h5 import *  # main as csv2h5, __file__ as file_csv2h5, read_csv
 from to_pandas_hdf5.h5_dask_pandas import filterGlobal_minmax
-
+from utils2init import path_on_drive_d
 # import imp; imp.reload(csv2h5)
 
-path_cruise = '/mnt/D/Work/_Python3/And0K/h5toGrid/test/csv2h5/data'  # r'd:/WorkData/BalticSea/180418_Svetlogorsk/inclinometer'
-scripts_path = '/mnt/D/Work/_Python3/And0K/h5toGrid/scripts'  # to find ini
-test_path = Path('/mnt/D/Work/_Python3/And0K/h5toGrid/test')
+path_cruise = path_on_drive_d('/mnt/D/Work/_Python3/And0K/h5toGrid/test/csv2h5/data')  # r'd:/WorkData/BalticSea/180418_Svetlogorsk/inclinometer'
+scripts_path = path_on_drive_d('/mnt/D/Work/_Python3/And0K/h5toGrid/scripts')  # to find ini
+test_path = path_on_drive_d('/mnt/D/Work/_Python3/And0K/h5toGrid/test')
 sys.path.append(str(Path(test_path).parent.resolve()))
 
 
@@ -46,52 +46,59 @@ if True:  # g.unitTesting:  #
     from to_pandas_hdf5.h5toh5 import h5init, h5del_obsolete
     from to_pandas_hdf5.h5_dask_pandas import h5_append_dummy_row
 
-# cfg
-cfg = main([
-    os.path.join(scripts_path, 'ini/csv_inclin_Kondrashov.ini'),
-    '--path', os.path.join(path_cruise, 'inclin_Kondrashov_180430.txt'),
-    '--b_interact', 'False',
-    '--return', '<gen_names_and_log>',
-    '--log', os.path.join(scripts_path, 'log/csv2h5_inclin_Kondrashov.log'),
-    '--b_skip_if_up_to_date', 'False',  # to not use store
-    '--date_min', '30.04.2018 23:59:51',  # ; UTC, not output data < date_min
-    '--date_max', '01.05.2018 00:00:05',  # ; UTC, not output data > date_max
-    ])
-print(cfg)
-cfg_out = cfg['output_files']
-# cfg['in']['fun_proc_loaded'].visualize()
-for nameFull in cfg['in']['gen_names_and_log'](cfg):
-    d = read_csv(nameFull, **cfg['in'])  # , b_ok
-    tim = d.index.compute()
-    # assert isinstance(tim, pd.Series)
-    assert isinstance(tim, pd.DatetimeIndex)  # , 'tim class'
-    assert isinstance(d, dd.DataFrame)
 
-    if d is None:
-        continue
+@pytest.fixture()
+def cfg():
+    # cfg
+    get_cfg = partial(main, [
+        os.path.join(scripts_path, 'ini/csv_inclin_Kondrashov.ini'),
+        '--path', os.path.join(path_cruise, 'inclin_Kondrashov_180430.txt'),
+        '--b_interact', 'False',
+        '--return', '<gen_names_and_log>',
+        '--log', os.path.join(scripts_path, 'log/csv2h5_inclin_Kondrashov.log'),
+        '--b_skip_if_up_to_date', 'False',  # to not use store
+        '--date_min', '30.04.2018 23:59:51',  # ; UTC, not output data < date_min
+        '--date_max', '01.05.2018 00:00:05',  # ; UTC, not output data > date_max
+        ])
+    return get_cfg
 
-    # test filterGlobal_minmax()
-    bGood = filterGlobal_minmax(d, None, cfg['filter'])
-    # test set_filterGlobal_minmax()
-    d, tim = set_filterGlobal_minmax(d, cfg['filter'], cfg_out['log'])
 
-    if cfg_out['log']['rows_filtered']:
-        print('filtered out {}, remains {}'.format(cfg_out['log']['rows_filtered'], cfg_out['log']['rows']))
-    elif cfg_out['log']['rows']:
-        print('.', end='')
-    else:
-        print('no data!')
-        continue
+def test_csv2h5(cfg):
+    print(cfg)
+    cfg_out = cfg['output_files']
+    # cfg['in']['fun_proc_loaded'].visualize()
+    for nameFull in cfg['in']['gen_names_and_log'](cfg):
+        d = read_csv(nameFull, **cfg['in'])  # , b_ok
+        tim = d.index.compute()
+        # assert isinstance(tim, pd.Series)
+        assert isinstance(tim, pd.DatetimeIndex)  # , 'tim class'
+        assert isinstance(d, dd.DataFrame)
 
-    cfg['in']['time_last'] = tim[-1]  # save last time to can filter next file
-    print(f'Filtering success, data range: {tim[0]} - {tim[-1]}')
+        if d is None:
+            continue
 
-    # test h5_append_dummy_row()
-    cfg_out.setdefault('fs')
-    d1 = h5_append_dummy_row(d, cfg_out['fs'], tim)
+        # test filterGlobal_minmax()
+        bGood = filterGlobal_minmax(d, None, cfg['filter'])
+        # test set_filterGlobal_minmax()
+        d, tim = set_filterGlobal_minmax(d, cfg['filter'], cfg_out['log'])
 
-    df = d1.compute()  # [list(cfg_out['dtype'].names)].set_index(tim)
-    assert isinstance(df, pd.DataFrame)
+        if cfg_out['log']['rows_filtered']:
+            print('filtered out {}, remains {}'.format(cfg_out['log']['rows_filtered'], cfg_out['log']['rows']))
+        elif cfg_out['log']['rows']:
+            print('.', end='')
+        else:
+            print('no data!')
+            continue
+
+        cfg['in']['time_last'] = tim[-1]  # save last time to can filter next file
+        print(f'Filtering success, data range: {tim[0]} - {tim[-1]}')
+
+        # test h5_append_dummy_row()
+        cfg_out.setdefault('fs')
+        d1 = h5_append_dummy_row(d, cfg_out['fs'], tim)
+
+        df = d1.compute()  # [list(cfg_out['dtype'].names)].set_index(tim)
+        assert isinstance(df, pd.DataFrame)
 
     # csv2h5(['ini/csv_inclin_Kondrashov.ini',
 #        '--path', os_path.join(path_cruise, r'inclin_Kondrashov_180430.txt'),

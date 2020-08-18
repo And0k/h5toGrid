@@ -6,85 +6,86 @@ drive_d = 'D:' if sys.platform == 'win32' else '/mnt/D'  # to run on my Linux/Wi
 scripts_path = Path(drive_d + '/Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))
 # my funcs
-from utils2init import st as st_full
+from utils2init import st
 import veuszPropagate
 from to_pandas_hdf5.csv2h5 import main as csv2h5
 from to_pandas_hdf5.gpx2h5 import main as gpx2h5
 from to_pandas_hdf5.CTD_calc import main as CTD_calc
+from to_pandas_hdf5.csv_specific_proc import proc_loaded_corr
 from h5toGpx import main as h5toGpx
 from grid2d_vsz import main as grid2d_vsz
 
-# ---------------------------------------------------------------------------------------------
-device = 'CTD_SST_48Mc#1253'
-path_cruise = Path(r'd:\workData\BalticSea\191215_ANS46')
+device = 'CTD_Idronaut_OS310'
+path_cruise = Path(r'd:\WorkData\BalticSea\200630_AI55')
 path_db = path_cruise / path_cruise.with_suffix('.h5').name  # same name as dir
-device_veusz_prefix = 'ss_'
-go = True  # False #
-start = 130  # 5 70 110
-end = 120  # 60 80 120
-# Usually need stop before steps that need manual preparings (70): so stop at 60, and last step for device.
+device_veusz_prefix = 'i0_'
+st.go = True   # False #
+st.start = 110  # 5 30 70 80
+st.end = 120   # 60 80 120
+# Stop before steps that need manual preparings (70) i.e. set end < 70 at first
 # Gridding (last step) needs debugging if interactive filtering is needed
 # ---------------------------------------------------------------------------------------------
-st = partial(st_full, start=start, end=end)
 
-if st(1) and False:  # nav with depth is in next section
-    # Save navigation to DB
-    gpx2h5(['',
-            '--db_path', str(path_db),
-            '--path', str(path_cruise / r'navigation\_raw\*.gpx'),
-            '--tables_list', ',navigation,',  # skip waypoints
-            '--table_prefix', r'',
-            # '--date_min', '2019-07-17T14:00:00',
-            ])
-
+# if st(1):
+#     # Save navigation to DB
+#     gpx2h5(['',
+#             '--db_path', str(path_db),
+#             '--path', str(path_cruise / r'navigation\_raw\*.gpx'),
+#             '--tables_list', ',navigation,',  # skip waypoints
+#             '--table_prefix', r'',
+#             # '--date_min', '2019-07-17T14:00:00',
+#             '--b_interact', '0',
+#             ])
 if st(5):
+    # Save navigation to DB
     csv2h5(['ini/csv_nav_supervisor.ini',
             '--db_path', str(path_db),
             '--path', str(path_cruise / r'navigation\bridge\??????.txt'),
             '--table', 'navigation',  # skip waypoints
-            '--b_remove_duplicates', 'True',
-            '--csv_specific_param_dict', 'DepEcho_add:4.5',
-            '--min_dict', 'DepEcho:10',
+            #'--b_remove_duplicates', 'True',
+            #'--csv_specific_param_dict', 'DepEcho_add:4.5',
+            '--min_dict', 'DepEcho:6',
             ])
 
-if st(10):  # False: #
-    # Save CTD_SST_48Mc Underway to DB
-    from to_pandas_hdf5.csv_specific_proc import proc_loaded_sea_and_sun_corr_s
 
-    csv2h5([
-        'ini/csv_CTD_Sea&Sun.ini',
-        '--path', str(path_cruise / device / '_raw' / '19*[0-9].TOB'),
+if st(10):  # False: #
+    # Save {device} data to DB
+    csv2h5(['ini\csv_CTD_IdrRedas.ini',
+        '--path', r'c:\RedasData\Ioffe\txt\Ioffe*.txt', # str(path_cruise / device / r'_raw_txt\Ioffe*.txt') '[20|42]*.txt'
         '--db_path', str(path_db),
-        '--dt_from_utc_hours', '0',
-        '--header', 'Number,Date(text),Time(text),Pres,Temp,Sal,O2,O2ppm,SIGMA,Cond,Vbatt,SVel',
-        '--cols_not_use_list', 'Number,SIGMA,Vbatt,SVel',
-        '--delimiter_chars', '\\ \\',  # ''\s+',
         '--table', f'{device}',
-        '--b_interact', '0'
-        # '--b_raise_on_err', '0',
+        '--dt_from_utc_hours', '0', #'2'
+        '--header',
+        'Time(text),Pres(float),Temp90(float),Cond(float),SigmaT,Sal(float),O2(float),O2ppm(float),pH(float),Eh(float),'
+        'SoundVel,Lat,Lon',
+        '--delimiter_chars', r'\t',  # ''\s+',
+        '--b_interact', '0',
+        '--cols_not_use_list', 'N',
+        # '--b_raise_on_err', '0'
+        '--min_dict', 'O2:0, O2ppm:0',  # replace strange values
         ],
         **{'in': {
-            'fun_proc_loaded': proc_loaded_sea_and_sun_corr_s,
-            'csv_specific_param': {'Temp_fun': lambda x: (x + 0.254) / 1.00024,
-                                   # 'Temp_add': 0.254, And convert to ITS90
-                                   'Sal_fun': lambda x: (1 + 0.032204423446495364) * x + 0.045516504802752523,
-                                   'Cond_fun': lambda x: -0.000098593 * x ** 2 + 1.040626 * x + 0.01386
-                                   }
-            }}
+           'fun_proc_loaded': proc_loaded_corr,
+           'csv_specific_param': {'O2_add': -1.74,
+                                  'O2ppm_add': -0.2,
+                                  # 'Temp_add': 0.254, And convert to ITS90
+                                  'Sal_add': -0.003,
+                                  }
+           }}
         )
 
 if st(20):  # False: #
     # Extract CTD runs (if files are not splitted on runs).
     # Note: Saves extended log needed by pattern used in next step with veuszPropagate
     # todo: be able provide log with (Lat,Lon) separately
-    CTD_calc(['ini/CTD_calc-find_runs.ini',
+    st.go = () != CTD_calc(['ini/CTD_calc-find_runs.ini',
               '--db_path', str(path_db),
               '--tables_list', f'{device}',
               '--min_samples', '50',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
-              '--min_dp', '15',
-              # '--b_keep_minmax_of_bad_files', 'True',
-              '--b_skip_if_up_to_date', 'True',
-              # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
+              '--min_dp', '9',
+              '--b_keep_minmax_of_bad_files', 'True',
+              # '--b_skip_if_up_to_date', 'True', - not works. Delete previous table manually, and from ~not_sorted!
+
               # '--output_files.tables_list', '',
               ])
 
@@ -99,11 +100,13 @@ if st(30):  # False: #
                          """'[["{log_row[Index]:%Y-%m-%dT%H:%M:%S}", "{log_row[DateEnd]:%Y-%m-%dT%H:%M:%S}"]]'""",
                          # '--export_pages_int_list', '1', #'--b_images_only', 'True'
                          '--b_interact', '0',
-                         # '--b_update_existed', 'True',
+                         '--b_update_existed', 'True',
                          # '--b_images_only', 'True'
+                         '--min_time', '2020-07-08T03:35:00',
+                         #'--max_time', '2020-06-30T22:37:00',
                          ])
 
-if start <= 40 and False:  #: # may not comment always because can not delete same time more than once
+if st(40) and False:  # may not comment always because can not delete same time more than once
     # Deletng bad runs from DB:
     import pandas as pd
 
@@ -127,16 +130,15 @@ if st(50):  # False: #
     # Extract navigation data at time station starts to GPX waypoints
     h5toGpx(['ini/h5toGpx_CTDs.ini',
              '--db_path', str(path_db),
-             '--tables_list', f'{device}',  # CTD_Idronaut_OS316',
+             '--tables_list', f'{device}',
              '--tables_log_list', 'logRuns',
              '--gpx_names_funs_list', """i+1""",
-             '--gpx_names_fun_format', '{:02d}',
+             '--gpx_names_fun_format', '{:03d}',
              '--select_from_tablelog_ranges_index', '0'
              ])
-    go = False  # Hey! Prepare gpx tracks _manually_ before continue!
 
-go = True
-if start <= 60 and False:
+
+if st(60) and False:
     # Extract navigation data at runs/starts to GPX tracks. Useful to indicate where no nav?
     h5toGpx(['ini/h5toGpx_CTDs.ini',
              '--db_path', str(path_db),
@@ -147,10 +149,10 @@ if start <= 60 and False:
              '--gpx_names_funs_list', '"i, row.Index"',
              '--gpx_names_funs_cobined', ''
              ])
+    st.go = False  # Hey! Prepare gpx tracks _manually_ before continue and rerun from st.start = 70!
 
-# go=False
 if st(70):  # False: #
-    # Save waypoints/routes from _manually_ prepared "CTD-sections=routes.gpx" to hdf5
+    # Save waypoints/routes from _manually_ prepared gpx to hdf5    # todo: sort by time start
     gpx2h5(['', '--path', str(path_cruise / r'navigation\CTD-sections=routes.gpx'),
             '--table_prefix',
             r'navigation/sectionsCTD'])  # need copy reult from {path_db}_not_sorted manually, todo: auto copy
@@ -161,21 +163,21 @@ if st(80):  # False: #
     grid2d_vsz(['ini/grid2d_vsz.ini', '--db_path', str(path_db),
                 '--table_sections', r'navigation/sectionsCTD_routes',
                 '--subdir', 'CTD-sections',
-                '--begin_from_section_int', '1',  # values <= 1 means no skip
-                '--data_columns_list', "Temp, Sal, SigmaTh, O2, O2ppm, soundV",
+                '--begin_from_section_int', '11', #'1',  # values <= 1 means no skip
+                '--data_columns_list', "Temp, Sal, SigmaTh, O2, O2ppm, Eh, pH, soundV",
                 # 'Eh, pH',  todo: N^2 - need calc before
-                '--max_depth', '110',
-                '--filter_depth_wavelet_level_int', '7',  # 4, 2 for section 3
-                '--filter_ctd_bottom_edge_float', 'True',
+                '--max_depth', '250', #'250',
+                '--filter_depth_wavelet_level_int', '4',  # 4, 5, 5, 4, 6, 4, 4, 5
+                '--filter_ctd_bottom_edge_float', '50',
                 # '--x_resolution', '0.2',
                 # '--y_resolution', '5',
                 '--dt_search_nav_tolerance_seconds', '120',
                 '--symbols_in_veusz_ctd_order_list',
                 "'Triangle, Green', 'Diamond, Blue', 'Triangle, Red', 'Square, Green'",
                 '--b_temp_on_its90', 'True',  # modern probes
-                '--blank_level_under_bot', '-150',
+                '--blank_level_under_bot', '-220',
                 # '--interact', 'False',
-                # '--b_reexport_images', 'True'
+                '--b_reexport_images', 'True'
                 ])
 
     # todo: bug: bad top and bottom edges
@@ -191,7 +193,7 @@ if st(110):  # False: #
         # '--min_dp', '9',
         # '--b_keep_minmax_of_bad_files', 'True',
         '--path_csv', str(path_cruise / device / 'txt_processed'),
-        '--data_columns_list', 'Pres, Temp90, Cond, Sal, O2, O2ppm, SA, sigma0, depth, soundV',  # pH, Eh,
+        '--data_columns_list', 'Pres, Temp90, Cond, Sal, O2, O2ppm, pH, Eh, Lat, Lon, SA, sigma0, depth, soundV',  #
         '--b_skip_if_up_to_date', 'True',
         # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
         '--output_files.tables_list', 'None',

@@ -95,7 +95,7 @@ def main(new_arg=None):
 
     with pd.HDFStore(cfg['in']['db_path'], mode='r') as storeIn:
         # dfL = storeIn[tblD + '/logFiles']
-        nav2add = h5select(storeIn, cfg['in']['table_nav'], ['Lat', 'Lon', 'DepEcho'], tim)
+        nav2add = h5select(storeIn, cfg['in']['table_nav'], ['Lat', 'Lon', 'DepEcho'], tim)[0]
         rnav_df_join = nav2add.assign(itbl=itbl)  # copy/append on first/next cycle
         # Save to gpx waypoints
 

@@ -409,7 +409,7 @@ def type_fix(oname: str, opt: Any) -> Tuple[str, Any]:
             #         return onamec, [n.strip(' ",\n') for n in opt.split('",')]
             #     else:  # split to strings separated by ','
             #         return onamec, [n.strip() for n in opt.split(',')]
-        elif suffix == 'dict':
+        if suffix == 'dict':
             onamec = '_'.join(key_splitted[0:-1])
             if opt is None:
                 return onamec, {}
@@ -421,11 +421,11 @@ def type_fix(oname: str, opt: Any) -> Tuple[str, Any]:
 
                 return onamec, dict([val_type_fix(onamec, *n.strip().split(': ' if ': ' in n else ':')) for n in
                                      opt.split('\n,' if '\n' in opt else ',') if len(n)])
-        elif prefix == 'b':
+        if prefix == 'b':
             return oname, literal_eval(opt)
-        elif prefix == 'time':
+        if prefix == 'time':
             return oname, datetime.strptime(opt, '%Y %m %d %H %M %S')
-        elif prefix == 'dt':
+        if prefix == 'dt':
             onamec = '_'.join(key_splitted[:-1])
             if opt is None:
                 try:
@@ -433,44 +433,52 @@ def type_fix(oname: str, opt: Any) -> Tuple[str, Any]:
                 except TypeError as e:
                     raise KeyError(e.msg) from e  # changing type to be not catched and accepted if bad suffix
             return onamec, timedelta(**{suffix: float(opt)})
-        elif 'date' in {suffix, prefix}:
-            if suffix != 'date':
+        b_trig_is_prefix = prefix in {'date', 'time'}
+        if b_trig_is_prefix or suffix in {'date', 'time'}:
+            if b_trig_is_prefix or prefix in {'min', 'max'}:  # not strip to 'min', 'max'
                 onamec = oname
                 # = opt_new  #  use other temp. var instead onamec to keep name (see last "if" below)???
             else:
                 onamec = '_'.join(key_splitted[0:-1])  # #oname = del suffix
                 # onamec = opt_new  # will del old name (see last "if" below)???
-            date_format = '%Y-%m-%dT' if '-' in opt else '%d.%m.%Y '
-            try:
+            date_format = '%Y-%m-%dT'
+            if not '-' in opt[:len(date_format)]:
+                date_format = '%d.%m.%Y '
+            try:  # opt has only date?
                 return onamec, datetime.strptime(opt, date_format[:-1])
             except ValueError:
-                if opt == 'NaT':  # fallback to None
-                    return onamec, None
+                time_format = '%H:%M:%S%z'[:(len(opt) - len(date_format) - 2)]  # minus 2 because 2 chars of '%Y' corresponds 4 digits of year
                 try:
-                    return (onamec, datetime.strptime(opt, f'{date_format}%H:%M:%S'))
+                    tim = datetime.strptime(opt, f'{date_format}{time_format}')
                 except ValueError:
-                    return (onamec, datetime.strptime(opt, f'{date_format}%H:%M:%S%z'))
-        elif suffix in {'int', 'integer', 'index'}:
+                    if opt == 'NaT':  # fallback to None
+                        tim = None
+                    elif opt == 'now':
+                        tim = datetime.now()
+                    else:
+                        raise
+                return onamec, tim
+        if suffix in {'int', 'integer', 'index'}:
             onamec = '_'.join(key_splitted[0:-1])
             return onamec, int(opt)
-        elif suffix == 'float':  # , 'percent'
+        if suffix == 'float':  # , 'percent'
             onamec = '_'.join(key_splitted[0:-1])
             return onamec, float(opt)
-        elif suffix in {'b', 'bool'}:
+        if suffix in {'b', 'bool'}:
             onamec = '_'.join(key_splitted[0:-1])
             return onamec, literal_eval(opt)
-        elif suffix == 'chars':
+        if suffix == 'chars':
             onamec = '_'.join(key_splitted[0:-1])
             return onamec, opt.replace('\\t', '\t').replace('\\ \\', ' ')
-        elif prefix in {'fixed', 'float', 'max', 'min'}:
+        if prefix in {'fixed', 'float', 'max', 'min'}:
             # this snameion is at end because includes frequently used 'max'&'min' which not
             # nesesary for floats, so set to float only if have no other special format words
             return oname, float(opt)
 
-        elif 'path' in {suffix, prefix}:
+        if 'path' in {suffix, prefix}:
             return oname, Path(opt)
-        else:
-            return oname, opt
+
+        return oname, opt
     except (TypeError, AttributeError, ValueError) as e:
         # do not try to convert not a str
         if not isinstance(opt, str):
@@ -754,8 +762,11 @@ def cfg_from_args(p, arg_add, **kwargs):
                     else:
                         # type not converted, remove type suffixes and convert
                         new_name, val = type_fix(key_level1, opt)
-                        cfg[key_level0][new_name] = val
-                        if new_name != key_level1:
+                        if new_name == key_level1:               # if only type changed
+                            cfg[key_level0][new_name] = val
+                        else:
+                            if not new_name in cfg[key_level0]:  # if not str (=> not default) parameter without suffixes added already
+                                cfg[key_level0][new_name] = val
                             del cfg[key_level0][key_level1]
 
         if kwargs:
@@ -1351,35 +1362,72 @@ def name_output_and_log(cfg, logging, f_rep_filemask=lambda f: f, bInteract=Fals
     return cfg, l
 
 
+
+class Message:
+    def __init__(self, fmt, args):
+        self.fmt = fmt
+        self.args = args
+
+    def __str__(self):
+        return self.fmt.format(*self.args)
+
+class LoggingStyleAdapter(logging.LoggerAdapter):
+    """
+    Uses str.format() style in logging messages. Usage:
+    logger = LoggingStyleAdapter(logging.getLogger(__name__))
+    also prepends message with [self.extra['id']]
+    """
+    def __init__(self, logger, extra=None):
+        super(LoggingStyleAdapter, self).__init__(logger, extra or {})
+
+    def process(self, msg, kwargs):
+        return ('[%s] %s' % (self.extra['id'], msg) if 'id' in self.extra else msg,
+                kwargs)
+
+    def log(self, level, msg, *args, **kwargs):
+        if self.isEnabledFor(level):
+            msg, kwargs = self.process(msg, kwargs)
+            self.logger._log(level, Message(msg, args), (), **kwargs)
+
+
+
+
 class FakeContextIfOpen:
     """
-    If input is filename then acts like usual open context manager:
-    closes handle returned by fn_open_file()
-    Else do nothing: treat input as already opened file object,
-    also act is the same if returned handle is None
+    Context manager that do nothing if file is not str/PurePath or custom open function is None/False
+    useful if file can be already opened file object
     """
 
-    def __init__(self, fn_open_file, file):
+    def __init__(self,
+                 fn_open_file: Optional[Callable[[Any], Any]] = None,
+                 file: Optional[Any] = None):
+        """
+        :param fn_open_file: any, if not bool(fn_open_file) then context manager will do nothing on exit .
+        :param file: any, if not str or PurePath then context manager will do nonthing on exit
+        """
         self.file = file
         self.fn_open_file = fn_open_file
+        self._do_open_close = isinstance(self.file, (str, PurePath)) and self.fn_open_file
 
     def __enter__(self):
-        self.handle = (
-            self.fn_open_file(self.file) if isinstance(self.file, (str, PurePath)) else
-            self.file)
+        """
+        :return: opened handle or :param file: from __init__ if not need open
+        """
+        self.handle = self.fn_open_file(self.file) if self._do_open_close else self.file
         return self.handle
 
     def __exit__(self, exc_type, ex_value, ex_traceback):
-        if ((exc_type is None) and
-                (self.handle is not None) and
-                isinstance(self.file, (str, PurePath))
-        ):
+        """
+        Closes handle returned by fn_open_file() if need
+        """
+        if exc_type is None and self._do_open_close:
+            # self.handle is not None and
             self.handle.close()
         return False
 
 
 def open_csv_or_archive_of_them(filename: Union[PurePath, Iterable[Union[Path, str]]], binary_mode=False,
-                                pattern=None, encoding=None) -> Iterator[Union[TextIO, BinaryIO]]:
+                                pattern='', encoding=None) -> Iterator[Union[TextIO, BinaryIO]]:
     """
     Opens and yields files from archive with name filename or from list of filenames in context manager (autoclosing).
     Note: Allows stop iteration over files in archive by assigning True to next() in consumer of generator
@@ -1390,46 +1438,66 @@ def open_csv_or_archive_of_them(filename: Union[PurePath, Iterable[Union[Path, s
     Note: RarFile anyway opens in binary mode
     """
     read_mode = 'rb' if binary_mode else 'r'
-    ArcFile = None
-    if filename.suffix == '.zip':
-        from zipfile import ZipFile as ArcFile
-    elif filename.suffix == '.rar':
-        import rarfile
-        ArcFile = rarfile.RarFile
-        try:  # only try increase peformance
-            # Configure RarFile Temp file size: keep ~1Gbit free, always take at least ~20Mbit
-            io.DEFAULT_BUFFER_SIZE = max(io.DEFAULT_BUFFER_SIZE, 8192*16)  # decrease the operations number as we are working with big files
-            import tempfile, psutil
-            rarfile.HACK_SIZE_LIMIT = max(20_000_000,
-                                          psutil.disk_usage(Path(tempfile.gettempdir()).drive).free - 1_000_000_000
-                                          )
-        except:
-            pass
-    if ArcFile:
-        with ArcFile(filename, mode='r') as arc_file:
-            for text_file in arc_file.infolist():
-                if pattern and not fnmatch(text_file.filename, pattern):
-                    continue
-                # RarFile need opening in mode 'r' but it opens in binary_mode:
-                with arc_file.open(text_file.filename, mode='r' if filename.suffix == '.rar' else read_mode) as f:
-                    break_flag = yield (f if binary_mode else io.TextIOWrapper(
-                        f, encoding=encoding, errors='replace', line_buffering=True))  #, newline=None
-                    if break_flag:
-                        print(f'exiting after openined archived file "{text_file.filename}":')
-                        print(arc_file.getinfo(text_file))
-                        break
 
-    elif hasattr(filename, '__iter__') and not isinstance(filename, (str, bytes)):
+
+
+    if hasattr(filename, '__iter__') and not isinstance(filename, (str, bytes)):
         for text_file in filename:
             if pattern and not fnmatch(text_file, pattern):
                 continue
             with open(text_file, mode=read_mode) as f:
                 yield f
     else:
-        if pattern and not fnmatch(filename, pattern):
-            return
-        with open(filename, mode=read_mode) as f:
-            yield f
+        filename_str = (
+            filename.lower() if isinstance(filename, str) else
+            str(filename).lower() if isinstance(filename, PurePath) else
+            '')
+
+        # Find arc_suffix ('.zip'/'.rar'/'') and pattern if it is in filename after suffix
+        for arc_suffix in ('.zip', '.rar'):
+            if arc_suffix in filename_str:
+                filename_str_no_ext, pattern_parent = filename_str.split(arc_suffix, maxsplit=1)
+                if pattern_parent:
+                    pattern = str(PurePath(pattern_parent[1:]) / pattern)
+                    filename_str = filename_str_no_ext + arc_suffix
+                break
+        else:
+            arc_suffix = ''
+
+        if arc_suffix == '.zip':
+            from zipfile import ZipFile as ArcFile
+        elif arc_suffix == '.rar':
+            import rarfile
+            ArcFile = rarfile.RarFile
+            try:  # only try increase peformance
+                # Configure RarFile Temp file size: keep ~1Gbit free, always take at least ~20Mbit:
+                # decrease the operations number as we are working with big files
+                io.DEFAULT_BUFFER_SIZE = max(io.DEFAULT_BUFFER_SIZE, 8192 * 16)
+                import tempfile, psutil
+                rarfile.HACK_SIZE_LIMIT = max(20_000_000,
+                                              psutil.disk_usage(Path(tempfile.gettempdir()).drive).free - 1_000_000_000
+                                              )
+            except Exception as e:
+                l.warning('%s: can not update settings to increase peformance', standard_error_info(e))
+            read_mode = 'r' # RarFile need opening in mode 'r' (but it opens in binary_mode)
+        if arc_suffix:
+            with ArcFile(filename_str, mode='r') as arc_file:
+                for text_file in arc_file.infolist():
+                    if pattern and not fnmatch(text_file.filename, pattern):
+                        continue
+
+                    with arc_file.open(text_file.filename, mode=read_mode) as f:
+                        break_flag = yield (f if binary_mode else io.TextIOWrapper(
+                            f, encoding=encoding, errors='replace', line_buffering=True))  # , newline=None
+                        if break_flag:
+                            print(f'exiting after openined archived file "{text_file.filename}":')
+                            print(arc_file.getinfo(text_file))
+                            break
+        else:
+            if pattern and not fnmatch(filename, pattern):
+                return
+            with open(filename, mode=read_mode) as f:
+                yield f
 
 def path_on_drive_d(path_str: str = '/mnt/D',
                     drive_win32: str = 'D:',

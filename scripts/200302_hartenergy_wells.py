@@ -153,7 +153,7 @@ if st(80):  # False: #
                 # 'Eh, pH',  todo: N^2 - need calc before
                 '--max_depth', '110',
                 '--filter_depth_wavelet_level_int', '7',  # 4, 2 for section 3
-                '--filter_ctd_bottom_edge_bool', 'True',
+                '--filter_ctd_bottom_edge_float', 'True',
                 # '--x_resolution', '0.2',
                 # '--y_resolution', '5',
                 '--dt_search_nav_tolerance_seconds', '120',

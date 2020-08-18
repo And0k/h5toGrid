@@ -1,4 +1,6 @@
 """
+Note: for more advanced loading options (from archives, ...) and processing use "191101incl_load"
+
 Runs steps:
 1. csv2h5(): save inclinometer data from Kondrashov format to DB
 2. veuszPropagate(): draw using Veusz pattern
@@ -38,9 +40,10 @@ from utils_time import intervals_from_period
 from utils2init import path_on_drive_d
 
 path_cruise = path_on_drive_d(
-    r'd:\WorkData\_experiment\_2019\inclinometer\200117_tank[23,30,32]'
+    r'd:\WorkData\_experiment\_2019\inclinometer\200610_tank_ex[4,5,7,9,10,11][3,12,13,14,15,16,19]'
     )
 r"""
+d:\WorkData\_experiment\_2019\inclinometer\200117_tank[23,30,32]
 d:\workData\BalticSea\191119_Filino
 d:\WorkData\_experiment\_2019\inclinometer\190710_compas_calibr-byMe
 d:\WorkData\_experiment\_2019\inclinometer\190710_compas_calibr-byMe\190902[3,14,15,16,19]
@@ -129,14 +132,14 @@ date_min = defaultdict(lambda: None, {9: '2019-12-23T17:00'})  # '2019-11-06T12:
 date_max = defaultdict(lambda: None, {9: '2019-12-23T17:35'})
 
 date_min = defaultdict(
-    lambda: '2020-01-17T13:00',
-    # '2019-11-19T12:30',  # '2019-11-08T12:20', 2019-11-08T12:00 '2019-11-06T12:35', # '2019-11-06T10:50' '2019-07-16T17:00:00' 2019-06-20T14:30:00  '2019-07-21T20:00:00', #None,
+    lambda: '2020-06-10T12:50',
+    # '2020-01-17T13:00','2019-11-19T12:30',  # '2019-11-08T12:20', 2019-11-08T12:00 '2019-11-06T12:35', # '2019-11-06T10:50' '2019-07-16T17:00:00' 2019-06-20T14:30:00  '2019-07-21T20:00:00', #None,
     {  # 0: #'2019-08-07T16:00:00' '2019-08-17T18:00', 0: '2018-04-18T07:15',
         # 1: '2018-05-10T15:00',
         })
 date_max = defaultdict(
-    lambda: '2020-01-17T15:00',
-    # '2019-11-06T13:34','2019-11-06T12:20' '2019-08-31T16:38:00' '2019-07-19T17:00:00', # '2019-08-18T01:45:00', # None,
+    lambda: '2020-06-10T15:20',
+    #  '2020-01-17T15:00','2019-11-06T13:34','2019-11-06T12:20' '2019-08-31T16:38:00' '2019-07-19T17:00:00', # '2019-08-18T01:45:00', # None,
     {  # 0:  # '2019-09-09T17:00:00' '2019-09-06T04:00:00' '2019-08-27T02:00', 0: '2018-05-07T11:55',
         # 1: '2018-05-30T10:30',
         })
@@ -167,8 +170,8 @@ def f_next_date_min(key):
         return v
 
 
-probes = [23, 30,
-          32]  # , 3, 13range(1, 20)  # [9, 11]  # range(1, 20) #[3,14,15,16,19]  #[4, 11, 5, 12]  # 29, 30 range(12, 13)  # [1, 4, 7, 11, ] 5, 12  # sorted(t_start_utc.keys())  # [1, 4, 5, 7, 11, 12, 14]  #[21, 23]  #range(1, 40)  # [25,26]  #, [17, 18]
+probes = [4,5,7,9,10,11]  #[3,12,13,14,15,16,19]
+#[23, 30, 32] , 3, 13range(1, 20)  # [9, 11]  # range(1, 20) #[3,14,15,16,19]  #[4, 11, 5, 12]  # 29, 30 range(12, 13)  # [1, 4, 7, 11, ] 5, 12  # sorted(t_start_utc.keys())  # [1, 4, 5, 7, 11, 12, 14]  #[21, 23]  #range(1, 40)  # [25,26]  #, [17, 18]
 # '190727incl.h5'
 db_path = r'd:\workData\BalticSea\191119_Filino\inclinometer\191119incl.h5'  # r'd:\WorkData\_experiment\_2019\inclinometer\190710_compas_calibr-byMe\190710incl.h5'  # path_cruise / (re.match('(^[\d_]*).*', path_cruise.name).groups()[0].strip('_') + 'incl.h5')
 # db_path = Path(r'd:\workData\BalticSea\190713_ABP45\inclinometer\190721incl.h5')  #!

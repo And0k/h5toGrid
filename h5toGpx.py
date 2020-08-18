@@ -463,7 +463,7 @@ def main(new_arg=None):
                 nav2add = h5select(store, cfg['in']['table_nav'], ['Lat', 'Lon', 'DepEcho'], time_points=time_points,
                                    dt_check_tolerance=cfg['process']['dt_search_nav_tolerance'],
                                    query_range_lims=(time_points[0], dfL['DateEnd'][-1])
-                                   )
+                                   )[0]
 
                 nav2add.index = timzone_view(nav2add.index, dt_from_utc=cfg['output_files']['dt_from_utc_in_comments'])
                 # tz_local= tzoffset(None, cfg['output_files']['dt_from_utc_in_comments'].total_seconds())

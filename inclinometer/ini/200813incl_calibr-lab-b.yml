@@ -1,0 +1,21 @@
+
+in:
+  db_path: 'd:\WorkData\_experiment\_2019\inclinometer\200807_Schukas\mag_components_calibration\200807_calibr-lab-b.h5'
+  tables: ['incl_b.*']
+  timerange:
+    1: [2020-07-27T05:38:00, 2020-07-27T05:39:38]
+
+  timerange_nord:
+    1: [2020-07-27T05:39:40, 2020-07-27T05:40:14]
+
+  channels: [M, A]
+  #chunksize: 1000000         # 'chunksize_percent': 10,  # we'll repace this with burst size if it suit
+
+output_files:
+  db_path: 'd:\WorkData\_experiment\_2019\inclinometer\200807_Schukas\200807_calibr-tank-b.h5'
+
+filter:
+  no_works_noise: {M: 15, A: 200}
+  offsets: []  # not filter
+#program:
+#  return: <end>

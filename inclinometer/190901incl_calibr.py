@@ -25,8 +25,7 @@ from veuszPropagate import __file__ as file_veuszPropagate
 
 l = logging.getLogger(__name__)
 
-probes = [23, 30,
-          32]  # 17,18 [3,12,15,19,1,13,14,16] [1,4,5,7,11,12]  # [4,5,11,12]   #[29, 30, 33]  # [3, 14, 15, 16, 19]
+probes = [4,5,7,9,10,11,3,12,13,14,15,16,19] # [23,30,32] 17,18 [3,12,15,19,1,13,14,16] [1,4,5,7,11,12]  # [4,5,11,12]   #[29, 30, 33]  # [3, 14, 15, 16, 19]
 channels_list = ['M', 'A']  # []
 
 # stand data - input for 1st step
@@ -42,37 +41,25 @@ d:\WorkData\_experiment\_2018\inclinometer\181004_tank[1-20]\181004_KTIz.h5
     # r'/mnt/D/workData/_experiment/_2019/inclinometer/190704_tank_ex2/190704incl.h5'
 """
 
-step = 2
+step = 2  # one step for one program's run
 # ---------------------------------------------------------------------------------------------
 for i, probe in enumerate(probes):  # incl_calibr not supports multiple timeranges so calculate one by one probe
     # tank data - used to output coefficients in both steps
     db_path_tank = path_on_drive_d(  # path to load calibration data: newer first
-        r'd:\WorkData\_experiment\_2019\inclinometer\200117_tank[23,30,32]\200117_tank.h5' if probe in
-                                                                                              [23, 30, 32] else
+        r'd:\WorkData\_experiment\_2019\inclinometer\200610_tank_ex[4,5,7,9,10,11][3,12,13,14,15,16,19]\200610_tank.h5' if probe in
+[4,5,7,9,10,11,3,12,13,14,15,16,19] else
+    r'd:\WorkData\_experiment\_2019\inclinometer\200117_tank[23,30,32]\200117_tank.h5' if probe in
+[23,30,32] else
         r'd:\WorkData\_experiment\_2019\inclinometer\191106_tank_ex[1,13,14,16][3,12,15,19]\191106_tank_ex2.h5' if probe in
-                                                                                                                   [3,
-                                                                                                                    12,
-                                                                                                                    15,
-                                                                                                                    19] else
+[3,12,15,19] else
         r'd:\WorkData\_experiment\_2019\inclinometer\191106_tank_ex[1,13,14,16][3,12,15,19]\191106_tank_ex1.h5' if probe in
-                                                                                                                   [1,
-                                                                                                                    13,
-                                                                                                                    14,
-                                                                                                                    16] else
+[1,13,14,16] else
         r'd:\WorkData\_experiment\_2019\inclinometer\190711_tank[1,4,5,7,11,12]\190711incl.h5' if probe in
-                                                                                                  [1, 4, 5, 7, 11,
-                                                                                                   12] else
+[1, 4, 5, 7,11,12] else
         r'd:\WorkData\_experiment\_2019\inclinometer\190704_tank_ex2[12,22,27,28,30,31,35]\190704incl.h5' if probe in
-                                                                                                             [22, 27,
-                                                                                                              28, 30,
-                                                                                                              31,
-                                                                                                              35] else  # 12,
+[22,27,28,30,31,35] else  # 12,
         r'd:\WorkData\_experiment\_2019\inclinometer\190704_tank_ex1[21,23,24,25,26,29,32,34]\190704incl.h5' if probe in
-                                                                                                                [21, 23,
-                                                                                                                 24, 25,
-                                                                                                                 26, 29,
-                                                                                                                 32,
-                                                                                                                 34] else
+[21,23,24,25,26,29,32,34] else
         r'd:\WorkData\_experiment\_2018\inclinometer\181004_tank[1-20]\181004_KTIz.h5'
         # old DB with inverted M like new
         )  # r'd:\WorkData\_experiment\_2018\inclinometer\180406_tank[9]\180406_incl09.h5'
@@ -148,7 +135,7 @@ for i, probe in enumerate(probes):  # incl_calibr not supports multiple timerang
                            '--re_tbl_from_vsz_name', '\D*\d*',
                            '--channels_list', 'M,A',
                            '--b_update_existed', 'True',  # to not skip.
-                           '--export_pages_int_list', '',
+                           '--export_pages_int_list', '0',  # 0 = all
                            '--b_interact', 'False'
                            ])
         # if step == 3:
@@ -182,7 +169,8 @@ for i, probe in enumerate(probes):  # incl_calibr not supports multiple timerang
                 for tbl, coefs in h5_names_gen({'in': cfg_in}):
                     del coefs['azimuth_shift_deg']  # to calculate shift of uncorrected data
                     # Calculation:
-                    dict_matrices = {'//coef//H//azimuth_shift_deg': zeroing_azimuth(store, tbl, coefs, cfg_in)}
+                    dict_matrices = {'//coef//H//azimuth_shift_deg': zeroing_azimuth(
+                        store, tbl, timeranges_nord[probe], coefs, cfg_in)}
             h5copy_coef(None, db_path_tank, tbl, dict_matrices=dict_matrices)
             h5copy_coef(db_path_tank, db_path_calibr_scalling, tbl, ok_to_replace_group=True)
         else:

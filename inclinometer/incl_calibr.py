@@ -40,11 +40,11 @@ except Exception as e:  # if __file__ is wrong
     scripts_path = drive_d.joinpath('Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))
 # from inclinometer.incl_calibr import calibrate, calibrate_plot, coef2str
-from inclinometer.h5inclinometer_coef import h5copy_coef
+from inclinometer.h5inclinometer_coef import h5copy_coef, l
 from inclinometer.incl_h5clc import incl_calc_velocity_nodask
-from utils2init import cfg_from_args, this_prog_basename, init_logging
+from utils2init import cfg_from_args, this_prog_basename, init_logging, standard_error_info
 from to_pandas_hdf5.h5toh5 import h5select, h5find_tables
-from other_filters import despike
+from other_filters import is_works, despike
 from graphics import make_figure
 
 if __name__ != '__main__':
@@ -70,9 +70,16 @@ def my_argparser():
              default='M, A')
     p_in.add('--chunksize_int', help='limit loading data in memory', default='50000')
     p_in.add('--timerange_list', help='time range to use')
+    p_in.add('--timerange_dict', help='time range to use for each inclinometer number (consisted of digits in table name)')
     p_in.add('--timerange_nord_list', help='time range to zeroing nord. Not zeroing Nord if not used')
+    p_in.add('--timerange_nord_dict', help='time range to zeroing nord for each inclinometer number (consisted of digits in table name)')
+    p_filter = p.add_argument_group('filter', 'excludes some data')
+    p_filter.add('--no_works_noise_float_dict', default='M:10, A:100',
+                 help='is_works() noise argument for each channel: excludes data if too small changes')
+    p_filter.add('--blocks_int_list', default='21, 7', help='despike() argument')
+    p_filter.add('--offsets_float_list', default='1.5, 2', help='despike() argument')
+    p_filter.add('--std_smooth_sigma_float', default='4', help='despike() argument')
 
-    # p_filter = p.add_argument_group('filter', 'limits amount of data loading')
     p_out = p.add_argument_group('output_files', 'where write resulting coef (additionally)')
     p_out.add('--output_files.db_path',
               help='hdf5 store file path where to write resulting coef. Writes to tables that names configured for input data (cfg[in].tables) in this file')
@@ -84,63 +91,26 @@ def my_argparser():
     return (p)
 
 
-def load_hdf5_data(store, cfg_in: Mapping[str, Any], t_intervals=None, table=None,
+def load_hdf5_data(store, table=None, t_intervals=None,
                    query_range_pattern="index>=Timestamp('{}') & index<=Timestamp('{}')"):
     """
     Load data
-    :param cfg_in:
-    :param t_intervals: even sequence of strings convertable to index type values. Each pair defines edjes of data that will be concatenated. 1st and last must be min and max values in sequence.
+    :param t_intervals: even sequence of datetimes or strings convertable to index type values. Each pair defines edges of data that will be concatenated. 1st and last must be min and max values in sequence.
+    :param table:
     :return:
     """
-    # from h5_dask_pandas import h5q_interval2coord, h5_load_range_by_coord
-    #
-    # if t_interval is None:
-    #
-    # start_end = h5q_interval2coord(cfg['in'], t_interval[0])
-    # a = h5_load_range_by_coord(cfg['in'], start_end)
-    if t_intervals is None:
-        t_intervals = cfg_in['timerange']
-    if table is None:
-        table = cfg_in['table']
-    df_list = []
-    n = len(t_intervals)
+
+    n = len(t_intervals) if t_intervals is not None else 0
     if n > 2:
         query_range_pattern = '|'.join(f'({query_range_pattern.format(*query_range_lims)})' for query_range_lims in (
             (lambda x=iter(t_intervals): zip(x, x))())
-                                       )
-    df = h5select(store, table, query_range_lims=t_intervals[0::(n - 1)],
-                  interpolate=None, query_range_pattern=query_range_pattern
-                  )
-    # for t_interval in (lambda x=iter(t_intervals): zip(x, x))():
-    #     df_list.append(h5select(
-    #         store, table, query_range_lims=t_interval,
-    #         interpolate=None, query_range_pattern=query_range_pattern
-    #         ))
-    # df = pd.concat(df_list, copy=False)
-
-    # with pd.HDFStore(cfg['in']['db_path'], mode='r') as storeIn:
-    #     try:  # Sections
-    #         df = storeIn[cfg['in']['table_sections']]  # .sort()
-    #     except KeyError as e:
-    #         l.error('Sections not found in {}!'.format(cfg['in']['db_path']))
-    #         raise e
-
-    return df
-
-
-def channel_cols(channel: str) -> Tuple[str, str]:
-    """
-    Data columns names (col_str M/A) and coef letters (coef_str H/G) from parameter name (or its abbreviation)
-    :param channel:
-    :return: (col_str, coef_str)
-    """
-    if (channel == 'magnetometer' or channel == 'M'):
-        col_str = 'M'
-        coef_str = 'H'
+                                   )
     else:
-        col_str = 'A'
-        coef_str = 'G'
-    return (col_str, coef_str)
+        query_range_pattern = None
+        t_intervals = []
+    df = h5select(store, table, query_range_lims=t_intervals[0::(n - 1)],
+                  interpolate=None, query_range_pattern=query_range_pattern)
+    return df
 
 
 def fG(Axyz, Ag, Cg):
@@ -157,22 +127,24 @@ def fG(Axyz, Ag, Cg):
 #     (np.column_stack((Ax, Ay, Az))[slice(*i)] - Cg[0, :]), Ag).T
 
 
-def filter_channes(a3d: np.ndarray, a_time=None, fig=None, fig_save_prefix=None
+def filter_channes(a3d: np.ndarray, a_time=None, fig=None, fig_save_prefix=None,
+                   blocks=(21, 7), offsets=(1.5, 2), std_smooth_sigma=4
                    ) -> Tuple[np.ndarray, np.ndarray, matplotlib.figure.Figure]:
     """
+    Filter back and forward each column of a3d by despike()
     despike a3d - 3 channels of data and plot data and overlayed results
     :param a3d: shape = (3,len)
     :param a_time:
     :param fig:
     :param fig_save_prefix: save figure to this path + 'despike({ch}).png' suffix
+    :param blocks: filter window width - see despike()
+    :param offsets: offsets to std - see despike(). Note: filters too many if set some < 3
+    :param std_smooth_sigma - see despike()
     :return: a3d[ :,b_ok], b_ok
     """
-    # dim_channel = 0
-    dim_length = 1
 
-    blocks = np.minimum((21, 7), a3d.shape[dim_length])
-    offsets = (1.5, 2)  # filters too many if set some < 3
-    std_smooth_sigma = 4
+    dim_length = 1   # dim_channel = 0
+    blocks = np.minimum(blocks, a3d.shape[dim_length])
     b_ok = np.ones((a3d.shape[dim_length],), np.bool8)
     if fig:
         fig.axes[0].clear()
@@ -189,26 +161,30 @@ def filter_channes(a3d: np.ndarray, a_time=None, fig=None, fig_save_prefix=None
         n_nans_before = b_nan.sum()
         b_ok &= ~b_nan
 
-        # back and forward:
-        a_f = np.float64(a[b_ok][::-1])
-        a_f, _ = despike(a_f, offsets, blocks, std_smooth_sigma=std_smooth_sigma)
-        a_f, _ = despike(a_f[::-1], offsets, blocks, ax, label=ch,
-                         std_smooth_sigma=std_smooth_sigma, x_plot=np.flatnonzero(b_ok))
-        b_nan[b_ok] = np.isnan(a_f)
-        n_nans_after = b_nan.sum()
-        b_ok &= ~b_nan
+        if len(offsets):
+            # back and forward:
+            a_f = np.float64(a[b_ok][::-1])
+            a_f, _ = despike(a_f, offsets, blocks, std_smooth_sigma=std_smooth_sigma)
+            a_f, _ = despike(a_f[::-1], offsets, blocks, ax, label=ch,
+                             std_smooth_sigma=std_smooth_sigma, x_plot=np.flatnonzero(b_ok))
+            b_nan[b_ok] = np.isnan(a_f)
+            n_nans_after = b_nan.sum()
+            b_ok &= ~b_nan
 
-        # ax, lines = make_figure(y_kwrgs=((
-        #     {'data': a, 'label': 'source', 'color': 'r', 'alpha': 1},
-        # )), mask_kwrgs={'data': b_ok, 'label': 'filtered', 'color': 'g', 'alpha': 0.7}, ax=ax,
-        #     ax_title=f'despike({ch})', lines='clear')
+            # ax, lines = make_figure(y_kwrgs=((
+            #     {'data': a, 'label': 'source', 'color': 'r', 'alpha': 1},
+            # )), mask_kwrgs={'data': b_ok, 'label': 'filtered', 'color': 'g', 'alpha': 0.7}, ax=ax,
+            #     ax_title=f'despike({ch})', lines='clear')
 
-        ax.legend(prop={'size': 10}, loc='upper right')
-        l.info('despike(%s, offsets=%s, blocks=%s) deleted %s',
-               ch, offsets, blocks, n_nans_after - n_nans_before)
+            ax.legend(prop={'size': 10}, loc='upper right')
+            l.info('despike(%s, offsets=%s, blocks=%s) deleted %s',
+                   ch, offsets, blocks, n_nans_after - n_nans_before)
         plt.show()
         if fig_save_prefix:  # dbstop
-            ax.figure.savefig(fig_save_prefix + (ax_title + '.png'), dpi=300, bbox_inches="tight")
+            try:
+                ax.figure.savefig(fig_save_prefix + (ax_title + '.png'), dpi=300, bbox_inches="tight")
+            except Exception as e:
+                l.warning(f'Can not save fig: {standard_error_info(e)}')
         # Dep_filt = rep2mean(a_f, b_ok, a_time)  # need to execute waveletSmooth on full length
 
     # ax.plot(np.flatnonzero(b_ok), Depth[b_ok], color='g', alpha=0.9, label=ch)
@@ -444,8 +420,9 @@ def calibrate_plot(raw3d: np.ndarray, a2d: np.ndarray, b, fig=None, window_title
 
     # ax = axes3d(fig)
     # ax1 = fig.add_subplot(121, projection='3d')
+    marker_size = 5  # 0.2
     ax1.set_title('source')
-    ax1.scatter(raw3d[0, :], raw3d[1, :], raw3d[2, :], color='k', marker='.', s=0.2)
+    ax1.scatter(raw3d[0, :], raw3d[1, :], raw3d[2, :], color='k', marker='.', s=marker_size)
     # , alpha=0.1) # dfcum['Hx'], dfcum['Hy'], dfcum['Hz']
     # plot sphere
     # find the rotation matrix and radii of the axes
@@ -456,7 +433,7 @@ def calibrate_plot(raw3d: np.ndarray, a2d: np.ndarray, b, fig=None, window_title
     # ax2 = fig.add_subplot(122, projection='3d')
     ax2.set_title('calibrated')
     # plot points
-    ax2.scatter(s[0, :], s[1, :], s[2, :], color='g', marker='.', s=0.2)  # , alpha=0.2  # s is markersize,
+    ax2.scatter(s[0, :], s[1, :], s[2, :], color='g', marker='.', s=marker_size)  # , alpha=0.2  # s is markersize,
     axes_connect_on_move(ax1, ax2)
     # plot unit sphere
     center = np.zeros(3, float)
@@ -471,10 +448,11 @@ def calibrate_plot(raw3d: np.ndarray, a2d: np.ndarray, b, fig=None, window_title
     return fig
 
 
-def zeroing_azimuth(store, tbl, coefs, cfg_in):
+def zeroing_azimuth(store, tbl, timerange_nord, coefs=None, cfg_in=None):
     """
     azimuth_shift_deg by calculating velocity (Ve, Vn) in cfg_in['timerange_nord'] interval of tbl data:
      taking median, calculating direction, multipling by -1
+    :param timerange_nord:
     :param store:
     :param tbl:
     :param coefs: dict with fields having values of array type with sizes:
@@ -485,7 +463,7 @@ def zeroing_azimuth(store, tbl, coefs, cfg_in):
     :return: azimuth_shift_deg
     """
     l.debug('Zeroing Nord direction')
-    df = load_hdf5_data(store, cfg_in, t_intervals=cfg_in['timerange_nord'], table=tbl)
+    df = load_hdf5_data(store, table=tbl, t_intervals=timerange_nord)
     if df.empty:
         l.info('Zero calibration range out of data scope')
         return
@@ -500,6 +478,86 @@ def zeroing_azimuth(store, tbl, coefs, cfg_in):
     azimuth_shift_deg = -np.degrees(np.arctan2(*dfv_mean.to_numpy()))
     l.info('Nord azimuth shifting coef. found: %s degrees', azimuth_shift_deg)
     return azimuth_shift_deg
+
+
+def channel_cols(channel: str) -> Tuple[str, str]:
+    """
+    Data columns names (col_str M/A) and coef letters (coef_str H/G) from parameter name (or its abbreviation)
+    :param channel:
+    :return: (col_str, coef_str)
+    """
+    if (channel == 'magnetometer' or channel == 'M'):
+        col_str = 'M'
+        coef_str = 'H'
+    else:
+        col_str = 'A'
+        coef_str = 'G'
+    return (col_str, coef_str)
+
+
+def dict_matrices_for_h5(coefs=None, tbl=None, channels=None):
+    """
+
+    :param coefs: some fields from: {'M': {'A', 'b', 'azimuth_shift_deg'} 'A': {'A', 'b', 'azimuth_shift_deg'}, 'Vabs0'}
+    :param tbl: should include probe number in name. Example: "incl_b01"
+    :param channels: some from default ['M', 'A']: magnetometer, accelerometer
+    :return: dict_matrices
+    """
+    if channels is None:
+        channels = ['M', 'A']
+
+    # Fill coefs where not specified
+    dummies = []
+    b_have_coefs = coefs is not None
+    if not b_have_coefs:
+        coefs = {}  # dict(zip(channels,[None]*len(channels)))
+
+    for channel in channels:
+        if not coefs.get(channel):
+            coefs[channel] = ({'A': np.identity(3) * 0.00173, 'b': np.zeros((3, 1))} if channel == 'M' else
+                              {'A': np.identity(3) * 6.103E-5, 'b': np.zeros((3, 1))}
+                              )
+            if b_have_coefs:
+                dummies.append(channel)
+        if channel == 'M':
+            if not coefs['M'].get('azimuth_shift_deg'):
+                coefs['M']['azimuth_shift_deg'] = 180
+                if b_have_coefs and not 'M' in dummies:
+                    dummies.append('azimuth_shift_deg')  # only 'azimuth_shift_deg' for M channel is dummy
+
+    if coefs.get('Vabs0') is None:
+        coefs['Vabs0'] = np.float64([10, -10, -10, -3, 3, 70])
+        if b_have_coefs:
+            dummies.append('Vabs0')
+
+    if dummies or not b_have_coefs:
+        l.warning('Coping coefs, %s - dummy!', ','.join(dummies) if b_have_coefs else 'all')
+    else:
+        l.info('Coping coefs')
+
+    # Fill dict_matrices with coefs values
+    dict_matrices = {}
+    if tbl:
+        # Coping probe number to coefficient to can manually check when copy manually
+        i_search = re.search('\d*$', tbl)
+        if i_search:
+            try:
+                dict_matrices['//coef//i'] = int(i_search.group(0))
+            except Exception as e:
+                pass
+        dict_matrices['//coef//Vabs0'] = coefs['Vabs0']
+
+
+    for channel in channels:
+        (col_str, coef_str) = channel_cols(channel)
+        dict_matrices.update(
+            {f'//coef//{coef_str}//A': coefs[channel]['A'],
+             f'//coef//{coef_str}//C': coefs[channel]['b'],
+             })
+        if channel == 'M':
+            dict_matrices[f'//coef//{coef_str}//azimuth_shift_deg'] = coefs['M']['azimuth_shift_deg']
+
+    return dict_matrices
 
 
 # ###################################################################################
@@ -537,19 +595,39 @@ def main(new_arg=None):
             cfg['in']['tables'] = h5find_tables(store, cfg['in']['tables'][0])
         coefs = {}
         for itbl, tbl in enumerate(cfg['in']['tables'], start=1):
-
+            probe_number = int(re.findall('\d+', tbl)[0])
             l.info(f'{itbl}. {tbl}: ')
-            a = load_hdf5_data(store, cfg['in'], table=tbl)
+            if isinstance(cfg['in']['timerange'], Mapping):  # individual interval for each table
+                if probe_number in cfg['in']['timerange']:
+                    timerange = cfg['in']['timerange'][probe_number]
+                else:
+                    timerange = None
+            else:
+                timerange = cfg['in']['timerange']  # same interval for each table
+            a = load_hdf5_data(store, table=tbl, t_intervals=timerange)
             # iUseTime = np.searchsorted(stime, [np.array(s, 'datetime64[s]') for s in np.array(strTimeUse)])
             coefs[tbl] = {}
             for channel in cfg['in']['channels']:
                 print(f' channel "{channel}"', end=' ')
                 (col_str, coef_str) = channel_cols(channel)
-                vec3d = np.column_stack(
-                    (a[col_str + 'x'], a[col_str + 'y'], a[col_str + 'z'])).T  # [slice(*iUseTime.flat)]
-                if True:  # col_str == 'A'?
+
+                # filtering # col_str == 'A'?
+                if True:
+                    b_ok = np.zeros(a.shape[0], bool)
+                    for component in ['x', 'y', 'z']:
+                        b_ok |= is_works(a[col_str + component], noise=cfg['filter']['no_works_noise'][channel])
+                    l.info('Filter not working %2.1f%% area:', (b_ok.size - b_ok.sum())*100/b_ok.size)
+                    # vec3d = np.column_stack(
+                    #     (a[col_str + 'x'], a[col_str + 'y'], a[col_str + 'z']))[:, b_ok].T  # [slice(*iUseTime.flat)]
+                    vec3d = a.loc[b_ok, [col_str + 'x', col_str + 'y', col_str + 'z']].to_numpy(float).T
+                    index = a.index[b_ok]
+
                     vec3d, b_ok, fig_filt = filter_channes(
-                        vec3d, a.index, fig_filt, fig_save_prefix=f"{fig_save_dir_path / tbl}-'{channel}'")
+                        vec3d, index, fig_filt, fig_save_prefix=f"{fig_save_dir_path / tbl}-'{channel}'",
+                        blocks=cfg['filter']['blocks'],
+                        offsets=cfg['filter']['offsets'],
+                        std_smooth_sigma=cfg['filter']['std_smooth_sigma'])
+
                 A, b = calibrate(vec3d)
                 window_title = f"{tbl} '{channel}' channel ellipse"
                 fig = calibrate_plot(vec3d, A, b, fig, window_title=window_title)
@@ -559,84 +637,91 @@ def main(new_arg=None):
                 coefs[tbl][channel] = {'A': A, 'b': b}
 
             # Zeroing Nord direction
-            if len(cfg['in']['timerange_nord']):
-                coefs[tbl]['M']['azimuth_shift_deg'] = zeroing_azimuth(store, tbl, calc_vel_flat_coef(coefs[tbl]),
-                                                                       cfg['in'])
-
+            if cfg['in'].get('timerange_nord'):
+                coefs[tbl]['M']['azimuth_shift_deg'] = zeroing_azimuth(
+                    store, tbl, cfg['in']['timerange_nord'].get(probe_number) if
+                    isinstance(cfg['in']['timerange'], Mapping) else cfg['in']['timerange_nord'],
+                    calc_vel_flat_coef(coefs[tbl]), cfg['in'])
+    # Write coefs
     for cfg_output in (['in', 'output_files'] if cfg['output_files'].get('db_path') else ['in']):
         l.info(f"Write to {cfg[cfg_output]['db_path']}")
         for itbl, tbl in enumerate(cfg['in']['tables'], start=1):
-            i_search = re.search('\d*$', tbl)
-            for channel in cfg['in']['channels']:
-                (col_str, coef_str) = channel_cols(channel)
-                dict_matrices = {f'//coef//{coef_str}//A': coefs[tbl][channel]['A'],
-                                 f'//coef//{coef_str}//C': coefs[tbl][channel]['b'],
-                                 }
-                if channel == 'M':
-                    if coefs[tbl]['M'].get('azimuth_shift_deg'):
-                        dict_matrices[f'//coef//{coef_str}//azimuth_shift_deg'] = coefs[tbl]['M']['azimuth_shift_deg']
-                    # Coping probe number to coefficient to can manually check when copy manually
-                    if i_search:
-                        try:
-                            dict_matrices['//coef//i'] = int(i_search.group(0))
-                        except Exception as e:
-                            pass
-
-                h5copy_coef(None, cfg[cfg_output]['db_path'], tbl, dict_matrices=dict_matrices)
+            # i_search = re.search('\d*$', tbl)
+            # for channel in cfg['in']['channels']:
+            #     (col_str, coef_str) = channel_cols(channel)
+            #     dict_matrices = {f'//coef//{coef_str}//A': coefs[tbl][channel]['A'],
+            #                      f'//coef//{coef_str}//C': coefs[tbl][channel]['b'],
+            #                      }
+            #     if channel == 'M':
+            #         if coefs[tbl]['M'].get('azimuth_shift_deg'):
+            #             dict_matrices[f'//coef//{coef_str}//azimuth_shift_deg'] = coefs[tbl]['M']['azimuth_shift_deg']
+            #         # Coping probe number to coefficient to can manually check when copy manually
+            #         if i_search:
+            #             try:
+            #                 dict_matrices['//coef//i'] = int(i_search.group(0))
+            #             except Exception as e:
+            #                 pass
+            dict_matrices = dict_matrices_for_h5(coefs[tbl], tbl, cfg['in']['channels'])
+            h5copy_coef(None, cfg[cfg_output]['db_path'], tbl, dict_matrices=dict_matrices)
 
 
 if __name__ == '__main__':
-    # Calculation example
-    timeranges = {
-        30: ['2019-07-09T18:51:00', '2019-07-09T19:20:00'],
-        12: ['2019-07-11T18:07:50', '2019-07-11T18:24:22'],
-        5: ['2019-07-11T18:30:11', '2019-07-11T18:46:28'],
-        4: ['2019-07-11T17:25:30', '2019-07-11T17:39:30'],
-        }
+    main()
 
-    timeranges_nord = {
-        # 30: ['2019-07-09T17:54:50', '2019-07-09T17:55:22'],
-        # 12: ['2019-07-11T18:04:46', '2019-07-11T18:05:36'],
-        }
+    # Calculation examples:
+    # inclinometer/190901incl_calibr.py
+    # or here:
+    if False:
+        timeranges = {
+            30: ['2019-07-09T18:51:00', '2019-07-09T19:20:00'],
+            12: ['2019-07-11T18:07:50', '2019-07-11T18:24:22'],
+            5: ['2019-07-11T18:30:11', '2019-07-11T18:46:28'],
+            4: ['2019-07-11T17:25:30', '2019-07-11T17:39:30'],
+            }
 
-    i = 14
+        timeranges_nord = {
+            # 30: ['2019-07-09T17:54:50', '2019-07-09T17:55:22'],
+            # 12: ['2019-07-11T18:04:46', '2019-07-11T18:05:36'],
+            }
 
-    # multiple timeranges not supported so calculate one by one probe?
-    probes = [i]
-    main(['', '--db_path',
-          r'd:\WorkData\_experiment\_2019\inclinometer\190710_compas_calibr-byMe\190710incl.h5',
-          # r'd:\WorkData\_experiment\_2019\inclinometer\190320\190320incl.h5',
-          # r'd:\WorkData\_experiment\_2018\inclinometr\181003_compas\181003compas.h5',
-          '--channels_list', 'M,A',  # 'M,', Note: empty element cause calc of accelerometer coef.
-          '--tables_list', ', '.join(f'incl{i:0>2}' for i in probes),
-          #    'incl02', 'incl03','incl04','incl05','incl06','incl07','incl08','incl09','incl10','incl11','incl12','incl13','incl14','incl15','incl17','incl19','incl20','incl16','incl18',
-          '--timerange_list', str_range(timeranges, i),
-          '--timerange_nord_list', str_range(timeranges_nord, i),
-          # '--timerange_list', "'2019-03-20T11:53:35', '2019-03-20T11:57:20'",
-          # '--timerange_list', "'2019-03-20T11:49:10', '2019-03-20T11:53:00'",
+        i = 14
 
-          # "'2018-10-03T18:18:30', '2018-10-03T18:20:00'",
-          # "'2018-10-03T17:18:00', '2018-10-03T17:48:00'",
-          # "'2018-10-03T18:10:19', '2018-10-03T18:16:20'",
-          # "'2018-10-03T17:13:09', '2018-10-03T18:20:00'",
-          # "'2018-10-03T17:30:30', '2018-10-03T17:34:10'",
-          # "'2018-10-03T17:27:00', '2018-10-03T17:50:00'",
-          # "'2018-10-03T17:23:00', '2018-10-03T18:05:00'",?
-          # "'2018-10-03T17:23:00', '2018-10-03T18:05:00'",
-          # "'2018-10-03T17:23:00', '2018-10-03T18:07:00'",
-          # "'2018-10-03T17:23:00', '2018-10-03T18:10:00'",
-          # "'2018-10-03T17:45:30', '2018-10-03T18:09:00'",
-          # "'2018-10-03T17:59:00', '2018-10-03T18:03:00'",
-          # "'2018-10-03T18:23:00', '2018-10-03T18:28:20'",
-          # "'2018-10-03T17:23:00', '2018-10-03T18:30:00'",
-          # "'2018-10-03T17:23:00', '2018-10-03T18:03:00'",
-          # "'2018-10-03T17:52:32', '2018-10-03T17:59:00'",
-          # "'2018-10-03T18:21:00', '2018-10-03T18:24:00'",
-          # "'2018-10-03T18:05:39', '2018-10-03T18:46:35'",
-          # "'2018-10-03T17:23:40', '2018-10-03T17:24:55'",
-          # "'2018-10-03T16:13:00', '2018-10-03T17:14:30'",
+        # multiple timeranges not supported so calculate one by one probe?
+        probes = [i]
+        main(['', '--db_path',
+              r'd:\WorkData\_experiment\_2019\inclinometer\190710_compas_calibr-byMe\190710incl.h5',
+              # r'd:\WorkData\_experiment\_2019\inclinometer\190320\190320incl.h5',
+              # r'd:\WorkData\_experiment\_2018\inclinometr\181003_compas\181003compas.h5',
+              '--channels_list', 'M,A',  # 'M,', Note: empty element cause calc of accelerometer coef.
+              '--tables_list', ', '.join(f'incl{i:0>2}' for i in probes),
+              #    'incl02', 'incl03','incl04','incl05','incl06','incl07','incl08','incl09','incl10','incl11','incl12','incl13','incl14','incl15','incl17','incl19','incl20','incl16','incl18',
+              '--timerange_list', str_range(timeranges, i),
+              '--timerange_nord_list', str_range(timeranges_nord, i),
+              # '--timerange_list', "'2019-03-20T11:53:35', '2019-03-20T11:57:20'",
+              # '--timerange_list', "'2019-03-20T11:49:10', '2019-03-20T11:53:00'",
 
-          ])
+              # "'2018-10-03T18:18:30', '2018-10-03T18:20:00'",
+              # "'2018-10-03T17:18:00', '2018-10-03T17:48:00'",
+              # "'2018-10-03T18:10:19', '2018-10-03T18:16:20'",
+              # "'2018-10-03T17:13:09', '2018-10-03T18:20:00'",
+              # "'2018-10-03T17:30:30', '2018-10-03T17:34:10'",
+              # "'2018-10-03T17:27:00', '2018-10-03T17:50:00'",
+              # "'2018-10-03T17:23:00', '2018-10-03T18:05:00'",?
+              # "'2018-10-03T17:23:00', '2018-10-03T18:05:00'",
+              # "'2018-10-03T17:23:00', '2018-10-03T18:07:00'",
+              # "'2018-10-03T17:23:00', '2018-10-03T18:10:00'",
+              # "'2018-10-03T17:45:30', '2018-10-03T18:09:00'",
+              # "'2018-10-03T17:59:00', '2018-10-03T18:03:00'",
+              # "'2018-10-03T18:23:00', '2018-10-03T18:28:20'",
+              # "'2018-10-03T17:23:00', '2018-10-03T18:30:00'",
+              # "'2018-10-03T17:23:00', '2018-10-03T18:03:00'",
+              # "'2018-10-03T17:52:32', '2018-10-03T17:59:00'",
+              # "'2018-10-03T18:21:00', '2018-10-03T18:24:00'",
+              # "'2018-10-03T18:05:39', '2018-10-03T18:46:35'",
+              # "'2018-10-03T17:23:40', '2018-10-03T17:24:55'",
+              # "'2018-10-03T16:13:00', '2018-10-03T17:14:30'",
+
+              ])
 
     # # Old variant not using argparser
     #

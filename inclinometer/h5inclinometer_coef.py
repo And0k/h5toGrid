@@ -9,7 +9,7 @@ Save/modify coef in hdf5 data in "/coef" table of PyTables (pandas hdf5) store
 """
 import logging
 from typing import Iterable, Mapping, Union
-
+from pathlib import Path
 import h5py
 import numpy as np
 
@@ -157,6 +157,9 @@ def h5copy_coef(h5file_source=None, h5file_dest=None, tbl=None, tbl_source=None,
     #             self.h5file.close()
     #         return False
 
+    def path_h5(file):
+        return Path(file.filename if isinstance(file, h5py._hl.files.File) else file)
+
     def save_operation(h5source=None):
         """
         update dict_matrices in h5file_dest. h5source may be used to copy from h5source
@@ -169,26 +172,35 @@ def h5copy_coef(h5file_source=None, h5file_dest=None, tbl=None, tbl_source=None,
         nonlocal dict_matrices
 
         with FakeContextIfOpen(lambda f: h5py.File(f, 'a'), h5file_dest) as h5dest:
-            if (h5source is None) and (tbl_dest != tbl_source):
-                h5source = h5dest
-
-            # Copy using provided paths:
-            if h5source and not (h5dest == h5source and tbl_dest == tbl_source):
-                l.info(f'copying {h5source.filename}//{tbl_source} to {h5dest.filename}//{tbl_dest}')
-                # Reuse previous calibration structure:
-                # import pdb; pdb.set_trace()
-                # h5source.copy('//' + tbl_source + '//coef', h5dest[tbl_dest + '//coef'])
-                try:
-                    path = '//' + tbl_source + '//coef'
-                    h5source.copy(path, h5dest[tbl_dest])
-                    # h5source[tbl_source].copy('', h5dest[tbl_dest], name='coef')
-                except RuntimeError as e:  # Unable to copy object (destination object already exists)
-                    if ok_to_replace_group:
-                        l.warning(f'Replacing group "%s"', path)
-                        del h5dest[path]
-                        h5source.copy(path, h5dest[tbl_dest])
+            try:
+                if (h5source is None):
+                    if (tbl_dest != tbl_source):
+                        h5source = h5dest
                     else:
-                        l.error('Skip copy coef: '   + '\n==> '.join([a for a in e.args if isinstance(a, str)]))
+                        raise FileExistsError(f'Can not copy to itself {h5dest.filename}//{tbl_dest}')
+                elif (path_h5(h5dest) == h5source and tbl_dest == tbl_source):
+                    raise FileExistsError(f'Can not copy to itself {h5dest.filename}//{tbl_dest}')
+
+                # Copy using provided paths:
+                if h5source:
+                    l.info(f'copying {path_h5(h5source)}//{tbl_source} to {h5dest.filename}//{tbl_dest}')
+                    # Reuse previous calibration structure:
+                    # import pdb; pdb.set_trace()
+                    # h5source.copy('//' + tbl_source + '//coef', h5dest[tbl_dest + '//coef'])
+                    try:
+                        path = '//' + tbl_source + '//coef'
+                        h5source.copy(path, h5dest[tbl_dest])
+                        # h5source[tbl_source].copy('', h5dest[tbl_dest], name='coef')
+                    except RuntimeError as e:  # Unable to copy object (destination object already exists)
+                        if ok_to_replace_group:
+                            l.warning(f'Replacing group "%s"', path)
+                            del h5dest[path]
+                            h5source.copy(path, h5dest[tbl_dest])
+                        else:
+                            l.error('Skip copy coef: '   + '\n==> '.join([a for a in e.args if isinstance(a, str)]))
+            except FileExistsError:
+                if dict_matrices is None:
+                    raise
 
             if dict_matrices:  # not is None:
                 have_values = isinstance(dict_matrices, dict)
@@ -242,7 +254,7 @@ def h5copy_coef(h5file_source=None, h5file_dest=None, tbl=None, tbl_source=None,
 
     # try:
     with FakeContextIfOpen(
-            lambda f: h5py.File(f, 'r') if h5file_source != h5file_dest else None,
+            (lambda f: h5py.File(f, 'r')) if h5file_source != h5file_dest else None,
             h5file_source) as h5source:
         save_operation(h5source)
 
@@ -281,5 +293,5 @@ def h5_rotate_coef(h5file_source, h5file_dest, tbl):
             h5dest.flush()
 
     print('h5copy_coef(): coef. updated')
-# @-others
-# @-leo
+
+

@@ -1,0 +1,24 @@
+
+in:
+  path_cruise: d:\WorkData\_experiment\_2019\inclinometer\200807_Schukas
+  raw_subdir: tank_calibr.rar\inkl 30 piecse patr 2  #\Inkl 30 pieces  #
+  probes: []
+  probes_prefix: incl_b
+  raw_pattern: "*{prefix:}{number:0>2}*.[tT][xX][tT]"
+
+#  timerange_zeroing_dict:
+#    incl14: [2020-07-10T21:31:00, 2020-07-10T21:39:00]
+  db_coefs: incl_b.h5
+
+filter:
+  date_min: {0: 2020-07-21T12:30:00}  # {0: 2020-07-20T11:40:00}  #
+  date_max: {0: 2020-07-21T15:00:00}  # {0: 2020-07-20T14:30:00}  #
+
+out:
+  db_name: 200807_calibr-tank-b.h5
+  aggregate_period_s: [None, 2, 600, 7200]
+
+
+program:
+  step_start: 1
+  step_end: 1

@@ -15,7 +15,7 @@ if __debug__:
     from matplotlib import pyplot as plt
 from dateutil.tz import tzoffset
 from pathlib import Path, PurePath
-from utils2init import set_field_if_no, FakeContextIfOpen, open_csv_or_archive_of_them, standard_error_info
+from utils2init import set_field_if_no, FakeContextIfOpen, open_csv_or_archive_of_them, standard_error_info, dir_create_if_need
 from functools import partial
 
 l = logging.getLogger(__name__)
@@ -120,7 +120,7 @@ def meta_out(attribute: Any) -> Callable[[Callable[..., RT]], Callable[..., RT]]
     Decorator that adds attribute ``meta_out`` to decorated function
     In this file it is used to return partial of out_fields(),
     and that in this module used to get metadata parameter for dask functions.
-    :param attribute: any, will be assigned to ``meta_out`` attribute of decorated function
+    :param attribute: any data, will be assigned to ``meta_out`` attribute of decorated function
     :return:
     """
 
@@ -131,7 +131,7 @@ def meta_out(attribute: Any) -> Callable[[Callable[..., RT]], Callable[..., RT]]
     return meta_out_dec
 
 
-def out_fields(dtyp: np.dtype, keys_del: Iterable[str],
+def out_fields(dtyp: np.dtype, keys_del: Optional[Iterable[str]] = (),
                 add_before: Optional[Mapping[str, np.dtype]] = None,
                 add_after: Optional[Mapping[str, np.dtype]] = None) -> Dict[str, np.dtype]:
     """
@@ -165,6 +165,71 @@ def log_csv_specific_param_operation(
         l.info(f'{msg_format_param} will be applyed', csv_specific_param.keys())
 
 
+def param_funs_closure(csv_specific_param, cfg_in):
+    params_funs = {}
+    # def fun(param, fun_id, v):
+    #     param_closure = param
+    #     if fun_id == 'fun':
+    #         def fun_closure(x):
+    #             return v(x[param_closure])
+    #     elif fun_id == 'add':
+    #         def fun_closure(x):
+    #             return x[param_closure] + v
+    #         # or a.eval(f"{param} = {param} + {v}", inplace=True)
+    #     else:
+    #         raise KeyError(f'Error in csv_specific_param: {k}: {v}')
+    #     return fun_closure
+    if csv_specific_param is not None:
+        for k, v in csv_specific_param.items():
+            param, fun_id = k.split('_')
+            if fun_id == 'fun':
+                def fun(param, v):
+                    param_closure = param
+                    v_closure = v
+
+                    def fun_closure(x):
+                        return v_closure(x[param_closure])
+
+                    return fun_closure
+            elif fun_id == 'add':
+                def fun(param, v):
+                    param_closure = param
+                    v_closure = v
+
+                    def fun_closure(x):
+                        return x[param_closure] + v_closure
+
+                    # or a.eval(f"{param} = {param} + {v}", inplace=True)
+                    return fun_closure
+            else:
+                raise KeyError(f'Error in csv_specific_param: {k}: {v}')
+            params_funs[param] = fun(param, v)  # f"{param} = {v}({param})
+        if not cfg_in.get('csv_specific_param_logged'):  # log 1 time i.e. in only one 1 dask partition
+            cfg_in['csv_specific_param_logged'] = True
+            l.info(f'csv_specific_param {csv_specific_param.keys()} modifications applyed')
+    return params_funs
+
+
+@meta_out(out_fields)
+def proc_loaded_corr(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
+                                   csv_specific_param: Optional[Mapping[str, Any]] = None) -> pd.DataFrame:
+    """
+    Specified prep&proc of data :
+    - Time calc: gets string for time in current zone
+
+
+    :param a: numpy record array. Will be modified inplace.
+    :param cfg_in: dict
+    :param csv_specific_param: {param_suffix: fun_expr} where ``suffix`` in param_suffix string can be 'fun' or 'add':
+    - 'fun': fun_expr specifies function assign to ``param``
+    - 'add': fun_expr specifies value to add to ``param`` to modify it
+    :return: pandas.DataFrame
+    """
+    params_funs = param_funs_closure(csv_specific_param, cfg_in)
+
+    # check that used
+    return a.assign(**params_funs)
+
 # ----------------------------------------------------------------------
 def proc_loaded_Idronaut(a: Union[pd.DataFrame, np.ndarray],
                          cfg_in: Optional[Mapping[str, Any]] = None) -> pd.DatetimeIndex:
@@ -182,8 +247,33 @@ def proc_loaded_Idronaut(a: Union[pd.DataFrame, np.ndarray],
     # np.array(date, 'datetime64[ms]')
     return convertNumpyArrayOfStrings(date, 'datetime64[ns]', format='%Y-%m-%dT%H:%M:%S.%f')
 
-
 # ----------------------------------------------------------------------
+@meta_out(partial(out_fields, keys_del={'Date', 'Time'}, add_before={'Time': 'M8[ns]'}))
+def proc_loaded_sea_and_sun_corr_s(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
+                                   csv_specific_param: Optional[Mapping[str, Any]] = None) -> pd.DataFrame:
+    """
+    Specified prep&proc of data :
+    - Time calc: gets string for time in current zone
+
+
+    :param a: numpy record array. Will be modified inplace.
+    :param cfg_in: dict
+    :param csv_specific_param: {param_suffix: fun_expr} where ``suffix`` in param_suffix string can be 'fun' or 'add':
+    - 'fun': fun_expr specifies function assign to ``param``
+    - 'add': fun_expr specifies value to add to ``param`` to modify it
+    :return: pandas.DataFrame
+    """
+
+    date = pd.to_datetime(a['Date'].str.decode('utf-8', errors='replace'), format='%d.%m.%Y') + \
+           pd.to_timedelta(a['Time'].str.decode('utf-8', errors='replace'), unit='ms')
+
+    params_funs = param_funs_closure(csv_specific_param, cfg_in)
+
+    # check that used
+    return a.assign(**{'Time': date}, **params_funs).loc[:, list(
+        proc_loaded_sea_and_sun_corr_s.meta_out(cfg_in['dtype_out']).keys())]
+
+
 def proc_loaded_sea_and_sun(a: pd.DataFrame,
                             cfg_in: Optional[Mapping[str, Any]] = None) -> pd.Series:
     """
@@ -555,15 +645,19 @@ def proc_loaded_chain_Baranov(a: Union[pd.DataFrame, np.ndarray],
 
 
 
-# njit not works for "isinstance(arr, pd.Series)" and np.add.reduce()
-def concat_to_iso8601(a: pd.DataFrame) -> np.ndarray:  #pd.Series, Mapping[str, np.ndarray]
+
+def concat_to_iso8601(a: pd.DataFrame) -> pd.Series:
     """
     Concatenate date/time parts to get iso8601 strings
     :param a: pd.DataFrame with columns 'yyyy', 'mm', 'dd', 'HH', 'MM', 'SS' having byte strings
     :return:  series of byte strings of time in iso8601 format
     """
-    return np.add.reduce([a['yyyy'], b'-'] + [fill0(arr, width=2) if isinstance(arr, pd.Series) else arr for arr in (
-        a['mm'], b'-', a['dd'], b'T', a['HH'], b':', a['MM'], b':', a['SS'])])
+
+    d = a['yyyy'].str.decode("utf-8")
+    d = d.str.cat([a[c].str.decode("utf-8").str.zfill(2) for c in ['mm', 'dd']], sep='-')
+    t = a['HH'].str.decode("utf-8").str.zfill(2)
+    t = t.str.cat([a[c].str.decode("utf-8").str.zfill(2) for c in ['MM', 'SS']], sep=':')
+    return d.str.cat(t, sep='T')
 
 
 @meta_out(partial(out_fields, keys_del={'yyyy', 'mm', 'dd', 'HH', 'MM', 'SS'}, add_before={'Time': 'M8[ns]'}))
@@ -584,34 +678,8 @@ def proc_loaded_inclin_Kondrashov(a: Union[pd.DataFrame, np.ndarray], cfg_in: Ma
     'HH': b'9','MM': b'5', 'SS': b''}
     """
 
-    # Time calc: get string for time in current zone
-
-    # def adder(additive, *additions): #, shape, dtype
-    #     """
-    #     :param additive: dd.Series(dsk, name, meta, divisions) # da.empty(shape, dtype=dtype, chunks= cfg_in['blocksize'])
-    #     :param list_of_additions:
-    #     :return:
-    #     adder(dd.from_pandas(pd.Series([b''] * shape, name='Sum', meta=('Sum', '|S19')), npartitions=2)
-    #     """
-    #     for arr in additions:
-    #         additive += arr
-    #     return additive
-
-
-        # # Trying pandas is not saccesful:
-        # return pd.Series([b''] * a.shape[0]).apply(
-        #     adder, args=([a['yyyy'], b'-'] + [fill0(arr) for arr in [
-        #         a['mm'], b'-', a['dd'], b'T', a['HH'], b':', a['MM'], b':', a['SS']]])
-        # # Trying dask is not saccesful:
-        # ds = pd.Series([b''] * a.shape[0], name='Sum')
-        # return dd.from_pandas(ds, chunksize=cfg_in['blocksize']).apply(
-        #     adder, args=([a['yyyy'], b'-'] + [fill0(arr) for arr in [
-        #     a['mm'], b'-', a['dd'], b'T', a['HH'], b':', a['MM'],  b':', a['SS']]]),
-        #     meta= ('date', '|S19'))  # , shape=a.shape[0], dtype='S19'
-
     try:
         date = concat_to_iso8601(a)  # .compute() #da.from_delayed(, (a.shape[0],), '|S19') #, ndmin=1)
-        # date = b'%(yyyy)b-%(mm)b-%(dd)bT%(HH)02b-%(MM)02b-%(SS)02b' % a
     except Exception as e:
         l.exception('Can not convert date: ')
         raise e
@@ -795,10 +863,12 @@ def rep_in_file(in_file: Union[str, PurePath, BinaryIO, TextIO],
 def mod_incl_name(in_file: Union[str, PurePath]):
     """ Change name of corrected (regular table format) csv file of raw inclinometer/wavegage data"""
     in_file = PurePath(in_file)
-    out_file = in_file.with_name(re.sub('((?P<i>inkl)|w)_0*(?P<n>\d\d)',
-                                        lambda m: f"{'incl' if m.group('i') else 'w'}{m.group('n')}",
-                                        in_file.name.lower()
-                                        ))  # r'inkl_?0*(\d{2})', r'incl\1'
+    in_file_name = in_file.name.lower().replace('inkl', 'incl')  # main replacement that marks result file
+    in_file_name = re.sub('((?P<prefix>incl|w))_0*(?P<number>\d\d)',
+           lambda m: f"{m.group('prefix')}{m.group('number')}",
+           in_file_name
+           )
+    out_file = in_file.with_name(in_file_name)  # r'inkl_?0*(\d{2})', r'incl\1'
     return out_file
 
 
@@ -858,6 +928,7 @@ def correct_kondrashov_txt(in_file: Union[str, Path, BinaryIO, TextIO],
         l.warning(f'skipping of pre-correcting csv file {msg_in_file} to {out_file.name}: destination exist')
         return out_file
 
+    dir_create_if_need(out_file.parent)
     binary_mode = False if isinstance(in_file, io.TextIOBase) else True
     fsub = f_repl_by_dict([x if binary_mode else bytes.decode(x) for x in (
         b'^(?P<use>20\d{2}(,\d{1,2}){5}(,\-?\d{1,6}){6}(,\d{1,2}\.\d{2})(,\-?\d{1,3}\.\d{2})).*',
@@ -873,75 +944,6 @@ def correct_kondrashov_txt(in_file: Union[str, Path, BinaryIO, TextIO],
         l.warning('{} bad line deleted'.format(sum_deleted))
 
     return out_file
-
-
-@meta_out(partial(out_fields, keys_del={'Date', 'Time'}, add_before={'Time': 'M8[ns]'}))
-def proc_loaded_sea_and_sun_corr_s(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
-                                   csv_specific_param: Optional[Mapping[str, Any]] = None) -> pd.DataFrame:
-    """
-    Specified prep&proc of data :
-    - Time calc: gets string for time in current zone
-    - Lat, Lon to degrees conversion
-
-
-    :param a: numpy record array. Will be modified inplace.
-    :param cfg_in: dict
-    :param csv_specific_param: {param_suffix: fun_expr} where ``suffix`` in param_suffix string can be 'fun' or 'add':
-    - 'fun': fun_expr specifies function assign to ``param``
-    - 'add': fun_expr specifies value to add to ``param`` to modify it
-    :return: pandas.DataFrame
-    """
-
-    date = pd.to_datetime(a['Date'].str.decode('utf-8', errors='replace'), format='%d.%m.%Y') + \
-           pd.to_timedelta(a['Time'].str.decode('utf-8', errors='replace'), unit='ms')
-
-    params_funs = {}
-
-    # def fun(param, fun_id, v):
-    #     param_closure = param
-    #     if fun_id == 'fun':
-    #         def fun_closure(x):
-    #             return v(x[param_closure])
-    #     elif fun_id == 'add':
-    #         def fun_closure(x):
-    #             return x[param_closure] + v
-    #         # or a.eval(f"{param} = {param} + {v}", inplace=True)
-    #     else:
-    #         raise KeyError(f'Error in csv_specific_param: {k}: {v}')
-    #     return fun_closure
-
-    if csv_specific_param is not None:
-        for k, v in csv_specific_param.items():
-            param, fun_id = k.split('_')
-            if fun_id == 'fun':
-                def fun(param, v):
-                    param_closure = param
-                    v_closure = v
-
-                    def fun_closure(x):
-                        return v_closure(x[param_closure])
-
-                    return fun_closure
-            elif fun_id == 'add':
-                def fun(param, v):
-                    param_closure = param
-                    v_closure = v
-
-                    def fun_closure(x):
-                        return x[param_closure] + v_closure
-
-                    # or a.eval(f"{param} = {param} + {v}", inplace=True)
-                    return fun_closure
-            else:
-                raise KeyError(f'Error in csv_specific_param: {k}: {v}')
-            params_funs[param] = fun(param, v)  # f"{param} = {v}({param})
-        if not cfg_in.get('csv_specific_param_logged'):  # log 1 time i.e. in only one 1 dask partition
-            cfg_in['csv_specific_param_logged'] = True
-            l.info(f'csv_specific_param {csv_specific_param.keys()} modifications applyed')
-
-    # check that used
-    return a.assign(**{'Time': date}, **params_funs).loc[:, list(
-        proc_loaded_sea_and_sun_corr_s.meta_out(cfg_in['dtype_out']).keys())]
 
 
 def correct_baranov_txt(in_file: Union[str, PurePath],

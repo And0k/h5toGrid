@@ -36,7 +36,7 @@ sys.path.append(str(scripts_path.parent.resolve()))
 # from scripts.incl_calibr import calibrate, calibrate_plot, coef2str
 # from other_filters import despike, rep2mean
 from utils2init import Ex_nothing_done, set_field_if_no, init_logging, cfg_from_args, init_file_names, \
-    my_argparser_common_part, this_prog_basename
+    my_argparser_common_part, this_prog_basename, dir_create_if_need
 from utils_time import intervals_from_period, pd_period_to_timedelta
 from to_pandas_hdf5.h5toh5 import h5init, h5find_tables, h5remove_table, h5move_tables
 from to_pandas_hdf5.h5_dask_pandas import h5_append, h5q_intervals_indexes_gen, h5_load_range_by_coord, i_bursts_starts, \
@@ -45,7 +45,7 @@ from to_pandas_hdf5.csv2h5 import h5_dispenser_and_names_gen, h5_close
 from other_filters import rep2mean
 from inclinometer.h5inclinometer_coef import rot_matrix_x, rotate_y
 
-if True:  # __name__ == '__main__':
+if __name__ == '__main__':  # True:
     from dask.distributed import Client
 
     client = Client(
@@ -109,7 +109,7 @@ def my_argparser(varargs=None):
     p_in.add('--timerange_zeroing_list',
              help='if specified then rotate data in this interval such that it will have min mean pitch and roll, display "info" warning about')
     p_in.add('--timerange_zeroing_dict',
-             help='{table: [start, end]}, rotate data in this interval only for specified table(s) data such that it will have min mean pitch and roll, the about "info" warning will be displayed')
+             help='{table: [start, end]}, rotate data in this interval only for specified probe number(s) data such that it will have min mean pitch and roll, the about "info" warning will be displayed. Probe number is int number consisted of digits in table name')
 
     p_flt = p.add_argument_group('filter', 'filter all data based on min/max of parameters')
     p_flt.add('--max_g_minus_1_float', default='1',
@@ -1112,14 +1112,20 @@ def dd_to_csv(d: dd.DataFrame, cfg: Mapping[str, Any], suffix='', b_single_file=
     cfg_out = cfg['output_files']
     if cfg_out['csv_path'] is None:
         return
+
     l.info('Saving csv: %s', '1 file' if b_single_file else f'{d.npartitions} files')
+    try:
+        dir_create_if_need(cfg_out['csv_path'])
+        def combpath(dir_or_prefix, s):
+            return str(dir_or_prefix / s)
+    except:
+        l.exception('Dir not created!')
+        def combpath(dir_or_prefix, s):
+            return f'{dir_or_prefix}{s}'
 
     def name_that_replaces_asterisk(i_partition):
         return f'{d.divisions[i_partition]:%y%m%d_%H%M}'
         # too long variant: '{:%y%m%d_%H%M}-{:%H%M}'.format(*d.partitions[i_partition].index.compute()[[0,-1]])
-
-    def combpath(dir_or_prefix, s):
-        return str(dir_or_prefix / s) if dir_or_prefix.is_dir() else f'{dir_or_prefix}{s}'
 
     filename_csv = combpath(cfg_out['csv_path'],
                             '{}bin{}'.format(
@@ -1138,7 +1144,7 @@ def dd_to_csv(d: dd.DataFrame, cfg: Mapping[str, Any], suffix='', b_single_file=
             d_csv['Date'] = d_csv.map_partitions(lambda df: cfg_out['csv_date_format'](df.index))
         else:
             arg_csv = {'date_format': cfg_out['csv_date_format'],
-                       'columns': cfg_out.get('csv_columns') or None
+                       'columns': cfg_out.get('csv_columns') or None  # write all columns if list is empty
                        }
 
         if progress is not None:
@@ -1219,9 +1225,10 @@ def main(new_arg=None, **kwargs):
 
         # Zeroing
         if cfg['in']['timerange_zeroing'] and not cfg['in']['db_path'].stem.endswith('proc_noAvg'):
-            if isinstance(cfg['in']['timerange_zeroing'], dict):  # individual interval for each table
-                if tbl in cfg['in']['timerange_zeroing']:
-                    timerange_zeroing = cfg['in']['timerange_zeroing'][tbl]
+            if isinstance(cfg['in']['timerange_zeroing'], Mapping):  # individual interval for each table
+                probe_number = int(re.findall('\d+', tbl)[0])
+                if probe_number in cfg['in']['timerange_zeroing']:
+                    timerange_zeroing = cfg['in']['timerange_zeroing'][probe_number]
                 else:
                     timerange_zeroing = None
             else:
