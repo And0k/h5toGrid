@@ -79,11 +79,11 @@ file based on vsz pattern
 
     p_out = p.add_argument_group('output_files', 'all about output files')
     p_out.add('--export_pages_int_list', default='0',
-              help='pages numbers to export, comma separated (1 is first), 0= all')
+              help='pages numbers to export, comma separated (1 is first), 0 = all')
     p_out.add('--b_images_only', default='False',
               help='export only. If true then all output vsz must exist, they will be loaded and vsz not be updated')
     p_out.add('--b_update_existed', default='False',
-              help='replace all existed vsz files else skip existed files')
+              help='replace all existed vsz files else skip existed files. In b_images_only mode - skip exporting vsz files for wich any files in "export_dir/*{vsz file stem}*. {export_format}" exist')
     p_out.add('--export_dir', default='images(vsz)',
               help='subdir relative to input path or absolute path to export images')
     p_out.add('--export_format', default='jpg',
@@ -104,6 +104,8 @@ file based on vsz pattern
     p_prog = p.add_argument_group('program', 'program behaviour')
     p_prog.add('--export_timeout_s_float', default='0',
                help='export asyncroniously with this timeout, s (tryed 600s?)')
+    p_prog.add('--load_timeout_s_float', default='180',
+               help='export asyncroniously with this timeout, s (tryed 600s?)')
     p_prog.add('--veusz_path',
                default=u'C:\\Program Files (x86)\\Veusz' if sys_platform == 'win32' else '/home/korzh/.local/lib/python3.6/site-packages/veusz',
                # '/usr/lib64/python3.6/site-packages/veusz-2.1.1-py3.6-linux-x86_64.egg/veusz', # os_environ['PATH']
@@ -118,6 +120,53 @@ file based on vsz pattern
                help='<cfg_from_args>: returns cfg based on input args only and exit, <gen_names_and_log>: execute init_input_cols() and also returns fun_proc_loaded function... - see main()')
 
     return p
+
+
+
+import asyncio
+from functools import partial
+import multiprocessing
+from concurrent.futures.thread import ThreadPoolExecutor
+
+
+class SingletonTimeOut:
+    """
+    Timeout on a function call
+    https://stackoverflow.com/a/63337662/2028147
+    """
+    pool = None
+    @classmethod
+    def run(cls, to_run: partial, timeout: float):
+        """
+
+        :param to_run: functools.partial, your function with arguments included
+        :param timeout: seconds
+        :return: your function output
+        """
+        pool = cls.get_pool()
+        loop = cls.get_loop()
+        try:
+            task = loop.run_in_executor(pool, to_run)
+            return loop.run_until_complete(asyncio.wait_for(task, timeout=timeout))
+        except asyncio.TimeoutError as e:
+            error_type = type(e).__name__ #TODO
+            raise e
+
+    @classmethod
+    def get_pool(cls):
+        if cls.pool is None:
+            cls.pool = ThreadPoolExecutor(multiprocessing.cpu_count())
+        return cls.pool
+
+    @classmethod
+    def get_loop(cls):
+        try:
+            return asyncio.get_event_loop()
+        except RuntimeError:
+            asyncio.set_event_loop(asyncio.new_event_loop())
+            # print("NEW LOOP" + str(threading.current_thread().ident))
+            return asyncio.get_event_loop()
+
 
 
 # ----------------------------------------------------------------------
@@ -171,11 +220,12 @@ def veusz_data(veusze, prefix: str, suffix_prior: str = '') -> Dict[str, Any]:
     return vsz_data
 
 
-def load_vsz_closure(veusz_path: PurePath) -> Callable[
+def load_vsz_closure(veusz_path: PurePath, load_timeout_s: Optional = 120) -> Callable[
     [Union[str, PurePath], Optional[str], Optional[str], Optional[str]], Tuple[Any, Optional[Dict[str, Any]]]]:
     """
     See load_vsz inside
     :param veusz_path: pathlib Path to directory of embed.py
+    :param load_timeout_s: rases asyncio.TimeoutError if loads longer
     """
 
     # def import_veusz(veusz_path=u'C:\\Program Files (x86)\\Veusz'):
@@ -220,9 +270,9 @@ def load_vsz_closure(veusz_path: PurePath) -> Callable[
         :param veusze: veusz.Embedded object or None - will be created if None else reused
         :param prefix: only data started with this prefix will be loaded
         :param suffix_prior: high priority names suffix, removes other version of data if starts same but with no such suffix (see veusz_data())
-        :return: (vsz_data, veusze) if prefix is not none else only veusze
-                  vsz_data - data loaded,
-                  veusze - veusz.Embedded object
+        :return: (veusze, vsz_data):
+            - veusze - veusz.Embedded object
+            - vsz_data - loaded data if prefix is not None else None
         """
         if vsz is None:
             file_exists = False
@@ -241,12 +291,19 @@ def load_vsz_closure(veusz_path: PurePath) -> Callable[
                 title = f'{vsz} - was created'
 
         if veusze is None:  # construct a Veusz embedded window
+            if __name__ != '__main__':       # if this not haven't done in main()
+                # Save right path in veusz.Embedded (closure)
+                path_prev = os_getcwd()      # to recover
+                os_chdir(Path(vsz).parent)   # allows veusze.Load(path) to work if _path_ is relative or relative paths is used in vsz
             veusze = veusz.Embedded(title)
             # veusze.EnableToolbar()
             # veusze.Zoom('page')
+            if __name__ != '__main__':
+                os_chdir(path_prev)          # recover
 
         if file_exists:
-            veusze.Load(str(vsz))
+            # veusze.Load(str(Path(vsz).name)) with timeout:  # not tried veusze.serv_socket.settimeout(60)
+            SingletonTimeOut.run(partial(veusze.Load, str(Path(vsz).name)), load_timeout_s)
             sleep(1)
 
         if prefix is None:
@@ -274,10 +331,10 @@ def export_images(veusze, cfg_out, suffix, b_skip_if_exists=False):
     for i, key in enumerate(veusze.GetChildren(where='/'), start=1):
         if cfg_out['export_pages'][0] == 0 or (  # = b_export_all_pages
                 i in cfg_out['export_pages']):
-            file_name = Path(cfg_out['export_dir']) / (key + suffix + '.' + cfg_out['export_format'])  # '.png'
+            file_name = Path(cfg_out['export_dir']) / f"{key}{suffix}.{cfg_out['export_format']}"
             if veusze.Get(key + '/hide') or (b_skip_if_exists and file_name.is_file()):
                 continue
-            # Veusz can not export too big images - reduce
+            # Veusz partly blanks too big images on export - reduce
             dpi = dpi_list[min(i, len(dpi_list) - 1)]
             if int(re.sub('[^\d]', '', veusze.Get(key + '/width'))) > 400 and dpi > 200:
                 dpi = 200
@@ -402,6 +459,7 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
     which is defined by call load_vsz_closure()
     Note 2: If 'restore_config' in cfg['program']['before_next'] then sets cfg['in']= cfg['in_saved']
     """
+    global load_vsz
 
     filename_fun = eval(compile(cfg['output_files']['filename_fun'], '', 'eval'))
     ifile = 0
@@ -409,19 +467,24 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
         ifile += 1
         in_full = Path(in_full)
 
-        in_ext = in_full.suffix.lower()
+
         out_name = filename_fun(in_full.stem) + cfg['output_files']['add_to_filename']
         out_vsz_full = (Path(cfg['output_files']['dir']) / out_name).with_suffix('.vsz')
 
         # if ifile < cfg['in']['start_file']:
         #     continue
 
-        # skip existed vsz if need
-        if (not cfg['output_files']['b_images_only'] and
-                (not cfg['output_files']['b_update_existed']) and
-                out_vsz_full.is_file()):
+        # do not update existed vsz/images if not specified 'b_update_existed'
+        if not cfg['output_files']['b_update_existed']:
+             if cfg['output_files']['b_images_only']:
+                 glob = Path(cfg['output_files']['export_dir']).glob(
+                     f"*{out_name}*.{cfg['output_files']['export_format']}")
+                 if any(glob):
+                     continue
+             elif out_vsz_full.is_file():
+                 continue
             # yield (None, None)
-            continue
+
         if in_full.stem != out_vsz_full.stem:
             l.info('%d. %s -> %s, ', ifile, in_full.name, out_vsz_full.name)
         else:
@@ -437,29 +500,53 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
                 b_closed = True
             if b_closed:
                 veusze = None
-            elif 'Close()' in cfg['program']['before_next'] or in_ext == '.vsz':
+            elif 'Close()' in cfg['program']['before_next']:  # or in_ext == '.vsz'
                 veusze.Close()
                 veusze = None
 
-        # load same filePattern (last in list) if data file not "vsz"
-        vsz_load = in_full if in_ext == '.vsz' else cfg['output_files']['namesFull'][-1]
 
-        if cfg['output_files']['b_images_only']:
-            veusze = load_vsz(vsz_load, veusze)[0]  # veusze.Load(in_full.with_suffix('.vsz'))
-        else:
-            if 'restore_config' in cfg['program']['before_next']:
-                cfg['in'] = cfg['in_saved'].copy()  # useful if need restore add_custom_expressions?
-            if not veusze:
-                veusze = load_vsz(vsz_load)[0]  # , veusze=veusze
-                if cfg['program']['verbose'] == 'DEBUG':
-                    veusze.SetVerbose()  # nothing changes
-            # Relative path from new vsz to data, such as u'txt/160813_0010.txt'
-            try:
-                file_name_r = in_full.relative_to(cfg['output_files']['dir'])
-            except ValueError as e:
-                # l.exception('path not related to pattern')
-                file_name_r = in_full
-            veusze_commands(veusze, cfg['in'], file_name_r)
+
+        def do_load_vsz(in_full, veusze, load_vsz):
+            in_ext = in_full.suffix.lower()
+            vsz_load = in_full if in_ext == '.vsz' else \
+                cfg['output_files']['namesFull'][-1]  # load same filePattern (last in list) if data file not "vsz"
+            if cfg['output_files']['b_images_only']:
+                veusze = load_vsz(vsz_load, veusze)[0]  # veusze.Load(in_full.with_suffix('.vsz'))
+            else:
+                if 'restore_config' in cfg['program']['before_next']:
+                    cfg['in'] = cfg['in_saved'].copy()  # useful if need restore add_custom_expressions?
+                if not veusze:
+                    veusze = load_vsz(vsz_load)[0]  # , veusze=veusze
+                    if cfg['program']['verbose'] == 'DEBUG':
+                        veusze.SetVerbose()  # nothing changes
+                # Relative path from new vsz to data, such as u'txt/160813_0010.txt'
+                try:
+                    file_name_r = in_full.relative_to(cfg['output_files']['dir'])
+                except ValueError as e:
+                    # l.exception('path not related to pattern')
+                    file_name_r = in_full
+                veusze_commands(veusze, cfg['in'], file_name_r)
+            return veusze
+
+        try:
+            veusze = do_load_vsz(in_full, veusze, load_vsz)
+        except asyncio.TimeoutError as e:
+            l.warning('Recreating window because of %s', standard_error_info(e))
+            veusze.remote.terminate()
+            veusze.remote = None
+
+            # veusze.Close()  # veusze.exitQt()                                              # not works
+            # import socket
+            # veusze.serv_socket.shutdown(socket.SHUT_RDWR)
+            # veusze.serv_socket.close()
+            # veusze.serv_socket, veusze.from_pipe = -1, -1
+
+            # veusze.serv_socket.shutdown(socket.SHUT_RDWR); veusze.serv_socket.close()
+            # veusze.startRemote()                                                           # no effect
+
+            load_vsz = load_vsz_closure(cfg['program']['veusz_path'], cfg['program']['load_timeout_s'])     # this is only unfreezes Veusz
+            veusze = do_load_vsz(in_full, None, load_vsz)
+
         yield (veusze, log)
 
 
@@ -500,8 +587,9 @@ def co_savings(cfg: Dict[str, Any]) -> Iterator[None]:
     """
     with pd.HDFStore(Path(cfg['program']['log']).with_suffix('.h5'), mode='a') as storeLog:
         veusze = None
-        path_prev = os_getcwd()
-        os_chdir(cfg['output_files']['dir'])
+        if __name__ != '__main__':
+            path_prev = os_getcwd()
+            os_chdir(cfg['output_files']['dir'])
         print('Saving to {}'.format(Path(cfg['output_files']['dir']).absolute()))
         try:
             while True:
@@ -527,7 +615,8 @@ def co_savings(cfg: Dict[str, Any]) -> Iterator[None]:
         except GeneratorExit:
             print('Ok>')
         finally:
-            os_chdir(path_prev)
+            if __name__ != '__main__':
+                os_chdir(path_prev)
             if veusze and cfg['program']['return'] != '<embedded_object>':
                 veusze.Close()
                 l.info('closing Veusz embedded object')
@@ -589,7 +678,7 @@ def main(new_arg=None, veusze=None):
         l
 
     :param new_arg:
-    :param veusze: used to reuze veusz embedded object (thus to not leak memory)
+    :param veusze: used to reuse veusz embedded object (thus to not leak memory)
     :return:
     """
     global l, load_vsz
@@ -605,9 +694,11 @@ def main(new_arg=None, veusze=None):
 
     print('\n' + this_prog_basename(__file__), 'started', end=' ')
     if cfg['output_files']['b_images_only']:
-        print('in images only mode. Output pattern: ')
+        print('in images only mode. Output pattern: ')  # todo Export path: '
     else:
         print('. Output pattern and Data: ')
+    __name__ = '__main__'  # indicate to other functions that they are called from main
+
     try:
         # Using cfg['output_files'] to store pattern information
         if not Path(cfg['in']['pattern_path']).is_absolute():
@@ -616,7 +707,7 @@ def main(new_arg=None, veusze=None):
         cfg['output_files'] = init_file_names(cfg['output_files'], b_interact=False)  # find it
     except Ex_nothing_done as e:
         if not cfg['output_files']['b_images_only']:
-            l.warning(e.message, ' - no pattern!')
+            l.warning(f'{e.message} - no pattern. Specify it or use "b_images_only" mode!')
             return  # or raise FileNotFoundError?
 
     if (cfg['output_files']['b_images_only'] and cfg['output_files']['namesFull']):
@@ -632,10 +723,10 @@ def main(new_arg=None, veusze=None):
 
     if 'restore_config' in cfg['program']['before_next']:
         cfg['in_saved'] = cfg['in'].copy()
-    if cfg['output_files']['b_images_only'] and not 'Close()' in cfg['program']['before_next']:
-        cfg['program']['before_next'].append(
-            'Close()')  # usually we need to load new file for export (not only modify previous file)
-
+    # Next is commented because reloading is Ok: not need to Close()
+    # if cfg['output_files']['b_images_only'] and not 'Close()' in cfg['program']['before_next']:
+    #     cfg['program']['before_next'].append(
+    #         'Close()')  # usually we need to load new file for export (not only modify previous file)
     if cfg['program']['export_timeout_s'] and export_images_timed:
         cfg['async'] = {'loop': asyncio.get_event_loop(),
                         'export_timeout_s': cfg['program']['export_timeout_s']
@@ -643,7 +734,7 @@ def main(new_arg=None, veusze=None):
     else:
         cfg['async'] = {'loop': None}
 
-    load_vsz = load_vsz_closure(cfg['program']['veusz_path'])
+    load_vsz = load_vsz_closure(cfg['program']['veusz_path'], cfg['program']['load_timeout_s'])
     cfg['load_vsz'] = load_vsz
     cfg['co'] = {}
     if cfg['in']['table_log'] and cfg['in']['path'].suffix == '.h5' and not (
@@ -660,14 +751,16 @@ def main(new_arg=None, veusze=None):
     cor_savings = co_savings(cfg)
     cor_savings.send(None)
     nfiles = 0
-    if True:
+    try:  # if True:
+        path_prev = os_getcwd()
+        os_chdir(cfg['output_files']['dir'])
         if cfg['program']['return'] == '<corutines_in_cfg>':
             cfg['co']['savings'] = cor_savings
             cfg['co']['gen_veusz_and_logs'] = load_to_veusz(in_fulls, cfg)
             cfg['co']['send_data'] = co_send_data(load_to_veusz, cfg, cor_savings)
             return cfg  # return with link to generator function
         elif cfg['in'].get('data_yield_prefix'):
-            # cycle with obtaining Veusz data
+            # Cycle with obtaining Veusz data
             cfgin_update = None
             while True:  # for vsz_data, log in cor_send_data.send(cfgin_update):
                 try:
@@ -678,7 +771,7 @@ def main(new_arg=None, veusze=None):
                 if 'f_custom_in_cycle' in cfg['program']:
                     cfgin_update = cfg['program']['f_custom_in_cycle'](vsz_data, log)
         else:
-            # cycle without obtaining Veusz data (or implemented by user's cfg['program']['f_custom_in_cycle'])
+            # Cycle without obtaining Veusz data (or implemented by user's cfg['program']['f_custom_in_cycle'])
             for veusze, log in load_to_veusz(in_fulls, cfg, veusze):
                 file_name_r = Path(log['out_vsz_full']).relative_to(cfg['output_files']['dir'])
                 if cfg['program'].get('f_custom_in_cycle'):
@@ -690,15 +783,15 @@ def main(new_arg=None, veusze=None):
             if cfg['program']['return'] != '<embedded_object>':
                 veusze = None  # to note that it is closed in cor_savings.close()
         print(f'{nfiles} processed. ok>')
-    try:
+
         pass
     except Exception as e:
-        print('The end. There are error ', standard_error_info(e))
+        l.exception('Not good')
         return  # or raise FileNotFoundError?
     finally:
         if cfg['async']['loop']:
             cfg['async']['loop'].close()
-        # os_chdir(path_prev)
+        os_chdir(path_prev)
         if veusze and cfg['program']['return'] == '<end>':
             veusze.Close()
             veusze.WaitForClose()

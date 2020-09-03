@@ -107,8 +107,7 @@ def h5q_ranges_gen(cfg_in: Mapping[str, Any], df_intervals: pd.DataFrame):
         db_path, str
         table, str
     Exsmple:
-    >>> df_intervals = pd.DataFrame({'DateEnd': np.max([t_edges[1], t_edges_Calibr[1]])},
-    ...                             index=[np.min([t_edges[0], t_edges_Calibr[0]])])
+    >>> df_intervals = pd.DataFrame({'DateEnd': pd.DatetimeIndex([2,4,6])}, index=pd.DatetimeIndex([1,3,5]))
     ... a = h5q_ranges_gen(df_intervals, cfg['output_files'])
     """
     with pd.HDFStore(cfg_in['db_path'], mode='r') as store:
@@ -337,11 +336,22 @@ def filterGlobal_minmax(a, tim=None, cfg_filter=None, b_ok=True) -> pd.Series:
         elif fkey == 'date':  # 'index':
             # fval= pd.to_datetime(fval, utc=True)
             if fval:
-                tz = 'UTC' if (tim.tz and (fval.tzname() is None)) else None
-                fval = pd.Timestamp(fval, tz=tz)
-                if tz is None and fval.tzname():    # if fval had time zone then pd.Timestamp(fval, tz=None) not works
-                    fval = fval.astimezone(None)    # so need this
-
+                tz = None
+                # if tim has tz then ensure fval has too
+                if tim.tz:
+                    try:
+                        if fval.tzname() is None:
+                            fval = fval.tz_localize(tz=tim.tz)
+                    except AttributeError:
+                        fval = pd.Timestamp(fval, tz='UTC')
+                else:
+                    try:  # if fval had time zone then pd.Timestamp(fval, tz=None) not works
+                        if fval.tzname() is not None:
+                            fval = fval.astimezone(None)    # so need this
+                    except AttributeError:
+                        fval = pd.Timestamp(fval)
+                        if fval.tz: # not None?
+                            fval = fval.astimezone(None)
                 filt_max_or_min(tim, flim, fval)
         elif fkey in ('dict', 'b_bad_cols_in_file'):
             pass
@@ -620,77 +630,93 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
         raise e
 
     # Align types
-    with TemporaryMoveChilds(cfg_out, tbl_parent):
+    # -----------
+    # Make index to be UTC
+    df_cor = cfg_out['db'][tbl_parent]
+    b_df_cor_changed = False
 
-        # Make index to be UTC
-        df_cor = cfg_out['db'][tbl_parent]
+    def align_columns(df, df_ref, columns=None):
+        """
 
-        def align_columns(df, df_ref, columns=None):
-            """
+        :param df: changing dataframe. Will Updated Implisitly!
+        :param df_ref: reference dataframe
+        :param columns:
+        :return: updated df
+        """
+        if columns is None:
+            columns = df.columns
+        df = df.reindex(df_ref.columns, axis="columns", copy=False)
+        for col, typ in df_ref[columns].dtypes.items():
+            fill_value = np.array(
+                0 if np.issubdtype(typ, np.integer) else np.NaN if np.issubdtype(typ, np.floating) else '',
+                dtype=typ)
+            df[col] = fill_value
+        return df
 
-            :param df: changing dataframe. Will Updated Implisitly!
-            :param df_ref: reference dataframe
-            :param columns:
-            :return: updated df
-            """
-            if columns is None:
-                columns = df.columns
-            df = df.reindex(df_ref.columns, axis="columns", copy=False)
-            for col, typ in df_ref[columns].dtypes.items():
-                fill_value = np.array(
-                    0 if np.issubdtype(typ, np.integer) else np.NaN if np.issubdtype(typ, np.floating) else '',
-                    dtype=typ)
-                df[col] = fill_value
-            return df
+    if b_correct_time:
+        # change stored to UTC
+        df_cor.index = pd.DatetimeIndex(df_cor.index.tz_convert(tz=tzUTC))
+        b_df_cor_changed = True
 
-        if b_correct_time:
-            # change stored to UTC
-            df_cor.index = pd.DatetimeIndex(df_cor.index.tz_convert(tz=tzUTC))
+    elif b_correct_cols:
+        new_cols = list(set(df.columns).difference(df_cor.columns))
+        if new_cols:
+            df_cor = align_columns(df_cor, df, columns=new_cols)
+            b_df_cor_changed = True
+            # df_cor = df_cor.reindex(columns=df.columns, copy=False)
+        # add columns to df same as in store
+        new_cols = list(set(df_cor.columns).difference(df.columns))
+        if new_cols:
+            if isinstance(df, dd.DataFrame):
+                df = df.compute()
+            df = align_columns(df, df_cor, columns=new_cols)
 
-
-        elif b_correct_cols:
-            new_cols = list(set(df.columns).difference(df_cor.columns))
-            if new_cols:
-                df_cor = align_columns(df_cor, df, columns=new_cols)
-                # df_cor = df_cor.reindex(columns=df.columns, copy=False)
-            # add columns to df same as in store
-            new_cols = list(set(df_cor.columns).difference(df.columns))
-            if new_cols:
-                if isinstance(df, dd.DataFrame):
-                    df = df.compute()
-                df = align_columns(df, df_cor, columns=new_cols)
-
-        for col, dtype in zip(df_cor.columns, df_cor.dtypes):
-            d = df_cor[col]
-            # if isinstance(d[0], pd.datetime):
-            if dtype != df[col].dtype:
-                if b_correct_time:
-                    if isinstance(d[0], pd.datetime):
-                        df_cor[col] = d.dt.tz_convert(tz=df[col].dt.tz)
-                elif b_correct_str:
-                    # todo: correct str length
-                    pass
-                else:
-                    try:
-                        dtype_max = np.result_type(df_cor[col].dtype, df[col].dtype)
-                        if df[col].dtype != dtype_max:
-                            df[col] = df[col].astype(dtype_max)
-                        if df_cor[col].dtype != dtype_max:
-                            df_cor[col] = df_cor[col].astype(dtype_max)
-                    except e:
-                        l.exception('Col "%s" have not numpy dtype?', col)
-                        df_cor[col] = df_cor[col].astype(df[col].dtype)
-                    # pd.api.types.infer_dtype(df_cor.loc[df_cor.index[0], col], df.loc[df.index[0], col])
-        # Update store data
+    for col, dtype in zip(df_cor.columns, df_cor.dtypes):
+        d = df_cor[col]
+        # if isinstance(d[0], pd.datetime):
+        if dtype != df[col].dtype:
+            if b_correct_time:
+                if isinstance(d[0], pd.datetime):
+                    df_cor[col] = d.dt.tz_convert(tz=df[col].dt.tz)
+                    b_df_cor_changed = True
+            elif b_correct_str:
+                # todo: correct str length
+                pass
+            else:
+                try:
+                    dtype_max = np.result_type(df_cor[col].dtype, df[col].dtype)
+                    if df[col].dtype != dtype_max:
+                        df[col] = df[col].astype(dtype_max)
+                    if df_cor[col].dtype != dtype_max:
+                        df_cor[col] = df_cor[col].astype(dtype_max)
+                        b_df_cor_changed = True
+                except e:
+                    l.exception('Col "%s" have not numpy dtype?', col)
+                    df_cor[col] = df_cor[col].astype(df[col].dtype)
+                    b_df_cor_changed = True
+                # pd.api.types.infer_dtype(df_cor.loc[df_cor.index[0], col], df.loc[df.index[0], col])
+    if b_df_cor_changed:
+        # Update all cfg_out['db'] store data
+        with TemporaryMoveChilds(cfg_out, tbl_parent):
+            try:
+                h5remove_table(cfg_out, tbl_parent)
+                cfg_out['db'].flush()
+                # cfg_out['db'].remove(tbl_parent)
+            except KeyError as e:
+                print('was removed?')
+                pass
+            try:  # df = df_cor.append(df); cfg_out['db'][tbl_parent] = df
+                df_append_fun(cfg_out, tbl_parent, df_cor)
+                df_append_fun(cfg_out, tbl_parent, df)
+            except Exception as e:
+                l.error('%s Can not write to store. May be data corrupted. %s', msg_func, standard_error_info(e))
+                raise (e)
+            except HDF5ExtError as e:
+                l.exception(e)
+                raise (e)
+    else:
+        # Uppend corrected data to cfg_out['db'] store
         try:
-            h5remove_table(cfg_out, tbl_parent)
-            cfg_out['db'].flush()
-            # cfg_out['db'].remove(tbl_parent)
-        except KeyError as e:
-            print('was removed?')
-            pass
-        try:  # df = df_cor.append(df); cfg_out['db'][tbl_parent] = df
-            df_append_fun(cfg_out, tbl_parent, df_cor)
             df_append_fun(cfg_out, tbl_parent, df)
         except Exception as e:
             l.error('%s Can not write to store. May be data corrupted. %s', msg_func, standard_error_info(e))
@@ -847,7 +873,7 @@ def h5_append(cfg_out: Dict[str, Any],
 
         def df_append_fun(cfg_out, tbl_name, df, **kwargs):
             df.to_hdf(cfg_out['db'], tbl_name, append=True, data_columns=cfg_out.get('data_columns', True),
-                      format='table', dropna=not cfg_out.get('b_insert_separator'), **kwargs)
+                      format='table', dropna=not cfg_out.get('b_insert_separator'), index=False, **kwargs)
             # , compute=False
             # cfg_out['db'].append(cfg_out['table'], df, data_columns=True, index=False,
             #              chunksize=cfg_out['chunksize'])

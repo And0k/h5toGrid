@@ -370,14 +370,15 @@ def main(new_arg=None):
     #     code.interact(local=ns)
     # finally:
     #     cfg_out['db'].close()
-    #     new_storage_names= h5move_tables(cfg_out, cfg_out['tables_have_wrote'])
+    #     failed_storages= h5move_tables(cfg_out, cfg_out['tables_have_wrote'])
 
-    if cfg['in'].get(
-            'time_last'):  # if have any processed data (needed because ``ptprepack`` not closes hdf5 source if it not finds data)
-        new_storage_names = h5move_tables(cfg_out, tbl_names=cfg_out['tables_have_wrote'])
-        print('Ok.', end=' ')
+
+    failed_storages = h5move_tables(cfg_out, tbl_names=cfg_out['tables_have_wrote'])
+    print('Finishing...' if failed_storages else 'Ok.', end=' ')
+    if cfg['in'].get('time_last'):
+        # if have any processed data that need to be sorted (not the case for the routes and waypoints), also needed because ``ptprepack`` not closes hdf5 source if it not finds data
         cfg_out['b_remove_duplicates'] = True
-        h5index_sort(cfg_out, out_storage_name=cfg_out['db_base'] + '-resorted.h5', in_storages=new_storage_names,
+        h5index_sort(cfg_out, out_storage_name=cfg_out['db_base'] + '-resorted.h5', in_storages=failed_storages,
                      tables=cfg_out['tables_have_wrote'])
 
 

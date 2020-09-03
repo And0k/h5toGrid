@@ -426,10 +426,10 @@ def main(new_arg=None, **kwargs):
 
     if cfg['in'].get(
             'time_last'):  # if have any processed data (needed because ``ptprepack`` not closses hdf5 source if it not finds data)
-        new_storage_names = h5move_tables(cfg['output_files'])
+        failed_storages = h5move_tables(cfg['output_files'])
         print('Ok.', end=' ')
         h5index_sort(cfg['output_files'], out_storage_name=cfg['output_files']['db_base'] + '-resorted.h5',
-                     in_storages=new_storage_names)
+                     in_storages=failed_storages)
 
 
 if __name__ == '__main__':

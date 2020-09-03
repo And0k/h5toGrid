@@ -151,18 +151,22 @@ def out_fields(dtyp: np.dtype, keys_del: Optional[Iterable[str]] = (),
 
 # ----------------------------------------------------------------------
 def log_csv_specific_param_operation(
-        log_param: str,
-        csv_specific_param: Optional[Mapping[str, Any]] = None,
-        msg_format_param: str = '%s') -> None:
+        key_logged: str,
+        csv_specific_param: Optional[Mapping[str, Any]],
+        cfg_in) -> None:
     """
-    Show message of forthcoming csv_specific_param operations
+    Shows info message of csv_specific_param operations.
+    Sets cfg_in['csv_specific_param_logged' + key_logged] to not repeat message on repeating call
     :param log_param: key of csv_specific_param triggering specific calculations when func will be called and this message about
     :param csv_specific_param:
     :param msg_format_param: message format pattern with one parameter (%s) wich will be replaced by csv_specific_param.keys()
     :return:
     """
-    if log_param in csv_specific_param:
-        l.info(f'{msg_format_param} will be applyed', csv_specific_param.keys())
+
+    key_logged_full = f'csv_specific_param_logged{"-" if key_logged else ""}{key_logged}'
+    if not cfg_in.get(key_logged_full):  # log 1 time i.e. in only one 1 dask partition
+        cfg_in[key_logged_full] = True
+        l.info(f'csv_specific_param {csv_specific_param.keys()} modifications applied')
 
 
 def param_funs_closure(csv_specific_param, cfg_in):
@@ -179,34 +183,34 @@ def param_funs_closure(csv_specific_param, cfg_in):
     #     else:
     #         raise KeyError(f'Error in csv_specific_param: {k}: {v}')
     #     return fun_closure
-    if csv_specific_param is not None:
-        for k, v in csv_specific_param.items():
-            param, fun_id = k.split('_')
-            if fun_id == 'fun':
-                def fun(param, v):
-                    param_closure = param
-                    v_closure = v
 
-                    def fun_closure(x):
-                        return v_closure(x[param_closure])
+    for k, v in csv_specific_param.items():
+        param, fun_id = k.split('_')
+        if fun_id == 'fun':
+            def fun(param, v):
+                param_closure = param
+                v_closure = v
 
-                    return fun_closure
-            elif fun_id == 'add':
-                def fun(param, v):
-                    param_closure = param
-                    v_closure = v
+                def fun_closure(x):
+                    return v_closure(x[param_closure])
 
-                    def fun_closure(x):
-                        return x[param_closure] + v_closure
+                return fun_closure
+        elif fun_id == 'add':
+            def fun(param, v):
+                param_closure = param
+                v_closure = v
 
-                    # or a.eval(f"{param} = {param} + {v}", inplace=True)
-                    return fun_closure
-            else:
-                raise KeyError(f'Error in csv_specific_param: {k}: {v}')
-            params_funs[param] = fun(param, v)  # f"{param} = {v}({param})
-        if not cfg_in.get('csv_specific_param_logged'):  # log 1 time i.e. in only one 1 dask partition
-            cfg_in['csv_specific_param_logged'] = True
-            l.info(f'csv_specific_param {csv_specific_param.keys()} modifications applyed')
+                def fun_closure(x):
+                    return x[param_closure] + v_closure
+
+                # or a.eval(f"{param} = {param} + {v}", inplace=True)
+                return fun_closure
+        else:
+            # raise KeyError(f'Error in csv_specific_param: {k}: {v}')
+            continue
+        params_funs[param] = fun(param, v)  # f"{param} = {v}({param})
+
+    log_csv_specific_param_operation('', csv_specific_param, cfg_in)
     return params_funs
 
 
@@ -225,12 +229,15 @@ def proc_loaded_corr(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, An
     - 'add': fun_expr specifies value to add to ``param`` to modify it
     :return: pandas.DataFrame
     """
-    params_funs = param_funs_closure(csv_specific_param, cfg_in)
+    if csv_specific_param is not None:
+        params_funs = param_funs_closure(csv_specific_param, cfg_in)
+        if params_funs:
+            return a.assign(**params_funs)
+    return a
 
-    # check that used
-    return a.assign(**params_funs)
 
-# ----------------------------------------------------------------------
+# Specific format loaders ---------------------------------------------
+
 def proc_loaded_Idronaut(a: Union[pd.DataFrame, np.ndarray],
                          cfg_in: Optional[Mapping[str, Any]] = None) -> pd.DatetimeIndex:
     """
@@ -247,10 +254,10 @@ def proc_loaded_Idronaut(a: Union[pd.DataFrame, np.ndarray],
     # np.array(date, 'datetime64[ms]')
     return convertNumpyArrayOfStrings(date, 'datetime64[ns]', format='%Y-%m-%dT%H:%M:%S.%f')
 
-# ----------------------------------------------------------------------
+
 @meta_out(partial(out_fields, keys_del={'Date', 'Time'}, add_before={'Time': 'M8[ns]'}))
-def proc_loaded_sea_and_sun_corr_s(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
-                                   csv_specific_param: Optional[Mapping[str, Any]] = None) -> pd.DataFrame:
+def proc_loaded_sea_and_sun(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
+                            csv_specific_param: Optional[Mapping[str, Any]] = None) -> pd.DataFrame:
     """
     Specified prep&proc of data :
     - Time calc: gets string for time in current zone
@@ -267,14 +274,15 @@ def proc_loaded_sea_and_sun_corr_s(a: Union[pd.DataFrame, np.ndarray], cfg_in: M
     date = pd.to_datetime(a['Date'].str.decode('utf-8', errors='replace'), format='%d.%m.%Y') + \
            pd.to_timedelta(a['Time'].str.decode('utf-8', errors='replace'), unit='ms')
 
-    params_funs = param_funs_closure(csv_specific_param, cfg_in)
+    #params_funs = param_funs_closure(csv_specific_param, cfg_in)
+    #a = a.assign(**{'Time': date}, **params_funs)
 
     # check that used
-    return a.assign(**{'Time': date}, **params_funs).loc[:, list(
-        proc_loaded_sea_and_sun_corr_s.meta_out(cfg_in['dtype_out']).keys())]
+    return a.assign(Time=date).loc[:, list(
+        proc_loaded_sea_and_sun.meta_out(cfg_in['dtype_out']).keys())]
 
 
-def proc_loaded_sea_and_sun(a: pd.DataFrame,
+def proc_loaded_sea_and_sun_old(a: pd.DataFrame,
                             cfg_in: Optional[Mapping[str, Any]] = None) -> pd.Series:
     """
     Sea&sun specified proc
@@ -498,7 +506,7 @@ def day_jumps_correction(cfg_in: Mapping[str, Any], t: Union[np.ndarray, pd.Date
     # if dT[0] < 0: #b_corU_from0 #softer crieria for detect jump at start?
     # jumpU.insert(txtDlast,0)  # need up time data at start
 
-    lU = len(jumpU);
+    lU = len(jumpU)
     lD = len(jumpD)
     if lU or lD:
         jumps = np.hstack((jumpU, jumpD))
@@ -508,8 +516,7 @@ def day_jumps_correction(cfg_in: Mapping[str, Any], t: Union[np.ndarray, pd.Date
         if __debug__:
             plt.plot(t, color='r', alpha=0.5)  # ; plt.show()
         for bjU, jSt, jEn in zip(bjumpU[::2], jumps[:-1:2], jumps[1::2]):  # apply_day_shifting
-            t_datetime = datetime.fromtimestamp(t[jSt].astype(datetime) * 1e-9, tzUTC) if isinstance(t, np.ndarray) else \
-                t[jSt]
+            t_datetime = datetime.fromtimestamp(t[jSt].astype(datetime) * 1e-9, tzUTC) if isinstance(t, np.ndarray) else t[jSt]
             if bjU:
                 t[jSt:jEn] -= dT_day_jump
                 print('date correction to {:%d.%m.%y}UTC: day jumps up was '
@@ -521,93 +528,6 @@ def day_jumps_correction(cfg_in: Mapping[str, Any], t: Union[np.ndarray, pd.Date
         if __debug__:
             plt.plot(t)  # ; plt.show()
     return t
-
-
-# ----------------------------------------------------------------------
-def deg_min_float_as_text2deg(degmin):
-    """
-    :param degmin: 5539.33 where 55 are degrees, 39.33 are minutes
-    """
-    minut, deg = np.modf(degmin / 100)
-    deg += minut / 0.6
-    return deg
-
-
-# 'yyyy', 'mm', 'dd', 'HH', 'MM', 'SS'
-@meta_out(partial(out_fields, keys_del={'date', 'Lat_NS', 'Lon_WE'}, add_before={'Time': 'M8[ns]'}))
-def proc_loaded_nav_supervisor(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
-                               csv_specific_param: Optional[Mapping[str, Any]] = None) -> pd.DataFrame:
-    """
-    Specified prep&proc of navigation data from program "Supervisor":
-    - Time calc: gets string for time in current zone
-    - Lat, Lon to degrees conversion
-
-
-    :param a: numpy record array. Will be modified inplace.
-    :param cfg_in: dict
-    :param csv_specific_param: {depth_add: str_val}
-    :return: numpy 'datetime64[ns]' array
-
-    Example input:
-    a = {
-    'date': "17 10 14", 'Time': "   00 00 01",
-    'Lat': 5522.949219, 'Lat_NS': 'N',
-    'Lon': 1817.303223, 'Lon_WE': 'E',
-    'DepEcho': 10
-    }
-    todo: replace bad strings. Now it is need to manual delete multiple headers
-    """
-
-    if not isinstance(a, np.recarray):
-        txtT = pd.to_datetime(a['Time'].str.decode('utf-8', errors='replace'), format='%H %M %S', errors='coerce') - \
-               pd.to_datetime('00:00:00', format='%H:%M:%S')
-        date = pd.to_datetime(a['date'].str.decode('utf-8', errors='replace'), format='%y %m %d',
-                              errors='coerce') + txtT
-        names_in = a.columns
-    else:
-        # old (array input)
-        # whitespaces before time
-        c = 3 if Path(cfg_in['cfgFile']).stem.endswith('nav_supervisor') else 1
-        date = np.array(a['date'].astype(object), dtype={'YY': ('a2', 0), 'MM': ('a2', 3), 'DD': ('a2', 6)})
-        txtT = np.array(a['Time'].astype(object), dtype={'hh': ('a2', 0 + c), 'mm': ('a2', 3 + c), 'ss': ('a2', 6 + c)})
-        bBad = np.int8(date['YY']) > np.int8(datetime.now().strftime('%y'))
-        if np.any(bBad):
-            print('Bad date => extract from file name')
-            date['YY'], date['MM'], date['DD'] = [cfg_in['file_stem'][(slice(k, k + 2))] for k in range(0, 5, 2)]
-            # date = np.where(bBad,
-        date = np.array(century + date['YY'].astype(np.object) + b'-' + date['MM'].astype(np.object) + b'-' +
-                        date['DD'].astype(np.object) + b'T' + txtT['hh'].astype(np.object) + b':' +
-                        txtT['mm'].astype(np.object) + b':' + txtT['ss'].astype(np.object), '|S19', ndmin=1)
-        # Bug in supervisor convertor corrupts dates: gets in local time zone.
-        # Ad hoc: for daily records we use 1st date - can not use if 1st date is wrong
-        # so use full correct + wrong time at start (day jump down)
-        # + up and down must be alternating
-        date = convertNumpyArrayOfStrings(date, 'datetime64[ns]')  # convert ISO8601 date strings
-        names_in = a.dtype.names
-    date = day_jumps_correction(cfg_in, date)
-
-    if 'Lat' in names_in:
-        # Lat, Lon to degrees. Not used for meteo data
-        a['Lat'] = deg_min_float_as_text2deg(a['Lat'])
-        a['Lon'] = deg_min_float_as_text2deg(a['Lon'])
-
-        bMinus = a['Lat_NS'] == b'S'
-        if np.any(bMinus):
-            a['Lat'] = np.where(bMinus, -1 * a['Lat'], a['Lat'])
-        bMinus = a['Lon_WE'] == b'W'
-        if np.any(bMinus):
-            a['Lon'] = np.where(bMinus, -1 * a['Lon'], a['Lon'])
-
-    if csv_specific_param is not None:
-        if 'DepEcho_add' in csv_specific_param:
-            a.eval(f"DepEcho = DepEcho + {csv_specific_param['DepEcho_add']}",
-                   inplace=True)  # @corrections['DepEcho_add'] if float
-            if not cfg_in.get('csv_specific_param_logged'):  # log 1 time i.e. in only one 1 dask partition
-                cfg_in['csv_specific_param_logged'] = True
-                l.info(f'csv_specific_param {csv_specific_param.keys()} modifications applyed')
-
-    return a.assign(**{'Time': date}).loc[:, list(proc_loaded_nav_supervisor.meta_out(cfg_in['dtype_out']).keys())]
-
 
 # ----------------------------------------------------------------------
 def proc_loaded_chain_Baranov(a: Union[pd.DataFrame, np.ndarray],
@@ -690,48 +610,15 @@ def proc_loaded_inclin_Kondrashov(a: Union[pd.DataFrame, np.ndarray], cfg_in: Ma
         if csv_specific_param.get(key):
             magnitometer_channels = ['Mx', 'My', 'Mz']
             a.loc[:, magnitometer_channels] = -a.loc[:, magnitometer_channels]
-            if not cfg_in.get('csv_specific_param_logged'):  # log 1 time i.e. in only one 1 dask partition
-                cfg_in['csv_specific_param_logged'] = True
+            # log_csv_specific_param_operation('proc_loaded_inclin_Kondrashov', csv_specific_param, cfg_in) mod:
+            key_logged = 'csv_specific_param_logged-proc_loaded_inclin_Kondrashov'
+            if not cfg_in.get(key_logged):  # log 1 time i.e. in only one 1 dask partition
+                cfg_in[key_logged] = True
                 l.info(f'{key} applied')
         elif csv_specific_param:
             l.info(f'unknown key(s) in csv_specific_param')
 
     return a.assign(Time=tim_index).loc[:, list(proc_loaded_inclin_Kondrashov.meta_out(cfg_in['dtype_out']).keys())]
-
-
-def proc_loaded_nav_HYPACK(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any]) -> pd.DatetimeIndex:
-    """
-    Specified prep&proc of navigation data from program "Supervisor":
-    - Time calc: gets string for time in current zone
-    - Lat, Lon to degrees conversion
-
-    :param a: numpy record array. Will be modified inplace.
-    :param cfg_in: dict
-    :return: numpy 'datetime64[ns]' array
-
-    Example input:
-    a = {
-    'date': "02:13:12.30", #'Time'
-    'Lat': 55.94522129,
-    'Lon': 18.70426069,
-    'Depth': 43.01}
-    """
-
-    # extract date from file name
-    if not cfg_in.get('fun_date_from_filename'):
-        def date_from_filename(file_stem, century=None):
-            return century + '-'.join(file_stem[(slice(k, k + 2))] for k in (6, 3, 0))
-
-        cfg_in['fun_date_from_filename'] = date_from_filename
-    elif isinstance(cfg_in['fun_date_from_filename'], str):
-        cfg_in['fun_date_from_filename'] = eval(
-            compile("lambda file_stem, century=None: {}".format(cfg_in['fun_date_from_filename']), '', 'eval'))
-
-    str_date = cfg_in['fun_date_from_filename'](cfg_in['file_stem'], century.decode())
-    t = pd.to_datetime(str_date) + \
-        pd.to_timedelta(a['Time'].str.decode('utf-8', errors='replace'))
-    # t = day_jumps_correction(cfg_in, t.values)
-    return t
 
 
 def f_repl_by_dict(replist: Iterable[AnyStr], binary_str=True) -> Callable[[Match[AnyStr]], AnyStr]:  # , repldictvalues={None: b''}
@@ -986,3 +873,179 @@ def correct_baranov_txt(in_file: Union[str, PurePath],
         l.warning('{} bad line deleted'.format(sum_deleted))
 
     return out_file
+
+
+# navigation loaders -------------------------------------------------------------
+
+# ----------------------------------------------------------------------
+def deg_min_float_as_text2deg(degmin):
+    """
+    :param degmin: 5539.33 where 55 are degrees, 39.33 are minutes
+    """
+    minut, deg = np.modf(degmin / 100)
+    deg += minut / 0.6
+    return deg
+
+
+# 'yyyy', 'mm', 'dd', 'HH', 'MM', 'SS'
+@meta_out(partial(out_fields, keys_del={'date', 'Lat_NS', 'Lon_WE'}, add_before={'Time': 'M8[ns]'}))
+def proc_loaded_nav_supervisor(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
+                               csv_specific_param: Optional[Mapping[str, Any]] = None) -> pd.DataFrame:
+    """
+    Specified prep&proc of navigation data from program "Supervisor":
+    - Time calc: gets string for time in current zone
+    - Lat, Lon to degrees conversion
+
+
+    :param a: numpy record array. Will be modified inplace.
+    :param cfg_in: dict
+    :param csv_specific_param: {depth_add: str_val}
+    :return: numpy 'datetime64[ns]' array
+
+    Example input:
+    a = {
+    'date': "17 10 14", 'Time': "   00 00 01",
+    'Lat': 5522.949219, 'Lat_NS': 'N',
+    'Lon': 1817.303223, 'Lon_WE': 'E',
+    'DepEcho': 10
+    }
+    todo: replace bad strings. Now it is need to manual delete multiple headers
+    """
+
+    if not isinstance(a, np.recarray):
+        txtT = pd.to_datetime(a['Time'].str.decode('utf-8', errors='replace'), format='%H %M %S', errors='coerce') - \
+               pd.to_datetime('00:00:00', format='%H:%M:%S')
+        date = pd.to_datetime(a['date'].str.decode('utf-8', errors='replace'), format='%y %m %d',
+                              errors='coerce') + txtT
+        names_in = a.columns
+    else:
+        # old (array input)
+        # whitespaces before time
+        c = 3 if Path(cfg_in['cfgFile']).stem.endswith('nav_supervisor') else 1
+        date = np.array(a['date'].astype(object), dtype={'YY': ('a2', 0), 'MM': ('a2', 3), 'DD': ('a2', 6)})
+        txtT = np.array(a['Time'].astype(object), dtype={'hh': ('a2', 0 + c), 'mm': ('a2', 3 + c), 'ss': ('a2', 6 + c)})
+        bBad = np.int8(date['YY']) > np.int8(datetime.now().strftime('%y'))
+        if np.any(bBad):
+            print('Bad date => extract from file name')
+            date['YY'], date['MM'], date['DD'] = [cfg_in['file_stem'][(slice(k, k + 2))] for k in range(0, 5, 2)]
+            # date = np.where(bBad,
+        date = np.array(century + date['YY'].astype(np.object) + b'-' + date['MM'].astype(np.object) + b'-' +
+                        date['DD'].astype(np.object) + b'T' + txtT['hh'].astype(np.object) + b':' +
+                        txtT['mm'].astype(np.object) + b':' + txtT['ss'].astype(np.object), '|S19', ndmin=1)
+        # Bug in supervisor convertor corrupts dates: gets in local time zone.
+        # Ad hoc: for daily records we use 1st date - can not use if 1st date is wrong
+        # so use full correct + wrong time at start (day jump down)
+        # + up and down must be alternating
+        date = convertNumpyArrayOfStrings(date, 'datetime64[ns]')  # convert ISO8601 date strings
+        names_in = a.dtype.names
+    date = day_jumps_correction(cfg_in, date)
+
+    if 'Lat' in names_in:
+        # Lat, Lon to degrees. Not used for meteo data
+        a['Lat'] = deg_min_float_as_text2deg(a['Lat'])
+        a['Lon'] = deg_min_float_as_text2deg(a['Lon'])
+
+        bMinus = a['Lat_NS'] == b'S'
+        if np.any(bMinus):
+            a['Lat'] = np.where(bMinus, -1 * a['Lat'], a['Lat'])
+        bMinus = a['Lon_WE'] == b'W'
+        if np.any(bMinus):
+            a['Lon'] = np.where(bMinus, -1 * a['Lon'], a['Lon'])
+
+    if csv_specific_param is not None:
+        if 'DepEcho_add' in csv_specific_param:
+            a.eval(f"DepEcho = DepEcho + {csv_specific_param['DepEcho_add']}",
+                   inplace=True)  # @corrections['DepEcho_add'] if float
+            log_csv_specific_param_operation('proc_loaded_nav_supervisor', csv_specific_param, cfg_in)
+
+    return a.assign(**{'Time': date}).loc[:, list(proc_loaded_nav_supervisor.meta_out(cfg_in['dtype_out']).keys())]
+
+
+def proc_loaded_nav_HYPACK(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any]) -> pd.DatetimeIndex:
+    """
+    Specified prep&proc of navigation data from program "HYPACK":
+    - Time calc: gets string for time in current zone
+
+    :param a: numpy record array. Will be modified inplace.
+    :param cfg_in: dict
+    :return: numpy 'datetime64[ns]' array
+
+    Example input:
+    a = {
+    'date': "02:13:12.30", #'Time'
+    'Lat': 55.94522129,
+    'Lon': 18.70426069,
+    'Depth': 43.01}
+    """
+
+    # extract date from file name
+    if not cfg_in.get('fun_date_from_filename'):
+        def date_from_filename(file_stem, century='20'):
+            return century + '-'.join(file_stem[(slice(k, k + 2))] for k in (6, 3, 0))
+
+        cfg_in['fun_date_from_filename'] = date_from_filename
+    elif isinstance(cfg_in['fun_date_from_filename'], str):
+        cfg_in['fun_date_from_filename'] = eval(
+            compile("lambda file_stem, century=None: {}".format(cfg_in['fun_date_from_filename']), '', 'eval'))
+
+    str_date = cfg_in['fun_date_from_filename'](cfg_in['file_stem'], century.decode())
+    t = pd.to_datetime(str_date) + \
+        pd.to_timedelta(a['Time'].str.decode('utf-8', errors='replace'))
+    # t = day_jumps_correction(cfg_in, t.values)
+    return t
+
+
+@meta_out(partial(out_fields, keys_del={'Time', 'LatNS', 'LonEW', 'DatePC', 'TimePC'}, add_before={'Time': 'M8[ns]', 'Lat': 'f8', 'Lon': 'f8'}))
+def proc_loaded_nav_HYPACK_SES2000(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any]) -> pd.DatetimeIndex:
+    """
+    Specified prep&proc of SES2000 data from program "HYPACK":
+    - Time calc: gets string for time in current zone
+    - Lat, Lon to degrees conversion
+
+    :param a: numpy record array. Will be modified inplace.
+    :param cfg_in: dict
+    :return: numpy 'datetime64[ns]' array
+
+
+1 01855.748,E 5558.892,N 191533 370793.50 6205960.01 -120.65 24.08.2020 19:08:23
+    Example input:
+    a = {
+    'date': "02:13:12.30", #'Time'
+    'Lat': 55.94522129,
+    'Lon': 18.70426069,
+    'Depth': 43.01}
+    """
+
+    # # extract date from file name
+    # if not cfg_in.get('fun_date_from_filename'):
+    #     def date_from_filename(file_stem, century='20'):
+    #         return century + '-'.join(file_stem[(slice(k, k + 2))] for k in (6, 3, 0))
+    #
+    #     cfg_in['fun_date_from_filename'] = date_from_filename
+    # elif isinstance(cfg_in['fun_date_from_filename'], str):
+    #     cfg_in['fun_date_from_filename'] = eval(
+    #         compile("lambda file_stem, century='20': {}".format(cfg_in['fun_date_from_filename']), '', 'eval'))
+
+
+    # sources to out columns proc_loaded_nav_HYPACK_SES2000.meta_out(cfg_in['dtype']).keys()
+    uniq = ~a.duplicated(subset=['Time'])  #'LatNS', 'LonEW', , 'DepEcho']
+
+    date = pd.to_datetime(a.loc[uniq, 'DatePC'].str.decode('utf-8', errors='replace'), format='%d.%m.%Y')
+    tim = pd.to_datetime(a.loc[uniq, 'Time'].str.decode('utf-8', errors='replace'), format='%H%M%S') - pd.Timestamp('1900-01-01')  # default date '1900-01-01' found experimentally!
+    date += tim
+    a['Time'] = pd.NaT  # also changes column's type
+    a.loc[uniq, 'Time'] = day_jumps_correction(cfg_in, date.to_numpy())
+
+    for in_f, out_f in (('LatNS', 'Lat'),('LonEW', 'Lon')):
+        a[out_f] = np.NaN
+        a.loc[uniq, out_f] = deg_min_float_as_text2deg(
+            pd.to_numeric(a.loc[uniq, in_f].str.decode('utf-8', errors='replace').str.split(',').str.get(0))
+            )
+    a.loc[uniq, 'DepEcho'] = -a.loc[uniq, 'DepEcho']  # make positive below sea top
+
+    # str_date = cfg_in['fun_date_from_filename'](cfg_in['file_stem'], century.decode())
+    # t = pd.to_datetime(str_date) + \
+    #     pd.to_timedelta(a['Time'].str.decode('utf-8', errors='replace'))
+    # # t = day_jumps_correction(cfg_in, t.values)
+    return a.loc[:, list(proc_loaded_nav_HYPACK_SES2000.meta_out(cfg_in['dtype_out']).keys())]
+    # may use a.loc[:, list(cfg_in['fun_proc_loaded']... instead?

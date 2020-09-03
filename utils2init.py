@@ -1481,7 +1481,7 @@ def open_csv_or_archive_of_them(filename: Union[PurePath, Iterable[Union[Path, s
                 l.warning('%s: can not update settings to increase peformance', standard_error_info(e))
             read_mode = 'r' # RarFile need opening in mode 'r' (but it opens in binary_mode)
         if arc_suffix:
-            with ArcFile(filename_str, mode='r') as arc_file:
+            with ArcFile(str(Path(filename_str).resolve().absolute()), mode='r') as arc_file:
                 for text_file in arc_file.infolist():
                     if pattern and not fnmatch(text_file.filename, pattern):
                         continue
@@ -1534,7 +1534,7 @@ def import_file(path: PurePath, module_name: str):
     return mod
 
 
-def st(current: int) -> bool:
+def st(current: int, descr: Optional[str] = '') -> bool:
     """
     Says if need to execute current step.
     Note: executs >= one step beginnig from ``start``
@@ -1542,12 +1542,15 @@ def st(current: int) -> bool:
     start, end: int, step control limits
     go: skip if False
 
-    :param current: step~
+    :param current: step#
+    :param descr: step description to print
     :return desision: True if start <= current <= max(start, end)): allows one step if end <= start
     True => execute current st, False => skip
     """
     if (st.start <= current <= max(st.start, st.end)) and st.go:
-        print(f'step {current}')
+        msg = f'Step {current}.\t{descr}'
+        print(msg)
+        print('-'*len(msg))
         return True
     return False
 

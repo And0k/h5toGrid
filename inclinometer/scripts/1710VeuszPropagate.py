@@ -1,7 +1,7 @@
 from os import path as os_path
 
 import numpy as np
-from .incl_calibr import calibrate, coef2str
+from inclinometer.incl_calibr import calibrate, coef2str
 
 from utils2init import this_prog_basename, standard_error_info
 # my

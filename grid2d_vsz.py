@@ -127,8 +127,8 @@ def my_argparser():
     p_proc.add('--invert_prior_sn_angle_float', default='30',
                help='[0-90] degrees: from S-N to W-E, 45 - no priority')
     p_proc.add('--depecho_add_float', default='0', help='add value to echosounder depth data')
-    p_proc.add('--filter_ctd_bottom_edge_float',
-               help='if "1" - filter ctd_bottom_edge line closer to bottom (be convex). Else absolute min value of depth to use all bigger as edges')
+    p_proc.add('--convexing_ctd_bot_edge_max_float',  # filter_ctd_bottom_edge_float, min_ctd_end_as_bot_edge
+               help='filter ctd_bottom_edge line closer to bottom (be convex) where its depth is lesser')
     p_proc.add('--min_depth', default='4', help='filter out smaller depths')
     p_proc.add('--max_depth', default='1E5', help='filter out deeper depths')
     p_proc.add('--filter_depth_wavelet_level_int', default='4', help='level of wavelet filtering of depth')
@@ -593,56 +593,48 @@ def idata_from_tpoints(tst_approx, tdata, idata_st, dt_point2run_max=None):
     return sel_run, sel_data
 
 
-def runs_ilast_good(bctd_ok: Sequence,
-                    starts: Sequence,
-                    ends: Sequence,
-                    ctd_z: Optional[Sequence],
-                    range_to_bot: Optional[float] = None,
-                    bottom_at_ends: Optional[Sequence] = None) -> Tuple[List, np.ndarray]:
+def runs_ilast_good(
+        bctd_ok: Sequence[bool],
+        starts: Sequence[int], ends: Sequence[int],
+        ctd_z: Optional[Sequence], max_altitude: Optional[float] = None,
+        bottom_at_ends: Optional[np.ndarray] = None
+        ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Find last not nan value in each run
-    :param bctd_ok: mask where source is good
-    :param starts:  start of profiles indexes
-    :param ends:    end of profiles indexes
+    Finds last not NaN value in each run
+    :param bctd_ok: mask where profile values are good
+    :param starts:  start indexes of each profile (of runs)
+    :param ends:    end indexes of each profiles
 
-    Filtering too short runs parametrs:
-    :param ctd_z:     Increase to bottom (usually positive). set NaN or small if not care
-    :param range_to_bot: set NaN or big if not care
-    :param bottom_at_ends:     set NaN or big (>0) if not care
+    Filtering too short runs parameters:
+    :param ctd_z: CTD depth data, same size as :param bctd_ok. Set NaN or small if not need the filtering
+    :param max_altitude: max good distance to bottom, set NaN or big to not filter
+    :param bottom_at_ends: set NaN or big (>0) to not filter
     :return ends_cor, ok_runs:
-     ends_cor: last value have found in each run skipping ones having bad range_to_bot
-     ok_runs: bool mask size of starts: 1 for runs having good range_to_bot, else 0.
+        - ends_cor: index of last value have found in each run skipping ones having bad range_to_bot
+        - ok_runs: bool mask size of starts: 1 for runs having good range_to_bot, else 0.
     """
-    if (ctd_z is None) or (bottom_at_ends is None) or (range_to_bot is None):
-        bottom_at_ends = np.empty_like(starts)  # not care
-        range_to_bot = None  # not care
-        ctd_z = None  # not care
     ok_runs = np.ones_like(starts, np.bool)
-    ends_cor = []
+    ends_cor = np.empty_like(starts)
     # for each profile:
-    for k, (st, en, Pen) in enumerate(zip(starts, ends, bottom_at_ends)):
+    for k, (st, en) in enumerate(zip(starts, ends)):
         try:
-            i_last = np.flatnonzero(bctd_ok[st:en])[-1]
-        except IndexError:  # no good in profile
+            ends_cor[k] = np.flatnonzero(bctd_ok[st:en])[-1] + st
+        except IndexError:                      # no good values in profile
             ok_runs[k] = False
             continue
-        # if (np.flatnonzero(bctd_ok[st:en])).size > 0:
-        i_last += st
-        if ctd_z is not None:
-            t = ctd_z[i_last]
-            if (t - Pen) > range_to_bot:  # too far from bottom
-                ok_runs[k] = False
-                continue
-        ends_cor.append(i_last)
+    # filter runs that ends too far from bottom
+    if any(arg is None for arg in (ctd_z, bottom_at_ends, max_altitude)):
+        d = bottom_at_ends[ok_runs] - ctd_z[ends_cor[ok_runs]]
+        ok_runs[ok_runs] = d <= max_altitude
 
-    return ends_cor, ok_runs
+    return ends_cor[ok_runs], ok_runs
 
 
 def b_add_ctd_depth(dist, depth, add_dist, add_depth, max_dist=0.5, max_bed_gradient=50, max_bed_add=5):
     """
     Mask useful elements from CTD profile to add them to echosounder depth profile
     where it has no data near.
-    Modifies (!) depth: Sets depth smaller than add_depth near same dist to NaN.
+    Modifies (!) depth: sets depth smaller than add_depth near same dist to NaN.
     :param add_dist: dist of profile (CTD) to append
     :param add_depth: depth of profile (CTD) to append
     :param dist:
@@ -653,7 +645,7 @@ def b_add_ctd_depth(dist, depth, add_dist, add_depth, max_dist=0.5, max_bed_grad
     :return: mask of edge_path elements to use
     """
     # Set bottom depth by bottom edge of CTD path (keep lowest) where no bottom profile data near the run's bot edge
-    # todo: also filter depth far from CTD bot using this method
+    # todo: also allow filter depth far from CTD bot using this method
     bAdd = np.ones_like(add_dist, np.bool8)
     bAnyR = True
     for i, (dSt, dEn) in enumerate(add_dist[:, np.newaxis] + np.array([[-1, 1]]) * max_dist):
@@ -756,7 +748,8 @@ def data_sort_to_nav(navp: pd.DataFrame,
                      ctd_prm: Dict[str, Any],
                      cfg: Mapping[str, Any]) -> Tuple[pd.DataFrame, Dict[str, Any], np.ndarray]:
     """
-    excludes CTD runs and data which  in navigation points by symbol_excude_point
+    Finds correspondence of CTD runs to nav points using its times and device markers.
+    Excludes CTD runs and data where corresponded navigation points marked by symbol_excude_point
     :param navp: pandas DataFrame. Navigation points table (with datemindex and obligatory columns Lat, Lon, name, sym)
     :param navp_exclude: navigation points to exclude
     :param b_invert:
@@ -800,6 +793,7 @@ def data_sort_to_nav(navp: pd.DataFrame,
         #  n1   n2  n3    n4    - nav time not sorted
         #  |     \ /       \    - navp_ictd
         #  C1    C2   C3   C4   - CTD time sorted
+
         if navp_ictd_isort_diff[inav] == 0:
             # Same CTD assigned to this nav point and next
             # - because current or next nav point is bad and skipped previous or next CTD
@@ -1108,10 +1102,10 @@ def filt_depth(cfg: Mapping[str, Any], s_ndepth: pd.Series) -> Tuple[np.ndarray,
                                        label='Depth')
 
         # Smooth small high frequency noise (do not use if big spykes exist!)
-        sGood = sum(ok)  # ok[:] = False  # to use max of data as bed
+        sGood = ok.sum()  # ok[:] = False  # to use max of data as bed
         # to make depth follow lowest data execute: depth_filt[:] = 0
         n_smooth = 5  # 30
-        if sGood > 100 and np.all(np.abs(np.diff(depth_filt)) < 30):
+        if sGood > 100 and (np.abs(np.diff(depth_filt)) < 30).all():
             depth_filt_smooth = gaussian_filter1d(depth_filt, n_smooth)
             if ax: ax.plot(depth_filt_smooth, color='y', alpha=0.7, label='smooth')
             # to cansel gaussian filter: dbstop, set depth_filt_smooth = depth_filt
@@ -1165,9 +1159,17 @@ def filt_depth(cfg: Mapping[str, Any], s_ndepth: pd.Series) -> Tuple[np.ndarray,
 #     out[0, [0, -1]] = a[0, [0, -1]]
 #     return out
 
-def extract_repeat_at_bad_edges(a, b_ok):
-    edges_ok = b_ok[[0, -1]]
-    if all(edges_ok):
+
+def extract_repeat_at_bad_edges(a: np.ndarray, b_ok: np.ndarray) -> np.ndarray:
+    """
+    Returns a[:, b_ok] except where `b_ok`` at edge is False, always keeps edges of 1st row of ``a``.
+    :param a: 2d array, 1st row
+    :param b_ok: 1d, boolean
+    :return: a[:, b_ok] with edge columns replaced by nearest ``a`` column where ``b_ok`` is True,
+    and where the 1st row edges are always the edges of ``a``
+    """
+
+    if b_ok[[0, -1]].all():
         return a[:, b_ok]
 
     edges_i_ok_near = np.flatnonzero(b_ok)[[0, -1]]
@@ -1178,36 +1180,34 @@ def extract_repeat_at_bad_edges(a, b_ok):
     out[1:, [0, -1]] = a[1:, edges_i_ok_near]
     return out
 
-def add_data_at_edges(cfg, ctd, ctd_add_bt, ctd_add_lr, ctd_prm, edge_depth, edge_dist, z_col, i_z_col, ok_ctd,
-                      ok_edge, edges_sl_in, edges_sl_out):
+
+def add_data_at_edges(cfg, ctd: pd.DataFrame, ctd_add_bt, ctd_add_lr, ctd_prm, edge_depth, edge_dist, z_col, i_z_col,
+                      ok_ctd, ok_ends: np.ndarray, edges_sl_in: Sequence[slice], edges_sl_out: Sequence[slice]) -> pd.DataFrame:
     """
 
     :param cfg: fields: 'y_resolution_use', ['output_files']['y_resolution']
-    :param ctd:
+    :param ctd: CTD data
     :param ctd_add_bt:
     :param ctd_add_lr:
-    :param ctd_prm:
+    :param ctd_prm: dict with fields: "starts", "ends" - CTD run's top and end edges
     :param edge_depth:
     :param edge_dist:
     :param z_col:
     :param i_z_col:
     :param ok_ctd:
-    :param ok_edge:
-    :param edges_sl_in:
-    :param edges_sl_out:
-    :return:
+    :param ok_ends: mask runs from which take no bottom edge values
+    :param edges_sl_in: index slices of 1st & last run of :param ctd: from which data will be copied to ctd_with_adds
+    :param edges_sl_out: index slices of :return: ctd_with_adds where data from ctd will be copied
+    :return: ctd_with_adds
     """
     # Adding repeated/interpolated data at edges to help gridding
     # -----------------------------------------------------------
     # Interpolate data along bottom edge and add them as source to griddata():
+    # todo: also add values to top edge
     # - find last not nan value in each run
     ctd_ok = ctd[z_col].notna() & ok_ctd
     edge_depth_f, b_run_to_edge = runs_ilast_good(
-        ctd_ok.values,
-        ctd_prm['starts'][ok_edge['soft']],
-        ctd_prm['ends'][ok_edge['soft']], ctd.depth.values,
-        cfg['y_resolution_use'] * 5,
-        edge_depth[ok_edge['soft']])
+        bctd_ok=ctd_ok.values, starts=ctd_prm['starts'][ok_ends], ends=ctd_prm['ends'][ok_ends], ctd_z=ctd.depth.values, max_altitude=cfg['y_resolution_use'] * 5, bottom_at_ends=edge_depth[ok_ends])
     ctd_add_bt.loc[:, 'y'] = np.interp(ctd_add_bt.x, *ctd.iloc[
         edge_depth_f, ctd.columns.get_indexer(ax2col[:])].values.T)
     # Old code:
@@ -1219,14 +1219,14 @@ def add_data_at_edges(cfg, ctd, ctd_add_bt, ctd_add_lr, ctd_prm, edge_depth, edg
     # intervals indexes (0 - before the second, last - after the last but one)
     i_add = ctd.dist.iloc[edge_depth_f[1:-1]].searchsorted(ctd_add_bt.x)
 
-    def lin_squeeze(x_old, x0keep, x1old, x1new):
+    def lin_squeeze(x_old: np.ndarray, x0keep: float, x1old: float, x1new: float) -> np.ndarray:
         """
-        Linear squeeze x by moving x0 while keepeng the x1 the same
-        :param x_old: sequence to be scaled
-        :param x0keep: value of sequence that must remain the same after scaling
+        Linear squeeze x by moving x0 while keeping the x1 the same
+        :param x_old: array to be scaled
+        :param x0keep: value of array that must remain the same after scaling
         :param x1old: x point that need to shift to ``x1new``
-        :param x1new: required value of scaled sequence
-        :return: scaled sequence
+        :param x1new: required value of scaled array
+        :return: scaled array
         """
 
         given_old_range = x0keep - x1old
@@ -1238,7 +1238,7 @@ def add_data_at_edges(cfg, ctd, ctd_add_bt, ctd_add_lr, ctd_prm, edge_depth, edg
 
     print('Add z-values on bot. edge from scaled bot. part of longer profiles. Found z shifts [m]:')
     st_ends01 = (lambda se: np.column_stack((se[:-1, :], se[1:, :])))(
-        np.column_stack((ctd_prm['starts'][ok_edge['soft']][b_run_to_edge], edge_depth_f)))
+        np.column_stack((ctd_prm['starts'][ok_ends][b_run_to_edge], edge_depth_f)))
     for i0, (ddist, (st0, en0, st1, en1)) in enumerate(zip(np.diff(edge_dist), st_ends01)):
         # names numeric suffixes: 0 - current, 1 - next profile
         #                         s - shorter (shallow), l - longer (deeper) profile
@@ -1439,7 +1439,7 @@ def main(new_arg=None):
 
                 # Calculte CTD depth and other output fields
                 try:
-                    # for interp must np.all(np.diff(navp_d['indexs'].values.view(np.int64)) > 0)
+                    # for interp must (np.diff(navp_d['indexs'].values.view(np.int64)) > 0).all()
                     for coord in ['Lat', 'Lon']:
                         ctd[coord] = rep2mean(np.interp(
                             ctd.time.to_numpy(np.int64),
@@ -1518,10 +1518,10 @@ def main(new_arg=None):
                     # nav_dist_isort = nav_dist.argsort()
 
                     # if not enough points then use max of it and CTD
-                    if (0 < bt.size <= 2):
+                    if 0 < bt.size <= 2:
                         bt.loc[:, 'DepEcho'] = np.append(bt, ctd.depth.iloc[ctd_prm['ends']].values).max()
 
-                    # Change ndex from time to dist
+                    # Change index from time to dist
                     bt.index = np.interp(
                         bt.time.view(np.int64),
                         ctd.time.iloc[ctd_prm['starts'][ctd_isort]].to_numpy(np.int64),
@@ -1563,16 +1563,13 @@ def main(new_arg=None):
 
                 # Go along bottom and collect nearest CTD bottom edge path points
                 ok_edge = np.zeros_like(edge_dist, [('hard', np.bool8), ('soft', np.bool8)])
-                if cfg['process']['filter_ctd_bottom_edge'] == True:
-                    k = 2  # vert to hor. scale for filter, m/km
-                    edge_path_scaled = np.vstack((edge_dist * k, edge_depth))
-                    for bed_point in np.vstack((edge_path_scaled[0, :], edge_bed)).T:
-                        ok_edge['soft'][closest_node(bed_point[:, np.newaxis], edge_path_scaled)] = True
-                    ok_edge['soft'][[0, -1]] = True  # not filter edges anyway
-                elif cfg['process']['filter_ctd_bottom_edge']:
-                    ok_edge['soft'][:] = abs(edge_depth) > cfg['process']['filter_ctd_bottom_edge']
-                else:
-                    ok_edge['soft'][:] = True
+                ok_edge['soft'][:] = abs(edge_depth) > cfg['process']['convexing_ctd_bot_edge_max']
+                k = 2  # vert to hor. scale for filter, m/km
+                edge_path_scaled = np.vstack((edge_dist * k, edge_depth))
+                for bed_point in np.vstack((edge_path_scaled[0, :], edge_bed)).T:
+                    i = closest_node(bed_point[:, np.newaxis], edge_path_scaled)
+                    ok_edge['soft'][i] = True
+                ok_edge['soft'][[0, -1]] = True  # not filter edges anyway
 
                 # Filter bottom edge of CTD path manually
                 if __debug__:
@@ -1669,26 +1666,22 @@ def main(new_arg=None):
                                         mask_kwrgs={'data': b_good},  # , 'label': 'closest to bottom'
                                         ax=ax, ax_title='Bottom depth smoothing',
                                         ax_invert=True, position=(15, -4), stop=cfg['process']['interact'])
-                    # Deletion
+                    # Deletion with keeping left & right edge values:
                     nav_dist, nav_dep, depth_lowess = extract_repeat_at_bad_edges(np.vstack(
                         [nav_dist, nav_dep, depth_lowess]), b_good)
-                    # nav_dep = nav_dep[b_good]  # retain alternative variant
-                    # nav_dist = nav_dist[b_good]
-                    if (not plt.fignum_exists(ax.figure.number)):
+                    if not plt.fignum_exists(ax.figure.number):
                         _, ax = plt.subplots()
                         ax.yaxis.set_inverted(True)
                     ax.plot(nav_dist, nav_dep, alpha=0.5, color='k', label='source')
                     plt.show()
-                    # try:
-                    #     ax.plot(nav_dist, nav_dep, alpha=0.5, color='b', label='corrected')
-                    # except Exception as e:
-                    #     pass
 
                     if np.max(depth_lowess) - np.min(depth_lowess) > 1:  # m, checks if it became ~constant
+                        l.info('using Gaussian "lowess" filtered depth')
                         bok_depth_lowess = False  # Not applying lowess filtering, but it may be useful for awful data:
                         if bok_depth_lowess:  # dbstop if want to apply lowess, set: bok_depth_lowess = True
                             nav_dep = depth_lowess  # if whant lowess some regions use as: sl = nav_dist >18.7; nav_dep[sl]= depth_lowess[sl]
-                    else:  # set depth to be lowest data
+                    else:
+                        l.info('set depth to DepEcho data at runs ends')
                         nav_dep = edge_bed
                         nav_dist = edge_dist
 
@@ -1714,25 +1707,22 @@ def main(new_arg=None):
                         cfg['output_files']['x_resolution'] / 2 + 0.01))  # To hide polygon edges on image ~*k_inv
                 polygon_top_edge_path = to_polygon(
                     top_edge_dist,
-                    -(lambda a: np.min([medfilt(a), a], axis=0))(ctd.depth.iloc[ctd_prm['starts']].values),
+                    -(lambda a: np.fmin(medfilt(a), a))(ctd.depth.iloc[ctd_prm['starts']].values),
                     0)
                 save_shape(cfg['output_files']['path'] / (stem_time + 'P'), MultiPolygon(
                     [polygon_top_edge_path, polygon_edge_path]), 'BNA')
 
-                # Runs tracks path
+                # Runs down tracks
                 # ----------------
-                print('Saving CTD runs tracks.')
+                print('Saving CTD pressure(depth) runs in "*P.txt" and data with coordinates for gridding in "*params.txt"')
                 ok_ctd = ctd.depth.notna()  # find NaNs in Pres
                 ctd.depth = -ctd.depth
                 np.savetxt(cfg['output_files']['path'] / (stem_time + 'P.txt'),
                            ctd.loc[ok_ctd, ['dist', 'depth']].values,
                            fmt='%g\t%g', header='Dist_km\tDepth_m', delimiter='\t', comments='')
-                np.savetxt(
-                    cfg['output_files']['path'] / (stem_time + 'params.txt'),
-                    ctd.loc[ok_ctd, ['dist', 'depth', 'Lat', 'Lon'] + cfg['output_files']['data_columns']].values,
-                    fmt='\t'.join(['%g'] * (4 + len(cfg['output_files']['data_columns']))), delimiter='\t',
-                    header='\t'.join(['Dist_km', 'Depth_m', 'Lat_°', 'Lon_°'] + cfg['output_files']['data_columns']),
-                    comments='')
+                cols = ['Dist_km', 'Depth_m', 'Lat_°', 'Lon_°'] + cfg['output_files']['data_columns']
+                np.savetxt(cfg['output_files']['path'] / (stem_time + 'params.txt'), ctd.loc[ok_ctd, cols].values,
+                    fmt='\t'.join(['%g'] * len(cols)), delimiter='\t', header='\t'.join(cols), comments='')
                 ctd.depth = -ctd.depth  # back to positive
 
                 ### Gridding ######################################################################
@@ -1742,7 +1732,7 @@ def main(new_arg=None):
                 ### Syntetic data that helps gridding ###
                 # ---------------------------------------
                 # Additional data along bottom edge
-                # I think add_bot_x = x will be the minimum addition to avoid big stranges. Increasing here in 10 times
+                # I think add_bot_x = x will be the minimum addition to avoid big strange. Increasing here in 10 times
                 # (if more data added then it will have more prority):
                 add_bot_x = np.arange(lim.x.min, lim.x.max, cfg['x_resolution_use'] / 10)
                 ctd_add_bt = pd.DataFrame({'x': add_bot_x,
@@ -1750,14 +1740,12 @@ def main(new_arg=None):
                                            'z': np.empty(len(add_bot_x)),
                                            })
                 # Additional data to increase grid length at left/right edges upon resolution/2
-                
-                # excluding bad length profiles:
-                edges_ok = ok_edge['soft'][[0, -1]]
-                if ~all(edges_ok):
-                    edges_ok = np.flatnonzero(ok_edge['soft'])[[0, -1]]
-                edges_sl_in = [slice(ctd_prm['starts'][e], ctd_prm['ends'][e]) for e in edges_ok] # 1st & last run
 
-                # to dataframe ctd_add_lr here:
+                ## Add data to left and right from existed data # todo: make it by add_data_at_edges(): if bad length profile at edge then use its data with interpolated nearest good length profile data
+                #  - good length profiles at edges:
+                edges_ok = [0, -1] if ok_edge['soft'][[0, -1]].all() else np.flatnonzero(ok_edge['soft'])[[0, -1]]
+                #  - slices from in (1st & last run) to out (ctd_add_lr dataframe)
+                edges_sl_in = [slice(ctd_prm['starts'][e], ctd_prm['ends'][e]) for e in edges_ok]
                 edges_sl_out = (lambda d: [slice(0, d[0]), slice(*np.cumsum(d))])(
                     [edge.stop - edge.start for edge in edges_sl_in])
 
@@ -1765,21 +1753,20 @@ def main(new_arg=None):
                     'x': np.empty(edges_sl_out[1].stop, np.float64),
                     'y': np.empty(edges_sl_out[1].stop, np.float64),
                     'z': np.empty(edges_sl_out[1].stop, np.float64), })
-                # copy y and update x from ctd edge profiles data here, for z see add_data_at_edges() below:
+                #  - copy y and update x from ctd edge profiles data here, for z see add_data_at_edges() below:
                 for i_col, (col, ax, lim_ax) in enumerate(zip(ax2col[:], ax2col._fields, lim[:])):
                     shift = cfg['output_files'][ax + '_resolution']
                     lim_ax = lim_ax._replace(min=lim_ax.min - shift, max=lim_ax.max + shift)
                     lim = lim._replace(**{ax: lim_ax})
-                    if ax != 'x':
-                        for sl_in, sl_out in ((edges_sl_in[0], edges_sl_out[0]), (edges_sl_in[1], edges_sl_out[1])):
-                            ctd_add_lr.iloc[sl_out, i_col] = ctd.iloc[sl_in, ctd.columns.get_loc(col)].values
-                    else:
+                    if ax == 'x':
                         for lim_val, sl_out in zip(lim_ax[:], (edges_sl_out[0], edges_sl_out[1])):
                             ctd_add_lr.iloc[sl_out, i_col] = lim_val
+                    else:
+                        for sl_in, sl_out in ((edges_sl_in[0], edges_sl_out[0]), (edges_sl_in[1], edges_sl_out[1])):
+                            ctd_add_lr.iloc[sl_out, i_col] = ctd.iloc[sl_in, ctd.columns.get_loc(col)].values
 
 
-
-                # Rezulting grid coordinates
+                # Resulting grid coordinates
                 x = np.arange(lim.x.min, lim.x.max, cfg['x_resolution_use'])
                 y = np.arange(lim.y.min, lim.y.max, cfg['y_resolution_use'])
 
@@ -1792,16 +1779,13 @@ def main(new_arg=None):
                 # [4] поворот, 0, если изображение ориентировано на север
                 # [5] высота пиксела
 
-                # Grid blanking bot. edge: use hard filter to keep more of our beautiful contours
-                y_edge_path = np.interp(
-                    x,
-                    edge_dist[ok_edge['hard']],
-                    edge_depth[ok_edge['hard']] + (lambda d: np.where(d[1:]>0, d[1:], np.where(d[:-1]<0,-d[:-1], cfg['y_resolution_use'])))(np.ediff1d(edge_depth[ok_edge['hard']], to_begin=0, to_end=0))
-                                        )
+                # Grid blanking bot. edge: use hard filter and blur by 1 run to keep more of our beautiful contours
+                d_blur = (lambda d: np.where(d[1:]>0, d[1:], np.where(d[:-1]<0,-d[:-1], cfg['y_resolution_use']))
+                          )(np.pad(np.diff(edge_depth[ok_edge['hard']]), 1, 'edge'))     # to less del. data
+                y_edge_path = np.interp(x, edge_dist[ok_edge['hard']], edge_depth[ok_edge['hard']] + d_blur)
                 xm, ym = np.meshgrid(x, y)
                 # to prevent stepping edge of blanking that reach useful data at high slope regions:
                 ym_blank = ym > y_edge_path + cfg['y_resolution_use']
-                # todo: not helps if no data? and better use polygon or result grid modification method?
 
                 l.info('Gridding to {}x{} points'.format(*xm.shape))
                 b_1st = True
@@ -1825,9 +1809,9 @@ def main(new_arg=None):
                                 ctd.time.iloc[st]), cfg['output_files']['dt_from_utc'])))
                             ctd.iloc[st:en, i_z_col] = np.NaN
 
-                    ctd_with_adds = add_data_at_edges(
-                        cfg, ctd, ctd_add_bt, ctd_add_lr, ctd_prm, edge_depth, edge_dist, z_col, i_z_col, ok_ctd,
-                        ok_edge, edges_sl_in, edges_sl_out)
+                    ctd_with_adds = add_data_at_edges(cfg, ctd, ctd_add_bt, ctd_add_lr, ctd_prm, edge_depth, edge_dist,
+                                                      z_col, i_z_col, ok_ctd, ok_edge['soft'], edges_sl_in,
+                                                      edges_sl_out)
                     """
                     griddata_by_surfer(ctd, outFnoE_pattern=os_path.join(
                                 cfg['output_files']['path'], 'surfer', stem_time + '{}'),  ),

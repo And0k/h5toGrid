@@ -43,7 +43,7 @@ if st(1):  # nav with depth is in next section
 
 if st(10):  # False: #
     # Save CTD_SST_48Mc Underway to DB
-    from to_pandas_hdf5.csv_specific_proc import proc_loaded_sea_and_sun_corr_s
+    from to_pandas_hdf5.csv_specific_proc import proc_loaded_sea_and_sun
 
     csv2h5([
         'ini/csv_CTD_Sea&Sun.ini',
@@ -58,7 +58,7 @@ if st(10):  # False: #
         # '--b_raise_on_err', '0',
         ],
         **{'in': {
-            'fun_proc_loaded': proc_loaded_sea_and_sun_corr_s,
+            'fun_proc_loaded': proc_loaded_sea_and_sun,
             'csv_specific_param': {'Temp_fun': lambda x: (x + 0.254) / 1.00024,
                                    # 'Temp_add': 0.254, And convert to ITS90
                                    'Sal_fun': lambda x: (1 + 0.032204423446495364) * x + 0.045516504802752523,

@@ -105,7 +105,7 @@ def load_hdf5_data(store, table=None, t_intervals=None,
         query_range_pattern = '|'.join(f'({query_range_pattern.format(*query_range_lims)})' for query_range_lims in (
             (lambda x=iter(t_intervals): zip(x, x))())
                                    )
-    else:
+    elif n < 2:
         query_range_pattern = None
         t_intervals = []
     df = h5select(store, table, query_range_lims=t_intervals[0::(n - 1)],
@@ -616,7 +616,7 @@ def main(new_arg=None):
                     b_ok = np.zeros(a.shape[0], bool)
                     for component in ['x', 'y', 'z']:
                         b_ok |= is_works(a[col_str + component], noise=cfg['filter']['no_works_noise'][channel])
-                    l.info('Filter not working %2.1f%% area:', (b_ok.size - b_ok.sum())*100/b_ok.size)
+                    l.info('Filtered not working area: %2.1f%%', (b_ok.size - b_ok.sum())*100/b_ok.size)
                     # vec3d = np.column_stack(
                     #     (a[col_str + 'x'], a[col_str + 'y'], a[col_str + 'z']))[:, b_ok].T  # [slice(*iUseTime.flat)]
                     vec3d = a.loc[b_ok, [col_str + 'x', col_str + 'y', col_str + 'z']].to_numpy(float).T
@@ -637,11 +637,14 @@ def main(new_arg=None):
                 coefs[tbl][channel] = {'A': A, 'b': b}
 
             # Zeroing Nord direction
-            if cfg['in'].get('timerange_nord'):
+            timerange_nord = cfg['in']['timerange_nord']
+            if isinstance(timerange_nord, Mapping):
+                timerange_nord = timerange_nord.get(probe_number)
+            if timerange_nord:
                 coefs[tbl]['M']['azimuth_shift_deg'] = zeroing_azimuth(
-                    store, tbl, cfg['in']['timerange_nord'].get(probe_number) if
-                    isinstance(cfg['in']['timerange'], Mapping) else cfg['in']['timerange_nord'],
-                    calc_vel_flat_coef(coefs[tbl]), cfg['in'])
+                    store, tbl, timerange_nord, calc_vel_flat_coef(coefs[tbl]), cfg['in'])
+            else:
+                l.info('no zeroing Nord')
     # Write coefs
     for cfg_output in (['in', 'output_files'] if cfg['output_files'].get('db_path') else ['in']):
         l.info(f"Write to {cfg[cfg_output]['db_path']}")

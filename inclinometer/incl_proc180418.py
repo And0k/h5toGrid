@@ -336,10 +336,10 @@ if b_appended:
         print('Wait store is closing...')
         # from time import sleep
         # sleep(2)
-    new_storage_names = h5move_tables(cfg['output_files'])
+    failed_storages = h5move_tables(cfg['output_files'])
     print('Ok.', end=' ')
     h5index_sort(cfg['output_files'], out_storage_name=cfg['output_files']['db_base'] + '-resorted.h5',
-                 in_storages=new_storage_names)
+                 in_storages=failed_storages)
 
 # @+node:korzh.20180520131532.4: ** garbage
 # def main_gabage():

@@ -86,7 +86,7 @@ d:\WorkData\_experiment\_2019\inclinometer\190917_intertest
 d:\workData\BalticSea\190806_Yantarniy\inclinometer
 d:\workData\BalticSea\190817_ANS42\inclinometer
 
-dt_from_utc = defaultdict(
+    dt_from_utc = defaultdict(
     lambda: '19-07-09T17:48:00',
 )
     lambda: '19-07-03T15:15:00', #'19-07-03T12:00:00',

@@ -19,7 +19,7 @@ import pandas as pd
 
 # my
 sys.path.append(str(Path(__file__).parent.parent.resolve()))
-from utils2init import cfg_from_args, this_prog_basename, init_file_names, init_logging, Ex_nothing_done, \
+from utils2init import cfg_from_args, this_prog_basename, init_file_names, init_logging, Ex_nothing_done, dir_from_cfg,\
     set_field_if_no, \
     path_on_drive_d
 import veuszPropagate
@@ -110,6 +110,7 @@ def main(new_arg=None):
         cfg['in_saved'] = cfg['in'].copy()
     # cfg['loop'] = asyncio.get_event_loop()
     # cfg['export_timeout_s'] = 600
+    dir_from_cfg(cfg['output_files'], 'export_dir')
 
     veuszPropagate.load_vsz = veuszPropagate.load_vsz_closure(cfg['program']['veusz_path'])
     gen_veusz_and_logs = veuszPropagate.load_to_veusz(veuszPropagate.ge_names(cfg), cfg, None)

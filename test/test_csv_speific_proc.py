@@ -3,12 +3,16 @@ import os
 import sys
 import unittest, pytest
 from functools import partial
+
 from to_pandas_hdf5.csv2h5 import *  # main as csv2h5, __file__ as file_csv2h5, read_csv
-from to_pandas_hdf5.h5_dask_pandas import filterGlobal_minmax
+from to_pandas_hdf5.csv_specific_proc import *
+from to_pandas_hdf5.h5toh5 import h5init, h5del_obsolete
+
+from to_pandas_hdf5.h5_dask_pandas import filterGlobal_minmax, h5_append_dummy_row
 from utils2init import path_on_drive_d
 # import imp; imp.reload(csv2h5)
 
-path_cruise = path_on_drive_d('/mnt/D/Work/_Python3/And0K/h5toGrid/test/csv2h5/data')  # r'd:/WorkData/BalticSea/180418_Svetlogorsk/inclinometer'
+r'd:/WorkData/BalticSea/180418_Svetlogorsk/inclinometer'
 scripts_path = path_on_drive_d('/mnt/D/Work/_Python3/And0K/h5toGrid/scripts')  # to find ini
 test_path = path_on_drive_d('/mnt/D/Work/_Python3/And0K/h5toGrid/test')
 sys.path.append(str(Path(test_path).parent.resolve()))
@@ -19,37 +23,69 @@ sys.path.append(str(Path(test_path).parent.resolve()))
 # os.chdir(os.path.dirname(scripts_path))
 
 
-class test_1(unittest.TestCase):
-    def test_rep_in_file(self):
-        in_file = test_path / 'csv2h5/data/INKL_008_Kondrashov_raw.txt'
+def test_proc_loaded_nav_HYPACK_SES2000(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any]) -> pd.DatetimeIndex:
+    """
+    Specified prep&proc of SES2000 data from program "HYPACK":
+    - Time calc: gets string for time in current zone
+    - Lat, Lon to degrees conversion
 
-        fsub = f_repl_by_dict([b'(?P<use>^20\d{2}(,\d{1,2}){5}(,\-?\d{1,6}){6}(,\d{1,2}\.\d{2})(,\-?\d{1,2}\.\d{2})).*',
-                               b'^.+'])  # $ not works without \r\n so it is useless
-        # '^Inklinometr, S/N 008, ABIORAS, Kondrashov A.A.': '',
-        # '^Start datalog': '',
-        # '^Year,Month,Day,Hour,Minute,Second,Ax,Ay,Az,Mx,My,Mz,Battery,Temp':
+    :param a: numpy record array. Will be modified inplace.
+    :param cfg_in: dict
+    :return: numpy 'datetime64[ns]' array
 
-        out_file = in_file.with_name(re.sub('^inkl_0', 'incl', in_file.name.lower()))
+    Example input:
+    a = {
+    'date': "02:13:12.30", #'Time'
+    'Lat': 55.94522129,
+    'Lon': 18.70426069,
+    'Depth': 43.01}
+    """
 
-        rep_in_file(in_file, out_file, fsub, header_rows=1)
-
-        with open(out_file, 'rb') as fout:
-            for irow in range(3):
-                line = fout.readline()
-                assert not b'RS' in line
+    proc_loaded_nav_HYPACK_SES2000(a, cfg_in)
 
 
-if True:  # g.unitTesting:  #
-    # import project_root_path
-    # g.cls()
-    from to_pandas_hdf5.csv_specific_proc import *
-    from to_pandas_hdf5.h5toh5 import h5init, h5del_obsolete
-    from to_pandas_hdf5.h5_dask_pandas import h5_append_dummy_row
+    # extract date from file name
+    if not cfg_in.get('fun_date_from_filename'):
+        def date_from_filename(file_stem, century=None):
+            return century + '-'.join(file_stem[(slice(k, k + 2))] for k in (6, 3, 0))
+
+        cfg_in['fun_date_from_filename'] = date_from_filename
+    elif isinstance(cfg_in['fun_date_from_filename'], str):
+        cfg_in['fun_date_from_filename'] = eval(
+            compile("lambda file_stem, century=None: {}".format(cfg_in['fun_date_from_filename']), '', 'eval'))
+
+    str_date = cfg_in['fun_date_from_filename'](cfg_in['file_stem'], century.decode())
+    t = pd.to_datetime(str_date) + \
+        pd.to_timedelta(a['Time'].str.decode('utf-8', errors='replace'))
+    # t = day_jumps_correction(cfg_in, t.values)
+    return t
+
+
+
+def test_rep_in_file():
+    in_file = test_path / 'csv2h5/data/INKL_008_Kondrashov_raw.txt'
+
+    fsub = f_repl_by_dict([b'(?P<use>^20\d{2}(,\d{1,2}){5}(,\-?\d{1,6}){6}(,\d{1,2}\.\d{2})(,\-?\d{1,2}\.\d{2})).*',
+                           b'^.+'])  # $ not works without \r\n so it is useless
+    # '^Inklinometr, S/N 008, ABIORAS, Kondrashov A.A.': '',
+    # '^Start datalog': '',
+    # '^Year,Month,Day,Hour,Minute,Second,Ax,Ay,Az,Mx,My,Mz,Battery,Temp':
+
+    out_file = in_file.with_name(re.sub('^inkl_0', 'incl', in_file.name.lower()))
+
+    rep_in_file(in_file, out_file, fsub, header_rows=1)
+
+    with open(out_file, 'rb') as fout:
+        for irow in range(3):
+            line = fout.readline()
+            assert not b'RS' in line
+
+
 
 
 @pytest.fixture()
 def cfg():
-    # cfg
+    path_cruise = path_on_drive_d('/mnt/D/Work/_Python3/And0K/h5toGrid/test/csv2h5/data')  #
     get_cfg = partial(main, [
         os.path.join(scripts_path, 'ini/csv_inclin_Kondrashov.ini'),
         '--path', os.path.join(path_cruise, 'inclin_Kondrashov_180430.txt'),

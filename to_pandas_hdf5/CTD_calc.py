@@ -411,7 +411,7 @@ def log_runs(df_raw: pd.DataFrame,
          'DateEnd': timzone_view(df_log_en.index, cfg['in']['dt_from_utc']),
          **dict([(i[0], i[1].values) for st_en in zip(df_log_st.items(), df_log_en.items()) for i in st_en]),
          'rows': imax - imin,
-         'rows_filtered': imin - np.append(0, imax[:-1]),
+         'rows_filtered': imin - np.append(0, imax[:-1]),  # rows between runs down
          'fileName': [os_path.basename(cfg['in']['file_stem'])] * len(imin),
          'fileChangeTime': [cfg['in']['fileChangeTime']] * len(imin),
          })
@@ -427,7 +427,7 @@ def log_runs(df_raw: pd.DataFrame,
     dfNpoints['nearestNav'.format(cfg['output_files']['dt_search_nav_tolerance'])] = dt.astype('m8[s]').view(np.int64)
     # todo: allow filter for individual columns. solution: use multiple calls for columns that need filtering with appropriate query_range_pattern argument of h5select()
 
-    df_edges_items_list = [df_edge.add_suffix(sfx).items() for sfx, df_edge in (
+    df_edges_items_list = [df_edge.add_suffix(suffix).items() for suffix, df_edge in (
         ('_st', dfNpoints.iloc[:len(df_log_st)]),
         ('_en', dfNpoints.iloc[len(df_log_st):len(dfNpoints)]))]
     log_update = {}
@@ -435,7 +435,7 @@ def log_runs(df_raw: pd.DataFrame,
         for name, series in st_en:
             log_update[name] = series.values
     log.update(log_update)
-    print('updating log:', log)
+    l.info('updating log with %d row%s...', imin.size, 's' if imin.size > 1 else '')
 
 
     # log.update(**dict([(i[0], i[1].values) for st_en in zip(
@@ -736,9 +736,9 @@ def main(new_arg=None):
                 print('Wait store is closing...')
                 sleep(2)
 
-            new_storage_names = h5move_tables(cfg_out)
-            print('Ok.', end=' ')
-        h5index_sort(cfg_out, out_storage_name=cfg_out['db_base'] + '-resorted.h5', in_storages=new_storage_names)
+            failed_storages = h5move_tables(cfg_out)
+            print('Finishing...' if failed_storages else 'Ok.', end=' ')
+            h5index_sort(cfg_out, out_storage_name=cfg_out['db_base'] + '-resorted.h5', in_storages=failed_storages)
 
 
 if __name__ == '__main__':

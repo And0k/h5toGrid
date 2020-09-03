@@ -768,7 +768,7 @@ def main(new_arg=None, **kwargs):
 
     nc_psd.variables['time_good_min'][:] = np.array(time_good_min.value, 'M8[ns]')
     nc_psd.variables['time_good_max'][:] = np.array(time_good_max.value, 'M8[ns]')
-    # new_storage_names = h5move_tables(cfg_out)
+    # failed_storages = h5move_tables(cfg_out)
     print('Ok.', end=' ')
     nc_root.close()
 

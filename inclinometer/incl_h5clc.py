@@ -137,6 +137,7 @@ def my_argparser(varargs=None):
               help='concatenate all data in same columns in out db, both separated and joined csv data will be wrote')
     p_out.add('--csv_columns_list',
               help='if not empty then when save csv use only specified columns here')
+    p_out.add('--b_del_temp_db', default='False', help='temporary h5 file will be deleted after operation')
 
     p_proc = p.add_argument_group('proc', 'Processing parameters')
     p_proc.add('--calc_version', default='trigonometric(incl)',
@@ -1198,8 +1199,8 @@ def main(new_arg=None, **kwargs):
     # if len(cfg['in']['tables']) == 1 and '*' in cfg['in']['tables'][0]:  # pattern specified
     set_field_if_no(cfg_out, 'not_joined_h5_path', not cfg['in']['aggregate_period'])
 
-    def map_to_suffixed(names, tbl):
-        suffix = tbl[0] + re.match(r'[^\d_]*(\d*).*', tbl).group(1)
+    def map_to_suffixed(names, tbl, probe_number):
+        suffix = f'{tbl[0]}{probe_number:02}'
         return {col: f'{col}_{suffix}' for col in names}
 
     for lim in ['min', 'max']:
@@ -1222,11 +1223,11 @@ def main(new_arg=None, **kwargs):
     #         assert i_burst == 0  # this is not a cycle
     for itbl, tbl, coefs, d in gen_variables(cfg, fun_gen=h5_names_gen):
         d = filter_local(d, cfg['filter'])  # d[['Mx','My','Mz']] = d[['Mx','My','Mz']].mask(lambda x: x>=4096)
-
+        probe_number = int(re.findall('\d+', tbl)[0])
         # Zeroing
         if cfg['in']['timerange_zeroing'] and not cfg['in']['db_path'].stem.endswith('proc_noAvg'):
             if isinstance(cfg['in']['timerange_zeroing'], Mapping):  # individual interval for each table
-                probe_number = int(re.findall('\d+', tbl)[0])
+
                 if probe_number in cfg['in']['timerange_zeroing']:
                     timerange_zeroing = cfg['in']['timerange_zeroing'][probe_number]
                 else:
@@ -1279,7 +1280,7 @@ def main(new_arg=None, **kwargs):
                 sleep(cfg['filter']['sleep_s'])
                 Vne = d[cols_save].compute()  # MemoryError((1, 12400642), dtype('float64'))
                 if not cfg_out.get('b_all_to_one_col'):
-                    Vne.rename(columns=map_to_suffixed(cols_save, tbl), inplace=True)
+                    Vne.rename(columns=map_to_suffixed(cols_save, tbl, probe_number), inplace=True)
                 dfs_all_list.append(Vne)
                 dfs_all_log.append(tbl)
             except Exception as e:
@@ -1308,7 +1309,7 @@ def main(new_arg=None, **kwargs):
     h5_close(cfg_out)
 
     try:
-        new_storage_names = h5move_tables(cfg_out, cfg_out['tables_have_wrote'])
+        failed_storages = h5move_tables(cfg_out, cfg_out['tables_have_wrote'])
     except Ex_nothing_done as e:
         l.warning('Tables not moved')
 
@@ -1324,7 +1325,7 @@ def main(new_arg=None, **kwargs):
             )
 
     print('Ok.', end=' ')
-    # h5index_sort(cfg_out, out_storage_name= cfg_out['db_base']+'-resorted.h5', in_storages= new_storage_names)
+    # h5index_sort(cfg_out, out_storage_name= cfg_out['db_base']+'-resorted.h5', in_storages= failed_storages)
     # dd_out = dd.multi.concat(dfs_list, axis=1)
 
 

@@ -70,7 +70,7 @@ Saving result in Pandas HDF5 store (*.h5) and *.csv
     p_in.add('--raw_subdir', default='',
              help='Optional zip/rar arhive name (data will be unpacked) or subdir in "path_cruise/_raw"')
     p_in.add('--raw_pattern', default="*{prefix:}{number:0>3}*.[tT][xX][tT]",
-             help='Python "format" command pattern to format prefix and probe number.'
+             help='Pattern to find raw files: Python "format" command pattern to format prefix and probe number.'
                   '"prefix" is a --probes_prefix arg that is in UPPER case and INCL replaced with INKL.')
     p_in.add('--probes_int_list',
              help='Note: Not affects steps 2, 3, set empty list to load all')
@@ -119,6 +119,10 @@ def main(new_arg=None, **kwargs):
 
     # global l
     cfg = cfg_from_args(my_argparser(), new_arg, **kwargs)
+    cfg['in']['db_coefs'] = Path(cfg['in']['db_coefs'])
+    for path_field in ['db_coefs', 'path_cruise']:
+        if ~cfg['in'][path_field].is_absolute():
+            cfg['in'][path_field] = (Path(sys.argv[0]).parent / cfg['in'][path_field]).resolve().absolute()  # cfg['in']['cfgFile'].parent /
 
     def constant_factory(val):
         def default_val():
@@ -179,7 +183,7 @@ def main(new_arg=None, **kwargs):
         return np.datetime_as_string(np.datetime64(time_str, 's'))
 
 
-    probes = cfg['in']['probes'] or range(1, 40)  # sets default range, specify your values before line ---
+    probes = cfg['in']['probes'] or range(1, 41)  # sets default range, specify your values before line ---
     raw_root, subs_made = re.subn('INCL_?', 'INKL_', cfg['in']['probes_prefix'].upper())
     if st(1):  # Can not find additional not corrected files for same probe if already have any corrected in search path (move them out if need)
         i_proc_probe = 0  # counter of processed probes
@@ -221,7 +225,8 @@ def main(new_arg=None, **kwargs):
                     # '--b_raise_on_err', '0',  # ?
                     '--b_interact', '0',
                     '--fs_float', f'{fs(probe, in_file.stem)}',
-                    '--dt_from_utc_seconds', str(cfg['in']['dt_from_utc'].total_seconds())
+                    '--dt_from_utc_seconds', str(cfg['in']['dt_from_utc'].total_seconds()),
+                    '--b_del_temp_db', '1',
                     ] +
                    (
                    ['--csv_specific_param_dict', 'invert_magnitometr: True'
@@ -274,6 +279,7 @@ def main(new_arg=None, **kwargs):
                     '--output_files.db_path', str(db_path_out),
                     '--table', f'V_incl_bin{aggregate_period_s}' if aggregate_period_s else 'V_incl',
                     '--verbose', 'INFO',  #'DEBUG' get many numba messages
+                    '--b_del_temp_db', '1',
                     # '--calc_version', 'polynom(force)',  # depreshiated
                     # '--chunksize', '20000',
                     # '--not_joined_h5_path', f'{db_path.stem}_proc.h5',
@@ -289,8 +295,8 @@ def main(new_arg=None, **kwargs):
                     ['--bad_p_at_bursts_starts_peroiod', '1H',
                     ])
             # csv splitted by 1day (default for no avg) and monolit csv if aggregate_period_s==600
-            if aggregate_period_s in [None, 300, 600]:
-                args += ['--csv_path', str(db_path.parent / 'csv')]
+            # if aggregate_period_s in [None, 300, 600]:
+            args += ['--csv_path', str(db_path.parent / 'csv')]
 
             kwarg = {'in': {
                 'date_min': cfg['filter']['date_min'][0],

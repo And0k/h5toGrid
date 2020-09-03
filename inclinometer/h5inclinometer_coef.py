@@ -198,6 +198,11 @@ def h5copy_coef(h5file_source=None, h5file_dest=None, tbl=None, tbl_source=None,
                             h5source.copy(path, h5dest[tbl_dest])
                         else:
                             l.error('Skip copy coef: '   + '\n==> '.join([a for a in e.args if isinstance(a, str)]))
+                    except KeyError: # Unable to open object (object 'incl_b11' doesn't exist)"
+                        l.warning('Creating "%s"', tbl_source)
+                        h5dest.create_group(tbl_source)
+                        h5source.copy(path, h5dest[tbl_dest])
+
             except FileExistsError:
                 if dict_matrices is None:
                     raise

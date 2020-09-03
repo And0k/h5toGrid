@@ -26,7 +26,7 @@ tim_min_save: pd.Timestamp     # can only decrease in time_corr(), set to pd.Tim
 tim_max_save: pd.Timestamp     # can only increase in time_corr(), set to pd.Timestamp(0, tz='UTC') before call
 def time_corr(date: Union[pd.Series, pd.Index, np.ndarray],
               cfg_in: Mapping[str, Any],
-              b_make_time_inc: Optional[bool] = True,
+              b_make_time_inc: Optional[bool] = None,
               path_save_image='time_corr'):
     """
     :param date: numpy np.ndarray elements may be datetime64 or text in ISO 8601 format
@@ -36,6 +36,7 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray],
     - b_make_time_inc
     - keep_input_nans: nans in date remains unchanged
     - path: where save images of bad time corrected
+    - date_min, date_min: optional limits - to set out time beyond limits to constants slitly beyond limits
     :param b_make_time_inc: check time resolution and increase if needed to avoid duplicates
     :return:
         tim, pandas time series, same size as date input
@@ -44,7 +45,7 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray],
     todo: use Kalman filter?
     """
     if not date.size:
-        return pd.DatetimeIndex([]), np.bool_([])
+        return pd.DatetimeIndex([], tz='UTC'), np.bool_([])
     if __debug__:
         l.debug('time_corr (time correction) started')
     if cfg_in.get('dt_from_utc'):
@@ -86,7 +87,6 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray],
         tim = pd.to_datetime(date, utc=True)  # .tz_localize('UTC')tz_convert(None)
         #hours_from_utc_f = 0
 
-
     if cfg_in.get('date_min'):
         # Skip processing if data out of filtering range
         global tim_min_save, tim_max_save
@@ -96,7 +96,7 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray],
         tim_min_save = min(tim_min_save, tim_min)
         tim_max_save = max(tim_max_save, tim_max)
 
-        # set time to special values keeping it sorted for dask and mark out of range as good values
+        # set time beyond limits to special values keeping it sorted for dask and mark out of range as good values
         if tim_max < pd.Timestamp(cfg_in['date_min'], tz='UTC'):
             tim[:] = pd.Timestamp(cfg_in['date_min'], tz='UTC') - np.timedelta64(1, 'ns')  # pd.NaT                      # ns-resolution maximum year
             return tim, np.ones_like(tim, dtype=bool)
@@ -104,9 +104,10 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray],
             tim[:] = pd.Timestamp(cfg_in['date_max'], tz='UTC') + np.timedelta64(1, 'ns')  # pd.Timestamp('2262-01-01')  # ns-resolution maximum year
             return tim, np.ones_like(tim, dtype=bool)
         else:
-            it_se = np.flatnonzero(
-                (tim >= pd.Timestamp(cfg_in['date_min'], tz='UTC')) &
-                (tim <= pd.Timestamp(cfg_in.get('date_max'), tz='UTC')) )[[0,-1]]
+            b_ok_in = tim >= pd.Timestamp(cfg_in['date_min'], tz='UTC')
+            if cfg_in.get('date_max'):
+                b_ok_in &= (tim <= pd.Timestamp(cfg_in['date_max'], tz='UTC'))
+            it_se = np.flatnonzero(b_ok_in)[[0,-1]]
             it_se[1] += 1
             tim = tim[slice(*it_se)]
             # tim.clip(lower=pd.Timestamp(cfg_in['date_min'], tz='UTC') - np.timedelta64(1, 'ns'),
@@ -126,7 +127,7 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray],
 
 
     t = tim.to_numpy(np.int64)
-    if b_make_time_inc or ((b_make_time_inc is None) and cfg_in.get('b_make_time_inc')) and tim.size > 1:
+    if b_make_time_inc or ((b_make_time_inc is None) and (not cfg_in.get('b_make_time_inc') is False)) and tim.size > 1:
         # Check time resolution and increase if needed to avoid duplicates
         if n_bad_in and not cfg_in.get('keep_input_nans'):
             t = np.int64(rep2mean(t, bOk=b_ok_in))

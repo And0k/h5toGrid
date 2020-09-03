@@ -1,4 +1,6 @@
-## Plotting - 191101incl_load.py
+## Plotting [incl_load](https://github.com/And0k/h5toGrid/blob/master/inclinometer/incl_load.py) 
+(old version: 191101incl_load.py)
+
 contains steps:
 1. _csv2h5_ - Converting data (interval) to hdf5 format with automatic time correction: improve resolution compared to the original 1s to specified frequency, and ensure creating of a increasing time sequence. This is useful to build graphs with maximum resolution, what is  relevant for a small intervals, as well as for some processing algorithms.
 1a. h5copy_coef - copy coefficients to the created hdf along the data path of the corresponding device

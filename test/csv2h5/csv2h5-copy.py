@@ -1553,9 +1553,9 @@ def main(new_arg=None):
             print('Wait store is closing...')
             sleep(2)
 
-        new_storage_names = h5move_tables(cfg_out)
+        failed_storages = h5move_tables(cfg_out)
         print('Ok.', end=' ')
-    h5index_sort(cfg_out, out_storage_name=cfg_out['db_base'] + '-resorted.h5', in_storages=new_storage_names)
+    h5index_sort(cfg_out, out_storage_name=cfg_out['db_base'] + '-resorted.h5', in_storages=failed_storages)
 
 
 if __name__ == '__main__':
