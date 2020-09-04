@@ -269,7 +269,7 @@ if st(2):
             kwarg = {}
         # csv splitted by 1day (default for no avg) and monolit csv if aggregate_period_s==600
         if aggregate_period_s in [None, 300, 600]:
-            args += ['--csv_path', str(db_path.parent / 'csv')]
+            args += ['--text_path', str(db_path.parent / 'text_output')]
 
 
         # If need all data to be combined one after one:

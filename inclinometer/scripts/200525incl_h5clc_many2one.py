@@ -82,7 +82,7 @@ if st(2):
                 # '--calc_version', 'polynom(force)',  # depreshiated
                 # '--chunksize', '20000',
                 # '--not_joined_h5_path', f'{db_path.stem}_proc.h5',
-                # '--csv_date_format', '%g'
+                # '--text_date_format', '%g'
                 ]
         if aggregate_period_s is None:  # proc. parameters (if we have saved proc. data then when aggregating we are not processing)
 
@@ -101,11 +101,11 @@ if st(2):
                 'dates_max': [timeranges[iprobe][0][1] for iprobe in range(len(probes))],  # '2019-09-09T16:31:00',  #17:00:00
                 }, 'output_files': {
                 'b_all_to_one_col': True,
-                'csv_date_format': lambda t: (t - m_TimeStart_csv) / np.timedelta64(1, 'h'),
-                'csv_columns': ['Date', 'Ve', 'Vn']
+                'text_date_format': lambda t: (t - m_TimeStart_csv) / np.timedelta64(1, 'h'),
+                'text_columns': ['Date', 'Ve', 'Vn']
                 }}
         # csv splitted by 1day (default for no avg) and monolit csv if aggregate_period_s==600
         if aggregate_period_s is not None:
-            args += ['--csv_path', str(db_path_out.parent / 'csv')]
+            args += ['--text_path', str(db_path_out.parent / 'text_output')]
 
         incl_h5clc.main(args, **kwarg)

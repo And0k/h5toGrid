@@ -127,16 +127,16 @@ def my_argparser(varargs=None):
     p_out.add('--output_files.db_path', help='hdf5 store file path')
     p_out.add('--table',
               help='table name in hdf5 store to write data. If not specified then will be generated on base of path of input files. Note: "*" is used to write blocks in autonumbered locations (see dask to_hdf())')
-    p_out.add('--csv_path',
-              help='path to save csv files with proced velocity (each probe individually)')
+    p_out.add('--text_path',
+              help='path to save text files with processed velocity (each probe individually)')
     p_out.add('--not_joined_h5_path',
               help='If something then saving proced velocity for each probe individually to output_files.db_path. Todo: use this settings to can save in other path')
-    p_out.add('--csv_date_format', default='%Y-%m-%d %H:%M:%S.%f',
-              help='Format of date column in csv files. Can use float or string representations')
+    p_out.add('--text_date_format', default='%Y-%m-%d %H:%M:%S.%f',
+              help='Format of date column in output text files. Can use float or string representations')
     p_out.add('--b_all_to_one_col',
-              help='concatenate all data in same columns in out db, both separated and joined csv data will be wrote')
-    p_out.add('--csv_columns_list',
-              help='if not empty then when save csv use only specified columns here')
+              help='concatenate all data in same columns in out db, both separated and joined text files will be wrote')
+    p_out.add('--text_columns_list',
+              help='if not empty then saved text files will contain only specified here columns')
     p_out.add('--b_del_temp_db', default='False', help='temporary h5 file will be deleted after operation')
 
     p_proc = p.add_argument_group('proc', 'Processing parameters')
@@ -1100,23 +1100,25 @@ def gen_variables(cfg: MutableMapping[str, Any], fun_gen=h5_names_gen
 
 def dd_to_csv(d: dd.DataFrame, cfg: Mapping[str, Any], suffix='', b_single_file=True):
     """
-    Save to csv
+    Save to ascii
     :param d:
     :param cfg: must have field 'output_files' with fields:
-        'csv_path'
-        'csv_date_format' - If callable then create "Date" column by calling it (dd.index), retain index only if "Time" in 'csv_columns'. If string use it as format for index (Time) column
-        'csv_columns': optional
+        'text_path'
+        'text_date_format' - If callable then create "Date" column by calling it (dd.index), retain index only if "Time" in 'text_columns'. If string use it as format for index (Time) column
+        'text_columns': optional
     :param suffix:
     :param b_single_file:
     :return:
     """
     cfg_out = cfg['output_files']
-    if cfg_out['csv_path'] is None:
+    if cfg_out['text_path'] is None:
         return
-
-    l.info('Saving csv: %s', '1 file' if b_single_file else f'{d.npartitions} files')
+    tab = '\t'
+    sep = tab
+    ext = '.tsv' if sep==tab else '.csv'
+    l.info('Saving *%s: %s', ext, '1 file' if b_single_file else f'{d.npartitions} files')
     try:
-        dir_create_if_need(cfg_out['csv_path'])
+        dir_create_if_need(cfg_out['text_path'])
         def combpath(dir_or_prefix, s):
             return str(dir_or_prefix / s)
     except:
@@ -1128,34 +1130,35 @@ def dd_to_csv(d: dd.DataFrame, cfg: Mapping[str, Any], suffix='', b_single_file=
         return f'{d.divisions[i_partition]:%y%m%d_%H%M}'
         # too long variant: '{:%y%m%d_%H%M}-{:%H%M}'.format(*d.partitions[i_partition].index.compute()[[0,-1]])
 
-    filename_csv = combpath(cfg_out['csv_path'],
-                            '{}bin{}'.format(
-                                name_that_replaces_asterisk(0),
-                                str(cfg['in']['aggregate_period']).lower()  # lower seconds: S -> s
-                                ) if b_single_file else '*'
-                            ) + f"_{suffix.replace('incl', 'i')}.csv"
+    filename = combpath(cfg_out['text_path'],
+                        '{}bin{}'.format(
+                            name_that_replaces_asterisk(0),
+                            str(cfg['in']['aggregate_period']).lower()  # lower seconds: S -> s
+                            ) if b_single_file else '*'
+                        ) + f"_{suffix.replace('incl', 'i')}{ext}"
     with ProgressBar():
-        d_csv = d.round({'Vdir': 4, 'inclination': 4, 'Pressure': 3})
+        d_out = d.round({'Vdir': 4, 'inclination': 4, 'Pressure': 3})
         # if not cfg_out.get('b_all_to_one_col'):
-        #     d_csv.rename(columns=map_to_suffixed(d.columns, suffix))
-        if callable(cfg_out['csv_date_format']):
-            arg_csv = {'index': 'Time' in cfg_out.get('csv_columns', []),
-                       'columns': cfg_out.get('csv_columns', d_csv.columns.insert(0, 'Date'))
+        #     d_out.rename(columns=map_to_suffixed(d.columns, suffix))
+        if callable(cfg_out['text_date_format']):
+            arg_out = {'index': 'Time' in cfg_out.get('text_columns', []),
+                       'columns': cfg_out.get('text_columns', d_out.columns.insert(0, 'Date'))
                        }
-            d_csv['Date'] = d_csv.map_partitions(lambda df: cfg_out['csv_date_format'](df.index))
+            d_out['Date'] = d_out.map_partitions(lambda df: cfg_out['text_date_format'](df.index))
         else:
-            arg_csv = {'date_format': cfg_out['csv_date_format'],
-                       'columns': cfg_out.get('csv_columns') or None  # write all columns if list is empty
+            arg_out = {'date_format': cfg_out['text_date_format'],
+                       'columns': cfg_out.get('text_columns') or None  # write all columns if list is empty
                        }
 
         if progress is not None:
-            progress(d_csv)
-        d_csv.to_csv(filename=filename_csv,
+            progress(d_out)
+        d_out.to_csv(filename=filename,
                      single_file=b_single_file,
                      name_function=None if b_single_file else name_that_replaces_asterisk,  # 'epoch' not works
                      float_format='%.5g',
-                     sep='\t',
-                     **arg_csv
+                     sep=sep,
+                     encoding="ascii",
+                     **arg_out
                      )
 
 
@@ -1183,7 +1186,7 @@ def main(new_arg=None, **kwargs):
     cfg['in']['burst_min'] = np.inf  # inf to not use bursts, None to autofind
     cfg['output_files']['chunksize'] = cfg['in']['chunksize']
 
-    # this affect memory consumption and splitting to csv files
+    # this affect memory consumption and to splitting of output ascii files
     set_field_if_no(cfg['in'], 'split_period', '1D')
     set_field_if_no(cfg['output_files'], 'split_period', 100000 * pd_period_to_timedelta(cfg['in']['aggregate_period'])
     if cfg['in']['aggregate_period'] and not cfg['in']['split_period'] else
@@ -1247,7 +1250,7 @@ def main(new_arg=None, **kwargs):
                            # 'right' for burst mode because the last value of interval used in wavegauges is round
                            ).mean()
             try:  # persist speedups calc_velocity greatly but may require too many memory
-                l.info('Persisting aggregated by %s data', cfg['in']['aggregate_period'])
+                l.info('Persisting data aggregated by %s', cfg['in']['aggregate_period'])
                 d.persist()  # excludes missed values?
             except MemoryError:
                 l.debug('- Failed (not enough memory for persisting). Continue...')
@@ -1257,7 +1260,7 @@ def main(new_arg=None, **kwargs):
             d = dekart2polar_df_v_en(d)
         else:  # loading source data needed to be processed to calc velocity
             # Velocity calculation
-            # repartition for split csv and/or remove MemoryError
+            # repartition for split ascii and/or remove MemoryError
             d = incl_calc_velocity(d.repartition(freq=cfg_out['split_period']), **coefs,
                                    cfg_filter=cfg['filter'],
                                    cfg_proc=cfg['proc'])
@@ -1315,7 +1318,7 @@ def main(new_arg=None, **kwargs):
 
 
     if dfs_all is not None and cfg_out.get('b_all_to_one_col'):
-        # Save to 1 combined csv with regular time interval filling absent values with 0
+        # Save to 1 combined ascii with regular time interval filling absent values with 0
         dd_to_csv(
             dd.from_pandas(dfs_all, chunksize=500000)
                 .resample(rule=cfg['in']['aggregate_period'])

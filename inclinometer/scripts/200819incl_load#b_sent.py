@@ -9,7 +9,7 @@ sys.path.append(str(Path(module_path).resolve()))  # os.getcwd()
 from inclinometer.incl_load import main as incl_load
 
 #incl_load([])
-incl_load(['ini/200813incl_load#b-paths_relative_to_scripts.yml'
+incl_load(['ini/200813incl_load#b-paths_relative_to_scripts.yml', '--step_start_int', '2'
 # 'ini/200813incl_load-calibtank#b20.yml'
 # 'ini/200813incl_load-caliblab-b.yml'
 # 'ini/200813incl_load-calibtank-b.yml'

@@ -544,6 +544,41 @@ def ini2dict(arg_source=None):
     return cfg
 
 
+def cfg_from_args_yaml(p, arg_add, **kwargs):
+    """
+    todo: version using Hydra
+    Split sys.argv to ``arg_source`` for loading config (data of 2nd priority) and rest (data of 1st priority)
+    arg_source = sys.argv[1] if it not starts with '--' else tries find file sys.argv[0] + ``.yaml`` or else ``.ini``
+    and assigns arg_source to it.
+    Loaded data (configargparse object) is converted to configuration dict of dicts
+
+    1st priority (sys.argv[2:]) will overwrite all other
+    See requirements for command line arguments p
+    (argument_groups (sections) is top level dict)
+
+    :param p: configargparse object of parameters. 1st command line parameter in it
+     must not be optional. Also it may be callable with arguments to init configargparse.ArgumentParser()
+    :param arg_add: list of string arguments in format of command line interface defined by p to add/replace parameters
+     (starting from 2nd)
+    :param kwargs: dicts for each section: to overwrite values in them (overwrites even high priority values, other values remains)
+    :return cfg: dict with parameters
+        will set cfg['in']['cfgFile'] to full name of used config file
+        '<prog>' strings in p replaces with p.prog
+    see also: my_argparser_common_part()
+    """
+
+    def is_option_name(arg):
+        """
+        True if arg is an option name (i.e. that is not a value, which must be followed)
+        :param arg:
+        :return:
+        """
+        return isinstance(arg, str) and arg.startswith('--')
+
+    args = {}  # will be converted to dict cfg:
+    cfg = None
+
+
 def cfg_from_args(p, arg_add, **kwargs):
     """
     Split sys.argv to ``arg_source`` for loading config (data of 2nd priority) and rest (data of 1st priority)
@@ -572,9 +607,9 @@ def cfg_from_args(p, arg_add, **kwargs):
         :param arg:
         :return:
         """
-        return (isinstance(arg, str) and arg.startswith('--'))
+        return isinstance(arg, str) and arg.startswith('--')
 
-    args = {}  # will be conveerted to dict cfg:
+    args = {}  # will be converted to dict cfg:
     cfg = None
 
     if arg_add:
@@ -649,6 +684,19 @@ def cfg_from_args(p, arg_add, **kwargs):
                 if not isinstance(option_name, str):
                     continue
                 try:
+                    if not isinstance(section[option_name], str):
+                        # parameter comes from yaml file and not contain type suffix so can't overridden by command line
+                        # override if in command line
+                        for arg in arg_add[1::2]:
+                            if arg[2:].startswith(option_name):
+                                b_override = True
+                                break
+                        else:
+                            # nothing to override
+                            b_override = False
+                        if b_override:
+                            continue  # will use what is come in command line instead
+
                     # p_sec.set_defaults(**{'--' + option_name: config.get(section_name, option_name)})
                     p_sec.add(f'{prefix}{option_name}', default=section[option_name])
                 except configargparse.ArgumentError as e:
@@ -726,7 +774,7 @@ def cfg_from_args(p, arg_add, **kwargs):
             cfg = ini2dict(cfg)
             suffixes = ()
 
-        # Convert cfg['re mask'] chields and all str (or list of str but not starting from '') chields beginning with 're_' to compiled regular expression object
+        # Convert cfg['re mask'] descendants and all str (or list of str but not starting from '') chields beginning with 're_' to compiled regular expression object
         # lists in 're_' are joined to strings before compile (useful as list allows in yaml to use aliases for part of re expression)
 
         for key_level0, v in cfg.items():
@@ -1360,7 +1408,6 @@ def name_output_and_log(cfg, logging, f_rep_filemask=lambda f: f, bInteract=Fals
         l.warning(str_print)  # or use "a %(a)d b %(b)s", {'a':1, 'b':2}
 
     return cfg, l
-
 
 
 class Message:

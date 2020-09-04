@@ -294,9 +294,9 @@ def main(new_arg=None, **kwargs):
                     ] if subs_made else
                     ['--bad_p_at_bursts_starts_peroiod', '1H',
                     ])
-            # csv splitted by 1day (default for no avg) and monolit csv if aggregate_period_s==600
+            # csv splitted by 1day (default for no avg) and monolith csv if aggregate_period_s==600
             # if aggregate_period_s in [None, 300, 600]:
-            args += ['--csv_path', str(db_path.parent / 'csv')]
+            args += ['--text_path', str(db_path.parent / 'text_output')]
 
             kwarg = {'in': {
                 'date_min': cfg['filter']['date_min'][0],

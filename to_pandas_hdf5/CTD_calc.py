@@ -93,7 +93,7 @@ process it and save HDF5/CSV
     p_out.add('--b_insert_separator', default='True',
               help='insert NaNs row in table after each file data end')
     p_out.add('--b_remove_duplicates', default='False', help='Set True if you see warnings about')
-    p_out.add('--csv_date_format', default='%Y-%m-%d %H:%M:%S.%f',
+    p_out.add('--text_date_format', default='%Y-%m-%d %H:%M:%S.%f',
               help='Format of date column in csv files. Can use float or string representations')
 
     p_run = p.add_argument_group('extract_runs', 'program behaviour')
@@ -685,7 +685,7 @@ def main(new_arg=None):
                         if not 'data_columns' in cfg_out:
                             cfg_out['data_columns'] = slice(0, len(cols))
                         df.to_csv(  # [cfg_out['data_columns']]
-                            cfg_out['path_csv'] / fname, date_format=cfg_out['csv_date_format'],
+                            cfg_out['path_csv'] / fname, date_format=cfg_out['text_date_format'],
                             float_format='%5.6g', index_label='Time')  # to_string, line_terminator='\r\n'
 
                     # Log to screen (if not prohibited explicitly)
