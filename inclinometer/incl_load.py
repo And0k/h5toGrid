@@ -159,8 +159,10 @@ def main(new_arg=None, **kwargs):
 
     dir_incl = '' if 'inclinometer' in str(cfg['in']['path_cruise']) else 'inclinometer'
     if not cfg['out']['db_name']:  # then name by cruise dir:
-        cfg['out']['db_name'] = re.match('(^[\d_]*).*', (cfg['in']['path_cruise'].parent if dir_incl or cfg['in']['path_cruise'].name.startswith('inclinometer') else cfg['in']['path_cruise']).name
-                           ).group(1).strip('_') + 'incl.h5'  # group(0) if db name == cruise dir name
+        cfg['out']['db_name'] = re.match('(^[\d_]*).*', (
+            cfg['in']['path_cruise'].parent if dir_incl or cfg['in']['path_cruise'].name.startswith('inclinometer') else
+            cfg['in']['path_cruise']).name
+                                         ).group(1).strip('_') + 'incl.h5'  # group(0) if db name == cruise dir name
     db_path = cfg['in']['path_cruise'] / cfg['out']['db_name']  # _z  '190210incl.h5' 'ABP44.h5', / '200514incl_experiment.h5'
     # ---------------------------------------------------------------------------------------------
     def fs(probe, name):

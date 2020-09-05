@@ -15,7 +15,7 @@ filter:
   date_max: {0: 2030-01-01T00:00:00}
 
 out:
-  db_name: out_send.h5
+  # db_name: out_send.h5
   aggregate_period_s: [Null, 2, 600, 7200]  # Null means no average
 
 

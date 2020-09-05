@@ -684,10 +684,10 @@ def cfg_from_args(p, arg_add, **kwargs):
                 if not isinstance(option_name, str):
                     continue
                 try:
-                    if not isinstance(section[option_name], str):
-                        # parameter comes from yaml file and not contain type suffix so can't overridden by command line
-                        # override if in command line
-                        for arg in arg_add[1::2]:
+                    # if parameter comes from yaml file and not contain type suffix it is not overridden by command line
+                    # so override if in command line
+                    if (len(sys.argv) > 1) and not isinstance(section[option_name], str):
+                        for arg in sys.argv[2::2]:
                             if arg[2:].startswith(option_name):
                                 b_override = True
                                 break
