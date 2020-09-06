@@ -306,7 +306,7 @@ def cfgfile2dict(arg_source: Union[Mapping[str, Any], str, PurePath, None] = Non
         if not b_path:
             arg_source = PurePath(arg_source)
         if not arg_source.is_absolute():
-            arg_source = PurePath(sys.argv[0]).parent.joinpath(arg_source)
+            arg_source = (Path(sys.argv[0]).parent / arg_source).resolve()
         arg_ext = arg_source.suffix
         try:
             dir_create_if_need(arg_source.parent)

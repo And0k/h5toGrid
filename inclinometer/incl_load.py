@@ -30,9 +30,6 @@ import numpy as np
 import pandas as pd
 
 # import my scripts
-drive_d = Path('D:/' if sys.platform == 'win32' else '/mnt/D')  # allows to run on both my Linux and Windows systems:
-scripts_path = drive_d.joinpath('Work/_Python3/And0K/h5toGrid/scripts')
-sys.path.append(str(Path(scripts_path).parent.resolve()))  # os.getcwd()
 from to_pandas_hdf5.csv2h5 import main as csv2h5
 from to_pandas_hdf5.csv_specific_proc import correct_kondrashov_txt, rep_in_file, correct_baranov_txt
 from to_pandas_hdf5.h5_dask_pandas import h5q_interval2coord
@@ -122,7 +119,7 @@ def main(new_arg=None, **kwargs):
     cfg['in']['db_coefs'] = Path(cfg['in']['db_coefs'])
     for path_field in ['db_coefs', 'path_cruise']:
         if ~cfg['in'][path_field].is_absolute():
-            cfg['in'][path_field] = (Path(sys.argv[0]).parent / cfg['in'][path_field]).resolve().absolute()  # cfg['in']['cfgFile'].parent /
+            cfg['in'][path_field] = (cfg['in']['cfgFile'].parent / cfg['in'][path_field]).resolve().absolute()  # cfg['in']['cfgFile'].parent /
 
     def constant_factory(val):
         def default_val():
@@ -140,7 +137,7 @@ def main(new_arg=None, **kwargs):
     if True:  # False. Experimental speedup but takes memory
         from dask.cache import Cache
         cache = Cache(2e9)  # Leverage two gigabytes of memory
-        cache.register()  # Turn cache on globally
+        cache.register()    # Turn cache on globally
     if False:  # True:  # False:  #
         l.warning('using "synchronous" scheduler for debugging')
         import dask
@@ -158,12 +155,11 @@ def main(new_arg=None, **kwargs):
     st.go = True
 
     dir_incl = '' if 'inclinometer' in str(cfg['in']['path_cruise']) else 'inclinometer'
-    if not cfg['out']['db_name']:  # then name by cruise dir:
-        cfg['out']['db_name'] = re.match('(^[\d_]*).*', (
-            cfg['in']['path_cruise'].parent if dir_incl or cfg['in']['path_cruise'].name.startswith('inclinometer') else
-            cfg['in']['path_cruise']).name
-                                         ).group(1).strip('_') + 'incl.h5'  # group(0) if db name == cruise dir name
-    db_path = cfg['in']['path_cruise'] / cfg['out']['db_name']  # _z  '190210incl.h5' 'ABP44.h5', / '200514incl_experiment.h5'
+    if not cfg['out']['db_name']:  # set name by 'path_cruise' name or parent if it is  "*inclinometer*"
+        cfg['out']['db_name'] = re.match(
+            '(^[\d_]*).*', (lambda p: p.name if dir_incl else p.parent.name)(cfg['in']['path_cruise'])
+            ).group(1).strip('_') + 'incl.h5'
+    db_path = cfg['in']['path_cruise'] / cfg['out']['db_name']
     # ---------------------------------------------------------------------------------------------
     def fs(probe, name):
         return 5
@@ -216,7 +212,7 @@ def main(new_arg=None, **kwargs):
                     continue
 
                 csv2h5(
-                    [scripts_path / f"ini/csv_inclin_{'Kondrashov' if subs_made else 'Baranov'}.ini",
+                    [str(Path(__file__).parent / 'ini' / f"csv_inclin_{'Kondrashov' if subs_made else 'Baranov'}.ini"),
                     '--path', str(in_file),
                     '--blocksize_int', '50_000_000',  # 50Mbt
                     '--table', re.sub('^((?P<i>inkl)|w)_0', lambda m: 'incl' if m.group('i') else 'w',  # correct name
