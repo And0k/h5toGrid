@@ -58,7 +58,7 @@ def main():
 
         custom_expressions_use_time = "[['{Index:%Y-%m-%dT%H:%M:%S}', '{DateEnd:%Y-%m-%dT%H:%M:%S}']]".format_map(
             cfg['log_row'])
-        if not cfg['output_files']['b_images_only']:
+        if not cfg['out']['b_images_only']:
             cfgin_update = {
                 'add_custom': ['USE_timeRange'],
                 'add_custom_expressions': [custom_expressions_use_time]}

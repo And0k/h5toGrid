@@ -19,7 +19,7 @@ ro = re.compile(rs, re.MULTILINE)  # |re.IGNORECASE
 def cfg_prepare(cfg):
     '''Get list of numbers to insert in output'''
     columns = [(cfg['columns'][k.lower()] if k.lower() in cfg['columns'] else k) \
-               for k in cfg['output_files']['colmn_names']]
+               for k in cfg['out']['colmn_names']]
     # get number slist
     ext = os_path.splitext(cfg['in']['path'])[1]
     out_numbers = []
@@ -66,15 +66,15 @@ if __name__ == '__main__':
 
     cfg = ini2dict()
 
-    cfg['output_files']['digits'] = cfg_prepare(cfg)
-    if 'path' not in cfg['output_files']:
+    cfg['out']['digits'] = cfg_prepare(cfg)
+    if 'path' not in cfg['out']:
         fileDir = os_path.dirname(os_path.abspath(cfg['in']['path']))
-        cfg['output_files']['path'] = os_path.join(fileDir, os_path.basename(cfg['output_files']['name']))
-    fileDir, filenameF = pathAndMask(*[cfg['output_files'][spec] if spec in
-                                                                    cfg['output_files'] else None for \
+        cfg['out']['path'] = os_path.join(fileDir, os_path.basename(cfg['out']['name']))
+    fileDir, filenameF = pathAndMask(*[cfg['out'][spec] if spec in
+                                                                    cfg['out'] else None for \
                                        spec in ['path', 'name', 'ext']])
     filenameB, ext = os_path.splitext(filenameF)
-    cfg['output_files']['path'], writeMode, msgFile = name_output_file(fileDir, filenameB, ext, False)
+    cfg['out']['path'], writeMode, msgFile = name_output_file(fileDir, filenameB, ext, False)
     root = ET.Element('TTF')
     child1 = ET.SubElement(root, 'Subscription')
     child1.set('Id', "WinRiver Processed Data")
@@ -89,7 +89,7 @@ if __name__ == '__main__':
     child_pattern_digit = ET.SubElement(child_pattern, 'Data')
     from copy import copy
 
-    for d in cfg['output_files']['digits']:
+    for d in cfg['out']['digits']:
         child_pattern_digit.text = str(d)
         child21.append(copy(child_pattern))  # ET.Element()
 
@@ -104,8 +104,8 @@ if __name__ == '__main__':
     if msgFile:
         msgFile = '(' + msgFile + ')'
     try:
-        et.write(cfg['output_files']['path'], pretty_print=True)
-        print('Saved to', cfg['output_files']['path'], msgFile)
+        et.write(cfg['out']['path'], pretty_print=True)
+        print('Saved to', cfg['out']['path'], msgFile)
     except IOError:
-        print('Can not save to', cfg['output_files']['path'], msgFile)
-        et.write(cfg['output_files']['path'], pretty_print=True)
+        print('Can not save to', cfg['out']['path'], msgFile)
+        et.write(cfg['out']['path'], pretty_print=True)

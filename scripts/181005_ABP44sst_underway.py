@@ -50,7 +50,7 @@ if st(5):  # False: #
               '--min_dp', '20',
               '--b_skip_if_up_to_date', 'True',
               # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
-              # '--output_files.tables_list', '',
+              # '--out.tables_list', '',
               ])
 
 if st(7):  # False: #
@@ -140,7 +140,7 @@ if st(10):  # False: #
             '--path', os_path.join(path_cruise, r'navigation\*spot*.gpx'),
             '--table_prefix', r'navigation/',
             '--segments_cols_list', "time, latitude, longitude, comment",
-            '--output_files.segments_cols_list', 'Time, Lat, Lon, comment',
+            '--out.segments_cols_list', 'Time, Lat, Lon, comment',
             '--tables_list', ',,tracker{}', ])
 # go = True
 if st(11):  # False: #

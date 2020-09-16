@@ -8,7 +8,7 @@ in:
   date_min: 2019-07-21T20:00:00Z
   date_max: 2019-08-18T01:45:00Z
 
-output_files:
+out:
   db_path: 'incl_proc.h5'
   table: 'V_incl'
 

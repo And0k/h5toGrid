@@ -100,7 +100,7 @@ for i, probe in enumerate(probes):  # incl_calibr not supports multiple timerang
             '--tables_list', tbl,
             '--timerange_list', str_range(timeranges, probe),
             # '--timerange_nord_list', str_range(timeranges_nord, probe),
-            '--output_files.db_path', str(db_path_tank),  # save here addititonally
+            '--out.db_path', str(db_path_tank),  # save here addititonally
             ])
 
     if step == 2:
@@ -131,7 +131,7 @@ for i, probe in enumerate(probes):  # incl_calibr not supports multiple timerang
                            '--widget', '/fitV(incl)/grid1/graph/fit_t/values',
                            # '/fitV(force)/grid1/graph/fit1/values',
                            '--data_for_coef', 'max_incl_of_fit_t',
-                           '--output_files.path', str(db_path_tank),
+                           '--out.path', str(db_path_tank),
                            '--re_tbl_from_vsz_name', '\D*\d*',
                            '--channels_list', 'M,A',
                            '--b_update_existed', 'True',  # to not skip.

@@ -63,7 +63,7 @@ def test_proc_loaded_nav_HYPACK_SES2000(a: Union[pd.DataFrame, np.ndarray], cfg_
 
 
 def test_rep_in_file():
-    in_file = test_path / 'csv2h5/data/INKL_008_Kondrashov_raw.txt'
+    file_in = test_path / 'csv2h5/data/INKL_008_Kondrashov_raw.txt'
 
     fsub = f_repl_by_dict([b'(?P<use>^20\d{2}(,\d{1,2}){5}(,\-?\d{1,6}){6}(,\d{1,2}\.\d{2})(,\-?\d{1,2}\.\d{2})).*',
                            b'^.+'])  # $ not works without \r\n so it is useless
@@ -71,11 +71,11 @@ def test_rep_in_file():
     # '^Start datalog': '',
     # '^Year,Month,Day,Hour,Minute,Second,Ax,Ay,Az,Mx,My,Mz,Battery,Temp':
 
-    out_file = in_file.with_name(re.sub('^inkl_0', 'incl', in_file.name.lower()))
+    file_out = file_in.with_name(re.sub('^inkl_0', 'incl', file_in.name.lower()))
 
-    rep_in_file(in_file, out_file, fsub, header_rows=1)
+    rep_in_file(file_in, file_out, fsub, header_rows=1)
 
-    with open(out_file, 'rb') as fout:
+    with open(file_out, 'rb') as fout:
         for irow in range(3):
             line = fout.readline()
             assert not b'RS' in line
@@ -101,7 +101,7 @@ def cfg():
 
 def test_csv2h5(cfg):
     print(cfg)
-    cfg_out = cfg['output_files']
+    cfg_out = cfg['out']
     # cfg['in']['fun_proc_loaded'].visualize()
     for nameFull in cfg['in']['gen_names_and_log'](cfg):
         d = read_csv(nameFull, **cfg['in'])  # , b_ok

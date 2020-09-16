@@ -618,7 +618,14 @@ def is_works(s, noise=0):
     :param noise: minimum adjasent data changing when working
     :return:
     """
-    b = np.abs(np.diff(s)) > noise
+
+    d = np.diff(s)
+    n = np.isnan(d)
+    if n.sum() > len(s)/10:
+        print('too many nans - skip freezing data filter')
+        return np.ones_like(s, dtype=np.bool_)
+
+    b = np.abs(d) > noise
     for stride in [16, 32]:
         bnext = (np.abs(np.diff(s[::stride])) > noise).repeat(stride)
         b[:bnext.size] = np.logical_or(b[:bnext.size], bnext)
@@ -661,9 +668,12 @@ def too_frequent_values(a, max_portion_allowed=0.5):
             '(last alternates', np.around(bad_portion[m_all.size - 1], 1), '%')  #l.info()
     else:
         if __debug__:
-            i = np.argmax(n_uniq)
-            print('most frquent value' ,a[i_uniq[i]], 'appears', n_uniq[i], 'times - not too frequent',
-                  round(bad_portion[i], 1))
+            if len(n_uniq):
+                i = np.argmax(n_uniq)
+                print('most frquent value' ,a[i_uniq[i]], 'appears', n_uniq[i], 'times - not too frequent',
+                      round(bad_portion[i], 1))
+            elif not len(a):
+                print('- no data')
     return bbad
 
 @njit
@@ -828,6 +838,9 @@ def waveletSmooth(y, wavelet="db4", level=1, ax=None, label=None, x=None, color=
 
     waveletSmooth(NDepth.values.flat, wavelet='db8', level=11, ax=ax, label='Depth')
     """
+    if level <= 0:
+        return y, ax
+
     # calculate the wavelet coefficients
     mode = "antireflect"
     coeff = pywt.wavedec(y, wavelet, mode=mode)  # , mode="per", level=10
@@ -993,7 +1006,7 @@ def inearestsorted(array, values):
 def inearestsorted_around(array, values):
     """
     Find nearest values before and after of each values in sorted numpy array
-    Returned values useful as indexes for linear interpolation of data associeted with values
+    Returned values useful as indexes for linear interpolation of data associated with values
     :param array:  numpy array where to search
     :param values: numpy array to which values need to find nearest
     :return: found indexes of length <= len(values)
@@ -1050,7 +1063,7 @@ def check_time_diff(t_queried: Union[pd.Series, np.ndarray], t_found: Union[pd.S
     bbad = abs(dT) > np.timedelta64(dt_warn)
     if (mesage is not None) and np.any(bbad):
         if mesage:
-            mesage += '\n'.join(['{}. {}:\t{}{:.1f}'.format(
+            mesage = '\n'.join(['mesage'] + ['{}. {}:\t{}{:.1f}'.format(
                 i, tdat, m, dt / 60) for i, tdat, m, dt in zip(
                 np.flatnonzero(bbad), t_queried[bbad], np.where(dT[bbad].astype(np.int64) < 0, '-', '+'),
                 np.abs(dT[bbad]) / np.timedelta64(1, 's'))])

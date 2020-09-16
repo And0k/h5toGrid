@@ -5,7 +5,7 @@ different format converters mainly for csv2h5
 import logging
 import re
 from datetime import datetime
-from typing import Any, AnyStr, Callable, Dict, Iterable, Mapping, MutableMapping, Match, Optional, Union, TypeVar, BinaryIO, TextIO
+from typing import Any, AnyStr, Callable, Dict, Iterable, Mapping, MutableMapping, Match, Optional, Union, Sequence, TypeVar, BinaryIO, TextIO
 import io
 import numpy as np
 import pandas as pd
@@ -253,7 +253,6 @@ def proc_loaded_Idronaut(a: Union[pd.DataFrame, np.ndarray],
     date = np.append(date, a['txtT'].to_numpy(dtype='|S11')[:, np.newaxis], axis=1).view('|S22').ravel()
     # np.array(date, 'datetime64[ms]')
     return convertNumpyArrayOfStrings(date, 'datetime64[ns]', format='%Y-%m-%dT%H:%M:%S.%f')
-
 
 @meta_out(partial(out_fields, keys_del={'Date', 'Time'}, add_before={'Time': 'M8[ns]'}))
 def proc_loaded_sea_and_sun(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
@@ -668,18 +667,30 @@ def f_repl_by_dict(replist: Iterable[AnyStr], binary_str=True) -> Callable[[Matc
     return fsub
 
 
-def rep_in_file(in_file: Union[str, PurePath, BinaryIO, TextIO],
-                out_file,
-                f_replace: Callable[[bytes], bytes],
-                header_rows=0,
-                block_size=None,
-                min_out_length=2,
-                f_replace_in_header: Optional[Callable[[bytes], bytes]] = None,
-                binary_mode=True) -> int:
+def correct_old_zip_name_ru(name):
+    """
+    Correct invalid zip encoding of Russian file names
+    code try to work with old style zips (having encoding CP437 and just has it broken), and if fails, it seems that zip archive is new style (UTF-8)
+    :param name:
+    :return:
+    """
+    from chardet import detect
+
+    try:
+        name_bytes = name.encode('cp437')
+    except UnicodeEncodeError:
+        name_bytes = name.encode('utf8')
+    encoding = detect(name_bytes)['encoding']
+    return name_bytes.decode(encoding)
+
+
+def rep_in_file(file_in: Union[str, PurePath, BinaryIO, TextIO], file_out, f_replace: Callable[[bytes], bytes],
+                header_rows=0, block_size=None, min_out_length=2,
+                f_replace_in_header: Optional[Callable[[bytes], bytes]] = None, binary_mode=True) -> int:
     """
     Replacing text in a file, applying f_replace
-    :param in_file: str/Path or opened file handle, file to read from
-    :param out_file: str/Path, file name to write here
+    :param file_in: str/Path or opened file handle, file to read from
+    :param file_out: str/Path, file name to write here
     :param f_replace: bytes = function(bytes) or str = function(str) if binary_mode=False
     :param header_rows: int/range copy rows, if range and range[0]>0 remove rows till range[0] then copy till range[-1]
     :param block_size: int or None, if None - reads line by line else size in bytes
@@ -690,29 +701,29 @@ def rep_in_file(in_file: Union[str, PurePath, BinaryIO, TextIO],
 
 
     try:
-        in_file_path = Path(in_file)
-        if not in_file_path.is_file():
-            print(f'{in_file_path} not found')
+        file_in_path = Path(file_in)
+        if not file_in_path.is_file():
+            print(f'{file_in_path} not found')
             return None
 
     except TypeError:  # have opened file handle
-        in_file_path = Path(in_file.name)  # losts abs path for archives so
+        file_in_path = Path(file_in.name)  # losts abs path for archives so
         # next check will be filed, but we not writing to archives so it's safe.
 
     l.warning('preliminary correcting csv file %s by removing irregular rows, writing to %s.',
-        in_file_path.name, out_file)
+              file_in_path.name, file_out)
 
     # Check if we modyfing input file
-    out_file = Path(out_file)
-    if in_file_path == out_file:
+    file_out = Path(file_out)
+    if file_in_path == file_out:
         # Modyfing input file -> temporary out file and final output files:
-        out_file, out_file_original = out_file.with_suffix(f'{out_file.suffix}.bak'), out_file
+        file_out, file_out_original = file_out.with_suffix(f'{file_out.suffix}.bak'), file_out
     else:
-        out_file_original = ''
+        file_out_original = ''
 
     sum_deleted = 0
-    with FakeContextIfOpen(lambda x: open(x, 'rb' if binary_mode else 'r'), in_file) as fin,\
-         open(out_file, 'wb' if binary_mode else 'w') as fout:
+    with FakeContextIfOpen(lambda x: open(x, 'rb' if binary_mode else 'r'), file_in) as fin,\
+         open(file_out, 'wb' if binary_mode else 'w') as fout:
         if isinstance(header_rows, range):
             for row in range(header_rows[0]):
                 # removing rows
@@ -741,82 +752,83 @@ def rep_in_file(in_file: Union[str, PurePath, BinaryIO, TextIO],
                 if block != (b'' if binary_mode else ''):
                     fout.write(block)
 
-    if out_file_original:
-        out_file.replace(out_file_original)
+    if file_out_original:
+        file_out.replace(file_out_original)
 
     return sum_deleted
 
 
-def mod_incl_name(in_file: Union[str, PurePath]):
+def mod_incl_name(file_in: Union[str, PurePath]):
     """ Change name of corrected (regular table format) csv file of raw inclinometer/wavegage data"""
-    in_file = PurePath(in_file)
-    in_file_name = in_file.name.lower().replace('inkl', 'incl')  # main replacement that marks result file
-    in_file_name = re.sub('((?P<prefix>incl|w))_0*(?P<number>\d\d)',
+    file_in = PurePath(file_in)
+    file_in_name = file_in.name.lower().replace('inkl', 'incl')  # main replacement that marks result file
+    file_in_name = re.sub('((?P<prefix>incl|w))_0*(?P<number>\d\d)',
            lambda m: f"{m.group('prefix')}{m.group('number')}",
-           in_file_name
+           file_in_name
            )
-    out_file = in_file.with_name(in_file_name)  # r'inkl_?0*(\d{2})', r'incl\1'
-    return out_file
+    file_out = file_in.with_name(file_in_name)  # r'inkl_?0*(\d{2})', r'incl\1'
+    return file_out
 
 
-def correct_kondrashov_txt(in_file: Union[str, Path, BinaryIO, TextIO],
-                           out_file:Optional[Path]=None,
-                            out_dir:Optional[PurePath]=None
-                           ) -> Path:
+def correct_kondrashov_txt(file_in: Union[str, Path, BinaryIO, TextIO], file_out: Optional[Path] = None,
+                           dir_out: Optional[PurePath] = None) -> Path:
     """
-    Replaces bad strings in csv file and writes corrected file which named by replacing 'inkl_0' by 'incl' in in_file
-    :param in_file: file name or file-like object of csv file or csv file opened in arhive that RarFile.open() returns
-    :param out_file: full output file name. If None _out_dir_ is trying to use, name of output file is generated by mod_incl_name(in_file.name)
-    :param out_dir: output dir, if None try the out dir is dir of in_file, but
+    Replaces bad strings in csv file and writes corrected file which named by replacing 'inkl_0' by 'incl' in file_in
+    :param file_in: file name or file-like object of csv file or csv file opened in arhive that RarFile.open() returns
+    :param file_out: full output file name. If None _dir_out_ is trying to use, name of output file is generated by mod_incl_name(file_in.name)
+    :param dir_out: output dir, if None try the out dir is dir of file_in, but
         Note: in opened archives it may not contain original path info (they may be temporary arhives).
 
     :return: name of file to write.
 
-    Supported _in_file_ format examples:
+    Supported _file_in_ format examples:
     # 2018,4,30,23,59,53,-1088,-640,-15648,-14,74,556,7.82,5.50
     # 2018,12,1,0,0,0,-544,-1136,-15568,-44,90,550,7.82,5.50
     """
 
-    is_opened = isinstance(in_file, (io.TextIOBase, io.RawIOBase))
-    msg_in_file = in_file
+    is_opened = isinstance(file_in, (io.TextIOBase, io.RawIOBase))
+    msg_file_in = file_in
 
-    # Set _out_file_ name if not yet
-    if out_file:
+    # Set _file_out_ name if not yet
+    if file_out:
         pass
-    elif out_dir:
-        name_maybe_with_sub_dir = mod_incl_name((Path(in_file) if isinstance(in_file, str) else in_file).name)
-        out_file = out_dir / Path(name_maybe_with_sub_dir).name  # flattens archive subdirs
+    elif dir_out:
+        msg_file_in = (Path(file_in) if isinstance(file_in, str) else file_in).name
+        name_maybe_with_sub_dir = mod_incl_name(msg_file_in)
+        file_out = dir_out / Path(name_maybe_with_sub_dir).name  # flattens archive subdirs
     else: # autofind out path
         # handle opened files too
 
-        # Set out file dir based on in_file dir
+        # Set out file dir based on file_in dir
         if is_opened:
             # handle opened files from archive too
-            inf = getattr(in_file, '_inf', None)
+            inf = getattr(file_in, '_inf', None)
             if inf:
-                in_file_path = Path(inf.volume_file)
-                out_file = mod_incl_name(in_file_path.parent / in_file.name)     # exclude archive name in out path
-                in_file_path /= in_file.name                       # archive name+name / in_file.name for logging
+                file_in_path = Path(inf.volume_file)
+                file_out = mod_incl_name(file_in_path.parent / file_in.name)  # exclude archive name in out path
+                file_in_path /= file_in.name                       # archive name+name / file_in.name for logging
             else:
-                # cmd_contained_path_of_archive = getattr(in_file, '_cmd', None)  # deprechate
+                # cmd_contained_path_of_archive = getattr(file_in, '_cmd', None)  # deprechate
                 # if cmd_contained_path_of_archive:
                 #     # archive path+name
-                #     in_file_path = Path([word for word in cmd_contained_path_of_archive if (len(word)>3 and word[-4]=='.')][0])
+                #     file_in_path = Path([word for word in cmd_contained_path_of_archive if (len(word)>3 and word[-4]=='.')][0])
                 #     # here '.' used to find path word (of arhive with extension .rar)
-                #     out_file = mod_incl_name(in_file_path.parent / in_file.name)     # exclude archive name in out path
-                #     in_file_path /= in_file.name                       # archive name+name / in_file.name for logging
+                #     file_out = mod_incl_name(file_in_path.parent / file_in.name)     # exclude archive name in out path
+                #     file_in_path /= file_in.name                       # archive name+name / file_in.name for logging
                 # else:
-                in_file_path = Path(in_file.name)
-                out_file = mod_incl_name(in_file_path)
+                file_in_path = Path(file_in.name)
+                file_out = mod_incl_name(file_in_path)
 
-        msg_in_file = in_file_path.name
+        msg_file_in = file_in_path.name
 
-    if out_file.is_file():
-        l.warning(f'skipping of pre-correcting csv file {msg_in_file} to {out_file.name}: destination exist')
-        return out_file
+    if file_out.is_file():
+        if is_opened:
+            msg_file_in = correct_old_zip_name_ru(msg_file_in)
+        l.warning(f'skipping of pre-correcting csv file {msg_file_in} to {file_out.name}: destination exist')
+        return file_out
 
-    dir_create_if_need(out_file.parent)
-    binary_mode = False if isinstance(in_file, io.TextIOBase) else True
+    dir_create_if_need(file_out.parent)
+    binary_mode = False if isinstance(file_in, io.TextIOBase) else True
     fsub = f_repl_by_dict([x if binary_mode else bytes.decode(x) for x in (
         b'^(?P<use>20\d{2}(,\d{1,2}){5}(,\-?\d{1,6}){6}(,\d{1,2}\.\d{2})(,\-?\d{1,3}\.\d{2})).*',
         b'^.+')], binary_str=binary_mode)
@@ -825,20 +837,19 @@ def correct_kondrashov_txt(in_file: Union[str, Path, BinaryIO, TextIO],
     # '^Inklinometr, S/N 008, ABIORAS, Kondrashov A.A.': '',
     # '^Start datalog': '',
     # '^Year,Month,Day,Hour,Minute,Second,Ax,Ay,Az,Mx,My,Mz,Battery,Temp':
-    sum_deleted = rep_in_file(in_file, out_file, fsub, header_rows=3, binary_mode=binary_mode)
+    sum_deleted = rep_in_file(file_in, file_out, fsub, header_rows=3, binary_mode=binary_mode)
 
     if sum_deleted:
         l.warning('{} bad line deleted'.format(sum_deleted))
 
-    return out_file
+    return file_out
 
 
-def correct_baranov_txt(in_file: Union[str, PurePath],
-                        out_file:Optional[PurePath]=None,
-                        out_dir:Optional[PurePath]=None) -> Path:
+def correct_baranov_txt(file_in: Union[str, PurePath], file_out: Optional[PurePath] = None,
+                        dir_out: Optional[PurePath] = None) -> Path:
     """
-    Replaces bad strings in csv file and writes corrected file which named by replacing 'W_0' by 'w' in in_file
-    :param in_file:
+    Replaces bad strings in csv file and writes corrected file which named by replacing 'W_0' by 'w' in file_in
+    :param file_in:
     :return: name of file to write.
     """
     # 2019	11	18	18	00	00	02316	22206	16128	31744	32640	33261	32564	32529
@@ -850,30 +861,133 @@ def correct_baranov_txt(in_file: Union[str, PurePath],
     # last element in list is used to delete non captured by previous: it has no group so sub() returns empty line,
     # that will be checked and deleted
 
-    in_file = Path(in_file)
-    if out_file:
+    file_in = Path(file_in)
+    if file_out:
         pass
-    elif out_dir:
-        out_file = out_dir / mod_incl_name(in_file.name)
+    elif dir_out:
+        file_out = dir_out / mod_incl_name(file_in.name)
     else: # autofind out path
-        out_file = in_file.with_name(mod_incl_name(in_file.name))  # re.sub(r'W_?0*(\d{2})', r'w\1', in_file.name)
+        file_out = file_in.with_name(mod_incl_name(file_in.name))  # re.sub(r'W_?0*(\d{2})', r'w\1', file_in.name)
 
-    if out_file.is_file():
-        l.warning(f'skipping of pre-correcting csv file {in_file.name} to {out_file}: destination exist')
-        return out_file
-    elif not in_file.is_file():
-        print(f'{in_file} not found')
+    if file_out.is_file():
+        l.warning(f'skipping of pre-correcting csv file {file_in.name} to {file_out}: destination exist')
+        return file_out
+    elif not file_in.is_file():
+        print(f'{file_in} not found')
         return None
     else:
         l.warning('preliminary correcting csv file {} by removing irregular rows, writing to {}.'.format(
-            in_file.name, str(out_file)))
-    sum_deleted = rep_in_file(in_file, out_file, fsub)
+            file_in.name, str(file_out)))
+    sum_deleted = rep_in_file(file_in, file_out, fsub)
 
     if sum_deleted:
         l.warning('{} bad line deleted'.format(sum_deleted))
 
-    return out_file
+    return file_out
 
+
+def correct_txt(
+        file_in: Union[str, Path, BinaryIO, TextIO],
+        file_out: Optional[Path] = None,
+        dir_out: Optional[PurePath] = None,
+        mod_file_name: Callable[[str], str] = lambda n: n.replace('.', '_clean.'),
+        sub_str_list: Sequence[bytes] = None,
+        **kwargs
+        ) -> Path:
+    """
+    Modified correct_kondrashov_txt() to be universal replacer
+    Replaces bad strings in csv file and writes corrected file
+    :param file_in: file name or file-like object of csv file or csv file opened in arhive that RarFile.open() returns
+    :param file_out: full output file name. If None _dir_out_ is trying to use, name of output file is generated by mod_file_name(file_in.name)
+    :param dir_out: output dir, if None try the out dir is dir of file_in, but
+        Note: in opened archives it may not contain original path info (they may be temporary archives).
+    :param mod_file_name: function to get out file name from input file name
+    :param sub_str_list: f_repl_by_dict() argument that will be decoded here to str if need
+    :param kwargs: rep_in_file() keyword arguments except first 3 and 'binary_mode'
+    :return: name of file to write.
+
+    Supported _file_in_ format examples:
+    # 2018,4,30,23,59,53,-1088,-640,-15648,-14,74,556,7.82,5.50
+    # 2018,12,1,0,0,0,-544,-1136,-15568,-44,90,550,7.82,5.50
+    """
+
+    is_opened = isinstance(file_in, (io.TextIOBase, io.RawIOBase))
+    msg_file_in = file_in
+
+    # Set _file_out_ name if not yet
+    if file_out:
+        pass
+    elif dir_out:
+        msg_file_in = (Path(file_in) if isinstance(file_in, str) else file_in).name
+        name_maybe_with_sub_dir = mod_file_name(msg_file_in)
+        file_out = dir_out / Path(name_maybe_with_sub_dir).name  # flattens archive subdirs
+    else:  # autofind out path
+        # handle opened files too
+
+        # Set out file dir based on file_in dir
+        if is_opened:
+            # handle opened files from archive too
+            inf = getattr(file_in, '_inf', None)
+            if inf:
+                file_in_path = Path(inf.volume_file)
+                file_out = mod_file_name(file_in_path.parent / file_in.name)  # exclude archive name in out path
+                file_in_path /= file_in.name  # archive name+name / file_in.name for logging
+            else:
+                # cmd_contained_path_of_archive = getattr(file_in, '_cmd', None)  # deprechate
+                # if cmd_contained_path_of_archive:
+                #     # archive path+name
+                #     file_in_path = Path([word for word in cmd_contained_path_of_archive if (len(word)>3 and word[-4]=='.')][0])
+                #     # here '.' used to find path word (of arhive with extension .rar)
+                #     file_out = mod_file_name(file_in_path.parent / file_in.name)     # exclude archive name in out path
+                #     file_in_path /= file_in.name                       # archive name+name / file_in.name for logging
+                # else:
+                file_in_path = Path(file_in.name)
+                file_out = mod_file_name(file_in_path)
+
+        msg_file_in = file_in_path.name
+
+    if file_out.is_file():
+        if is_opened:
+            msg_file_in = correct_old_zip_name_ru(msg_file_in)
+        l.warning(f'skipping of pre-correcting csv file {msg_file_in} to {file_out.name}: destination exist')
+        return file_out
+
+    dir_create_if_need(file_out.parent)
+    binary_mode = False if isinstance(file_in, io.TextIOBase) else True
+
+    fsub = f_repl_by_dict([x if binary_mode else bytes.decode(x) for x in sub_str_list], binary_str=binary_mode)
+
+    # {'use': b'\g<use>'})  # $ not works without \r\n so it is useless
+    # b'((?!2018)^.+)': '', b'( RS)(?=\r\n)': ''
+    # '^Inklinometr, S/N 008, ABIORAS, Kondrashov A.A.': '',
+    # '^Start datalog': '',
+    # '^Year,Month,Day,Hour,Minute,Second,Ax,Ay,Az,Mx,My,Mz,Battery,Temp':
+    sum_deleted = rep_in_file(file_in, file_out, fsub, binary_mode=binary_mode, **kwargs)
+
+    if sum_deleted:
+        l.warning('{} bad line deleted'.format(sum_deleted))
+
+    return file_out
+
+
+def correct_idronaut_terminal_txt(
+        file_in: Union[str, Path, BinaryIO, TextIO],
+        file_out: Optional[Path] = None,
+        dir_out: Optional[PurePath] = None, **kwargs) -> Path:
+    """
+    Replaces bad strings in Idronaut terminal csv file and writes corrected file
+     261.23  8.812 23.917 21.561    2.53    0.26  7.858 -180.8 09:26:03.96
+     0.28 25.430  0.017  0.017-1148.98  -21.71  9.026  107.4 09:53:02.56
+    """
+    return correct_txt(
+        file_in, file_out, dir_out,
+        mod_file_name = lambda n: n.replace('.', '_clean.'),
+        sub_str_list = [
+            b'^(?P<use> *\d{1,4}.\d{1,2}( *[ -]\d{1,4}.\d{1,3}){7}( +\d{2}:\d{2}:\d{2}\.\d{2})).*',
+            b'^.+'
+            ],
+        **kwargs
+    )
 
 # navigation loaders -------------------------------------------------------------
 
@@ -1049,3 +1163,18 @@ def proc_loaded_nav_HYPACK_SES2000(a: Union[pd.DataFrame, np.ndarray], cfg_in: M
     # # t = day_jumps_correction(cfg_in, t.values)
     return a.loc[:, list(proc_loaded_nav_HYPACK_SES2000.meta_out(cfg_in['dtype_out']).keys())]
     # may use a.loc[:, list(cfg_in['fun_proc_loaded']... instead?
+
+
+#@meta_out(partial(out_fields, keys_del={'Time'}, add_before={'Time': 'M8[ns]'}))
+def proc_loaded_nav_ADCP_WinRiver2_at(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any]) -> pd.DatetimeIndex:
+    """
+    Specified prep&proc of Depth and navigation from ADCP data, exported by WinRiver II with at.ttf settings:
+    - Time calc: gets string for time in UTC from b'20,9,9,13,36,18,78' (yy,mm,dd,HH,MM,SS )
+
+    :param a: numpy record array. Will be modified inplace.
+    :param cfg_in: dict
+    :return: numpy 'datetime64[ns]' array
+    """
+
+    tim = pd.to_datetime(a['Time'].str.decode('utf-8', errors='replace'), format='%y,%m,%d,%H,%M,%S,%f')
+    return tim

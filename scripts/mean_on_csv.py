@@ -68,13 +68,13 @@ cfg = main([
     '--b_skip_if_up_to_date', 'False'  # becouse we not use store at all
     ])
 print(cfg)
-cfg_out = cfg['output_files']
+cfg_out = cfg['out']
 # cfg['in']['fun_proc_loaded'].visualize()
 stat = []
 i = 0
 name_value = []
 tim_start = []
-for path_csv in cfg['in']['gen_names_and_log'](cfg['output_files']):
+for path_csv in cfg['in']['gen_names_and_log'](cfg['out']):
     a = read_csv(path_csv, **cfg['in'])
     # , tim, b_ok
     # # filter

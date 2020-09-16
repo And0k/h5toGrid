@@ -154,12 +154,12 @@ if __name__ == '__main__':
     filt_fileCur = lambda f, mask: bGood_file(f, mask, namesBadAtEdge=(r'coef'))
 
     print('found: ', end='')
-    namesFull = [f for f in dir_walker(
+    paths = [f for f in dir_walker(
         cfg['Veusz files']['dir'],
         cfg['Veusz files']['filemask'],
         bGoodFile=filt_fileCur,
         bGoodDir=filt_dirCur)]
-    nFiles = len(namesFull)
+    nFiles = len(paths)
     if nFiles == 0:
         print('(0 files) => nothing done')
         # exit?
@@ -182,7 +182,7 @@ if __name__ == '__main__':
                     f = open(cfg['program']['log'], 'a+', encoding='cp1251')
                     f.writelines(datetime.now().strftime('\n\n%d.%m.%Y %H:%M:%S> processed '
                                                          + str(nFiles) + ' file' + 's:' if nFiles > 1 else ':'))
-                for nameFull in namesFull:
+                for nameFull in paths:
                     nameFE = os_path.basename(nameFull)
                     print(nameFE, end=': ')
                     #

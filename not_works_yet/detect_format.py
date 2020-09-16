@@ -265,7 +265,7 @@ will be sabstituted with correspondng input file names.
         cfg = ini2dict(args.cfgFile)
         cfg['in'] = init_file_names(cfg['in'])
     except (IOError, Ex_nothing_done) as e:
-        cfg = {'in': {'namesFull': [args.path],
+        cfg = {'in': {'paths': [args.path],
                       'nfiles': 1}}  # one file
         if not os_path.isfile(args.path):
             print('\n==> '.join([s for s in e.args if isinstance(s, str)]))  # e.message
@@ -277,7 +277,7 @@ will be sabstituted with correspondng input file names.
     if cfg['in']['nfiles']:
 
         # ## Main circle ############################################################
-        for ifile, nameFull in enumerate(cfg['in']['namesFull'], start=1):
+        for ifile, nameFull in enumerate(cfg['in']['paths'], start=1):
             nameFE = os_path.basename(nameFull)
 
             # known_structure ['%m/%d/%Y', '%H:%M:%S']
@@ -311,15 +311,15 @@ will be sabstituted with correspondng input file names.
 
             # Prepare cpecific format loading
             cfg['in'] = init_input_cols(cfg['in'])
-            cfg['output_files']['names'] = np.array(cfg['in']['dtype'].names
+            cfg['out']['names'] = np.array(cfg['in']['dtype'].names
                                                     )[cfg['in']['cols_loaded_save_b']]
-            cfg['output_files']['formats'] = [cfg['in']['dtype'].fields[
+            cfg['out']['formats'] = [cfg['in']['dtype'].fields[
                                                   n][0] for n
-                                              in cfg['output_files']['names']]
-            cfg['output_files']['dtype'] = np. \
+                                              in cfg['out']['names']]
+            cfg['out']['dtype'] = np. \
                 dtype({
-                'formats': cfg['output_files']['formats'],
-                'names': cfg['output_files']['names']})
+                'formats': cfg['out']['formats'],
+                'names': cfg['out']['names']})
             # Load data
 
 # '4	15,10,3,19,34,1,64	44.45140000	49.92563500'

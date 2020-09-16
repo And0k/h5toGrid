@@ -94,7 +94,7 @@ def main(new_arg):
     #     r'd:\workData\BalticSea\181005_ABP44\navigation\2018-10-06tracks_copy.gpx'
     # r'd:\WorkData\_experiment\_2017\tracker\170502.gpx'
     # r'd:\workData\_experiment\2016\GPS_tracker\sms_backup\sms-20160225135922.gpx'
-    for ifile, nameFull in enumerate(cfg['in']['namesFull'], start=1):
+    for ifile, nameFull in enumerate(cfg['in']['paths'], start=1):
         print('{}. {}'.format(ifile, nameFull), end=', ')
         gpx2csv(nameFull)
 

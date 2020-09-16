@@ -20,7 +20,7 @@ def my_argparser():
 
 
 def ge_names(cfg):
-    for in_full in cfg['in']['namesFull']:
+    for in_full in cfg['in']['paths']:
         # ifile += 1
         inFE = os_path.basename(in_full)
         inF = os_path.splitext(inFE)[0].encode('ascii')
@@ -32,8 +32,8 @@ def filename2date(inF):
 
     :param inF: base name of source data file (20171015_090558p1) yyyymmdd_HHMMSS*
     :param cfg: dict with keys:
-        output_files:
-            dir, namesFull - pattern path
+        out:
+            dir, paths - pattern path
             b_images_only, b_update_existed - see command line arguments,
         in:
             import_method, header if import_method == 'ImportFile',
@@ -72,9 +72,9 @@ def main(new_arg=None):
         return cfg
     print('\n' + this_prog_basename(__file__), 'started', end=' ')
 
-    if not os_path.isabs(cfg['output_files']['dir']):
+    if not os_path.isabs(cfg['out']['dir']):
         # set path relative to cfg['in']['db_path']
-        cfg['output_files']['dir'] = os_path.join(os_path.dirname(cfg['in']['db_path']), cfg['output_files']['dir'])
+        cfg['out']['dir'] = os_path.join(os_path.dirname(cfg['in']['db_path']), cfg['out']['dir'])
 
     try:
         print(end='Data ')
@@ -85,10 +85,10 @@ def main(new_arg=None):
 
     itbl = 0
     # compile functions if defined in cfg or assign default
-    gpx_symbols = init_gpx_symbols_fun(cfg['output_files'])
+    gpx_symbols = init_gpx_symbols_fun(cfg['out'])
     gpx_names_funs = ["i+1"]
     gpx_names_fun = eval(compile("lambda i, row: '{}'.format({})".format(
-        cfg['output_files']['gpx_names_fun_format'],
+        cfg['out']['gpx_names_fun_format'],
         gpx_names_funs[itbl]), [], 'eval'))
 
     tim = filename2date([f for f in ge_names(cfg)])
@@ -99,13 +99,13 @@ def main(new_arg=None):
         rnav_df_join = nav2add.assign(itbl=itbl)  # copy/append on first/next cycle
         # Save to gpx waypoints
 
-        # if 'gpx_names_funs' in cfg['output_files'] and \
-        #     len(cfg['output_files']['gpx_names_funs'])>itbl:
+        # if 'gpx_names_funs' in cfg['out'] and \
+        #     len(cfg['out']['gpx_names_funs'])>itbl:
         #
         #     gpx_names = eval(compile('lambda i: str({})'.format(
-        #         cfg['output_files']['gpx_names_funs'][itbl]), [], 'eval'))
+        #         cfg['out']['gpx_names_funs'][itbl]), [], 'eval'))
         #
-        save_to_gpx(rnav_df_join[-len(nav2add):], os_path.join(cfg['output_files']['dir'], 'fileNames'),
+        save_to_gpx(rnav_df_join[-len(nav2add):], os_path.join(cfg['out']['dir'], 'fileNames'),
                     gpx_obj_namef=gpx_names_fun, waypoint_symbf=gpx_symbols, cfg_proc=cfg['process'])
 
 

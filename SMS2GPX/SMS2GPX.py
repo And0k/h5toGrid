@@ -45,8 +45,8 @@ Convert SMS *.xml to *.gpx
     p_in.add('--contacts_names',
              help='list of contacts names to use like "tracker 3, Трекер 0, Трекер 1"')
 
-    p_out = p.add_argument_group('output_files', 'XML files')
-    p_out.add('--output_files.path', default='./<filename>.gpx',
+    p_out = p.add_argument_group('out', 'XML files')
+    p_out.add('--out.path', default='./<filename>.gpx',
               help='''Output dir/path.
     Join data from all found input files to single output if extension provided. If
     "<filename>" found it will be sabstituted with [1st file name]+, if "<dir>" -
@@ -187,7 +187,7 @@ lat:54.735578\nlong:20.544967\nspeed:0.07 \nT:19/10/13 05:03\nbat:100%\nhttp://m
                 if not time_b:
                     continue
                 # Add segment for big time intervals:
-                if time_b - time_b_prev > cfg['output_files']['dt_between_track_segments']:
+                if time_b - time_b_prev > cfg['out']['dt_between_track_segments']:
                     gpx_segment = GPX.GPXTrackSegment()
                     gpx_track[contact_name].segments.append(gpx_segment)
                 time_b_prev = time_b
@@ -244,14 +244,14 @@ def main(new_arg=None, **kwargs):
     # Input files
     default_input_filemask = '*.xml'
     inD, namesFE, nFiles, outD, outF, outE, bWrite2dir, msgFile = prep(
-        {'path': cfg['in']['path'], 'out_path': cfg['output_files']['path']},
+        {'path': cfg['in']['path'], 'out_path': cfg['out']['path']},
         default_input_filemask)
 
     l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
     l.warning('\n' + this_prog_basename(__file__) + ' started. ')
 
     l.warning(msgFile)
-    # set_field_if_no(cfg['output_files'], 'dt_between_track_segments', 99999)
+    # set_field_if_no(cfg['out'], 'dt_between_track_segments', 99999)
 
     gpx = parse_smses(cfg)
     try:

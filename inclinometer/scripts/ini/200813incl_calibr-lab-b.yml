@@ -19,7 +19,7 @@ in:
   channels: [M, A]
   #chunksize: 1000000         # 'chunksize_percent': 10,  # we'll repace this with burst size if it suit
 
-output_files:
+out:
   db_path: 'd:\WorkData\_experiment\_2019\inclinometer\200807_Schukas\200807_calibr-tank-b.h5'
 
 filter:

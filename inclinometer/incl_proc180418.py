@@ -33,7 +33,7 @@ from to_pandas_hdf5.h5_dask_pandas import h5_append
 from other_filters import despike, rep2mean
 
 cfg = {  # output configuration after loading csv:
-    'output_files': {
+    'out': {
         'table': 'inclPres11',  # 'inclPres14',
         'db_path': '/mnt/D/workData/_source/BalticSea/180418/_source/180418inclPres.h5',
         'chunksize': None, 'chunksize_percent': 10  # we'll repace this with burst size if it suit
@@ -41,7 +41,7 @@ cfg = {  # output configuration after loading csv:
 
 
 # cfg = ini2dict(r'D:\Work\_Python3\_projects\PyCharm\h5toGrid\to_pandas_hdf5\csv_inclin_Baranov.ini')
-# tblD = cfg['output_files']['table']
+# tblD = cfg['out']['table']
 # tblL = tblD + '/log'
 # dtAdd= np.timedelta64(60,'s')
 # dtInterval = np.timedelta64(60, 's')
@@ -62,7 +62,7 @@ def load_data_intervals(df_intervals, cfg_out):
         
     >>> df_intervals = pd.DataFrame({'DateEnd': np.max([t_edges[1], t_edges_Calibr[1]])},
                                  index=[np.min([t_edges[0], t_edges_Calibr[0]])])    
-    ... a = load_data_intervals(df_intervals, cfg['output_files'])
+    ... a = load_data_intervals(df_intervals, cfg['out'])
     """
     qstr_range_pattern = "index>=Timestamp('{}') & index<=Timestamp('{}')"
     with pd.HDFStore(cfg_out['db_path'], mode='r') as storeIn:
@@ -209,7 +209,7 @@ def poly_load_apply(x: Sequence, pattern_path_of_poly: str, pattern_format_arg: 
     :param pattern_format_arg:
     :return: np.ndarray of same size as ``x``
     poly = '/mnt/D/workData/_experiment/_2018/inclinometr/180416Pcalibr/fitting_result(P#' + '11' + 'calibr_log).txt'
-    >>> dfcum.P = poly_load_apply(y_filt, pattern_path_of_poly = '/mnt/D/workData/_experiment/_2018/inclinometr/180605Pcalibr/fitting_result(inclPres{}).txt', pattern_format_arg=cfg['output_files']['table'][-2:])
+    >>> dfcum.P = poly_load_apply(y_filt, pattern_path_of_poly = '/mnt/D/workData/_experiment/_2018/inclinometr/180605Pcalibr/fitting_result(inclPres{}).txt', pattern_format_arg=cfg['out']['table'][-2:])
 
     """
 
@@ -237,7 +237,7 @@ t_start = pd.to_datetime('2018-04-17T00:00')  # 18 09:14
 t_interval = pd.Timedelta(hours=10000)  # 40
 
 df_intervals = pd.DataFrame({'DateEnd': [t_start + t_interval]}, index=[t_start])  # only 1 interval now
-dfcum = load_data_intervals(df_intervals, cfg['output_files'])
+dfcum = load_data_intervals(df_intervals, cfg['out'])
 i_burst, mean_burst_size = i_bursts_starts(dfcum.index, dt_between_blocks=pd.Timedelta(minutes=10))
 
 ### Pressure ###
@@ -250,10 +250,10 @@ y_filt = filt_blocks_array(y_filt, i_burst, func=interpolate)
 
 dfcum.P = poly_load_apply(y_filt,
                           pattern_path_of_poly='/mnt/D/workData/_experiment/_2018/inclinometr/180605Pcalibr/fitting_result(inclPres{}).txt',
-                          pattern_format_arg=cfg['output_files']['table'][-2:])
+                          pattern_format_arg=cfg['out']['table'][-2:])
 # @+node:korzh.20180608193421.1: ** save plot
 plt.plot(dfcum.index, dfcum.P, '-k', linewidth=0.01)
-plt.savefig(Path(cfg['output_files']['db_path']).with_name(cfg['output_files']['table'] + '600dpi').with_suffix('.png'),
+plt.savefig(Path(cfg['out']['db_path']).with_name(cfg['out']['table'] + '600dpi').with_suffix('.png'),
             dpi=600)
 # @+node:korzh.20180524090703.1: ** right columns order and dtypes
 # they all are float64
@@ -264,14 +264,14 @@ df = dfcum.rename(columns={"Gx": "Ax", "Gz": "Az", "Gy": "Ay",
                            "Hx": "Mx", "Hz": "Mz", "Hy": "My",
                            "U": "Battery"})[list(cols_names_right_order)]  # , inplace=True
 
-cfg['output_files']['dtype'] = np.dtype(
+cfg['out']['dtype'] = np.dtype(
     {'names': df.dtypes.keys(),
      'formats': [np.uint16 if k in cols_int16 else v for k, v in df.dtypes.items()]})
 # astype() need to convert to simpler dict (df= pd.DataFrame(df[...], dtype=...) also not works):
-cfg['output_files']['dtype'] = {k: v[0] for k, v in cfg['output_files']['dtype'].fields.items()}
+cfg['out']['dtype'] = {k: v[0] for k, v in cfg['out']['dtype'].fields.items()}
 
 try:
-    df = df.astype(cfg['output_files']['dtype'], copy=False)
+    df = df.astype(cfg['out']['dtype'], copy=False)
 except ValueError as e:
     print("replacing bad values of integer columns by interpolated mean")
 
@@ -300,7 +300,7 @@ except ValueError as e:
             b_bad |= b_bad2
         df[col] = rep2mean(df[col], np.logical_not(b_bad), df.index.astype('i8').astype('f8'))
 
-df = df.astype(cfg['output_files']['dtype'], copy=False)
+df = df.astype(cfg['out']['dtype'], copy=False)
 
 
 # @+node:korzh.20180521171338.1: ** save
@@ -309,22 +309,22 @@ def change_db_path(cfg, str_old='Pres.h5', str_new=',P(cal0605).h5'):
         cfg['db_path'] = cfg['db_path'][:-len(str_old)] + str_new
 
 
-change_db_path(cfg['output_files'])
+change_db_path(cfg['out'])
 log = {}
 try:  # set chanks to mean data interval between holes
-    cfg['output_files']['chunksize'] = int(mean_burst_size)  # np.median(np.diff(i_burst[:-1]))
+    cfg['out']['chunksize'] = int(mean_burst_size)  # np.median(np.diff(i_burst[:-1]))
 except ValueError:  # some default value if no holes
-    cfg['output_files']['chunksize'] = 100000
+    cfg['out']['chunksize'] = 100000
 
-h5init(cfg['in'], cfg['output_files'])  # cfg['in'] = {}
+h5init(cfg['in'], cfg['out'])  # cfg['in'] = {}
 try:
-    cfg['output_files']['b_skip_if_up_to_date'] = False  # not copy prev data: True not implemented
-    store, dfLogOld = h5temp_open(cfg['output_files'])
+    cfg['out']['b_skip_if_up_to_date'] = False  # not copy prev data: True not implemented
+    store, dfLogOld = h5temp_open(cfg['out'])
     # with pd.HDFStore(fileOut, mode='w') as store:
     # Append to Store
     if df.empty:  # log['rows']==0
         print('No data => skip file')
-    h5_append(cfg['output_files'], df, log)
+    h5_append(cfg['out'], df, log)
     b_appended = True
 except Exception as e:
     b_appended = False
@@ -336,9 +336,9 @@ if b_appended:
         print('Wait store is closing...')
         # from time import sleep
         # sleep(2)
-    failed_storages = h5move_tables(cfg['output_files'])
+    failed_storages = h5move_tables(cfg['out'])
     print('Ok.', end=' ')
-    h5index_sort(cfg['output_files'], out_storage_name=cfg['output_files']['db_base'] + '-resorted.h5',
+    h5index_sort(cfg['out'], out_storage_name=cfg['out']['db_base'] + '-resorted.h5',
                  in_storages=failed_storages)
 
 # @+node:korzh.20180520131532.4: ** garbage
@@ -353,7 +353,7 @@ if b_appended:
 #     fGi = lambda Ax,Ay,Az,Ag,Cg,i: np.dot(Ag.T, (np.column_stack((Ax, Ay, Az))[
 #                                                      slice(*i)] - Cg[0,:]).T)
 #     strTimeUse =  [['2017-10-15T15:37:00', '2017-10-15T19:53:00']]
-#     for ifile, nameFull in enumerate(cfg['in']['namesFull'], start=1):
+#     for ifile, nameFull in enumerate(cfg['in']['paths'], start=1):
 #         nameFE = os_path.basename(nameFull)
 #         print('{}. {}'.format(ifile, nameFE), end=': ')
 #
@@ -376,7 +376,7 @@ if b_appended:
 # freq =5  # Hz
 # interval = freq * 10 * 60  # 10 min
 # start = interval
-# df = dask.​dataframe.read_hdf(cfg['output_files']['db_path'], cfg['output_files']['table'], start=start, stop=start+interval, columns='P', sorted_index=True, lock=False, mode='r')  # chunksize=1000000,
+# df = dask.​dataframe.read_hdf(cfg['out']['db_path'], cfg['out']['table'], start=start, stop=start+interval, columns='P', sorted_index=True, lock=False, mode='r')  # chunksize=1000000,
 # @-others
 
 # @@language python

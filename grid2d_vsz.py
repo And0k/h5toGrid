@@ -104,7 +104,7 @@ def my_argparser():
     p_gpx.add('--symbol_excude_point', default='Circle with X', help='to break all data to sections')
     p_gpx.add('--symbols_in_veusz_ctd_order_list',
               help="GPX symbols of section in order of Veusz joins tables of CTD data (use if section has data from several tables, see CTDitable variable in Veusz file). Used only to exclude CTD runs if its number bigger than number of section's points.")  # todo: use names of tables which Veusz loads
-    p_out = p.add_argument_group('output_files',
+    p_out = p.add_argument_group('out',
                                  'Output files: paths, formats... - not calculation intensive affecting parameters')
     p_out.add('--subdir_out', default='subproduct', help='path relative to in.db_path')
     p_out.add('--dt_from_utc_hours', default='0')
@@ -429,7 +429,7 @@ def ge_sections(navp_all: pd.DataFrame,
             msg_invert = 'Veusz section will {}need to be inverted to approximate this route '.format(
                 '' if navp_d['b_invert'] else 'not ')
 
-        navp_d['time_msg_min'], navp_d['time_msg_max'] = [timzone_view(x, cfg['output_files'][
+        navp_d['time_msg_min'], navp_d['time_msg_max'] = [timzone_view(x, cfg['out'][
             'dt_from_utc']) for x in navp_d['indexs'][[0, -1]]]
         navp_d['stem_time_st'] = '{:%y%m%d_%H%M}'.format(navp_d['time_msg_min'])
         navp_d['msg'] = '\n{} "{}". Section of {}runs {} ({:.0f}\xb0=>{}). '.format(
@@ -459,7 +459,7 @@ def load_cur_veusz_section(cfg: Mapping[str, Any],
         load_vsz = load_vsz_closure(cfg['program']['veusz_path'])
     def good_name(pathname):
         return pathname.startswith(navp_d['stem_time_st']) and navp_d['b_invert'] ^ ('Inv' not in pathname)
-    vsz_names = [Path(v).name for v in cfg['vsz_files']['namesFull'] if good_name(Path(v).name)]
+    vsz_names = [Path(v).name for v in cfg['vsz_files']['paths'] if good_name(Path(v).name)]
     if vsz_names:  # Load data from Veusz vsz
         l.warning('%s\nOpening matched %s as source...', navp_d['msg'], vsz_names[0])
         vsz_path = cfg['vsz_files']['path'] / vsz_names[0]
@@ -471,8 +471,8 @@ def load_cur_veusz_section(cfg: Mapping[str, Any],
         if vsze:
             print('Use currently opened pattern...', end=' ')
         else:
-            print('Opening last file {} as pattern...'.format(cfg['vsz_files']['namesFull'][-1]), end=' ')
-            vsze, ctd_dict = load_vsz(cfg['vsz_files']['namesFull'][-1], prefix='CTD')
+            print('Opening last file {} as pattern...'.format(cfg['vsz_files']['paths'][-1]), end=' ')
+            vsze, ctd_dict = load_vsz(cfg['vsz_files']['paths'][-1], prefix='CTD')
             if 'time' not in ctd_dict:
                 l.error('vsz data not processed!')
                 return None, None, None
@@ -480,11 +480,11 @@ def load_cur_veusz_section(cfg: Mapping[str, Any],
         vsze.AddCustom('constant', u'USE_runRange', u'[[0, -1]]', mode='replace')  # u
         vsze.AddCustom('constant', u'USE_timeRange', '[[{0}, {0}]]'.format(
             "'{:%Y-%m-%dT%H:%M:%S}'").format(navp_d['time_msg_min'], timzone_view(  # iso
-            navp_d['time_poss_max'], cfg['output_files']['dt_from_utc'])), mode='replace')
+            navp_d['time_poss_max'], cfg['out']['dt_from_utc'])), mode='replace')
         vsze.AddCustom('constant', u'Shifting_multiplier', u'-1' if navp_d['b_invert'] else u'1', mode='replace')
 
         # If pattern has suffix (excluding 'Inv') then add it to our name (why? - adds 'Z')
-        stem_no_inv = Path(cfg['vsz_files']['namesFull'][0]).stem
+        stem_no_inv = Path(cfg['vsz_files']['paths'][0]).stem
         if stem_no_inv.endswith('Inv'): stem_no_inv = stem_no_inv[:-3]
         len_stem_time_st = len(navp_d['stem_time_st'])
         vsz_path = cfg['vsz_files']['path'] / (navp_d['stem_time_st'] + (
@@ -505,9 +505,9 @@ def load_cur_veusz_section(cfg: Mapping[str, Any],
     ctd_prm['stem'] = vsz_path.stem
     ctd = pd.DataFrame.from_dict(ctd_dict)
 
-    if b_new_vsz or cfg['output_files']['b_reexport_images'] != False:
+    if b_new_vsz or cfg['out']['b_reexport_images'] != False:
         export_images(vsze, cfg['vsz_files'], vsz_path.stem,
-                      b_skip_if_exists=cfg['output_files']['b_reexport_images'] is None)
+                      b_skip_if_exists=cfg['out']['b_reexport_images'] is None)
 
     l.info('- %s CTD runs loaded', ctd_prm['starts'].size)
     return ctd, ctd_prm, vsze
@@ -723,7 +723,7 @@ try:  # try get griddata_by_surfer() function reqwirements
         np.savetxt(tmpF, ctd, header=','.join(ctd.dtype.names), delimiter=',', comments='')
         dist_etrap = (yMax - yMin) / 10
         # const={'srfDupAvg': 15, 'srfGridFmtS7': 3}
-        # gdal_geotransform = (x_min, cfg['output_files']['x_resolution'], 0, -y_min, 0, -cfg['y_resolution_use'])
+        # gdal_geotransform = (x_min, cfg['out']['x_resolution'], 0, -y_min, 0, -cfg['y_resolution_use'])
         for i, izCol in enumerate(izCols):
             outGrd = outFnoE_pattern.format(zCols[i]) + '.grd'
             Surfer.GridData3(DataFile=tmpF, xCol=xCol, yCol=yCol, zCol=izCol, NumCols=NumCols, NumRows=NumRows,
@@ -1086,7 +1086,7 @@ def filt_depth(cfg: Mapping[str, Any], s_ndepth: pd.Series) -> Tuple[np.ndarray,
     depth_filt = bed
     depth_out = bed[ok]
     wdesp = min(100, sum(ok))
-    if wdesp:
+    if wdesp > 50:
         coef_std_offsets = (15, 7)  # filters too many if set some < 3
         # back and forward:
         depth_out = despike(depth_out[::-1], coef_std_offsets, wdesp)[0]
@@ -1185,7 +1185,7 @@ def add_data_at_edges(cfg, ctd: pd.DataFrame, ctd_add_bt, ctd_add_lr, ctd_prm, e
                       ok_ctd, ok_ends: np.ndarray, edges_sl_in: Sequence[slice], edges_sl_out: Sequence[slice]) -> pd.DataFrame:
     """
 
-    :param cfg: fields: 'y_resolution_use', ['output_files']['y_resolution']
+    :param cfg: fields: 'y_resolution_use', ['out']['y_resolution']
     :param ctd: CTD data
     :param ctd_add_bt:
     :param ctd_add_lr:
@@ -1352,15 +1352,15 @@ def add_data_at_edges(cfg, ctd: pd.DataFrame, ctd_add_bt, ctd_add_lr, ctd_prm, e
     for sl_in, sl_out in zip(edges_sl_in, edges_sl_out):
         ctd_add_lr.iloc[sl_out, ctd_add_lr.columns.get_loc('z')] = ctd.iloc[sl_in, i_z_col].values
     ctd_add1 = ctd_add_bt[ctd_add_bt.y.notna() & ctd_add_bt.z.notna()]
-    #  todo: y= ctd_add1.y + 5*cfg['output_files']['y_resolution'] - not sufficient but if multiply > 20
+    #  todo: y= ctd_add1.y + 5*cfg['out']['y_resolution'] - not sufficient but if multiply > 20
     #  then fill better but this significant affect covature so: shift x such that new data will
     #  below previous only.
-    #  ctd_add1.x + np.where(ctd_add1['y'].diff() > 0, 1, -1) * cfg['output_files']['y_resolution']
+    #  ctd_add1.x + np.where(ctd_add1['y'].diff() > 0, 1, -1) * cfg['out']['y_resolution']
     cols = list(ax2col) + [z_col]
     ctd_with_adds = pd.concat([
         ctd.loc[ctd_ok, cols].rename(dict(zip(cols, list(ax2col._fields) + ['z'])), axis='columns', copy=False),
         ctd_add1,
-        ctd_add1.assign(y=ctd_add1.y + 5 * cfg['output_files']['y_resolution']),
+        ctd_add1.assign(y=ctd_add1.y + 5 * cfg['out']['y_resolution']),
         ctd_add_lr[pd.concat([ctd_ok[sl_in] for sl_in in edges_sl_in], ignore_index=True, copy=False)]
         ], ignore_index=True, copy=False)
     return ctd_with_adds
@@ -1389,10 +1389,10 @@ def main(new_arg=None):
         return cfg
 
     cfg['in']['db_path'] = Path(cfg['in']['db_path'])
-    cfg['output_files']['path'] = cfg['in']['db_path'].with_name(cfg['output_files']['subdir_out'])
+    cfg['out']['path'] = cfg['in']['db_path'].with_name(cfg['out']['subdir_out'])
     cfg['vsz_files']['path'] = cfg['in']['db_path'].with_name(cfg['vsz_files']['subdir'])
 
-    dir_create_if_need(cfg['output_files']['path'])
+    dir_create_if_need(cfg['out']['path'])
     if not Path(cfg['vsz_files']['export_dir']).is_absolute():
         cfg['vsz_files']['export_dir'] = cfg['vsz_files']['path'] / cfg['vsz_files']['export_dir']
     dir_create_if_need(cfg['vsz_files']['export_dir'])
@@ -1446,9 +1446,9 @@ def main(new_arg=None):
                             navp_d['indexs'].view(np.int64),
                             navp.iloc[navp_d['isort'], navp.columns.get_loc(coord)].values),
                             x=ctd.time.to_numpy(np.int64))
-                    ctd = add_ctd_params(ctd, {**cfg, 'output_files': {'data_columns': set(
+                    ctd = add_ctd_params(ctd, {**cfg, 'out': {'data_columns': set(
                         ctd.columns[~ctd.columns.str.startswith('shift')]).union(
-                        cfg['output_files']['data_columns'] + ['depth'])
+                        cfg['out']['data_columns'] + ['depth'])
                         }})
                 except Exception as e:
                     l.exception('\nCTD depth calculation error - assigning it to "Pres" insted! %s')
@@ -1477,6 +1477,31 @@ def main(new_arg=None):
                     dt_check_tolerance=cfg['process']['dt_search_nav_tolerance'],
                     query_range_pattern=qstr
                     )[0]
+                # Try get non NaN from dfL if it has needed columns (we used to write there edges' data with _st/_en suffixes)
+                # if nav have nans search in other places
+                isnan = dfNpoints.isna()
+                if isnan.any().any():
+                    #dfL = cfg['in']['db'][cfg['in']['table_runs']] - other variant
+                    for col in isnan.columns[isnan.any()]:
+                        if col in ctd:  # already loaded data, so try search here first
+                            try:
+                                b_ctd_col = ctd[col].notna()
+                                col_vals = ctd.loc[b_ctd_col, col].values
+                                col_time = ctd.time[b_ctd_col, col].values
+                                vals = ctd_col_ok.values[inearestsorted(ctd_col_ok.index, dfNpoints.index[isnan[col]])]
+                            except IndexError:
+                                continue  # not found
+                            # vals = df_nav_col[col]
+                            if vals.any():
+                                df_nav.loc[isnan[col], col] = vals
+
+                    # dfL_col_suffix = 'st' if cfg['out']['select_from_tablelog_ranges'] == 0 else 'en'
+                    # for col in cols_nav:
+                    #     col_dat = f'{col}_{dfL_col_suffix}'
+                    #     if isna[col].any() and  col_dat in dfL.columns:
+                    #         b_use = isna[col].values & dfL[col_dat].notna().values
+                    #         nav2add.loc[b_use, col] = dfL.loc[b_use, col_dat].values
+
                 # 2. distances between CTD start points
                 ddist = np.append(0, distance(
                     *dfNpoints.iloc[:ctd_prm['starts'].size,
@@ -1502,8 +1527,8 @@ def main(new_arg=None):
 
                 # Adjust (fine) x gridding resolution if too many profiles per distance:
                 dd = ctd_prm['starts'].size / np.diff(run_dist[[0, ctd_prm['starts'].size - 1]])
-                cfg['x_resolution_use'] = min(cfg['output_files']['x_resolution'], dd / 2)
-                cfg['y_resolution_use'] = cfg['output_files']['y_resolution']
+                cfg['x_resolution_use'] = min(cfg['out']['x_resolution'], dd / 2)
+                cfg['y_resolution_use'] = cfg['out']['y_resolution']
 
                 # Bottom edge of CTD path
                 # -----------------------
@@ -1611,10 +1636,10 @@ def main(new_arg=None):
                 """
                 # Creating bottom edge of CTD path polygon.
                 # increasing x limits to hide polygon edges on image:
-                edge_dist[[0, -1]] += (np.array([-1, 1]) * (cfg['output_files']['x_resolution'] / 2 + 0.01))
+                edge_dist[[0, -1]] += (np.array([-1, 1]) * (cfg['out']['x_resolution'] / 2 + 0.01))
                 polygon_edge_path = to_polygon(
                     *extract_repeat_at_bad_edges(np.vstack([edge_dist, -edge_depth]), ok_edge['soft']),
-                    cfg['output_files']['blank_level_under_bot']
+                    cfg['out']['blank_level_under_bot']
                     )  # use soft filter because deleting is simpler than adding in Surfer
 
                 # Bottom depth line
@@ -1688,15 +1713,15 @@ def main(new_arg=None):
                 # Save polygons
 
                 nav_dist[[0, -1]] += (np.array([-1, 1]) * (
-                        cfg['output_files']['x_resolution'] / 2 + 0.01))  # To hide polygon edges on image
-                polygon_depth = to_polygon(nav_dist, -nav_dep, cfg['output_files']['blank_level_under_bot'])
+                        cfg['out']['x_resolution'] / 2 + 0.01))  # To hide polygon edges on image
+                polygon_depth = to_polygon(nav_dist, -nav_dep, cfg['out']['blank_level_under_bot'])
                 polygon_depth = polygon_depth.simplify(0.05, preserve_topology=False)  #
 
                 # # Filter bottom depth by bottom edge of CTD path (keep lowest)
                 # polygon_depth= polygon_depth.intersection(polygon_edge_path)
                 # polygon_depth= polygon_depth.buffer(0)
 
-                save_shape(cfg['output_files']['path'] / (stem_time + 'Depth'), polygon_depth, 'BNA')
+                save_shape(cfg['out']['path'] / (stem_time + 'Depth'), polygon_depth, 'BNA')
 
                 # CTD blank polygons for top and bottom areas
                 # -------------------------------------------
@@ -1704,12 +1729,12 @@ def main(new_arg=None):
                 # todo: separate top blank polygon
                 top_edge_dist = ctd.dist.values[ctd_prm['starts']]
                 top_edge_dist[[0, -1]] += (np.array([-1, 1]) * (
-                        cfg['output_files']['x_resolution'] / 2 + 0.01))  # To hide polygon edges on image ~*k_inv
+                        cfg['out']['x_resolution'] / 2 + 0.01))  # To hide polygon edges on image ~*k_inv
                 polygon_top_edge_path = to_polygon(
                     top_edge_dist,
                     -(lambda a: np.fmin(medfilt(a), a))(ctd.depth.iloc[ctd_prm['starts']].values),
                     0)
-                save_shape(cfg['output_files']['path'] / (stem_time + 'P'), MultiPolygon(
+                save_shape(cfg['out']['path'] / (stem_time + 'P'), MultiPolygon(
                     [polygon_top_edge_path, polygon_edge_path]), 'BNA')
 
                 # Runs down tracks
@@ -1717,12 +1742,15 @@ def main(new_arg=None):
                 print('Saving CTD pressure(depth) runs in "*P.txt" and data with coordinates for gridding in "*params.txt"')
                 ok_ctd = ctd.depth.notna()  # find NaNs in Pres
                 ctd.depth = -ctd.depth
-                np.savetxt(cfg['output_files']['path'] / (stem_time + 'P.txt'),
+                np.savetxt(cfg['out']['path'] / (stem_time + 'P.txt'),
                            ctd.loc[ok_ctd, ['dist', 'depth']].values,
                            fmt='%g\t%g', header='Dist_km\tDepth_m', delimiter='\t', comments='')
-                cols = ['Dist_km', 'Depth_m', 'Lat_°', 'Lon_°'] + cfg['output_files']['data_columns']
-                np.savetxt(cfg['output_files']['path'] / (stem_time + 'params.txt'), ctd.loc[ok_ctd, cols].values,
-                    fmt='\t'.join(['%g'] * len(cols)), delimiter='\t', header='\t'.join(cols), comments='')
+                cols_nav = ['dist', 'depth', 'Lat', 'Lon']
+                cols_nav_suffix = ['km', 'm', '°', '°']
+                cols = ['_'.join(c).capitalize() for c in zip(cols_nav, cols_nav_suffix)] + cfg['out']['data_columns']
+                np.savetxt(cfg['out']['path'] / (stem_time + 'params.txt'),
+                           ctd.loc[ok_ctd, cols_nav + cfg['out']['data_columns']].values,
+                           fmt='\t'.join(['%g'] * len(cols)), delimiter='\t', header='\t'.join(cols), comments='')
                 ctd.depth = -ctd.depth  # back to positive
 
                 ### Gridding ######################################################################
@@ -1755,7 +1783,7 @@ def main(new_arg=None):
                     'z': np.empty(edges_sl_out[1].stop, np.float64), })
                 #  - copy y and update x from ctd edge profiles data here, for z see add_data_at_edges() below:
                 for i_col, (col, ax, lim_ax) in enumerate(zip(ax2col[:], ax2col._fields, lim[:])):
-                    shift = cfg['output_files'][ax + '_resolution']
+                    shift = cfg['out'][ax + '_resolution']
                     lim_ax = lim_ax._replace(min=lim_ax.min - shift, max=lim_ax.max + shift)
                     lim = lim._replace(**{ax: lim_ax})
                     if ax == 'x':
@@ -1789,7 +1817,7 @@ def main(new_arg=None):
 
                 l.info('Gridding to {}x{} points'.format(*xm.shape))
                 b_1st = True
-                for iparam, z_col in enumerate(cfg['output_files']['data_columns']):  # z_col= u'Temp'
+                for iparam, z_col in enumerate(cfg['out']['data_columns']):  # z_col= u'Temp'
                     label_param = z_col  # .lstrip('_').split("_")[0]  # remove technical comments in names
                     i_z_col = ctd.columns.get_loc(z_col)
                     print(label_param, end=': ')
@@ -1806,7 +1834,7 @@ def main(new_arg=None):
                         l.warning('Removing ', z_col, ' runs:')
                         for st, en in zip(ctd_prm['starts'][iruns_del], ctd_prm['ends'][iruns_del]):
                             l.warning('{:%d %H:%M}'.format(timzone_view(pd.to_datetime(
-                                ctd.time.iloc[st]), cfg['output_files']['dt_from_utc'])))
+                                ctd.time.iloc[st]), cfg['out']['dt_from_utc'])))
                             ctd.iloc[st:en, i_z_col] = np.NaN
 
                     ctd_with_adds = add_data_at_edges(cfg, ctd, ctd_add_bt, ctd_add_lr, ctd_prm, edge_depth, edge_dist,
@@ -1814,14 +1842,14 @@ def main(new_arg=None):
                                                       edges_sl_out)
                     """
                     griddata_by_surfer(ctd, outFnoE_pattern=os_path.join(
-                                cfg['output_files']['path'], 'surfer', stem_time + '{}'),  ),
+                                cfg['out']['path'], 'surfer', stem_time + '{}'),  ),
                                        xCol='Dist', yCol='Pres',
                                        zCols=z_col, NumCols=y.size, NumRows=x.size,
                                        xMin=lim.x.min, xMax=lim.x.max, yMin=lim.y.min, yMax=lim.y.max)
                     """
                     write_grd_this_geotransform = write_grd_fun(gdal_geotransform)
                     for interp_method, interp_method_subdir in [['linear', ''], ['cubic', 'cubic\\']]:
-                        dir_interp_method = cfg['output_files']['path'] / interp_method_subdir
+                        dir_interp_method = cfg['out']['path'] / interp_method_subdir
                         dir_create_if_need(dir_interp_method)
                         # may be very long! : try extent=>map_extent?
                         z = interpolate.griddata(points=ctd_with_adds[['x', 'y']].values,
@@ -1863,7 +1891,7 @@ def main(new_arg=None):
                             except Exception as e:
                                 l.error('\nCan not draw contour! ', exc_info=1)
                         # gdal_drv_grid.Register()
-                        fileOut_grd = cfg['output_files']['path'] / interp_method_subdir / (
+                        fileOut_grd = cfg['out']['path'] / interp_method_subdir / (
                                 stem_time + label_param + '.grd')
                         write_grd_this_geotransform(fileOut_grd, z)
                         if b_1st:

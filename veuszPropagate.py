@@ -77,7 +77,7 @@ file based on vsz pattern
     p_in.add('--min_time', help='%%Y-%%m-%%dT%%H:%%M:%%S, optional, allows range table_log rows')
     p_in.add('--max_time', help='%%Y-%%m-%%dT%%H:%%M:%%S, optional, allows range table_log rows')
 
-    p_out = p.add_argument_group('output_files', 'all about output files')
+    p_out = p.add_argument_group('out', 'all about output files')
     p_out.add('--export_pages_int_list', default='0',
               help='pages numbers to export, comma separated (1 is first), 0 = all')
     p_out.add('--b_images_only', default='False',
@@ -210,11 +210,7 @@ def veusz_data(veusze, prefix: str, suffix_prior: str = '') -> Dict[str, Any]:
 
     vsz_data = dict([(name_out, veusze.GetData(name)[0]) for name_out, name in names_filt.items()])
     if ('time' in vsz_data) and len(vsz_data['time']):
-        vsz_data['time'] = ((vsz_data['time'] + (1230768000 - 7200)) * 1E+9).astype('datetime64[ns]')
-        # Convert time back to UTC:
-        # Veusz imports only naive times. Python think it is local, but really it is UTC.
-        vsz_data['time'] = pd.to_datetime(vsz_data['time']).tz_localize(to_mytz_offset).tz_convert('UTC')
-
+        vsz_data['time'] = pd.DatetimeIndex((vsz_data['time'] + 1230768000) * 1E+9, tz='UTC')
         vsz_data['starts'] = vsz_data['starts'].astype('int32')
         vsz_data['ends'] = vsz_data['ends'].astype('int32')
     return vsz_data
@@ -321,7 +317,7 @@ def export_images(veusze, cfg_out, suffix, b_skip_if_exists=False):
     :param suffix:
     :return:
 
-    export_images(veusze, cfg['output_files'], log['out_name'])
+    export_images(veusze, cfg['out'], log['out_name'])
     """
     # Export images
     if not cfg_out['export_pages']:
@@ -346,51 +342,51 @@ def export_images(veusze, cfg_out, suffix, b_skip_if_exists=False):
             l.debug('%s,', i)
 
 
-try:
-    import async_timeout
-    import asyncio
-
-
-    def force_async(fn):
-        '''
-        turns a sync function to async function using threads
-        :param sync function:
-        :return async funciton:
-
-        run a sync task in a thread (returning a future object, coroutine.Future) and then turn this future object into a asyncio.Future object. Obivously, this future object will be resolve when the sync function is done, and also is awaitable.
-        '''
-        from concurrent.futures import ThreadPoolExecutor
-        pool = ThreadPoolExecutor()
-
-        def wrapper(*args, **kwargs):
-            future = pool.submit(fn, *args, **kwargs)
-            return asyncio.wrap_future(future)  # make it awaitable
-
-        return wrapper
-
-
-    @force_async
-    def export_images_a(veusze, cfg_out, suffix, b_skip_if_exists=False):
-        export_images(veusze, cfg_out, suffix, b_skip_if_exists)
-
-
-    async def export_images_timed(veusze, cfg, suffix, b_skip_if_exists=False) -> bool:
-        """
-        Asyncronous export_images(...)
-        :param veusze:
-        :param cfg: must have ['async']['export_timeout_s'] to skip on timeout, dict 'output_files' to call export_images(...)
-        :param suffix:
-        :param b_skip_if_exists:
-        :return:
-        """
-        async with async_timeout.timeout(cfg['async']['export_timeout_s']) as cm:
-            export_images_a(veusze, cfg['output_files'], suffix, b_skip_if_exists)
-        if cm.expired:
-            l.warning('timeout on exporting. going to next file')
-        return cm.expired
-
-except Exception as e:
-    export_images_timed = None
+# try:
+#     import async_timeout
+#     import asyncio
+#
+#
+#     def force_async(fn):
+#         '''
+#         turns a sync function to async function using threads
+#         :param sync function:
+#         :return async funciton:
+#
+#         run a sync task in a thread (returning a future object, coroutine.Future) and then turn this future object into a asyncio.Future object. Obivously, this future object will be resolve when the sync function is done, and also is awaitable.
+#         '''
+#         from concurrent.futures import ThreadPoolExecutor
+#         pool = ThreadPoolExecutor()
+#
+#         def wrapper(*args, **kwargs):
+#             future = pool.submit(fn, *args, **kwargs)
+#             return asyncio.wrap_future(future)  # make it awaitable
+#
+#         return wrapper
+#
+#
+#     @force_async
+#     def export_images_a(veusze, cfg_out, suffix, b_skip_if_exists=False):
+#         export_images(veusze, cfg_out, suffix, b_skip_if_exists)
+#
+#
+#     async def export_images_timed(veusze, cfg, suffix, b_skip_if_exists=False) -> bool:
+#         """
+#         Asyncronous export_images(...)
+#         :param veusze:
+#         :param cfg: must have ['async']['export_timeout_s'] to skip on timeout, dict 'out' to call export_images(...)
+#         :param suffix:
+#         :param b_skip_if_exists:
+#         :return:
+#         """
+#         async with async_timeout.timeout(cfg['async']['export_timeout_s']) as cm:
+#             export_images_a(veusze, cfg['out'], suffix, b_skip_if_exists)
+#         if cm.expired:
+#             l.warning('timeout on exporting. going to next file')
+#         return cm.expired
+#
+# except Exception as e:
+export_images_timed = None
 
 
 def veusze_commands(veusze, cfg_in, file_name_r):
@@ -440,8 +436,8 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
     Generate Veusz embedded instances by opening vsz-file(s) and modify it by executing commands specified in cfg
     :param in_full: full name of source data file to load in veusz pattern (usually csv)
     :param cfg: dict with keys:
-        output_files:
-            dir, namesFull - pattern path
+        out:
+            dir, paths - pattern path
             b_images_only, b_update_existed - command line arguments - see my_argparser()
         in:
             before_next - modify Veusz pattern data by execute Veusz commands if have fields:
@@ -455,30 +451,30 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
         veusze: Veusz embedded object.
         log: dict, {'out_name': inF, 'out_vsz_full': out_vsz_full}
 
-    Note 1: Uses global load_vsz function if veusze = None or cfg['output_files']['b_images_only']
+    Note 1: Uses global load_vsz function if veusze = None or cfg['out']['b_images_only']
     which is defined by call load_vsz_closure()
     Note 2: If 'restore_config' in cfg['program']['before_next'] then sets cfg['in']= cfg['in_saved']
     """
     global load_vsz
 
-    filename_fun = eval(compile(cfg['output_files']['filename_fun'], '', 'eval'))
+    filename_fun = eval(compile(cfg['out']['filename_fun'], '', 'eval'))
     ifile = 0
     for in_full in in_fulls:
         ifile += 1
         in_full = Path(in_full)
 
 
-        out_name = filename_fun(in_full.stem) + cfg['output_files']['add_to_filename']
-        out_vsz_full = (Path(cfg['output_files']['dir']) / out_name).with_suffix('.vsz')
+        out_name = filename_fun(in_full.stem) + cfg['out']['add_to_filename']
+        out_vsz_full = (Path(cfg['out']['dir']) / out_name).with_suffix('.vsz')
 
         # if ifile < cfg['in']['start_file']:
         #     continue
 
         # do not update existed vsz/images if not specified 'b_update_existed'
-        if not cfg['output_files']['b_update_existed']:
-             if cfg['output_files']['b_images_only']:
-                 glob = Path(cfg['output_files']['export_dir']).glob(
-                     f"*{out_name}*.{cfg['output_files']['export_format']}")
+        if not cfg['out']['b_update_existed']:
+             if cfg['out']['b_images_only']:
+                 glob = Path(cfg['out']['export_dir']).glob(
+                     f"*{out_name}*.{cfg['out']['export_format']}")
                  if any(glob):
                      continue
              elif out_vsz_full.is_file():
@@ -509,8 +505,8 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
         def do_load_vsz(in_full, veusze, load_vsz):
             in_ext = in_full.suffix.lower()
             vsz_load = in_full if in_ext == '.vsz' else \
-                cfg['output_files']['namesFull'][-1]  # load same filePattern (last in list) if data file not "vsz"
-            if cfg['output_files']['b_images_only']:
+                cfg['out']['paths'][-1]  # load same filePattern (last in list) if data file not "vsz"
+            if cfg['out']['b_images_only']:
                 veusze = load_vsz(vsz_load, veusze)[0]  # veusze.Load(in_full.with_suffix('.vsz'))
             else:
                 if 'restore_config' in cfg['program']['before_next']:
@@ -521,7 +517,7 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
                         veusze.SetVerbose()  # nothing changes
                 # Relative path from new vsz to data, such as u'txt/160813_0010.txt'
                 try:
-                    file_name_r = in_full.relative_to(cfg['output_files']['dir'])
+                    file_name_r = in_full.relative_to(cfg['out']['dir'])
                 except ValueError as e:
                     # l.exception('path not related to pattern')
                     file_name_r = in_full
@@ -555,11 +551,11 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
 def ge_names(cfg, f_mod_name=lambda x: x):
     """
     Yield all full file names
-    :param cfg: dict with field ['in']['namesFull'], - list of parameters for f_mod_name
+    :param cfg: dict with field ['in']['paths'], - list of parameters for f_mod_name
     :param f_mod_name: function(filename:str) returns new full file name: str
-    :yields: f_mod_name(cfg['in']['namesFull'] elements)
+    :yields: f_mod_name(cfg['in']['paths'] elements)
     """
-    for name in cfg['in']['namesFull']:
+    for name in cfg['in']['paths']:
         yield f_mod_name(name)
 
 
@@ -589,19 +585,19 @@ def co_savings(cfg: Dict[str, Any]) -> Iterator[None]:
         veusze = None
         if __name__ != '__main__':
             path_prev = os_getcwd()
-            os_chdir(cfg['output_files']['dir'])
-        print('Saving to {}'.format(Path(cfg['output_files']['dir']).absolute()))
+            os_chdir(cfg['out']['dir'])
+        print('Saving to {}'.format(Path(cfg['out']['dir']).absolute()))
         try:
             while True:
                 veusze, log = yield ()
-                if not cfg['output_files']['b_images_only']:
+                if not cfg['out']['b_images_only']:
                     veusze.Save(str(log['out_vsz_full']))
                     # Save vsz modification date
                     log['fileChangeTime'] = datetime.fromtimestamp(Path(
                         log['out_vsz_full']).stat().st_mtime),
                     dfLog = pd.DataFrame.from_records(log, exclude=['out_name', 'out_vsz_full'],
                                                       index=[log['out_name']])
-                    storeLog.append(Path(cfg['output_files']['path']).name, dfLog, data_columns=True,
+                    storeLog.append(Path(cfg['out']['path']).name, dfLog, data_columns=True,
                                     expectedrows=cfg['in']['nfiles'], index=False, min_itemsize={'index': 30})
                 if cfg['async']['loop']:
                     try:  # yield from     asyncio.ensure_future(
@@ -611,7 +607,7 @@ def co_savings(cfg: Dict[str, Any]) -> Iterator[None]:
                     except asyncio.TimeoutError:
                         l.warning('can not export in time')
                 else:
-                    export_images(veusze, cfg['output_files'], '#' + log['out_name'])
+                    export_images(veusze, cfg['out'], '#' + log['out_name'])
         except GeneratorExit:
             print('Ok>')
         finally:
@@ -660,17 +656,17 @@ def co_send_data(gen_veusz_and_logs, cfg, cor_savings):
         cfgin_update = yield (vsz_data, log)  # to test here run veusze.Save('-.vsz')
         # cfg['in'].update(cfgin_update)  # only update of cfg.in.add_custom_expressions is tested
 
-        file_name_r = Path(log['out_vsz_full']).relative_to(cfg['output_files']['dir'])
+        file_name_r = Path(log['out_vsz_full']).relative_to(cfg['out']['dir'])
         veusze_commands(veusze, cfgin_update, file_name_r)
         cor_savings.send((veusze, log))
 
 
-def main(new_arg=None, veusze=None):
+def main(new_arg=None, veusze=None, **kwargs):
     """
     Initialise configuration and runs or returns routines
     cfg:
         ['program']['log'],
-        'output_files'
+        'out'
         'in'
         'async'
     globals:
@@ -682,7 +678,7 @@ def main(new_arg=None, veusze=None):
     :return:
     """
     global l, load_vsz
-    cfg = cfg_from_args(my_argparser(), new_arg)
+    cfg = cfg_from_args(my_argparser(), new_arg, **kwargs)
     if not cfg or not cfg['program'].get('return'):
         print('Can not initialise')
         return cfg
@@ -693,25 +689,34 @@ def main(new_arg=None, veusze=None):
     cfg['program']['log'] = l.root.handlers[0].baseFilename  # sinchronize obtained absolute file name
 
     print('\n' + this_prog_basename(__file__), 'started', end=' ')
-    if cfg['output_files']['b_images_only']:
-        print('in images only mode. Output pattern: ')  # todo Export path: '
-    else:
-        print('. Output pattern and Data: ')
     __name__ = '__main__'  # indicate to other functions that they are called from main
 
-    try:
-        # Using cfg['output_files'] to store pattern information
-        if not Path(cfg['in']['pattern_path']).is_absolute():
-            cfg['in']['pattern_path'] = Path(cfg['in']['path']).with_name(cfg['in']['pattern_path'])
-        cfg['output_files']['path'] = cfg['in']['pattern_path']
-        cfg['output_files'] = init_file_names(cfg['output_files'], b_interact=False)  # find it
-    except Ex_nothing_done as e:
-        if not cfg['output_files']['b_images_only']:
-            l.warning(f'{e.message} - no pattern. Specify it or use "b_images_only" mode!')
-            return  # or raise FileNotFoundError?
+    if cfg['out'].get('paths'):
+        if not cfg['out']['b_images_only']:
+            raise NotImplementedError('Provided out in not "b_images_only" mode!')
+        cfg['out']['nfiles'] = len(cfg['out']['paths'])
+        cfg['out']['dir'] = cfg['out']['paths'][0].parent
+        print(end=f"\n- {cfg['out']['nfiles']} output files to export images...")
+        pass
+    else:
+        if cfg['out']['b_images_only']:
+            print('in images only mode. Output pattern: ')  # todo Export path: '
+        else:
+            print('. Output pattern and Data: ')
 
-    if (cfg['output_files']['b_images_only'] and cfg['output_files']['namesFull']):
-        cfg['in']['namesFull'] = cfg['output_files']['namesFull']  # have all we need to export
+        try:
+            # Using cfg['out'] to store pattern information
+            if not Path(cfg['in']['pattern_path']).is_absolute():
+                cfg['in']['pattern_path'] = Path(cfg['in']['path']).with_name(cfg['in']['pattern_path'])
+            cfg['out']['path'] = cfg['in']['pattern_path']
+            cfg['out'] = init_file_names(cfg['out'], b_interact=False)  # find it
+        except Ex_nothing_done as e:
+            if not cfg['out']['b_images_only']:
+                l.warning(f'{e.message} - no pattern. Specify it or use "b_images_only" mode!')
+                return  # or raise FileNotFoundError?
+
+    if (cfg['out']['b_images_only'] and cfg['out']['paths']):
+        cfg['in']['paths'] = cfg['out']['paths']  # have all we need to export
     else:
         try:
             cfg['in'] = init_file_names(cfg['in'], cfg['program']['b_interact'])
@@ -719,12 +724,12 @@ def main(new_arg=None, veusze=None):
             print(e.message)
             return  # or raise FileNotFoundError?
 
-    dir_from_cfg(cfg['output_files'], 'export_dir')
+    dir_from_cfg(cfg['out'], 'export_dir')
 
     if 'restore_config' in cfg['program']['before_next']:
         cfg['in_saved'] = cfg['in'].copy()
     # Next is commented because reloading is Ok: not need to Close()
-    # if cfg['output_files']['b_images_only'] and not 'Close()' in cfg['program']['before_next']:
+    # if cfg['out']['b_images_only'] and not 'Close()' in cfg['program']['before_next']:
     #     cfg['program']['before_next'].append(
     #         'Close()')  # usually we need to load new file for export (not only modify previous file)
     if cfg['program']['export_timeout_s'] and export_images_timed:
@@ -738,7 +743,7 @@ def main(new_arg=None, veusze=None):
     cfg['load_vsz'] = load_vsz
     cfg['co'] = {}
     if cfg['in']['table_log'] and cfg['in']['path'].suffix == '.h5' and not (
-            cfg['output_files']['b_images_only'] and len(cfg['in']['namesFull']) > 1):
+            cfg['out']['b_images_only'] and len(cfg['in']['paths']) > 1):
         # load data by ranges from table log rows
         cfg['in']['db_path'] = cfg['in']['path']
         in_fulls = h5log_names_gen(cfg['in'])
@@ -753,7 +758,7 @@ def main(new_arg=None, veusze=None):
     nfiles = 0
     try:  # if True:
         path_prev = os_getcwd()
-        os_chdir(cfg['output_files']['dir'])
+        os_chdir(cfg['out']['dir'])
         if cfg['program']['return'] == '<corutines_in_cfg>':
             cfg['co']['savings'] = cor_savings
             cfg['co']['gen_veusz_and_logs'] = load_to_veusz(in_fulls, cfg)
@@ -773,7 +778,7 @@ def main(new_arg=None, veusze=None):
         else:
             # Cycle without obtaining Veusz data (or implemented by user's cfg['program']['f_custom_in_cycle'])
             for veusze, log in load_to_veusz(in_fulls, cfg, veusze):
-                file_name_r = Path(log['out_vsz_full']).relative_to(cfg['output_files']['dir'])
+                file_name_r = Path(log['out_vsz_full']).relative_to(cfg['out']['dir'])
                 if cfg['program'].get('f_custom_in_cycle'):
                     cfgin_update = cfg['program']['f_custom_in_cycle'](veusze, log)
                     veusze_commands(veusze, cfgin_update, file_name_r)

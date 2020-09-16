@@ -9,7 +9,7 @@
   'split_period': '999D'                # pandas offset string (Y, D, 5D, H, ...) ['D' ]
   'aggregate_period': '2S'     # pandas offset string (Y, D, 5D, H, ...)
 
-'output_files':
+'out':
   'db_path': '181005_ABP44incl_proc.h5'
   'table': 'V_incl'
 

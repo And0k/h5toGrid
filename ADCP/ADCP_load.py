@@ -31,8 +31,8 @@ filt_fileCur = lambda f, mask: bGood_file(f, mask, namesBadAtEdge=(r'coef'))
 
 
 # Standard starting dialog
-def found_dialog(namesFull):
-    nFiles = len(namesFull)
+def found_dialog(paths):
+    nFiles = len(paths)
     if nFiles == 0:
         print('(0 files) => nothing done')
         # sys.exit(?)
@@ -46,12 +46,12 @@ def found_dialog(namesFull):
     return nFiles
 
 
-def file_walker(namesFull):
+def file_walker(paths):
     nameDW = ''  # directory name was took before current cycle
     nameFW = ''  # file name without ext was took before current cycle
     bSavedStart = False
 
-    for iname, nameFull in enumerate(namesFull):
+    for iname, nameFull in enumerate(paths):
         nameD, nameFE = os.path.split(nameFull)
         nameF, nameE = os.path.splitext(nameFE)
         pd0 = ''
@@ -65,9 +65,9 @@ def file_walker(namesFull):
 if __name__ == '__main__':
     # Find files
     print('found: ', end='')
-    namesFull = [f for f in dir_walker(strDir, strMask, bGoodFile=filt_fileCur, bGoodDir=filt_dirCur)]
-    if not found_dialog(namesFull): exit  # sys.exit()?
-    file_walker(namesFull)
+    paths = [f for f in dir_walker(strDir, strMask, bGoodFile=filt_fileCur, bGoodDir=filt_dirCur)]
+    if not found_dialog(paths): exit  # sys.exit()?
+    file_walker(paths)
 
     # unittest.main()
 # import sys

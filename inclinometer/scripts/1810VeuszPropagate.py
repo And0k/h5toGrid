@@ -87,7 +87,7 @@ ImportFileHDF5(u'../181005_ABP44.h5', [u'/181017inclinometers/incl03/coef', u'/1
         # i_ = log['fileName'].rfind('incl')
         probe = log['fileName'].replace(str_date,
                                         '')  # re.sub('^[\d_]*', '', in_file.stem),  # use last digits (date part) log['fileName'][:(i_)]
-        if not cfg['output_files']['b_images_only']:
+        if not cfg['out']['b_images_only']:
             cfgin_update = {
                 'add_custom': ['USEtime'],
                 # 'add_custom_expressions': [expr],

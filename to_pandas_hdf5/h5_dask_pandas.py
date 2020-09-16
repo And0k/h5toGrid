@@ -108,7 +108,7 @@ def h5q_ranges_gen(cfg_in: Mapping[str, Any], df_intervals: pd.DataFrame):
         table, str
     Exsmple:
     >>> df_intervals = pd.DataFrame({'DateEnd': pd.DatetimeIndex([2,4,6])}, index=pd.DatetimeIndex([1,3,5]))
-    ... a = h5q_ranges_gen(df_intervals, cfg['output_files'])
+    ... a = h5q_ranges_gen(df_intervals, cfg['out'])
     """
     with pd.HDFStore(cfg_in['db_path'], mode='r') as store:
         print("loading from {db_path}: ".format_map(cfg_in), end='')
@@ -301,7 +301,7 @@ def filterGlobal_minmax(a, tim=None, cfg_filter=None, b_ok=True) -> pd.Series:
             elif flim == 'max':
                 b_ok &= (array < fval).compute()  # da.logical_and(b_ok, )
         else:
-            if flim == 'min':
+            if flim == 'min':           # matplotlib error when stop in PyCharm debugger!
                 b_ok &= (array > fval)  # da.logical_and(b_ok, )
             elif flim == 'max':
                 b_ok &= (array < fval)  # da.logical_and(b_ok, )
@@ -315,7 +315,7 @@ def filterGlobal_minmax(a, tim=None, cfg_filter=None, b_ok=True) -> pd.Series:
         except ValueError:  # not enough values to unpack
             continue  # not filter field
 
-        # swap if need (depreshiated):
+        # swap if need (depreciate?):
         if fkey in ('min', 'max'):
             fkey, flim = flim, fkey
         # else:
@@ -420,16 +420,19 @@ def filter_local(d: Union[pd.DataFrame, dd.DataFrame],
 
     """
     for limit, f_compare in [('min', lambda x, v: x > v), ('max', lambda x, v: x < v)]:
+        # todo: check if is better to use between(left, right, inclusive=True)
         if not cfg_filter.get(limit):
             continue
-        for fkey, fval in cfg_filter[
-            limit].items():  # todo: check if is better to use between(left, right, inclusive=True)
+        for fkey, fval in cfg_filter[limit].items():
             if ('*' in fkey) or ('[' in fkey):  # get multiple keys by regex
                 keys = [c for c in d.columns if re.fullmatch(fkey, c)]
                 d[keys] = d.loc[:, keys].where(f_compare(d.loc[:, keys], fval))
                 fkey = ', '.join(keys)  # for logging only
             else:
-                d[fkey] = d.loc[:, fkey].where(f_compare(d.loc[:, fkey], fval))
+                try:
+                    d[fkey] = d.loc[:, fkey].where(f_compare(d.loc[:, fkey], fval))
+                except KeyError as e:  # allow redundant parameters in config
+                    l.warning('Can not filter this parameer %s', standard_error_info(e))
             l.debug('filtering %s(%s) = %g', limit, fkey, fval)
     return d
 
@@ -514,7 +517,7 @@ def export_df_to_csv(df, cfg_out, add_subdir='', add_suffix=''):
     modifies: creates if not exist:
         cfg_out['dir_export'] if 'dir_export' is not in cfg_out
         directory 'V,P_txt'
-    >>> export_df_to_csv(df, cfg['output_files'])
+    >>> export_df_to_csv(df, cfg['out'])
     """
     if 'dir_export' not in cfg_out:
         cfg_out['dir_export'] = Path(cfg_out['db_path']).parent / add_subdir
@@ -544,11 +547,17 @@ def h5_append_dummy_row(df: Union[pd.DataFrame, dd.DataFrame],
     :return: appended dataframe
     """
     if tim is not None:
-        dindex = pd.Timedelta(seconds=0.5 / freq) if freq else np.abs(tim[-1] - tim[-2]) / 2
+        try:
+            dindex = pd.Timedelta(seconds=0.5 / freq) if freq else np.abs(tim[-1] - tim[-2]) / 2
+        except IndexError:  # only one element => we think they are seldom so use 1s
+            dindex = pd.Timedelta(seconds=1)
         ind_new = [tim[-1] + dindex]
     else:
         df_index, itm = multiindex_timeindex(df.index)
-        dindex = pd.Timedelta(seconds=0.5 / freq) if freq else np.abs(df_index[-1] - df_index[-2]) / 2
+        try:
+            dindex = pd.Timedelta(seconds=0.5 / freq) if freq else np.abs(df_index[-1] - df_index[-2]) / 2
+        except IndexError:  # only one element => we think they are seldom so use 1s
+            dindex = pd.Timedelta(seconds=1)
         ind_new = multiindex_replace(df.index[-1:], df_index[-1:] + dindex, itm)
 
     dict_dummy = {}
@@ -768,7 +777,6 @@ def h5add_log(cfg_out: Dict[str, Any], df, log: Union[pd.DataFrame, Mapping], ti
         'db' - handle of opened hdf5 store
     must have path of log table in one of fields (2nd used if 1st not defined):
         'table_log', str: path of log table
-        'tables_log', list of str (used only 1st list item)
     optiondal:
         'logfield_fileName_len': fixed length of string format of 'fileName' hdf5 column
     :param df:
@@ -777,9 +785,25 @@ def h5add_log(cfg_out: Dict[str, Any], df, log: Union[pd.DataFrame, Mapping], ti
     :param log_dt_from_utc:
     :return:
     """
-    table_log = cfg_out.setdefault('table_log', cfg_out['tables_log'][0])
-    if (('Date0' not in log) or (log['Date0'] is None)) or not (('b_log_ready' in cfg_out) and cfg_out[
-        'b_log_ready']):  # or (table_log.split('/')[-1].startswith('logFiles')):
+    if (not log) and cfg_out.get('b_log_ready'):
+        return
+
+    # synchro "tables_log" and more user friendly but not so universal to code "table_log"
+    if not cfg_out.get('table_log'):
+        _t = cfg_out.get('tables_log')
+        if _t:
+            cfg_out['table_log'] = _t[0]
+        else:  # set default for (1st) data table
+            try:
+                cfg_out['table_log'] = f"{cfg_out['table']}'/log'"
+            except KeyError:
+                cfg_out['table_log'] = f"{cfg_out['tables'][0]}'/log'"
+
+
+    set_field_if_no(cfg_out, 'logfield_fileName_len', 255)
+
+    if (log.get('Date0') is None) or not cfg_out.get('b_log_ready'):
+        # or (table_log.split('/')[-1].startswith('logFiles')):
         log['Date0'], log['DateEnd'] = timzone_view(
             (tim if tim is not None else
              df.index.compute() if isinstance(df, dd.DataFrame) else
@@ -798,9 +822,9 @@ def h5add_log(cfg_out: Dict[str, Any], df, log: Union[pd.DataFrame, Mapping], ti
                              min_itemsize={'values': cfg_out['logfield_fileName_len']})
 
     try:
-        df_append_fun(cfg_out, table_log, log)
+        df_append_fun(cfg_out, cfg_out['table_log'], log)
     except ValueError as e:
-        h5append_on_inconsistent_index(cfg_out, table_log, log, df_append_fun, e, 'append log')
+        h5append_on_inconsistent_index(cfg_out, cfg_out['table_log'], log, df_append_fun, e, 'append log')
     except ClosedFileError as e:
         l.warning('Check code: On reopen store update store variable')
 
@@ -856,10 +880,7 @@ def h5_append(cfg_out: Dict[str, Any],
             if cfg_out['tables'] is None:
                 return
             set_field_if_no(cfg_out, 'table', cfg_out['tables'][0])
-        if 'tables_log' in cfg_out: set_field_if_no(cfg_out, 'table_log', cfg_out['tables_log'][0])
-        set_field_if_no(cfg_out, 'table_log', cfg_out['table'] + '/log')
 
-        set_field_if_no(cfg_out, 'logfield_fileName_len', 255)
         set_field_if_no(cfg_out, 'nfiles', 1)
 
         if (cfg_out['chunksize'] is None) and ('chunksize_percent' in cfg_out):  # based on first file

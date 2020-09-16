@@ -3,7 +3,7 @@ import pandas as pd
 from utils2init import ini2dict
 
 cfg = ini2dict(r'D:\Work\_Python3\_projects\PyCharm\h5toGrid\CTD_calc.ini')
-tblD = cfg['output_files']['table'][0]
+tblD = cfg['out']['table'][0]
 tblL = tblD + '/logFiles'
 store = pd.HDFStore(r'd:\WorkData\_source\AtlanticOcean\161113_Strahov\161113_Strahov.h5')
 dfL = store[tblL]

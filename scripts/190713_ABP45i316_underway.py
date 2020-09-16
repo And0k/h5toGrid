@@ -71,7 +71,7 @@ if st(5):  # False: #
               '--b_keep_minmax_of_bad_files', 'True',
               '--b_skip_if_up_to_date', 'True',
               # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
-              # '--output_files.tables_list', '',
+              # '--out.tables_list', '',
               ])
 
 if st(7):  # False: #

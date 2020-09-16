@@ -58,7 +58,7 @@ try:  # try get griddata_by_surfer() function reqwirements
         np.savetxt(tmpF, ctd, header=','.join(ctd.dtype.names), delimiter=',', comments='')
         dist_etrap = (yMax - yMin) / 10
         # const={'srfDupAvg': 15, 'srfGridFmtS7': 3}
-        # gdal_geotransform = (x_min, cfg['output_files']['x_resolution'], 0, -y_min, 0, -cfg['y_resolution_use'])
+        # gdal_geotransform = (x_min, cfg['out']['x_resolution'], 0, -y_min, 0, -cfg['y_resolution_use'])
         for i, izCol in enumerate(izCols):
             outGrd = outFnoE_pattern.format(zCols[i]) + '.grd'
             Surfer.GridData3(DataFile=tmpF, xCol=xCol, yCol=yCol, zCol=izCol, NumCols=NumCols, NumRows=NumRows,

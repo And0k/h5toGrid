@@ -88,7 +88,7 @@ def main():
             #     print('There are error: ', standard_error_info(e))
             #     break  # continue
             probe = log['fileName'][:log['fileName'].find('_')]
-            if not cfg['output_files']['b_images_only']:
+            if not cfg['out']['b_images_only']:
                 cfgin_update = {
                     'add_custom': ['USEtime'],
                     'add_custom_expressions': [expr],

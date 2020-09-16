@@ -80,8 +80,8 @@ def my_argparser():
     p_filter.add('--offsets_float_list', default='1.5, 2', help='despike() argument')
     p_filter.add('--std_smooth_sigma_float', default='4', help='despike() argument')
 
-    p_out = p.add_argument_group('output_files', 'where write resulting coef (additionally)')
-    p_out.add('--output_files.db_path',
+    p_out = p.add_argument_group('out', 'where write resulting coef (additionally)')
+    p_out.add('--out.db_path',
               help='hdf5 store file path where to write resulting coef. Writes to tables that names configured for input data (cfg[in].tables) in this file')
 
     p_prog = p.add_argument_group('program', 'program behaviour')
@@ -646,7 +646,7 @@ def main(new_arg=None):
             else:
                 l.info('no zeroing Nord')
     # Write coefs
-    for cfg_output in (['in', 'output_files'] if cfg['output_files'].get('db_path') else ['in']):
+    for cfg_output in (['in', 'out'] if cfg['out'].get('db_path') else ['in']):
         l.info(f"Write to {cfg[cfg_output]['db_path']}")
         for itbl, tbl in enumerate(cfg['in']['tables'], start=1):
             # i_search = re.search('\d*$', tbl)
@@ -738,7 +738,7 @@ if __name__ == '__main__':
     # from utils2init import ini2dict
     # from inclinometer.h5inclinometer_coef import h5copy_coef, h5_rotate_coef
     # cfg = ini2dict(r'D:\Work\_Python3\_projects\PyCharm\h5toGrid\to_pandas_hdf5\csv_inclin_Baranov.ini')
-    # tbl = cfg['output_files']['table']
+    # tbl = cfg['out']['table']
     # tblL = tbl + '/log'
     # dt_add= np.timedelta64(60, 's')
     # dt_interval = np.timedelta64(60, 's')

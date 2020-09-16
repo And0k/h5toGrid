@@ -48,32 +48,35 @@ def my_argparser():
              help='used if only dir in path - extension of gpx files')
     p_in.add('--dt_from_utc_hours', default='0',
              help='add this correction to loading datetime data. May to use other suffixes instead of "hours"')
+    p_in.add('--b_skip_if_up_to_date', default='True',
+             help='exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files')
+    p_in.add('--b_make_time_inc', default='False',  # 'correct', 'sort_rows'
+             help='if time not sorted then coorect it trying affecting small number of values. Used here for tracks/segments only. This is different from sorting rows which is performed at last step after the checking table in database')
+
+    # Parameters specific to gpx
     p_in.add('--waypoints_cols_list', default='time, latitude, longitude, name, symbol, description',
-             help='column names (comma separated) of gpxpy fields of gpx waypoints to load (symbol=sym,  description=cmt), first will be index. Its number and order must match output_files.waypoints_cols_list')
+             help='column names (comma separated) of gpxpy fields of gpx waypoints to load (symbol=sym,  description=cmt), first will be index. Its number and order must match out.waypoints_cols_list')
     p_in.add('--routes_cols_list', default='time, latitude, longitude, name, symbol, description',
              help='same as waypoints_cols_list but for routes')
     p_in.add('--tracks_cols_list', default='time, latitude, longitude',
              help='same as waypoints_cols_list but for tracks')
     p_in.add('--segments_cols_list', default='time, latitude, longitude',
              help='same as waypoints_cols_list but for segments')
-    p_in.add('--b_skip_if_up_to_date', default='True',
-             help='exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files')
-    p_in.add('--b_make_time_inc', default='False',  # 'correct', 'sort_rows'
-             help='if time not sorted then coorect it trying affecting small number of values. Used here for tracks/segments only. This is different from sorting rows which is performed at last step after the checking table in database')
 
-    p_out = p.add_argument_group('output_files', 'all about output files')
+
+    p_out = p.add_argument_group('out', 'all about output files')
     p_out.add('--db_path', help='hdf5 store file path')
     p_out.add('--table_prefix',
               help='prepend tables names to save data with this string (Note: _waypoints or _routes or ... suffix will be added automaticaly)')
     p_out.add('--tables_list', default='waypoints, tracks, tracks/segments, routes',
               help='tables names (comma separated) in hdf5 store to write data'
                    'keep them in logical order: [waypoints, tracks, tracks sections, routes]')
-    p_out.add('--output_files.waypoints_cols_list', default='time, Lat, Lon, name, sym, cmt',
+    p_out.add('--out.waypoints_cols_list', default='time, Lat, Lon, name, sym, cmt',
               help='column names (comma separated) in hdf5 table to write data, '
                    'its number and order must match in.waypoints_cols_list')
-    p_out.add('--output_files.tracks_cols_list', default='time, Lat, Lon',
+    p_out.add('--out.tracks_cols_list', default='time, Lat, Lon',
               help='same as waypoints_cols_list but for tracks')
-    p_out.add('--output_files.segments_cols_list', default='time, Lat, Lon',
+    p_out.add('--out.segments_cols_list', default='time, Lat, Lon',
               help='same as waypoints_cols_list but for segments')
 
     p_out.add('--b_insert_separator', default='False',
@@ -91,6 +94,8 @@ def my_argparser():
     p_filt = p.add_argument_group('filter', 'filter all data based on min/max of parameters')
     p_filt.add('--date_min', help='minimum time')
     p_filt.add('--date_max', help='maximum time')
+    p_filt.add('--min_dict', help='List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is below ``value``')
+    p_filt.add('--max_dict', help='List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is above ``value``')
 
     p_prog = p.add_argument_group('program', 'program behaviour')
     p_prog.add('--return', default='<end>',  # nargs=1,
@@ -100,6 +105,13 @@ def my_argparser():
 
 
 # ----------------------------------------------------------------------
+def df_rename_cols(df, col_in, col_out):
+    if df.empty:
+        return
+    df.index.name = col_out[0]  # ?df = df.reindex(df.index.rename(['Date']))
+    df.rename(columns=dict(zip(col_in[1:], col_out[1:])), inplace=True)
+
+
 def gpxConvert(cfg: Mapping[str, Any],
                fileInF: Union[GPX, PurePath, str]
                ) -> Dict[str, pd.DataFrame]:
@@ -107,7 +119,7 @@ def gpxConvert(cfg: Mapping[str, Any],
     Fill dataframes 'tracks', 'segments' and 'waypoints' with corresponding gpx objects data
     :param cfg: dict with keys
     ['in']['*_cols'], where * is name of mentioned above gpx object with needed gpxpy properties to store
-    ['output_files']['*_cols'] columns names of dataframes to rename gpxpy properties
+    ['out']['*_cols'] columns names of dataframes to rename gpxpy properties
     :param fileInF: gpx file path or gpxpy gpx class instance
     :return: dict of dataframes with keys 'tracks', 'segments' and 'waypoints'
     """
@@ -181,24 +193,31 @@ def gpxConvert(cfg: Mapping[str, Any],
             copy=False,
             keys=[r.name for r in gpx.routes])
 
-    def df_rename_cols(df, col_in, col_out, Ncols_t=1):
-        if df.empty:
-            return
-        df.index.name = col_out[0]  # ?df = df.reindex(df.index.rename(['Date']))
-        df.rename(columns=dict(zip(col_in[Ncols_t:], col_out[Ncols_t:])), inplace=True)
 
     for dfname in df_names:
         c = dfname + '_cols'
-        df_rename_cols(dfs[dfname], cfg['in'][c], cfg['output_files'][c])
+        df_rename_cols(dfs[dfname], cfg['in'][c], cfg['out'][c])
 
     return dfs
 
 
-def df_filter_and_save_to_h5(cfg_out, cfg, df, key):
+def df_filter_and_save_to_h5(cfg_out, cfg, df, b_make_time_inc=True) -> Union[str, int]:
+    """
+
+    :param cfg_out: must have fields:
+      - log
+    :param cfg: dict with fields:
+      - in
+      - filter (optional)
+      - dt_from_utc: to correct cfg_out['log'] time  #???
+    :param df:
+    :param key:
+    :return: 'continue' if no data else 0
+    Modifies cfg_out: adds field 'tables_have_wrote': Set[Tuple[str, str]]
+    """
     df_t_index, itm = multiindex_timeindex(df.index)
     # sorting will break multiindex?
-    df_t_index, b_ok = time_corr(df_t_index, cfg['in'], b_make_time_inc=key not in {'waypoints',
-                                                                                    'routes'})  # need sort in tracks/segments only
+    df_t_index, b_ok = time_corr(df_t_index, cfg['in'], b_make_time_inc)  # need sort in tracks/segments only
     df.index = multiindex_replace(df.index, df_t_index, itm)
 
     if 'filter' in cfg:
@@ -228,8 +247,14 @@ def df_filter_and_save_to_h5(cfg_out, cfg, df, key):
     # #dfLog= pd.DataFrame.from_dict(cfg_out['log']) #, index= 'Date0'
     # store.append(tables_log[key], dfLog, data_columns= True, expectedrows= cfg['in']['nfiles'], index=False) #append
 
-    h5_append(cfg_out, df, cfg_out['log'], cfg['in']['dt_from_utc'], tim=df_t_index)
-    cfg_out['tables_have_wrote'].add((cfg_out['table'], cfg_out['table_log']))
+    h5_append(cfg_out, df, cfg_out['log'], log_dt_from_utc=cfg['in']['dt_from_utc'], tim=df_t_index)
+
+    _t = (cfg_out['table'], cfg_out['table_log'])
+    if 'tables_have_wrote' in cfg_out:
+        cfg_out['tables_have_wrote'].add(_t)
+    else:
+        cfg_out['tables_have_wrote'] = {_t}
+
     return 0
 
 
@@ -247,7 +272,7 @@ def main(new_arg=None):
 
     try:
         cfg['in'] = init_file_names(cfg['in'], cfg['program']['b_interact'])
-        cfg_out = cfg['output_files']
+        cfg_out = cfg['out']
         h5init(cfg['in'], cfg_out)
     except Ex_nothing_done as e:
         print(e.message)
@@ -277,7 +302,6 @@ def main(new_arg=None):
 
         tables = dict(zip(df_names, cfg_out['tables']))
         tables_log = dict(zip(df_names, cfg_out['tables_log']))
-        cfg_out['tables_have_wrote'] = set()
         # Can not save path to DB (useless?) so set  for this max file name length:
         set_field_if_no(cfg_out, 'logfield_fileName_len', 50)
         cfg_out['index_level2_cols'] = cfg['in']['routes_cols'][0]
@@ -287,18 +311,17 @@ def main(new_arg=None):
         ## Main circle ############################################################
         for i1_file, path_gpx in h5_dispenser_and_names_gen(cfg, cfg_out):
             l.info('{}. {}: '.format(i1_file, path_gpx.name))
-
             # Loading data
             dfs = gpxConvert(cfg, path_gpx)
-            # Add time shift specified in configuration .ini
-            print('write', end=': ');
-            sys_stdout.flush()
+            print('write', end=': '); sys_stdout.flush()
             for key, df in dfs.items():
                 if (not tables.get(key)) or df.empty:
                     continue
                 elif key == 'tracks':
                     # Save last time to can filter next file
                     cfg['in']['time_last'] = df.index[-1]
+
+                b_make_time_inc = key not in {'waypoints', 'routes'}
 
                 # monkey patching
                 if 'tracker' in tables[key]:
@@ -325,11 +348,11 @@ def main(new_arg=None):
                         # redefine saving parameters
                         cfg_out['table'] = tables_pattern.format(trackers_numbers[sn])
                         cfg_out['table_log'] = tables_log_pattern.format(trackers_numbers[sn])
-                        df_filter_and_save_to_h5(cfg_out, cfg, df, key)
+                        df_filter_and_save_to_h5(cfg_out, cfg, df, b_make_time_inc)
                 else:
                     cfg_out['table'] = tables[key]
                     cfg_out['table_log'] = tables_log[key]
-                    df_filter_and_save_to_h5(cfg_out, cfg, df, key)
+                    df_filter_and_save_to_h5(cfg_out, cfg, df, b_make_time_inc)
 
     # try:
     # if cfg_out['b_remove_duplicates']:
@@ -372,15 +395,16 @@ def main(new_arg=None):
     #     cfg_out['db'].close()
     #     failed_storages= h5move_tables(cfg_out, cfg_out['tables_have_wrote'])
 
-
-    failed_storages = h5move_tables(cfg_out, tbl_names=cfg_out['tables_have_wrote'])
-    print('Finishing...' if failed_storages else 'Ok.', end=' ')
-    if cfg['in'].get('time_last'):
-        # if have any processed data that need to be sorted (not the case for the routes and waypoints), also needed because ``ptprepack`` not closes hdf5 source if it not finds data
-        cfg_out['b_remove_duplicates'] = True
-        h5index_sort(cfg_out, out_storage_name=cfg_out['db_base'] + '-resorted.h5', in_storages=failed_storages,
-                     tables=cfg_out['tables_have_wrote'])
-
+    try:
+        failed_storages = h5move_tables(cfg_out, tbl_names=cfg_out.get('tables_have_wrote', {}))
+        print('Finishing...' if failed_storages else 'Ok.', end=' ')
+        if cfg['in'].get('time_last'):
+            # if have any processed data that need to be sorted (not the case for the routes and waypoints), also needed because ``ptprepack`` not closes hdf5 source if it not finds data
+            cfg_out['b_remove_duplicates'] = True
+            h5index_sort(cfg_out, out_storage_name=cfg_out['db_base'] + '-resorted.h5', in_storages=failed_storages,
+                         tables=cfg_out.get('tables_have_wrote', {}))
+    except Ex_nothing_done:
+        print('ok')
 
 if __name__ == '__main__':
     main()

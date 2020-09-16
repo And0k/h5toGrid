@@ -1,0 +1,24 @@
+    
+in:
+  path_cruise: d:\WorkData\BalticSea\200818_Pregolya,Lagoon-inclinometer
+  raw_subdir: 1сент20.zip  #_Experiment.rar
+  probes: # [2]
+  probes_prefix: incl
+  raw_pattern: "*{prefix:}{number:0>3}*.[tT][xX][tT]"
+
+#  timerange_zeroing_dict:
+#    14: [2020-07-10T21:31:00, 2020-07-10T21:39:00]
+  db_coefs: d:\WorkData\_experiment\_2019\inclinometer\190710_compas_calibr-byMe\190710incl.h5
+
+filter:
+  date_min: {0: 2020-08-18T12:00:00}
+  date_max: {0: 2030-01-01T00:00:00}
+
+out:
+  # db_name: out_send.h5  # default: "incl.h5"
+  aggregate_period_s: [Null, 2, 600, 7200]  # Null means no average
+
+
+program:
+  step_start: 1
+  step_end: 2

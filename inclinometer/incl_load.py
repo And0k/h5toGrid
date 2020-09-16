@@ -13,7 +13,7 @@ Allows to specify some of args:
     - data processing parameters:
 
         :path_cruise:
-        :dir_incl: or :in_file:
+        :dir_incl: or :file_in:
         :path_db:
         :probes:
         ...
@@ -188,12 +188,12 @@ def main(new_arg=None, **kwargs):
         i_proc_file = 0  # counter of processed files
         # patten to identify only _probe_'s raw data files that need to correct '*INKL*{:0>2}*.[tT][xX][tT]':
         raw_parent = cfg['in']['path_cruise'] / dir_incl / '_raw'
-        out_dir = raw_parent / re.sub(r'[.\\/ ]', '_', cfg['in']['raw_subdir'])  # sub replaces multilevel subdirs to 1 level that correct_fun() can only make
+        dir_out = raw_parent / re.sub(r'[.\\/ ]', '_', cfg['in']['raw_subdir'])  # sub replaces multilevel subdirs to 1 level that correct_fun() can only make
         raw_parent /= cfg['in']['raw_subdir']
         for probe in probes:
             raw_found = []
             raw_pattern_file = cfg['in']['raw_pattern'].format(prefix=raw_root, number=probe)
-            correct_fun = partial(correct_kondrashov_txt if subs_made else correct_baranov_txt, out_dir=out_dir)
+            correct_fun = partial(correct_kondrashov_txt if subs_made else correct_baranov_txt, dir_out=dir_out)
             # if not archive:
             if (not '.zip' in cfg['in']['raw_subdir'].lower() and not '.rar' in cfg['in']['raw_subdir'].lower()) or raw_parent.is_dir():
                 raw_found = list(raw_parent.glob(raw_pattern_file))
@@ -206,23 +206,23 @@ def main(new_arg=None, **kwargs):
                 elif not cfg['in']['raw_subdir']:
                     continue
 
-            for in_file in (raw_found or open_csv_or_archive_of_them(raw_parent, binary_mode=False, pattern=raw_pattern_file)):
-                in_file = correct_fun(in_file)
-                if not in_file:
+            for file_in in (raw_found or open_csv_or_archive_of_them(raw_parent, binary_mode=False, pattern=raw_pattern_file)):
+                file_in = correct_fun(file_in)
+                if not file_in:
                     continue
-
+                tbl = f"{cfg['in']['probes_prefix']}{probe:0>2}"
+                # tbl = re.sub('^((?P<i>inkl)|w)_0', lambda m: 'incl' if m.group('i') else 'w',  # correct name
+                #              re.sub('^[\d_]*|\*', '', file_in.stem).lower()),  # remove date-prefix if in name
                 csv2h5(
                     [str(Path(__file__).parent / 'ini' / f"csv_inclin_{'Kondrashov' if subs_made else 'Baranov'}.ini"),
-                    '--path', str(in_file),
+                    '--path', str(file_in),
                     '--blocksize_int', '50_000_000',  # 50Mbt
-                    '--table', re.sub('^((?P<i>inkl)|w)_0', lambda m: 'incl' if m.group('i') else 'w',  # correct name
-                                      re.sub('^[\d_]*|\*', '', in_file.stem).lower()),  # remove date-prefix if in name
-
+                    '--table', tbl,
                     '--db_path', str(db_path),
                     # '--log', str(scripts_path / 'log/csv2h5_inclin_Kondrashov.log'),
                     # '--b_raise_on_err', '0',  # ?
                     '--b_interact', '0',
-                    '--fs_float', f'{fs(probe, in_file.stem)}',
+                    '--fs_float', f'{fs(probe, file_in.stem)}',
                     '--dt_from_utc_seconds', str(cfg['in']['dt_from_utc'].total_seconds()),
                     '--b_del_temp_db', '1',
                     ] +
@@ -240,7 +240,6 @@ def main(new_arg=None, **kwargs):
                 )
 
                 # Get coefs:
-                tbl = f"{cfg['in']['probes_prefix']}{probe:0>2}"
                 l.info(f"Adding coefficients to {db_path}/{tbl} from {cfg['in']['db_coefs']}")
                 try:
                     h5copy_coef(cfg['in']['db_coefs'], db_path, tbl)
@@ -252,7 +251,7 @@ def main(new_arg=None, **kwargs):
                     h5copy_coef(None, db_path, tbl, dict_matrices=dict_matrices_for_h5(tbl=tbl))
                 i_proc_file += 1
             else:
-                print(probe, end=': no, ')
+                print('no', raw_pattern_file, end=', ')
             i_proc_probe += 1
         print('Ok:', i_proc_probe, 'probes,', i_proc_file, 'files processed.')
 
@@ -274,7 +273,7 @@ def main(new_arg=None, **kwargs):
                     '--db_path', str(db_path_in),
                     '--tables_list', 'incl.*',  #!   'incl.*|w\d*'  inclinometers or wavegauges w\d\d # 'incl09',
                     '--aggregate_period', f'{aggregate_period_s}S' if aggregate_period_s else '',
-                    '--output_files.db_path', str(db_path_out),
+                    '--out.db_path', str(db_path_out),
                     '--table', f'V_incl_bin{aggregate_period_s}' if aggregate_period_s else 'V_incl',
                     '--verbose', 'INFO',  #'DEBUG' get many numba messages
                     '--b_del_temp_db', '1',
@@ -310,8 +309,8 @@ def main(new_arg=None, **kwargs):
             #         'dates_min': date_min.values(),  # in table list order
             #         'dates_max': date_max.values(),  #
             #         })
-            # set_field_if_no(kwarg, 'output_files', {})
-            # kwarg['output_files'].update({'b_all_to_one_col': 'True'})
+            # set_field_if_no(kwarg, 'out', {})
+            # kwarg['out'].update({'b_all_to_one_col': 'True'})
 
 
             incl_h5clc.main(args, **kwarg)
@@ -332,7 +331,7 @@ def main(new_arg=None, **kwargs):
             '--date_min', datetime64_str(cfg['filter']['date_min'][0]),
             '--date_max', datetime64_str(cfg['filter']['date_max'][0]),  # '2019-09-09T16:31:00',  #17:00:00
             # '--max_dict', 'M[xyz]:4096',  # use if db_path is not ends with _proc_noAvg.h5 i.e. need calc velocity
-            '--output_files.db_path', f"{db_path.stem.replace('incl', cfg['in']['probes_prefix'])}_proc_psd.h5",
+            '--out.db_path', f"{db_path.stem.replace('incl', cfg['in']['probes_prefix'])}_proc_psd.h5",
             # '--table', f'psd{aggregate_period_s}' if aggregate_period_s else 'psd',
             '--fs_float', f"{fs(probes[0], cfg['in']['probes_prefix'])}",
             # (lambda x: x == x[0])(np.vectorize(fs)(probes, prefix))).all() else raise_ni()

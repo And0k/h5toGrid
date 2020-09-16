@@ -170,7 +170,7 @@ if st(1):  # Can not find additional not corrected files for same probe if alrea
     raw_pattern = f'*{prefix.replace("incl","inkl").upper()}_{{:0>3}}*.[tT][xX][tT]'
     raw_parent = path_cruise / dir_incl / '_raw'
     for probe in probes:
-        correct_fun = partial(correct_kondrashov_txt if prefix == 'incl' else correct_baranov_txt, out_dir=raw_parent)
+        correct_fun = partial(correct_kondrashov_txt if prefix == 'incl' else correct_baranov_txt, dir_out=raw_parent)
         raw_found = []
         if not raw_archive_name:
             raw_found = list(raw_parent.glob(raw_pattern.format(probe)))
@@ -247,7 +247,7 @@ if st(2):
                 '--aggregate_period', f'{aggregate_period_s}S' if aggregate_period_s else '',
                 '--date_min', datetime64_str(date_min[0]),  # '2019-08-18T06:00:00',
                 '--date_max', datetime64_str(date_max[0]),  # '2019-09-09T16:31:00',  #17:00:00
-                '--output_files.db_path', str(db_path_out),
+                '--out.db_path', str(db_path_out),
                 '--table', f'V_incl_bin{aggregate_period_s}' if aggregate_period_s else 'V_incl',
                 '--verbose', 'INFO',  #'DEBUG' get many numba messages
                 # '--calc_version', 'polynom(force)',  # depreshiated
@@ -280,8 +280,8 @@ if st(2):
         #         'dates_min': date_min.values(),  # in table list order
         #         'dates_max': date_max.values(),  #
         #         })
-        # set_field_if_no(kwarg, 'output_files', {})
-        # kwarg['output_files'].update({'b_all_to_one_col': 'True'})
+        # set_field_if_no(kwarg, 'out', {})
+        # kwarg['out'].update({'b_all_to_one_col': 'True'})
 
 
         incl_h5clc.main(args, **kwarg)
@@ -302,7 +302,7 @@ if st(3):  # Can be done at any time after step 1
         '--date_min', datetime64_str(date_min[0]),
         '--date_max', datetime64_str(date_max[0]),  # '2019-09-09T16:31:00',  #17:00:00
         # '--max_dict', 'M[xyz]:4096',  # use if db_path is not ends with _proc_noAvg.h5 i.e. need calc velocity
-        '--output_files.db_path', f'{db_path.stem.replace("incl", prefix)}_proc_psd.h5',
+        '--out.db_path', f'{db_path.stem.replace("incl", prefix)}_proc_psd.h5',
         # '--table', f'psd{aggregate_period_s}' if aggregate_period_s else 'psd',
         '--fs_float', f'{fs(probes[0], prefix)}',
         # (lambda x: x == x[0])(np.vectorize(fs)(probes, prefix))).all() else raise_ni()

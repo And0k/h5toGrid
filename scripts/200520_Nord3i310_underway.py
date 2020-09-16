@@ -64,7 +64,7 @@ if st(20):  # False: #
               # '--b_keep_minmax_of_bad_files', 'True',
               '--b_skip_if_up_to_date', 'True',
               # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
-              # '--output_files.tables_list', '',
+              # '--out.tables_list', '',
               ])
 
 if st(30):  # False: #
@@ -173,7 +173,7 @@ if st(110):  # False: #
         '--data_columns_list', 'Pres, Temp90, Cond, Sal, O2, O2ppm, SA, sigma0, depth, soundV',  # pH, Eh,
         '--b_skip_if_up_to_date', 'True',
         # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
-        '--output_files.tables_list', 'None',
+        '--out.tables_list', 'None',
         ])
 
 # Meteo

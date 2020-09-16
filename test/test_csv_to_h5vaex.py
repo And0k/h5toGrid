@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import pytest
 import sys
-from pathlib import PurePath, Path
+from pathlib import Path
 #from to_pandas_hdf5.csv2h5 import *  # main as csv2h5, __file__ as file_csv2h5, read_csv
 
 # import imp; imp.reload(csv2h5)
@@ -13,15 +13,10 @@ sys.path.append(str(Path(scripts_path).parent.resolve()))  # os.getcwd()
 path_data = Path(r'd:\Work\_Python3\hartenergy-find_formation_names\test\200202_1st750rows.tsv')
 path_data_full = Path(r'd:\Work\_Python3\hartenergy-find_formation_names\data\HartEnergy\wells_US_all.tsv')
 
-from csv_to_h5vaex import *  #to_pandas_hdf5.
+from to_vaex_hdf5.csv_to_h5vaex import *  #to_pandas_hdf5.
 
-
-
-from typing import Any, Callable, Iterator, Mapping, Optional, Sequence, Tuple, Union, Iterable
 import logging
 from rarfile import BadRarFile
-import tempfile
-import re
 
 #from omegaconf import DictConfig
 #import hydra
@@ -30,10 +25,8 @@ import re
 #from clize import run, converters, parameters
 #from sigtools.wrappers import decorator
 
-import h5py
 import numpy as np
 import pandas as pd
-import vaex
 
 VERSION = '0.0.1'
 l = logging.getLogger(__name__)

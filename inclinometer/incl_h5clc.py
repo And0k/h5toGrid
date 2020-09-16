@@ -123,14 +123,14 @@ def my_argparser(varargs=None):
     p_flt.add('--bad_p_at_bursts_starts_peroiod',
                help='pandas offset string. If set then marks each 2 samples of Pressure at start of burst as bad')
 
-    p_out = p.add_argument_group('output_files', 'Parameters of output files')
-    p_out.add('--output_files.db_path', help='hdf5 store file path')
+    p_out = p.add_argument_group('out', 'Parameters of output files')
+    p_out.add('--out.db_path', help='hdf5 store file path')
     p_out.add('--table',
               help='table name in hdf5 store to write data. If not specified then will be generated on base of path of input files. Note: "*" is used to write blocks in autonumbered locations (see dask to_hdf())')
     p_out.add('--text_path',
               help='path to save text files with processed velocity (each probe individually)')
     p_out.add('--not_joined_h5_path',
-              help='If something then saving proced velocity for each probe individually to output_files.db_path. Todo: use this settings to can save in other path')
+              help='If something then saving proced velocity for each probe individually to out.db_path. Todo: use this settings to can save in other path')
     p_out.add('--text_date_format', default='%Y-%m-%d %H:%M:%S.%f',
               help='Format of date column in output text files. Can use float or string representations')
     p_out.add('--b_all_to_one_col',
@@ -990,7 +990,7 @@ def h5_names_gen(cfg: Mapping[str, Any], cfg_out: Optional[Mapping[str, Any]] = 
 
                 node_coef = store.get_node(f'{tbl}/coef')
                 if node_coef is None:
-                    l.warning('Skipping this talbe "%s" - not found coefs!', tbl)
+                    l.warning('Skipping this table "%s" - not found coefs!', tbl)
                     continue
                 for node_name in node_coef.__members__:
                     node_coef_l2 = node_coef[node_name]
@@ -1086,7 +1086,7 @@ def gen_variables(cfg: MutableMapping[str, Any], fun_gen=h5_names_gen
     for d_source in gen_sources_dict(cfg_in_copy):
         cfg['in'].update(d_source)
         cfg['in']['tables'] = [cfg['in']['table']]              # for h5_dispenser_and_names_gen()
-        for itbl, (tbl, coefs) in h5_dispenser_and_names_gen(cfg, cfg['output_files'], fun_gen=fun_gen, b_close_at_end=False):
+        for itbl, (tbl, coefs) in h5_dispenser_and_names_gen(cfg, cfg['out'], fun_gen=fun_gen, b_close_at_end=False):
             l.info('%s. %s: ', n, tbl)  # itbl
             cfg['in']['table'] = tbl                            # for gen_data_on_intervals()
             for d, i_burst in gen_data_on_intervals(cfg):
@@ -1102,7 +1102,7 @@ def dd_to_csv(d: dd.DataFrame, cfg: Mapping[str, Any], suffix='', b_single_file=
     """
     Save to ascii
     :param d:
-    :param cfg: must have field 'output_files' with fields:
+    :param cfg: must have field 'out' with fields:
         'text_path'
         'text_date_format' - If callable then create "Date" column by calling it (dd.index), retain index only if "Time" in 'text_columns'. If string use it as format for index (Time) column
         'text_columns': optional
@@ -1110,7 +1110,7 @@ def dd_to_csv(d: dd.DataFrame, cfg: Mapping[str, Any], suffix='', b_single_file=
     :param b_single_file:
     :return:
     """
-    cfg_out = cfg['output_files']
+    cfg_out = cfg['out']
     if cfg_out['text_path'] is None:
         return
     tab = '\t'
@@ -1184,17 +1184,17 @@ def main(new_arg=None, **kwargs):
 
     cfg['in']['i_range'] = [0, -1]  # USEi
     cfg['in']['burst_min'] = np.inf  # inf to not use bursts, None to autofind
-    cfg['output_files']['chunksize'] = cfg['in']['chunksize']
+    cfg['out']['chunksize'] = cfg['in']['chunksize']
 
     # this affect memory consumption and to splitting of output ascii files
     set_field_if_no(cfg['in'], 'split_period', '1D')
-    set_field_if_no(cfg['output_files'], 'split_period', 100000 * pd_period_to_timedelta(cfg['in']['aggregate_period'])
+    set_field_if_no(cfg['out'], 'split_period', 100000 * pd_period_to_timedelta(cfg['in']['aggregate_period'])
     if cfg['in']['aggregate_period'] and not cfg['in']['split_period'] else
     cfg['in']['split_period'])
-    # as this alredy used to set cfg['output_files']['split_period'] this is need not more:
+    # as this alredy used to set cfg['out']['split_period'] this is need not more:
     cfg['in']['split_period'] = '999D'  # to not split of input data (dask do: not need to make chanks manually)
 
-    cfg_out = cfg['output_files']
+    cfg_out = cfg['out']
     h5init(cfg['in'], cfg_out)
     cfg_out_table = cfg_out['table']  # need? save beacause will need to change for h5_append()
     cols_out_allow = ['Vn', 'Ve', 'Pressure', 'Temp']  # ubsent cols will be ignored
@@ -1365,7 +1365,7 @@ old cfg
             'aggregate_period': '2H',  # pandas offset string (D, 5D, H, ...)
             #'max_g_minus_1' used only to replace bad with NaN
         },
-        'output_files': {
+        'out': {
             'db_path': '181116incl_proc.h5',
             'table': 'V_incl',
 
@@ -1377,6 +1377,6 @@ old cfg
     }
 
     # optional external coef source:
-    # cfg['output_files']['db_coef_path']           # defaut is same as 'db_path'
-    # cfg['output_files']['table_coef'] = 'incl10'  # defaut is same as 'table'
+    # cfg['out']['db_coef_path']           # defaut is same as 'db_path'
+    # cfg['out']['table_coef'] = 'incl10'  # defaut is same as 'table'
 """

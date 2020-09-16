@@ -31,10 +31,10 @@ cfg = {'in': {
 cfg['in'] = init_input_cols(cfg['in'])
 
 
-# cfg['output_files']['names'] = np.array(cfg['in']['dtype'].names)[cfg['in']['cols_loaded_save_b']]
-# cfg['output_files']['formats'] = [cfg['in']['dtype'].fields[n][0] for n in cfg['output_files']['names']]
-# cfg['output_files']['dtype'] = np. \
-#     dtype({'formats': cfg['output_files']['formats'], 'names': cfg['output_files']['names']})
+# cfg['out']['names'] = np.array(cfg['in']['dtype'].names)[cfg['in']['cols_loaded_save_b']]
+# cfg['out']['formats'] = [cfg['in']['dtype'].fields[n][0] for n in cfg['out']['names']]
+# cfg['out']['dtype'] = np. \
+#     dtype({'formats': cfg['out']['formats'], 'names': cfg['out']['names']})
 
 def fun_proc_loaded(a, cfg_in):
     """

@@ -95,7 +95,7 @@ if st(20, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params
               '--b_keep_minmax_of_bad_files', 'True',
               # '--b_skip_if_up_to_date', 'True', - not works. Delete previous table manually, and from ~not_sorted!
 
-              # '--output_files.tables_list', '',
+              # '--out.tables_list', '',
               ])
 
 if st(30, f'Draw {device} data profiles'):  # False: #
@@ -122,11 +122,11 @@ if st(30, f'Draw {device} data profiles'):  # False: #
     argv_prev = sys.argv
 
     os_chdir(cfg_in['pattern_path'].parent)
-    for filenme, str_expr in h5log_names_gen(cfg_in, f_row):
-        path_vsz = cfg_in['pattern_path'].with_name(filenme)
+    for filename, str_expr in h5log_names_gen(cfg_in, f_row):
+        path_vsz = cfg_in['pattern_path'].with_name(filename)
         path_vsz.write_bytes(re.sub(rb'^([^\n]+)', str_expr, pattern_code, count=1))  # replaces 1st row
         # try:
-        #     with Popen(rf'"C:\Program Files (x86)\Veusz\veusz.exe" {filenme} --unsafe-mode',
+        #     with Popen(rf'"C:\Program Files (x86)\Veusz\veusz.exe" {filename} --unsafe-mode',
         #                stdout=PIPE, stderr=STDOUT) as proc:
         #         pass
         #
@@ -248,7 +248,7 @@ if st(110, 'Export csv with some new calculated paremeters'):  # False: #
         '--data_columns_list', 'Pres, Temp90, Cond, Sal, O2, O2ppm, SA, sigma0, depth, soundV',  #Lat, Lon,
         '--b_skip_if_up_to_date', 'True',
         # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
-        '--output_files.tables_list', 'None',
+        '--out.tables_list', 'None',
         ])
 
 if st(120, 'Meteo'):

@@ -60,13 +60,13 @@ if not os_path.isfile(strPath_BBSub):
 
 
 # Returns indexes of first and last files with same name and increased extension
-def range_of_files_with_inc_ext(namesFull):
+def range_of_files_with_inc_ext(paths):
     nameDW = ''  # directory name was took before current cycle
     nameFW = ''  # file name without ext was took before current cycle
     # nameEW= '9999' #             extension was took before current cycle
     bSavedStart = False
     # inameEW= 9999
-    for iname, nameFull in enumerate(namesFull):
+    for iname, nameFull in enumerate(paths):
         nameD, nameFE = os_path.split(nameFull)
         nameF, nameE = os_path.splitext(nameFE)
         if nameDW == nameD and nameFW == nameF:
@@ -113,8 +113,8 @@ console.show()
 if __name__ == '__main__':
     strDir = first_of_paths_text(strDir)  # Get only first path from strDir
     print('found: ', end='')
-    namesFull = [f for f in dir_walker(strDir, strMask, bGoodFile=filt_fileCur, bGoodDir=filt_dirCur)]
-    nFiles = len(namesFull)
+    paths = [f for f in dir_walker(strDir, strMask, bGoodFile=filt_fileCur, bGoodDir=filt_dirCur)]
+    nFiles = len(paths)
     if nFiles == 0:
         print('(0 files) => nothing done')
         exit
@@ -130,10 +130,10 @@ if __name__ == '__main__':
                        ((' -filter:' + BBSub_filter) if BBSub_filter else '')
 
             for inameSt, inameEn in range_of_files_with_inc_ext(
-                    namesFull):  # indexes files with same name and increased extension
+                    paths):  # indexes files with same name and increased extension
                 # 1. move files which will modify
                 while inameSt + 1 < inameEn:  # returns here while get FilesSizeSum > maxFilesSize
-                    nameFull0 = namesFull[inameSt]
+                    nameFull0 = paths[inameSt]
                     nameD, nameFE0 = os_path.split(nameFull0)
                     dst = os_path.join(nameD, nameSourceArchive)
                     if not os_path.isdir(dst): os_mkdir(dst)
@@ -141,7 +141,7 @@ if __name__ == '__main__':
                     move(nameFull0, nameFullDst)  # move 1st file
                     FilesSizeSum = os_path.getsize(nameFullDst)
                     for inameSt in range(inameSt + 1, inameEn):  # move next files
-                        nameFull = namesFull[inameSt]
+                        nameFull = paths[inameSt]
                         nameFE = os_path.basename(nameFull)
                         FilesSizeSum += os_path.getsize(nameFull)
                         if FilesSizeSum < maxFilesSize:
@@ -164,8 +164,8 @@ if __name__ == '__main__':
             print('making archive of replaced files...')
             nameFull0 = make_archive(dst, 'zip', dst)
             if nameFull0 == dst + '.zip':  # think that all archived Ok, so delete source
-                for inameSt, inameEn in range_of_files_with_inc_ext(namesFull):
-                    for nameFull in namesFull[inameSt:inameEn]:
+                for inameSt, inameEn in range_of_files_with_inc_ext(paths):
+                    for nameFull in paths[inameSt:inameEn]:
                         os_remove(os_path.join(dst, os_path.basename(nameFull)))
                 try:
                     os_rmdir(dst)

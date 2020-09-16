@@ -7,12 +7,13 @@
 from __future__ import print_function, division
 
 import logging
+from pathlib import PurePath
 import re
 import sys  # from sys import argv
 import warnings
 from os import path as os_path, getcwd as os_getcwd, chdir as os_chdir, remove as os_remove
 from time import sleep
-from typing import Any, Dict, Iterable, Iterator, Mapping, Optional, Sequence, Tuple, Union, List, Set
+from typing import Any, Dict, Iterable, Iterator, Mapping, MutableMapping, Optional, Sequence, Tuple, Union, List, Set
 
 import numpy as np
 import pandas as pd
@@ -215,6 +216,7 @@ def h5sort_pack(h5source_fullpath, h5out_name, table_node, arguments=None, addar
 
 
     except Exception as e:
+        tbl_cur = 'even not started!'
         try:
             if f'--sortby={col_sort}' in arguments:
                 # check that requirement of fool index is recursively satisfied
@@ -256,7 +258,15 @@ def h5sel_index_and_istart(store: pd.HDFStore,
                            query_range_lims: Optional[Iterable[Any]] = None,
                            query_range_pattern: str = "index>=Timestamp('{}') & index<=Timestamp('{}')",
                            to_edge: Optional[Any] = None) -> Tuple[pd.Index, int]:
-    # Get data index extcuting query and find queried start index in stored table
+    """
+    Get data index by executing query and find queried start index in stored table
+    :param store:
+    :param tbl_name:
+    :param query_range_lims: values to print in query_range_pattern
+    :param query_range_pattern:
+    :param to_edge:
+    :return:
+    """
     if query_range_lims is None:  # select all
         df0 = store.select(tbl_name, columns=[])
         i_start = 0
@@ -322,6 +332,8 @@ def h5select(store: pd.HDFStore,
     :param interpolate: str: "method" arg of pandas.Series.interpolate. If not interpolate, then return closest points
     :return: (df, bbad): df - table of found points, bbad - boolean array returned by other_filters.check_time_diff() or
               df - dataframe of query_range_lims if no time_ranges nor time_points
+
+    Note: query_range_pattern will be used only if query_range_lims specified
     """
     # h5select(store, cfg['in']['table_nav'], ['Lat', 'Lon', 'DepEcho'], dfL.index, query_range_lims=(dfL.index[0], dfL['DateEnd'][-1]), query_range_pattern=cfg['process']['dt_search_nav_tolerance'])
     q_time = time_ranges if time_points is None else time_points
@@ -424,6 +436,8 @@ def h5temp_open(cfg_out: Dict[str, Any]) -> Optional[pd.DataFrame]:
           tables, tables_log - if tables is None return (do nothing), else opens HDF5 store and tries to work with ``tables_log``
           b_skip_if_up_to_date
           b_use_old_temporary_tables, bool, defult False - not copy tables from dest to temp
+          b_overwrite: remove all existed data in tables where going to write
+          b_skip_if_up_to_date:
     :return: df_log, dataframe of log from store if cfg_in['b_skip_if_up_to_date']==True else None.
     Modifies (creates): cfg_out['db'] - handle of opened pandas HDF5 store
     """
@@ -718,6 +732,8 @@ def create_indexes(cfg_out, cfg_table_keys):
     l.debug('Creating index')
     for cfgListName in cfg_table_keys:
         for i_in_group, tbl in unzip_if_need_enumerated(cfg_out[cfgListName]):
+            if not tbl:
+                continue
             try:
                 if i_in_group == 0 or cfgListName != 'tables_log':  # not nested (i.e. log) table
                     navp_all_index, level2_index = multiindex_timeindex(cfg_out['db'][tbl].index)
@@ -937,7 +953,7 @@ def h5index_sort(cfg_out,
                 else:
                     pass  # will sorting by prepack in h5move_tables #l.warning('skipped of sorting ')
         if tbl_dups:
-            l.warning(f'To drop duplicates from {tbl_dups} restart with [output_files][b_remove_duplicates] = True')
+            l.warning(f'To drop duplicates from {tbl_dups} restart with [out][b_remove_duplicates] = True')
             tbl_nonm -= tbl_dups
         else:
             l.info('no duplicates...')
@@ -964,7 +980,7 @@ def h5index_sort(cfg_out,
             # h5sort_pack(cfg_out['db_path_temp'], out_storage_name, tbl) #, ['--overwrite-nodes=true']
 
 
-def h5del_obsolete(cfg_out: Mapping[str, Any],
+def h5del_obsolete(cfg_out: MutableMapping[str, Any],
                    log: Mapping[str, Any],
                    df_log: pd.DataFrame) -> Tuple[bool, bool]:
     """
@@ -996,7 +1012,7 @@ def h5del_obsolete(cfg_out: Mapping[str, Any],
             print('Duplicate entries in log => will be removed from tables! (detected "{}")'.format(log['fileName']))
             cfg_out['b_remove_duplicates'] = True
             if cfg_out['b_use_old_temporary_tables']:
-                print('Consider set [output_files].b_use_old_temporary_tables=0,[in].b_skip_if_up_to_date=0')
+                print('Consider set [out].b_use_old_temporary_tables=0,[in].b_skip_if_up_to_date=0')
             print('Continuing...')
             imax = np.argmax([r.to_pydatetime() for r in rows_for_file['fileChangeTime']])
         else:
@@ -1011,21 +1027,24 @@ def h5del_obsolete(cfg_out: Mapping[str, Any],
             qstr = "index>=Timestamp('{}')".format(rows_for_file.index[0])
             qstrL = "fileName=='{}'".format(rows_for_file['fileName'][0])
             try:
-                tbl=''
+                tbl = ''; tbl_log = ''
                 for tbl, tbl_log in zip(cfg_out['tables'], cfg_out['tables_log']):
-                    Ln = cfg_out['db'].remove(tbl_log, where=qstrL)  # useful if it is not a child
-                    L = cfg_out['db'].remove(tbl, where=qstr)
-                    print('{} in table/{} in log'.format(L, Ln))
+                    if tbl:
+                        L = cfg_out['db'].remove(tbl, where=qstr)
+                        print(f'{L} in table', end=', ')
+                    if tbl_log:
+                        Ln = cfg_out['db'].remove(tbl_log, where=qstrL)
+                        print(f'{Ln} in log.')
             except NotImplementedError as e:
-                l.exception('Can not delete obsolete rows, so removing full tables %s & %s', tbl, tbl_log)
-                cfg_out['db'].remove(tbl_log)
-                cfg_out['db'].remove(tbl)
+                l.exception('Can not delete obsolete rows, so removing full tables %s & %s and filling with all currently found data', tbl, tbl_log)
+                if tbl_log: cfg_out['db'].remove(tbl_log)  # useful if it  is not a child
+                if tbl: cfg_out['db'].remove(tbl)
                 bExistOk = False
                 bExistDup = False
     return (bExistOk, bExistDup)
 
 
-def h5init(cfg_in: Mapping[str, Any], cfg_out: Dict[str, Any]):
+def h5init(cfg_in: Mapping[str, Any], cfg_out: MutableMapping[str, Any]):
     """
     Init cfg_out database (hdf5 data store) information in cfg_out _if it is not exist_
     :param: cfg_in - configuration dicts, with fields:
@@ -1059,10 +1078,15 @@ def h5init(cfg_in: Mapping[str, Any], cfg_out: Dict[str, Any]):
         ] if 'b_skip_if_up_to_date' in cfg_in else False)
     set_field_if_no(cfg_out, 'b_remove_duplicates', False)
     set_field_if_no(cfg_out, 'b_use_old_temporary_tables', True)
+    if cfg_out.get('b_insert_separator') is None:
+        cfg_file = PurePath(cfg_in['cfgFile']).stem
+        cfg_out['b_insert_separator'] = not '_nav_' in cfg_file
+        # elif '_CTD_' in cfg_file:
+        #     cfg_out['b_insert_separator'] = True
+    # Automatic db file and tables names
 
-    # automatic names
-    cfg_source_dir_words = cfg_in['source_dir_words'] if 'source_dir_words' in cfg_in else ['raw', 'source', 'WorkData',
-                                                                                            'workData']
+    cfg_source_dir_words = cfg_in['source_dir_words'] if cfg_in.get('source_dir_words') else [
+        'raw', 'source', 'WorkData', 'workData']
     auto = {'db_ext': 'h5'}
     if cfg_out.get('db_path'):
         # print(cfg_out)
@@ -1091,8 +1115,7 @@ def h5init(cfg_in: Mapping[str, Any], cfg_out: Dict[str, Any]):
 
     # Will save to temporary file initially
     set_field_if_no(cfg_out, 'db_path_temp', cfg_out['db_path'][:-3] + '_not_sorted.h5')
-
-    set_field_if_no(cfg_out, 'nfiles', cfg_in.get('nfiles') if 'nfiles' in cfg_in else 1)
+    set_field_if_no(cfg_out, 'nfiles', cfg_in.get('nfiles', 1))
 
     if 'tables' in cfg_out and cfg_out['tables']:
         set_field_if_no(cfg_out, 'tables_log', [((tab + '/logFiles') if tab else '') for tab in cfg_out['tables']])

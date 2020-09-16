@@ -3,7 +3,7 @@
 """
   Purpose:  helper functions for input/output handling
   Author:   Andrey Korzh <ao.korzh@gmail.com>
-  Created:  2016 - 2019
+  Created:  2016 - 2020
 """
 # from __future__ import print_function
 import sys
@@ -28,7 +28,7 @@ import re
 from pathlib import Path, PurePath
 import io
 from functools import wraps
-from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional, Iterable, Iterator, BinaryIO, TextIO, TypeVar, Tuple, Union
+from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional, Iterable, Iterator, BinaryIO, Sequence, TextIO, TypeVar, Tuple, Union
 import logging
 
 A = TypeVar('A')
@@ -142,7 +142,7 @@ def bGood_file(fname, mask, namesBadAtEdge, bPrintGood=True):
     return False
 
 
-def dir_create_if_need(str_dir: Union[str, Path]) -> Path:
+def dir_create_if_need(str_dir: Union[str, PurePath, Path]) -> Path:
     """
 
     :param str_dir:
@@ -210,9 +210,9 @@ def set_field_if_no(dictlike, dictfield, value=None):
     """
     if not dictfield in dictlike or dictlike[dictfield] is None:
         dictlike[dictfield] = value
+    # if MissingMandatoryValue or omegaconf.errors.ValidationError or on set None set it Optional
 
-
-def getDirBaseOut(mask_in_path, source_dir_words=None, replaceDir=None):
+def getDirBaseOut(mask_in_path, source_dir_words: Optional[Sequence[str]]=None, replaceDir:str=None):
     """
     Finds 'Cruise' and 'Device' dirs. Also returns full path to 'Cruise'.
     If 'keyDir' in fileMaskIn and after 2 levels of dirs then treat next subsequence as:
@@ -220,7 +220,7 @@ def getDirBaseOut(mask_in_path, source_dir_words=None, replaceDir=None):
     Else use subsequence before 'keyDir' (or from end of fileMaskIn if no ``keyDir``):
     ...\\'Sea'\\'Cruise'
     :param mask_in_path: path to analyse
-    :param source_dir_words: str or list of str - "keyDir" or list of variants to find "keyDir" in priority order
+    :param source_dir_words: list of str - list of variants to find "keyDir" in priority order
     :param replaceDir: str, "dir" to replace "keyDir" in out_path
         + used instead "Device" dir if "keyDir" not in fileMaskIn
     :return: returns tuple, which contains:
@@ -237,14 +237,11 @@ def getDirBaseOut(mask_in_path, source_dir_words=None, replaceDir=None):
     # if isinstance(mask_in_path, PurePath):
     mask_in_str = str(mask_in_path)
 
-    if isinstance(source_dir_words, list):
-        for source_dir_word in source_dir_words:
-            # Start of source_dir_word in 1st detected variant
-            st = mask_in_str.find(source_dir_word, 3)  # .lower()
-            if st >= 0: break
-    else:
-        source_dir_word = source_dir_words
-        st = mask_in_str.find(source_dir_word, 3)
+    st = -1
+    for source_dir_word in source_dir_words:
+        # Start of source_dir_word in 1st detected variant
+        st = mask_in_str.find(source_dir_word, 3)  # .lower()
+        if st >= 0: break
 
     if st < 0:
         print("Directory structure should be ..."
@@ -736,7 +733,7 @@ def cfg_from_args(p, arg_add, **kwargs):
     except configargparse.ArgumentError as e:
         pass  # option already exist - need no to do anything
 
-    # os_path.join(os_path.dirname(__file__), 'empty.ini')
+    # os_path.join(os_path.dirname(__file__), 'empty.yml')
     sys.argv[1] = ''  # do not parse ini file by configargparse already parsed by configparser
     try:
         args = vars(p.parse_args())
@@ -838,7 +835,7 @@ class MyArgparserCommonPart(configargparse.ArgumentParser):
     def init(self, default_config_files=[],
              formatter_class=configargparse.ArgumentDefaultsRawHelpFormatter, epilog='',
              args_for_writing_out_config_file=["-w", "--write-out-config-file"],
-             write_out_config_file_arg_help_message="takes the current command line arguments and writes them out to a configuration file the given path, then exits. But this file have no section headers. So to use this file you need to add sections manually. Sections are listed here in help message: [in], [output_files] ...",
+             write_out_config_file_arg_help_message="takes the current command line arguments and writes them out to a configuration file the given path, then exits. But this file have no section headers. So to use this file you need to add sections manually. Sections are listed here in help message: [in], [out] ...",
              ignore_unknown_config_file_keys=True, version='?'):
         self.add('cfgFile', is_config_file=True,
                  help='configuration file path(s). Command line parameters will overwrites parameters specified iside it')
@@ -879,7 +876,7 @@ def my_argparser_common_part(varargs, version='?'):  # description, version='?',
     varargs.setdefault('epilog', '')
     varargs.setdefault('args_for_writing_out_config_file', ["-w", "--write-out-config-file"])
     varargs.setdefault('write_out_config_file_arg_help_message',
-                       "takes the current command line arguments and writes them out to a configuration file the given path, then exits. But this file have no section headers. So to use this file you need to add sections manually. Sections are listed here in help message: [in], [output_files] ...")
+                       "takes the current command line arguments and writes them out to a configuration file the given path, then exits. But this file have no section headers. So to use this file you need to add sections manually. Sections are listed here in help message: [in], [out] ...")
     varargs.setdefault('ignore_unknown_config_file_keys', True)
 
     p = configargparse.ArgumentParser(**varargs)
@@ -995,12 +992,12 @@ def init_file_names(cfg_files: MutableMapping[str, Any], b_interact=True, path_f
         b_search_in_subdirs, exclude_dirs_ends_with - to search in dirs recursively
         start_file, end_file - exclude files before and after this values in search list result
     :param b_interact: do ask user to proceed? If false proseed silently
-    :return: (namesFull, cfg_files)
+    :return: (paths, cfg_files)
         cfg_files: configuration with added (if was not) fields
     'path':,
     'filemask':,
     'nfiles': number of files found,
-    'namesFull': list of full names of found files
+    'paths': list of full names of found files
     """
     set_field_if_no(cfg_files, 'b_search_in_subdirs', False)
     if path_field:
@@ -1062,14 +1059,14 @@ def init_file_names(cfg_files: MutableMapping[str, Any], b_interact=True, path_f
     # Execute declared functions ######################################
     if cfg_files['b_search_in_subdirs']:
         print(', including subdirs:', end=' ')
-        cfg_files['namesFull'] = [f for f in dir_walker(
+        cfg_files['paths'] = [f for f in dir_walker(
             cfg_files['dir'], cfg_files['filemask'],
             bGoodFile=filt_file_cur, bGoodDir=filt_dirCur)]
     else:
         print(':', end=' ')
-        cfg_files['namesFull'] = [os_path.join(cfg_files['dir'], f) for f in sorted(os_listdir(
+        cfg_files['paths'] = [os_path.join(cfg_files['dir'], f) for f in sorted(os_listdir(
             cfg_files['dir'])) if filt_file_cur(f, cfg_files['filemask'])]
-    cfg_files['nfiles'] = len(cfg_files['namesFull'])
+    cfg_files['nfiles'] = len(cfg_files['paths'])
 
     print(end=f"\n- {cfg_files['nfiles']} found")
     if cfg_files['nfiles'] == 0:
@@ -1358,52 +1355,52 @@ def init_logging(logging, logger_name=__name__, log_file=None, level_file='INFO'
 
 def name_output_and_log(cfg, logging, f_rep_filemask=lambda f: f, bInteract=False):
     """
-    Initialize cfg['output_files']['path'] and splits it to fields
+    Initialize cfg['out']['path'] and splits it to fields
     'path', 'filemask', 'ext'
     Initialize logging and prints message of beginning to write
 
     :param cfg: dict of dicts, requires fields:
         'in' with fields
-            'namesFull'
-        'output_files' with fields
+            'paths'
+        'out' with fields
             'out_path'
 
     :param logging:
     :param bInteract: see name_output_file()
-    :param f_rep_filemask: function f(cfg['output_files']['path']) modifying its argument
-        To replase in 'filemask' string '<File_in>' with base of cfg['in']['namesFull'][0] use
+    :param f_rep_filemask: function f(cfg['out']['path']) modifying its argument
+        To replase in 'filemask' string '<File_in>' with base of cfg['in']['paths'][0] use
     lambda fmask fmask.replace(
-            '<File_in>', os_path.splitext(os_path.basename(cfg['in']['namesFull'][0])[0] + '+')
+            '<File_in>', os_path.splitext(os_path.basename(cfg['in']['paths'][0])[0] + '+')
     :return: cfg, l
     cfg with added fields:
-        in 'output_files':
+        in 'out':
             'path'
 
             'ext' - splits 'out_path' or 'csv' if not found in 'out_path'
     """
     # find 'path' and 'ext' required for set_cfg_path_filemask()
-    if cfg['output_files']['out_path']:
-        cfg['output_files']['path'], cfg['output_files']['ext'] = os_path.splitext(cfg['output_files']['out_path'])
-        if not cfg['output_files']['ext']:  # set_cfg_path_filemask requires
-            cfg['output_files']['ext'] = '.csv'
-        cfg['output_files']['path'] = f_rep_filemask(cfg['output_files']['out_path'])
+    if cfg['out']['out_path']:
+        cfg['out']['path'], cfg['out']['ext'] = os_path.splitext(cfg['out']['out_path'])
+        if not cfg['out']['ext']:  # set_cfg_path_filemask requires
+            cfg['out']['ext'] = '.csv'
+        cfg['out']['path'] = f_rep_filemask(cfg['out']['out_path'])
 
-        set_cfg_path_filemask(cfg['output_files'])
+        set_cfg_path_filemask(cfg['out'])
 
         # Check target exists
-        cfg['output_files']['path'], cfg['output_files']['writeMode'], msg_name_output_file = name_output_file(
-            cfg['output_files']['dir'], cfg['output_files']['filemask'], None,
-            bInteract, cfg['output_files']['min_size_to_overwrite'])
+        cfg['out']['path'], cfg['out']['writeMode'], msg_name_output_file = name_output_file(
+            cfg['out']['dir'], cfg['out']['filemask'], None,
+            bInteract, cfg['out']['min_size_to_overwrite'])
 
         str_print = '{msg_name} Saving all to {out}:'.format(
-            msg_name=msg_name_output_file, out=os_path.abspath(cfg['output_files']['path']))
+            msg_name=msg_name_output_file, out=os_path.abspath(cfg['out']['path']))
 
     else:
-        set_field_if_no(cfg['output_files'], 'dir', '.')
+        set_field_if_no(cfg['out'], 'dir', '.')
         str_print = ''
 
     l = init_logging(logging, None, os_path.join(
-        cfg['output_files']['dir'], cfg['program']['log']), cfg['program']['verbose'])
+        cfg['out']['dir'], cfg['program']['log']), cfg['program']['verbose'])
     if str_print:
         l.warning(str_print)  # or use "a %(a)d b %(b)s", {'a':1, 'b':2}
 
@@ -1492,7 +1489,7 @@ def open_csv_or_archive_of_them(filename: Union[PurePath, Iterable[Union[Path, s
         for text_file in filename:
             if pattern and not fnmatch(text_file, pattern):
                 continue
-            with open(text_file, mode=read_mode) as f:
+            with open(text_file, mode=read_mode, encoding=encoding) as f:
                 yield f
     else:
         filename_str = (

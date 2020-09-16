@@ -14,7 +14,7 @@ import h5py
 import numpy as np
 
 # my
-from utils2init import FakeContextIfOpen
+from utils2init import FakeContextIfOpen, standard_error_info
 
 if __name__ != '__main__':
     l = logging.getLogger(__name__)
@@ -183,25 +183,25 @@ def h5copy_coef(h5file_source=None, h5file_dest=None, tbl=None, tbl_source=None,
 
                 # Copy using provided paths:
                 if h5source:
-                    l.info(f'copying {path_h5(h5source)}//{tbl_source} to {h5dest.filename}//{tbl_dest}')
+                    path_coef = f'//{tbl_source}//coef'
+                    l.info(f'copying "coef" from {path_h5(h5source)}//{tbl_source} to {h5dest.filename}//{tbl_dest}')
                     # Reuse previous calibration structure:
                     # import pdb; pdb.set_trace()
                     # h5source.copy('//' + tbl_source + '//coef', h5dest[tbl_dest + '//coef'])
                     try:
-                        path = '//' + tbl_source + '//coef'
-                        h5source.copy(path, h5dest[tbl_dest])
+                        h5source.copy(path_coef, h5dest[tbl_dest])
                         # h5source[tbl_source].copy('', h5dest[tbl_dest], name='coef')
                     except RuntimeError as e:  # Unable to copy object (destination object already exists)
-                        if ok_to_replace_group:
-                            l.warning(f'Replacing group "%s"', path)
-                            del h5dest[path]
-                            h5source.copy(path, h5dest[tbl_dest])
-                        else:
-                            l.error('Skip copy coef: '   + '\n==> '.join([a for a in e.args if isinstance(a, str)]))
+                        replace_coefs_group_on_error(h5source, h5dest, path_coef, e)
                     except KeyError: # Unable to open object (object 'incl_b11' doesn't exist)"
                         l.warning('Creating "%s"', tbl_source)
-                        h5dest.create_group(tbl_source)
-                        h5source.copy(path, h5dest[tbl_dest])
+
+                        try:
+                            h5dest.create_group(tbl_source)
+                        except (ValueError, KeyError) as e:  # already exists
+                            replace_coefs_group_on_error(h5source, h5dest, tbl_source, e)
+                        else:
+                            h5source.copy(path_coef, h5dest[tbl_dest])
 
             except FileExistsError:
                 if dict_matrices is None:
@@ -213,7 +213,7 @@ def h5copy_coef(h5file_source=None, h5file_dest=None, tbl=None, tbl_source=None,
 
                 if have_values:  # Save provided values:
                     for k in dict_matrices.keys():
-                        path = tbl_dest + k
+                        path = f'{tbl_dest}{k}'
                         data = dict_matrices[k]
                         if isinstance(dict_matrices[k], (int, float)):
                             data = np.atleast_1d(data)  # Veusz can't load 0d single values
@@ -256,6 +256,14 @@ def h5copy_coef(h5file_source=None, h5file_dest=None, tbl=None, tbl_source=None,
             # h5dest.create_dataset(tbl_dest + '//coef_cal//H//A', data= A  , dtype=np.float64)
             # h5dest.create_dataset(tbl_dest + '//coef_cal//H//C', data= C, dtype=np.float64)
             # h5dest[tbl_dest + '//coef//H//C'][:] = C
+
+    def replace_coefs_group_on_error(h5source, h5dest, path, e=None):
+        if ok_to_replace_group:
+            l.warning(f'Replacing group "%s"', path)
+            del h5dest[path]
+            h5source.copy(path, h5dest[tbl_dest])
+        else:
+            l.error('Skip copy coef' + (f': {standard_error_info(e)}!' if e else '!'))
 
     # try:
     with FakeContextIfOpen(

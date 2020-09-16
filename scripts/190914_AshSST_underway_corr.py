@@ -79,7 +79,7 @@ if st(20):  # False: #
               '--b_keep_minmax_of_bad_files', 'True',
               '--b_skip_if_up_to_date', 'True',
               # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
-              # '--output_files.tables_list', '',
+              # '--out.tables_list', '',
               ])
 
 if st(30):  # False: #
@@ -186,7 +186,7 @@ if st(110):  # False: #
         '--data_columns_list', 'Pres, Temp90, Cond, Sal, O2, O2ppm, pH, Eh, SA, sigma0, depth, soundV',
         '--b_skip_if_up_to_date', 'True',
         # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
-        '--output_files.tables_list', 'None',
+        '--out.tables_list', 'None',
         ])
 
 # # ################################################################################################################
@@ -223,7 +223,7 @@ if st(220):  # False: #
               '--b_keep_minmax_of_bad_files', 'True',
               '--b_skip_if_up_to_date', 'True',
               # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
-              # '--output_files.tables_list', '',
+              # '--out.tables_list', '',
               ])
 
 if st(230):  # False: #
@@ -270,7 +270,7 @@ if st(300):  # False: #
             '--path', str(path_cruise / rf'navigation/{device}s/*spot*messages.gpx'),
             '--table_prefix', r'navigation/',
             '--segments_cols_list', "time, latitude, longitude, comment",
-            '--output_files.segments_cols_list', 'Time, Lat, Lon, comment',
+            '--out.segments_cols_list', 'Time, Lat, Lon, comment',
             '--tables_list', ',,tracker{}', ])
 # go = True
 if st(310):  # False: #

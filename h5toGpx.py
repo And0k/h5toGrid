@@ -38,7 +38,7 @@ def my_argparser():
     p_in.add('--table_nav', help='table where to search coordinates. If empty then use data tables',
              default='navigation')
 
-    p_out = p.add_argument_group('output_files',
+    p_out = p.add_argument_group('out',
                                  'Output files: paths, formats... - not calculation intensive affecting parameters')
     p_out.add('--select_from_tablelog_ranges_index',
               help='if set to 0 (or -1) then use only 1 data point per log row and retrieve navigation at data points only (to calc dist) else if None then use all data for ranges specified in log rows and saves tracks (not points)')
@@ -115,7 +115,7 @@ gpx_names_funs = None  # need when eval gpx_obj_namef()?
 def save_to_gpx(nav_df: pd.DataFrame, fileOutPN, gpx_obj_namef, waypoint_symbf=None, cfg_proc=None):  #
     '''
     Save navigatin from dataframe to *.gpx file. track or waypoints.
-    Generate wayponts names and selects symbols from cfg['output_files']['gpx_symbols'] based on current row in nav_df
+    Generate wayponts names and selects symbols from cfg['out']['gpx_symbols'] based on current row in nav_df
     :param nav_df:          dataframe
     :param fileOutPN:       *.gpx file full name without extension
     :param gpx_obj_namef:           str or fun(waypoint number)
@@ -293,7 +293,7 @@ def save_to_csv(nav, datetimeindex, filepath):
     rnav.to_csv(filepath, sep='\t')
 
     # if True:
-    #     f = open(cfg['output_files']['dir'] + tblD + '.txt', 'w+');
+    #     f = open(cfg['out']['dir'] + tblD + '.txt', 'w+');
     #     #np.savetxt(f, np.atleast_2d(rnav_dt.names), '%s', delimiter='\t') - not works
     #     header= rnav_dt.names
     #     rnav.view()
@@ -338,18 +338,18 @@ def main(new_arg=None):
     l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
 
     l.warning('\n {}({}) is gonna save gpx to ..{} dir. '.format(
-        this_prog_basename(__file__), cfg['in']['db_path'], cfg['output_files']['dir']))
+        this_prog_basename(__file__), cfg['in']['db_path'], cfg['out']['dir']))
 
-    if not os_path.isabs(cfg['output_files']['dir']):
+    if not os_path.isabs(cfg['out']['dir']):
         # set path relative to cfg['in']['db_path']
-        cfg['output_files']['dir'] = os_path.join(os_path.dirname(cfg['in']['db_path']), cfg['output_files']['dir'])
+        cfg['out']['dir'] = os_path.join(os_path.dirname(cfg['in']['db_path']), cfg['out']['dir'])
 
-    if cfg['output_files']['select_from_tablelog_ranges'] is None:
+    if cfg['out']['select_from_tablelog_ranges'] is None:
         gpx_symbols = None
     else:
-        gpx_symbols = init_gpx_symbols_fun(cfg['output_files'])
+        gpx_symbols = init_gpx_symbols_fun(cfg['out'])
 
-    global gpx_names_funs  # Shortcat for cfg['output_files']['gpx_names_funs']
+    global gpx_names_funs  # Shortcat for cfg['out']['gpx_names_funs']
 
     # Load data #################################################################
     qstr_trange_pattern = "index>=Timestamp('{}') & index<=Timestamp('{}')"
@@ -368,10 +368,10 @@ def main(new_arg=None):
 
             gpx_names_funs = []
             for itbl in range(len(cfg['in']['tables'])):  # same fo each table
-                gpx_names_funs.append(cfg['output_files']['gpx_names_funs'][0])
+                gpx_names_funs.append(cfg['out']['gpx_names_funs'][0])
         else:  # fixed number of tables
             # initialise with defaults if need:
-            gpx_names_funs = cfg['output_files']['gpx_names_funs']
+            gpx_names_funs = cfg['out']['gpx_names_funs']
             for itbl in range(len(gpx_names_funs), len(cfg['in']['tables'])):
                 gpx_names_funs.append('i+1')
         dfs_rnav = []
@@ -400,10 +400,10 @@ def main(new_arg=None):
                     dfL = pd.DataFrame.from_records({'DateEnd': st_en[-1], 'fileName': tblD}, index=st_en[:1])
 
             gpx_names_fun_str = "lambda i, row, t=0: '{}'.format({})".format(
-                cfg['output_files']['gpx_names_fun_format'],
+                cfg['out']['gpx_names_fun_format'],
                 gpx_names_funs[itbl])
             gpx_names_fun = eval(compile(gpx_names_fun_str, '', 'eval'))
-            if cfg['output_files']['select_from_tablelog_ranges'] is None:
+            if cfg['out']['select_from_tablelog_ranges'] is None:
                 # Use all data for ranges specified in log rows and saves tracks (not points)
 
                 for irow, r in enumerate(dfL.itertuples()):  # iterrows()
@@ -426,7 +426,7 @@ def main(new_arg=None):
                     # Add UTC time and table name to output file name
                     # Local time and table name to gpx object name
                     str_time_long = '{:%y%m%d_%H%M}'.format(r.Index)
-                    r = r._replace(Index=timzone_view(r.Index, cfg['output_files']['dt_from_utc_in_comments']))
+                    r = r._replace(Index=timzone_view(r.Index, cfg['out']['dt_from_utc_in_comments']))
                     tblD_safe = file_from_tblname(tblD, cfg['in']['tables_log'][0])
                     try:
                         gpx_names_fun_result = gpx_names_fun(tblD_safe, r)  # '{:%y%m%d}'.format(timeLocal)
@@ -435,7 +435,7 @@ def main(new_arg=None):
                             e.__traceback__)
 
                     save_to_gpx(
-                        dfD, Path(cfg['output_files']['dir']) / (str_time_long + tblD_safe),
+                        dfD, Path(cfg['out']['dir']) / (str_time_long + tblD_safe),
                         gpx_obj_namef=gpx_names_fun_result, cfg_proc=cfg['process'])
 
                     if len(cfg['in']['tables']) > 1:
@@ -446,27 +446,36 @@ def main(new_arg=None):
             else:
                 # Use only 1 data point per log row
 
-                if cfg['output_files']['select_from_tablelog_ranges'] != 0:
+                if cfg['out']['select_from_tablelog_ranges'] != 0:
                     print('selecting from {} row index of log table'.format(
-                        cfg['output_files']['select_from_tablelog_ranges']))
+                        cfg['out']['select_from_tablelog_ranges']))
 
                 try:
                     dfL.index = dfL.index.tz_convert('UTC')
                 except TypeError as e:
                     print((e.msg if hasattr(e, 'msg') else str(e)) + '!\n- continue presume on UTC log index...')
                 print(end='all log data ')
-                time_points = (dfL.index if cfg['output_files']['select_from_tablelog_ranges'] == 0 else
-                               dfL['DateEnd'] if cfg['output_files']['select_from_tablelog_ranges'] == -1 else
+                time_points = (dfL.index if cfg['out']['select_from_tablelog_ranges'] == 0 else
+                               dfL['DateEnd'] if cfg['out']['select_from_tablelog_ranges'] == -1 else
                                None)
                 if time_points is None:
-                    raise (ValueError("cfg['output_files']['select_from_tablelog_ranges'] must be 0 or -1"))
-                nav2add = h5select(store, cfg['in']['table_nav'], ['Lat', 'Lon', 'DepEcho'], time_points=time_points,
+                    raise (ValueError("cfg['out']['select_from_tablelog_ranges'] must be 0 or -1"))
+                cols_nav = ['Lat', 'Lon', 'DepEcho']
+                nav2add = h5select(store, cfg['in']['table_nav'], cols_nav, time_points=time_points,
                                    dt_check_tolerance=cfg['process']['dt_search_nav_tolerance'],
                                    query_range_lims=(time_points[0], dfL['DateEnd'][-1])
                                    )[0]
+                # Try get non NaN from dfL if it has needed columns (we used to write there edges' data with _st/_en suffixes)
+                isna = nav2add.isna()
+                dfL_col_suffix = 'st' if cfg['out']['select_from_tablelog_ranges'] == 0 else 'en'
+                for col in cols_nav:
+                    col_dat = f'{col}_{dfL_col_suffix}'
+                    if isna[col].any() and  col_dat in dfL.columns:
+                        b_use = isna[col].values & dfL[col_dat].notna().values
+                        nav2add.loc[b_use, col] = dfL.loc[b_use, col_dat].values
 
-                nav2add.index = timzone_view(nav2add.index, dt_from_utc=cfg['output_files']['dt_from_utc_in_comments'])
-                # tz_local= tzoffset(None, cfg['output_files']['dt_from_utc_in_comments'].total_seconds())
+                nav2add.index = timzone_view(nav2add.index, dt_from_utc=cfg['out']['dt_from_utc_in_comments'])
+                # tz_local= tzoffset(None, cfg['out']['dt_from_utc_in_comments'].total_seconds())
                 # if nav2add.index.tz is None:
                 #     # think if time zone of tz-naive Timestamp is naive then it is UTC
                 #     nav2add.index = nav2add.index.tz_localize('UTC')
@@ -475,20 +484,20 @@ def main(new_arg=None):
                 # Save to gpx waypoints
                 nav2add_cur = nav2add.assign(itbl=itbl)
 
-                # if 'gpx_names_funs' in cfg['output_files'] and \
-                #     len(cfg['output_files']['gpx_names_funs'])>itbl:
+                # if 'gpx_names_funs' in cfg['out'] and \
+                #     len(cfg['out']['gpx_names_funs'])>itbl:
                 #
                 #     gpx_names = eval(compile('lambda i: str({})'.format(
-                #         cfg['output_files']['gpx_names_funs'][itbl]), [], 'eval'))
+                #         cfg['out']['gpx_names_funs'][itbl]), [], 'eval'))
                 #
                 save_to_gpx(nav2add_cur,
-                            os_path.join(cfg['output_files']['dir'],
+                            os_path.join(cfg['out']['dir'],
                                          'stations_' + file_from_tblname(tblD, cfg['in']['tables_log'][0])),
                             gpx_obj_namef=gpx_names_fun, waypoint_symbf=gpx_symbols,
                             cfg_proc=cfg['process']
                             )
                 # save_to_csv(nav2add, dfL.index, os_path.join(
-                #     cfg['output_files']['dir'], 'nav' + tblD + '.txt'))
+                #     cfg['out']['dir'], 'nav' + tblD + '.txt'))
                 if False:  # Show table info
                     store.get_storer(tblD).table
 
@@ -509,26 +518,26 @@ def main(new_arg=None):
                 tbl_names_all_shortened.append(tblD)
             dfs_rnav.append(nav2add_cur)
 
-        if len(cfg['in']['tables']) > 1 and cfg['output_files']['gpx_names_funs_cobined']:
+        if len(cfg['in']['tables']) > 1 and cfg['out']['gpx_names_funs_cobined']:
             print('combined: ', end='')  # Save combined data to gpx
             df_rnav_combined = pd.concat(dfs_rnav)
             df_rnav_combined.sort_index(inplace=True)
             # Save to gpx waypoints
-            if 'gpx_names_funs' in cfg['output_files']['gpx_names_funs_cobined']:
+            if 'gpx_names_funs' in cfg['out']['gpx_names_funs_cobined']:
                 gpx_names_funs = [  # row not used, it is here only for compability with tracks
                     eval(compile("lambda i: " + f, '', 'eval')) for f in gpx_names_funs]
             gpx_names_fun = eval(compile(
                 "lambda i,row,t: '{gpx_names_fun_format}'.format({gpx_names_funs_cobined})".format_map(
-                    cfg['output_files']), '', 'eval'))
+                    cfg['out']), '', 'eval'))
 
-            # gpx_symbols = lambda row: cfg['output_files']['gpx_symbols'][sym_index_fun(row)]
+            # gpx_symbols = lambda row: cfg['out']['gpx_symbols'][sym_index_fun(row)]
 
-            # gpx_names = eval(compile("lambda i,row: '{gpx_names_fun_format}'.format({gpx_names_funs_cobined})".format_map(cfg['output_files']), '', 'eval'))
+            # gpx_names = eval(compile("lambda i,row: '{gpx_names_fun_format}'.format({gpx_names_funs_cobined})".format_map(cfg['out']), '', 'eval'))
             # gpx_names = lambda i: str(i + 1)
 
             save_to_gpx(
                 df_rnav_combined,
-                Path(cfg['output_files']['dir']) /
+                Path(cfg['out']['dir']) /
                 ('all_' + file_from_tblname(','.join(tbl_names_all_shortened), cfg['in']['tables_log'][0])),
                 gpx_obj_namef=gpx_names_fun, waypoint_symbf=gpx_symbols, cfg_proc=cfg['process'])
     print('Ok')
@@ -548,7 +557,7 @@ if __name__ == '__main__':
                     dfN = dfN[~dfN.index.duplicated(keep='last')]
 
                 dfN['timeNav'] = dfN.index #temorary to check reindex
-                                if cfg['output_files']['select_from_tablelog_ranges']==0:
+                                if cfg['out']['select_from_tablelog_ranges']==0:
                     nav2add = dfN.reindex(dfL.index.tz_convert('UTC'), method='nearest',
                                           tolerance= cfg['process']['dt_search_nav_tolerance'])
                 else:

@@ -98,8 +98,8 @@ def my_argparser(varargs=None):
     p_flt.add('--max_dict',
               help='List with items in  "key:value" format. Filter out data of ``key`` columns if it is above ``value``')
 
-    p_out = p.add_argument_group('output_files', 'Parameters of output files')
-    p_out.add('--output_files.db_path', help='hdf5 store file path')
+    p_out = p.add_argument_group('out', 'Parameters of output files')
+    p_out.add('--out.db_path', help='hdf5 store file path')
     p_out.add('--table', default='psd',
               help='table name in hdf5 store to write data. If not specified then will be generated on base of path of input files. Note: "*" is used to write blocks in autonumbered locations (see dask to_hdf())')
 
@@ -625,7 +625,7 @@ def main(new_arg=None, **kwargs):
         return ()
     print('\n' + prog, end=' started. ')
 
-    cfg_out = cfg['output_files']
+    cfg_out = cfg['out']
     if 'split_period' in cfg['proc']:
         cfg['proc']['dt_interval'] = np.timedelta64(cfg['proc']['dt_interval'] if cfg['proc']['dt_interval'] else
                                                     pd_period_to_timedelta(cfg['proc']['split_period']))
@@ -912,7 +912,7 @@ def psd_calc_other_methods(df, prm: Mapping[str, Any]):
             'chunksize': 1000000,  # 'chunksize_percent': 10,  # we'll repace this with burst size if it suit
             # 'max_g_minus_1' used only to replace bad with NaN
         },
-        'output_files': {
+        'out': {
             'db_path': 'incl_proc.h5',
             'table': 'V_incl',
 

@@ -1,6 +1,6 @@
 import pytest
 
-from to_pandas_hdf5.csv2h5_vaex import *
+from to_vaex_hdf5.csv2h5_vaex import *
 
 @pytest.mark.skip(reason="clise was not installed")
 def test_with_prog_config():

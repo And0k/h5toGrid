@@ -15,7 +15,7 @@ from collections import OrderedDict
 from datetime import datetime
 from os import path as os_path
 from sys import stdout as sys_stdout
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -28,7 +28,7 @@ import gsw
 from utils2init import my_argparser_common_part, cfg_from_args, this_prog_basename, init_file_names, init_logging, \
     Ex_nothing_done, set_field_if_no, dir_create_if_need, FakeContextIfOpen
 from utils_time import timzone_view
-from other_filters import rep2mean
+from other_filters import rep2mean, inearestsorted
 from to_pandas_hdf5.csv2h5 import set_filterGlobal_minmax
 from to_pandas_hdf5.h5toh5 import h5temp_open, h5move_tables, h5init, h5del_obsolete, h5index_sort, query_time_range, \
     h5remove_duplicates, h5select
@@ -70,6 +70,8 @@ process it and save HDF5/CSV
              help='table name in hdf5 store to read data. If not specified then will be generated on base of path of input files')
     p_in.add('--tables_log',
              help='table name in hdf5 store to read data intervals. If not specified then will be "{}/logFiles" where {} will be replaced by current data table name')
+    p_in.add('--table_nav', default='navigation',
+             help='table name in hdf5 store to add data from it to log table when in "find runs" mode. Use empty strng to not add')
     p_in.add('--dt_from_utc_hours', default='0',
              help='add this correction to loading datetime data. Can use other suffixes instead of "hours"')
     p_in.add('--b_skip_if_up_to_date', default='True',
@@ -79,10 +81,10 @@ process it and save HDF5/CSV
     p_in.add('--path_coef',
              help='path to file with coefficients. Used for processing of Neil Brown CTD data')
 
-    p_out = p.add_argument_group('output_files', 'all about output files')
+    p_out = p.add_argument_group('out', 'all about output files')
     info_default_path = '[in] path from *.ini'
-    p_out.add('--output_files.db_path', help='hdf5 store file path')
-    p_out.add('--output_files.tables_list',
+    p_out.add('--out.db_path', help='hdf5 store file path')
+    p_out.add('--out.tables_list',
               help='table name in hdf5 store to write data. If not specified then it is same as input tables_list (only new subtable will created here), else it will be generated on base of path of input files')
     # p_out.add('--tables_list',
     #     #           help='tables names in hdf5 store to write data (comma separated)')
@@ -98,13 +100,19 @@ process it and save HDF5/CSV
 
     p_run = p.add_argument_group('extract_runs', 'program behaviour')
     p_run.add('--cols_list', default='Pres',
-              help='column for extract_runs (other common variant is "Depth")')
+              help='column for extract_runs (other common variant besides default is "Depth")')
     p_run.add('--dt_between_min_minutes', default='1', help='')
     p_run.add('--min_dp', default='20', help='')
     p_run.add('--min_samples', default='200', help='100 use small value (10) for binned (averaged) samples')
     p_run.add('--b_keep_minmax_of_bad_files', default='False',
               help='keep 1 min before max and max of separated parts of data where movements insufficient to be runs')
     p_run.add('--b_save_images', default='True', help='to review split result')
+
+    p_flt = p.add_argument_group('filter', 'filter all data based on min/max of parameters')
+    p_flt.add('--min_dict',
+              help='List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is below ``value``')
+    p_flt.add('--max_dict',
+              help='List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is above ``value``')
 
     p_prog = p.add_argument_group('program', 'program behaviour')
     p_prog.add('--return', default='<end>',  # nargs=1,
@@ -257,20 +265,18 @@ def CTDrunsExtract(P: np.ndarray,
     :param P: Pressure/Depth
     :param dnT: Time
     :param cfg_extract_runs - settings dict with fields:
-        'dt_between_min'
-        'min_dp'
-        'min_samples'
-        ['dt_hole_max'] - split runs where dt between adjasent samples bigger. If not
+        dt_between_min
+        min_dp
+        min_samples
+        dt_hole_max - split runs where dt between adjasent samples bigger. If not
         specified it is set equal to 'dt_between_min' automatically
-        ['b_do'] - if it is set to False intepret all data as one run
+        b_do - if it is set to False intepret all data as one run
         'b_keep_minmax_of_bad_files', optional - keep 1 min before max and max of separated parts of data where movements insufficient to be runs
     :return: iminmax: 2D numpy array np.int64([[minimums],[maximums]])
     '''
 
     if ('do' not in cfg_extract_runs) or cfg_extract_runs['b_do']:  # not do only if b_do is set to False
         P = np.abs(rep2mean(P))
-        # if issubclass(x, DatetimeIndex)     # not works ??????????????
-        # dnT= rep2mean(dnT, pd.notnull(dnT)) #           ??????????????
         if not 'dt_hole_max' in cfg_extract_runs:
             cfg_extract_runs['dt_hole_max'] = cfg_extract_runs['dt_between_min']
         dt64_hole_max = np.timedelta64(cfg_extract_runs['dt_hole_max'], 'ns')
@@ -283,9 +289,6 @@ def CTDrunsExtract(P: np.ndarray,
             islice = slice(ist, ien)
             if (ien - ist) < cfg_extract_runs['min_samples']:
                 continue
-
-            # timeit('max(P[islice])', number= 1000, globals=globals())
-            # timeit('P[islice].max()', number= 1000, globals=globals())
 
             if (P[islice].max() - P[islice].min()) < cfg_extract_runs['min_dp']:
                 if cfg_extract_runs.get('b_keep_minmax_of_bad_files'):
@@ -373,7 +376,7 @@ def process_brown(df_raw, cfg: Mapping[str, Any]):
 
     # Practical Salinty PSS-78
     Val['Sal'] = gsw.SP_from_C(Val['Cond'], Val['Temp'], Val['Pres'])
-    df = pd.DataFrame(Val, columns=cfg['output_files']['data_columns'], index=df_raw.index)
+    df = pd.DataFrame(Val, columns=cfg['out']['data_columns'], index=df_raw.index)
 
     # import seawater as sw
     # T90conv = lambda t68: t68/1.00024
@@ -383,12 +386,15 @@ def process_brown(df_raw, cfg: Mapping[str, Any]):
 
 def log_runs(df_raw: pd.DataFrame,
              cfg: Mapping[str, Any],
-             log: Optional[Mapping[str, Any]] = None) -> pd.DataFrame:
+             log: Optional[MutableMapping[str, Any]] = None) -> pd.DataFrame:
     """
     Changes log
     :param df_raw:
-    :param cfg:
-    :param log:
+    :param cfg: dict with fields:
+      - extract_runs:
+      - in
+      -
+    :param log: here result is saved in fields 'Date0', 'DateEnd', 'rows', 'rows_filtered', 'fileName', 'fileChangeTime', and params
     :return: empty DataFrame (for compability)
     """
 
@@ -404,44 +410,128 @@ def log_runs(df_raw: pd.DataFrame,
         cfg['extract_runs'])
     if not len(imin):
         return pd.DataFrame(data=None, columns=df_raw.columns, index=df_raw.index[[]])  # empty dataframe
-    df_log_st = df_raw.asof(df_raw.index[imin], subset=cfg['extract_runs']['cols']).add_suffix('_st')
-    df_log_en = df_raw.asof(df_raw.index[imax], subset=cfg['extract_runs']['cols']).add_suffix('_en')
-    log.update(  # pd.DataFrame(, index=df_log_st.index).rename_axis('Date0')
-        {'Date0': timzone_view(df_log_st.index, cfg['in']['dt_from_utc']),
-         'DateEnd': timzone_view(df_log_en.index, cfg['in']['dt_from_utc']),
-         **dict([(i[0], i[1].values) for st_en in zip(df_log_st.items(), df_log_en.items()) for i in st_en]),
+
+    log_update = {}
+    for ilim, suffix, log_time_col, i_search in ((imin, '_st', 'Date0', 0), (imax, '_en', 'DateEnd', -1)):
+        log_update[suffix] = df_raw.asof(df_raw.index[ilim], subset=cfg['extract_runs']['cols'])  # rows of last good depth
+        log[log_time_col] = timzone_view(log_update[suffix].index, cfg['in']['dt_from_utc'])
+        # Search for nearest good values if have bad
+        for (p, *isnan) in log_update[suffix].isna().T.itertuples(name=None):
+            if i_search==-1:
+                log_update[suffix].loc[isnan, p] = df_raw[p].asof(df_raw.index[imax[isnan]])
+            else:
+                # asof alternative for 1st notna: take 1st good element in each interval
+                for i, i_l, i_h in zip(log_update[suffix].index[isnan], imin[isnan], imax[isnan]):
+                    s_search = df_raw.iloc[i_l:i_h, df_raw.columns.get_loc(p)]
+                    try:
+                        log_update[suffix].at[i, p] = s_search[s_search.notna()].iloc[0]  # i_search=0
+                    except IndexError:
+                        l.warning('no good values for parameter "%s" in run started %s', p, i)
+                        continue
+        log_update[suffix] = log_update[suffix].add_suffix(suffix)
+
+    log.update(  # pd.DataFrame(, index=log_update['_st'].index).rename_axis('Date0')
+        {**dict([(k, v.values) for st_en in zip(log_update['_st'].items(), log_update['_en'].items()) for k, v in st_en]),  # flatten pares
          'rows': imax - imin,
          'rows_filtered': imin - np.append(0, imax[:-1]),  # rows between runs down
          'fileName': [os_path.basename(cfg['in']['file_stem'])] * len(imin),
          'fileChangeTime': [cfg['in']['fileChangeTime']] * len(imin),
          })
 
-    set_field_if_no(cfg['in'], 'table_nav', 'navigation')
-    set_field_if_no(cfg['output_files'], 'dt_search_nav_tolerance', pd.Timedelta(minutes=2))
+    #set_field_if_no(cfg['in'], 'table_nav', 'navigation')
+    if cfg['in'].get('table_nav'):
+        set_field_if_no(cfg['out'], 'dt_search_nav_tolerance', pd.Timedelta(minutes=2))
+        time_points = log_update['_st'].index.append(log_update['_en'].index)
+        df_nav, dt = h5select(  # all starts then all ends in row
+            cfg['in']['db'], cfg['in']['table_nav'], columns=['Lat', 'Lon', 'DepEcho', 'Speed', 'Course'],
+            time_points=time_points, dt_check_tolerance=cfg['out']['dt_search_nav_tolerance']
+            )
 
-    dfNpoints, dt = h5select(  # all starts then all ends in row
-        cfg['in']['db'], cfg['in']['table_nav'], columns=['Lat', 'Lon', 'DepEcho', 'Speed', 'Course'],
-        time_points=df_log_st.index.append(df_log_en.index),
-        dt_check_tolerance=cfg['output_files']['dt_search_nav_tolerance']
-        )
-    dfNpoints['nearestNav'.format(cfg['output_files']['dt_search_nav_tolerance'])] = dt.astype('m8[s]').view(np.int64)
-    # todo: allow filter for individual columns. solution: use multiple calls for columns that need filtering with appropriate query_range_pattern argument of h5select()
 
-    df_edges_items_list = [df_edge.add_suffix(suffix).items() for suffix, df_edge in (
-        ('_st', dfNpoints.iloc[:len(df_log_st)]),
-        ('_en', dfNpoints.iloc[len(df_log_st):len(dfNpoints)]))]
-    log_update = {}
-    for st_en in zip(*df_edges_items_list):
-        for name, series in st_en:
-            log_update[name] = series.values
-    log.update(log_update)
+        # {:0.0f}s'.format(cfg['out']['dt_search_nav_tolerance'].total_seconds())
+        # todo: allow filter for individual columns. solution: use multiple calls for columns that need filtering with appropriate query_range_pattern argument of h5select()
+        isnan = df_nav.isna()
+        for col in df_nav.columns[isnan.any(axis=0)]:
+
+            # not works:
+            # df_nav_col, dt_col = h5select(  # for current parameter's name
+            #         cfg['in']['db'], cfg['in']['table_nav'],
+            #         columns=[col],
+            #         query_range_lims=time_points[[0,-1]],
+            #         time_points=time_points[isnan[col]],
+            #         query_range_pattern = f"index>=Timestamp('{{}}') & index<=Timestamp('{{}}') & {col} > 0 ",
+            #         dt_check_tolerance=cfg['out']['dt_search_nav_tolerance']
+            #         )
+
+            # Note: tries to find only positive vals:
+            df_nav_col = cfg['in']['db'].select(cfg['in']['table_nav'], where=
+                  "index>=Timestamp('{}') & index<=Timestamp('{}') & {} > 0".format(
+                       *(time_points[[0, -1]] + np.array((
+                           -cfg['out']['dt_search_nav_tolerance'],
+                            cfg['out']['dt_search_nav_tolerance']))
+                         ), col),  columns=[col])
+            try:
+                vals = df_nav_col[col].values
+                vals = vals[inearestsorted(df_nav_col.index, time_points[isnan[col]])]
+            except IndexError:
+                continue  # not found
+            #vals = df_nav_col[col]
+            if vals.any():
+                df_nav.loc[isnan[col], col] = vals
+
+        df_nav['nearestNav'] = dt.astype('m8[s]').view(np.int64)
+        df_edges_items_list = [df_edge.add_suffix(suffix).items() for suffix, df_edge in (
+            ('_st', df_nav.iloc[:len(log_update['_st'])]),
+            ('_en', df_nav.iloc[len(log_update['_st']):len(df_nav)]))]
+
+        #
+
+        for st_en in zip(*df_edges_items_list):
+            for name, series in st_en:
+                # If have from data table already => update needed elements only
+                if name in log:
+                    b_need = np.isnan(log.get(name))
+                    if b_need.any():
+                        b_have = np.isfinite(series.values)
+                        # from loaded nav in points
+                        b_use = b_need & b_have
+                        if b_use.any():
+                            log[name][b_use] = series.values[b_use]
+                        # # from all nav (not loaded)
+                        # b_need &= ~b_have
+                        #
+                        # if b_need.any():
+                        #     # load range to search nearest good val. for specified fields and tolerance
+                        #     df = cfg['in']['db'].select(cfg['in']['table_nav'], where=query_range_pattern.format(st_en.index), columns=name)
+
+
+                            # df_nav = h5select(  # for current parameter's name
+                            #     cfg['in']['db'], cfg['in']['table_nav'],
+                            #     columns=name,
+                            #     query_range_lims=st_en
+                            #     time_points=log_update['_st'].index.append(log_update['_en'].index),
+                            #     dt_check_tolerance=cfg['out']['dt_search_nav_tolerance']
+                            #     )
+                    continue
+                # else:
+                #     b_need = np.isnan(series.values)
+                #     for
+
+                # Else update all elements at once
+                log[name] = series.values
+
+
+
     l.info('updating log with %d row%s...', imin.size, 's' if imin.size > 1 else '')
 
+    # list means save only log but not data
+    print('runs lengths, initial fitered counts: {rows}, {rows_filtered}'.format_map(log))
 
+    # isinstance(cfg_out['log']['rows'], int) and
     # log.update(**dict([(i[0], i[1].values) for st_en in zip(
     #     *(dfNpoints.iloc[sl].add_suffix(sfx).items() for sfx, sl in (
-    #         ('_st', slice(0, len(df_log_st))),
-    #         ('_en', slice(len(df_log_st), len(dfNpoints)))
+    #         ('_st', slice(0, len(log_update['_st']))),
+    #         ('_en', slice(len(log_update['_st']), len(dfNpoints)))
     #     )
     # )) for i in st_en]))
 
@@ -460,19 +550,19 @@ def log_runs(df_raw: pd.DataFrame,
 
 def add_ctd_params(df_in: Mapping[str, Sequence], cfg: Mapping[str, Any], lon=16.7, lat=55.2):
     """
-    Calculate all parameters from 'sigma0', 'depth', 'soundV', 'SA' that is specified in cfg['output_files']['data_columns']
+    Calculate all parameters from 'sigma0', 'depth', 'soundV', 'SA' that is specified in cfg['out']['data_columns']
     :param df_in: DataFrame with columns:
      'Pres', 'Temp90' or 'Temp', and may be others:
      'Lat', 'Lon': to use instead cfg['in']['lat'] and lat and -//- lon
     :param cfg: dict with fields:
-        ['output_files']['data_columns'] - list of columns in output dataframe
+        ['out']['data_columns'] - list of columns in output dataframe
         ['in'].['b_temp_on_its90'] - optional
     :param lon:  # 54.8707   # least priority values
     :param lon:  # 19.3212
-    :return: DataFrame with only columns specified in cfg['output_files']['data_columns']
+    :return: DataFrame with only columns specified in cfg['out']['data_columns']
     """
     ctd = df_in
-    params_to_calc = set(cfg['output_files']['data_columns']).difference(ctd.columns)
+    params_to_calc = set(cfg['out']['data_columns']).difference(ctd.columns)
     params_coord_needed_for = params_to_calc.intersection(('depth', 'sigma0', 'SA', 'soundV'))  # need for all cols?
     if any(params_coord_needed_for):
         # todo: load from nav:
@@ -502,8 +592,12 @@ def add_ctd_params(df_in: Mapping[str, Sequence], cfg: Mapping[str, Any], lon=16
     if 'sigma0' in params_to_calc:
         CT = gsw.CT_from_t(ctd['SA'], ctd['Temp90'], ctd['Pres'])
         ctd['sigma0'] = gsw.sigma0(ctd['SA'], CT)
-        # ctd = pd.DataFrame(ctd, columns=cfg['output_files']['data_columns'], index=df_in.index)
-    return ctd[cfg['output_files']['data_columns']]
+        # ctd = pd.DataFrame(ctd, columns=cfg['out']['data_columns'], index=df_in.index)
+    if 'Lat' in params_to_calc and not 'Lat' in ctd.columns:
+        ctd['Lat'] = lat
+        ctd['Lon'] = lon
+
+    return ctd[cfg['out']['data_columns']]
 
 
 ##################################################################################
@@ -531,10 +625,10 @@ def main(new_arg=None):
     print('\n' + this_prog_basename(__file__), end=' started. ')
     try:
         cfg['in'] = init_file_names(cfg['in'], cfg['program']['b_interact'], path_field='db_path')
-        set_field_if_no(cfg['in'], 'tables_log', '{}/logFiles')
+        set_field_if_no(cfg['in'], 'tables_log', '{}/logFiles')  # will be filled by each table from cfg['in']['tables']
         cfg['in']['query'] = query_time_range(cfg['in'])
-        set_field_if_no(cfg['output_files'], 'db_path', cfg['in']['db_path'])
-        # cfg['output_files'] = init_file_names(cfg['output_files'], , path_field='db_path')
+        set_field_if_no(cfg['out'], 'db_path', cfg['in']['db_path'])
+        # cfg['out'] = init_file_names(cfg['out'], , path_field='db_path')
     except Ex_nothing_done as e:
         print(e.message)
         return ()
@@ -547,22 +641,21 @@ def main(new_arg=None):
     # except IOError as e:
     #     print('\n==> '.join([a for a in e.args if isinstance(a,str)])) #e.message
     #     raise(e)
-    set_field_if_no(cfg, 'filter', {})
     # Open text log
     if 'log' in cfg['program'].keys():
         dir_create_if_need(os_path.dirname(cfg['program']['log']))
         flog = open(cfg['program']['log'], 'a+', encoding='cp1251')
     str_log = ''
-    cfg['output_files']['log'] = OrderedDict({'fileName': None,
+    cfg['out']['log'] = OrderedDict({'fileName': None,
                                               'fileChangeTime': None})
 
     # Prepare save to csv
-    if 'file_names_add_fun' in cfg['output_files']:
-        file_names_add = eval(compile(cfg['output_files']['file_names_add_fun'], '', 'eval'))
+    if 'file_names_add_fun' in cfg['out']:
+        file_names_add = eval(compile(cfg['out']['file_names_add_fun'], '', 'eval'))
     else:
         file_names_add = lambda i: '.csv'  # f'_{i}.csv'
 
-    cfg_out = cfg['output_files']
+    cfg_out = cfg['out']
     if True:  # try:
         # Prepare data for output store and open it
         if cfg_out['tables'] == ['None']:
@@ -575,9 +668,11 @@ def main(new_arg=None):
 
     cfg_fileN = os_path.splitext(cfg['in']['cfgFile'])[0]
     if cfg_fileN.endswith('_runs'):
+        # Only after filter
         func_before_cycle = lambda x: None
-        func_in_cycle = lambda df_raw, cfg: log_runs(df_raw, cfg, cfg_out['log'])
-        cfg['filter'] = None
+        func_before_filter = lambda df, cfg: df
+        func_after_filter = lambda df, cfg: log_runs(df, cfg, cfg_out['log'])
+        # todo: calcuate derived parameters before were they are bad (or replace all of them if any bad?)
         # this table will be added:
         cfg_out['tables_log'] = [cfg_out['tables'][0] + '/logRuns']
         cfg_out['b_log_ready'] = True  # to not apdate time range in h5_append()
@@ -594,12 +689,13 @@ def main(new_arg=None):
         if 'brown' in cfg_fileN.lower():
             func_before_cycle = load_coef
             if 'Lat' in cfg['in']:
-                func_in_cycle = lambda *args, **kwargs: add_ctd_params(process_brown(*args, **kwargs), kwargs['cfg'])
+                func_before_filter = lambda *args, **kwargs: add_ctd_params(process_brown(*args, **kwargs), kwargs['cfg'])
             else:
-                func_in_cycle = process_brown
+                func_before_filter = process_brown
         else:
             func_before_cycle = lambda x: None
-            func_in_cycle = add_ctd_params
+            func_before_filter = add_ctd_params
+        func_after_filter = lambda df, cfg: df  # nothing after filter
 
     func_before_cycle(cfg)  # prepare: usually assign data to cfg['for']
     if cfg_out.get('path_csv'):
@@ -611,6 +707,7 @@ def main(new_arg=None):
 
     dfLogOld = h5temp_open(cfg_out)
     b_out_db_is_different = cfg_out.get('db') is not None and cfg_out['db_path'] != cfg['in']['db_path']  # .is_open
+    # Cycle
     # for path_csv in gen_names_and_log(cfg_out, dfLogOld):
     with FakeContextIfOpen(lambda f: pd.HDFStore(f, mode='r'),
                            cfg_out['db'] if cfg_out.get('db') and not b_out_db_is_different else cfg['in']['db_path']
@@ -623,7 +720,10 @@ def main(new_arg=None):
                 # cfg_out['db'].get_node('CTD_Idronaut(Redas)').logFiles        # n_ext level nodes
             print(tbl, end='. ')
             # Process for each row in log and write multiple rows at once
-            df_log = cfg['in']['db'].select(cfg['in']['tables_log'].format(tbl), where=cfg['in']['query'])
+            if cfg['in']['tables_log']:
+                df_log = cfg['in']['db'].select(cfg['in']['tables_log'].format(tbl), where=cfg['in']['query'])
+            else:
+                df_log = cfg['in']['db'].select(tbl, where=cfg['in']['query'])
             if True:  # try:
                 if 'log' in cfg['program'].keys():
                     nRows = df_log.rows.size
@@ -658,23 +758,24 @@ def main(new_arg=None):
                         # cfg['in']['lat'] will not be used (overrided by df_raw['Lat']) if Lat in df_raw. Same for Lon
                         cfg['in']['lat'] = np.nanmean((r.Lat_st, r.Lat_en))
                         cfg['in']['lon'] = np.nanmean((r.Lon_st, r.Lon_en))
-                    df = func_in_cycle(df_raw, cfg=cfg)
+
+                    df = func_before_filter(df_raw, cfg=cfg)
+
                     if df.size:  # size is zero means save only log but not data
                         # filter, updates cfg_out['log']['rows']
                         df, _ = set_filterGlobal_minmax(df, cfg['filter'], cfg_out['log'])
                     if 'rows' not in cfg_out['log']:
                         l.warning('no data!')
                         continue
-                    elif not isinstance(cfg_out['log']['rows'], int):  # list means save only log but not data
-                        print(
-                            'runs lengths, initial fitered counts: {rows}, {rows_filtered}'.format_map(cfg_out['log']))
-                    else:  # isinstance(cfg_out['log']['rows'], int) and
+                    elif isinstance(cfg_out['log']['rows'], int):
                         print('filtered out {rows_filtered}, remains {rows}'.format_map(cfg_out['log']))
                         if cfg_out['log']['rows']:
                             print('.', end='')
                         else:
                             l.warning('no data!')
                             continue
+
+                    df = func_after_filter(df, cfg=cfg)
 
                     # Append to Store
                     h5_append(cfg_out, df, cfg_out['log'], log_dt_from_utc=cfg['in']['dt_from_utc'])
@@ -694,10 +795,10 @@ def main(new_arg=None):
                         str_log = '{fileName}:\t{Date0:%d.%m.%Y %H:%M:%S}-' \
                                   '{DateEnd:%d. %H:%M:%S%z}\t{rows}rows'.format_map(
                             cfg_out['log'])  # \t{Lat}\t{Lon}\t{strOldVal}->\t{mag}
-                        print(str_log)
+                        l.info(str_log)
                     else:
-                        str_log = str(cfg_out['log']['rows'])
-                        # Log to logfile
+                        str_log = str(cfg_out['log'].get('rows', '0'))
+                    # Log to logfile
                     if 'log' in cfg['program'].keys():
                         flog.writelines('\n' + str_log)
 
@@ -745,6 +846,10 @@ if __name__ == '__main__':
     main()
 
 """ trash ##############################################
+
+timeit('max(P[islice])', number= 1000, globals=globals())
+timeit('P[islice].max()', number= 1000, globals=globals())
+            
 iex = np.flatnonzero(np.diff(bbad))  # will be edges + extremums indices
 if iex[0] != 0:
     iex = np.insert(iex, 0, 0)  # start edge added

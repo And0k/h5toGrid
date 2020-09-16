@@ -59,21 +59,21 @@ will be sabstituted with correspondng input file names.
     except IOError as e:
         print('\n==> '.join([a for a in e.args if isinstance(a, str)]))  # e.message
         raise (e)
-    nadd = len(cfg['in']['table']) - len(cfg['output_files']['file_names'])
+    nadd = len(cfg['in']['table']) - len(cfg['out']['file_names'])
     if nadd != 0:  # same file names for all tables
-        cfg['output_files']['file_names'] += [cfg['output_files']['file_names'][-1]] * nadd
+        cfg['out']['file_names'] += [cfg['out']['file_names'][-1]] * nadd
     # Load data #################################################################
-    fileOutP = cfg['output_files']['path'] if 'path' in cfg['output_files'] else os_path.dirname(
+    fileOutP = cfg['out']['path'] if 'path' in cfg['out'] else os_path.dirname(
         cfg['in']['path'])
     qstr_trange_pattern = "index>=Timestamp('{}') & index<=Timestamp('{}')"
-    if 'file_names_add_fun' in cfg['output_files']:
-        file_names_add = eval(compile(cfg['output_files']['file_names_add_fun'], [], 'eval'))
+    if 'file_names_add_fun' in cfg['out']:
+        file_names_add = eval(compile(cfg['out']['file_names_add_fun'], [], 'eval'))
     else:
         file_names_add = lambda i: str(i) + '.csv'
     iSt = 1
     with pd.HDFStore(cfg['in']['path'], mode='r') as storeIn:
         for tblD, fileOutN in zip(cfg['in']['table'],
-                                  cfg['output_files']['file_names']):
+                                  cfg['out']['file_names']):
             if False:  # Show table info
                 storeIn.get_storer(tblD).table  # ?
                 nodes = sorted(storeIn.root.__members__)  # , key=number_key
@@ -107,7 +107,7 @@ will be sabstituted with correspondng input file names.
                                               < 0, '-', '+'), np.abs(dT[bBad]))]))
             Nind += Nind_st
             nav2add = storeIn.select(cfg['in']['table_nav'], where=Nind,
-                                     columns=cfg['output_files']['nav_cols'])
+                                     columns=cfg['out']['nav_cols'])
             print("{} rows loaded".format(dfL.shape[0]))
 
             # Save waypoints to csv
@@ -136,13 +136,13 @@ will be sabstituted with correspondng input file names.
                     if bFirst_data_from_table:
                         # check existanse of needed cols
                         bFirst_data_from_table = False
-                        add_empty_col = [c for c in cfg['output_files']['data_columns'] if c not in cols]
+                        add_empty_col = [c for c in cfg['out']['data_columns'] if c not in cols]
                     for c in add_empty_col:
                         Dat[c] = None
 
                     # cols = list(df.columns.values)
                     # pd.merge(ind, Dat) #Dat.join
-                    Dat[cfg['output_files']['data_columns']].to_csv(os_path.join(fileOutP, fname),
+                    Dat[cfg['out']['data_columns']].to_csv(os_path.join(fileOutP, fname),
                                                                     date_format=date_format_ISO9115,
                                                                     float_format='%4.4g',
                                                                     index_label='Rec_num')  # to_string, line_terminator='\r\n'

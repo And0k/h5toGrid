@@ -42,7 +42,7 @@ sys.path.append(str(Path(scripts_path).parent.resolve()))
 # from other_filters import despike, rep2mean
 
 cfg = {  # output configuration after loading csv:
-    'output_files': {
+    'out': {
         'table': 'inclPres11',  # 'inclPres14',
         'db_path': '/mnt/D/workData/_source/BalticSea/180418/_source/180418inclPres.h5',
         'chunksize': None, 'chunksize_percent': 10  # we'll repace this with burst size if it suit
@@ -50,7 +50,7 @@ cfg = {  # output configuration after loading csv:
 
 
 # cfg = ini2dict(r'D:\Work\_Python3\_projects\PyCharm\h5toGrid\to_pandas_hdf5\csv_inclin_Baranov.ini')
-# tblD = cfg['output_files']['table']
+# tblD = cfg['out']['table']
 # tblL = tblD + '/log'
 # dtAdd= np.timedelta64(60,'s')
 # dtInterval = np.timedelta64(60, 's')
@@ -111,12 +111,12 @@ def poly_load_apply(x, pattern_path_of_poly, pattern_format_arg):
     """
     Load and apply calibraion (polynominal coefficients)
     poly = '/mnt/D/workData/_experiment/_2018/inclinometr/180416Pcalibr/fitting_result(P#' + '11' + 'calibr_log).txt'
-    >>> dfcum.P = poly_load_apply(y_filt, pattern_path_of_poly = '/mnt/D/workData/_experiment/_2018/inclinometr/180605Pcalibr/fitting_result(inclPres{}).txt', pattern_format_arg=cfg['output_files']['table'][-2:])
+    >>> dfcum.P = poly_load_apply(y_filt, pattern_path_of_poly = '/mnt/D/workData/_experiment/_2018/inclinometr/180605Pcalibr/fitting_result(inclPres{}).txt', pattern_format_arg=cfg['out']['table'][-2:])
     """
 
     # pattern_path_of_poly ='/mnt/D/workData/_experiment/_2018/inclinometr/180416Pcalibr/fitting_result(P#{}calibr_log).txt')
 
-    path_poly = Path(pattern_path_of_poly.format(cfg['output_files']['table'][-2:]))
+    path_poly = Path(pattern_path_of_poly.format(cfg['out']['table'][-2:]))
 
     if not path_poly.exists():
         raise (FileNotFoundError(f'can not load coef from {path_poly}'))
@@ -138,15 +138,15 @@ from incinometer.h5inclinometer_coef import h5_save_coef
 from utils2init import Ex_nothing_done, standard_error_info
 
 # input:
-cfg['output_files']['table'] = 'incl10'  # 'inkl09' # 'inclPres11' #4
-cfg['output_files']['db_path'] = '/mnt/D/workData/_source/BalticSea/180418/_source/180418inclPres.h5'
+cfg['out']['table'] = 'incl10'  # 'inkl09' # 'inclPres11' #4
+cfg['out']['db_path'] = '/mnt/D/workData/_source/BalticSea/180418/_source/180418inclPres.h5'
 
 # optional external coef source:
-# cfg['output_files']['db_coef_path']           # defaut is same as 'db_path'
-# cfg['output_files']['table_coef'] = 'incl10'  # defaut is same as 'table'
+# cfg['out']['db_coef_path']           # defaut is same as 'db_path'
+# cfg['out']['table_coef'] = 'incl10'  # defaut is same as 'table'
 
 # '/mnt/D/workData/_source/BalticSea/180418/_source/180418incl,P(cal0605).h5'  # 180418incl,P.h5
-cfg['output_files']['chunksize'] = 50000
+cfg['out']['chunksize'] = 50000
 
 # @+others
 # @+node:korzh.20180603070720.1: *3* functions
@@ -296,13 +296,13 @@ def waves_proc(df, i_burst, len_avg=600, i_burst_good_exactly=1):
     # save calculated parameters
     export_df_to_csv(
         pd.DataFrame(ar_spectrum_characteristics, index=df.index[i_burst], columns=calc_spectrum_characteristics),
-        cfg['output_files'],
+        cfg['out'],
         add_subdir='V,P_txt',
         add_suffix='spectrum_characteristics')
 
     export_df_to_csv(
         pd.DataFrame(Sp, index=df.index[i_burst], columns=wfreq),
-        cfg['output_files'],
+        cfg['out'],
         add_subdir='V,P_txt',
         add_suffix='spectrum')
 
@@ -332,7 +332,7 @@ def waves_proc(df, i_burst, len_avg=600, i_burst_good_exactly=1):
         ax.plot(df.index[ind_trough], df.P_detrend[ind_trough], '-r', linewidth=1)
         ax.set_ylim(-2, 2)
         ax.grid(True)
-        # plt.savefig(Path(cfg['output_files']['db_path']).with_name(cfg['output_files']['table'] + '_P_detrend (600dpi)_18_1930-2300').with_suffix('.png'), dpi=600)
+        # plt.savefig(Path(cfg['out']['db_path']).with_name(cfg['out']['table'] + '_P_detrend (600dpi)_18_1930-2300').with_suffix('.png'), dpi=600)
         # @-others
 
     return df, ind_crest, ind_trough
@@ -422,9 +422,9 @@ Ah_old, Ch: scaling coefficients for magnitometer
 """
 try:
 
-    with h5py.File(cfg['output_files']['db_path_coef' if 'db_path_coef' in cfg['output_files'] else 'db_path']
+    with h5py.File(cfg['out']['db_path_coef' if 'db_path_coef' in cfg['out'] else 'db_path']
             , "r") as h5source:
-        tblD = cfg['output_files']['table_coef' if 'table_coef' in cfg['output_files'] else 'table']
+        tblD = cfg['out']['table_coef' if 'table_coef' in cfg['out'] else 'table']
         print(f'loading coefficient from {h5source.file.name}/{tblD}')
         Ag_old = h5source[tblD + '//coef//G//A'].value
         Cg = h5source[tblD + '//coef//G//C'].value
@@ -445,8 +445,8 @@ try:
 
     if True:
         # zeroing
-        start_end = h5q_interval2coord(cfg['output_files'], USEcalibr0V_time[0])
-        a = h5_load_range_by_coord(cfg['output_files'], start_end)
+        start_end = h5q_interval2coord(cfg['out'], USEcalibr0V_time[0])
+        a = h5_load_range_by_coord(cfg['out'], start_end)
         Ag, Ah = zeroing(a, Ag_old, Cg, Ah_old)
         if np.allclose(Ag, Ag_old):
             raise Ex_nothing_done('zeroing coefficients are not changed')
@@ -460,7 +460,7 @@ try:
     b_update = True
     print('have new zeroing coefficients')
 except Ex_nothing_done as ex:  # not need update except need copy
-    if ('db_path_coef' in cfg['output_files']) or ('table_coef' in cfg['output_files']):
+    if ('db_path_coef' in cfg['out']) or ('table_coef' in cfg['out']):
         print('copying loaded coef replacing Ag, Ah to specified Ag_old, Ah_old')
         Ag, Ah = Ag_old, Ah_old
         b_update = True
@@ -468,22 +468,22 @@ except Ex_nothing_done as ex:  # not need update except need copy
         print('not need update zeroing coefficients')
         b_update = False
 if b_update:
-    h5_save_coef(cfg['output_files'].get('db_path_coef'),
-                 cfg['output_files']['db_path'],
-                 tblD_source=cfg['output_files'].get('table_coef'),
-                 tblD_dest=cfg['output_files']['table'],
+    h5_save_coef(cfg['out'].get('db_path_coef'),
+                 cfg['out']['db_path'],
+                 tblD_source=cfg['out'].get('table_coef'),
+                 tblD_dest=cfg['out']['table'],
                  dict_matrices={'//coef//H//A': Ah,
                                 '//coef//G//A': Ag})
 # @+node:korzh.20180610154356.1: ** |||break|||
 raise (UserWarning('my break of calculation'))
 # @+node:korzh.20180604143456.1: ** circle
 all_data = pd.to_datetime(['2018-04-18T10:00', '2018-06-06T00:00'])  # use something like [-inf, inf] for all data
-cfg['output_files']['period'] = 'Y'  # 'D'   # pandas. Offset strings (as D, 5D, H, ... )
+cfg['out']['period'] = 'Y'  # 'D'   # pandas. Offset strings (as D, 5D, H, ... )
 t_interval_end = all_data[0]
 t_intervals_start = pd.date_range(start=t_interval_end.normalize(), end=max(all_data[-1],
                                                                             t_interval_end.normalize() + pd_period_to_timedelta(
-                                                                                cfg['output_files']['period'])),
-                                  freq=cfg['output_files']['period'])  # make last t_interval_start >= all_data[-1]
+                                                                                cfg['out']['period'])),
+                                  freq=cfg['out']['period'])  # make last t_interval_start >= all_data[-1]
 n_intervals_without_data = 0
 
 for t_interval_start in t_intervals_start:
@@ -492,8 +492,8 @@ for t_interval_start in t_intervals_start:
     try:
         # @+others
         # @+node:korzh.20180526160951.1: *3* load_interval
-        start_end = h5_data_interval(cfg['output_files'], USEtime[0])
-        a = h5_load_interval_dd(cfg['output_files'], start_end)
+        start_end = h5_data_interval(cfg['out'], USEtime[0])
+        a = h5_load_interval_dd(cfg['out'], start_end)
         # determine indexes of bursts starts
 
         tim = a.index.compute()
@@ -620,7 +620,7 @@ for t_interval_start in t_intervals_start:
                     np.degrees(np.arctan2(np.tan(sRoll), np.tan(sPitch)) + fHeading(Hxyz, sPitch, sRoll))]
                 , columns=['inclination', 'Vdir'], index=tim)
 
-        export_df_to_csv(df, cfg['output_files'], add_subdir='V,P_txt')
+        export_df_to_csv(df, cfg['out'], add_subdir='V,P_txt')
 
         df, ind_crest, ind_trough = waves_proc(df, i_burst, len_avg=600, i_burst_good_exactly=1)
         # @+node:korzh.20180525161640.1: *3* open_veusz_pages
@@ -666,8 +666,8 @@ for t_interval_start in t_intervals_start:
         veusze.SetData('ind_crest', ind_crest)
         veusze.SetData('ind_trough', ind_trough)
         veusze.SetData('i_burst', i_burst)
-        path_vsz_save = Path(cfg['output_files']['db_path']).with_name(
-            cfg['output_files']['table'] + '_P_detrend').with_suffix('.vszh5')
+        path_vsz_save = Path(cfg['out']['db_path']).with_name(
+            cfg['out']['table'] + '_P_detrend').with_suffix('.vszh5')
         print(f'saving {path_vsz_save.name} ...', end='')
 
         veusze.Save(str(path_vsz_save), mode='hdf5')  # veusze.Save(str(path_vsz_save)) saves time with bad resolution

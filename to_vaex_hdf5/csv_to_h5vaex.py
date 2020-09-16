@@ -62,7 +62,6 @@ except ImportError:
 if __name__ == '__main__':
     lf = None  # see main(): l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
 else:
-    #l = logging.getLogger(__name__)
     lf = LoggingStyleAdapter(logging.getLogger(__name__))
 
 def h5pandas_to_vaex_file_names(file_in: Union[None, str, PurePath] = None, path_out_str: Optional[str] = None):
@@ -649,7 +648,7 @@ def csv_to_h5_vaex(read_csv_args, to_hdf_args, dates_formats: Mapping[str, str],
             if len(hdf5_list):      # continue interrupted csv_to_h5()
                 hdf5_list.sort()
                 file_last = hdf5_list[-1]
-                l.info('Found %d temporary files, continue from index found in last file', len(hdf5_list))
+                lf.info('Found {:d} temporary files, continue from index found in last file', len(hdf5_list))
                 "table/columns/index"
             else:                   # add next csv data
                 file_last = to_hdf_args['path_or_buf']
@@ -666,10 +665,10 @@ def csv_to_h5_vaex(read_csv_args, to_hdf_args, dates_formats: Mapping[str, str],
     elif continue_row:
         msg_start += ' Starting from specified csv data row:'
     if continue_row:
-        l.info(f'{msg_start} {continue_row}...')
+        lf.info('{:s} {:s}...', msg_start, continue_row)
         read_csv_args['skiprows'] = read_csv_args.get('skiprows', 0) + continue_row
     else:
-        l.info(f'{msg_start} Beging from csv row 0, giving it index 0...')
+        lf.info('{:s} Beging from csv row 0, giving it index 0...', msg_start)
 
     dtypes = read_csv_args['dtype']
 

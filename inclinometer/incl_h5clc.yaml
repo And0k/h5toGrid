@@ -15,7 +15,7 @@ filter:
     M: 4095
 
 
-output_files:
+out:
   db_path: '190727incl_proc.h5'
   table: 'V_incl'
 

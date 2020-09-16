@@ -55,7 +55,7 @@ to Pandas HDF5 store*.h5
     p_in.add('--filename2timestart_format', default='%Y%m%d_%H%M',
              help='Time from file name. For example for RealTerm v3+ writes names formatted %Y-%m-%d_%H%M')
 
-    p_out = p.add_argument_group('output_files', 'all about output files')
+    p_out = p.add_argument_group('out', 'all about output files')
     p_out.add('--db_path', help='hdf5 store file path')
     p_out.add('--table',
               help='table name in hdf5 store to write data. If not specified then will be generated on base of path of input files. Note: "*" is used to write blocks in autonumbered locations (see dask to_hdf())')
@@ -311,14 +311,14 @@ def main(new_arg=None, **kwargs):
     # Prepare cpecific format loading and writing
     set_field_if_no(cfg['in'], 'coltime', [])
     cfg['in'] = init_input_cols(cfg['in'])
-    cfg['output_files']['names'] = np.array(cfg['in']['dtype'].names)[ \
+    cfg['out']['names'] = np.array(cfg['in']['dtype'].names)[ \
         cfg['in']['cols_loaded_save_b']]
-    cfg['output_files']['formats'] = [cfg['in']['dtype'].fields[n][0]
-                                      for n in cfg['output_files']['names']]
-    cfg['output_files']['dtype'] = np.dtype({
-        'formats': cfg['output_files']['formats'],
-        'names': cfg['output_files']['names']})
-    h5init(cfg['in'], cfg['output_files'])
+    cfg['out']['formats'] = [cfg['in']['dtype'].fields[n][0]
+                                      for n in cfg['out']['names']]
+    cfg['out']['dtype'] = np.dtype({
+        'formats': cfg['out']['formats'],
+        'names': cfg['out']['names']})
+    h5init(cfg['in'], cfg['out'])
 
     # cfg['Period'] = 1.0 / cfg['in']['fs']  # instead Second can use Milli / Micro / Nano:
     # cfg['pdPeriod'] = pd.to_timedelta(cfg['Period'], 's')
@@ -327,14 +327,14 @@ def main(new_arg=None, **kwargs):
     #     pd.datetools.Nano(cfg['Period'] * 1e9)
 
     # log table of loaded files. columns: Start time, file name, and its index in array off all loaded data:
-    log_item = cfg['output_files']['log'] = {}  # fields will have: 'fileName': None, 'fileChangeTime': None, 'rows': 0
+    log_item = cfg['out']['log'] = {}  # fields will have: 'fileName': None, 'fileChangeTime': None, 'rows': 0
 
     strLog = ''
     # from collections import namedtuple
     # type_log_files = namedtuple('type_log_files', ['label','iStart'])
     # log.sort(axis=0, order='log_item['Date0']')#sort files by time
 
-    dfLogOld = h5temp_open(cfg['output_files'])
+    dfLogOld = h5temp_open(cfg['out'])
     if 'log' in cfg['program'].keys():
         f = open(PurePath(sys_argv[0]).parent / cfg['program']['log'], 'a', encoding='cp1251')
         f.writelines(datetime.now().strftime('\n\n%d.%m.%Y %H:%M:%S> processed '
@@ -345,10 +345,10 @@ def main(new_arg=None, **kwargs):
     set_field_if_no(cfg['in'], 'b_byte_order_is_big_endian', True)
     set_field_if_no(cfg['in'], 'b_baklan', False)
     set_field_if_no(cfg['in'], 'b_time_fromtimestamp_source', False)
-    cfg['output_files']['fs'] = cfg['in']['fs']
+    cfg['out']['fs'] = cfg['in']['fs']
     if True:
         ## Main circle ############################################################
-        for i1_file, path_in in h5_dispenser_and_names_gen(cfg, cfg['output_files']):
+        for i1_file, path_in in h5_dispenser_and_names_gen(cfg, cfg['out']):
             l.info('{}. {}: '.format(i1_file, path_in.name))
 
             # Loading data
@@ -371,10 +371,10 @@ def main(new_arg=None, **kwargs):
             log_item['Date0'] += cfg['in']['dt_from_utc']
             tim = log_item['Date0'] + iFrame * timedelta(seconds=1 / cfg['in'][
                 'fs'])  # tim = pd.date_range(log_item['Date0'], periods=np.size(V, 0), freq=cfg['pdPeriod'])
-            df = pd.DataFrame(V.view(dtype=cfg['output_files']['dtype']),  # np.uint16
-                              columns=cfg['output_files']['names'],
+            df = pd.DataFrame(V.view(dtype=cfg['out']['dtype']),  # np.uint16
+                              columns=cfg['out']['names'],
                               index=tim)
-            # pd.DataFrame(V, columns=cfg['output_files']['names'], dtype=cfg['output_files']['formats'], index=tim)
+            # pd.DataFrame(V, columns=cfg['out']['names'], dtype=cfg['out']['formats'], index=tim)
             if df.empty:  # log['rows']==0
                 print('No data => skip file')
                 continue
@@ -393,7 +393,7 @@ def main(new_arg=None, **kwargs):
                 continue
 
             # Append to Store
-            h5_append(cfg['output_files'], df.astype('int32'), log_item)
+            h5_append(cfg['out'], df.astype('int32'), log_item)
 
             if 'txt' in cfg['program'].keys():  # can be saved as text too
                 np.savetxt(cfg['program']['txt'], V, delimiter='\t', newline='\n',
@@ -402,12 +402,12 @@ def main(new_arg=None, **kwargs):
 
     try:
         if b_remove_duplicates:
-            for tblName in (cfg['output_files']['table'] + cfg['output_files']['tableLog_names']):
-                cfg['output_files']['db'][tblName].drop_duplicates(keep='last', inplace=True)  # subset='fileName',?
+            for tblName in (cfg['out']['table'] + cfg['out']['tableLog_names']):
+                cfg['out']['db'][tblName].drop_duplicates(keep='last', inplace=True)  # subset='fileName',?
         if len(strLog):
             print('Create index', end=', ')
-            for tblName in (cfg['output_files']['table'] + cfg['output_files']['tableLog_names']):
-                cfg['output_files']['db'].create_table_index(tblName, columns=['index'], kind='full')
+            for tblName in (cfg['out']['table'] + cfg['out']['tableLog_names']):
+                cfg['out']['db'].create_table_index(tblName, columns=['index'], kind='full')
         else:
             print('done nothing')
     except Exception as e:
@@ -426,9 +426,9 @@ def main(new_arg=None, **kwargs):
 
     if cfg['in'].get(
             'time_last'):  # if have any processed data (needed because ``ptprepack`` not closses hdf5 source if it not finds data)
-        failed_storages = h5move_tables(cfg['output_files'])
+        failed_storages = h5move_tables(cfg['out'])
         print('Ok.', end=' ')
-        h5index_sort(cfg['output_files'], out_storage_name=cfg['output_files']['db_base'] + '-resorted.h5',
+        h5index_sort(cfg['out'], out_storage_name=cfg['out']['db_base'] + '-resorted.h5',
                      in_storages=failed_storages)
 
 

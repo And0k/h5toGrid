@@ -94,7 +94,7 @@ to Pandas HDF5 store*.h5
     p_in.add('--dt_from_utc_hours', default='0',
              help='add this correction to loading datetime data. Can use other suffixes instead of "hours"')
     p_in.add('--header',
-             help='comma separated list mached to input data columns to name variables. Can contain type suffix i.e. (float) - which is default, (text) - also to convert by specific converter, or (time) - for ISO format only. If it will')
+             help='comma separated list matched to input data columns to name variables. Can contain type suffix i.e. (float) - which is default, (text) - also to convert by specific converter, or (time) - for ISO format only. If it will')
     p_in.add('--cols_load_list',
              help='comma separated list of names from header to be saved in hdf5 store. not use "/" char for them')
     p_in.add('--skiprows_integer', default='1',
@@ -112,7 +112,7 @@ to Pandas HDF5 store*.h5
              help='<return_cfg>: returns cfg only and exit, <return_cfg_step_gen_names_and_log>: execute init_input_cols() and also returns fun_proc_loaded function ... - see code')
     p_in.add('--b_interact', default='True',
              help='ask with showing files to process them')
-    p_out = p.add_argument_group('output_files', 'all about output files')
+    p_out = p.add_argument_group('out', 'all about output files')
     p_out.add('--db_path', help='hdf5 store file path')
     p_out.add('--table',
               help='table name in hdf5 store to write data. If not specified then will be generated on base of path of input files')
@@ -642,7 +642,7 @@ def h5del_obsolete(store, cfg_out, log, dfL):
             print('Duplicate entries in log => will be removed from tables! (detected "{}")'.format(log['fileName']))
             cfg_out['b_remove_duplicates'] = True
             if cfg_out['b_use_old_temporary_tables']:
-                print('Consider set [output_files].b_use_old_temporary_tables=0,[in].b_skip_if_up_to_date=0')
+                print('Consider set [out].b_use_old_temporary_tables=0,[in].b_skip_if_up_to_date=0')
             print('Continuing...')
             imax = np.argmax([r.to_pydatetime() for r in rows_for_file['fileChangeTime']])
         else:
@@ -1197,7 +1197,7 @@ def h5index_sort(cfg_out, out_storage_name=None, in_storages=None, tables=None):
                 else:
                     l.warning('skipped of sorting multiindex')
         if b_have_duplicates:
-            l.warning('To drop duplicates restart with [output_files][b_remove_duplicates] = True')
+            l.warning('To drop duplicates restart with [out][b_remove_duplicates] = True')
         else:
             l.info('Ok, no duplicates')
         if b_need_save:
@@ -1391,8 +1391,8 @@ def main(new_arg=None):
 
     # Prepare cpecific format loading and writing
     cfg['in'] = init_input_cols(cfg['in'])
-    # cfg['output_files']['dtype'] = cfg['in']['dtype_out']
-    cfg_out = cfg['output_files'];
+    # cfg['out']['dtype'] = cfg['in']['dtype_out']
+    cfg_out = cfg['out'];
     h5init(cfg['in'], cfg_out)
     # Default time postload proc
     if cfg['in']['fun_proc_loaded'] is None:
@@ -1427,7 +1427,7 @@ def main(new_arg=None):
         """
         # todo: if cfg_in is None:, cfg_in=None
 
-        for ifile, nameFull in enumerate(cfg['in']['namesFull'], start=1):
+        for ifile, nameFull in enumerate(cfg['in']['paths'], start=1):
             # info to identify record (used to update db incrementally)
             nameFE = os_path.basename(nameFull)
             cfg['in']['file_stem'] = nameFE[:-4]  # to extract date if need
@@ -1448,7 +1448,7 @@ def main(new_arg=None):
 
     if cfg['in']['return'] == '<return_cfg_step_gen_names_and_log>':  # to help testing
         cfg['in']['gen_names_and_log'] = gen_names_and_log
-        cfg['output_files'] = cfg_out
+        cfg['out'] = cfg_out
         return cfg
 
     # Writing

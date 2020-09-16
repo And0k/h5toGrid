@@ -16,7 +16,7 @@ from datetime import datetime
 from functools import partial
 from pathlib import Path, PurePath
 from time import sleep
-from typing import Any, Callable, Iterator, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Iterator, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -24,6 +24,7 @@ import vaex
 
 from utils2init import init_file_names, Ex_nothing_done, set_field_if_no, cfg_from_args, my_argparser_common_part, \
     this_prog_basename, init_logging, standard_error_info
+import utils_time_corr
 
 if __name__ == '__main__':
     l = None  # see main(): l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
@@ -35,7 +36,7 @@ VERSION = '0.0.1'
 def cmdline_help_mod(version, info):
     'csv2h5 version {}'.format(version) + info
 
-def my_argparser(
+def argparser_files(
         # "in" default parameters
         path='.', *,
         b_search_in_subdirs=False,
@@ -49,7 +50,7 @@ def my_argparser(
         max_text_width=1000,
         blocksize_int=20000000,
         b_make_time_inc=True,
-        # "output_files"
+        # "out"
         b_insert_separator=True,
         b_use_old_temporary_tables=False,
         b_remove_duplicates=False,
@@ -74,7 +75,7 @@ def my_argparser(
     :param dt_from_utc_hours: add this correction to loading datetime data. Can use other suffixes instead of "hours"
     :param fs_float: sampling frequency, uses this value to calculate intermediate time values between time changed values (if same time is assined to consecutive data)
     :param fs_old_method_float: sampling frequency, same as ``fs_float``, but courses the program to use other method. If smaller than mean data frequency then part of data can be deleted!(?)
-    :param header: comma separated list mached to input data columns to name variables. Can contain type suffix i.e.
+    :param header: comma separated list matched to input data columns to name variables. Can contain type suffix i.e.
      (float) - which is default, (text) - also to convert by specific converter, or (time) - for ISO format only
     :param cols_load_list: comma separated list of names from header to be saved in hdf5 store. Do not use "/" char, or type suffixes like in ``header`` for them. Defaut - all columns
     :param cols_not_use_list: comma separated list of names from header to not be saved in hdf5 store
@@ -90,7 +91,7 @@ def my_argparser(
     :param csv_specific_param_dict: not default parameters for function in csv_specific_proc.py used to load data
 
 
-    "output_files": all about output files:
+    "out": all about output files:
     
     :param db_path: hdf5 store file path
     :param table: table name in hdf5 store to write data. If not specified then will be generated on base of path of input files. Note: "*" is used to write blocks in autonumbered locations (see dask to_hdf())
@@ -191,7 +192,7 @@ def init_input_cols(*, header=None, dtype, converters=None, cols_load, max_text_
             cfg_in['dtype'][cfg_in.get('coldate', cfg_in['coltime'])] = 'datetime64[ns]'
 
     # process format cpecifiers: '(text)','(float)','(time)' and remove it from ['cols'],
-    # also find not used cols cpecified if have no name between commas like in 'col1,,,col4'
+    # also find not used cols cpecified by skipping name between commas like in 'col1,,,col4'
     for i, s in enumerate(cfg_in['cols']):
         if len(s) == 0:
             cols_load_b[i] = 0
@@ -265,12 +266,13 @@ def init_input_cols(*, header=None, dtype, converters=None, cols_load, max_text_
     else:  # list to array
         cfg_in['cols_loaded_save_b'] = np.bool8(cfg_in['cols_loaded_save_b'])
 
-    if b_index_exist and cfg_in['col_index_name']:  # Exclude index from cols_loaded_save_b
+    # Exclude index from cols_loaded_save_b
+    if b_index_exist and cfg_in['col_index_name']:
         cfg_in['cols_loaded_save_b'][cfg_in['dtype'].names.index(
             cfg_in['col_index_name'])] = False  # (must index be used separately?)
 
     # Output columns dtype
-    col_names_out = np.array(col_names_out)[cfg_in['cols_loaded_save_b']]
+    col_names_out = np.array(col_names_out)[cfg_in['cols_loaded_save_b']].tolist() + cfg_in['cols_use']
     cfg_in['dtype_out'] = np.dtype({
         'formats': [cfg_in['dtype'].fields[n][0] if n in cfg_in['dtype'].names else
                     np.dtype(np.float64) for n in col_names_out],
@@ -280,14 +282,13 @@ def init_input_cols(*, header=None, dtype, converters=None, cols_load, max_text_
 
 
 
-def read_csv(nameFull: Sequence[Union[str, Path]],
-             cfg_in: Mapping[str, Any]) -> Union[pd.DataFrame, vaex.dataframe.DataFrame]:
+def read_csv(paths: Sequence[Union[str, Path]], cfg_in: Mapping[str, Any]) -> Union[pd.DataFrame, vaex.dataframe.DataFrame]:
     """
     Reads csv in dask DataFrame
     Calls cfg_in['fun_proc_loaded'] (if specified)
     Calls time_corr: corrects/checks Time (with arguments defined in cfg_in fields)
     Sets Time as index
-    :param nameFull: list of file names
+    :param paths: list of file names
     :param cfg_in: contains fields for arguments of dask.read_csv correspondence:
 
         names=cfg_in['cols'][cfg_in['cols_load']]
@@ -323,9 +324,9 @@ def read_csv(nameFull: Sequence[Union[str, Path]],
     try:
         try:
             # raise ValueError('Temporary')
-            # for ichunk, chunk in enumerate(pd.read_csv(nameFull, chunksize=1000, delimiter='\t')):
+            # for ichunk, chunk in enumerate(pd.read_csv(paths, chunksize=1000, delimiter='\t')):
             df = pd.read_csv(
-                nameFull,
+                paths,
                 dtype=cfg_in['dtype_raw'],
                 names=cfg_in['cols'],
                 delimiter=cfg_in['delimiter'],
@@ -354,7 +355,7 @@ def read_csv(nameFull: Sequence[Union[str, Path]],
             #     low_memory=True, buffer_lines=None, memory_map=False, float_precision=None)
         except ValueError as e:
             l.exception('dask lib can not load data. Trying pandas lib...')
-            for i, nf in enumerate(nameFull):
+            for i, nf in enumerate(paths):
                 df = pd.read_csv(
                     nf, dtype=cfg_in['dtype_raw'], names=cfg_in['cols'], usecols=cfg_in['dtype'].names,
                     # cfg_in['cols_load'],
@@ -383,7 +384,7 @@ def read_csv(nameFull: Sequence[Union[str, Path]],
     meta_df_with_time_col = cfg_in['cols_load']
 
     # Process ddf and get date in ISO string or numpy standard format
-    cfg_in['file_stem'] = Path(nameFull[0]).stem  # may be need in func below to extract date
+    cfg_in['file_stem'] = Path(paths[0]).stem  # may be need in func below to extract date
     try:
         date_delayed = None
         try:
@@ -438,7 +439,7 @@ def read_csv(nameFull: Sequence[Union[str, Path]],
 
     def time_corr_df(t, cfg_in):
         """convert tuple returned by time_corr() to dataframe"""
-        return pd.DataFrame.from_dict(OrderedDict(zip(meta2.keys(), time_corr(t, cfg_in))))
+        return pd.DataFrame.from_dict(OrderedDict(zip(meta2.keys(), utils_time_corr.time_corr(t, cfg_in))))
         # return pd.DataFrame.from_items(zip(meta2.keys(), time_corr(t, cfg_in)))
         # pd.Series()
 
@@ -566,6 +567,7 @@ try:
     @decorator
     def with_prog_config(
             wrapped,
+            config_path='to_pandas_hdf5/csv2h5_ini/csv2h5_vaex.yml',
             return_: parameters.one_of('<cfg_from_args>', '<gen_names_and_log>', '<end>')='<end>',
             # b_interact=False,
             # verbose=:
@@ -579,11 +581,11 @@ try:
         """
         global l
 
-        @hydra.main(config_path='to_pandas_hdf5/csv2h5_ini/csv2h5_vaex.yml')
+        @hydra.main(config_path=config_path)
         def main_cfg(cfg: DictConfig):
             global l
 
-            # cfg = cfg_from_args(my_argparser(), **kwargs)
+            # cfg = cfg_from_args(argparser_files(), **kwargs)
             if not cfg or not cfg['program'].get('return'):
                 print('Can not initialise')
                 return cfg
@@ -615,7 +617,6 @@ try:
             :param fun_proc_loaded: function(df: Dataframe, cfg_in: Optional[Mapping[str, Any]] = None) -> Dataframe/DateTimeIndex: to update/calculate new parameters from loaded data  before filtering. If output is Dataframe then function should have meta_out attribute which is Callable[[np.dtype, Iterable[str], Mapping[str, dtype]], Dict[str, np.dtype]]
         """
 
-
         def wrap(**kwargs):
             # Prepare loading and writing specific to format
             kwargs['in']['fun_proc_loaded'] = get_fun_proc_loaded_converters(**kwargs['in'])
@@ -623,8 +624,8 @@ try:
 
             return wrapped(**kwargs)
 
-
         return wrap
+
 
     @with_in_config
     def main(cfg):

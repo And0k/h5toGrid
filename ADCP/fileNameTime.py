@@ -58,7 +58,7 @@ if __name__ == '__main__':
         cfg = ini2dict(args.cfgFile)
     except FileNotFoundError:
         print('no config found')
-        cfg = {'in': {'path': args.path}, 'output_files': {}, 'program': {'log': 'fileNameTime.log'}}
+        cfg = {'in': {'path': args.path}, 'out': {}, 'program': {'log': 'fileNameTime.log'}}
         if 'ADCP_WH' in cfg['in']['path']:
             cfg['in']['cfgFile'] = 'ADCP_WH'
             cfg['in']['delimiter'] = '\t'
@@ -101,14 +101,14 @@ if __name__ == '__main__':
 
     # Prepare cpecific format loading and writing
     cfg['in'] = init_input_cols(cfg['in'])
-    cfg['output_files']['names'] = np.array(
+    cfg['out']['names'] = np.array(
         cfg['in']['dtype'].names)[cfg['in']['cols_loaded_save_b']]
-    cfg['output_files']['formats'] = [
-        cfg['in']['dtype'].fields[n][0] for n in cfg['output_files']['names']]
-    cfg['output_files']['dtype'] = np.dtype({
-        'formats': cfg['output_files']['formats'],
-        'names': cfg['output_files']['names']})
-    cfg['output_files']['logfield_filename_len'] = 100
+    cfg['out']['formats'] = [
+        cfg['in']['dtype'].fields[n][0] for n in cfg['out']['names']]
+    cfg['out']['dtype'] = np.dtype({
+        'formats': cfg['out']['formats'],
+        'names': cfg['out']['names']})
+    cfg['out']['logfield_filename_len'] = 100
     # Default time postload proc
     if fun_proc_loaded is None:
         if 'coldate' not in cfg['in']:  # Time includes Date
@@ -125,9 +125,9 @@ if __name__ == '__main__':
                                              + str(nFiles) + ' file' + 's:' if nFiles > 1 else ':'))
 
     # ## Main circle ############################################################
-    for ifile, nameFull in enumerate(cfg['in']['namesFull'], start=1):
+    for ifile, nameFull in enumerate(cfg['in']['paths'], start=1):
         nameFE = os_path.basename(nameFull)
-        log_item['fileName'] = nameFE[-cfg['output_files']['logfield_filename_len']:-4]
+        log_item['fileName'] = nameFE[-cfg['out']['logfield_filename_len']:-4]
         log_item['fileChangeTime'] = datetime.fromtimestamp(os_path.getmtime(nameFull))
         print('{}. {}'.format(ifile, nameFE), end=': ')
         # Loading data

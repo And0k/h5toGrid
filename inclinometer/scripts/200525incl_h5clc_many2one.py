@@ -76,7 +76,7 @@ if st(2):
                 '--aggregate_period', f'{aggregate_period_s}S' if aggregate_period_s else '',
                 # '--date_min', datetime64_str(date_min[0]),  # '2019-08-18T06:00:00',
                 # '--date_max', datetime64_str(date_max[0]),  # '2019-09-09T16:31:00',  #17:00:00
-                '--output_files.db_path', str(db_path_out),
+                '--out.db_path', str(db_path_out),
                 '--table', f'V_incl_bin{aggregate_period_s}' if aggregate_period_s else 'V_incl',
                 '--verbose', 'DEBUG',
                 # '--calc_version', 'polynom(force)',  # depreshiated
@@ -99,7 +99,7 @@ if st(2):
             kwarg = {'in': {
                 'dates_min': [timeranges[iprobe][0][0] for iprobe in range(len(probes))],  # '2019-08-18T06:00:00',
                 'dates_max': [timeranges[iprobe][0][1] for iprobe in range(len(probes))],  # '2019-09-09T16:31:00',  #17:00:00
-                }, 'output_files': {
+                }, 'out': {
                 'b_all_to_one_col': True,
                 'text_date_format': lambda t: (t - m_TimeStart_csv) / np.timedelta64(1, 'h'),
                 'text_columns': ['Date', 'Ve', 'Vn']

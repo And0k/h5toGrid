@@ -24,7 +24,7 @@ from other_filters import inearestsorted
 # idata_from_tpoints
 
 # ##############################################################################
-cfg = {'input_h5store': {}, 'process': {}, 'gpx': {}, 'vsz_files': {}, 'output_files': {}}
+cfg = {'input_h5store': {}, 'process': {}, 'gpx': {}, 'vsz_files': {}, 'out': {}}
 
 cfg['input_h5store']['path'] = r'd:\WorkData\BalticSea\160802_ANS32\160802_Strahov.h5'
 cfg['input_h5store']['tbl_sec_points'] = '1609_CTDsections_waypoints'
@@ -40,10 +40,10 @@ cfg['gpx']['symbol_excude_point'] = 'Circle with X'
 cfg['process']['dt_search_nav_tolerance'] = timedelta(minutes=1)
 cfg['process']['invert_prior_sn_angle'] = 30
 
-cfg['output_files']['skip_to_section'] = 11  # 1 - no skip. > 1 - skipped sections
-cfg['output_files']['path'] = os_path.join(os_path.dirname(cfg['input_h5store']['path']), 'subproduct')
-cfg['output_files']['dt_from_utc'] = timedelta(hours=2)
-cfg['program'] = {'log': os_path.join(cfg['output_files']['path'], 'S&S_CTDprofilesEnds.txt')}  # common data out
+cfg['out']['skip_to_section'] = 11  # 1 - no skip. > 1 - skipped sections
+cfg['out']['path'] = os_path.join(os_path.dirname(cfg['input_h5store']['path']), 'subproduct')
+cfg['out']['dt_from_utc'] = timedelta(hours=2)
+cfg['program'] = {'log': os_path.join(cfg['out']['path'], 'S&S_CTDprofilesEnds.txt')}  # common data out
 cfg['program']['logs'] = 'CTDprofilesEnds.txt'  # separate file for each section suffix
 cfg['program']['veusz_path'] = u'C:\\Program Files (x86)\\Veusz'  # directory of Veusz
 load_vsz = load_vsz_closure(Path(cfg['program']['veusz_path']))
@@ -51,8 +51,8 @@ load_vsz = load_vsz_closure(Path(cfg['program']['veusz_path']))
 b_filter_time = False
 # dt_point2run_max= timedelta(minutes=15)
 
-if not os_path.isdir(cfg['output_files']['path']):
-    raise (FileNotFoundError('output dir not exist: ' + cfg['output_files']['path']))
+if not os_path.isdir(cfg['out']['path']):
+    raise (FileNotFoundError('output dir not exist: ' + cfg['out']['path']))
 # ----------------------------------------------------------------------
 # dir_walker
 vszFs = [os_path.join(cfg['vsz_files']['path'], f) for f in os_listdir(
@@ -79,7 +79,7 @@ try:
     colCTD = [u'Pres', u'Temp', u'Sal', u'SigmaTh', u'O2', u'ChlA', u'Turb', u'pH', u'Eh']  # u'ChlA', , u'Turb'
     for isec, vszF in enumerate(vszFs, start=1):
         # Load filtered down runs data
-        if isec < cfg['output_files']['skip_to_section']:
+        if isec < cfg['out']['skip_to_section']:
             continue
         print('\n{}. {}'.format(isec, vszF))
         g, CTD = load_vsz(vszF, veusze=g, prefix='CTD')
@@ -92,7 +92,7 @@ try:
         CTDout = np.empty_like(CTD['ends'], dtype={'names': ['timeEnd'] + colNav + colCTD + ['O2_min'],
                                                    'formats': ['|S20'] + ['f8'] * Ncols_noTime})
         # Fill it
-        temp = CTD['time'][CTD['ends']] + np.timedelta64(cfg['output_files']['dt_from_utc'])
+        temp = CTD['time'][CTD['ends']] + np.timedelta64(cfg['out']['dt_from_utc'])
         CTDout['timeEnd'][:] = ['{:%d:%m:%y %H:%M:%S}'.format(t) for t in temp.astype(
             'M8[s]').astype(datetime)]
         # 1. Load existed bottom edge parameters:
@@ -169,7 +169,7 @@ try:
 
         if 'logs' in cfg['program'].keys():
             fileN_time_st = os_path.splitext(os_path.basename(vszF))[0]  # '{:%y%m%d_%H%M}'.format(CTDout['Dist'])
-            with open(os_path.join(cfg['output_files']['path'], fileN_time_st + cfg['program']['logs']), 'w') as fs:
+            with open(os_path.join(cfg['out']['path'], fileN_time_st + cfg['program']['logs']), 'w') as fs:
                 fs.writelines('\t'.join(CTDout.dtype.names) + '\n')
                 for row in CTDout:
                     fs.writelines(format_str.format(*row)[1:])
