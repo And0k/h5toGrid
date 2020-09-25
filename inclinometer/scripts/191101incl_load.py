@@ -61,16 +61,16 @@ path_cruise = path_on_drive_d(r'd:\WorkData\BalticSea\200628_Pregolya,Lagoon-inc
 
 r"""
 d:\WorkData\BalticSea\200630_AI55\inclinometer
-d:\WorkData\_experiment\_2019\inclinometer\200610_tank_ex[4,5,7,9,10,11][3,12,13,14,15,16,19]
+d:\WorkData\_experiment\inclinometer\200610_tank_ex[4,5,7,9,10,11][3,12,13,14,15,16,19]
 d:\WorkData\BalticSea\200514_Pregolya,Lagoon-inclinometer
 d:\WorkData\BalticSea\200317_Pregolya,Lagoon-inclinometer
 d:\WorkData\BalticSea\191210_Pregolya,Lagoon-inclinometer
-d:\WorkData\_experiment\_2019\inclinometer\200117_tank[23,30,32]
+d:\WorkData\_experiment\inclinometer\200117_tank[23,30,32]
 d:\workData\BalticSea\191119_Filino\inclinometer
 d:\workData\BalticSea\191108_Filino\inclinometer
 d:\WorkData\BlackSea\191029_Katsiveli\inclinometer
 
-d:\WorkData\_experiment\_2019\inclinometer\191106_tank_ex1[1,13,14,16]
+d:\WorkData\_experiment\inclinometer\191106_tank_ex1[1,13,14,16]
 d:\WorkData\BalticSea\190806_Yantarniy\inclinometer
 d:\workData\BalticSea\190801inclinometer_Schuka
 d:\workData\BalticSea\190713_ABP45\inclinometer
@@ -78,11 +78,11 @@ d:\workData\BalticSea\190817_ANS42\inclinometer
 d:\workData\BalticSea\180418_Svetlogorsk\inclinometer
 d:\WorkData\_experiment\_2018\inclinometer\180406_tank[9]
 
-d:\WorkData\_experiment\_2019\inclinometer\190711_tank[1,4,5,7,11,12]
+d:\WorkData\_experiment\inclinometer\190711_tank[1,4,5,7,11,12]
 d:\WorkData\_experiment\_2018\inclinometer\181004_tank[1-20]
 d:\workData\BalticSea\190801inclinometer_Schuka
-d:\WorkData\_experiment\_2019\inclinometer\190902_compas_calibr-byMe
-d:\WorkData\_experiment\_2019\inclinometer\190917_intertest
+d:\WorkData\_experiment\inclinometer\190902_compas_calibr-byMe
+d:\WorkData\_experiment\inclinometer\190917_intertest
 d:\workData\BalticSea\190806_Yantarniy\inclinometer
 d:\workData\BalticSea\190817_ANS42\inclinometer
 
@@ -215,7 +215,7 @@ if st(1):  # Can not find additional not corrected files for same probe if alrea
                  )
 
             # Get coefs:
-            db_coefs = r'd:\WorkData\_experiment\_2019\inclinometer\190710_compas_calibr-byMe\190710incl.h5'
+            db_coefs = r'd:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe\190710incl.h5'
             try:
                 tbl = f'{prefix}{probe:0>2}'
                 l.info(f"Adding coefficients to {db_path}/{tbl} from {db_coefs}")

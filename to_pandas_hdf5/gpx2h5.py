@@ -39,66 +39,66 @@ def my_argparser():
     p = my_argparser_common_part(
         {'description': 'Add data from *.gpx to *.h5'})
 
-    p_in = p.add_argument_group('in', 'data')
-    p_in.add('--path',
+    s = p.add_argument_group('in', 'data')
+    s.add('--path',
              help='path/mask to GPX file(s) to parse')
-    p_in.add('--b_search_in_subdirs', default='False',
+    s.add('--b_search_in_subdirs', default='False',
              help='used if mask or only dir in path (not full path) to search in subdirectories')
-    p_in.add('--ext', default='gpx',
+    s.add('--ext', default='gpx',
              help='used if only dir in path - extension of gpx files')
-    p_in.add('--dt_from_utc_hours', default='0',
+    s.add('--dt_from_utc_hours', default='0',
              help='add this correction to loading datetime data. May to use other suffixes instead of "hours"')
-    p_in.add('--b_skip_if_up_to_date', default='True',
+    s.add('--b_skip_if_up_to_date', default='True',
              help='exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files')
-    p_in.add('--b_make_time_inc', default='False',  # 'correct', 'sort_rows'
+    s.add('--b_make_time_inc', default='False',  # 'correct', 'sort_rows'
              help='if time not sorted then coorect it trying affecting small number of values. Used here for tracks/segments only. This is different from sorting rows which is performed at last step after the checking table in database')
 
     # Parameters specific to gpx
-    p_in.add('--waypoints_cols_list', default='time, latitude, longitude, name, symbol, description',
+    s.add('--waypoints_cols_list', default='time, latitude, longitude, name, symbol, description',
              help='column names (comma separated) of gpxpy fields of gpx waypoints to load (symbol=sym,  description=cmt), first will be index. Its number and order must match out.waypoints_cols_list')
-    p_in.add('--routes_cols_list', default='time, latitude, longitude, name, symbol, description',
+    s.add('--routes_cols_list', default='time, latitude, longitude, name, symbol, description',
              help='same as waypoints_cols_list but for routes')
-    p_in.add('--tracks_cols_list', default='time, latitude, longitude',
+    s.add('--tracks_cols_list', default='time, latitude, longitude',
              help='same as waypoints_cols_list but for tracks')
-    p_in.add('--segments_cols_list', default='time, latitude, longitude',
+    s.add('--segments_cols_list', default='time, latitude, longitude',
              help='same as waypoints_cols_list but for segments')
 
 
-    p_out = p.add_argument_group('out', 'all about output files')
-    p_out.add('--db_path', help='hdf5 store file path')
-    p_out.add('--table_prefix',
+    s = p.add_argument_group('out', 'all about output files')
+    s.add('--db_path', help='hdf5 store file path')
+    s.add('--table_prefix',
               help='prepend tables names to save data with this string (Note: _waypoints or _routes or ... suffix will be added automaticaly)')
-    p_out.add('--tables_list', default='waypoints, tracks, tracks/segments, routes',
+    s.add('--tables_list', default='waypoints, tracks, tracks/segments, routes',
               help='tables names (comma separated) in hdf5 store to write data'
                    'keep them in logical order: [waypoints, tracks, tracks sections, routes]')
-    p_out.add('--out.waypoints_cols_list', default='time, Lat, Lon, name, sym, cmt',
+    s.add('--out.waypoints_cols_list', default='time, Lat, Lon, name, sym, cmt',
               help='column names (comma separated) in hdf5 table to write data, '
                    'its number and order must match in.waypoints_cols_list')
-    p_out.add('--out.tracks_cols_list', default='time, Lat, Lon',
+    s.add('--out.tracks_cols_list', default='time, Lat, Lon',
               help='same as waypoints_cols_list but for tracks')
-    p_out.add('--out.segments_cols_list', default='time, Lat, Lon',
+    s.add('--out.segments_cols_list', default='time, Lat, Lon',
               help='same as waypoints_cols_list but for segments')
 
-    p_out.add('--b_insert_separator', default='False',
+    s.add('--b_insert_separator', default='False',
               help='insert NaNs row in table after each file data end')
-    p_out.add('--b_use_old_temporary_tables', default='False',
+    s.add('--b_use_old_temporary_tables', default='False',
               help='Warning! Set True only if temporary storage already have good data!'
                    'if True and b_skip_if_up_to_date= True then not replace temporary storage with current storage before adding data to the temporary storage')
 
     # candidates to move out to common part
-    p_in.add('--exclude_dirs_ends_with_list', default='-, bad, test, TEST, toDel-',
+    s.add('--exclude_dirs_ends_with_list', default='-, bad, test, TEST, toDel-',
              help='exclude dirs which ends with this srings. This and next option especially useful when search recursively in many dirs')
-    p_in.add('--exclude_files_ends_with_list', default='coef.txt, -.txt, test.txt',
+    s.add('--exclude_files_ends_with_list', default='coef.txt, -.txt, test.txt',
              help='exclude files which ends with this srings')
 
-    p_filt = p.add_argument_group('filter', 'filter all data based on min/max of parameters')
-    p_filt.add('--date_min', help='minimum time')
-    p_filt.add('--date_max', help='maximum time')
-    p_filt.add('--min_dict', help='List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is below ``value``')
-    p_filt.add('--max_dict', help='List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is above ``value``')
+    s = p.add_argument_group('filter', 'filter all data based on min/max of parameters')
+    s.add('--date_min', help='minimum time')
+    s.add('--date_max', help='maximum time')
+    s.add('--min_dict', help='List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is below ``value``')
+    s.add('--max_dict', help='List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is above ``value``')
 
-    p_prog = p.add_argument_group('program', 'program behaviour')
-    p_prog.add('--return', default='<end>',  # nargs=1,
+    s = p.add_argument_group('program', 'program behaviour')
+    s.add('--return', default='<end>',  # nargs=1,
                choices=['<cfg_from_args>', '<gen_names_and_log>', '<end>'],
                help='<cfg_from_args>: returns cfg based on input args only and exit, <gen_names_and_log>: execute init_input_cols() and also returns fun_proc_loaded function... - see main()')
     return p
@@ -309,7 +309,7 @@ def main(new_arg=None):
         # ###############################################################
         # ## Cumulate all data in cfg_out['path_temp'] ##################
         ## Main circle ############################################################
-        for i1_file, path_gpx in h5_dispenser_and_names_gen(cfg, cfg_out):
+        for i1_file, path_gpx in h5_dispenser_and_names_gen(cfg['in'], cfg_out):
             l.info('{}. {}: '.format(i1_file, path_gpx.name))
             # Loading data
             dfs = gpxConvert(cfg, path_gpx)

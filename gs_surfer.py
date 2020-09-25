@@ -12,11 +12,11 @@ import logging
 import re
 import numpy as np
 
-from win32com.client import constants, Dispatch, CastTo, pywintypes
+from win32com.client import constants, Dispatch, CastTo, pywintypes, gencache
 # python "c:\Programs\_coding\WinPython3\python-3.5.2.amd64\Lib\site-packages\win32com\client\makepy.py" -i "c:\Program Files\Golden Software\S
 # urfer 13\Surfer.exe"
 # Use these commands in Python code to auto generate .py support
-from win32com.client import gencache
+
 
 from utils2init import standard_error_info
 
@@ -24,56 +24,103 @@ l = logging.getLogger(__name__)
 Surfer = None
 obj_interface = {}
 
-try:  # try get griddata_by_surfer() function reqwirements
+# try:  # try get griddata_by_surfer() function reqwirements
 
-    def griddata_by_surfer(ctd, outFnoE_pattern=r'%TEMP%\xyz{}', xCol='Lon', yCol='Lat', zCols=None,
-                           NumCols=None, NumRows=None, xMin=None, xMax=None, yMin=None, yMax=None):
-        """
-        Grid by Surfer
-        :param ctd:
-        :param outFnoE_pattern:
-        :param xCol:
-        :param yCol:
-        :param zCols:
-        :param NumCols:
-        :param NumRows:
-        :param xMin:
-        :param xMax:
-        :param yMin:
-        :param yMax:
-        :return:
-        """
-        global Surfer
-        if not Surfer:
-
-
-            gencache.EnsureModule('{54C3F9A2-980B-1068-83F9-0000C02A351C}', 0, 1, 4)
+def griddata_by_surfer(
+        ctd, path_stem_pattern: Union[str, Path] = r'%TEMP%\xyz{}',
+        margins: Union[bool, Tuple[float, float], None] = True,
+        xCol: str='Lon', yCol: str='Lat', zCols: Sequence[str]= None,
+        SearchEnable=True, BlankOutsideHull=1,
+        DupMethod=15, ShowReport=False,  # DupMethod=15=constants.srfDupAvg
+        **kwargs):
+    """
+    Grid by Surfer
+    :param ctd: pd.DataFrame
+    :param path_stem_pattern:
+    :param margins: extend grid size on all directions:
+      - True - use 10% if limits (xMin...) passed else use InflateHull value
+      - Tuple[float, float] - use this values to add to edges. Note: limits (xMin...) args must be provided in this case
+    :param zCols: z column indexes in ctd
+    :param xCol: x column index in ctd
+    :param yCol: y column index in ctd
+    :param kwargs: other Surfer.GridData4() arguments
+    :return:
+    """
+    global Surfer
+    if not Surfer:
+        gencache.EnsureModule('{54C3F9A2-980B-1068-83F9-0000C02A351C}', 0, 1, 4)
+        try:
             Surfer = Dispatch("Surfer.Application")
+        except pywintypes.com_error as e:
+            print("Open Surfer! ", standard_error_info(e))
+            try:
+                Surfer = Dispatch("Surfer.Application")
+            except pywintypes.com_error as e:
+                print("Open Surfer! ", standard_error_info(e))
+                raise
+    try:
+        tmpF = f"{path_stem_pattern.format('~temp')}.csv"
+    except AttributeError:
+        path_stem_pattern = str(path_stem_pattern)
+        tmpF = f"{path_stem_pattern.format('~temp')}.csv"
+    kwargs['xCol'] = ctd.dtype.names.index(xCol) + 1
+    kwargs['yCol'] = ctd.dtype.names.index(yCol) + 1
+    if zCols is None:
+        zCols = list(ctd.dtype.names)
+        zCols.remove(xCol)
+        zCols.remove(yCol)
+
+    izCols = [ctd.dtype.names.index(zCol) + 1 for zCol in zCols]  # ctd.columns.get_indexer(zCols) + 1
+    np.savetxt(tmpF, ctd, header=','.join(ctd.dtype.names), delimiter=',', comments='')
+
+    if margins:
+        if isinstance(margins, bool):
+            margins = [0, 0]
+            for i, coord in enumerate(('x', 'y')):
+                if (f'{coord}Min' in kwargs) and (f'{coord}Max' in kwargs):
+                    margins[i] = (kwargs[f'{coord}Max'] - kwargs[f'{coord}Min']) / 10
+                elif kwargs.get('InflateHull'):
+                    margins[i] = kwargs['InflateHull']
+
+        kwargs['xMin'] -= margins[0]
+        kwargs['xMax'] += margins[0]
+        kwargs['yMin'] -= margins[1]
+        kwargs['yMax'] += margins[1]
+
+        if kwargs.get('SearchRad1') is None:
+            kwargs['SearchRad1'] = margins[1] * 3
+
+        if kwargs.get('InflateHull') is None:
+            kwargs['InflateHull'] = margins[1]
 
 
-        tmpF = outFnoE_pattern.format('_temp') + '.csv'
-        xCol = ctd.dtype.names.index(xCol) + 1
-        yCol = ctd.dtype.names.index(yCol) + 1
-        izCols = [ctd.dtype.names.index(zCol) + 1 for zCol in zCols]
-        np.savetxt(tmpF, ctd, header=','.join(ctd.dtype.names), delimiter=',', comments='')
-        dist_etrap = (yMax - yMin) / 10
         # const={'srfDupAvg': 15, 'srfGridFmtS7': 3}
-        # gdal_geotransform = (x_min, cfg['out']['x_resolution'], 0, -y_min, 0, -cfg['y_resolution_use'])
-        for i, izCol in enumerate(izCols):
-            outGrd = outFnoE_pattern.format(zCols[i]) + '.grd'
-            Surfer.GridData3(DataFile=tmpF, xCol=xCol, yCol=yCol, zCol=izCol, NumCols=NumCols, NumRows=NumRows,
-                             xMin=xMin,
-                             xMax=xMax, yMin=yMin, yMax=yMax, SearchEnable=True, SearchRad1=dist_etrap * 2,
-                             ShowReport=False, DupMethod=constants.srfDupAvg, OutGrid=outGrd,
-                             OutFmt=constants.srfGridFmtS7,
-                             BlankOutsideHull=True, InflateHull=dist_etrap)
-except Exception as e:
-    l.error('\nCan not initialiase Surfer.Application! %s', standard_error_info(e))
-
-
-    def griddata_by_surfer(ctd, outFnoE_pattern=r'%TEMP%\xyz{}', xCol='Lon', yCol='Lat', zCols=2,
-                           NumCols=None, NumRows=None, xMin=None, xMax=None, yMin=None, yMax=None):
-        pass
+    # gdal_geotransform = (x_min, cfg['out']['x_resolution'], 0, -y_min, 0, -cfg['y_resolution_use'])
+    for i, kwargs['zCol'] in enumerate(izCols):
+        outGrd = path_stem_pattern.format(zCols[i]) + '.grd'
+        try:
+            Surfer.GridData4(
+                Algorithm=constants.srfKriging, DataFile=tmpF, OutGrid=outGrd,
+                SearchEnable=(SearchEnable and ctd.size > 3), BlankOutsideHull=BlankOutsideHull, DupMethod=DupMethod,
+                ShowReport=ShowReport, **kwargs)
+        except pywintypes.com_error as e:
+            print(standard_error_info(e))
+            if i >= 0:  # True but in debug mode you can change to not raise and continue without side effects by set i=-1
+                raise
+    return margins
+# except Exception as e:
+#
+#     print('\nCan not initialiase Surfer.Application! {:s}'.format(standard_error_info(e)))
+#
+#
+#     def griddata_by_surfer(
+#             ctd, path_stem_pattern: Union[str, Path] = r'%TEMP%\xyz{}',
+#             margins: Union[bool, Tuple[float, float], None] = True,
+#             xCol: str='Lon', yCol: str='Lat', zCols=Sequence[str],
+#             SearchEnable=True, BlankOutsideHull=1,
+#             DupMethod=15, ShowReport=False,
+#             **kwargs):
+#         pass
 
 
 def objpath_fill(re_ovr, re_shp=None) -> Dict[Tuple[int, str], Any]:
@@ -337,7 +384,7 @@ def paste_srfs_data(path_srfs, re_ovr='*', re_shp=None,
         path_doc = path_dir_out / Path(srf).name
         try:
             doc.SaveAs(str(path_doc))
-        except pywintypes.com_error:
+        except pywintypes.pywintypes.com_error:
             l.exception(f'Can not save to {path_doc}')
         Surfer.ScreenUpdating = True
         doc.Export2(str(path_doc.with_suffix('.png')), Options='HDPI=300,VDPI=300')

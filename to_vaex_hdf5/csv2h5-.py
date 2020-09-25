@@ -287,7 +287,7 @@ def do(cfg):
     :return:
     """
     ## Main circle ############################################################
-    for i1_file, file in h5_dispenser_and_names_gen(cfg, cfg):
+    for i1_file, file in h5_dispenser_and_names_gen(cfg['in'], cfg['out']):
         lf.info('{}. {}: '.format(i1_file, file.name))
         # Loading data
 

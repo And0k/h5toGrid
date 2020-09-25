@@ -174,7 +174,7 @@ def do(cfg):
     in_cols = ('datetime', 'latitude', 'longitude', 'depth_meters')
     out_cols = ('Time', 'Lat', 'Lon', 'DepEcho')
     ## Main circle ############################################################
-    for i1_file, file in h5_dispenser_and_names_gen(cfg, cfg['out']):
+    for i1_file, file in h5_dispenser_and_names_gen(cfg['in'], cfg['out']):
         lf.info('{}. {}: ', i1_file, file.name)
         # Loading data
         df = load_nmea(file, in_cols)

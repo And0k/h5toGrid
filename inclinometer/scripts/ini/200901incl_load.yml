@@ -8,7 +8,7 @@ in:
 
 #  timerange_zeroing_dict:
 #    14: [2020-07-10T21:31:00, 2020-07-10T21:39:00]
-  db_coefs: d:\WorkData\_experiment\_2019\inclinometer\190710_compas_calibr-byMe\190710incl.h5
+  db_coefs: d:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe\190710incl.h5
 
 filter:
   date_min: {0: 2020-08-18T12:00:00}

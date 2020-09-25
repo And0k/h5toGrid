@@ -282,7 +282,7 @@ def filterGlobal_minmax(a, tim=None, cfg_filter=None, b_ok=True) -> pd.Series:
     :param cfg_filter:  dict with keys max_'field', min_'field', where 'field' must be
      in _a_ or 'date' (case insensitive)
     :param b_ok: initial mask - True means not filtered yet <=> da.ones(len(tim), dtype=bool, chunks = tim.values.chunks) if isinstance(a, dd.DataFrame) else np.ones_like(tim, dtype=bool)  # True #
-    :return:            dask bool array of good rows (or array if tim is not dask and only tim is filtered)
+    :return: boolean pandas.Series
     """
 
     def filt_max_or_min(array, flim, fval):
@@ -290,7 +290,7 @@ def filterGlobal_minmax(a, tim=None, cfg_filter=None, b_ok=True) -> pd.Series:
         Emplicitly logical adds new check to b_ok
         :param array: numpy array or pandas series to filter
         :param flim:
-        :return:
+        :return: array of good rows or None
         """
         nonlocal b_ok  # :param b_ok: logical array
         if fval is None:
@@ -406,7 +406,7 @@ def filter_global_minmax(a, cfg_filter=None):
     # @cf['{}_{}] not works in dask
 
 
-def filter_local(d: Union[pd.DataFrame, dd.DataFrame],
+def filter_local(d: Union[pd.DataFrame, dd.DataFrame, Mapping[str, pd.Series], Mapping[str, dd.Series]],
                  cfg_filter: Mapping[str, Any]
                  ) -> Union[pd.DataFrame, dd.DataFrame]:
     """
@@ -426,11 +426,44 @@ def filter_local(d: Union[pd.DataFrame, dd.DataFrame],
         for fkey, fval in cfg_filter[limit].items():
             if ('*' in fkey) or ('[' in fkey):  # get multiple keys by regex
                 keys = [c for c in d.columns if re.fullmatch(fkey, c)]
-                d[keys] = d.loc[:, keys].where(f_compare(d.loc[:, keys], fval))
+                d[keys] = d[keys].where(f_compare(d[keys], fval))
                 fkey = ', '.join(keys)  # for logging only
             else:
                 try:
-                    d[fkey] = d.loc[:, fkey].where(f_compare(d.loc[:, fkey], fval))
+                    d[fkey] = d[fkey].where(f_compare(d[fkey], fval))
+                except KeyError as e:  # allow redundant parameters in config
+                    l.warning('Can not filter this parameer %s', standard_error_info(e))
+            l.debug('filtering %s(%s) = %g', limit, fkey, fval)
+    return d
+
+
+def filter_local_arr(d: Mapping[str, Sequence],
+                 cfg_filter: Mapping[str, Any]
+                 ) -> Mapping[str, np.ndarray]:
+    """
+    Same as filter_local but for dict of arrays
+    Filtering values without changing output size: set to NaN if exceed limits
+    :param d: dict of arrays
+    :param cfg: must have field 'filter'. This is a dict with dicts "min" and "max" having fields with:
+     - keys equal to column names to filter or regex strings to selelect columns: "*" or "[" must be present to detect
+    it as regex.
+     - values are min and max limits consequently.
+    :return: filtered input where filtered values are np.ndarrays having filtered values replaced by NaN
+
+    """
+    for limit, f_compare in [('min', lambda x, v: x < v), ('max', lambda x, v: x > v)]:
+        # todo: check if is better to use between(left, right, inclusive=True)
+        if not cfg_filter.get(limit):
+            continue
+        for fkey, fval in cfg_filter[limit].items():
+            if ('*' in fkey) or ('[' in fkey):  # get multiple keys by regex
+                # Filter multiple columns at once
+                keys = [c for c in d.columns if re.fullmatch(fkey, c)]
+                d[keys][f_compare(d[keys], fval)] = np.NaN
+                fkey = ', '.join(keys)  # for logging only
+            else:
+                try:
+                    d[fkey][f_compare(d[fkey], fval)] = np.NaN
                 except KeyError as e:  # allow redundant parameters in config
                     l.warning('Can not filter this parameer %s', standard_error_info(e))
             l.debug('filtering %s(%s) = %g', limit, fkey, fval)
@@ -556,7 +589,8 @@ def h5_append_dummy_row(df: Union[pd.DataFrame, dd.DataFrame],
         df_index, itm = multiindex_timeindex(df.index)
         try:
             dindex = pd.Timedelta(seconds=0.5 / freq) if freq else np.abs(df_index[-1] - df_index[-2]) / 2
-        except IndexError:  # only one element => we think they are seldom so use 1s
+        except (IndexError, NotImplementedError):
+            # only one element => we think they are seldom so use 1s or NotImplemented in Dask
             dindex = pd.Timedelta(seconds=1)
         ind_new = multiindex_replace(df.index[-1:], df_index[-1:] + dindex, itm)
 
@@ -769,23 +803,25 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
 
 
 # Log to store
-def h5add_log(cfg_out: Dict[str, Any], df, log: Union[pd.DataFrame, Mapping], tim, log_dt_from_utc):
+def h5add_log(cfg_out: Dict[str, Any], df, log: Union[pd.DataFrame, Mapping, None], tim, log_dt_from_utc):
     """
     Updates (or creates if need) metadata table
-    :param cfg_out: if not/no 'b_log_ready' then updates log['Date0'], log['DateEnd'].
-    must have fields
-        'db' - handle of opened hdf5 store
-    must have path of log table in one of fields (2nd used if 1st not defined):
-        'table_log', str: path of log table
-    optiondal:
-        'logfield_fileName_len': fixed length of string format of 'fileName' hdf5 column
+    :param cfg_out: dict with fields:
+     - b_log_ready: if False or '' then updates log['Date0'], log['DateEnd'].
+     - db: handle of opened hdf5 store
+     - some of following fields (next will be tried if previous not defined):
+         - table_log: str, path of log table
+         - tables_log: List[str], path of log table in first element
+         - table: str, path of log table will be consructed by adding '/log'
+         - tables: List[str], path of log table will be consructed by adding '/log' to first element
+     - logfield_fileName_len: optiondal, fixed length of string format of 'fileName' hdf5 column
     :param df:
-    :param log: records or dataframe. updates 'Date0' and 'DateEnd' if no 'Date0' or it is None
+    :param log: Mapping records or dataframe. updates 'Date0' and 'DateEnd' if no 'Date0' or it is {} or None
     :param tim:
     :param log_dt_from_utc:
     :return:
     """
-    if (not log) and cfg_out.get('b_log_ready'):
+    if cfg_out.get('b_log_ready') and (isinstance(log, Mapping) and not log):
         return
 
     # synchro "tables_log" and more user friendly but not so universal to code "table_log"

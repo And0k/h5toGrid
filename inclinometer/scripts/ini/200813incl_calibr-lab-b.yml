@@ -1,6 +1,6 @@
 
 in:
-  db_path: 'd:\WorkData\_experiment\_2019\inclinometer\200807_Schukas\mag_components_calibration\200807_calibr-lab#b.h5'
+  db_path: 'd:\WorkData\_experiment\inclinometer\200807_Schukas\mag_components_calibration\200807_calibr-lab#b.h5'
   tables: ['incl_b.*']  # 'incl_b.*' or 'incl_b03'
   timerange:
 #    1: [2020-07-27T05:38:00, 2020-07-27T05:39:38]
@@ -20,7 +20,7 @@ in:
   #chunksize: 1000000         # 'chunksize_percent': 10,  # we'll repace this with burst size if it suit
 
 out:
-  db_path: 'd:\WorkData\_experiment\_2019\inclinometer\200807_Schukas\200807_calibr-tank-b.h5'
+  db_path: 'd:\WorkData\_experiment\inclinometer\200807_Schukas\200807_calibr-tank-b.h5'
 
 filter:
   no_works_noise: {M: 15, A: 200}

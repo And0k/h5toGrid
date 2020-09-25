@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from codecs import open
 import warnings
 
-from magneticDec import magDec
+from magneticDec import mag_dec
 from ..utils2init import ini2dict
 
 loadRDCP_INI = os_path.join(os_path.dirname(sys.argv[0]), 'loadRDCP.ini')
@@ -120,7 +120,7 @@ def repInFile(nameFull, cfg, result):  # result is previous or with ['nameNavFul
 
             # 4. Get MagneticDeclination value
             result['mag'] = round(
-                magDec(round(result['Lat'], 10), round(result['Lon'], 10), result['Date'].strftime("%Y,%m,%d")), 3)
+                mag_dec(round(result['Lat'], 10), round(result['Lon'], 10), result['Date'].strftime("%Y,%m,%d")), 3)
 
         # 5. Replace MagneticDeclination:
         m = cfg['re mask']['mag'].search(file_content)  # m = cfg['re mask']['mag'].split(file_content,  maxsplit=1)
@@ -200,7 +200,7 @@ if __name__ == '__main__':
 """    
     #Test1:
     geoLat= 44; geoLon= 55
-    out= magDec(geoLat, geoLon)
+    out= mag_dec(geoLat, geoLon)
     if out:
       sys.stdout.write(str(out))
       

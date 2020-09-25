@@ -61,49 +61,49 @@ Processing raw inclinometer data,
 Saving result in Pandas HDF5 store (*.h5) and *.csv
 ----------------------------"""}, version)
     # Configuration sections
-    p_in = p.add_argument_group('in', 'all about input files')
-    p_in.add('--path_cruise', default='.',  # nargs=?,
+    s = p.add_argument_group('in', 'all about input files')
+    s.add('--path_cruise', default='.',  # nargs=?,
              help='Directory where inclinometer data will be stored, subdirs:'
                   '"_raw": required, with raw file(s)')
-    p_in.add('--raw_subdir', default='',
+    s.add('--raw_subdir', default='',
              help='Optional zip/rar arhive name (data will be unpacked) or subdir in "path_cruise/_raw"')
-    p_in.add('--raw_pattern', default="*{prefix:}{number:0>3}*.[tT][xX][tT]",
+    s.add('--raw_pattern', default="*{prefix:}{number:0>3}*.[tT][xX][tT]",
              help='Pattern to find raw files: Python "format" command pattern to format prefix and probe number.'
                   '"prefix" is a --probes_prefix arg that is in UPPER case and INCL replaced with INKL.')
-    p_in.add('--probes_int_list',
+    s.add('--probes_int_list',
              help='Note: Not affects steps 2, 3, set empty list to load all')
-    p_in.add('--probes_prefix', default='incl',
+    s.add('--probes_prefix', default='incl',
              help='''Table name prefix in DB (and in raw files with modification described in --raw_pattern help).
                   I have used "incl" for inclinometers, "w" for wavegauges. Note: only if "incl" in probes_prefix the 
                   Kondrashov format is used else it must be in Baranov's format''')
 
 
-    p_in.add('--db_coefs', default=r'd:\WorkData\_experiment\_2019\inclinometer\190710_compas_calibr-byMe\190710incl.h5',
+    s.add('--db_coefs', default=r'd:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe\190710incl.h5',
              help='coefs will be copied from this hdf5 store to output hdf5 store')
-    p_in.add('--timerange_zeroing_list', help='See incl_h5clc')
-    p_in.add('--timerange_zeroing_dict', help='See incl_h5clc. Example: incl14: [2020-07-10T21:31:00, 2020-07-10T21:39:00]')
-    p_in.add('--dt_from_utc_seconds', default='0',
+    s.add('--timerange_zeroing_list', help='See incl_h5clc')
+    s.add('--timerange_zeroing_dict', help='See incl_h5clc. Example: incl14: [2020-07-10T21:31:00, 2020-07-10T21:39:00]')
+    s.add('--dt_from_utc_seconds', default='0',
              help='add this correction to loading datetime data. Can use other suffixes instead of "seconds"')
-    p_in.add('--dt_from_utc_hours', default='0',
+    s.add('--dt_from_utc_hours', default='0',
              help='add this correction to loading datetime data. Can use other suffixes instead of "hours"')
 
-    p_flt = p.add_argument_group('filter', 'filter all data based on min/max of parameters')
-    p_flt.add('--date_min_dict', default='0: 2020-06-28T18:00',
+    s = p.add_argument_group('filter', 'filter all data based on min/max of parameters')
+    s.add('--date_min_dict', default='0: 2020-06-28T18:00',
              help='minimum time for each probe, use probe number 0 to set default value')
-    p_flt.add('--date_max_dict', default='0: now',
+    s.add('--date_max_dict', default='0: now',
              help='maximum time for each probe, use probe number 0 to set default value')
 
 
-    p_out = p.add_argument_group('out', 'all about output files')
-    p_out.add('--db_name', help='output hdf5 file name, do not set for auto using dir name')
-    p_out.add('--aggregate_period_s_int_list', default='',
+    s = p.add_argument_group('out', 'all about output files')
+    s.add('--db_name', help='output hdf5 file name, do not set for auto using dir name')
+    s.add('--aggregate_period_s_int_list', default='',
               help='bin average data in this intervals will be placed in separate section in output DB and csv for '
                    '[None, 300, 600], default: None, 2, 600, 3600 if "w" in [in][probes_prefix] else 7200')
 
-    p_prog = p.add_argument_group('program', 'program behaviour')
-    p_prog.add('--step_start_int', default='1', choices=['1', '2', '3', '4'],
+    s = p.add_argument_group('program', 'program behaviour')
+    s.add('--step_start_int', default='1', choices=['1', '2', '3', '4'],
                help='step to start')
-    p_prog.add('--step_end_int', default='2', choices=['1', '2', '3', '4'],
+    s.add('--step_end_int', default='2', choices=['1', '2', '3', '4'],
                help='step to end (inclusive, or if less than start then will run one start step only)')
     return (p)
 

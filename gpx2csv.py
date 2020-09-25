@@ -69,8 +69,8 @@ to CSV
 
     # All argumets of type str (default for add_argument...), because of
     # custom postprocessing based of args names in ini2dict
-    p_in = p.add_argument_group('in', 'all about input files')
-    p_in.add('--path', default='.',  # nargs=?,
+    s = p.add_argument_group('in', 'all about input files')
+    s.add('--path', default='.',  # nargs=?,
              help='path to source file(s) to parse. Use patterns in Unix shell style')
 
 

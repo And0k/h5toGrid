@@ -8,7 +8,7 @@ from __future__ import print_function
   Created: 08.09.2015
 """
 # For each *.vsz file:
-# 1. Get date from file name (defined by input data mask) to get nav(time) and magDec(..., time)
+# 1. Get date from file name (defined by input data mask) to get nav(time) and mag_dec(..., time)
 # 2. Get name of measuring device data in *.vsz code:
 # 2a. if need name of source bin measuring device data file, create it from name of (usually txt) source for veusz
 # 3. Get nav file name in *.vsz code
@@ -18,46 +18,46 @@ from __future__ import print_function
 ### Configuration for this script and comments may be found in magneticDec.ini
 
 #####################################################################################################
-import sys;
+import sys
 from os import path as os_path
 from datetime import datetime, timedelta
 from codecs import open
 import warnings
-from subprocess import check_output as subprocess_check_output  # , call as subprocess_call
-import re
+
+from typing import Iterable
+import datetime
+import wmm2020 as wmm
 
 
-# Default path to cfg file is this program dir.
-# It is may be overwrited here (only one line after first "\" will be used):
-# magneticDecINI = r'\
-# d:\workData\_source\KaraSea\150816_Kartesh-river_Ob\ADVS_RDI#17937 — копия\magneticDec.ini
-# \\\
-# '
-# magneticDecINI = first_of_paths_text(magneticDecINI) #Get only first path from strDir
-#
-
-# cfg['Veusz files']['dir'] = f.readline().split('//')[0].strip()
-# cfg['Geomag']['path']= r'd:\Work\MATLAB\_other\_hydro\imos-toolbox\Geomag\windows\geomag70.exe'
-# cfg['Geomag']['pathmodel']= r'd:\Work\MATLAB\_other\_hydro\imos-toolbox\Geomag\windows\IGRF11.COF' #in same directory
-
-def magDec(geoLat, geoLon, geoDate='2015,01,30', geoDepth=0, strCmdPattern=None):
+def year_fraction(date: datetime.datetime) -> float:
     """
-        Returns magnetic declination using call to geomag.exe
+    datetime dates to decimal years
+    https://stackoverflow.com/a/36949905/2028147
+    :param date:
+    :return:
+    Note: calculates the fraction based on the start of the day, so December 31 will be 0.997, not 1.0.
+
+    >>> print year_fraction(datetime.datetime.today())
+    2016.32513661
+    """
+    start = datetime.date(date.year, 1, 1).toordinal()
+    year_length = datetime.date(date.year+1, 1, 1).toordinal() - start
+    return date.year + float(date.toordinal() - start) / year_length
+
+
+def mag_dec(lat, lon, time: datetime.datetime, depth: float = 0):
+    """
+        Returns magnetic declination using wmm2020 library
         
-        Lat,Lon - coordinates in degrees WGS84
-        "Time" - 
-        Depth - in meters (negative below sea surface)
+    :param lat, lon: coordinates in degrees WGS84
+    :param time: # ='2020,09,20'
+    :param depth: in meters (negative below sea surface)
     """
-    # geoDate=
-    runString = strCmdPattern.format(geoDate, geoDepth, geoLat,
-                                     geoLon)  # os_path.join(nameD, os_path.splitext(nameFE0)[0] + '.0000')
-    txt = subprocess_check_output(runString)  # subprocess.call(
-    if txt:
-        # print(txt)
-        m = re.search(r'\n +' + geoDate[0:4] + r'\.\d\d +(\d+)d +(\d+)m +', txt)
-        return float(m.group(1)) + float(m.group(2)) / 60.0
-    else:
-        return None
+
+    yeardec = year_fraction(time)
+    mag = wmm.wmm(lat, lon, depth/1000, yeardec)
+    # .item()
+    return mag.decl if (isinstance(lat, Iterable) or isinstance(lon, Iterable)) else mag.decl.item(0)
 
 
 # Next writes value to file but it must be slow to read for 1 value compared to previous method,
@@ -79,6 +79,7 @@ def magDec(geoLat, geoLon, geoDate='2015,01,30', geoDepth=0, strCmdPattern=None)
 # with open(fOut,'r') as f:
 # for line in fOut: #import os; fOut.flush(); os.fsync(fOut.fileno())
 # print(line)
+
 
 def magDecFile(geomagInputFile, geomagOutputFile, stdOutRedirection='>NUL', strCmdPattern=None):
     warnings.warn('not implemented')
@@ -239,7 +240,7 @@ def repInFile(nameFull, cfg, result):  # result is previous or with ['nameNavFul
 
             # 4. Get MagneticDeclination value
             result['mag'] = round(
-                magDec(round(result['Lat'], 10), round(result['Lon'], 10), result['Date'].strftime("%Y,%m,%d")), 3)
+                mag_dec(round(result['Lat'], 10), round(result['Lon'], 10), result['Date'].strftime("%Y,%m,%d")), 3)
 
         # 5. Replace MagneticDeclination:
         m = cfg['re mask']['mag'].search(file_content)  # m = cfg['re mask']['mag'].split(file_content,  maxsplit=1)
@@ -326,7 +327,7 @@ if __name__ == '__main__':
 """    
     #Test1:
     geoLat= 44; geoLon= 55
-    out= magDec(geoLat, geoLon)
+    out= mag_dec(geoLat, geoLon)
     if out:
       sys.stdout.write(str(out))
       

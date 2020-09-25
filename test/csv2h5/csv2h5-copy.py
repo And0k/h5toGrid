@@ -80,50 +80,50 @@ to Pandas HDF5 store*.h5
 
     # All argumets of type str (default for add_argument...), because of
     # custom postprocessing based of args names in ini2dict
-    p_in = p.add_argument_group('in', 'all about input files')
-    p_in.add('--path', default='.',  # nargs=?,
+    s = p.add_argument_group('in', 'all about input files')
+    s.add('--path', default='.',  # nargs=?,
              help='path to source file(s) to parse. Use patterns in Unix shell style')
-    p_in.add('--b_search_in_subdirs', default='True',
+    s.add('--b_search_in_subdirs', default='True',
              help='search in subdirectories, used if mask or only dir in path (not full path)')
-    p_in.add('--exclude_dirs_ends_with_list', default='toDel, -, bad, test, TEST',
+    s.add('--exclude_dirs_ends_with_list', default='toDel, -, bad, test, TEST',
              help='exclude dirs which ends with this srings. This and next option especially useful when search recursively in many dirs')
-    p_in.add('--exclude_files_ends_with_list', default='coef.txt, -.txt, test.txt',
+    s.add('--exclude_files_ends_with_list', default='coef.txt, -.txt, test.txt',
              help='exclude files which ends with this srings')
-    p_in.add('--b_skip_if_up_to_date', default='True',
+    s.add('--b_skip_if_up_to_date', default='True',
              help='exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files')
-    p_in.add('--dt_from_utc_hours', default='0',
+    s.add('--dt_from_utc_hours', default='0',
              help='add this correction to loading datetime data. Can use other suffixes instead of "hours"')
-    p_in.add('--header',
+    s.add('--header',
              help='comma separated list matched to input data columns to name variables. Can contain type suffix i.e. (float) - which is default, (text) - also to convert by specific converter, or (time) - for ISO format only. If it will')
-    p_in.add('--cols_load_list',
+    s.add('--cols_load_list',
              help='comma separated list of names from header to be saved in hdf5 store. not use "/" char for them')
-    p_in.add('--skiprows_integer', default='1',
+    s.add('--skiprows_integer', default='1',
              help='skip rows from top. Use 1 to skip one line of header')
-    p_in.add('--b_raise_on_err', default='True',
+    s.add('--b_raise_on_err', default='True',
              help='if false then not rise error on rows which can not be loaded (only shows warning). Try set "comments" argument to skip them without warning')
 
-    p_in.add('--max_text_width', default='1000',
+    s.add('--max_text_width', default='1000',
              help='maximum length of text fields (specified by "(text)" in header) for dtype in numpy loadtxt')
-    p_in.add('--chunksize_percent_float',
+    s.add('--chunksize_percent_float',
              help='percent of 1st file length to set up hdf5 store tabe chunk size')
-    p_in.add('--blocksize_int', default='20000000',
+    s.add('--blocksize_int', default='20000000',
              help='bytes, chunk size for loading and processing csv')
-    p_in.add('--return',
+    s.add('--return',
              help='<return_cfg>: returns cfg only and exit, <return_cfg_step_gen_names_and_log>: execute init_input_cols() and also returns fun_proc_loaded function ... - see code')
-    p_in.add('--b_interact', default='True',
+    s.add('--b_interact', default='True',
              help='ask with showing files to process them')
-    p_out = p.add_argument_group('out', 'all about output files')
-    p_out.add('--db_path', help='hdf5 store file path')
-    p_out.add('--table',
+    s = p.add_argument_group('out', 'all about output files')
+    s.add('--db_path', help='hdf5 store file path')
+    s.add('--table',
               help='table name in hdf5 store to write data. If not specified then will be generated on base of path of input files')
-    # p_out.add('--tables_list',
+    # s.add('--tables_list',
     #           help='tables names in hdf5 store to write data (comma separated)')
-    p_out.add('--b_insert_separator', default='True',
+    s.add('--b_insert_separator', default='True',
               help='insert NaNs row in table after each file data end')
-    p_out.add('--b_use_old_temporary_tables', default='False',
+    s.add('--b_use_old_temporary_tables', default='False',
               help='Warning! Set True only if temporary storage already have good data!'
                    'if True and b_skip_if_up_to_date= True then not replace temporary storage with current storage before adding data to the temporary storage')
-    p_out.add('--b_remove_duplicates', default='False', help='Set True if you see warnings about')
+    s.add('--b_remove_duplicates', default='False', help='Set True if you see warnings about')
 
     return (p)
 
@@ -714,7 +714,7 @@ def h5init(cfg_in, cfg_out):
     :param: cfg_in, cfg_out - configuration dicts, with fields:
         cfg_in:
             path if no 'db_path' in cfg_out
-            source_dir_words (optional), default: ['source', 'WorkData', 'workData'] - see getDirBaseOut()
+            raw_dir_words (optional), default: ['source', 'WorkData', 'workData'] - see getDirBaseOut()
             nfiles (optional)
             b_skip_if_up_to_date (optional)
         cfg_out: all fields are optional
@@ -722,7 +722,7 @@ def h5init(cfg_in, cfg_out):
     Sets fields of cfg_out _if not exist_. Updated fields are:
         % paths %:
     tables, tables_log: tables names of data and log (metadata)
-    db_dir, db_base: parts of db (hdf5 store) path - based on cfg_in and cfg_in['source_dir_words']
+    db_dir, db_base: parts of db (hdf5 store) path - based on cfg_in and cfg_in['raw_dir_words']
     db_path: db_dir + "/" + db_base
     db_path_temp: temporary h5 file name
         % other %:
@@ -743,7 +743,7 @@ def h5init(cfg_in, cfg_out):
     set_field_if_no(cfg_out, 'b_use_old_temporary_tables', True)
 
     # automatic names
-    cfg_source_dir_words = cfg_in['source_dir_words'] if 'source_dir_words' in cfg_in else \
+    cfg_raw_dir_words = cfg_in['raw_dir_words'] if 'raw_dir_words' in cfg_in else \
         ['source', 'WorkData', 'workData']
     auto = {'db_ext': 'h5'}
     if ('db_path' in cfg_out) and cfg_out['db_path']:
@@ -756,7 +756,7 @@ def h5init(cfg_in, cfg_out):
             cfg_out['db_path'] = ''
     else:
         auto['db_path'] = os_path.split(cfg_in.get('path'))[0]
-    auto['db_path'], auto['db_base'], auto['table'] = getDirBaseOut(auto['db_path'], cfg_source_dir_words)
+    auto['db_path'], auto['db_base'], auto['table'] = getDirBaseOut(auto['db_path'], cfg_raw_dir_words)
     auto['db_base'] = os_path.splitext(auto['db_base'])[0]  # extension is specified in db_ext
 
     cfg_out['db_dir'], cfg_out['db_base'] = pathAndMask(*[cfg_out[spec] if (spec in cfg_out and cfg_out[spec]) else

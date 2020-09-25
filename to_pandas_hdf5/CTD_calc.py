@@ -43,6 +43,7 @@ else:
 version = '0.0.1'
 
 
+# noinspection PyUnresolvedReferences
 def my_argparser():
     """
     Configuration parser
@@ -63,59 +64,59 @@ process it and save HDF5/CSV
     #                            ('CTD_calc.ini', 'CTD_calc.json')]
 
     # Configuration sections
-    p_in = p.add_argument_group('in', 'all about input files')
-    p_in.add('--db_path', default='.',  # nargs=?,
+    s = p.add_argument_group('in', 'all about input files')
+    s.add('--db_path', default='.',  # nargs=?,
              help='path to pytables hdf5 store to load data. May use patterns in Unix shell style')
-    p_in.add('--tables_list',
+    s.add('--tables_list',
              help='table name in hdf5 store to read data. If not specified then will be generated on base of path of input files')
-    p_in.add('--tables_log',
+    s.add('--tables_log',
              help='table name in hdf5 store to read data intervals. If not specified then will be "{}/logFiles" where {} will be replaced by current data table name')
-    p_in.add('--table_nav', default='navigation',
+    s.add('--table_nav', default='navigation',
              help='table name in hdf5 store to add data from it to log table when in "find runs" mode. Use empty strng to not add')
-    p_in.add('--dt_from_utc_hours', default='0',
+    s.add('--dt_from_utc_hours', default='0',
              help='add this correction to loading datetime data. Can use other suffixes instead of "hours"')
-    p_in.add('--b_skip_if_up_to_date', default='True',
+    s.add('--b_skip_if_up_to_date', default='True',
              help='exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files')
-    p_in.add('--b_temp_on_its90', default='True',
+    s.add('--b_temp_on_its90', default='True',
              help='When calc CTD parameters treat Temp have red on ITS-90 scale. (i.e. same as "temp90")')
-    p_in.add('--path_coef',
+    s.add('--path_coef',
              help='path to file with coefficients. Used for processing of Neil Brown CTD data')
 
-    p_out = p.add_argument_group('out', 'all about output files')
+    s = p.add_argument_group('out', 'all about output files')
     info_default_path = '[in] path from *.ini'
-    p_out.add('--out.db_path', help='hdf5 store file path')
-    p_out.add('--out.tables_list',
+    s.add('--out.db_path', help='hdf5 store file path')
+    s.add('--out.tables_list',
               help='table name in hdf5 store to write data. If not specified then it is same as input tables_list (only new subtable will created here), else it will be generated on base of path of input files')
-    # p_out.add('--tables_list',
+    # s.add('--tables_list',
     #     #           help='tables names in hdf5 store to write data (comma separated)')
-    p_out.add('--path_csv',
+    s.add('--path_csv',
               help='path to output directory of csv file(s)')
-    p_out.add('--data_columns_list',
+    s.add('--data_columns_list',
               help='list of columns names used in output csv file(s)')
-    p_out.add('--b_insert_separator', default='True',
+    s.add('--b_insert_separator', default='True',
               help='insert NaNs row in table after each file data end')
-    p_out.add('--b_remove_duplicates', default='False', help='Set True if you see warnings about')
-    p_out.add('--text_date_format', default='%Y-%m-%d %H:%M:%S.%f',
+    s.add('--b_remove_duplicates', default='False', help='Set True if you see warnings about')
+    s.add('--text_date_format', default='%Y-%m-%d %H:%M:%S.%f',
               help='Format of date column in csv files. Can use float or string representations')
 
-    p_run = p.add_argument_group('extract_runs', 'program behaviour')
-    p_run.add('--cols_list', default='Pres',
+    s = p.add_argument_group('extract_runs', 'program behaviour')
+    s.add('--cols_list', default='Pres',
               help='column for extract_runs (other common variant besides default is "Depth")')
-    p_run.add('--dt_between_min_minutes', default='1', help='')
-    p_run.add('--min_dp', default='20', help='')
-    p_run.add('--min_samples', default='200', help='100 use small value (10) for binned (averaged) samples')
-    p_run.add('--b_keep_minmax_of_bad_files', default='False',
+    s.add('--dt_between_min_minutes', default='1', help='')
+    s.add('--min_dp', default='20', help='')
+    s.add('--min_samples', default='200', help='100 use small value (10) for binned (averaged) samples')
+    s.add('--b_keep_minmax_of_bad_files', default='False',
               help='keep 1 min before max and max of separated parts of data where movements insufficient to be runs')
-    p_run.add('--b_save_images', default='True', help='to review split result')
+    s.add('--b_save_images', default='True', help='to review split result')
 
-    p_flt = p.add_argument_group('filter', 'filter all data based on min/max of parameters')
-    p_flt.add('--min_dict',
+    s = p.add_argument_group('filter', 'filter all data based on min/max of parameters')
+    s.add('--min_dict',
               help='List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is below ``value``')
-    p_flt.add('--max_dict',
+    s.add('--max_dict',
               help='List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is above ``value``')
 
-    p_prog = p.add_argument_group('program', 'program behaviour')
-    p_prog.add('--return', default='<end>',  # nargs=1,
+    s = p.add_argument_group('program', 'program behaviour')
+    s.add('--return', default='<end>',  # nargs=1,
                choices=['<cfg_from_args>', '<gen_names_and_log>', '<end>'],
                help='<cfg_from_args>: returns cfg based on input args only and exit, <gen_names_and_log>: execute init_input_cols() and also returns fun_proc_loaded function... - see main()')
     return (p)
@@ -264,14 +265,14 @@ def CTDrunsExtract(P: np.ndarray,
     find profiles ("Mainas"). Uses extractRuns()
     :param P: Pressure/Depth
     :param dnT: Time
-    :param cfg_extract_runs - settings dict with fields:
-        dt_between_min
-        min_dp
-        min_samples
-        dt_hole_max - split runs where dt between adjasent samples bigger. If not
-        specified it is set equal to 'dt_between_min' automatically
-        b_do - if it is set to False intepret all data as one run
-        'b_keep_minmax_of_bad_files', optional - keep 1 min before max and max of separated parts of data where movements insufficient to be runs
+    :param cfg_extract_runs: settings dict with fields:
+      - dt_between_min
+      - min_dp
+      - min_samples
+      - dt_hole_max - split runs where dt between adjasent samples bigger. If not
+      specified it is set equal to 'dt_between_min' automatically
+      - b_do - if it is set to False intepret all data as one run
+      - b_keep_minmax_of_bad_files, optional - keep 1 min before max and max of separated parts of data where movements insufficient to be runs
     :return: iminmax: 2D numpy array np.int64([[minimums],[maximums]])
     '''
 
@@ -548,7 +549,7 @@ def log_runs(df_raw: pd.DataFrame,
     # df_raw.ix[[]] gets random error - bug in pandas
 
 
-def add_ctd_params(df_in: Mapping[str, Sequence], cfg: Mapping[str, Any], lon=16.7, lat=55.2):
+def add_ctd_params(df_in: MutableMappingMapping[str, Sequence], cfg: Mapping[str, Any], lon=16.7, lat=55.2):
     """
     Calculate all parameters from 'sigma0', 'depth', 'soundV', 'SA' that is specified in cfg['out']['data_columns']
     :param df_in: DataFrame with columns:
@@ -714,7 +715,7 @@ def main(new_arg=None):
                            ) as cfg['in']['db']:  # not opens ['in']['db'] if already opened to write
         for tbl in cfg['in']['tables']:
             if False:  # Show table info
-                cfg_out['db'].get_storer(tbl).table  # ?
+                #cfg_out['db'].get_storer(tbl).table  # ?
                 nodes = sorted(cfg_out['db'].root.__members__)  # , key=number_key
                 print(nodes)
                 # cfg_out['db'].get_node('CTD_Idronaut(Redas)').logFiles        # n_ext level nodes

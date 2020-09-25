@@ -35,11 +35,11 @@ if step == 2:
 
     # stand data - input for 1st step
     db_path_calibr_scalling = path_on_drive_d(
-        r'd:\WorkData\_experiment\_2019\inclinometer\200807_Schukas\mag_components_calibration\200807_calibr-lab#b.h5'
+        r'd:\WorkData\_experiment\inclinometer\200807_Schukas\mag_components_calibration\200807_calibr-lab#b.h5'
         )
     # tank data - used to output coefficients in both steps
     db_path_tank = path_on_drive_d(  # path to load calibration data: newer first
-        r'd:\WorkData\_experiment\_2019\inclinometer\200807_Schukas\200807_calibr-tank-b.h5')
+        r'd:\WorkData\_experiment\inclinometer\200807_Schukas\200807_calibr-tank-b.h5')
 
 
 

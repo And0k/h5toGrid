@@ -30,14 +30,14 @@ channels_list = ['M', 'A']  # []
 
 # stand data - input for 1st step
 db_path_calibr_scalling = path_on_drive_d(
-    r'd:\WorkData\_experiment\_2019\inclinometer\190710_compas_calibr-byMe\190710incl.h5'
+    r'd:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe\190710incl.h5'
     )
 
 r"""
 d:\WorkData\_experiment\_2018\inclinometer\181004_tank[1-20]\181004_KTIz.h5
     # r'd:/workData/_experiment/_2019/inclinometer/190704_tank_ex2/190704incl.h5'
-    # r'd:\WorkData\_experiment\_2019\inclinometer\190711_tank\190711incl.h5'
-    # r'd:\WorkData\_experiment\_2019\inclinometer\190711_tank\190711incl.h5'
+    # r'd:\WorkData\_experiment\inclinometer\190711_tank\190711incl.h5'
+    # r'd:\WorkData\_experiment\inclinometer\190711_tank\190711incl.h5'
     # r'/mnt/D/workData/_experiment/_2019/inclinometer/190704_tank_ex2/190704incl.h5'
 """
 
@@ -46,19 +46,19 @@ step = 2  # one step for one program's run
 for i, probe in enumerate(probes):  # incl_calibr not supports multiple timeranges so calculate one by one probe
     # tank data - used to output coefficients in both steps
     db_path_tank = path_on_drive_d(  # path to load calibration data: newer first
-        r'd:\WorkData\_experiment\_2019\inclinometer\200610_tank_ex[4,5,7,9,10,11][3,12,13,14,15,16,19]\200610_tank.h5' if probe in
+        r'd:\WorkData\_experiment\inclinometer\200610_tank_ex[4,5,7,9,10,11][3,12,13,14,15,16,19]\200610_tank.h5' if probe in
 [4,5,7,9,10,11,3,12,13,14,15,16,19] else
-    r'd:\WorkData\_experiment\_2019\inclinometer\200117_tank[23,30,32]\200117_tank.h5' if probe in
+    r'd:\WorkData\_experiment\inclinometer\200117_tank[23,30,32]\200117_tank.h5' if probe in
 [23,30,32] else
-        r'd:\WorkData\_experiment\_2019\inclinometer\191106_tank_ex[1,13,14,16][3,12,15,19]\191106_tank_ex2.h5' if probe in
+        r'd:\WorkData\_experiment\inclinometer\191106_tank_ex[1,13,14,16][3,12,15,19]\191106_tank_ex2.h5' if probe in
 [3,12,15,19] else
-        r'd:\WorkData\_experiment\_2019\inclinometer\191106_tank_ex[1,13,14,16][3,12,15,19]\191106_tank_ex1.h5' if probe in
+        r'd:\WorkData\_experiment\inclinometer\191106_tank_ex[1,13,14,16][3,12,15,19]\191106_tank_ex1.h5' if probe in
 [1,13,14,16] else
-        r'd:\WorkData\_experiment\_2019\inclinometer\190711_tank[1,4,5,7,11,12]\190711incl.h5' if probe in
+        r'd:\WorkData\_experiment\inclinometer\190711_tank[1,4,5,7,11,12]\190711incl.h5' if probe in
 [1, 4, 5, 7,11,12] else
-        r'd:\WorkData\_experiment\_2019\inclinometer\190704_tank_ex2[12,22,27,28,30,31,35]\190704incl.h5' if probe in
+        r'd:\WorkData\_experiment\inclinometer\190704_tank_ex2[12,22,27,28,30,31,35]\190704incl.h5' if probe in
 [22,27,28,30,31,35] else  # 12,
-        r'd:\WorkData\_experiment\_2019\inclinometer\190704_tank_ex1[21,23,24,25,26,29,32,34]\190704incl.h5' if probe in
+        r'd:\WorkData\_experiment\inclinometer\190704_tank_ex1[21,23,24,25,26,29,32,34]\190704incl.h5' if probe in
 [21,23,24,25,26,29,32,34] else
         r'd:\WorkData\_experiment\_2018\inclinometer\181004_tank[1-20]\181004_KTIz.h5'
         # old DB with inverted M like new
@@ -166,7 +166,7 @@ for i, probe in enumerate(probes):  # incl_calibr not supports multiple timerang
                 'db_path': db_path_tank,
                 'timerange_nord': timeranges_nord[probe]}
             with pd.HDFStore(db_path_calibr_scalling, mode='r') as store:
-                for tbl, coefs in h5_names_gen({'in': cfg_in}):
+                for tbl, coefs in h5_names_gen(cfg_in):
                     del coefs['azimuth_shift_deg']  # to calculate shift of uncorrected data
                     # Calculation:
                     dict_matrices = {'//coef//H//azimuth_shift_deg': zeroing_azimuth(

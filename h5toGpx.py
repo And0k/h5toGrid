@@ -32,39 +32,39 @@ def my_argparser():
     p = my_argparser_common_part({'description': 'Extract data from Pandas HDF5 '
                                                  'store*.h5 files to GPX'})  # 'gpx2h5.ini'
 
-    p_in = p.add_argument_group('in', 'data from hdf5 store')
-    p_in.add('--db_path', help='hdf5 store file path')  # '*.h5'
-    p_in.add('--tables_log_list', help='hdf5 log files name', default='logFiles')
-    p_in.add('--table_nav', help='table where to search coordinates. If empty then use data tables',
+    s = p.add_argument_group('in', 'data from hdf5 store')
+    s.add('--db_path', help='hdf5 store file path')  # '*.h5'
+    s.add('--tables_log_list', help='hdf5 log files name', default='logFiles')
+    s.add('--table_nav', help='table where to search coordinates. If empty then use data tables',
              default='navigation')
 
-    p_out = p.add_argument_group('out',
+    s = p.add_argument_group('out',
                                  'Output files: paths, formats... - not calculation intensive affecting parameters')
-    p_out.add('--select_from_tablelog_ranges_index',
+    s.add('--select_from_tablelog_ranges_index',
               help='if set to 0 (or -1) then use only 1 data point per log row and retrieve navigation at data points only (to calc dist) else if None then use all data for ranges specified in log rows and saves tracks (not points)')
-    p_out.add('--gpx_names_funs_list', default='i+1',
+    s.add('--gpx_names_funs_list', default='i+1',
               help='list of functions to name of tracks/waypoints, each item for each table. Use arguments of current indexes: i - waypoint. will be converted to string, to duplicates will be added letter in alphabet order. Functions arguments are i: row index, row: pandas series with fields: Index (datetime), Lat, Lon')
-    p_out.add('--gpx_names_funs_cobined', default='gpx_names_funs[row.itbl](i)',
+    s.add('--gpx_names_funs_cobined', default='gpx_names_funs[row.itbl](i)',
               help='tracks/waypoints names of combined gpx. Possibilites are the same as for gpx_names_funs_list item. Default function will keep combined values same as individual')
-    p_out.add('--gpx_names_fun_format', default='{}',
+    s.add('--gpx_names_fun_format', default='{}',
               help='name\'s format to display gpx_names_funs_(list/combined) result')
-    p_out.add('--dir', default='',
+    s.add('--dir', default='',
               help='directory to place output files')
 
-    p_proc = p.add_argument_group('process', 'calculation parameters')
-    p_proc.add_argument('--b_missed_coord_to_zeros',
+    s = p.add_argument_group('process', 'calculation parameters')
+    s.add_argument('--b_missed_coord_to_zeros',
                         help='out all points even if no coordinates, but replace them to zeros')
-    p_proc.add_argument('--simplify_tracks_error_m_float',
+    s.add_argument('--simplify_tracks_error_m_float',
                         help='does Ramer-Douglas-Peucker algorithm for simplification of tracks if set')
-    p_proc.add('--dt_search_nav_tolerance_seconds', default='1',
+    s.add('--dt_search_nav_tolerance_seconds', default='1',
                help='start interpolte nav when not found exact data time')
-    p_proc.add('--period_files', default='',
+    s.add('--period_files', default='',
                help='pandas offset strings as D, 5D, H, ... (most useful: D), exporrt data in intervals')
-    p_proc.add('--period_segments', default='',
+    s.add('--period_segments', default='',
                help='pandas offset strings as D, 5D, H, ... to divide track on segments')
 
-    p_program = p.add_argument_group('program', 'Program behaviour')
-    p_program.add_argument('--log', help='write log if path to existed file is specified')
+    s = p.add_argument_group('program', 'Program behaviour')
+    s.add_argument('--log', help='write log if path to existed file is specified')
 
     return p
 

@@ -33,10 +33,10 @@ from utils_time import intervals_from_period
 
 path_cruise = drive_d.joinpath(
     # r'd:\WorkData\_experiment\_2019\inclinometer\190711_tank'
-    r'd:\WorkData\_experiment\_2019\inclinometer\190710_compas_calibr-byMe'
+    r'd:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe'
     )
 """
-r'd:\WorkData\_experiment\_2019\inclinometer\190704'
+r'd:\WorkData\_experiment\inclinometer\190704'
 """
 
 # path_db = path_cruise / (re.match('(^[\d_]*).*', path_cruise.name).groups()[0].strip('_') + 'incl.h5')

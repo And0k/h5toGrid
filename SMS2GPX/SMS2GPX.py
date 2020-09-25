@@ -38,15 +38,15 @@ def my_argparser():
 Convert SMS *.xml to *.gpx
 ----------------------------"""}, version)  # config_file_paths=r'SMS2GPX.ini'
 
-    p_in = p.add_argument_group('in', 'XML files')
-    p_in.add('--path', help='Path to XML or directory with XML files to parse')
-    p_in.add('--dt_from_utc_hours', default='0',
+    s = p.add_argument_group('in', 'XML files')
+    s.add('--path', help='Path to XML or directory with XML files to parse')
+    s.add('--dt_from_utc_hours', default='0',
              help='add this correction to loading datetime data. Can use other suffixes instead of "hours"')
-    p_in.add('--contacts_names',
+    s.add('--contacts_names',
              help='list of contacts names to use like "tracker 3, Трекер 0, Трекер 1"')
 
-    p_out = p.add_argument_group('out', 'XML files')
-    p_out.add('--out.path', default='./<filename>.gpx',
+    s = p.add_argument_group('out', 'XML files')
+    s.add('--out.path', default='./<filename>.gpx',
               help='''Output dir/path.
     Join data from all found input files to single output if extension provided. If
     "<filename>" found it will be sabstituted with [1st file name]+, if "<dir>" -
@@ -54,17 +54,17 @@ Convert SMS *.xml to *.gpx
     Else, if no extension provided then ".gpx" will be used, "<filename>" string
     will be sabstituted with correspondng input file names.
     ''')
-    p_out.add('--dt_between_track_segments_hours', default='99999',
+    s.add('--dt_between_track_segments_hours', default='99999',
               help='''dt between track segments. also can try other valid time interval suffixes - all different suffix options will be summed''')
 
-    p_proc = p.add_argument_group('process', 'calculation parameters')
-    # p_proc.add_argument('--b_missed_coord_to_zeros',
+    s = p.add_argument_group('process', 'calculation parameters')
+    # s.add_argument('--b_missed_coord_to_zeros',
     #                     help='out all points even if no coordinates, but replace them to zeros')
-    p_proc.add_argument('--date_min',
+    s.add_argument('--date_min',
                         help='UTC, not output data with < date_min (if date is smaller then treat it as bad, so tries get from stamp if b_all_time_from_stamp is False. If it smaller too then data discard, format like in 13.05.2017 09:00:00')
 
-    p_program = p.add_argument_group('program', 'Program behaviour')
-    p_program.add_argument('--log',
+    s = p.add_argument_group('program', 'Program behaviour')
+    s.add_argument('--log',
                            help='write log if path to existed file is specified')
     return p
 

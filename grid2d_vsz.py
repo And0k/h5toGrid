@@ -77,67 +77,67 @@ def my_argparser():
                                       'Grid data from Pandas HDF5, VSZ files '
                                       'and Pandas HDF5 store*.h5'})
 
-    p_in = p.add_argument_group('in', 'data from hdf5 store')
-    p_in.add('--db_path', help='hdf5 store file path')  # '*.h5'
-    p_in.add('--table_sections', help='table name with sections waypoints data')
-    p_in.add('--table_nav', default='navigation',  # '/navigation/table' after saving without no data_columns= True
+    s = p.add_argument_group('in', 'data from hdf5 store')
+    s.add('--db_path', help='hdf5 store file path')  # '*.h5'
+    s.add('--table_sections', help='table name with sections waypoints data')
+    s.add('--table_nav', default='navigation',  # '/navigation/table' after saving without no data_columns= True
              help='table name with sections waypoints data')
-    p_in.add('--b_temp_on_its90', default='True',
+    s.add('--b_temp_on_its90', default='True',
              help='When calc CTD parameters treat Temp have red on ITS-90 scale. (i.e. same as "temp90")')
 
-    p_vsz = p.add_argument_group('vsz_files', 'data from hdf5 store')
-    p_vsz.add('--subdir', default='CTD-sections', help='Path to source file(s) to parse')
-    p_vsz.add('--filemask', default='[0-9]*.vsz',
+    s = p.add_argument_group('vsz_files', 'data from hdf5 store')
+    s.add('--subdir', default='CTD-sections', help='Path to source file(s) to parse')
+    s.add('--filemask', default='[0-9]*.vsz',
               help='path mask to Veusz pattern file(s). If any files found has names that starts with current section '
                    'time formatted "%y%m%d_%H%M" then use 1st of it without modification. Else use last name that '
                    'conforms to filemask as pattern')
-    p_vsz.add('--export_pages_int_list', default='0',
+    s.add('--export_pages_int_list', default='0',
               help='pages numbers to export, comma separated (1 is first), 0= all')
-    p_vsz.add('--export_dir', default='images(vsz)',
+    s.add('--export_dir', default='images(vsz)',
               help='subdir relative to input path or absolute path to export images')
-    p_vsz.add('--export_format', default='png',
+    s.add('--export_format', default='png',
               help='extention of images to export which defines format')
 
-    p_gpx = p.add_argument_group('gpx', 'symbols names')
-    p_gpx.add('--symbol_break_keeping_point', default='Circle, Red', help='to break all data to sections')
-    p_gpx.add('--symbol_break_notkeeping_dist_float', default='20', help='km, will not keeping to if big dist')
-    p_gpx.add('--symbol_excude_point', default='Circle with X', help='to break all data to sections')
-    p_gpx.add('--symbols_in_veusz_ctd_order_list',
+    s = p.add_argument_group('gpx', 'symbols names')
+    s.add('--symbol_break_keeping_point', default='Circle, Red', help='to break all data to sections')
+    s.add('--symbol_break_notkeeping_dist_float', default='20', help='km, will not keeping to if big dist')
+    s.add('--symbol_excude_point', default='Circle with X', help='to break all data to sections')
+    s.add('--symbols_in_veusz_ctd_order_list',
               help="GPX symbols of section in order of Veusz joins tables of CTD data (use if section has data from several tables, see CTDitable variable in Veusz file). Used only to exclude CTD runs if its number bigger than number of section's points.")  # todo: use names of tables which Veusz loads
-    p_out = p.add_argument_group('out',
+    s = p.add_argument_group('out',
                                  'Output files: paths, formats... - not calculation intensive affecting parameters')
-    p_out.add('--subdir_out', default='subproduct', help='path relative to in.db_path')
-    p_out.add('--dt_from_utc_hours', default='0')
-    p_out.add('--x_resolution_float', default='0.5',
+    s.add('--subdir_out', default='subproduct', help='path relative to in.db_path')
+    s.add('--dt_from_utc_hours', default='0')
+    s.add('--x_resolution_float', default='0.5',
               help='Dist, km. Default is 0.5km, but if dd = length/(nuber of profiles) is less then decrease to dd/2')
-    p_out.add('--y_resolution_float', default='1.0', help='Depth, m')
-    p_out.add('--blank_level_under_bot_float', default='-300',
+    s.add('--y_resolution_float', default='1.0', help='Depth, m')
+    s.add('--blank_level_under_bot_float', default='-300',
               help='Depth, m, that higher than maximum of plot y axis to not see it and to create polygon without self intersections')
-    p_out.add('--data_columns_list',
+    s.add('--data_columns_list',
               help='Comma separated string with data column names (of hdf5 table) to use. Not existed will skipped')
-    p_out.add('--b_reexport_images',
+    s.add('--b_reexport_images',
               help='Export images of loaded .vsz files (if .vsz creared then export ever)')
 
-    p_proc = p.add_argument_group('process', 'process')
-    p_proc.add('--begin_from_section_int', default='0', help='0 - no skip. > 0 - skipped sections')
-    p_proc.add('--interact', default='editable_figures',
+    s = p.add_argument_group('process', 'process')
+    s.add('--begin_from_section_int', default='0', help='0 - no skip. > 0 - skipped sections')
+    s.add('--interact', default='editable_figures',
                help='if not "False" then display figures where user can delete data and required to press Q to continue')
-    p_proc.add('--dt_search_nav_tolerance_seconds', default='1',
+    s.add('--dt_search_nav_tolerance_seconds', default='1',
                help='start interpolate navigation when not found exact data time')
-    p_proc.add('--invert_prior_sn_angle_float', default='30',
+    s.add('--invert_prior_sn_angle_float', default='30',
                help='[0-90] degrees: from S-N to W-E, 45 - no priority')
-    p_proc.add('--depecho_add_float', default='0', help='add value to echosounder depth data')
-    p_proc.add('--convexing_ctd_bot_edge_max_float',  # filter_ctd_bottom_edge_float, min_ctd_end_as_bot_edge
+    s.add('--depecho_add_float', default='0', help='add value to echosounder depth data')
+    s.add('--convexing_ctd_bot_edge_max_float',  # filter_ctd_bottom_edge_float, min_ctd_end_as_bot_edge
                help='filter ctd_bottom_edge line closer to bottom (be convex) where its depth is lesser')
-    p_proc.add('--min_depth', default='4', help='filter out smaller depths')
-    p_proc.add('--max_depth', default='1E5', help='filter out deeper depths')
-    p_proc.add('--filter_depth_wavelet_level_int', default='4', help='level of wavelet filtering of depth')
-    # p_proc.add(
+    s.add('--min_depth', default='4', help='filter out smaller depths')
+    s.add('--max_depth', default='1E5', help='filter out deeper depths')
+    s.add('--filter_depth_wavelet_level_int', default='4', help='level of wavelet filtering of depth')
+    # s.add(
     #     '--dt_point2run_max_minutes', #default=None,
     #     help='time interval to sinchronize points on map and table data (to search data marked as excluded on map i.e. runs which start time is in (t_start_good, t_start_good+dt_point2run_max). If None then select data in the range from current to the next point')
 
-    p_prog = p.add_argument_group('program', 'program behaviour')
-    p_prog.add('--veusz_path',
+    s = p.add_argument_group('program', 'program behaviour')
+    s.add('--veusz_path',
                default=u'C:\\Program Files (x86)\\Veusz' if platform == 'win32' else u'/home/korzh/.virtualenvs/veusz_experiments/lib/python3.6/site-packages/veusz-2.2.2-py3.6-linux-x86_64.egg/veusz',
                help='directory of Veusz')
 
@@ -328,22 +328,23 @@ def track_b_invert(Course, angle_use_SN_max=10):
 
 def sec_edges(navp_in: pd.DataFrame, cfg_gpx: Mapping[str, Any]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Get all start points and section start points
-    :param navp_in:
-    :param cfg_gpx: dict whitch must have keys:
-        'symbol_excude_point'
-        'symbol_break_keeping_point'
+    Get all start points and section start points from navigation log dataframe
+    :param navp_in: navigation log dataframe
+    :param cfg_gpx: if waypoits are used for split waypoits to sections then dict that must have fields:
+      - symbol_excude_point:
+      - symbol_break_keeping_point:
     :return: numpy 2D array and bool mask of excluded points: (A, b_navp_exclude)
         Array A allows to get starts/ends for section with index i: A[0/1, i]
     """
-    b_navp_exclude = navp_in.sym.values == cfg_gpx['symbol_excude_point']
+    b_navp_exclude = navp_in.sym.values == cfg_gpx.get('symbol_excude_point')
     df = navp_in[~b_navp_exclude]
     # [0,: -1]
     ddist = distance(df.Lon, df.Lat) / 1e3  # km
     df_timeind, itm = multiindex_timeindex(df.index)
 
     if itm is None:  # isinstance(df_timeind, pd.DatetimeIndex):
-        b_break_condition = df.sym == cfg_gpx['symbol_break_keeping_point']
+        l.warning('Special waypoits are used for split them to sections. Better use routes!')
+        b_break_condition = df.sym == cfg_gpx.get('symbol_break_keeping_point')
         # Remove boundary points from sections where distance to it is greater cfg_gpx['symbol_break_notkeeping_dist']
         isec_break = np.append(np.flatnonzero(b_break_condition), df.shape[0])
         i0between_sec = isec_break[1:-1]  # if isec_break[-1]+1 == df.shape[0] else isec_break[1:
@@ -377,7 +378,7 @@ def ge_sections(navp_all: pd.DataFrame,
                 isec_max=np.inf) -> Iterable[Tuple[pd.DataFrame, Dict[str, Any]]]:
     """
 
-    :param navp_all:
+    :param navp_all: navigation log dataframe
     :param cfg:
     :param isec_min:
     :param isec_max:
@@ -682,63 +683,67 @@ def b_add_ctd_depth(dist, depth, add_dist, add_depth, max_dist=0.5, max_bed_grad
     return bAdd  # , depth
 
 
-try:  # try get griddata_by_surfer() function reqwirements
-
-    Surfer = None
-
-
-    def griddata_by_surfer(ctd, outFnoE_pattern=r'%TEMP%\xyz{}', xCol='Lon', yCol='Lat', zCols=None,
-                           NumCols=None, NumRows=None, xMin=None, xMax=None, yMin=None, yMax=None):
-        """
-        Grid by Surfer
-        :param ctd:
-        :param outFnoE_pattern:
-        :param xCol:
-        :param yCol:
-        :param zCols:
-        :param NumCols:
-        :param NumRows:
-        :param xMin:
-        :param xMax:
-        :param yMin:
-        :param yMax:
-        :return:
-        """
-        global Surfer
-        if not Surfer:
-            from win32com.client import constants, Dispatch  # , CastTo
-            # python "c:\Programs\_coding\WinPython3\python-3.5.2.amd64\Lib\site-packages\win32com\client\makepy.py" -i "c:\Program Files\Golden Software\S
-            # urfer 13\Surfer.exe"
-            # Use these commands in Python code to auto generate .py support
-            from win32com.client import gencache
-
-            gencache.EnsureModule('{54C3F9A2-980B-1068-83F9-0000C02A351C}', 0, 1, 4)
-            Surfer = Dispatch("Surfer.Application")
-
-
-        tmpF = outFnoE_pattern.format('_temp') + '.csv'
-        xCol = ctd.dtype.names.index(xCol) + 1
-        yCol = ctd.dtype.names.index(yCol) + 1
-        izCols = [ctd.dtype.names.index(zCol) + 1 for zCol in zCols]
-        np.savetxt(tmpF, ctd, header=','.join(ctd.dtype.names), delimiter=',', comments='')
-        dist_etrap = (yMax - yMin) / 10
-        # const={'srfDupAvg': 15, 'srfGridFmtS7': 3}
-        # gdal_geotransform = (x_min, cfg['out']['x_resolution'], 0, -y_min, 0, -cfg['y_resolution_use'])
-        for i, izCol in enumerate(izCols):
-            outGrd = outFnoE_pattern.format(zCols[i]) + '.grd'
-            Surfer.GridData3(DataFile=tmpF, xCol=xCol, yCol=yCol, zCol=izCol, NumCols=NumCols, NumRows=NumRows,
-                             xMin=xMin,
-                             xMax=xMax, yMin=yMin, yMax=yMax, SearchEnable=True, SearchRad1=dist_etrap * 2,
-                             ShowReport=False, DupMethod=constants.srfDupAvg, OutGrid=outGrd,
-                             OutFmt=constants.srfGridFmtS7,
-                             BlankOutsideHull=True, InflateHull=dist_etrap)
-except Exception as e:
-    l.error('\nCan not initialiase Surfer.Application! %s', standard_error_info(e))
-
-
-    def griddata_by_surfer(ctd, outFnoE_pattern=r'%TEMP%\xyz{}', xCol='Lon', yCol='Lat', zCols=2,
-                           NumCols=None, NumRows=None, xMin=None, xMax=None, yMin=None, yMax=None):
-        pass
+# try:  # try get griddata_by_surfer() function reqwirements
+#
+#     Surfer = None
+#
+#
+#     def griddata_by_surfer(ctd: pd.DataFrame, path_stem_pattern: Union[str, Path]=r'%TEMP%\xyz{}',
+#                            xCol='Lon', yCol='Lat', zCols=None,
+#                            NumCols=None, NumRows=None, xMin=None, xMax=None, yMin=None, yMax=None):
+#         """
+#         Grid by Surfer
+#         :param ctd:
+#         :param path_stem_pattern:
+#         :param xCol:
+#         :param yCol:
+#         :param zCols:
+#         :param NumCols:
+#         :param NumRows:
+#         :param xMin:
+#         :param xMax:
+#         :param yMin:
+#         :param yMax:
+#         :return:
+#         """
+#         global Surfer
+#         if not Surfer:
+#             from win32com.client import constants, Dispatch  # , CastTo
+#             # python "c:\Programs\_coding\WinPython3\python-3.5.2.amd64\Lib\site-packages\win32com\client\makepy.py" -i "c:\Program Files\Golden Software\S
+#             # urfer 13\Surfer.exe"
+#             # Use these commands in Python code to auto generate .py support
+#             from win32com.client import gencache
+#
+#             gencache.EnsureModule('{54C3F9A2-980B-1068-83F9-0000C02A351C}', 0, 1, 4)
+#             Surfer = Dispatch("Surfer.Application")
+#
+#         try:
+#             tmpF = f"{path_stem_pattern.format('_temp')}.csv"
+#         except AttributeError:
+#             path_stem_pattern = str(path_stem_pattern)
+#             tmpF = f"{path_stem_pattern.format('_temp')}.csv"
+#         xCol = ctd.dtype.names.index(xCol) + 1
+#         yCol = ctd.dtype.names.index(yCol) + 1
+#         izCols = [ctd.dtype.names.index(zCol) + 1 for zCol in zCols]
+#         np.savetxt(tmpF, ctd, header=','.join(ctd.dtype.names), delimiter=',', comments='')
+#         dist_etrap = (yMax - yMin) / 10
+#         # const={'srfDupAvg': 15, 'srfGridFmtS7': 3}
+#         # gdal_geotransform = (x_min, cfg['out']['x_resolution'], 0, -y_min, 0, -cfg['y_resolution_use'])
+#         for i, izCol in enumerate(izCols):
+#             outGrd = path_stem_pattern.format(zCols[i]) + '.grd'
+#             Surfer.GridData3(DataFile=tmpF, xCol=xCol, yCol=yCol, zCol=izCol, NumCols=NumCols, NumRows=NumRows,
+#                              xMin=xMin,
+#                              xMax=xMax, yMin=yMin, yMax=yMax, SearchEnable=True, SearchRad1=dist_etrap * 2,
+#                              ShowReport=False, DupMethod=constants.srfDupAvg, OutGrid=outGrd,
+#                              OutFmt=constants.srfGridFmtS7,
+#                              BlankOutsideHull=True, InflateHull=dist_etrap)
+# except Exception as e:
+#     l.error('\nCan not initialiase Surfer.Application! %s', standard_error_info(e))
+#
+#
+#     def griddata_by_surfer(ctd, path_stem_pattern=r'%TEMP%\xyz{}', xCol='Lon', yCol='Lat', zCols=2,
+#                            NumCols=None, NumRows=None, xMin=None, xMax=None, yMin=None, yMax=None):
+#         pass
 
 
 def data_sort_to_nav(navp: pd.DataFrame,
@@ -1471,7 +1476,7 @@ def main(new_arg=None):
                 # 1. load navigation at CTD run starts and ends
                 # todo: dist_clc(nav, ctd_time, cfg): calc full dist
                 # - need direction to next route point and projection on it?
-                dfNpoints = h5select(
+                df_points = h5select(
                     cfg['in']['db'], cfg['in']['table_nav'], ['Lat', 'Lon', 'DepEcho'],
                     ctd.time.iloc[np.append(ctd_prm['starts'], ctd_prm['ends'])],
                     dt_check_tolerance=cfg['process']['dt_search_nav_tolerance'],
@@ -1479,16 +1484,16 @@ def main(new_arg=None):
                     )[0]
                 # Try get non NaN from dfL if it has needed columns (we used to write there edges' data with _st/_en suffixes)
                 # if nav have nans search in other places
-                isnan = dfNpoints.isna()
+                isnan = df_points.isna()
                 if isnan.any().any():
                     #dfL = cfg['in']['db'][cfg['in']['table_runs']] - other variant
                     for col in isnan.columns[isnan.any()]:
-                        if col in ctd:  # already loaded data, so try search here first
+                        if col in ctd:  # ctd is an already loaded data, so try search here first
                             try:
                                 b_ctd_col = ctd[col].notna()
                                 col_vals = ctd.loc[b_ctd_col, col].values
                                 col_time = ctd.time[b_ctd_col, col].values
-                                vals = ctd_col_ok.values[inearestsorted(ctd_col_ok.index, dfNpoints.index[isnan[col]])]
+                                vals = ctd_col_ok.values[inearestsorted(ctd_col_ok.index, df_points.index[isnan[col]])]
                             except IndexError:
                                 continue  # not found
                             # vals = df_nav_col[col]
@@ -1504,8 +1509,8 @@ def main(new_arg=None):
 
                 # 2. distances between CTD start points
                 ddist = np.append(0, distance(
-                    *dfNpoints.iloc[:ctd_prm['starts'].size,
-                     dfNpoints.columns.get_indexer(('Lon', 'Lat'))
+                    *df_points.iloc[:ctd_prm['starts'].size,
+                     df_points.columns.get_indexer(('Lon', 'Lat'))
                      ].values.T
                     ) * 1e-3)  # km
                 run_dist = np.cumsum(ddist)
@@ -1522,7 +1527,7 @@ def main(new_arg=None):
                 strLog = '\n'.join(
                     ['{:g}km – {:%d.%m.%y %H:%M}UTC, {:.6f}N, {:.6f}E'.format(
                         round(run_dist[k], 1), pd.to_datetime(ctd.time.iloc[ctd_prm['starts'][k]]),
-                        dfNpoints.Lat.iloc[k], dfNpoints.Lon.iloc[k]) for k in [0, ctd_prm['starts'].size - 1]])
+                        df_points.Lat.iloc[k], df_points.Lon.iloc[k]) for k in [0, ctd_prm['starts'].size - 1]])
                 l.warning(strLog)
 
                 # Adjust (fine) x gridding resolution if too many profiles per distance:
@@ -1841,7 +1846,7 @@ def main(new_arg=None):
                                                       z_col, i_z_col, ok_ctd, ok_edge['soft'], edges_sl_in,
                                                       edges_sl_out)
                     """
-                    griddata_by_surfer(ctd, outFnoE_pattern=os_path.join(
+                    griddata_by_surfer(ctd, path_stem_pattern=os_path.join(
                                 cfg['out']['path'], 'surfer', stem_time + '{}'),  ),
                                        xCol='Dist', yCol='Pres',
                                        zCols=z_col, NumCols=y.size, NumRows=x.size,
@@ -1964,5 +1969,5 @@ if __name__ == '__main__':
 # check_time_diff(ctd['time'][ctd_prm['starts']], bt.index[Nind],
 #                 cfg['process']['dt_search_nav_tolerance']*5)
 # Nind+= Nind_st
-# dfNpoints= storeIn.select(cfg['in']['table_nav'], where= Nind, columns=['Lat', 'Lon', 'DepEcho'])
+# df_points= storeIn.select(cfg['in']['table_nav'], where= Nind, columns=['Lat', 'Lon', 'DepEcho'])
 """

@@ -40,22 +40,22 @@ from utils_time import intervals_from_period
 from utils2init import path_on_drive_d
 
 path_cruise = path_on_drive_d(
-    r'd:\WorkData\_experiment\_2019\inclinometer\200610_tank_ex[4,5,7,9,10,11][3,12,13,14,15,16,19]'
+    r'd:\WorkData\_experiment\inclinometer\200610_tank_ex[4,5,7,9,10,11][3,12,13,14,15,16,19]'
     )
 r"""
-d:\WorkData\_experiment\_2019\inclinometer\200117_tank[23,30,32]
+d:\WorkData\_experiment\inclinometer\200117_tank[23,30,32]
 d:\workData\BalticSea\191119_Filino
-d:\WorkData\_experiment\_2019\inclinometer\190710_compas_calibr-byMe
-d:\WorkData\_experiment\_2019\inclinometer\190710_compas_calibr-byMe\190902[3,14,15,16,19]
-d:\WorkData\_experiment\_2019\inclinometer\190711_tank[1,4,5,7,11,12]
-d:\WorkData\_experiment\_2019\inclinometer\190710_compas_calibr-byMe
+d:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe
+d:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe\190902[3,14,15,16,19]
+d:\WorkData\_experiment\inclinometer\190711_tank[1,4,5,7,11,12]
+d:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe
 
-d:\WorkData\_experiment\_2019\inclinometer\190710_compas_calibr-byMe\191009incl15_directions_test
+d:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe\191009incl15_directions_test
 d:\WorkData\BalticSea\190806_Yantarniy\inclinometer
-d:\WorkData\_experiment\_2019\inclinometer\190704_tank_ex2[12,22,27,28,30,31,35]
-d:\WorkData\_experiment\_2019\inclinometer\190704_tank_ex1[21,23,24,25,26,29,32,34]
-d:\WorkData\_experiment\_2019\inclinometer\190710_compas_calibr-byMe
-d:\WorkData\_experiment\_2019\inclinometer\190704
+d:\WorkData\_experiment\inclinometer\190704_tank_ex2[12,22,27,28,30,31,35]
+d:\WorkData\_experiment\inclinometer\190704_tank_ex1[21,23,24,25,26,29,32,34]
+d:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe
+d:\WorkData\_experiment\inclinometer\190704
 
 
 t_start_utc = {
@@ -215,16 +215,16 @@ if start == 1:
                 ])
 
         for db_coefs in [
-            r'd:\WorkData\_experiment\_2019\inclinometer\190704_tank_ex2[12,22,27,28,30,31,35]\190704incl_not_-M.h5',
+            r'd:\WorkData\_experiment\inclinometer\190704_tank_ex2[12,22,27,28,30,31,35]\190704incl_not_-M.h5',
             r'd:\WorkData\_experiment\_2018\inclinometer\181004_tank[1-20]\181004_KTIz.h5'
             # # old DB with inverted M like new (coef not copied?)
 
             ]:
             r"""
               d:\WorkData\_experiment\_2018\inclinometer\181004_tank[1-20]\181004_KTI.h5
-            d:\WorkData\_experiment\_2019\inclinometer\190704_tank_ex1[21,23,24,25,26,29,32,34]\190704incl_not_-M.h5
-            d:\WorkData\_experiment\_2019\inclinometer\190704_tank_ex1[21,23,24,25,26,29,32,34]\190704incl.h5
-            d:\WorkData\_experiment\_2019\inclinometer\190704_tank_ex2[12,22,27,28,30,31,35]\190704incl.h5
+            d:\WorkData\_experiment\inclinometer\190704_tank_ex1[21,23,24,25,26,29,32,34]\190704incl_not_-M.h5
+            d:\WorkData\_experiment\inclinometer\190704_tank_ex1[21,23,24,25,26,29,32,34]\190704incl.h5
+            d:\WorkData\_experiment\inclinometer\190704_tank_ex2[12,22,27,28,30,31,35]\190704incl.h5
             """
             db_path_coefs = Path(db_coefs)
             try:

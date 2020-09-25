@@ -212,7 +212,7 @@ def set_field_if_no(dictlike, dictfield, value=None):
         dictlike[dictfield] = value
     # if MissingMandatoryValue or omegaconf.errors.ValidationError or on set None set it Optional
 
-def getDirBaseOut(mask_in_path, source_dir_words: Optional[Sequence[str]]=None, replaceDir:str=None):
+def getDirBaseOut(mask_in_path, raw_dir_words: Optional[Sequence[str]]=None, replaceDir:str=None):
     """
     Finds 'Cruise' and 'Device' dirs. Also returns full path to 'Cruise'.
     If 'keyDir' in fileMaskIn and after 2 levels of dirs then treat next subsequence as:
@@ -220,7 +220,7 @@ def getDirBaseOut(mask_in_path, source_dir_words: Optional[Sequence[str]]=None, 
     Else use subsequence before 'keyDir' (or from end of fileMaskIn if no ``keyDir``):
     ...\\'Sea'\\'Cruise'
     :param mask_in_path: path to analyse
-    :param source_dir_words: list of str - list of variants to find "keyDir" in priority order
+    :param raw_dir_words: list of str - list of variants to find "keyDir" in priority order
     :param replaceDir: str, "dir" to replace "keyDir" in out_path
         + used instead "Device" dir if "keyDir" not in fileMaskIn
     :return: returns tuple, which contains:
@@ -238,7 +238,7 @@ def getDirBaseOut(mask_in_path, source_dir_words: Optional[Sequence[str]]=None, 
     mask_in_str = str(mask_in_path)
 
     st = -1
-    for source_dir_word in source_dir_words:
+    for source_dir_word in raw_dir_words:
         # Start of source_dir_word in 1st detected variant
         st = mask_in_str.find(source_dir_word, 3)  # .lower()
         if st >= 0: break
@@ -477,9 +477,11 @@ def type_fix(oname: str, opt: Any) -> Tuple[str, Any]:
 
         return oname, opt
     except (TypeError, AttributeError, ValueError) as e:
-        # do not try to convert not a str
+        # do not try to convert not a str, also return None for "None"
         if not isinstance(opt, str):
             return onamec if onamec else oname, opt  # onamec is replasement of oname
+        elif opt=='None':
+            return onamec, None
         else:
             raise e
 

@@ -62,7 +62,7 @@ class ConfigIn:
     filemask: Optional[str] = MISSING
     paths: Optional[List[Any]] = field(default_factory= list)
     nfiles: Optional[int] = 0  # field(default=MISSING, init=False)
-    source_dir_words: Optional[List[str]] = field(default_factory= lambda: ['raw', 'source', 'WorkData', 'workData'])
+    raw_dir_words: Optional[List[str]] = field(default_factory= lambda: ['raw', 'source', 'WorkData', 'workData'])
 
 
 @dataclass

@@ -38,6 +38,7 @@ if __name__ != '__main__':
 else:
     l = None  # will set in main()
 
+default_veusz_path = 'C:\\Program Files (x86)\\Veusz' if sys_platform == 'win32' else '/home/korzh/.local/lib/python3.6/site-packages/veusz'  # try os_environ['PATH']?
 
 def my_argparser():
     """
@@ -53,69 +54,67 @@ Create vsz file for each source
 file based on vsz pattern
 ----------------------------"""}, version)
 
-    p_in = p.add_argument_group('in', 'data')
-    p_in.add('--path',
+    s = p.add_argument_group('in', 'data')
+    s.add('--path',
              help='path to source file(s) to generate list of their names (usually *.csv or *.txt) or hdf5 store')
-    p_in.add('--pattern_path',
+    s.add('--pattern_path',
              help='path to ".vsz" file to use as pattern')  # '*.h5'
-    p_in.add('--import_method',
+    s.add('--import_method',
              help='Veusz method to imort data in ".vsz" pattern')  # todo: read it from pattern
-    p_in.add('--start_file_index', default="0",
+    s.add('--start_file_index', default="0",
              help='indexes begins from 0')
-    p_in.add('--add_custom_list',
+    s.add('--add_custom_list',
              help='custom definitions names for evaluation of expressions defined in add_custom_expressions_list')
-    p_in.add('--add_custom_expressions_list',
+    s.add('--add_custom_expressions_list',
              help='custom_expressions_list to add by Veusz AddCustom() function')
-    p_in.add('--eval_list',
+    s.add('--eval_list',
              help='string represented Veusz.Embed function call to eval')
-    p_in.add('--data_yield_prefix',
+    s.add('--data_yield_prefix',
              help='used to get data from Vieusz which names started from this')
-    p_in.add('--tables_list',
+    s.add('--tables_list',
              help='path to tables in db to find instead files')
-    p_in.add('--table_log',
+    s.add('--table_log',
              help='name of log table - path to hdf5 table having intervals ("index" of type pd.DatetimeIndex and "DateEnd" of type pd.Datetime)')
-    p_in.add('--min_time', help='%%Y-%%m-%%dT%%H:%%M:%%S, optional, allows range table_log rows')
-    p_in.add('--max_time', help='%%Y-%%m-%%dT%%H:%%M:%%S, optional, allows range table_log rows')
+    s.add('--min_time', help='%%Y-%%m-%%dT%%H:%%M:%%S, optional, allows range table_log rows')
+    s.add('--max_time', help='%%Y-%%m-%%dT%%H:%%M:%%S, optional, allows range table_log rows')
 
-    p_out = p.add_argument_group('out', 'all about output files')
-    p_out.add('--export_pages_int_list', default='0',
+    s = p.add_argument_group('out', 'all about output files')
+    s.add('--export_pages_int_list', default='0',
               help='pages numbers to export, comma separated (1 is first), 0 = all')
-    p_out.add('--b_images_only', default='False',
+    s.add('--b_images_only', default='False',
               help='export only. If true then all output vsz must exist, they will be loaded and vsz not be updated')
-    p_out.add('--b_update_existed', default='False',
+    s.add('--b_update_existed', default='False',
               help='replace all existed vsz files else skip existed files. In b_images_only mode - skip exporting vsz files for wich any files in "export_dir/*{vsz file stem}*. {export_format}" exist')
-    p_out.add('--export_dir', default='images(vsz)',
+    s.add('--export_dir', default='images(vsz)',
               help='subdir relative to input path or absolute path to export images')
-    p_out.add('--export_format', default='jpg',
+    s.add('--export_format', default='jpg',
               help='extention of images to export which defines format')
-    p_out.add('--export_dpi_int_list', default='300',
+    s.add('--export_dpi_int_list', default='300',
               help='resolution (dpi) of images to export for all pages, defined in `export_pages_int_list`')
-    p_out.add('--filename_fun', default='lambda tbl: tbl',
+    s.add('--filename_fun', default='lambda tbl: tbl',
               help='function to modify output file name. Argument is input table name in hdf5')
-    p_out.add('--add_to_filename', default='',
+    s.add('--add_to_filename', default='',
               help='string will be appended to output filenames. If input is from hdf5 table then filename is name of table, this will be added to it')
 
     # candidates to move out to common part
-    p_in.add('--exclude_dirs_ends_with_list', default='-, bad, test, TEST, toDel-',
+    s.add('--exclude_dirs_ends_with_list', default='-, bad, test, TEST, toDel-',
              help='exclude dirs which ends with this srings. This and next option especially useful when search recursively in many dirs')
-    p_in.add('--exclude_files_ends_with_list', default='coef.txt, -.txt, test.txt',
+    s.add('--exclude_files_ends_with_list', default='coef.txt, -.txt, test.txt',
              help='exclude files which ends with this srings')
 
-    p_prog = p.add_argument_group('program', 'program behaviour')
-    p_prog.add('--export_timeout_s_float', default='0',
+    s = p.add_argument_group('program', 'program behaviour')
+    s.add('--export_timeout_s_float', default='0',
                help='export asyncroniously with this timeout, s (tryed 600s?)')
-    p_prog.add('--load_timeout_s_float', default='180',
+    s.add('--load_timeout_s_float', default='180',
                help='export asyncroniously with this timeout, s (tryed 600s?)')
-    p_prog.add('--veusz_path',
-               default=u'C:\\Program Files (x86)\\Veusz' if sys_platform == 'win32' else '/home/korzh/.local/lib/python3.6/site-packages/veusz',
-               # '/usr/lib64/python3.6/site-packages/veusz-2.1.1-py3.6-linux-x86_64.egg/veusz', # os_environ['PATH']
-               help='directory of Veusz')
-    p_prog.add('--before_next_list', default=',',
+    s.add('--veusz_path', default=default_veusz_path,
+               help='directory of Veusz like /usr/lib64/python3.6/site-packages/veusz-2.1.1-py3.6-linux-x86_64.egg/veusz')
+    s.add('--before_next_list', default=',',
                help=''' "Close()" - each time reopens pattern,
     "restore_config" - saves and restores initial configuration (may be changed in data_yield mode: see data_yield_prefix argument)''')
-    p_prog.add('--f_custom_in_cycle',
+    s.add('--f_custom_in_cycle',
                help='''function evaluated in cycle: not implemented over command line''')  # todo: implement
-    p_prog.add('--return', default='<end>',  # nargs=1,
+    s.add('--return', default='<end>',  # nargs=1,
                choices=['<cfg_from_args>', '<gen_names_and_log>', '<embedded_object>', '<end>'],
                help='<cfg_from_args>: returns cfg based on input args only and exit, <gen_names_and_log>: execute init_input_cols() and also returns fun_proc_loaded function... - see main()')
 
@@ -216,7 +215,7 @@ def veusz_data(veusze, prefix: str, suffix_prior: str = '') -> Dict[str, Any]:
     return vsz_data
 
 
-def load_vsz_closure(veusz_path: PurePath, load_timeout_s: Optional = 120) -> Callable[
+def load_vsz_closure(veusz_path: PurePath=default_veusz_path, load_timeout_s: Optional = 120) -> Callable[
     [Union[str, PurePath], Optional[str], Optional[str], Optional[str]], Tuple[Any, Optional[Dict[str, Any]]]]:
     """
     See load_vsz inside

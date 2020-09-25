@@ -7,7 +7,7 @@
 from __future__ import print_function, division
 
 import logging
-from pathlib import PurePath
+from pathlib import Path, PurePath
 import re
 import sys  # from sys import argv
 import warnings
@@ -450,11 +450,11 @@ def h5temp_open(cfg_out: Dict[str, Any]) -> Optional[pd.DataFrame]:
     if cfg_out['tables'] is None:
         return None  # skipping open, may be need if not need write
     else:
-        print('saving to', '/'.join([cfg_out['db_path_temp'], ','.join(cfg_out['tables'])]) + ':')
+        print('saving to', cfg_out['db_path_temp'] / ','.join(cfg_out['tables']), end=':\n')
 
     try:
         try:  # open temporary output file
-            if os_path.isfile(cfg_out['db_path_temp']):
+            if cfg_out['db_path_temp'].is_file():
                 cfg_out['db'] = pd.HDFStore(cfg_out['db_path_temp'])
                 if not cfg_out['b_use_old_temporary_tables']:
                     h5remove_tables(cfg_out)
@@ -473,8 +473,7 @@ def h5temp_open(cfg_out: Dict[str, Any]) -> Optional[pd.DataFrame]:
                                 continue
                             try:  # Check output store
                                 if tbl in storeOut:  # avoid harmful sortAndPack errors
-                                    h5sort_pack(cfg_out['db_path'], os_path.basename(
-                                        cfg_out['db_path_temp']), tbl)
+                                    h5sort_pack(cfg_out['db_path'], cfg_out['db_path_temp'].stem, tbl)
                                 else:
                                     raise HDF5ExtError(f'Table {tbl} does not exist')
                             except HDF5ExtError as e:
@@ -496,8 +495,7 @@ def h5temp_open(cfg_out: Dict[str, Any]) -> Optional[pd.DataFrame]:
                                 if (cfg_out['db'] is not None) and cfg_out['db'].is_open:
                                     cfg_out['db'].close()
                                     cfg_out['db'] = None
-                                h5sort_pack(cfg_out['db_path'], os_path.basename(
-                                    cfg_out['db_path_temp']), tbl)
+                                h5sort_pack(cfg_out['db_path'], cfg_out['db_path_temp'].stem, tbl)
 
                 except HDF5ExtError as e:
                     l.warning(e.args[0])   # print('processing all source data... - no table with previous data')
@@ -777,30 +775,17 @@ def h5move_tables(cfg_out, tbl_names: Optional[Sequence[str]]=None, **kwargs) ->
         raise Ex_nothing_done('no tables to move')
 
     # h5sort_pack can not remove/update dest table so we do:
-    with pd.HDFStore(cfg_out['db_path']) as store:
-        h5remove_table({'db': store}, tbl)
+    try:
+        with pd.HDFStore(cfg_out['db_path']) as store:
+            h5remove_table({'db': store}, tbl)
+    except HDF5ExtError:
+        file_bad = Path(cfg_out['db_path'])
+        file_bad_keeping = file_bad.with_suffix('.bad.h5')
+        l.exception('Bad output file - can not use!!! Renaming to "%s". Delete it if not useful', file_bad_keeping)
+        file_bad.rename(file_bad_keeping)
+        l.warning('Renamed: old data (if any) will not be in %s!!! Writing current data...', file_bad)
 
     with pd.HDFStore(cfg_out['db_path_temp']) as store_in:  #pd.HDFStore(cfg_out['db_path']) as store,
-        # h5sort_pack can not remove/update dest table so we do:
-
-        # Check if table to write is ok
-        # try:
-        #     updating = tbl in store
-        #     out_is_bad = (not (updating and (tbl in store_in))) or store[tbl] is None
-        # except (TypeError, AttributeError):  # Bad types in table? ('NoneType' object has no attribute 'startswith')
-        #     out_is_bad = True
-        # if out_is_bad:
-        #     if updating:
-        #         l.warning('Removing %s table from %s because it is not pandas...', tbl, cfg_out['db_path'])
-        # elif set(store[tbl].columns) != set(store_in[tbl].columns):
-        #     # Out table have different columns (why? - h5sort_pack not removed columns metadata?)
-        #     out_is_bad = True
-        #     l.warning(
-        #         'removing %s table from %s having different columns. Note: checking implemented only for 1st table!',
-        #         tbl, cfg_out['db_path'])
-        # if out_is_bad:
-        #     cfg_out['db'] = store
-        #     h5remove_table(cfg_out, tbl)
         for tbl in tables:
             if 'index' not in store_in.get_storer(tbl).group.table.colindexes:
                 print(tbl, end=' - was no indexes, creating.')
@@ -1049,7 +1034,7 @@ def h5init(cfg_in: Mapping[str, Any], cfg_out: MutableMapping[str, Any]):
     Init cfg_out database (hdf5 data store) information in cfg_out _if it is not exist_
     :param: cfg_in - configuration dicts, with fields:
             path if no 'db_path' in cfg_out
-            source_dir_words (optional), default: ['source', 'WorkData', 'workData'] - see getDirBaseOut()
+            raw_dir_words (optional), default: ['source', 'WorkData', 'workData'] - see getDirBaseOut()
             nfiles (optional)
             b_skip_if_up_to_date (optional)
     :param: cfg_out - configuration dict, where all fields are optional. Do nothing if cfg_out['tables'] is None
@@ -1057,7 +1042,7 @@ def h5init(cfg_in: Mapping[str, Any], cfg_out: MutableMapping[str, Any]):
     Sets fields of cfg_out _if not exist_. Updated fields are:
         % paths %:
     tables, tables_log: tables names of data and log (metadata)
-    db_dir, db_base: parts of db (hdf5 store) path - based on cfg_in and cfg_in['source_dir_words']
+    db_dir, db_base: parts of db (hdf5 store) path - based on cfg_in and cfg_in['raw_dir_words']
     db_path: db_dir + "/" + db_base
     db_path_temp: temporary h5 file name
         % other %:
@@ -1080,41 +1065,37 @@ def h5init(cfg_in: Mapping[str, Any], cfg_out: MutableMapping[str, Any]):
     set_field_if_no(cfg_out, 'b_use_old_temporary_tables', True)
     if cfg_out.get('b_insert_separator') is None:
         cfg_file = PurePath(cfg_in['cfgFile']).stem
-        cfg_out['b_insert_separator'] = not '_nav_' in cfg_file
+        cfg_out['b_insert_separator'] = '_ctd_' in cfg_file.lower()
         # elif '_CTD_' in cfg_file:
         #     cfg_out['b_insert_separator'] = True
     # Automatic db file and tables names
 
-    cfg_source_dir_words = cfg_in['source_dir_words'] if cfg_in.get('source_dir_words') else [
-        'raw', 'source', 'WorkData', 'workData']
     auto = {'db_ext': 'h5'}
     if cfg_out.get('db_path'):
-        # print(cfg_out)
-        # print('checking db_path "{}" is absolute'.format(cfg_out['db_path']))
         if os_path.isabs(cfg_out['db_path']):
-            auto['db_path'] = cfg_out['db_path']
+            auto['db_path'], auto['db_base'] = os_path.split(cfg_out['db_path'])
         else:
             # try get parent from cfg_in fields 'path' or 'db_path'
             cfg_out['db_base'] = cfg_out['db_path']
-            cfg_out['db_path'] = ''
-            auto['db_path'] = os_path.split(cfg_in.get('path' if 'path' in cfg_in else 'db_path'))[0]
             auto['db_base'] = cfg_out['db_base']  # os_path.join(auto['db_base'], cfg_out['db_path'])
+            cfg_out['db_path'] = ''
+            auto['db_path'] = Path(cfg_in.get('path' if 'path' in cfg_in else 'db_path')).parent
     else:
-        auto['db_path'] = os_path.split(cfg_in.get('path'))[0]
-    auto['db_path'], auto['db_base'], auto['table'] = getDirBaseOut(auto['db_path'], cfg_source_dir_words)
-    auto['db_base'] = os_path.splitext(auto['db_base'])[0]  # extension is specified in db_ext
+        path_in = Path(cfg_in['path'])
+        auto['db_path'] = path_in.parent
+        auto['db_base'] = f'{path_in.stem}_out'
 
     cfg_out['db_dir'], cfg_out['db_base'] = pathAndMask(
         *[cfg_out[spec] if (spec in cfg_out and cfg_out[spec]) else auto[spec] for spec in
           ['db_path', 'db_base', 'db_ext']])
     dir_create_if_need(cfg_out['db_dir'])
-    cfg_out['db_path'] = os_path.join(cfg_out['db_dir'], cfg_out['db_base'])
+    cfg_out['db_path'] = Path(cfg_out['db_dir']) / cfg_out['db_base']
 
     # set_field_if_no(cfg_out, 'db_base', auto['db_base'] + ('.h5' if not auto['db_base'].endswith('.h5') else ''))
     # set_field_if_no(cfg_out, 'db_path', os_path.join(auto['db_path'], cfg_out['db_base']+ ('.h5' if not cfg_out['db_base'].endswith('.h5') else '')))
 
     # Will save to temporary file initially
-    set_field_if_no(cfg_out, 'db_path_temp', cfg_out['db_path'][:-3] + '_not_sorted.h5')
+    set_field_if_no(cfg_out, 'db_path_temp', cfg_out['db_path'].with_name(f"{cfg_out['db_path'].stem}_not_sorted.h5"))
     set_field_if_no(cfg_out, 'nfiles', cfg_in.get('nfiles', 1))
 
     if 'tables' in cfg_out and cfg_out['tables']:
@@ -1123,7 +1104,13 @@ def h5init(cfg_in: Mapping[str, Any], cfg_out: MutableMapping[str, Any]):
         cfg_out['tables'] = [cfg_out['table']]
         set_field_if_no(cfg_out, 'tables_log', [cfg_out['table'] + '/logFiles'])
     else:
-        if auto['table'] == '':
+        auto['table'] == cfg_in.get('table')
+        if ~auto['table']:
+            auto['db_path'], auto['db_base'], auto['table'] = getDirBaseOut(
+                Path(auto['db_path']),
+                cfg_in['raw_dir_words'] or ['raw', '_raw', 'source', '_source', 'WorkData', 'workData']
+                )
+        if ~auto['table']:
             auto['table'] = os_path.basename(cfg_in['cfgFile'])
             l.warning('Can not dertermine table_name from file structure. '
                       'Set [tables] in ini! Now use table_name "{}"'.format(auto['table']))

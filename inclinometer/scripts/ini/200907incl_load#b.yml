@@ -1,14 +1,15 @@
     
 in:
-  path_cruise: .
-  raw_subdir: mag_components_calibration.zip  #_Experiment.rar
+  path_cruise: d:\WorkData\_experiment\inclinometer\_Schukas\200901_AMK81
+  raw_subdir: incl-amk81
   probes: # [2]
   probes_prefix: incl_b
   raw_pattern: "*{prefix:}{number:0>2}*.[tT][xX][tT]"
 
 #  timerange_zeroing_dict:
 #    14: [2020-07-10T21:31:00, 2020-07-10T21:39:00]
-  db_coefs: inclinometer/tests/data/inclinometer/incl#b.h5
+  db_coefs: ../../tests/data/inclinometer/incl#b.h5
+  azimuth_add: {Lat: 75.6, Lon: 63}  #  Новая Земля, залив Благополучия
 
 filter:
   date_min: {0: 2018-12-31T12:00:00}
@@ -17,7 +18,6 @@ filter:
 out:
   # db_name: out_send.h5  # default: "incl.h5"
   aggregate_period_s: [Null, 2, 600, 7200]  # Null means no average
-
 
 program:
   step_start: 1

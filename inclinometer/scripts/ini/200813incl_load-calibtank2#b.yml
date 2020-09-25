@@ -1,6 +1,6 @@
 
 in:
-  path_cruise: d:\WorkData\_experiment\_2019\inclinometer\200807_Schukas
+  path_cruise: d:\WorkData\_experiment\inclinometer\200807_Schukas
   raw_subdir: tank_calibr.rar\inkl 30 piecse patr 2  #\Inkl 30 pieces  #
   probes: []
   probes_prefix: incl_b
@@ -8,7 +8,7 @@ in:
 
 #  timerange_zeroing_dict:
 #    incl14: [2020-07-10T21:31:00, 2020-07-10T21:39:00]
-  db_coefs: d:\WorkData\_experiment\_2019\inclinometer\200807_Schukas\mag_components_calibration\200807_calibr-lab-b.h5
+  db_coefs: d:\WorkData\_experiment\inclinometer\200807_Schukas\mag_components_calibration\200807_calibr-lab-b.h5
 
 filter:
   date_min: {0: 2020-07-21T10:40:00}

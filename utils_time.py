@@ -136,7 +136,7 @@ def timzone_view(t, dt_from_utc=0):
 # ----------------------------------------------------------------------
 def pd_period_to_timedelta(period: str) -> pd.Timedelta:
     """
-    Converts str to pd.Timedelta
+    Converts str to pd.Timedelta. May be better to use pd.Timedelta(*pd.to_offset(period))
     :param period: str, in format of pandas offset string 'D' (Y, D, 5D, H, ...)
     :return:
     """
@@ -159,7 +159,7 @@ def intervals_from_period(
     :param period: pandas offset string 'D' (Y, D, 5D, H, ...) if None such field must be in cfg_in
     :param datetime_range: list of 2 elements, use something like np.array(['0', '9999'], 'datetime64[s]') for all data.
     If not provided 'date_min' and 'date_max' will be used
-    :param date_min, date_max: used if datetime_range is None, if neither provided then use range from 2000/01/01 to now
+    :param date_min, date_max: used if datetime_range is None. If neither provided then use range from 2000/01/01 to now
     :return (start, ends): (Timestamp, fixed frequency DatetimeIndex)
     """
 
@@ -174,26 +174,30 @@ def intervals_from_period(
             t_interval_last = pd.datetime.now()  # i.e. big value
         datetime_range = [start, t_interval_last]
 
-    period_timedelta = pd_period_to_timedelta(period)
+    if period:
+        period_timedelta = pd_period_to_timedelta(period)
 
-    # Set next start on the end of day if interval is bigger than day
-    if period_timedelta >= pd.Timedelta(1, 'D'):
-        start_next = start.normalize()
-        if start_next <= start:
-            start_next += period_timedelta
+        # Set next start on the end of day if interval is bigger than day
+        if period_timedelta >= pd.Timedelta(1, 'D'):
+            start_next = start.normalize()
+            if start_next <= start:
+                start_next += period_timedelta
+        else:
+            start_next = start
+
+        if start_next > datetime_range[-1]:
+            ends = pd.DatetimeIndex(datetime_range[-1:])
+        else:
+            ends = pd.date_range(
+                start=start_next,
+                end=max(datetime_range[-1], start_next + period_timedelta),
+                freq=period)
+            # make last start bigger than datetime_range[-1]
+            if ends[-1] < datetime_range[-1]:
+                ends = ends.append(pd.DatetimeIndex(datetime_range[-1:]))
     else:
-        start_next = start
-
-    if start_next > datetime_range[-1]:
         ends = pd.DatetimeIndex(datetime_range[-1:])
-    else:
-        ends = pd.date_range(
-            start=start_next,
-            end=max(datetime_range[-1], start_next + period_timedelta),
-            freq=period)
-        # make last start bigger than datetime_range[-1]
-        if ends[-1] < datetime_range[-1]:
-            ends = ends.append(pd.DatetimeIndex(datetime_range[-1:]))
+
     return start, ends
 
 

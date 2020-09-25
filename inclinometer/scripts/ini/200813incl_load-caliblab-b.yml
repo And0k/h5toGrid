@@ -1,6 +1,6 @@
 
 in:
-  path_cruise: d:\WorkData\_experiment\_2019\inclinometer\200807_Schukas
+  path_cruise: d:\WorkData\_experiment\inclinometer\200807_Schukas
   raw_subdir: mag_components_calibration  #_Experiment.rar
   probes: []
   probes_prefix: incl_b

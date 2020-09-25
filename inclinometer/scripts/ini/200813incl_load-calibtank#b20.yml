@@ -1,6 +1,6 @@
 
 in:
-  path_cruise: d:\WorkData\_experiment\_2019\inclinometer\200807_Schukas
+  path_cruise: d:\WorkData\_experiment\inclinometer\200807_Schukas
   raw_subdir: tank_calibr.rar\Inkl 30 pieces  #
   probes: [20]
   probes_prefix: incl_b
@@ -8,7 +8,7 @@ in:
 
 #  timerange_zeroing_dict:
 #    incl14: [2020-07-10T21:31:00, 2020-07-10T21:39:00]
-  db_coefs: d:\WorkData\_experiment\_2019\inclinometer\200807_Schukas\200807_calibr-tank-b.h5
+  db_coefs: d:\WorkData\_experiment\inclinometer\200807_Schukas\200807_calibr-tank-b.h5
   dt_from_utc_seconds: -648563489  # (np.datetime64('2000-01-01T00:00:00') - np.datetime64('2020-07-20T12:31:29')).view(np.int64)
 
 filter:

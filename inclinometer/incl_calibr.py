@@ -62,30 +62,30 @@ def my_argparser():
                                       'Grid data from Pandas HDF5, VSZ files '
                                       'and Pandas HDF5 store*.h5'})
 
-    p_in = p.add_argument_group('in', 'data from hdf5 store')
-    p_in.add('--db_path', help='hdf5 store file path where to load source data and write resulting coef')  # '*.h5'
-    p_in.add('--tables_list', help='tables names list or pattern to find tables to load data')
-    p_in.add('--channels_list',
+    s = p.add_argument_group('in', 'data from hdf5 store')
+    s.add('--db_path', help='hdf5 store file path where to load source data and write resulting coef')  # '*.h5'
+    s.add('--tables_list', help='tables names list or pattern to find tables to load data')
+    s.add('--channels_list',
              help='channel can be "magnetometer" or "M" for magnetometer and any else for accelerometer',
              default='M, A')
-    p_in.add('--chunksize_int', help='limit loading data in memory', default='50000')
-    p_in.add('--timerange_list', help='time range to use')
-    p_in.add('--timerange_dict', help='time range to use for each inclinometer number (consisted of digits in table name)')
-    p_in.add('--timerange_nord_list', help='time range to zeroing nord. Not zeroing Nord if not used')
-    p_in.add('--timerange_nord_dict', help='time range to zeroing nord for each inclinometer number (consisted of digits in table name)')
-    p_filter = p.add_argument_group('filter', 'excludes some data')
-    p_filter.add('--no_works_noise_float_dict', default='M:10, A:100',
+    s.add('--chunksize_int', help='limit loading data in memory', default='50000')
+    s.add('--timerange_list', help='time range to use')
+    s.add('--timerange_dict', help='time range to use for each inclinometer number (consisted of digits in table name)')
+    s.add('--timerange_nord_list', help='time range to zeroing nord. Not zeroing Nord if not used')
+    s.add('--timerange_nord_dict', help='time range to zeroing nord for each inclinometer number (consisted of digits in table name)')
+    s = p.add_argument_group('filter', 'excludes some data')
+    s.add('--no_works_noise_float_dict', default='M:10, A:100',
                  help='is_works() noise argument for each channel: excludes data if too small changes')
-    p_filter.add('--blocks_int_list', default='21, 7', help='despike() argument')
-    p_filter.add('--offsets_float_list', default='1.5, 2', help='despike() argument')
-    p_filter.add('--std_smooth_sigma_float', default='4', help='despike() argument')
+    s.add('--blocks_int_list', default='21, 7', help='despike() argument')
+    s.add('--offsets_float_list', default='1.5, 2', help='despike() argument')
+    s.add('--std_smooth_sigma_float', default='4', help='despike() argument')
 
-    p_out = p.add_argument_group('out', 'where write resulting coef (additionally)')
-    p_out.add('--out.db_path',
+    s = p.add_argument_group('out', 'where write resulting coef (additionally)')
+    s.add('--out.db_path',
               help='hdf5 store file path where to write resulting coef. Writes to tables that names configured for input data (cfg[in].tables) in this file')
 
-    p_prog = p.add_argument_group('program', 'program behaviour')
-    p_prog.add('--return', default='<end>',  # nargs=1,
+    s = p.add_argument_group('program', 'program behaviour')
+    s.add('--return', default='<end>',  # nargs=1,
                choices=['<cfg_from_args>', '<gen_names_and_log>', '<end>'],
                help='<cfg_from_args>: returns cfg based on input args only and exit, <gen_names_and_log>: execute init_input_cols() and returns... - see main()')
     return (p)
@@ -692,7 +692,7 @@ if __name__ == '__main__':
         # multiple timeranges not supported so calculate one by one probe?
         probes = [i]
         main(['', '--db_path',
-              r'd:\WorkData\_experiment\_2019\inclinometer\190710_compas_calibr-byMe\190710incl.h5',
+              r'd:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe\190710incl.h5',
               # r'd:\WorkData\_experiment\_2019\inclinometer\190320\190320incl.h5',
               # r'd:\WorkData\_experiment\_2018\inclinometr\181003_compas\181003compas.h5',
               '--channels_list', 'M,A',  # 'M,', Note: empty element cause calc of accelerometer coef.

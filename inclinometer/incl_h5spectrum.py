@@ -83,51 +83,55 @@ def my_argparser(varargs=None):
     # All argumets of type str (default for add_argument...), because of
     # custom postprocessing based of my_argparser names in ini2dict
 
-    p_in = p.add_argument_group('in', 'Parameters of input files')
-    p_in.add_argument('--db_path', default='*.h5',  # nargs=?,
-                      help='path to pytables hdf5 store to load data. May use patterns in Unix shell style')
-    p_in.add('--tables_list',
-             help='table names in hdf5 store to get data. Uses regexp')
-    p_in.add('--chunksize_int', help='limit loading data in memory', default='50000')
-    p_in.add('--date_min', default='2019-01-01T00:00:00', help='time range min to use')
-    p_in.add('--date_max', help='time range max to use')
-    p_in.add('--fs_float', help='sampling frequency of input data, Hz')
-    p_flt = p.add_argument_group('filter', 'filter all data based on min/max of parameters')
-    p_flt.add('--min_dict',
-              help='List with items in  "key:value" format. Filter out (set to NaN) data of ``key`` columns if it is below ``value``')
-    p_flt.add('--max_dict',
-              help='List with items in  "key:value" format. Filter out data of ``key`` columns if it is above ``value``')
+    s = p.add_argument_group('in',
+                             'Parameters of input files')
+    s.add('--db_path', default='*.h5',  # nargs=?,
+                             help='path to pytables hdf5 store to load data. May use patterns in Unix shell style')
+    s.add('--tables_list',   help='table names in hdf5 store to get data. Uses regexp')
+    s.add('--chunksize_int', help='limit loading data in memory', default='50000')
+    s.add('--date_min',      help='time range min to use', default='2019-01-01T00:00:00')
+    s.add('--date_max',      help='time range max to use')
+    s.add('--fs_float',      help='sampling frequency of input data, Hz')
 
-    p_out = p.add_argument_group('out', 'Parameters of output files')
-    p_out.add('--out.db_path', help='hdf5 store file path')
-    p_out.add('--table', default='psd',
-              help='table name in hdf5 store to write data. If not specified then will be generated on base of path of input files. Note: "*" is used to write blocks in autonumbered locations (see dask to_hdf())')
+    s = p.add_argument_group('filter',
+                             'Filter all data based on min/max of parameters')
+    s.add('--min_dict',
+        help='List with items in  "key:value" format. Filter out (set to NaN) data of ``key`` columns if it is below ``value``')
+    s.add('--max_dict',
+        help='List with items in  "key:value" format. Filter out data of ``key`` columns if it is above ``value``')
 
-    p_proc = p.add_argument_group('proc', 'Processing parameters')
-    p_proc.add('--split_period',
-               help='pandas offset string (5D, H, ...) to process and output in separate blocks. Number of spectrums is split_period/overlap_float. Use big values to not split',
-               default='100Y')
-    p_proc.add('--overlap_float',
-               help='period overlap ratio [0, 1): 0 - no overlap. 0.5 for default dt_interval')
-    p_proc.add('--time_intervals_center_list',
-               help='list of intervals centers that need to process. Used only if if period is not used')
-    p_proc.add('--dt_interval_hours',
-               help='time range of each interval. By default will be set to the split_period in units of suffix (hours+minutes)')
-    p_proc.add('--dt_interval_minutes')
+    s = p.add_argument_group('out',
+                             'Parameters of output files')
+    s.add('--out.db_path', help='hdf5 store file path')
+    s.add('--table', default='psd',
+        help='table name in hdf5 store to write data. If not specified then will be generated on base of path of input files. Note: "*" is used to write blocks in autonumbered locations (see dask to_hdf())')
+    s.add('--split_period',
+        help='pandas offset string (5D, H, ...) to process and output in separate blocks. Number of spectrums is split_period/overlap_float. Use big values to not split',
+        default='100Y')
 
-    p_proc.add('--fmin_float',  # todo: separate limits for different parameters
-               help='min output frequency to calc')
-    p_proc.add('--fmax_float',
-               help='max output frequency to calc')
-    p_proc.add('--calc_version', default='trigonometric(incl)',
-               help='string: variant of processing Vabs(inclination):',
-               choices=['trigonometric(incl)', 'polynom(force)'])
-    p_proc.add('--max_incl_of_fit_deg_float',
-               help='Finds point where g(x) = Vabs(inclination) became bend down and replaces after g with line so after max_incl_of_fit_deg {\Delta}^{2}y ≥ 0 for x > max_incl_of_fit_deg')
+    s = p.add_argument_group('proc',
+                             'Processing parameters')
+    s.add('--overlap_float',
+        help='period overlap ratio [0, 1): 0 - no overlap. 0.5 for default dt_interval')
+    s.add('--time_intervals_center_list',
+        help='list of intervals centers that need to process. Used only if if period is not used')
+    s.add('--dt_interval_hours',
+        help='time range of each interval. By default will be set to the split_period in units of suffix (hours+minutes)')
+    s.add('--dt_interval_minutes')
+    s.add('--fmin_float',  # todo: separate limits for different parameters
+        help='min output frequency to calc')
+    s.add('--fmax_float',
+        help='max output frequency to calc')
+    s.add('--calc_version', default='trigonometric(incl)',
+        help='string: variant of processing Vabs(inclination):',
+        choices=['trigonometric(incl)', 'polynom(force)'])
+    s.add('--max_incl_of_fit_deg_float',
+        help='Overwrites last coefficient of trigonometric version of g: Vabs = g(Inclingation). It corresponds to point where g(x) = Vabs(inclination) became bend down. To prevent this g after this point is replaced with line, so after max_incl_of_fit_deg {\Delta}^{2}y ≥ 0 for x > max_incl_of_fit_deg')
 
-    p_program = p.add_argument_group('program', 'Program behaviour')
-    p_program.add_argument('--return', default='<end>', choices=['<return_cfg>', '<return_cfg_with_options>'],
-                           help='executes part of code and returns parameters after skipping of some code')
+    s = p.add_argument_group('program',
+                             'Program behaviour')
+    s.add('--return', default='<end>', choices=['<return_cfg>', '<return_cfg_with_options>'],
+        help='executes part of code and returns parameters after skipping of some code')
 
     return (p)
 
@@ -333,31 +337,31 @@ def h5_velocity_by_intervals_gen(cfg: Mapping[str, Any], cfg_out: Mapping[str, A
             2.  'time_intervals_start' - manually specified starts of intercals
 
     :param cfg_out: fields must be provided:
-        - see h5_names_gen(cfg, cfg_out) requirements
+        - see h5_names_gen(cfg_in, cfg_out) requirements
     :return:
     """
     # Prepare cycle
-    if cfg['proc'].get('split_period'):
+    if cfg_out.get('split_period'):
         # variant 1. genereate ragular intervals (may be with overlap)
         def gen_loaded(tbl):
             cfg['in']['table'] = tbl
             # To obtain ``t_intervals_start`` used in query inside gen_data_on_intervals(cfg_out, cfg)
             # we copy its content here:
             t_prev_interval_start, t_intervals_start = intervals_from_period(
-                **cfg['in'], period=cfg['proc']['split_period'])
+                **cfg['in'], period=cfg_out['split_period'])
             if cfg['proc']['overlap']:
                 dt_shifts = np.arange(0, 1, (1 - cfg['proc']['overlap'])) * pd_period_to_timedelta(
-                    cfg['proc']['split_period'])
+                    cfg_out['split_period'])
                 t_intervals_start = (
                         t_intervals_start.to_numpy(dtype="datetime64[ns]")[np.newaxis].T + dt_shifts).flatten()
                 if cfg['in']['date_max']:
                     idel = t_intervals_start.searchsorted(
-                        np.datetime64(cfg['in']['date_max'] - pd_period_to_timedelta(cfg['proc']['split_period'])))
+                        np.datetime64(cfg['in']['date_max'] - pd_period_to_timedelta(cfg_out['split_period'])))
                     t_intervals_start = t_intervals_start[:idel]
                 cfg['in']['time_intervals_start'] = t_intervals_start  # to save queried time - see main()
             for start_end in h5q_starts2coord(cfg['in'], t_intervals_start, dt_interval=cfg['proc']['dt_interval']):
                 a = h5_load_range_by_coord(cfg['in'], start_end)
-                d, i_burst = filt_data_dd(a, cfg)
+                d, i_burst = filt_data_dd(a, cfg['in'])
                 n_bursts = len(i_burst)
                 if n_bursts > 1:  # 1st is always 0
                     l.info('gaps found: (%s)! at %s', n_bursts - 1, i_burst[1:] - 1)
@@ -386,7 +390,7 @@ def h5_velocity_by_intervals_gen(cfg: Mapping[str, Any], cfg_out: Mapping[str, A
 
     # Cycle
     with pd.HDFStore(cfg['in']['db_path'], mode='r') as store:
-        for (tbl, coefs) in h5_names_gen(cfg, cfg_out):
+        for (tbl, coefs) in h5_names_gen(cfg['in'], cfg_out):
             # Get data in ranges
             for df0, start_end in gen_loaded(tbl):
                 if cfg['in']['db_path'].stem.endswith('proc_noAvg'):
@@ -626,11 +630,11 @@ def main(new_arg=None, **kwargs):
     print('\n' + prog, end=' started. ')
 
     cfg_out = cfg['out']
-    if 'split_period' in cfg['proc']:
+    if 'split_period' in cfg['out']:
         cfg['proc']['dt_interval'] = np.timedelta64(cfg['proc']['dt_interval'] if cfg['proc']['dt_interval'] else
-                                                    pd_period_to_timedelta(cfg['proc']['split_period']))
+                                                    pd_period_to_timedelta(cfg['out']['split_period']))
         if (not cfg['proc']['overlap']) and \
-                (cfg['proc']['dt_interval'] == np.timedelta64(pd_period_to_timedelta(cfg['proc']['split_period']))):
+                (cfg['proc']['dt_interval'] == np.timedelta64(pd_period_to_timedelta(cfg['out']['split_period']))):
             cfg['proc']['overlap'] = 0.5
     else:
         cfg['proc']['dt_interval'] = np.timedelta64(cfg['proc']['dt_interval'])
@@ -662,9 +666,9 @@ def main(new_arg=None, **kwargs):
     nc_psd.createVariable('time_good_min', 'f8', ('value',))
     nc_psd.createVariable('time_good_max', 'f8', ('value',))
     nc_psd.createVariable('time_interval', 'f4', ('value',))
-    if cfg['proc'].get('split_period'):
+    if cfg['out'].get('split_period'):
         # nv_time_interval = nc_psd.createVariable('time_interval', 'f8', ('time',), zlib=False)
-        nc_psd.variables['time_interval'][:] = pd_period_to_timedelta(cfg['proc']['split_period']).delta
+        nc_psd.variables['time_interval'][:] = pd_period_to_timedelta(cfg['out']['split_period']).delta
     else:
         nc_psd.variables['time_interval'][:] = cfg['proc']['dt_interval']
     # Dataframe of accumulating results: adding result columns in cycle with appending source table name to column names
@@ -677,7 +681,7 @@ def main(new_arg=None, **kwargs):
     itbl = 0
     for df, tbl_in, dataname in h5_velocity_by_intervals_gen(cfg, cfg_out):
         tbl = tbl_in.replace('incl', '_i')
-        # _, (df, tbl, dataname) in h5_dispenser_and_names_gen(cfg, cfg_out, fun_gen=h5_velocity_by_intervals_gen):
+        # _, (df, tbl, dataname) in h5_dispenser_and_names_gen(cfg['in'], cfg_out, fun_gen=h5_velocity_by_intervals_gen):
         len_data_cur = df.shape[0]
         if tbl_prev != tbl:
             itbl += 1
@@ -924,7 +928,7 @@ def psd_calc_other_methods(df, prm: Mapping[str, Any]):
         }
     }
     
-    # not used if cfg['in']['split_period'] is specified:
+    # not used if cfg['out']['split_period'] is specified:
     cfg['proc']['time_intervals_center'] = pd.to_datetime(np.sort(np.array(
         ['2019-02-16T08:00', '2019-02-17T04:00', '2019-02-18T00:00', '2019-02-28T00:00',
         '2019-02-14T12:00', '2019-02-15T12:00', '2019-02-16T23:50',

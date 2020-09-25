@@ -47,38 +47,38 @@ Add data from bin files
 to Pandas HDF5 store*.h5
 ----------------------------"""}, version=version)
     # Configuration sections
-    p_in = p.add_argument_group('in', 'all about input files')
-    p_in.add('--path', default='.',  # nargs=?,
+    s = p.add_argument_group('in', 'all about input files')
+    s.add('--path', default='.',  # nargs=?,
              help='path to source file(s) to parse. Use patterns in Unix shell style')
-    p_in.add('--data_word_len_integer', default='2',  # nargs=?,
+    s.add('--data_word_len_integer', default='2',  # nargs=?,
              help='[bytes] => data type is int16')
-    p_in.add('--filename2timestart_format', default='%Y%m%d_%H%M',
+    s.add('--filename2timestart_format', default='%Y%m%d_%H%M',
              help='Time from file name. For example for RealTerm v3+ writes names formatted %Y-%m-%d_%H%M')
 
-    p_out = p.add_argument_group('out', 'all about output files')
-    p_out.add('--db_path', help='hdf5 store file path')
-    p_out.add('--table',
+    s = p.add_argument_group('out', 'all about output files')
+    s.add('--db_path', help='hdf5 store file path')
+    s.add('--table',
               help='table name in hdf5 store to write data. If not specified then will be generated on base of path of input files. Note: "*" is used to write blocks in autonumbered locations (see dask to_hdf())')
-    # p_out.add('--tables_list',
+    # s.add('--tables_list',
     #           help='tables names in hdf5 store to write data (comma separated)')
-    p_out.add('--b_insert_separator', default='True',
+    s.add('--b_insert_separator', default='True',
               help='insert NaNs row in table after each file data end')
-    p_out.add('--b_use_old_temporary_tables', default='False',
+    s.add('--b_use_old_temporary_tables', default='False',
               help='Warning! Set True only if temporary storage already have good data!'
                    'if True and b_skip_if_up_to_date= True then not replace temporary storage with current storage before adding data to the temporary storage')
-    p_out.add('--b_remove_duplicates', default='False', help='Set True if you see warnings about')
+    s.add('--b_remove_duplicates', default='False', help='Set True if you see warnings about')
     # 'logfield_filename_len': 255,
 
-    p_flt = p.add_argument_group('filter', 'filter all data based on min/max of parameters')
-    p_flt.add('--date_min', help='minimum time')  # todo: set to filt_min.key and filt_min.value
-    p_flt.add('--date_max', help='maximum time')  # todo: set to filt_max.key and filt_max.value
-    p_flt.add('--min_dict',
+    s = p.add_argument_group('filter', 'filter all data based on min/max of parameters')
+    s.add('--date_min', help='minimum time')  # todo: set to filt_min.key and filt_min.value
+    s.add('--date_max', help='maximum time')  # todo: set to filt_max.key and filt_max.value
+    s.add('--min_dict',
               help='List with items in  "key:value" format. Filter out (set to NaN) data of ``key`` columns if it is below ``value``')
-    p_flt.add('--max_dict',
+    s.add('--max_dict',
               help='List with items in  "key:value" format. Filter out data of ``key`` columns if it is above ``value``')
 
-    p_prog = p.add_argument_group('program', 'program behaviour')
-    p_prog.add('--return', default='<end>',  # nargs=1,
+    s = p.add_argument_group('program', 'program behaviour')
+    s.add('--return', default='<end>',  # nargs=1,
                choices=['<cfg_from_args>', '<gen_names_and_log>', '<end>'],
                help='<cfg_from_args>: returns cfg based on input args only and exit, <gen_names_and_log>: execute init_input_cols() and also returns fun_proc_loaded function... - see main()')
 
@@ -348,7 +348,7 @@ def main(new_arg=None, **kwargs):
     cfg['out']['fs'] = cfg['in']['fs']
     if True:
         ## Main circle ############################################################
-        for i1_file, path_in in h5_dispenser_and_names_gen(cfg, cfg['out']):
+        for i1_file, path_in in h5_dispenser_and_names_gen(cfg['in'], cfg['out']):
             l.info('{}. {}: '.format(i1_file, path_in.name))
 
             # Loading data

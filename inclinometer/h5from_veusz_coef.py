@@ -225,7 +225,7 @@ def main(new_arg=None):
 
 if __name__ == '__main__':
     cfg_out_db_path = path_on_drive_d(
-        r'd:\WorkData\_experiment\_2019\inclinometer\190711_tank\190711incl.h5'
+        r'd:\WorkData\_experiment\inclinometer\190711_tank\190711incl.h5'
         # r'/mnt/D/workData/_experiment/_2019/inclinometer/190704_tank_ex2/190704incl.h5'
         )
     # r'd:\WorkData\_experiment\_2019\inclinometer\190704\190704incl.h5'

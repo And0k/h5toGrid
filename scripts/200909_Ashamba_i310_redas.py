@@ -20,7 +20,7 @@ from to_vaex_hdf5.nmea2h5 import main as nmea2h5
 
 
 st.go = True   # False #
-st.start = 80   # 5 30 70 80
+st.start = 1   # 5 30 70 80
 st.end = 230   # 60 80 120
 
 path_cruise = Path(r'd:\WorkData\BlackSea\200909_Ashamba')
@@ -254,7 +254,7 @@ def merge_two_runs(df_log, irow_to, irow_from=None):
         print('done nothing')
         return
     cols_en = ['DateEnd'] + [col for col in df_log.columns if col.endswith('en')]
-    ind_to, ind_from = df_merging.index;
+    ind_to, ind_from = df_merging.index
     df_log.loc[ind_to, cols_en] = df_log.loc[ind_from, cols_en]
     cols_sum = ['rows', 'rows_filtered']
     df_log.loc[ind_to, cols_sum] += df_log.loc[ind_from, cols_sum]
@@ -457,7 +457,6 @@ if st(230, f'Draw {device} data profiles'):  # False: #
     # save all vsz files that uses separate code
     from to_pandas_hdf5.h5toh5 import h5log_names_gen
     import re
-    from subprocess import Popen, PIPE, STDOUT
 
     cfg_in = {
         'log_row': {},
