@@ -50,8 +50,8 @@ def my_argparser():
              help='add this correction to loading datetime data. May to use other suffixes instead of "hours"')
     s.add('--b_skip_if_up_to_date', default='True',
              help='exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files')
-    s.add('--b_make_time_inc', default='False',  # 'correct', 'sort_rows'
-             help='if time not sorted then coorect it trying affecting small number of values. Used here for tracks/segments only. This is different from sorting rows which is performed at last step after the checking table in database')
+    s.add('--sort', default='False',  # 'correct', 'sort_rows'
+             help='if time not sorted then coorect it trying affecting minimum number of values. Used here for tracks/segments only. This is different from sorting rows which is performed at last step after the checking table in database')
 
     # Parameters specific to gpx
     s.add('--waypoints_cols_list', default='time, latitude, longitude, name, symbol, description',
@@ -64,7 +64,8 @@ def my_argparser():
              help='same as waypoints_cols_list but for segments')
 
 
-    s = p.add_argument_group('out', 'all about output files')
+    s = p.add_argument_group('out',
+                             'all about output files')
     s.add('--db_path', help='hdf5 store file path')
     s.add('--table_prefix',
               help='prepend tables names to save data with this string (Note: _waypoints or _routes or ... suffix will be added automaticaly)')
@@ -91,9 +92,10 @@ def my_argparser():
     s.add('--exclude_files_ends_with_list', default='coef.txt, -.txt, test.txt',
              help='exclude files which ends with this srings')
 
-    s = p.add_argument_group('filter', 'filter all data based on min/max of parameters')
-    s.add('--date_min', help='minimum time')
-    s.add('--date_max', help='maximum time')
+    s = p.add_argument_group('filter',
+                             'filter all data based on min/max of parameters')
+    s.add('--min_date', help='minimum time')
+    s.add('--max_date', help='maximum time')
     s.add('--min_dict', help='List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is below ``value``')
     s.add('--max_dict', help='List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is above ``value``')
 
@@ -201,7 +203,7 @@ def gpxConvert(cfg: Mapping[str, Any],
     return dfs
 
 
-def df_filter_and_save_to_h5(cfg_out, cfg, df, b_make_time_inc=True) -> Union[str, int]:
+def df_filter_and_save_to_h5(cfg_out, cfg, df, sort_time=None) -> Union[str, int]:
     """
 
     :param cfg_out: must have fields:
@@ -217,16 +219,17 @@ def df_filter_and_save_to_h5(cfg_out, cfg, df, b_make_time_inc=True) -> Union[st
     """
     df_t_index, itm = multiindex_timeindex(df.index)
     # sorting will break multiindex?
-    df_t_index, b_ok = time_corr(df_t_index, cfg['in'], b_make_time_inc)  # need sort in tracks/segments only
+    df_t_index, b_ok = time_corr(df_t_index, cfg['in'], sort_time)  # need sort in tracks/segments only
     df.index = multiindex_replace(df.index, df_t_index, itm)
 
     if 'filter' in cfg:
         rows_in = len(df)
         bGood = filterGlobal_minmax(df, df.index, cfg['filter'])
-        df = df[bGood]
+        df = df[bGood & b_ok]
         cfg_out['log']['rows'] = len(df)
         print('filtered out {} from {}.'.format(rows_in - cfg_out['log']['rows'], rows_in))
     else:
+        df = df[b_ok]
         cfg_out['log']['rows'] = len(df)
     if df.empty:
         print('No data => skip file')
@@ -271,9 +274,9 @@ def main(new_arg=None):
     print('\n' + this_prog_basename(__file__), end=' started. ')
 
     try:
-        cfg['in'] = init_file_names(cfg['in'], cfg['program']['b_interact'])
-        cfg_out = cfg['out']
-        h5init(cfg['in'], cfg_out)
+        cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
+            **cfg['in'], b_interact=cfg['program']['b_interact'], cfg_search_parent=cfg['out'])
+        h5init(cfg['in'], cfg['out'])
     except Ex_nothing_done as e:
         print(e.message)
         exit()
@@ -281,35 +284,35 @@ def main(new_arg=None):
     df_dummy = pd.DataFrame(
         np.full(1, np.NaN, dtype=np.dtype({
             'formats': ['float64', 'float64'],
-            'names': cfg_out['tracks_cols'][1:]})),
+            'names': cfg['out']['tracks_cols'][1:]})),
         index=(pd.NaT,))  # used for insert separator lines
 
     if 'routes_cols' not in cfg['in']:
         cfg['in']['routes_cols'] = cfg['in']['waypoints_cols']
-    if 'routes_cols' not in cfg_out:
-        cfg_out['routes_cols'] = cfg_out['waypoints_cols']  # cfg['in']['routes_cols']  #
+    if 'routes_cols' not in cfg['out']:
+        cfg['out']['routes_cols'] = cfg['out']['waypoints_cols']  # cfg['in']['routes_cols']  #
     # Writing
     if True:  # try:
         l.warning('processing ' + str(cfg['in']['nfiles']) + ' file' + 's:' if cfg['in']['nfiles'] > 1 else ':')
-        cfg_out['log'] = {}
-        set_field_if_no(cfg_out, 'table_prefix', PurePath(cfg['in']['filemask']).stem)
-        cfg_out['table_prefix'] = cfg_out['table_prefix'].replace('-', '')
-        if len([t for t in cfg_out['tables'] if len(t)]) > 1:
-            cfg_out['tables'] = \
-                [cfg_out['table_prefix'] + '_' + s for s in cfg_out['tables']]
-            cfg_out['tables_log'] = \
-                [cfg_out['table_prefix'] + '_' + s for s in cfg_out['tables_log']]
+        cfg['out']['log'] = {}
+        set_field_if_no(cfg['out'], 'table_prefix', PurePath(cfg['in']['path']).stem)
+        cfg['out']['table_prefix'] = cfg['out']['table_prefix'].replace('-', '')
+        if len([t for t in cfg['out']['tables'] if len(t)]) > 1:
+            cfg['out']['tables'] = \
+                [cfg['out']['table_prefix'] + '_' + s for s in cfg['out']['tables']]
+            cfg['out']['tables_log'] = \
+                [cfg['out']['table_prefix'] + '_' + s for s in cfg['out']['tables_log']]
 
-        tables = dict(zip(df_names, cfg_out['tables']))
-        tables_log = dict(zip(df_names, cfg_out['tables_log']))
+        tables = dict(zip(df_names, cfg['out']['tables']))
+        tables_log = dict(zip(df_names, cfg['out']['tables_log']))
         # Can not save path to DB (useless?) so set  for this max file name length:
-        set_field_if_no(cfg_out, 'logfield_fileName_len', 50)
-        cfg_out['index_level2_cols'] = cfg['in']['routes_cols'][0]
+        set_field_if_no(cfg['out'], 'logfield_fileName_len', 50)
+        cfg['out']['index_level2_cols'] = cfg['in']['routes_cols'][0]
 
         # ###############################################################
-        # ## Cumulate all data in cfg_out['path_temp'] ##################
+        # ## Cumulate all data in cfg['out']['path_temp'] ##################
         ## Main circle ############################################################
-        for i1_file, path_gpx in h5_dispenser_and_names_gen(cfg['in'], cfg_out):
+        for i1_file, path_gpx in h5_dispenser_and_names_gen(cfg['in'], cfg['out']):
             l.info('{}. {}: '.format(i1_file, path_gpx.name))
             # Loading data
             dfs = gpxConvert(cfg, path_gpx)
@@ -321,11 +324,11 @@ def main(new_arg=None):
                     # Save last time to can filter next file
                     cfg['in']['time_last'] = df.index[-1]
 
-                b_make_time_inc = key not in {'waypoints', 'routes'}
+                sort_time = False if key in {'waypoints', 'routes'} else None
 
                 # monkey patching
                 if 'tracker' in tables[key]:
-                    # Also {} must be in tables[key]. todo: better key+'_fun_tracker' in cfg_out?
+                    # Also {} must be in tables[key]. todo: better key+'_fun_tracker' in cfg['out']?
                     # Trackers processing
                     trackers_numbers = {
                         '0-3106432': '1',
@@ -346,35 +349,35 @@ def main(new_arg=None):
                         except KeyError:
                             continue
                         # redefine saving parameters
-                        cfg_out['table'] = tables_pattern.format(trackers_numbers[sn])
-                        cfg_out['table_log'] = tables_log_pattern.format(trackers_numbers[sn])
-                        df_filter_and_save_to_h5(cfg_out, cfg, df, b_make_time_inc)
+                        cfg['out']['table'] = tables_pattern.format(trackers_numbers[sn])
+                        cfg['out']['table_log'] = tables_log_pattern.format(trackers_numbers[sn])
+                        df_filter_and_save_to_h5(cfg['out'], cfg, df, sort_time)
                 else:
-                    cfg_out['table'] = tables[key]
-                    cfg_out['table_log'] = tables_log[key]
-                    df_filter_and_save_to_h5(cfg_out, cfg, df, b_make_time_inc)
+                    cfg['out']['table'] = tables[key]
+                    cfg['out']['table_log'] = tables_log[key]
+                    df_filter_and_save_to_h5(cfg['out'], cfg, df, sort_time)
 
     # try:
-    # if cfg_out['b_remove_duplicates']:
-    #     for tbls in cfg_out['tables_have_wrote']:
+    # if cfg['out']['b_remove_duplicates']:
+    #     for tbls in cfg['out']['tables_have_wrote']:
     #         for tblName in tbls:
-    #             cfg_out['db'][tblName].drop_duplicates(keep='last', inplace= True)
+    #             cfg['out']['db'][tblName].drop_duplicates(keep='last', inplace= True)
     # print('Create index', end=', ')
 
     # create_table_index calls create_table which docs sais "cannot index Time64Col() or ComplexCol"
     # so load it, index, then save
     # level2_index = None
-    # df = cfg_out['db'][tblName] # last commented
+    # df = cfg['out']['db'][tblName] # last commented
     # df.set_index([navp_all_index, level2_index])
     # df.sort_index()
 
-    # cfg_out['db'][tblName].sort_index(inplace=True)
+    # cfg['out']['db'][tblName].sort_index(inplace=True)
 
     # if df is not None:  # resave
-    #     df_log = cfg_out['db'][tblName]
-    #     cfg_out['db'].remove(tbls[0])
-    #     cfg_out['db'][tbls[0]] = df
-    #     cfg_out['db'][tbls[1]] = df_log
+    #     df_log = cfg['out']['db'][tblName]
+    #     cfg['out']['db'].remove(tbls[0])
+    #     cfg['out']['db'][tbls[0]] = df
+    #     cfg['out']['db'][tbls[1]] = df_log
 
     try:
         pass
@@ -392,17 +395,17 @@ def main(new_arg=None):
     #     ns.update(frame.f_locals)
     #     code.interact(local=ns)
     # finally:
-    #     cfg_out['db'].close()
-    #     failed_storages= h5move_tables(cfg_out, cfg_out['tables_have_wrote'])
+    #     cfg['out']['db'].close()
+    #     failed_storages= h5move_tables(cfg['out'], cfg['out']['tables_have_wrote'])
 
     try:
-        failed_storages = h5move_tables(cfg_out, tbl_names=cfg_out.get('tables_have_wrote', {}))
+        failed_storages = h5move_tables(cfg['out'], tbl_names=cfg['out'].get('tables_have_wrote', {}))
         print('Finishing...' if failed_storages else 'Ok.', end=' ')
+        # Sort if have any processed data that needs it (not the case for the routes and waypoints), else don't because ``ptprepack`` not closes hdf5 source if it not finds data
         if cfg['in'].get('time_last'):
-            # if have any processed data that need to be sorted (not the case for the routes and waypoints), also needed because ``ptprepack`` not closes hdf5 source if it not finds data
-            cfg_out['b_remove_duplicates'] = True
-            h5index_sort(cfg_out, out_storage_name=cfg_out['db_base'] + '-resorted.h5', in_storages=failed_storages,
-                         tables=cfg_out.get('tables_have_wrote', {}))
+            cfg['out']['b_remove_duplicates'] = True
+            h5index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5", in_storages=failed_storages,
+                         tables=cfg['out'].get('tables_have_wrote', {}))
     except Ex_nothing_done:
         print('ok')
 
@@ -416,8 +419,8 @@ with pd.HDFStore('d:\\WorkData\\BalticSea\\171003_ANS36\\171003Strahov_not_sorte
     print(repr(store['/navigation/sectionsBaklan_d100_routes'].index))
 
 
-                store.append(cfg_out['strProbe'], chunk[chunk.columns].astype('float32'), data_columns= True, index= False)
-                store.append(cfg_out['strProbe'], chunk[chunk.columns].astype('float32'), data_columns= True, index= False)
+                store.append(cfg['out']['strProbe'], chunk[chunk.columns].astype('float32'), data_columns= True, index= False)
+                store.append(cfg['out']['strProbe'], chunk[chunk.columns].astype('float32'), data_columns= True, index= False)
 
                 #try#chunk.columns
                 strLog= '{Date0:%d.%m.%Y %H:%M:%S} - {DateEnd:%d.%m.%Y %H:%M:%S}'.format(**log) #\t{Lat}\t{Lon}\t{strOldVal}->\t{mag}
@@ -433,14 +436,14 @@ with pd.HDFStore('d:\\WorkData\\BalticSea\\171003_ANS36\\171003Strahov_not_sorte
                 f.close()
 
         #Remove duplicates and add index
-        with pd.get_store(cfg_out['path_temp']) as store:
-            s= store.get(cfg_out['strProbe'])
+        with pd.get_store(cfg['out']['path_temp']) as store:
+            s= store.get(cfg['out']['strProbe'])
             s= s.groupby(level=0).first()
-            store.append(cfg_out['strProbe'], s, append=False,
+            store.append(cfg['out']['strProbe'], s, append=False,
                          data_columns=True, expectedrows= s.shape[0])
-            store.create_table_index(cfg_out['strProbe'],
+            store.create_table_index(cfg['out']['strProbe'],
                                      columns=['index'], kind='full')
         #Save result in h5NameOut
-        h5sort_pack(cfg_out['path_temp'], h5NameOut, cfg_out['strProbe'])
+        h5sort_pack(cfg['out']['path_temp'], h5NameOut, cfg['out']['strProbe'])
         print('ok')
 """

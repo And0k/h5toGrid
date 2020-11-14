@@ -12,8 +12,8 @@ in:
   azimuth_add: {Lat: 75.6, Lon: 63}  #  Новая Земля, залив Благополучия
 
 filter:
-  date_min: {0: 2018-12-31T12:00:00}
-  date_max: {0: 2030-01-01T00:00:00}
+#  min_date: {0: 2018-12-31T12:00:00}
+#  max_date: {0: 2030-01-01T00:00:00}
 
 out:
   # db_name: out_send.h5  # default: "incl.h5"

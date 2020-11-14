@@ -142,37 +142,34 @@ def bGood_file(fname, mask, namesBadAtEdge, bPrintGood=True):
     return False
 
 
-def dir_create_if_need(str_dir: Union[str, PurePath, Path]) -> Path:
+def dir_create_if_need(dir_like: Union[str, PurePath, Path]) -> Path:
     """
 
-    :param str_dir:
+    :param dir_like:
     :return: Path(str_dir)
     """
-    if str_dir:
-        str_dir = Path(str_dir)
-        if not str_dir.is_dir():
-            print(f' ...making dir "{str_dir}"... ')
+    if dir_like:
+        dir_like = Path(dir_like)
+        if not dir_like.is_dir():
+            print(f' ...making dir "{dir_like}"... ')
             try:
-                str_dir.mkdir()
+                dir_like.mkdir(exist_ok=True)  # exist_ok=True is need because dir may be just created in other thread
             except Exception as e:
-                raise FileNotFoundError(f'Can make only 1 level of dir. Can not make: "{str_dir}"')
-    return str_dir
+                raise FileNotFoundError(f'Can make only 1 level of dir. Can not make: "{dir_like}"')
+    return dir_like
 
 
-def dir_from_cfg(cfg, key_dir):
+def dir_from_cfg(path_parent: Path, path_child: Union[str, Path]) -> Path:
     """
-    If not cfg[key_dir] is absolute path then set: cfg[key_dir] = cfg['dir']+cfg[key_dir]
-    Create cfg[key_dir] if need
-    :param cfg: dict with keys key_dir, 'dir'
-    :param key_dir: absolute path or relative (in last case it is appended to cfg['dir'])
-    :return: None
+    Create path_child if need, if not path_child is absolute path then path_parent will be prepended before
+    :param path_parent: parent dir path
+    :param path_child: absolute path or relative
+    :return: absolute Path(path_child)
     """
-    key_dir_path = Path(cfg[key_dir])
-    if not key_dir_path.is_absolute():
-        cfg[key_dir] = Path(cfg['dir']) / cfg[key_dir]
-    else:
-        cfg[key_dir] = key_dir_path
-    return dir_create_if_need(cfg[key_dir])
+    path_child = Path(path_child)
+    if not path_child.is_absolute():
+        path_child = path_parent / path_child
+    return dir_create_if_need(path_child)
 
 
 # def path2rootAndMask(pathF):
@@ -275,9 +272,11 @@ def getDirBaseOut(mask_in_path, raw_dir_words: Optional[Sequence[str]]=None, rep
 def cfgfile2dict(arg_source: Union[Mapping[str, Any], str, PurePath, None] = None
                  ) -> Tuple[Union[Dict, configparser.RawConfigParser], Union[str, PurePath], str]:
     """
-
-    :param arg_source: path of *.ini file or yaml file. if None - use name of program called with
-        ini extension.
+    Loads config to dict or passes dict though
+    :param arg_source: one of:
+        - path of *.ini or yaml file.
+        - None - same effect as path name of called program with ini extension.
+        - dict
     :return (config, arg_source):
         - config:
             dict loaded from yaml file if arg_source is name of file with yaml o yml extension
@@ -337,20 +336,20 @@ def cfgfile2dict(arg_source: Union[Mapping[str, Any], str, PurePath, None] = Non
                     print('Ini file "{}" not found, continue...'.format(cfg_file))  # todo: l.warning
                     config = {}
 
-    elif isinstance(arg_source, dict):
+    elif isinstance(arg_source, Mapping):
         # config = set_config()
         # config.read_dict(arg_source)  # todo: check if it is need
         config = arg_source
-        arg_source = '<dict>'
+        arg_source = '<mapping>'
         arg_ext = ''
     return config, arg_source, arg_ext
 
 
-def type_fix(oname: str, opt: Any) -> Tuple[str, Any]:
+def type_fix(name: str, opt: Any) -> Tuple[str, Any]:
     """
     Checking special words in parts of option's name splitted by '_'
 
-    :param oname: option's name. If special prefix/suffix provided then opt's type will be converted accordingly
+    :param name: option's name. If special prefix/suffix provided then opt's type will be converted accordingly
     :param opt: option's value, usually str that need to convert to the type specified by oname's prefix/suffix.
     For different oname's prefix/suffixes use this formattin rules:
     - 'dict': do not use curles, field separator: ',' if no '\n' in it else '\n,', key-value separator: ': ' (or ':' if no ': ')
@@ -360,18 +359,18 @@ def type_fix(oname: str, opt: Any) -> Tuple[str, Any]:
     :return: (new_name, new_opt)
     """
 
-    key_splitted = oname.split('_')
+    key_splitted = name.split('_')
     key_splitted_len = len(key_splitted)
     if key_splitted_len < 1:
-        return oname, opt
+        return name, opt
     else:
         prefix = key_splitted[0]
         suffix = key_splitted[-1] if key_splitted_len > 1 else ''
-    onamec = None
+    name_out = None
     try:
         if suffix in {'list', 'names'}:  # , '_ends_with_list' -> '_ends_with'
             # parse list
-            onamec = '_'.join(key_splitted[0:-1])
+            name_out = '_'.join(key_splitted[0:-1])
             if not opt:
                 opt_list_in = [None]
             elif opt[0] == "'":  # split to strings separated by "'," stripping " ',\n"
@@ -383,66 +382,79 @@ def type_fix(oname: str, opt: Any) -> Tuple[str, Any]:
 
             opt_list = []
             for opt_in in opt_list_in:
-                onamec_in, val_in = type_fix(onamec, opt_in)  # process next suffix
+                name_out_in, val_in = type_fix(name_out, opt_in)  # process next suffix
                 opt_list.append(val_in)
-            return onamec_in, ([]
+            return name_out_in, ([]
                                if opt_list_in == [None] else
                                opt_list)
             # suffix = key_splitted[-2]  # check next suffix:
             # if suffix in {'int', 'integer', 'index'}:
             #     # type of list values is specified
-            #     onamec = '_'.join(key_splitted[0:-2])
-            #     return onamec, [int(n) for n in opt.split(',')] if opt else []
+            #     name_out = '_'.join(key_splitted[0:-2])
+            #     return name_out, [int(n) for n in opt.split(',')] if opt else []
             # elif suffix in {'b', 'bool'}:
-            #     onamec = '_'.join(key_splitted[0:-2])
-            #     return onamec, list(literal_eval(opt))
+            #     name_out = '_'.join(key_splitted[0:-2])
+            #     return name_out, list(literal_eval(opt))
             # else:
-            #     onamec = '_'.join(key_splitted[0:-1])
+            #     name_out = '_'.join(key_splitted[0:-1])
             #     if not opt:
-            #         return onamec, []
+            #         return name_out, []
             #     elif opt[0] == "'":  # split to strings separated by "'," stripping " ',\n"
-            #         return onamec, [n.strip(" ',\n") for n in opt.split("',")]
+            #         return name_out, [n.strip(" ',\n") for n in opt.split("',")]
             #     elif opt[0] == '"':  # split to strings separated by '",' stripping ' ",\n'
-            #         return onamec, [n.strip(' ",\n') for n in opt.split('",')]
+            #         return name_out, [n.strip(' ",\n') for n in opt.split('",')]
             #     else:  # split to strings separated by ','
-            #         return onamec, [n.strip() for n in opt.split(',')]
+            #         return name_out, [n.strip() for n in opt.split(',')]
         if suffix == 'dict':
-            onamec = '_'.join(key_splitted[0:-1])
+            name_new = '_'.join(key_splitted[0:-1])
+            name_out = None
             if opt is None:
-                return onamec, {}
+                # remove key suffixes in the cfg name and return it with {} value
+                while True:
+                    name_out, dict_fixed = type_fix(name_new, {})
+                    if name_new == name_out:
+                        break
+                    name_new = name_out  # saving previous value for compare to exit cycle
             else:
                 def val_type_fix(parent_name, field_name, field_value):
-                    # modyfy type of field_value based on parent_name
-                    _, val = type_fix(parent_name, field_value)
+                    nonlocal name_out
+                    # modify type of field_value based on parent_name
+                    name_out, val = type_fix(parent_name, field_value)
                     return field_name, val
 
-                return onamec, dict([val_type_fix(onamec, *n.strip().split(': ' if ': ' in n else ':')) for n in
-                                     opt.split('\n,' if '\n' in opt else ',') if len(n)])
+                dict_fixed = dict([val_type_fix(name_new, *n.strip().split(': ' if ': ' in n else ':')) for n in
+                      opt.split('\n,' if '\n' in opt else ',') if len(n)])
+            return name_out, dict_fixed
         if prefix == 'b':
-            return oname, literal_eval(opt)
-        if prefix == 'time':
-            return oname, datetime.strptime(opt, '%Y %m %d %H %M %S')
+            return name, literal_eval(opt)
+        # if prefix == 'time':
+        #     return oname, datetime.strptime(opt, '%Y %m %d %H %M %S')
         if prefix == 'dt':
-            onamec = '_'.join(key_splitted[:-1])
-            if opt is None:
-                try:
-                    timedelta(**{suffix: 0})  # checking suffix
-                except TypeError as e:
-                    raise KeyError(e.msg) from e  # changing type to be not catched and accepted if bad suffix
-            return onamec, timedelta(**{suffix: float(opt)})
+            if suffix in {'days', 'seconds', 'microseconds', 'milliseconds', 'minutes', 'hours', 'weeks'}:
+                name_out = '_'.join(key_splitted[:-1])
+                if opt:
+                    try:
+                        opt = timedelta(**{suffix: float(opt)})
+                    except TypeError as e:
+                        raise KeyError(e.msg) from e  # changing error type to be not caught and accepted
+                else:  # not need convert
+                    opt = timedelta(0)
+            else:  # do nothing
+                name_out = name
+            return name_out, opt
         b_trig_is_prefix = prefix in {'date', 'time'}
         if b_trig_is_prefix or suffix in {'date', 'time'}:
             if b_trig_is_prefix or prefix in {'min', 'max'}:  # not strip to 'min', 'max'
-                onamec = oname
-                # = opt_new  #  use other temp. var instead onamec to keep name (see last "if" below)???
+                name_out = name
+                # = opt_new  #  use other temp. var instead name_out to keep name (see last "if" below)???
             else:
-                onamec = '_'.join(key_splitted[0:-1])  # #oname = del suffix
-                # onamec = opt_new  # will del old name (see last "if" below)???
+                name_out = '_'.join(key_splitted[0:-1])  # #oname = del suffix
+                # name_out = opt_new  # will del old name (see last "if" below)???
             date_format = '%Y-%m-%dT'
             if not '-' in opt[:len(date_format)]:
                 date_format = '%d.%m.%Y '
             try:  # opt has only date?
-                return onamec, datetime.strptime(opt, date_format[:-1])
+                return name_out, datetime.strptime(opt, date_format[:-1])
             except ValueError:
                 time_format = '%H:%M:%S%z'[:(len(opt) - len(date_format) - 2)]  # minus 2 because 2 chars of '%Y' corresponds 4 digits of year
                 try:
@@ -454,53 +466,52 @@ def type_fix(oname: str, opt: Any) -> Tuple[str, Any]:
                         tim = datetime.now()
                     else:
                         raise
-                return onamec, tim
+                return name_out, tim
         if suffix in {'int', 'integer', 'index'}:
-            onamec = '_'.join(key_splitted[0:-1])
-            return onamec, int(opt)
+            name_out = '_'.join(key_splitted[0:-1])
+            return name_out, int(opt)
         if suffix == 'float':  # , 'percent'
-            onamec = '_'.join(key_splitted[0:-1])
-            return onamec, float(opt)
+            name_out = '_'.join(key_splitted[0:-1])
+            return name_out, float(opt)
         if suffix in {'b', 'bool'}:
-            onamec = '_'.join(key_splitted[0:-1])
-            return onamec, literal_eval(opt)
+            name_out = '_'.join(key_splitted[0:-1])
+            return name_out, literal_eval(opt)
         if suffix == 'chars':
-            onamec = '_'.join(key_splitted[0:-1])
-            return onamec, opt.replace('\\t', '\t').replace('\\ \\', ' ')
+            name_out = '_'.join(key_splitted[0:-1])
+            return name_out, opt.replace('\\t', '\t').replace('\\ \\', ' ')
         if prefix in {'fixed', 'float', 'max', 'min'}:
             # this snameion is at end because includes frequently used 'max'&'min' which not
             # nesesary for floats, so set to float only if have no other special format words
-            return oname, float(opt)
+            return name, float(opt)
 
         if 'path' in {suffix, prefix}:
-            return oname, Path(opt)
+            return name, Path(opt)
 
-        return oname, opt
+        return name, opt
     except (TypeError, AttributeError, ValueError) as e:
         # do not try to convert not a str, also return None for "None"
         if not isinstance(opt, str):
-            return onamec if onamec else oname, opt  # onamec is replasement of oname
+            return name_out if name_out else name, opt  # name_out is a replacement of oname
         elif opt=='None':
-            return onamec, None
+            return name_out, None
         else:
             raise e
 
 
-def ini2dict(arg_source=None):
+def ini2dict(arg_source: Union[Mapping[str, Any], str, PurePath, None] = None):
     """
-    Loads configuration dict from *.ini file with type conversion based on keys names.
-    Removes suffics type indicators but keep prefiх.
-    prefiх/suffics type indicators (following/precieded with "_"):
-        b
-        chars - to list of chars, use string "\\ \\" to specify space char
-        time
-        dt (prefix only) with suffixes: ... , minutes, hours, ... - to timedelta
-        list, (names - not recommended) - splitted on ',' but if first is "'" then on "'," - to allow "," char, then all "'" removed.
+    1. Loads configuration dict from *.ini file (if arg is not a dict already)
+    2. Type conversion based on keys names. During this removes suffix type indicators but keeps prefiх.
+    Prefiх/suffics type indicators (followed/preceded with "_"):
+      - b
+      - chars - to list of chars, use string "\\ \\" to specify space char
+      - time
+      - dt (prefix only) with suffixes: ... , minutes, hours, ... - to timedelta
+      - list, (names - not recommended) - splitted on ',' but if first is "'" then on "'," - to allow "," char, then all "'" removed.
         If first list characters is " or ' then breaks list on " ',\n" or ' ",\n' correspondingly.
-
         before list can be other suffix to convert to
-        int, integer, index - to integer
-        float - to float
+      - int, integer, index - to integer
+      - float - to float
 
     :param arg_source: path of *.ini file. if None - use name of program called with
         ini extension.
@@ -767,7 +778,7 @@ def cfg_from_args(p, arg_add, **kwargs):
 
         if arg_ext.lower() in ('.yml', '.yaml'):
             # Remove type suffixes '_list', '_int' ... (currently removing is needed for yaml files only)
-            suffixes = {'_list', '_int', '_integer', '_index', '_float', '_b', '_bool', 'date', 'chars', '_dict'}
+            suffixes = {'_list', '_int', '_integer', '_index', '_float', '_b', '_bool', '_date', '_chars', '_dict'}
         else:
             # change types based on prefix/suffix
             cfg = ini2dict(cfg)
@@ -787,8 +798,8 @@ def cfg_from_args(p, arg_add, **kwargs):
                         if is_lst:
                             if key_level1.endswith('_list'):  # type already converted, remove type suffix
                                 new_key = key_level1[:-len('_list')]
-                                cfg[key_level0][new_key] = opt
-                                del cfg[key_level0][key_level1]
+                                v[new_key] = opt
+                                del v[key_level1]
                                 key_level1 = new_key
 
                             try:  # skip not list of str
@@ -796,25 +807,34 @@ def cfg_from_args(p, arg_add, **kwargs):
                                     continue
                             except IndexError:
                                 continue
-                            cfg[key_level0][key_level1] = re.compile(''.join(opt))
+                            v[key_level1] = re.compile(''.join(opt))
                         else:
-                            cfg[key_level0][key_level1] = re.compile(opt)
-                    elif not (opt is None or isinstance(opt,
-                                                        str)):  # type already converted, remove type suffixes here only
+                            v[key_level1] = re.compile(opt)
+                    elif not (opt is None or isinstance(opt, str)):
+                        # type already converted, remove type suffixes here only
                         for ends in suffixes:
                             if key_level1.endswith(ends):
-                                cfg[key_level0][key_level1[:-len(ends)]] = opt
-                                del cfg[key_level0][key_level1]
+                                new_name = key_level1[:-len(ends)]
+                                if ends == 'date' and new_name.endswith('min') or new_name.endswith('max'):  # exclusion for min_date and max_date
+                                    break  # todo: exclude all excisions that leave only special prefixes
+                                v[new_name] = opt
+                                del v[key_level1]
                                 break
                     else:
                         # type not converted, remove type suffixes and convert
                         new_name, val = type_fix(key_level1, opt)
                         if new_name == key_level1:               # if only type changed
-                            cfg[key_level0][new_name] = val
+                            if v[new_name] != val:
+                                if v[new_name]:
+                                    print(f'config value overwritten: {key_level0}.{new_name} = {v[new_name]} -> {val}')
+                                v[new_name] = val
                         else:
-                            if not new_name in cfg[key_level0]:  # if not str (=> not default) parameter without suffixes added already
-                                cfg[key_level0][new_name] = val
-                            del cfg[key_level0][key_level1]
+                            # replace old key
+                            if not new_name in v:  # if not str (=> not default) parameter without suffixes added already
+                                v[new_name] = val
+                            elif v[new_name] and v[new_name] != val:
+                                print(f'config {key_level1} value {val} ignored: {key_level0}.{new_name} = {v[new_name]} keeped')
+                            del v[key_level1]
 
         if kwargs:
             for key_level0, kwargs_level1 in kwargs.items():
@@ -908,17 +928,18 @@ def my_argparser_common_part(varargs, version='?'):  # description, version='?',
     return (p)
 
 
-def pathAndMask(path, filemask=None, ext=None):
+def pathAndMask(path: str, filemask=None, ext=None):
     """
+    Depreciated!
     Find Path & Mask
     :param path:
     :param filemask:
     :param ext:
-    :return:
+    :return: (dir, filemask)
 
     # File mask can be specified in "path" (for examample full path) it has higher priority than
     # "filemask" which can include ext part which has higher priority than specified by "ext"
-    # But if turget file(s) has empty name or ext than they need to be specified explisetly by ext = .(?)
+    # But if turget file(s) has empty name or ext then they need to be specified explisetly by ext = .(?)
     """
     path, fileN_fromCfgPath = os_path.split(path)
     if fileN_fromCfgPath:
@@ -980,7 +1001,16 @@ def generator_good_between(i_start=None, i_end=None):
         yield True
 
 
-def init_file_names(cfg_files: MutableMapping[str, Any], b_interact=True, path_field=None):
+def init_file_names(
+        path=None, filemask=None, ext=None,
+        b_search_in_subdirs=False,
+        exclude_dirs_ends_with=('bad', 'test'),
+        exclude_files_ends_with=None,
+        start_file=0,
+        end_file=None,
+        b_interact=True,
+        cfg_search_parent=None,
+        **kwargs):
     """
       Fill cfg_files filds of file names: {'path', 'filemask', 'ext'}
     which are not specified.
@@ -988,34 +1018,28 @@ def init_file_names(cfg_files: MutableMapping[str, Any], b_interact=True, path_f
       If any - asks user to proceed and if yes returns its names list.
       Else raises Ex_nothing_done exception.
 
-    :param cfg_files: dict with fields:
-        'path', 'filemask', 'ext' - name of file with mask or it's part
+    - path: name of file
+    - filemask', 'ext': optional - path mask or it's part
         exclude_files_ends_with - additional filter for ends in file's names
         b_search_in_subdirs, exclude_dirs_ends_with - to search in dirs recursively
         start_file, end_file - exclude files before and after this values in search list result
+    :param path_field: assigns path to this field initially
     :param b_interact: do ask user to proceed? If false proseed silently
-    :return: (paths, cfg_files)
-        cfg_files: configuration with added (if was not) fields
-    'path':,
-    'filemask':,
+    :return: (paths, nfiles, path)
+    'path':
     'nfiles': number of files found,
     'paths': list of full names of found files
+    :param kwargs: not used
     """
-    set_field_if_no(cfg_files, 'b_search_in_subdirs', False)
-    if path_field:
-        cfg_files['path'] = cfg_files[path_field]
-    set_cfg_path_filemask(cfg_files)
+
+    path = set_cfg_path_filemask(path, filemask, ext, cfg_search_parent)
 
     # Filter unused directories and files
-    filt_dirCur = lambda f: bGood_dir(f, namesBadAtEdge=cfg_files[
-        'exclude_dirs_ends_with']) if ('exclude_dirs_ends_with' in cfg_files) else \
-        lambda f: bGood_dir(f, namesBadAtEdge=(r'bad', r'test'))  # , r'\w'
+    filt_dirCur = lambda f: bGood_dir(f, namesBadAtEdge=exclude_dirs_ends_with)
 
     def skip_to_start_file(fun):
-        if ('start_file' in cfg_files) or ('end_file' in cfg_files):
-            fun_skip = generator_good_between(
-                cfg_files['start_file'] if 'start_file' in cfg_files else None,
-                cfg_files['end_file'] if 'end_file' in cfg_files else None)
+        if start_file or end_file:
+            fun_skip = generator_good_between(start_file, end_file)
 
             def call_skip(*args, **kwargs):
                 return (fun(*args, **kwargs) and fun_skip.__next__())
@@ -1024,12 +1048,8 @@ def init_file_names(cfg_files: MutableMapping[str, Any], b_interact=True, path_f
         return fun
 
     def skip_files_ends_with(fun):
-        if 'exclude_files_ends_with' in cfg_files:
-            def call_skip(*args, **kwargs):
-                return fun(*args, namesBadAtEdge=cfg_files['exclude_files_ends_with'])
-        else:
-            def call_skip(*args, **kwargs):
-                return fun(*args, namesBadAtEdge=(r'coef.txt',))
+        call_skip = lambda *args, **kwargs: fun(*args, namesBadAtEdge=exclude_files_ends_with) if \
+            exclude_files_ends_with else fun(*args, namesBadAtEdge=('coef.txt',))
         return call_skip
 
     def print_file_name(fun):
@@ -1055,29 +1075,28 @@ def init_file_names(cfg_files: MutableMapping[str, Any], b_interact=True, path_f
         # return False
         return bGood_file(fname, mask, namesBadAtEdge, bPrintGood=False)
 
-    print('search for {} files'.format(os_path.join(os_path.abspath(
-        cfg_files['dir']), cfg_files['filemask'])), end='')
+    print('search for {} files'.format(path), end='')
 
     # Execute declared functions ######################################
-    if cfg_files['b_search_in_subdirs']:
+    if b_search_in_subdirs:
         print(', including subdirs:', end=' ')
-        cfg_files['paths'] = [f for f in dir_walker(
-            cfg_files['dir'], cfg_files['filemask'],
+        paths = [f for f in dir_walker(
+            path.parent, path.name,
             bGoodFile=filt_file_cur, bGoodDir=filt_dirCur)]
     else:
         print(':', end=' ')
-        cfg_files['paths'] = [os_path.join(cfg_files['dir'], f) for f in sorted(os_listdir(
-            cfg_files['dir'])) if filt_file_cur(f, cfg_files['filemask'])]
-    cfg_files['nfiles'] = len(cfg_files['paths'])
+        paths = [path.with_name(f) for f in sorted(os_listdir(
+            path.parent)) if filt_file_cur(f, path.name)]
+    nfiles = len(paths)
 
-    print(end=f"\n- {cfg_files['nfiles']} found")
-    if cfg_files['nfiles'] == 0:
+    print(end=f"\n- {nfiles} found")
+    if nfiles == 0:
         print('!')
         raise Ex_nothing_done
     else:
         print(end='. ')
     if b_interact:
-        s = input(f"Process {'them' if cfg_files['nfiles'] > 1 else 'it'}? Y/n: ")
+        s = input(f"Process {'them' if nfiles > 1 else 'it'}? Y/n: ")
         if 'n' in s or 'N' in s:
             print('answered No')
             raise Ex_nothing_done
@@ -1112,24 +1131,26 @@ def init_file_names(cfg_files: MutableMapping[str, Any], b_interact=True, path_f
 
     """
 
-    return cfg_files
+    return paths, nfiles, path
 
 
 # File management ##############################################################
 
-def name_output_file(fileDir, filenameB, filenameE=None, bInteract=True, fileSizeOvr=0):
+def name_output_file(dir_path: PurePath, filenameB, filenameE=None, bInteract=True, fileSizeOvr=0
+                     ) -> Tuple[PurePath, str, str]:
     """
+    Depreciated!
     Name output file, rename or overwrite if output file exist.
-    :param fileDir:   file directoty
+    :param dir_path: file directoty
     :param filenameB: file base name
     :param filenameE: file extention. if None suppose filenameB is contans it
     :param bInteract: to ask user?
     :param fileSizeOvr: (bytes) bad files have this or smaller size. So will be overwrite
-    :return: (filePFE, sChange, msgFile):
-    filePFE - suggested output name. May be the same if bInteract=True, and user
-    answer "no" (i.e. to update existed), or size of existed file <= fileSizeOvr
-    sChange - user input if bInteract else ''
-    msgFile - string about resulting output name
+    :return: (path_out, sChange, msgFile):
+    - path_out: PurePath, suggested output name. May be the same if bInteract=True, and user
+                answer "no" (i.e. to update existed), or size of existed file <= fileSizeOvr
+    - sChange: user input if bInteract else ''
+    - msgFile: string about resulting output name
     """
 
     # filename_new= re_sub("[^\s\w\-\+#&,;\.\(\)']+", "_", filenameB)+filenameE
@@ -1144,14 +1165,14 @@ def name_output_file(fileDir, filenameB, filenameE=None, bInteract=True, fileSiz
 
     def append_to_filename(str_add):
         """
-        Returns filenameB + str_add + filenameE if no file with such name in fileDir
+        Returns filenameB + str_add + filenameE if no file with such name in dir_path
         or its size is less than fileSizeOvr else returns None
         :param str_add: string to add to file name before extension
         :return: base file name or None
         """
         filename_new = f'{filenameB}{str_add}{filenameE}'
-        full_filename_new = os_path.join(fileDir, filename_new)
-        if not os_path.isfile(full_filename_new):
+        full_filename_new = dir_path / filename_new
+        if not full_filename_new.is_file():
             return filename_new
         try:
             if os_path.getsize(full_filename_new) <= fileSizeOvr:
@@ -1178,45 +1199,54 @@ def name_output_file(fileDir, filenameB, filenameE=None, bInteract=True, fileSiz
     if bInteract and sChange in ['n', 'N']:
         # update only if answer No
         msgFile = 'update existed'
-        filePFE = os_path.join(fileDir, f'{filenameB}{filenameE}')  # new / overwrite
+        path_out = dir_path / f'{filenameB}{filenameE}'  # new / overwrite
         writeMode = 'a'
     else:
         # change name if need in auto mode or other answer
-        filePFE = os_path.join(fileDir, filename_new)
+        path_out = dir_path / filename_new
         if m > 0:
             msgFile += f'{str_add} added to name.'
         writeMode = 'w'
-    dir_create_if_need(fileDir)
-    return (filePFE, writeMode, msgFile)
+    dir_create_if_need(dir_path)
+    return (path_out, writeMode, msgFile)
 
 
-def set_cfg_path_filemask(cfg_files):
+def set_cfg_path_filemask(path=None, filemask=None, ext=None,
+                          cfg_search_parent: Optional[MutableMapping[str, Any]] = None):
     """
-    Sets 'dir' and 'filemask' of cfg_files based on its
-    'path','filemask','ext' fieds ('path' or 'filemask' is required)
-    :param cfg_files: dict with field 'path' or/and 'filemask' and may be 'ext'
-    :return: None
+    absolute path based on input ``path``, ``filemask``, ``ext`` and sys.argv[0] if not absolute
 
-    # Note. Extension may be within 'path' or in 'ext'
+    :param path: 'path' or 'filemask' is required
+    :param filemask: 'path' or 'filemask' is required
+    :param ext, optional
+    :param cfg_search_parent: dict with fields 'path' or 'db_path' (first extsted used) - used if :param path is't absolute to get parent dir
+    :return: absolute path
+
+    Note: Extension may be within :param path or in :param ext
     """
 
-    cfg_files['dir'], cfg_files['filemask'] = pathAndMask(*[
-        cfg_files[spec] if spec in cfg_files else None for
-        spec in ['path', 'filemask', 'ext']])
+    path = Path(*pathAndMask(*[path, filemask, ext]))
 
-    if not os_path.isabs(cfg_files['dir']):
-        dir_path = Path(sys.argv[0]).parent / cfg_files['dir']
+    if not path.is_absolute():
+        if cfg_search_parent:
+            for field in ['path', 'db_path']:
+                if field in cfg_search_parent and cfg_search_parent[field].is_absolute():
+                    path = cfg_search_parent[field].parent / path
+                    break
+            else:
+                path = Path(sys.argv[0]).parent / path
         try:
-            dir = dir_path.resolve()  # gets OSError "Bad file name" if do it directly for ``path`` having filemask symbols '*','?'
+            dir = path.parent.resolve()
+            # gets OSError "Bad file name" if do it directly for ``path`` having filemask symbols '*','?'
         except FileNotFoundError:
-            dir_create_if_need(str(dir_path))
-            dir = dir_path.resolve()
-        cfg_files['dir'] = str(dir)
-        cfg_files['path'] = str(dir / cfg_files['filemask'])
-
+            dir_create_if_need(path.parent)
+            dir = path.parent.resolve()
+        return dir / path.name
+    return path
 
 def splitPath(path, default_filemask):
     """
+    Depreciated!
     Split path to (D, mask, Dlast). Enshure that mask is not empty by using default_filemask.
     :param path: file or dir path
     :param default_filemask: used for mask if path is directory
@@ -1355,9 +1385,17 @@ def init_logging(logging, logger_name=__name__, log_file=None, level_file='INFO'
     return l
 
 
-def name_output_and_log(cfg, logging, f_rep_filemask=lambda f: f, bInteract=False):
+def name_output_and_log(out_path=None,
+                        writeMode=None,
+                        filemask=None,
+                        min_size_to_overwrite=None,
+                        logging=logging,
+                        f_rep_filemask=lambda f: f,
+                        bInteract=False,
+                        log='log.log',
+                        verbose=None):
     """
-    Initialize cfg['out']['path'] and splits it to fields
+    path and splits it to fields
     'path', 'filemask', 'ext'
     Initialize logging and prints message of beginning to write
 
@@ -1369,44 +1407,43 @@ def name_output_and_log(cfg, logging, f_rep_filemask=lambda f: f, bInteract=Fals
 
     :param logging:
     :param bInteract: see name_output_file()
-    :param f_rep_filemask: function f(cfg['out']['path']) modifying its argument
+    :param f_rep_filemask: function f(path) modifying its argument
         To replase in 'filemask' string '<File_in>' with base of cfg['in']['paths'][0] use
     lambda fmask fmask.replace(
             '<File_in>', os_path.splitext(os_path.basename(cfg['in']['paths'][0])[0] + '+')
-    :return: cfg, l
+    :return: path, ext, l
     cfg with added fields:
         in 'out':
             'path'
 
             'ext' - splits 'out_path' or 'csv' if not found in 'out_path'
     """
-    # find 'path' and 'ext' required for set_cfg_path_filemask()
-    if cfg['out']['out_path']:
-        cfg['out']['path'], cfg['out']['ext'] = os_path.splitext(cfg['out']['out_path'])
-        if not cfg['out']['ext']:  # set_cfg_path_filemask requires
-            cfg['out']['ext'] = '.csv'
-        cfg['out']['path'] = f_rep_filemask(cfg['out']['out_path'])
+    # find 'path' and 'ext' params for set_cfg_path_filemask()
+    if out_path:
+        path, ext = os_path.splitext(out_path)
+        if not ext:
+            ext = '.csv'
+        path = f_rep_filemask(out_path)
 
-        set_cfg_path_filemask(cfg['out'])
+        path = set_cfg_path_filemask(path, filemask, ext)
 
         # Check target exists
-        cfg['out']['path'], cfg['out']['writeMode'], msg_name_output_file = name_output_file(
-            cfg['out']['dir'], cfg['out']['filemask'], None,
-            bInteract, cfg['out']['min_size_to_overwrite'])
+        path, writeMode, msg_name_output_file = name_output_file(
+            path.parent, filemask, None,
+            bInteract, min_size_to_overwrite)
 
-        str_print = '{msg_name} Saving all to {out}:'.format(
-            msg_name=msg_name_output_file, out=os_path.abspath(cfg['out']['path']))
+        str_print = f"{msg_name_output_file} Saving all to {path.absolute()}:"
 
     else:
-        set_field_if_no(cfg['out'], 'dir', '.')
+        if not out_path:
+            path = '.'
         str_print = ''
 
-    l = init_logging(logging, None, os_path.join(
-        cfg['out']['dir'], cfg['program']['log']), cfg['program']['verbose'])
+    l = init_logging(logging, None, path.with_name(log), verbose)
     if str_print:
         l.warning(str_print)  # or use "a %(a)d b %(b)s", {'a':1, 'b':2}
 
-    return cfg, l
+    return path, ext, writeMode, l
 
 
 class Message:
@@ -1441,19 +1478,27 @@ class LoggingStyleAdapter(logging.LoggerAdapter):
 class FakeContextIfOpen:
     """
     Context manager that do nothing if file is not str/PurePath or custom open function is None/False
-    useful if file can be already opened file object
+    useful if instead file want use already opened file object
     """
 
     def __init__(self,
                  fn_open_file: Optional[Callable[[Any], Any]] = None,
-                 file: Optional[Any] = None):
+                 file: Optional[Any] = None,
+                 opened_file_object = None):
         """
-        :param fn_open_file: any, if not bool(fn_open_file) then context manager will do nothing on exit .
-        :param file: any, if not str or PurePath then context manager will do nonthing on exit
+        :param fn_open_file: if not bool(fn_open_file) is True then context manager will do nothing on exit
+        :param file:         if not str or PurePath then context manager will do nonthing on exit
         """
-        self.file = file
-        self.fn_open_file = fn_open_file
-        self._do_open_close = isinstance(self.file, (str, PurePath)) and self.fn_open_file
+        if opened_file_object:  # will return opened_file_object and do nothing
+            self.file = opened_file_object
+            self._do_open_close = False
+        else:
+            self.file = file
+            self.fn_open_file = fn_open_file
+            self._do_open_close = (
+                isinstance(self.file, (str, PurePath))
+                and self.fn_open_file
+            )
 
     def __enter__(self):
         """
@@ -1505,8 +1550,17 @@ def open_csv_or_archive_of_them(filename: Union[PurePath, Iterable[Union[Path, s
                 filename_str_no_ext, pattern_parent = filename_str.split(arc_suffix, maxsplit=1)
                 if pattern_parent:
                     pattern = str(PurePath(pattern_parent[1:]) / pattern)
-                    filename_str = filename_str_no_ext + arc_suffix
+                    filename_str = f'{filename_str_no_ext}{arc_suffix}'
+                    arc_files = [Path(filename_str).resolve().absolute()]
                 break
+            else:
+                pattern_lower = pattern.lower()
+                if arc_suffix in pattern_lower:
+                    pattern_arcs, pattern_lower = pattern_lower.split(arc_suffix, maxsplit=1)
+                    pattern = pattern[-len(pattern_lower.lstrip('/\\')):]  # recover text case for pattern
+                    arc_files = Path(filename_str).glob(f'{pattern_arcs}{arc_suffix}')
+                    break
+
         else:
             arc_suffix = ''
 
@@ -1527,18 +1581,19 @@ def open_csv_or_archive_of_them(filename: Union[PurePath, Iterable[Union[Path, s
                 l.warning('%s: can not update settings to increase peformance', standard_error_info(e))
             read_mode = 'r' # RarFile need opening in mode 'r' (but it opens in binary_mode)
         if arc_suffix:
-            with ArcFile(str(Path(filename_str).resolve().absolute()), mode='r') as arc_file:
-                for text_file in arc_file.infolist():
-                    if pattern and not fnmatch(text_file.filename, pattern):
-                        continue
+            for path_arc_file in arc_files:
+                with ArcFile(str(path_arc_file), mode='r') as arc_file:
+                    for text_file in arc_file.infolist():
+                        if pattern and not fnmatch(text_file.filename, pattern):
+                            continue
 
-                    with arc_file.open(text_file.filename, mode=read_mode) as f:
-                        break_flag = yield (f if binary_mode else io.TextIOWrapper(
-                            f, encoding=encoding, errors='replace', line_buffering=True))  # , newline=None
-                        if break_flag:
-                            print(f'exiting after openined archived file "{text_file.filename}":')
-                            print(arc_file.getinfo(text_file))
-                            break
+                        with arc_file.open(text_file.filename, mode=read_mode) as f:
+                            break_flag = yield (f if binary_mode else io.TextIOWrapper(
+                                f, encoding=encoding, errors='replace', line_buffering=True))  # , newline=None
+                            if break_flag:
+                                print(f'exiting after openined archived file "{text_file.filename}":')
+                                print(arc_file.getinfo(text_file))
+                                break
         else:
             if pattern and not fnmatch(filename, pattern):
                 return

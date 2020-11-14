@@ -37,7 +37,7 @@ if st(1):  # nav with depth is in next section
             '--path', str(path_cruise / r'navigation\bridge\NMEA_converted\*.gpx'),
             '--tables_list', ',navigation,',  # skip waypoints
             '--table_prefix', r'',
-            # '--date_min', '2019-07-17T14:00:00',
+            # '--min_date', '2019-07-17T14:00:00',
             ])
 
 if st(5):

@@ -6,12 +6,13 @@ from other_filters import *
 
 # ##############################################################################
 def test_find_sampling_frequency():
-    tim = np.array(['2017-10-20T12:36:31'] + ['2017-10-20T12:36:32'] * 3 + ['2017-10-20T12:36:33'], '<M8[ns]')
-    freq, kInterp, nDecrease, b_ok_out = find_sampling_frequency(tim, precision=0.1, b_show=True)
-    assert freq == 3
-    assert kInterp == pytest.approx(0.6, abs=1e-6)
-    assert nDecrease == 0
-    assert np.alltrue(b_ok_out)
+    n_insert = 30
+    tim = np.array(['2017-10-20T12:36:31'] + ['2017-10-20T12:36:32'] * n_insert + ['2017-10-20T12:36:33'], '<M8[ns]')
+    freq, n_same, n_decrease, i_inc = find_sampling_frequency(tim, precision=0.1, b_show=True)
+    assert freq == pytest.approx(n_insert, abs=1e-6)
+    assert n_same == n_insert
+    assert n_decrease == 0
+    assert np.alltrue(i_inc == np.int32([0, n_insert]))   # np.alltrue(np.diff(tim[i_inc]) > 0)
     pass
 
 
@@ -19,12 +20,11 @@ class LNDSTestCase(unittest.TestCase):
     # Try small lists and check that the correct subsequences are generated.
     def testLIS(self):
         # np.testing.assert_array_equal(
-        self.assertEqual(longest_increasing_subsequence_i(np.array([])).tolist(), [])
-        self.assertEqual(longest_increasing_subsequence_i(np.arange(10, 0, -1)).tolist(), [9])
-        self.assertEqual(longest_increasing_subsequence_i(np.arange(10)).tolist(),
-                         list(range(10)))
-        self.assertEqual(longest_increasing_subsequence_i(
-            np.array([3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9])).tolist(), [3, 6, 9, 10, 13, 14])
+        #self.assertEqual(longest_increasing_subsequence_i(np.array([])), []) - NOT IMPLEMENTED because numba is very very bad
+        self.assertEqual(list(longest_increasing_subsequence_i(np.arange(10, 0, -1))), [9])
+        self.assertEqual(list(longest_increasing_subsequence_i(np.arange(10))), list(range(10)))
+        self.assertEqual(list(longest_increasing_subsequence_i(
+            np.array([3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9]))), [3, 6, 9, 10, 13, 14])
 
     # def testLIS(self):
     #     self.assertEqual(other_filters.longest_increasing_subsequence_i(np.array([])),[])
@@ -36,22 +36,31 @@ class LNDSTestCase(unittest.TestCase):
 
     def test_repeated2increased(self):
         """ Test """
-        # Output may have repeated elements if freq is low
+        # Function will auto increase frequency for some intervals if freq is low
         freq = 1
         t = np.array(['2017-10-20T12:36:32'] * 2 + ['2017-10-20T12:36:33'], '<M8[ns]')  # np.dtype('datetime64[ns]')
-        t_out = repeated2increased(t.view(np.int64), freq, b_increased=None)
-        self.assertTupleEqual(tuple(t_out.view('<M8[ns]')), tuple(
-            np.array(['2017-10-20T12:36:32', '2017-10-20T12:36:33', '2017-10-20T12:36:33'], '<M8[ns]')))
+        t_out = repeated2increased(t.view(np.int64), freq, b_increased=None).view('<M8[ns]')
+        self.assertTupleEqual(tuple(t_out), tuple(
+            np.array(['2017-10-20T12:36:32', '2017-10-20T12:36:32.5', '2017-10-20T12:36:33'], '<M8[ns]')))
 
         # Increasing of frequency helps in most cases
         freq = 10
         t = np.hstack((np.datetime64('2017-10-20T12:36:32'),
-                       np.arange(np.datetime64('2017-10-20T12:36:32'), np.datetime64('2017-10-20T12:36:35'),
-                                 np.timedelta64(1, 's')),
-                       [np.datetime64('2017-10-20T12:36:34')] * 3, np.datetime64('2017-10-20T12:36:35'))).astype(
-            '<M8[ns]')
+                       np.arange(np.datetime64('2017-10-20T12:36:32'),
+                                 np.datetime64('2017-10-20T12:36:35'),
+                                 np.timedelta64(1, 's')), [
+                       np.datetime64('2017-10-20T12:36:34')] * 3,
+                       np.datetime64('2017-10-20T12:36:35'))
+                      ).astype('<M8[ns]')
         t_out = repeated2increased(t.view(np.int64), freq, b_increased=None)
         self.assertTrue(np.all(np.diff(t_out) > 0))
+        self.assertTupleEqual(tuple(t_out.view('<M8[ns]')), tuple(np.array(
+            ['2017-10-20T12:36:32.0', '2017-10-20T12:36:32.1',
+             '2017-10-20T12:36:33.0', '2017-10-20T12:36:34.0',
+             '2017-10-20T12:36:34.1', '2017-10-20T12:36:34.2',
+             '2017-10-20T12:36:34.3', '2017-10-20T12:36:35.0'],
+            dtype='datetime64[ns]')))
+
 
 
 if __name__ == '__main__':

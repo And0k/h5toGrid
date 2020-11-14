@@ -16,6 +16,7 @@ import re
 import sys
 from functools import wraps
 from pathlib import Path
+from datetime import timedelta, datetime
 from time import sleep
 from typing import Any, Callable, Dict, Iterator, Iterable, Mapping, MutableMapping, Optional, Sequence, Tuple, List, Union, TypeVar
 
@@ -101,8 +102,8 @@ def my_argparser(varargs=None):
     s.add('--tables_list', default='incl.*',
              help='table names in hdf5 store to get data. Uses regexp if only one table name')
     s.add('--chunksize_int', help='limit loading data in memory', default='50000')
-    s.add('--date_min', help='time range min to use')
-    s.add('--date_max', help='time range max to use')
+    s.add('--min_date', help='time range min to use')
+    s.add('--max_date', help='time range max to use')
     s.add('--raw_dir_words_list',
                help='cruise directories to search in in.db_path to set path of out.db_path under it if out.db_path is not absolute')
 
@@ -113,9 +114,15 @@ def my_argparser(varargs=None):
     s.add('--max_h_minus_1_float', default='8',
               help='sets Vdir to zero if module of magnetic field is greater')
     s.add('--min_dict',
-              help='List with items in  "key:value" format. Filter out (set to NaN) data of ``key`` columns if it is below ``value``')
+              help='List with items in "key:value" format. Filter out (set to NaN) data of ``key`` columns if it is below ``value``')
     s.add('--max_dict',
-              help='List with items in  "key:value" format. Filter out data of ``key`` columns if it is above ``value``')
+              help='List with items in "key:value" format. Filter out data of ``key`` columns if it is above ``value``')
+
+    s.add('--dates_min_dict',
+              help='List with items in "key:value" format. Start of time range for each probe: (used instead common for each probe min_dict["Time"]) ')
+    s.add('--dates_max_dict',
+              help='List with items in "key:value" format. End of time range for each probe: (used instead common for each probe max_dict["Time"]) ')
+
     s.add('--bad_p_at_bursts_starts_peroiod',
                help='pandas offset string. If set then marks each 2 samples of Pressure at start of burst as bad')
 
@@ -132,7 +139,7 @@ def my_argparser(varargs=None):
     s.add('--aggregate_period',
              help='pandas offset string (D, H, 2S, ...) to bin data and thus reduce output size')
     s.add('--text_path',
-              help='path to save text files with processed velocity (each probe individually)')
+              help='path to save text files with processed velocity (each probe individually). No file if not defined')
     s.add('--text_date_format', default='%Y-%m-%d %H:%M:%S.%f',
               help='Format of date column in output text files. Can use float or string representations')
     s.add('--text_columns_list',
@@ -723,7 +730,7 @@ def incl_calc_velocity(a: dd.DataFrame,
     lengths = tuple(a.map_partitions(len).compute())  # or True to autocalculate it
     len_data = sum(lengths)
 
-    if kVabs is not None:
+    if kVabs is not None and 'Ax' in a.columns:
         l.info('calculating V')
         try:    # lengths=True gets MemoryError   #.to_dask_array()?, dd.from_pandas?
             Gxyz = fG(a.loc[:, ('Ax', 'Ay', 'Az')].to_dask_array(lengths=lengths).T, Ag, Cg)
@@ -801,8 +808,11 @@ def incl_calc_velocity(a: dd.DataFrame,
         # Calculate pressure using P polynom
         meta = ('Pressure', 'f8')
 
-        if cfg_filter.get['bad_p_at_bursts_starts_peroiod']:   # '1h'
-            p_bursts = a.P.repartition(freq=cfg_filter['bad_p_at_bursts_starts_peroiod'])  # bursts must starts at beginnings of hours
+        if cfg_filter.get('bad_p_at_bursts_starts_peroiod'):   # '1h'
+            # Mark bad P data in first samples of bursts
+
+            # works right only if bursts starts at beginnings of hours!
+            p_bursts = a.P.repartition(freq=cfg_filter['bad_p_at_bursts_starts_peroiod'])
 
             def calc_and_rem2first(p: pd.Series) -> pd.Series:
                 """ mark bad data in first samples of burst"""
@@ -912,13 +922,19 @@ def coef_zeroing(mean_countsG0, Ag_old, Cg, Ah_old):
     # @-others
 
 
-def filt_data_dd(a, cfg_in: Mapping[str, Any]) -> Tuple[dd.DataFrame, np.array]:
+def filt_data_dd(
+    a,
+    dt_between_bursts=None,
+    dt_hole_warning: Optional[np.timedelta64] = None,
+    min_p=None,
+    cfg_filter=None) -> Tuple[dd.DataFrame, np.array]:
     """
-    Also gets burst starts (i.e. finds gaps in data)
+    Filter and get burst starts (i.e. finds gaps in data)
     :param a:
-    :param cfg_in: dict with fields:
-     - burst_min
-     - min_p, optional:
+    :param dt_between_bursts: minimum time interval between blocks to detect them and get its starts (i_burst), also repartition on found blocks if can i.e. if known_divisions
+    :param min_p, optional: used only if P in a.columns to delete a rows where a.P < min_p
+    :param dt_hole_warning: numpy.timedelta64
+    :param cfg_filter:
     :return: (a, i_burst) where:
      - a: filtered,
      - i_burst: array with 1st elem 0 and other - starts of data after big time holes
@@ -927,18 +943,18 @@ def filt_data_dd(a, cfg_in: Mapping[str, Any]) -> Tuple[dd.DataFrame, np.array]:
     if True:  # try:
         # determine indexes of bursts starts
         tim = a.index.compute()  # History: MemoryError((6, 12275998), dtype('float64'))
-        i_burst, mean_burst_size = i_bursts_starts(tim, dt_between_blocks=cfg_in['burst_min'])
+        i_burst, mean_burst_size, max_hole = i_bursts_starts(tim, dt_between_blocks=dt_between_bursts)
 
         # filter
-        if 'P' in a.columns and cfg_in.get('min_p'):
+        if 'P' in a.columns and min_p:
             print('restricting time range by good Pressure')
             # interp(NaNs) - removes warning 'invalid value encountered in less':
             a['P'] = filt_blocks_da(a['P'].values, i_burst, i_end=len(a)).to_dask_dataframe(['P'], index=tim)
             # todo: make filt_blocks_dd and replace filt_blocks_da: use a['P'] = a['P'].repartition(chunks=(tuple(np.diff(i_starts).tolist()),))...?
         # decrease interval based on ini date settings and filtering and recalc bursts
-        a = filter_global_minmax(a, cfg_filter=cfg_in)
+        a = filter_global_minmax(a, cfg_filter=cfg_filter)
         tim = a.index.compute()  # History: MemoryError((6, 10868966), dtype('float64'))
-        i_burst, mean_burst_size = i_bursts_starts(tim, dt_between_blocks=cfg_in['burst_min'])
+        i_burst, mean_burst_size, max_hole = i_bursts_starts(tim, dt_between_blocks=dt_between_bursts)
         # or use this and check dup? shift?:
         # i_good = np.search_sorted(tim, a.index.compute())
         # i_burst = np.search_sorted(i_good, i_burst)
@@ -946,25 +962,56 @@ def filt_data_dd(a, cfg_in: Mapping[str, Any]) -> Tuple[dd.DataFrame, np.array]:
         if not a.known_divisions:  # this is usually required for next op
             divisions = tuple(tim[np.append(i_burst, len(tim) - 1)])
             a.set_index(a.index, sorted=True).repartition(divisions=divisions)
-            1
             # a = a.set_index(a.index, divisions=divisions, sorted=True)  # repartition? (or reset_index)
+
+        if max_hole and dt_hole_warning and max_hole > dt_hole_warning:
+            l.warning(f'max time hole: {max_hole.astype(datetime)*1e-9}s')
         return a, i_burst
 
 
-def gen_data_on_intervals(cfg_in: Mapping[str, Any], split_period=None) -> Iterator[Tuple[dd.DataFrame, np.array]]:
+def gen_data_on_intervals(
+    t_prev_interval_start: pd.Timestamp,
+    t_intervals_start: Iterable[pd.Timestamp],
+    db_path,
+    table,
+    columns=None,
+    chunksize=None,
+    sorted_index=None,
+    dt_between_bursts: Optional[np.timedelta64] = None,
+    dt_hole_warning: Optional[np.timedelta64] = None,
+    min_p=None,
+    cfg_filter=None,
+    **kwargs) -> Iterator[Tuple[dd.DataFrame, np.array]]:
     """
-    Loading data of specified timerange
-    :param cfg_in: must have fiels:
-        fields required by intervals_from_period() except _split_period_ which is defined by 2nd input arg:
-        split_period:
-        other fields required by h5_load_range_by_coord():
-            db_path, ...
+    Yields loaded data of specified time interval(s)
+    :param t_prev_interval_start: first index value
+    :param t_intervals_start:
+
+    fields required by intervals_from_period():
+    :param split_period:
+    :param datetime_range: Optional[np.ndarray] = None,
+    :param min_date: Optional[pd.Timestamp] = None,
+    :param max_date: Optional[pd.Timestamp] = None,
+    :param period: Optional[str] = '999D',
+
+    params of filt_data_dd:
+    :param dt_between_bursts, dt_hole_warning, min_p, cfg_filter
+
+    other fields required by h5_load_range_by_coord() except range_coordinates:
+    :param db_path,
+    :param table,
+    :param columns=None,
+    :param chunksize=None,
+    :param sorted_index=None
+
+    :param **kwargs:
     :return:
     """
-    t_prev_interval_start, t_intervals_start = intervals_from_period(**cfg_in, period=split_period)
-    for start_end in h5q_intervals_indexes_gen(cfg_in, t_prev_interval_start, t_intervals_start):
-        a = h5_load_range_by_coord(cfg_in, start_end)
-        yield filt_data_dd(a, cfg_in)
+    for start_end in h5q_intervals_indexes_gen(db_path, table, t_prev_interval_start, t_intervals_start):
+        a = h5_load_range_by_coord(
+            db_path, table, range_coordinates=start_end,
+            columns=columns, chunksize=chunksize, sorted_index=sorted_index)
+        yield filt_data_dd(a, dt_between_bursts, dt_hole_warning, min_p, cfg_filter)
 
 
 def h5_names_gen(cfg_in: Mapping[str, Any], cfg_out: None = None
@@ -972,13 +1019,13 @@ def h5_names_gen(cfg_in: Mapping[str, Any], cfg_out: None = None
     """
     Generate table names with associated coefficients
     :param cfg_in: dict with fields:
-      - tables: pattern to find names
+      - tables: tables names search pattern or sequence of table names
       - db_path:
     :param cfg_out: not used but kept for the requirement of h5_dispenser_and_names_gen() argument
     :return: iterator that returns (table name, coefficients)
     updates cfg_in['tables'] - sets to list of found tables in store
     """
-    # dfLogOld = h5temp_open(cfg_out), cfg_out['db'].close()
+
     with pd.HDFStore(cfg_in['db_path'], mode='r') as store:
         if len(cfg_in['tables']) == 1:
             cfg_in['tables'] = h5find_tables(store, cfg_in['tables'][0])
@@ -1022,7 +1069,8 @@ def h5_append_to(dfs: Union[pd.DataFrame, dd.DataFrame],
         if msg: l.info(msg)
         tables_dict = {'table': tbl, 'table_log': f'{tbl}/logFiles'}
         try:
-            h5remove_table(cfg_out, tbl)
+            if h5remove_table(cfg_out['db'], tbl):
+                l.info('previous table removed')
         except Exception as e:  # no such table?
             pass
         h5_append({**cfg_out, **tables_dict}, dfs,
@@ -1034,76 +1082,121 @@ def h5_append_to(dfs: Union[pd.DataFrame, dd.DataFrame],
         print('No data.', end=' ')
 
 
-def gen_variables(cfg_in: MutableMapping[str, Any], cfg_out: MutableMapping[str, Any], fun_gen=h5_names_gen
-            ) -> Iterator[Tuple[dd.DataFrame, np.array]]:
+def gen_variables(
+        cfg_out: MutableMapping[str, Any],
+        db_path=None,
+        split_period=None,
+        db_paths=None,
+        tables=None,
+        dates_min=None,
+        dates_max=None,
+        fun_gen=h5_names_gen,
+        **kwargs) -> Iterator[Tuple[dd.DataFrame, np.array]]:
     """
     Wraps h5_dispenser_and_names_gen() to deal with many db_paths, tables, dates_min and dates_max
-    :param cfg_in: dict with fields:
-      - db_path: str/path of real path or multiple paths joined by '|' to be splitted in list cfg['db_paths'],
-      - tables,
-      - dates_min,
-      - dates_max
-      - split_period, optional - generate dataframes in parts with this period
     :param cfg_out: dict with fields:
+    Dicts with fields for each probe:
+    :param db_paths,
+    :param tables,
+    :param dates_min,
+    :param dates_max
 
+    cfg_in fields:
+    :param: db_path: Union[str, Path], str/path of real path or multiple paths joined by '|' to be splitted in list cfg['db_paths'],
+    :param: split_period, optional - generate dataframes in parts with this period
     :param fun_gen:
     :return: dict with plural named keys having list values
     """
 
+    cfg_in = locals()
+    cfg_many = {}
     names_many_to_one = {
         'db_paths': 'db_path',
         'tables': 'table',
-        'dates_min': 'date_min',
-        'dates_max': 'date_max'}
+        'dates_min': 'min_date',
+        'dates_max': 'max_date'}
+    for k, v in names_many_to_one.items():
+        try:
+            _ = cfg_in.pop(k)
+            if _:
+                cfg_many[v] = _
+        except KeyError:
+            continue
 
-    def gen_sources_dict(cfg_in: MutableMapping[str, Union[str, list]]) -> Iterator[Dict[str, str]]:
+    def delistify(vals):  # here is used only to get table item from 'tables' parameter (that is of type list with len=1)
+        return vals[0] if isinstance(vals, Iterable) and len(vals)==1 else vals
+
+    def gen_sources_dict(param_dicts) -> Iterator[Dict[str, str]]:
         """
-        Generate dicts with values of one str from dict having values of lists of str
-        :param cfg_in: dict with plural named keys having list values and may be singular named keys to fall back to
-        :return: dict with singular named keys and str values
+        Generate dicts {parameter: value} from dict {parameter: {probe: value}} for each probe
+        :param param_dicts: dict {parameter: {probe: value}} or {parameter: value} to use this value for all probes
+        :return: dict with singular named keys having str values
         """
-        if '|' in str(cfg_in['db_path']):
-            cfg_in['db_paths'] = [Path(p) for p in str(cfg_in['db_path']).split('|')]
 
-        cfg_in_lists = {}
-        for k, v in names_many_to_one.items():
-            if k in cfg_in:
-                cfg_in_lists[v] = cfg_in[k] if (not isinstance(cfg_in[k], str)
-                                                and isinstance(cfg_in[k], Iterable)) else [cfg_in[k]]
-        # dict of lists
-        for v in zip(*cfg_in_lists.values()):
-            yield dict(zip(cfg_in_lists, v))
+        param_groups: List[Dict[str, Any]] = []  #
+        for probe_vals in param_dicts.values():
+            if isinstance(probe_vals, Dict):
+                param_groups = [{'probe': probe} for probe in probe_vals.keys()]
+        if any(param_groups):
+            # depreciated to use encoded lists:
+            # if '|' in str(db_path):
+            #     params['db_paths'] = [Path(p) for p in str(db_path).split('|')]
 
-    cfg_in_copy = cfg_in.copy()
+            for param, probe_vals in param_dicts.items():
+                # if probe_vals is None:
+                #     continue
+                if isinstance(probe_vals, Dict):
+                    for i, probe, val in enumerate(probe_vals.items()):
+                        param_groups[i][param] = val
+                else:
+                    for i in range(len(param_groups)):
+                        param_groups[i][param] = delistify(probe_vals)
+                              # copy to each group of params
+
+            yield from param_groups
+        else:
+            yield {param: delistify(probe_vals) for param, probe_vals in param_dicts.items()}
+
     n = 1
-    for d_source in gen_sources_dict(cfg_in_copy):
-        cfg_in.update(d_source)
-        cfg_in['tables'] = [cfg_in['table']]                 # for h5_dispenser_and_names_gen()
-        for itbl, (tbl, coefs) in h5_dispenser_and_names_gen(cfg_in, cfg_out, fun_gen=fun_gen, b_close_at_end=False):
+    for d_source in gen_sources_dict(cfg_many):
+        cfg_in_copy = cfg_in.copy()  # exclude the possibility of next cycles be depended on changes in previous
+        cfg_in_copy.update(d_source)
+        cfg_in_copy['tables'] = [cfg_in_copy['table']]            # for h5_dispenser_and_names_gen()
+        t_prev_interval_start, t_intervals_start = intervals_from_period(
+            **{k: cfg_in_copy.get(k) for k in ['datetime_range', 'min_date', 'max_date']}, period=split_period)
+        for itbl, (tbl, coefs) in h5_dispenser_and_names_gen(cfg_in_copy, cfg_out,
+                                                             fun_gen=fun_gen, b_close_at_end=False):
             l.info('%s. %s: ', n, tbl)  # itbl
-            cfg_in['table'] = tbl                            # for gen_data_on_intervals()
-            for d, i_burst in gen_data_on_intervals(cfg_in, cfg_in.get('split_period')):
-                assert i_burst == 0                             # this is not a cycle
-                cfg_in['tables'] = cfg_in_copy['tables']     # recover (seems not need now but may be for future use)
-                coefs_copy = coefs.copy() if coefs else None # copy to not cumulate corrections in several cycles of generator consumer for same probe coefs
+            cfg_in_copy['table'] = tbl                           # for gen_data_on_intervals()
+
+            for i, (d, i_burst) in enumerate(gen_data_on_intervals(t_prev_interval_start, t_intervals_start, **cfg_in_copy)):
+                assert i == 0  # do not need the use of many intervals
+                cfg_in_copy['tables'] = cfg_in_copy['table']    # recover (seems not need now but may be for future use)
+                coefs_copy = coefs.copy() if coefs else None    # copy to not cumulate the coefs corrections in several cycles of generator consumer for same probe
                 yield n, tbl, coefs_copy, d
                 n += 1
 
 
-def dd_to_csv(d: dd.DataFrame, cfg_out: Mapping[str, Any], suffix='', b_single_file=True):
+def dd_to_csv(
+        d: dd.DataFrame,
+        text_path=None,
+        text_date_format: Optional[str] = None,
+        text_columns=None,
+        aggregate_period=None,
+        suffix='',
+        b_single_file=True
+        ):
     """
-    Save to ascii if cfg_out['text_path'] is not None
+    Save to ascii if _text_path_ is not None
     :param d:
-    :param cfg_out: dict with fields:
-      - text_path: None or directory path
-      - text_date_format: If callable then create "Date" column by calling it (dd.index), retain index only if "Time" in 'text_columns'. If string use it as format for index (Time) column
-      - text_columns': optional
-      - aggregate_period: str or with class with repr() that gives good file name part - to add suffix to files
+    :param text_path: None or directory path. If not a dir tries to create and if this fails (like if more than one level) then adds this as prefix to nemes
+    :param text_date_format: If callable then create "Date" column by calling it (dd.index), retain index only if "Time" in text_columns. If string use it as format for index (Time) column
+    :param text_columns: optional
+    :param aggregate_period: str or class with repr() to add "bin{}" suffix to files names
     :param suffix:
     :param b_single_file: save all to one file or each partition individually
-    :return:
     """
-    if cfg_out['text_path'] is None:
+    if text_path is None:
         return
 
 
@@ -1112,7 +1205,7 @@ def dd_to_csv(d: dd.DataFrame, cfg_out: Mapping[str, Any], suffix='', b_single_f
     ext = '.tsv' if sep==tab else '.csv'
     l.info('Saving *%s: %s', ext, '1 file' if b_single_file else f'{d.npartitions} files')
     try:
-        dir_create_if_need(cfg_out['text_path'])
+        dir_create_if_need(text_path)
         def combpath(dir_or_prefix, s):
             return str(dir_or_prefix / s)
     except:
@@ -1125,23 +1218,23 @@ def dd_to_csv(d: dd.DataFrame, cfg_out: Mapping[str, Any], suffix='', b_single_f
         # too long variant: '{:%y%m%d_%H%M}-{:%H%M}'.format(*d.partitions[i_partition].index.compute()[[0,-1]])
 
     filename = combpath(
-        cfg_out['text_path'],
+        text_path,
         f"{name_that_replaces_asterisk(0) if b_single_file else '*'}{{}}_{suffix.replace('incl', 'i')}{ext}".format(
-        f"bin{cfg_out['aggregate_period'].lower()}" if cfg_out['aggregate_period'] else '',  # lower seconds: S -> s
+        f'bin{aggregate_period.lower()}' if aggregate_period else '',  # lower seconds: S -> s
         ))
 
     with ProgressBar():
         d_out = d.round({'Vdir': 4, 'inclination': 4, 'Pressure': 3})
         # if not cfg_out.get('b_all_to_one_col'):
         #     d_out.rename(columns=map_to_suffixed(d.columns, suffix))
-        if callable(cfg_out['text_date_format']):
-            arg_out = {'index': 'Time' in cfg_out.get('text_columns', []),
-                       'columns': cfg_out.get('text_columns', d_out.columns.insert(0, 'Date'))
+        if callable(text_date_format):
+            arg_out = {'index': bool(text_columns) and 'Time' in text_columns,
+                       'columns': bool(text_columns) or d_out.columns.insert(0, 'Date')
                        }
-            d_out['Date'] = d_out.map_partitions(lambda df: cfg_out['text_date_format'](df.index))
+            d_out['Date'] = d_out.map_partitions(lambda df: text_date_format(df.index))
         else:
-            arg_out = {'date_format': cfg_out['text_date_format'],
-                       'columns': cfg_out.get('text_columns') or None  # write all columns if list is empty
+            arg_out = {'date_format': text_date_format,
+                       'columns': text_columns or None  # for write all columns if empty (replaces to None)
                        }
 
         if progress is not None:
@@ -1177,10 +1270,12 @@ def main(new_arg=None, **kwargs):
         print(e.message)
         return ()
 
+    # minimum time between blocks, required in filt_data_dd() for data quality control messages:
+    cfg['in']['dt_between_bursts'] = np.inf  # inf to not use bursts, None to autofind and repartition
+    cfg['in']['dt_hole_warning'] = np.timedelta64(10, 'm')
     cfg['in']['i_range'] = [0, -1]  # USEi
-    cfg['in']['burst_min'] = np.inf  # inf to not use bursts, None to autofind
-    cfg['out']['chunksize'] = cfg['in']['chunksize']
 
+    cfg['out']['chunksize'] = cfg['in']['chunksize']
     # If 'split_period' not set use custom splitting to be in memory limits
     if cfg['out']['aggregate_period']:
         aggregate_period_timedelta = pd_period_to_timedelta(cfg['out']['aggregate_period'])
@@ -1212,7 +1307,7 @@ def main(new_arg=None, **kwargs):
 
     log = {}
     dfs_all_list = []
-    dfs_all_log = []
+    tbls = []
     dfs_all: Optional[pd.DataFrame] = None
     cfg['out']['tables_have_wrote'] = []
 
@@ -1221,7 +1316,7 @@ def main(new_arg=None, **kwargs):
     #     cfg['in']['table'] = tbl  # to get data by gen_intervals()
     #     for d, i_burst in (gen_data_on_intervals if False else gen_data_on_intervals_from_many_sources)(cfg):
     #         assert i_burst == 0  # this is not a cycle
-    for itbl, tbl, coefs, d in gen_variables(cfg['in'], cfg['out'], fun_gen=h5_names_gen):
+    for itbl, tbl, coefs, d in gen_variables(cfg['out'], fun_gen=h5_names_gen, **cfg['in']):
         d = filter_local(d, cfg['filter'])  # d[['Mx','My','Mz']] = d[['Mx','My','Mz']].mask(lambda x: x>=4096)
         probe_number = int(re.findall('\d+', tbl)[0])
 
@@ -1239,10 +1334,10 @@ def main(new_arg=None, **kwargs):
                     mean_countsG0 = np.atleast_2d(d_zeroing.mean().values.compute()).T
                     coefs['Ag'], coefs['Ah'] = coef_zeroing(mean_countsG0, coefs['Ag'], coefs['Cg'], coefs['Ah'])
             # Azimuth correction
-            if cfg['in']['azimuth_add']:
+            if cfg['proc']['azimuth_add']:
                 # individual or the same correction for each table:
-                coefs['azimuth_shift_deg'] += (cfg['in']['azimuth_add'].get(probe_number, 0) if isinstance(
-                        cfg['in']['azimuth_add'], Mapping) else cfg['in']['azimuth_add'])
+                coefs['azimuth_shift_deg'] += (cfg['proc']['azimuth_add'].get(probe_number, 0) if isinstance(
+                        cfg['proc']['azimuth_add'], Mapping) else cfg['proc']['azimuth_add'])
 
         if aggregate_period_timedelta:
             if not cfg['in']['db_path'].stem.endswith('proc_noAvg'):
@@ -1258,14 +1353,14 @@ def main(new_arg=None, **kwargs):
                 l.debug('- Failed (not enough memory for persisting). Continue...')
 
         if cfg['in']['db_path'].stem.endswith('proc_noAvg'):
-            # recalculate aggregated values of polar coordinates and angles that is invalid after aggregated directly
+            # recalculate aggregated values of polar coordinates and angles that is invalid after the direct aggregating
             d = dekart2polar_df_v_en(d)
             if cfg['out']['split_period']:  # for csv splitting only
                 d = d.repartition(freq=cfg['out']['split_period'])
         else:
             # Velocity calculation
-
-            # with repartition for split ascii and/or remove MemoryError
+            # --------------------
+            # with repartition for split ascii (also helps to prevent MemoryError)
             d = incl_calc_velocity(d.repartition(freq=split_for_memory), **coefs,
                                    cfg_filter=cfg['filter'],
                                    cfg_proc=cfg['proc'])
@@ -1278,10 +1373,11 @@ def main(new_arg=None, **kwargs):
                 if tables_wrote_now:
                     cfg['out']['tables_have_wrote'].append(tables_wrote_now)
 
-        dd_to_csv(d, cfg['out'], tbl, b_single_file=not cfg['out']['split_period'])
+        dd_to_csv(d, cfg['out']['text_path'], cfg['out']['text_date_format'], cfg['out']['text_columns'],
+                  cfg['out']['aggregate_period'], suffix=tbl, b_single_file=not cfg['out']['split_period'])
 
-        if aggregate_period_timedelta:  # data have index of same period
-            # Combine data
+        # Combine data columns if we aggregate (if so then it is possible because all data have index of equal period)
+        if aggregate_period_timedelta:
             try:
                 cols_save = [c for c in cols_out_allow if c in d.columns]
                 sleep(cfg['filter']['sleep_s'])
@@ -1289,7 +1385,7 @@ def main(new_arg=None, **kwargs):
                 if not cfg['out']['b_all_to_one_col']:
                     Vne.rename(columns=map_to_suffixed(cols_save, tbl, probe_number), inplace=True)
                 dfs_all_list.append(Vne)
-                dfs_all_log.append(tbl)
+                tbls.append(tbl)
             except Exception as e:
                 l.exception('Can not cumulate result! ')
                 raise
@@ -1301,20 +1397,19 @@ def main(new_arg=None, **kwargs):
     # Combined data to hdf5
     if aggregate_period_timedelta:
         dfs_all = pd.concat(dfs_all_list, sort=True, axis=(0 if cfg['out']['b_all_to_one_col'] else 1))
-        dfs_all_log = pd.DataFrame([df.index[[0,-1]].to_list() for df in dfs_all_list],
-                                   columns=['Date0', 'DateEnd'])\
-            .set_index('Date0')\
-            .assign(table_name=dfs_all_log)\
+        dfs_all_log = pd.DataFrame(
+            [df.index[[0,-1]].to_list() for df in dfs_all_list], columns=['Date0', 'DateEnd']
+            ).set_index('Date0')\
+            .assign(table_name=tbls)\
             .sort_index()
-        tables_wrote_now = h5_append_to(dfs_all, cfg_out_table, cfg['out'], log=dfs_all_log, msg='Saving accumulated data',
-                                        print_ok='.')
+        tables_wrote_now = h5_append_to(dfs_all, cfg_out_table, cfg['out'], log=dfs_all_log,
+                                        msg='Saving accumulated data', print_ok='.')
         if tables_wrote_now:
             cfg['out']['tables_have_wrote'].append(tables_wrote_now)
 
 
     # close temporary output store
     h5_close(cfg['out'])
-
     try:
         failed_storages = h5move_tables(cfg['out'], cfg['out']['tables_have_wrote'])
     except Ex_nothing_done as e:
@@ -1328,11 +1423,12 @@ def main(new_arg=None, **kwargs):
                 .resample(rule=aggregate_period_timedelta)
                 .first()
                 .fillna(0),  # inserts zeros in holes
-            cfg['out'], suffix=','.join(cfg['in']['tables'])
+            **cfg['out'],
+            suffix=','.join(cfg['in']['tables'])
             )
 
     print('Ok.', end=' ')
-    # h5index_sort(cfg['out'], out_storage_name= cfg['out']['db_base']+'-resorted.h5', in_storages= failed_storages)
+    # h5index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5", in_storages= failed_storages)
     # dd_out = dd.multi.concat(dfs_list, axis=1)
 
 
@@ -1363,8 +1459,8 @@ old cfg
             'db_path': '/mnt/D/workData/BalticSea/181116inclinometer_Schuka/181116incl.h5', #r'd:\WorkData\BalticSea\181116inclinometer_Schuka\181116incl.h5',
             'tables': ['incl.*'],
             'chunksize': 1000000, # 'chunksize_percent': 10,  # we'll repace this with burst size if it suit
-            'date_min': datetime.strptime('2018-11-16T15:19:00', '%Y-%m-%dT%H:%M:%S'),
-            'date_max': datetime.strptime('2018-12-14T14:35:00', '%Y-%m-%dT%H:%M:%S')
+            'min_date': datetime.strptime('2018-11-16T15:19:00', '%Y-%m-%dT%H:%M:%S'),
+            'max_date': datetime.strptime('2018-12-14T14:35:00', '%Y-%m-%dT%H:%M:%S')
             'split_period': '999D',  # pandas offset string (999D, H, ...) ['D' ]
             'aggregate_period': '2H',  # pandas offset string (D, 5D, H, ...)
             #'max_g_minus_1' used only to replace bad with NaN

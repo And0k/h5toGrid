@@ -263,7 +263,7 @@ will be sabstituted with correspondng input file names.
     args.verbose = args.verbose[0]
     try:
         cfg = ini2dict(args.cfgFile)
-        cfg['in'] = init_file_names(cfg['in'])
+        cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(**cfg['in'])
     except (IOError, Ex_nothing_done) as e:
         cfg = {'in': {'paths': [args.path],
                       'nfiles': 1}}  # one file

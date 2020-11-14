@@ -164,7 +164,7 @@ else:  # line distance
 
     trackDist = nm2km(trackDist)  # convert & cat if was longer in cicle before
 # DistLine
-if ~track['bMeanOnIntervals']:
+if not track['bMeanOnIntervals']:
     track['Points']['Dist'] = trackDist[b_use]
     track['Points']['Time'] = a1DTime[b_use]
     if (iEdge[0] != 1) or (iEdge(2) != numel(a1DLon)):

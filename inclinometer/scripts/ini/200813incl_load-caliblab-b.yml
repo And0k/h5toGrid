@@ -11,8 +11,8 @@ in:
   db_coefs: incl_b.h5
 
 filter:
-  date_min: {0: 22.10.2018 12:30:00}
-  date_max: {0: now}
+  min_date: {0: 22.10.2018 12:30:00}
+  max_date: {0: now}
 
 out:
   db_name: 200807_calibr-lab-b.h5

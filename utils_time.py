@@ -8,9 +8,11 @@
 import logging
 import re
 from typing import Optional
-
+from datetime import datetime
 import numpy as np
 import pandas as pd
+
+from utils2init import LoggingStyleAdapter
 
 if __debug__:
     # datetime converter for a matplotlib plotting method
@@ -24,10 +26,7 @@ if __debug__:
 from dateutil.tz import tzoffset
 # my:
 
-if __name__ == '__main__':
-    l = None  # see main(): l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
-else:
-    l = logging.getLogger(__name__)
+lf = LoggingStyleAdapter(logging.getLogger(__name__))
 
 dt64_1s = np.int64(1e9)
 tzUTC = tzoffset('UTC', 0)
@@ -124,9 +123,8 @@ def timzone_view(t, dt_from_utc=0):
             t = t.tz_localize('UTC')
         return t.tz_convert(tzinfo)
     else:
-        l.error(
-            'Bad time format {}: {} - it is not subclass of pd.Timestamp/DatetimeIndex => Converting...'.format(type(t),
-                                                                                                                t))
+        lf.error(
+            'Bad time format {}: {} - it is not subclass of pd.Timestamp/DatetimeIndex => Converting...', type(t), t)
         t = pd.to_datetime(t).tz_localize(tzinfo)
         return t
         # t.to_datetime().replace(tzinfo= tzinfo) + dt_from_utc
@@ -150,16 +148,16 @@ def pd_period_to_timedelta(period: str) -> pd.Timedelta:
 
 def intervals_from_period(
         datetime_range: Optional[np.ndarray] = None,
-        date_min: Optional[pd.Timestamp] = None,
-        date_max: Optional[pd.Timestamp] = None,
+        min_date: Optional[pd.Timestamp] = None,
+        max_date: Optional[pd.Timestamp] = None,
         period: Optional[str] = '999D',
         **kwargs) -> (pd.Timestamp, pd.DatetimeIndex):
     """
     Divide datetime_range on intervals of period, normalizes starts[1:] if period>1D and returns them in tuple's 2nd element
     :param period: pandas offset string 'D' (Y, D, 5D, H, ...) if None such field must be in cfg_in
     :param datetime_range: list of 2 elements, use something like np.array(['0', '9999'], 'datetime64[s]') for all data.
-    If not provided 'date_min' and 'date_max' will be used
-    :param date_min, date_max: used if datetime_range is None. If neither provided then use range from 2000/01/01 to now
+    If not provided 'min_date' and 'max_date' will be used
+    :param min_date, max_date: used if datetime_range is None. If neither provided then use range from 2000/01/01 to now
     :return (start, ends): (Timestamp, fixed frequency DatetimeIndex)
     """
 
@@ -167,11 +165,11 @@ def intervals_from_period(
     if datetime_range is not None:
         start = pd.Timestamp(datetime_range[0])  # (temporarely) end of previous interval
     else:
-        start = pd.to_datetime(date_min) if date_min else pd.Timestamp(year=2000, month=1, day=1)
-        if date_max is not None:
-            t_interval_last = pd.to_datetime(date_max)  # last
+        start = pd.to_datetime(min_date) if min_date else pd.Timestamp(year=2000, month=1, day=1)
+        if max_date is not None:
+            t_interval_last = pd.to_datetime(max_date)  # last
         else:
-            t_interval_last = pd.datetime.now()  # i.e. big value
+            t_interval_last = datetime.now()  # i.e. big value
         datetime_range = [start, t_interval_last]
 
     if period:
@@ -225,3 +223,8 @@ def minInterval(iLims1, iLims2, L):
         return np.transpose([max(iL1[:, 0], iL2[:, 0]), min(iL1[:, -1], iL2[:, -1])])
 
     return maxmin(positiveInd(iLims1, L), positiveInd(iLims2, L))
+
+
+
+# str_time_short= '{:%d %H:%M}'.format(r.Index.to_datetime())
+# timeUTC= r.Index.tz_convert(None).to_datetime()

@@ -15,12 +15,12 @@ from to_pandas_hdf5.CTD_calc import main as CTD_calc
 from h5toGpx import main as h5toGpx
 from grid2d_vsz import main as grid2d_vsz
 
-device = 'CTD_Idronaut_OS316#494'
+
 path_cruise = Path(r'd:\workData\BalticSea\200819_AI56')
 path_db = path_cruise / path_cruise.with_suffix('.h5').name  # same name as dir
-device_veusz_prefix = 'i3_'
+
 st.go = True   # False #
-st.start = 110  # default: 1, used: 5 30 70 80
+st.start = 70  # default: 1, used: 5 30 70 80
 st.end = 110   # 60 80 120
 # Stop before steps that need manual preparings (70) i.e. set end < 70 at first
 # Gridding (last step) needs debugging if interactive filtering is needed
@@ -32,7 +32,7 @@ if st(1, 'Save gpx navigation to DB'):
             '--path', str(path_cruise / r'navigation\_raw\*.gpx'),
             '--tables_list', ',navigation,',  # skip waypoints
             '--table_prefix', r'',
-            # '--date_min', '2019-07-17T14:00:00',
+            # '--min_date', '2019-07-17T14:00:00',
             '--b_skip_if_up_to_date', '0',
             '--b_interact', '0',
             ])
@@ -51,14 +51,30 @@ if st(5, "Save Supervisor's navigation to DB"):
 
 if st(6, "Save bathymetry to DB from HYPACK's export of SES2000 echosounder data"):
     # (saved gpx data is sparse and coinsedence of time samples is seldom, but need to check and delete duplicates)
-    csv2h5([
+
+    arg = [
         'ini/csv_nav_HYPACK_SES2000.ini',
-        '--path', str(path_cruise / r'navigation\bathymetry_SES2000\AI56_*.txt'),
         '--db_path', str(path_db),
-        '--b_skip_if_up_to_date', '0',
+        '--b_skip_if_up_to_date', '0',          # needed to keep overlapped data from other data sources
         '--b_interact', '0',
         # '--fs_float', '4'
-        ])
+        '--b_remove_duplicates', 'True'
+        ]
+    f_underscored = lambda s: '\n'.join([s, "_" * len(s)])
+    for subdir in ['part1&format1', 'part2&format2']:
+        print(f_underscored(f'Directory "{subdir}"'))
+        arg_use = arg + ['--path', str(path_cruise / r'navigation/bathymetry_SES2000' / subdir / 'AI56_*.txt')]
+        if subdir == 'part2&format2':
+            arg_use.extend(
+                ['--header', 'LonEW(text),LatNS(text),Time(text),LatUTM,LonUTM,DepEcho,DatePC(text),TimePC(text),',
+                 '--skiprows_integer', '0',
+                 # 'cols_not_use_list',
+                 ])
+        csv2h5(arg_use)
+
+
+device = 'CTD_Idronaut_OS316#494'
+device_veusz_prefix = 'i3_'
 
 if st(10, f'Save {device} data to DB'):  # False: #
     csv2h5([
@@ -207,7 +223,9 @@ if False: # st(60, 'Extract navigation data at runs/starts to GPX tracks.'):
 
 if st(70, 'Save waypoints/routes from _manually_ prepared gpx to hdf5'):  # False: #
     # todo: sort by time start
-    gpx2h5(['', '--path', str(path_cruise / r'navigation\CTD-sections=routes.gpx'),
+    gpx2h5(['',
+            '--path', r'navigation\CTD-sections=routes.gpx',
+            '--db_path', str(path_db),
             '--table_prefix',
             r'navigation/sectionsCTD'])  # need copy result from {path_db}_not_sorted manually, todo: auto copy
 
@@ -216,7 +234,7 @@ if st(80, 'Gridding'):  # and False: #
     grid2d_vsz(['ini/grid2d_vsz.ini', '--db_path', str(path_db),
                 '--table_sections', r'navigation/sectionsCTD_routes',
                 '--subdir', 'CTD-sections',
-                '--begin_from_section_int', '8', #'1',  # values <= 1 means no skip
+                '--begin_from_section_int', '1', #'1',  # values <= 1 means no skip
                 '--data_columns_list', "Temp, Sal, SigmaTh, O2, O2ppm, soundV",
                 # 'Eh, pH',  todo: N^2 - need calc before
                 '--max_depth', '200', #'250',

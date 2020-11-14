@@ -30,22 +30,25 @@ cache.register()    # Turn cache on globally
 
 # using data from 190716И1#i14+190721i05+190818i04_proc.vsz in path:
 path_ref = Path(r'd:\workData\BalticSea\190713_ABP45\inclinometer\proc')
-paths_cruise = [
-    '../proc/190716incl_proc.h5',
-    '../proc/190721incl_proc.h5',
-    '../../../190817_ANS42/inclinometer/190818incl_proc/190818incl_proc.h5'
-    ]
-timeranges = [
-    [['2019-07-16T17:00:00', '2019-07-19T16:30:00']],
-    [['2019-07-21T20:00:00', '2019-08-18T01:45:00']],
-    [['2019-08-18T06:30:00', '2019-08-26T15:50:00']],
-    ]
 
-
-#Path(p).relative_to(path_ref)
-paths_db_in = [(path_ref / p).resolve().parent.with_name(Path(p).name.replace('_proc','')) for p in paths_cruise]  #path_on_drive_d() f'{db_path.stem}_proc_noAvg.h5'
 
 probes = [14, 5, 4]
+paths_cruise = {
+    14: '../proc/190716incl_proc.h5',
+     5: '../proc/190721incl_proc.h5',
+     4: '../../../190817_ANS42/inclinometer/190818incl_proc/190818incl_proc.h5'
+    }
+timeranges = {
+    14: [['2019-07-16T17:00:00', '2019-07-19T16:30:00']],
+     5: [['2019-07-21T20:00:00', '2019-08-18T01:45:00']],
+     4: [['2019-08-18T06:30:00', '2019-08-26T15:50:00']],
+    }
+
+#Path(p).relative_to(path_ref)
+paths_db_in = {path: (path_ref / path).resolve().parent.with_name(Path(path).name.replace('_proc',''))
+               for p, path in paths_cruise.items()}  # path_on_drive_d() f'{db_path.stem}_proc_noAvg.h5'
+
+
 
 prefix = 'incl'  # 'incl' or 'w'  # table name prefix in db and in raw files (to find raw fales name case will be UPPER anyway): 'incl' - inclinometer, 'w' - wavegauge
 
@@ -74,8 +77,8 @@ if st(2):
                 '--db_path', '|'.join(str(p) for p in paths_db_in),
                 '--tables_list', ','.join(f'incl{i:0>2}' for i in probes),  #incl.*| !  'incl.*|w\d*'  inclinometers or wavegauges w\d\d # 'incl09',
                 '--aggregate_period', f'{aggregate_period_s}S' if aggregate_period_s else '',
-                # '--date_min', datetime64_str(date_min[0]),  # '2019-08-18T06:00:00',
-                # '--date_max', datetime64_str(date_max[0]),  # '2019-09-09T16:31:00',  #17:00:00
+                # '--min_date', datetime64_str(min_date[0]),  # '2019-08-18T06:00:00',
+                # '--max_date', datetime64_str(max_date[0]),  # '2019-09-09T16:31:00',  #17:00:00
                 '--out.db_path', str(db_path_out),
                 '--table', f'V_incl_bin{aggregate_period_s}' if aggregate_period_s else 'V_incl',
                 '--verbose', 'DEBUG',
@@ -97,8 +100,8 @@ if st(2):
             kwarg = {}  # 'in': {'timerange_zeroing': {'incl19': ['2019-11-14T06:30:00', '2019-11-14T06:50:00']}}
         else:
             kwarg = {'in': {
-                'dates_min': [timeranges[iprobe][0][0] for iprobe in range(len(probes))],  # '2019-08-18T06:00:00',
-                'dates_max': [timeranges[iprobe][0][1] for iprobe in range(len(probes))],  # '2019-09-09T16:31:00',  #17:00:00
+                'dates_min': {probe: timeranges[probe][0][0] for probe in probes},  # '2019-08-18T06:00:00',
+                'dates_max': {probe: timeranges[probe][0][1] for probe in probes},  # '2019-09-09T16:31:00',  #17:00:00
                 }, 'out': {
                 'b_all_to_one_col': True,
                 'text_date_format': lambda t: (t - m_TimeStart_csv) / np.timedelta64(1, 'h'),

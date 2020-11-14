@@ -24,9 +24,9 @@ from dask import delayed, compute, persist
 # my:
 from utils2init import init_file_names, Ex_nothing_done, set_field_if_no, cfg_from_args, my_argparser_common_part, \
     this_prog_basename, init_logging, standard_error_info
-from to_pandas_hdf5.h5_dask_pandas import h5_append, filterGlobal_minmax, filter_local
-from to_pandas_hdf5.h5toh5 import h5temp_open, h5remove_duplicates, h5move_tables, h5index_sort, h5init, \
-    h5del_obsolete, create_indexes
+from to_pandas_hdf5.h5_dask_pandas import h5_append, filter_global_minmax, filter_local
+from to_pandas_hdf5.h5toh5 import h5temp_open, h5remove_duplicates, h5remove_duplicates_by_loading, h5move_tables, \
+    h5index_sort, h5init, h5del_obsolete, create_indexes
 import to_pandas_hdf5.csv_specific_proc
 import utils_time_corr
 
@@ -94,7 +94,7 @@ to Pandas HDF5 store*.h5
     s.add('--cols_not_use_list',
              help='comma separated list of names from header to not be saved in hdf5 store.')
     s.add('--cols_use_list',
-             help='comma separated list of names from header to be saved in hdf5 store. Include here converted autodeleting (text) columns and new columns that created in csv_specific_proc() after read_csv()')
+             help='comma separated list of names from header to be saved in hdf5 store. Because of autodeleting converted (text) columns include them here if want to keep. New columns that created in csv_specific_proc() after read_csv() must also be here to get')
 
     s.add('--skiprows_integer', default='1',
              help='skip rows from top. Use 1 to skip one line of header')
@@ -108,7 +108,7 @@ to Pandas HDF5 store*.h5
              help='percent of 1st file length to set up hdf5 store tabe chunk size')
     s.add('--blocksize_int', default='20000000',
              help='bytes, chunk size for loading and processing csv')
-    s.add('--b_make_time_inc', default='True',
+    s.add('--sort', default='True',
              help='if time not sorted then modify time values trying to affect small number of values. This is different from sorting rows which is performed at last step after the checking table in database')
     s.add('--fun_date_from_filename',
              help='function(file_stem: str, century: Optional[str]=None) -> Any[compartible to input of pandas.to_datetime()]: to get date from filename to time column in it.')
@@ -116,7 +116,9 @@ to Pandas HDF5 store*.h5
              help='function(df: Dataframe, cfg_in: Optional[Mapping[str, Any]] = None) -> Dataframe/DateTimeIndex: to update/calculate new parameters from loaded data  before filtering. If output is Dataframe then function should have meta_out attribute which is Callable[[np.dtype, Iterable[str], Mapping[str, dtype]], Dict[str, np.dtype]]')
     s.add('--csv_specific_param_dict',
              help='not default parameters for function in csv_specific_proc.py used to load data')
-    s = p.add_argument_group('out', 'all about output files')
+
+    s = p.add_argument_group('out',
+                             'all about output files')
     s.add('--db_path', help='hdf5 store file path')
     s.add('--table',
               help='table name in hdf5 store to write data. If not specified then will be generated on base of path of input files. Note: "*" is used to write blocks in autonumbered locations (see dask to_hdf())')
@@ -129,15 +131,18 @@ to Pandas HDF5 store*.h5
                    'if True and b_skip_if_up_to_date= True then program will not replace temporary storage with current storage before adding data to the temporary storage')
     s.add('--b_remove_duplicates', default='False', help='Set True if you see warnings about')
     s.add('--b_del_temp_db', default='False', help='temporary h5 file will be deleted after operation')
-    s = p.add_argument_group('filter', 'filter all data based on min/max of parameters')
-    s.add('--date_min', help='minimum time')  # todo: set to filt_min.key and filt_min.value
-    s.add('--date_max', help='maximum time')  # todo: set to filt_max.key and filt_max.value
+
+    s = p.add_argument_group('filter',
+                             'filter all data based on min/max of parameters')
+    s.add('--min_date', help='minimum time')
+    s.add('--max_date', help='maximum time')
     s.add('--min_dict', help='List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is below ``value``')
     s.add('--max_dict', help='List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is above ``value``')
     s.add('--b_bad_cols_in_file_name', default='True',
-              help='find string "<Separator>no_<col1>[,<col2>]..." in file name. Here <Separator> is one of -_()[, and set all values of col1[, col2] to NaN')
+              help='find string "<Separator>no_<col1>[,<col2>]..." in file name and set all values of col1[, col2] to NaN. Here <Separator> is one of -_()[, ')
 
-    s = p.add_argument_group('program', 'program behaviour')
+    s = p.add_argument_group('program',
+                             'program behaviour')
     s.add('--return', default='<end>',  # nargs=1,
                choices=['<cfg_from_args>', '<gen_names_and_log>', '<end>'],
                help='<cfg_from_args>: returns cfg based on input args only and exit, <gen_names_and_log>: execute init_input_cols() and also returns fun_proc_loaded function... - see main()')
@@ -165,7 +170,7 @@ def init_input_cols(cfg_in=None):
         col_index_name - index name for saving Pandas frame. Will be set to name of cfg_in['coltime'] column if not exist already
         used in main() default time postload proc only (if no specific loader which calculates and returns time column for index)
         cols_loaded_save_b - columns mask of cols_load to save (some columns needed only before save to calulate
-        of others). Default: exluded (text) columns and index and coldate
+        of others). Default: excluded (text) columns and index and coldate
         (because index saved in other variable and coldate may only used to create it)
 
     Example
@@ -233,6 +238,7 @@ def init_input_cols(cfg_in=None):
     for i, s in enumerate(cfg_in['cols']):
         if len(s) == 0:
             cols_load_b[i] = 0
+            cfg_in['cols'][i] = f'NotUsed{i}'
         else:
             b_i_not_in_converters = (not (i in cfg_in['converters'].keys())) \
                 if cfg_in['converters'] else True
@@ -277,6 +283,7 @@ def init_input_cols(cfg_in=None):
     # cfg_in['cols_load']= np.flatnonzero(cfg_in['cols_load'])
     # cfg_in['dtype']= np.dtype({'names': cfg_in['cols'].tolist(), 'formats': cfg_in['dtype'].tolist()})
 
+
     cfg_in['cols'] = np.array(cfg_in['cols'])
     cfg_in['dtype_raw'] = np.dtype({'names': cfg_in['cols'],
                                     'formats': cfg_in['dtype'].tolist()})
@@ -284,7 +291,7 @@ def init_input_cols(cfg_in=None):
                                 'formats': cfg_in['dtype'][cfg_in['cols_load']].tolist()})
 
     # Get index name for saving Pandas frame
-    b_index_exist = 'coltime' in cfg_in
+    b_index_exist = cfg_in.get('coltime') is not None
     if b_index_exist:
         set_field_if_no(cfg_in, 'col_index_name', cfg_in['cols'][cfg_in['coltime']])
 
@@ -308,7 +315,7 @@ def init_input_cols(cfg_in=None):
             cfg_in['col_index_name'])] = False  # (must index be used separately?)
 
     # Output columns dtype
-    col_names_out = np.array(col_names_out)[cfg_in['cols_loaded_save_b']].tolist() + cfg_in['cols_use']
+    col_names_out = np.array(col_names_out)[cfg_in['cols_loaded_save_b']].tolist() + cfg_in.get('cols_use', [])
     cfg_in['dtype_out'] = np.dtype({
         'formats': [cfg_in['dtype'].fields[n][0] if n in cfg_in['dtype'].names else
                     np.dtype(np.float64) for n in col_names_out],
@@ -317,56 +324,77 @@ def init_input_cols(cfg_in=None):
     return cfg_in
 
 
-def set_filterGlobal_minmax(a, cfg_filter=None, log=None, b_ok_ds=True, dict_to_save_last_time=None
+def set_filterGlobal_minmax(a: Union[pd.DataFrame, dd.DataFrame],
+                            cfg_filter: Optional[Mapping[str, Any]] = None,
+                            log: Optional[MutableMapping[str, Any]] = None,
+                            dict_to_save_last_time: Optional[MutableMapping[str, Any]] = None
                             ) -> Tuple[Union[pd.DataFrame, dd.DataFrame], pd.DatetimeIndex]:
     """
     Finds bad with filterGlobal_minmax and removes it from a,tim
     Adds 'rows' remained and 'rows_filtered' to log
 
     :param a:
-    :param cfg_filter: filtering settings, do nothing if None, if a is dask dataframe can has 'de'
-    :param log: changes inplacce - adds ['rows_filtered'] and ['rows'] - number of rows remained
-    :param b_ok_ds: initial mask or True that means "not filtered yet"
+    :param cfg_filter: filtering settings, do nothing if None, can has dict 'delayedfunc' if :param:a is a dask dataframe, that have fields:
+      - args: delayed values to be args for to dask.compute(), last is len of a. Output will be used as args of function func:
+      - func: function to execute on computed args
+
+    :param log: changes inplace - adds ['rows_filtered'] and ['rows'] - number of rows remained
     :param dict_to_save_last_time: dict where 'time_last' field will be updated
     :return: dataframe with remained rows
 
     """
 
-    tim = a.index
-    if isinstance(a, dd.DataFrame):
-        tim = tim.compute()
+    if log is None:
+        log = dict_to_save_last_time or {}
+
     log['rows_filtered'] = 0
-    # try:
-    log['rows'] = len(tim)  # shape[0]
-    # except IndexError:  # when?
-    #     a = []
-    #     return 0, None
 
     if cfg_filter is not None:
         meta_time = pd.Series([], name='Time', dtype=np.bool8)  # pd.Series([], name='Time',dtype='M8[ns]')
 
         # Applying filterGlobal_minmax(a, tim, cfg_filter) to dask or pandas dataframe
         if isinstance(a, dd.DataFrame):  # may be dask or not dask array
-            bGood = a.map_partitions(filterGlobal_minmax, None, cfg_filter, meta=meta_time)
+            out = filter_global_minmax(a, cfg_filter)  #a.map_partitions(filterGlobal_minmax, None, cfg_filter, meta=meta_time)
 
             # # i_starts = np.diff(np.append(tim.searchsorted(a.divisions), len(tim))).tolist()
             # i_starts = [len(p) for p in bGood.partitions]
             # # b_ok_da = da.from_array(b_ok, chunk=(tuple(i_starts),)).to_dask_dataframe(index=bGood.index)
             # # dd.from_pandas(pd.Series(b_ok, index=bGood.index.compute().tz_convert('UTC')),
             # #                            npartitions=bGood.npartitions)
+            # b_ok = (bGood if b_ok_ds is True else bGood.mask(~b_ok_ds, False))  #.persist()
+            # a = a.loc[bGood]
 
-            b_ok = (bGood if b_ok_ds is True else bGood.mask(~b_ok_ds, False))  #.persist()
-            a = a.loc[b_ok]
-            b_ok, tim, delayedfunc_args = compute(b_ok.values, a.index, *cfg_filter.get('delayedfunc')[1:])  #  delayedfunc - to show wating messages to execute at once
-            cfg_filter.get('delayedfunc')[0](*delayedfunc_args)
-            # tim = tim[b_ok]  # a.index.compute()
-
+            try:
+                log['rows'] = out.shape[0].compute()
+                # execute at once
+                if 'delayedfunc' in cfg_filter:
+                    sum_good, tim, args = compute(
+                        out.shape[0],
+                        out.index,
+                        cfg_filter['delayedfunc']['args']
+                        )
+                    cfg_filter['delayedfunc']['func'](*args)  # delayedfunc should show messages
+                    log['rows'] = args[-1]  # a.shape[0]
+                else:
+                    sum_good, tim, log['rows'] = compute(
+                        out.shape[0],
+                        out.index,
+                        a.shape[0]
+                        )
+            except Exception as e:
+                l.exception('Can not filter data:')
+                sum_good = np.NaN
+                log['rows'] = np.NaN
+                tim = a.index.compute()
+                out = a
         else:
-            b_ok = filterGlobal_minmax(a, tim, cfg_filter, b_ok_ds)  # b_ok_ds.values.compute()?
+            log['rows'] = len(a)  # shape[0]
+            out = filter_global_minmax(a, cfg_filter)  # b_ok_ds.values.compute()?
+            tim = out.index
+            sum_good = len(tim)
 
-        sum_good = b_ok.sum()
-        if sum_good < log['rows'] and not np.isscalar(
-                b_ok):  # <=> b_ok.any() and b_ok is not scalar True (True is if not need filter)
+        if sum_good < log['rows']:
+                 # and not np.isscalar(b_ok) <=> b_ok.any() and b_ok is not scalar True (True is if not need filter)
             # tim = tim[b_ok]
             #     #a = a.merge(pd.DataFrame(index=np.flatnonzero(b_ok)))  # a = a.compute(); a[b_ok]
             #
@@ -375,6 +403,9 @@ def set_filterGlobal_minmax(a, cfg_filter=None, log=None, b_ok_ds=True, dict_to_
 
             log['rows_filtered'] = log['rows'] - sum_good
             log['rows'] = sum_good
+    else:
+        tim = a.index.compute() if isinstance(a, dd.DataFrame) else a.index
+        out = a
 
     # Save last time to can filter next file
     if dict_to_save_last_time:
@@ -382,7 +413,7 @@ def set_filterGlobal_minmax(a, cfg_filter=None, log=None, b_ok_ds=True, dict_to_
             dict_to_save_last_time['time_last'] = tim[-1]
         except IndexError:
             l.warning('no data!')
-    return a, tim
+    return out, tim
 
 
 def filter_local_with_file_name_settings(d: Union[pd.DataFrame, dd.DataFrame],
@@ -444,7 +475,9 @@ def filter_local_with_file_name_settings(d: Union[pd.DataFrame, dd.DataFrame],
 
 # ----------------------------------------------------------------------
 
-def read_csv(paths: Sequence[Union[str, Path]], **cfg_in: MutableMapping[str, Any]) -> Tuple[Union[pd.DataFrame, dd.DataFrame], dd.Series]:
+def read_csv(paths: Sequence[Union[str, Path]],
+             **cfg_in: Mapping[str, Any]
+             ) -> Tuple[Union[pd.DataFrame, dd.DataFrame, None], Optional[dd.Series]]:
     """
     Reads csv in dask DataFrame
     Calls cfg_in['fun_proc_loaded'] (if specified)
@@ -479,7 +512,7 @@ def read_csv(paths: Sequence[Union[str, Path]], **cfg_in: MutableMapping[str, An
     
     :return: tuple (a, b_ok) where
         a:      dask dataframe with time index and only columns listed in cfg_in['dtype_out'].names
-        b_ok:   time correction reszult bulean array
+        b_ok:   time correction rezult boolean array
     """
     read_csv_args_to_cfg_in = {
         'dtype': 'dtype_raw',
@@ -526,7 +559,7 @@ def read_csv(paths: Sequence[Union[str, Path]], **cfg_in: MutableMapping[str, An
             ddf = dd.from_pandas(df, chunksize=cfg_in['blocksize'])  #
         except NotImplementedError as e:
             l.exception('If file "%s" have no data try to delete it', paths)
-            return None
+            return None, None
     except Exception as e:  # for example NotImplementedError if bad file
         msg = 'Bad file. skip!'
         ddf = None
@@ -538,7 +571,7 @@ def read_csv(paths: Sequence[Union[str, Path]], **cfg_in: MutableMapping[str, An
     if __debug__:
         l.debug('read_csv initialised')
     if ddf is None:
-        return None
+        return None, None
 
     meta_time = pd.Series([], name='Time', dtype='datetime64[ns, UTC]')  # np.dtype('datetime64[ns]')
     meta_time_index = pd.DatetimeIndex([], dtype='datetime64[ns, UTC]', name='Time')
@@ -556,10 +589,10 @@ def read_csv(paths: Sequence[Union[str, Path]], **cfg_in: MutableMapping[str, An
     # Process ddf and get date in ISO string or numpy standard format
     cfg_in['file_stem'] = Path(paths[0]).stem  # may be need in func below to extract date
     date = None
+    meta_out = getattr(cfg_in['fun_proc_loaded'], 'meta_out', None)
     try:
-        #date_delayed = None
         try:
-            if not getattr(cfg_in['fun_proc_loaded'], 'meta_out', None) is None:
+            if meta_out is not None:
                 # fun_proc_loaded() will return not only date column but full data DataFrame. Go to exception handler
                 # todo: find better condition
                 raise TypeError('fun_proc_loaded() will return full data dataframe')
@@ -572,21 +605,21 @@ def read_csv(paths: Sequence[Union[str, Path]], **cfg_in: MutableMapping[str, An
             ('time correction...',))
 
             def time_corr_df(t, cfg_in):
-                """Convert tuple returned by time_corr() to dataframe
+                """ Convert tuple returned by time_corr() to dataframe
                 """
-                return pd.DataFrame.from_dict(OrderedDict(zip(meta_time_and_mask.keys(), utils_time_corr.time_corr(t, cfg_in))))
+                return pd.DataFrame.from_dict(OrderedDict(zip(
+                    meta_time_and_mask.keys(), utils_time_corr.time_corr(t, cfg_in))))
                 # return pd.DataFrame.from_items(zip(meta_time_and_mask.keys(), time_corr(t, cfg_in)))
                 # pd.Series()
 
-            df_time_ok = date.map_overlap(time_corr_df, before=n_overlap, after=n_overlap, cfg_in=cfg_in, meta=meta_time_and_mask)
-
-            try:
-                pass  # df_time_ok = df_time_ok.persist()  # triggers all csv_specific_proc computations
-            except Exception as e:
-                l.exception(
-                    'Can not speed up by persist, doing something that can trigger error to help it identificate...')
-                df_time_ok = time_corr_df(date.compute(),
-                                          cfg_in=cfg_in)  # date_delayed if date_delayed is not None else date
+            df_time_ok = date.map_overlap(
+                time_corr_df, before=n_overlap, after=n_overlap, cfg_in=cfg_in, meta=meta_time_and_mask)
+            # try:
+            #     df_time_ok = df_time_ok.persist()  # triggers all csv_specific_proc computations
+            # except Exception as e:
+            #     l.exception(
+            #         'Can not speed up by persist, doing something that can trigger error to help it identificate...')
+            #     df_time_ok = time_corr_df(date.compute(), cfg_in=cfg_in)
 
             if cfg_in.get('csv_specific_param'):
                 # need run this:
@@ -597,7 +630,6 @@ def read_csv(paths: Sequence[Union[str, Path]], **cfg_in: MutableMapping[str, An
         except (TypeError, Exception) as e:
             # fun_proc_loaded() will return full data DataFrame (having Time col)
 
-            meta_out = cfg_in['fun_proc_loaded'].meta_out
             meta_out = meta_out(cfg_in['dtype']) if callable(meta_out) else None
 
             l.info('processing csv data with time correction%s...' %
@@ -609,7 +641,8 @@ def read_csv(paths: Sequence[Union[str, Path]], **cfg_in: MutableMapping[str, An
                 """fun_proc_loaded() then time_corr()
                 """
                 df_out = cfg_in['fun_proc_loaded'](df, cfg_in)
-                return df_out.assign(**dict(zip(meta_time_and_mask.keys(), utils_time_corr.time_corr(df_out.Time, cfg_in))))
+                return df_out.assign(**dict(zip(meta_time_and_mask.keys(),
+                                                utils_time_corr.time_corr(df_out.Time, cfg_in))))
 
             #ddf = ddf.map_partitions(cfg_in['fun_proc_loaded'], cfg_in, meta=meta_out)
             ddf = ddf.map_overlap(fun_proc_loaded_and_time_corr_df, before=n_overlap, after=n_overlap,
@@ -618,11 +651,23 @@ def read_csv(paths: Sequence[Union[str, Path]], **cfg_in: MutableMapping[str, An
 
     except IndexError:
         print('no data?')
-        return None
+        return None, None
 
-    # df_time_ok.compute(scheduler='single-threaded')
+    meta_out = cfg_in.get('dtype_out', meta_out)
+    if meta_out:
+        if cfg_in.get('meta_out_df') is None:
+            # construct meta (in format of dataframe to able set index name)
+            dict_dummy = {k: np.zeros(1, dtype=v[0]) for k, v in meta_out.fields.items()}
+            meta_out_df = pd.DataFrame(dict_dummy, index=pd.DatetimeIndex([], name='Time', tz='UTC'))
+        else:
+            meta_out_df = cfg_in['meta_out_df']
+    else:
+        meta_out_df = None
+
     if isinstance(df_time_ok, dd.DataFrame):
         nbad_time = True
+
+    # df_time_ok.compute(scheduler='single-threaded')
         # todo: return for msg something like bad_time_ind = df_time_ok['b_ok'].fillna(False).ne(True).to_numpy().nonzero()  # or query('') because below commented as compute() is long
         # nbad_time = len(df_time_ok['b_ok']) - df_time_ok['b_ok'].sum().compute()
         # if nbad_time:
@@ -650,8 +695,8 @@ def read_csv(paths: Sequence[Union[str, Path]], **cfg_in: MutableMapping[str, An
     n_ok_time = df_time_ok['b_ok'].sum()
     n_all_rows = df_time_ok.shape[0]
 
-    if cfg_in.get('date_min'):  # condition for calc. tim_min_save/tim_max_save in utils_time_corr() and to set
-        # index=cfg_in['date_min'] or index=cfg_in['date_max'] where it is out of config range
+    if cfg_in.get('min_date'):  # condition for calc. tim_min_save/tim_max_save in utils_time_corr() and to set
+        # index=cfg_in['min_date'] or index=cfg_in['max_date'] where it is out of config range
 
         @delayed(pure=True)
         def range_source():
@@ -660,12 +705,17 @@ def read_csv(paths: Sequence[Union[str, Path]], **cfg_in: MutableMapping[str, An
 
         # Filter data that is out of config range (after range_message()' args defined as both uses df_time_ok['b_ok'])
         df_time_ok['b_ok'] = df_time_ok['b_ok'].mask(
-            (df_time_ok['Time'] < pd.Timestamp(cfg_in['date_min'], tz='UTC')) |
-            (df_time_ok['Time'] > pd.Timestamp(cfg_in['date_max'], tz='UTC')), False)
+            (df_time_ok['Time'] < pd.Timestamp(cfg_in['min_date'], tz='UTC')) |
+            (df_time_ok['Time'] > pd.Timestamp(cfg_in['max_date'], tz='UTC')), False)
         #nbad_time = True  # need filter by 'b_ok': df_time_ok['b_ok'].any().compute()  # compute() takes too long
     else:
         # to be computed before filtering
-        range_source = df_time_ok['Time'].apply([min, max], skipna=True, meta=meta_time)
+        range_source = df_time_ok['Time'].reduction(
+            chunk=lambda x: pd.Series([x.min(), x.max()]),
+            # combine=chunk_fun, not works - gets None in args
+            aggregate=lambda x: pd.Series([x.iloc[0].min(), x.iloc[-1].max()], index=['min', 'max']),  # skipna=True is default
+            meta=meta_time)
+        # df_time_ok['Time'].apply([min, max], meta=meta_time) - not works for dask (works for pandas)
         # = df_time_ok.divisions[0::df_time_ok.npartitions] if (isinstance(df_time_ok, dd.DataFrame) and df_time_ok.known_divisions)
 
     range_message_args = [range_source, n_ok_time, n_all_rows]
@@ -685,28 +735,56 @@ def read_csv(paths: Sequence[Union[str, Path]], **cfg_in: MutableMapping[str, An
         # ddf_out = ddf.loc[df_time_ok['b_ok'], list(cfg_in['dtype_out'].names)].set_index(
         #    df_time_ok.loc[df_time_ok['b_ok'], 'Time'], sorted=True)
 
-    # Removing rows with bad time
-    ddf_out = ddf.loc[df_time_ok['b_ok'], list(cfg_in['dtype_out'].names)]
+    out_cols = list(cfg_in['dtype_out'].names)
 
-    if False and __debug__:
-        len_out = len(df_time_ok)
-        print('out data length before del unused blocks:', len_out)
+    if not ddf.known_divisions:  # meta_out is None  # always
 
-    # Removing rows with bad time (continue)
-    df_time_ok = df_time_ok[df_time_ok['b_ok']]
+        @delayed(pure=True)
+        def time_index_ok(new_df, new_time_ok):
+            #if new_time_ok['b_ok'].any():
+            #     need values below (i.e. drop index) because of due to map_overlap() the time.index is shifted relative to df.index
+            new_df_filt = new_df.loc[new_time_ok['b_ok'].values, out_cols]
+            new_time_filt = new_time_ok.loc[new_time_ok['b_ok'].values, 'Time']
+            return new_df_filt.set_index(new_time_filt)   # new_df_filt is pandas: no 'sorted' arg
+            #else:
+            #    return results_list
 
-    if False and __debug__:
-        len_out = len(df_time_ok)
-        print('out data length:', len_out)
-        print('index_limits:', df_time_ok.divisions[0::df_time_ok.npartitions])
-        sum_na_out, df_time_ok_time_min, df_time_ok_time_max = compute(
-            df_time_ok['Time'].notnull().sum(), df_time_ok['Time'].min(),  df_time_ok['Time'].max())
-        print('out data len, nontna, min, max:', sum_na_out, df_time_ok_time_min, df_time_ok_time_max)
+        ddf_out_list = []
+        for dl_f, dl_time_ok in zip(ddf.to_delayed(), df_time_ok.to_delayed()):
+            ddf_out_list.append(time_index_ok(dl_f, dl_time_ok))
+            # ddf_out_list.append(dl_f[dl_time_ok['b_ok']].set_index(df_time_ok.loc[df_time_ok['b_ok'], 'Time'], sorted=True))
 
-    ddf_out = ddf_out.set_index(df_time_ok['Time'], sorted=True)  #
+
+        ddf_out = dd.from_delayed(ddf_out_list, divisions='sorted', meta=meta_out_df)
+    else:
+        #ddf, df_time_ok = compute(ddf, df_time_ok)  # for testing
+        # Removing rows with bad time
+        ddf_out = ddf.loc[df_time_ok['b_ok'], out_cols]
+
+        if False and __debug__:
+            len_out = len(df_time_ok)
+            print('out data length before del unused blocks:', len_out)
+
+        # Removing rows with bad time (continue)
+        df_time_ok = df_time_ok[df_time_ok['b_ok']]
+
+        if False and __debug__:
+            len_out = len(df_time_ok)
+            print('out data length:', len_out)
+            print('index_limits:', df_time_ok.divisions[0::df_time_ok.npartitions])
+            sum_na_out, df_time_ok_time_min, df_time_ok_time_max = compute(
+                df_time_ok['Time'].notnull().sum(), df_time_ok['Time'].min(),  df_time_ok['Time'].max())
+            print('out data len, nontna, min, max:', sum_na_out, df_time_ok_time_min, df_time_ok_time_max)
+
+        ddf_out = ddf_out.set_index(df_time_ok['Time'], sorted=True)  #
+
+    # try:
+    #     ddf_out = ddf_out.persist()  # triggers all csv_specific_proc computations
+    # except Exception as e:
+    #     l.exception('Can not speed up by persist')
+
+
     # print('data loaded shape: {}'.format(ddf.compute(scheduler='single-threaded').shape))  # debug only
-
-
     # if nbad_time: #and cfg_in.get('keep_input_nans'):
     #     df_time_ok = df_time_ok.set_index('Time', sorted=True)
     #     # ??? after I set index: ValueError: Not all divisions are known, can't align partitions. Please use `set_index` to set the index.
@@ -721,7 +799,7 @@ def read_csv(paths: Sequence[Union[str, Path]], **cfg_in: MutableMapping[str, An
     #     b[col_temp] = b[col_temp].map_partitions(lambda s, t: t[s.index], tim, meta=meta)
     #     ddf = ddf.reset_index().set_index('index').set_index(b[col_temp], sorted=True).loc[:, list(cfg_in['dtype_out'].names)]
 
-    # date = pd.Series(tim, index=ddf.index.compute())  # dd.from_dask_array(da.from_array(tim.get_values(),chunks=ddf.divisions), 'Time', index=ddf.index)
+    # date = pd.Series(tim, index=ddf.index.compute())  # dd.from_dask_array(da.from_array(tim.values(),chunks=ddf.divisions), 'Time', index=ddf.index)
     # date = dd.from_pandas(date, npartitions=npartitions)
     # ddf = ddf.loc[:, list(cfg_in['dtype_out'].names)].set_index(date, sorted=True)
 
@@ -733,9 +811,9 @@ def read_csv(paths: Sequence[Union[str, Path]], **cfg_in: MutableMapping[str, An
     logger.addFilter(lambda s: s.getMessage() != "Partition indices have overlap.")
     # b_ok = df_time_ok['b_ok'].to_dask_array().compute() if isinstance(
     #     df_time_ok, dd.DataFrame) else df_time_ok['b_ok'].to_numpy()
-
+    # ddf_out.index.name = 'Time' not works
     # b_ok_ds= df_time_ok.set_index('Time')['b_ok']
-    return ddf_out, (range_message, range_message_args)  # , b_ok_ds
+    return ddf_out, {'func': range_message, 'args': range_message_args}  # , b_ok_ds
 
 
 # @delayed
@@ -824,7 +902,7 @@ def h5_names_gen(cfg_in, cfg_out: Mapping[str, Any], **kwargs) -> Iterator[Path]
 
 
 
-def h5_close(cfg_out: Mapping[str, Any]):
+def h5_close(cfg_out: Mapping[str, Any]) -> None:
     """
     Closes cfg_out['db'] store, removes duplicates (if need) and creates indexes
     :param cfg_out: dict, to remove duplicates it must have 'b_remove_duplicates': True
@@ -834,7 +912,8 @@ def h5_close(cfg_out: Mapping[str, Any]):
         print('')
         cfg_table_keys = ['tables_have_wrote'] if ('tables_have_wrote' in cfg_out) else ('tables', 'tables_log')
         if cfg_out['b_remove_duplicates']:
-            h5remove_duplicates(cfg_out, cfg_table_keys=cfg_table_keys)
+            tbl_dups = h5remove_duplicates_by_loading(cfg_out, cfg_table_keys=cfg_table_keys)
+            # or h5remove_duplicates() but it can take very long time
         create_indexes(cfg_out, cfg_table_keys)
     except Exception as e:
         l.exception('\nError of adding data to temporary store: ')
@@ -857,10 +936,11 @@ def h5_close(cfg_out: Mapping[str, Any]):
         return
 
 
-def h5_dispenser_and_names_gen(cfg_in: Mapping[str, Any],
-                               cfg_out: Optional[Mapping] = None,
-                               fun_gen: Callable[[Mapping[str, Any], Mapping[str, Any]], Iterator[Any]] = h5_names_gen,
-                               b_close_at_end: Optional[bool] = True, **kwargs) -> Iterator[Tuple[int, Any]]:
+def h5_dispenser_and_names_gen(
+        cfg_in: Mapping[str, Any],
+        cfg_out: Optional[MutableMapping[str, Any]] = None,
+        fun_gen: Callable[[Mapping[str, Any], Mapping[str, Any]], Iterator[Any]] = h5_names_gen,
+        b_close_at_end: Optional[bool] = True, **kwargs) -> Iterator[Tuple[int, Any]]:
     """
     Prepares HDF5 store to insert/update data and yields fun_gen(...) outputs:
         - Opens DB (see h5temp_open() requirements)
@@ -872,17 +952,19 @@ def h5_dispenser_and_names_gen(cfg_in: Mapping[str, Any],
     "log" node. "log" dataframe labels parent dataframe's data segments and allows to check it for existance and
     relevance.
 
-    :param cfg: dict, must have fields:
-        - program: dict, must have field ``log``, str: file name of additional metadata log file about loaded data
-        - fields used in your fun_gen(cfg, cfg_out)
+    :param cfg_in: dict, must have fields:
+        - fields used in your fun_gen(cfg_in, cfg_out)
     :param cfg_out: dict, must have fields
-        - log: current file info
+        - log: dict, with info about current data, must have fields for compare:
+            - 'fileName' - in format as in log table to able find duplicates
+            - 'fileChangeTime', datetime - to able find outdate data
         - b_skip_if_up_to_date: if True then not yields previously processed files. But if file was changed 1. removes stored data and 2. yields fun_gen(...) result
         - tables_have_wrote: sequence of table names where to create index
     :param fun_gen: function with arguments (cfg_in, cfg_out, **kwargs), that
         - generates data labels, default are file's ``Path``s,
         - updates cfg_out['log'] fields 'fileName' (by current label) and 'fileChangeTime' needed to store and find
         data. They named historically, in priciple, you can use any unique idetnificator composed of this two fields.
+
     :return: Iterator that returns (i1, pname):
         - i1: index (starting with 1) of fun_gen generated data label (may be file)
         - pname: fun_gen output (may be path name)
@@ -893,15 +975,15 @@ def h5_dispenser_and_names_gen(cfg_in: Mapping[str, Any],
         - that what fun_gen() do
     """
 
-    dfLogOld = h5temp_open(cfg_out)
+    dfLogOld, cfg_out['db'], cfg_out['b_skip_if_up_to_date'] = h5temp_open(**cfg_out)
     try:
         for i1, gen_out in enumerate(fun_gen(cfg_in, cfg_out, **kwargs), start=1):
             # remove stored data and process file if it was changed
             if cfg_out['b_skip_if_up_to_date']:
-                bExistOk, bExistDup = h5del_obsolete(cfg_out, cfg_out['log'], dfLogOld)
-                if bExistOk:
+                have_older_data, have_duplicates = h5del_obsolete(cfg_out, cfg_out['log'], dfLogOld)
+                if have_older_data:
                     continue
-                if bExistDup:
+                if have_duplicates:
                     cfg_out['b_remove_duplicates'] = True  # normally no duplicates but will if detect
 
             yield i1, gen_out
@@ -913,12 +995,13 @@ def h5_dispenser_and_names_gen(cfg_in: Mapping[str, Any],
             h5_close(cfg_out)
 
 
-def get_fun_proc_loaded_converters(cfg_in: Mapping[str, Any]):
+def get_fun_proc_loaded_converters(cfg_in: MutableMapping[str, Any]
+                                   ) -> Callable[[pd.DataFrame, Mapping[str, Any], Mapping[str, Any]], Iterator[Any]]:
     """
     Assign castom prep&proc and modify cfg_in['converters']
     in dependance to cfg_in['cfgFile'] name
     :param cfg_in:
-    :return fun_proc_loaded: Callable if cfgFile name match found or cfg_in['fun_proc_loaded'] specifed explicetly else None
+    :return fun_proc_loaded: Callable if cfgFile name match found or cfg_in['fun_proc_loaded'] specified explicitly else None
     """
 
     cfg_file = Path(cfg_in['cfgFile']).stem
@@ -1013,7 +1096,8 @@ def main(new_arg=None, **kwargs):
     l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
     print('\n' + this_prog_basename(__file__), end=' started. ')
     try:
-        cfg['in'] = init_file_names(cfg['in'], cfg['program']['b_interact'])
+        cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
+            **cfg['in'], b_interact=cfg['program']['b_interact'])
     except Ex_nothing_done as e:
         print(e.message)
         return ()
@@ -1026,7 +1110,7 @@ def main(new_arg=None, **kwargs):
     h5init(cfg['in'], cfg_out)
 
     if cfg['in']['fun_proc_loaded'] is None:
-        # Default time postload proc
+        # Default time processing after loading by dask/pandas.read_csv()
         if 'coldate' not in cfg['in']:  # if Time includes Date then we will just return it
             cfg['in']['fun_proc_loaded'] = lambda a, cfg_in, dummy=None: a[cfg_in['col_index_name']]
         else:                           # else will return Time + Date
@@ -1056,7 +1140,8 @@ def main(new_arg=None, **kwargs):
         return cfg
 
     cfg_out['log'] = {'fileName': None, 'fileChangeTime': None}
-
+    # for lim in ['min', 'max']:
+    #     cfg['filter'][f'{lim}_date'] = cfg['in'][f'date_{lim}']
     if True:  # try:   # Writing
         ## Main circle ############################################################
         for i1_file, path_csv in h5_dispenser_and_names_gen(cfg['in'], cfg_out):
@@ -1064,15 +1149,15 @@ def main(new_arg=None, **kwargs):
                 l.info('%s. %s: ', i1_file, path_csv.name)
             # Loading and processing data
             d, cfg['filter']['delayedfunc'] = read_csv(**{**cfg['in'], 'paths': [path_csv]}, **{
-                k: cfg['filter'].get(k) for k in ['date_min', 'date_max']})  # , b_ok_ds
+                k: cfg['filter'].get(k) for k in ['min_date', 'max_date']})  # , b_ok_ds
 
             if d is None:
                 l.warning('not processing')
                 continue
             try:
                 # filter
-                d, tim = set_filterGlobal_minmax(d, cfg_filter=cfg['filter'], log=cfg_out['log'],
-                                             dict_to_save_last_time=cfg['in'])  # b_ok_ds=b_ok_ds,
+                d, tim = set_filterGlobal_minmax(
+                    d, cfg_filter=cfg['filter'], log=cfg_out['log'], dict_to_save_last_time=cfg['in'])
             except TypeError:  # "TypeError: Cannot compare type NaTType with type str_" if len(d) = 0
                 l.exception('can not process: no data?')  # warning
                 continue
@@ -1090,12 +1175,11 @@ def main(new_arg=None, **kwargs):
             d = filter_local_with_file_name_settings(d, cfg, path_csv)
 
             h5_append(cfg_out, d, cfg_out['log'], tim=tim)  # , log_dt_from_utc=cfg['in']['dt_from_utc']
-
-    if cfg['in'].get(
-            'time_last'):  # if have any processed data (needed because ``ptprepack`` not closses hdf5 source if it not finds data)
+    # Sort if have any processed data else don't because ``ptprepack`` not closes hdf5 source if it not finds data
+    if cfg['in'].get('time_last'):
         failed_storages = h5move_tables(cfg_out)
         print('Ok.', end=' ')
-        h5index_sort(cfg_out, out_storage_name=cfg_out['db_base'] + '-resorted.h5', in_storages=failed_storages)
+        h5index_sort(cfg_out, out_storage_name=f"{cfg_out['db_path'].stem}-resorted.h5", in_storages=failed_storages)
 
 
 if __name__ == '__main__':
@@ -1115,7 +1199,7 @@ if __name__ == '__main__':
     # .to_series()
     # if __debug__:
     #     c = df_time_ok.compute()
-    # tim = date.compute().get_values()
+    # tim = date.compute().values()
     # tim, b_ok = time_corr(tim, cfg_in)
 
     # return None, None

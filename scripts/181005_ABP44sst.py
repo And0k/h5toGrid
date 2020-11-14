@@ -56,7 +56,7 @@ if st(4):  # False: #
             '--path', os_path.join(path_cruise, r'navigation\source_OpenCPN\tracks\*.gpx'),
             '--tables_list', ',navigation,',  # skip waypoints
             '--table_prefix', r'',
-            # '--b_make_time_inc', 'False',
+            # '--sort', 'False',
             ])
 
 if st(5):  # False: #
@@ -66,7 +66,7 @@ if st(5):  # False: #
             '--path',
             os_path.join(path_cruise, r'd:\workData\BalticSea\181005_ABP44\navigation\bathymetry_HYPACK\*.txt'),
             '--table', 'navigation',
-            '--b_make_time_inc', 'False'  # '--fs_float', '4'
+            '--sort', 'False'  # '--fs_float', '4'
             ])
 
 # go = False

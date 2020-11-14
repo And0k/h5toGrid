@@ -70,8 +70,8 @@ to Pandas HDF5 store*.h5
     # 'logfield_filename_len': 255,
 
     s = p.add_argument_group('filter', 'filter all data based on min/max of parameters')
-    s.add('--date_min', help='minimum time')  # todo: set to filt_min.key and filt_min.value
-    s.add('--date_max', help='maximum time')  # todo: set to filt_max.key and filt_max.value
+    s.add('--min_date', help='minimum time')  # todo: set to filt_min.key and filt_min.value
+    s.add('--max_date', help='maximum time')  # todo: set to filt_max.key and filt_max.value
     s.add('--min_dict',
               help='List with items in  "key:value" format. Filter out (set to NaN) data of ``key`` columns if it is below ``value``')
     s.add('--max_dict',
@@ -283,7 +283,8 @@ def main(new_arg=None, **kwargs):
     l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
     print('\n' + this_prog_basename(__file__), end=' started. ')
     try:
-        cfg['in'] = init_file_names(cfg['in'], cfg['program']['b_interact'])
+        cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
+            **cfg['in'], b_interact= cfg['program']['b_interact'])
     except Ex_nothing_done as e:
         print(e.message)
         return ()
@@ -334,7 +335,7 @@ def main(new_arg=None, **kwargs):
     # type_log_files = namedtuple('type_log_files', ['label','iStart'])
     # log.sort(axis=0, order='log_item['Date0']')#sort files by time
 
-    dfLogOld = h5temp_open(cfg['out'])
+    dfLogOld, cfg['out']['db'], cfg['out']['b_skip_if_up_to_date'] = h5temp_open(**cfg['out'])
     if 'log' in cfg['program'].keys():
         f = open(PurePath(sys_argv[0]).parent / cfg['program']['log'], 'a', encoding='cp1251')
         f.writelines(datetime.now().strftime('\n\n%d.%m.%Y %H:%M:%S> processed '
@@ -379,7 +380,7 @@ def main(new_arg=None, **kwargs):
                 print('No data => skip file')
                 continue
 
-            df, tim = set_filterGlobal_minmax(df, cfg_filter=cfg['filter'], log=log_item, b_ok_ds=True,
+            df, tim = set_filterGlobal_minmax(df, cfg_filter=cfg['filter'], log=log_item,
                                               dict_to_save_last_time=cfg['in'])
             if log_item['rows_filtered']:
                 print('filtered out {}, remains {}'.format(log_item['rows_filtered'], log_item['rows']))
@@ -423,13 +424,11 @@ def main(new_arg=None, **kwargs):
         ns = dict(frame.f_globals)
         ns.update(frame.f_locals)
         code.interact(local=ns)
-
-    if cfg['in'].get(
-            'time_last'):  # if have any processed data (needed because ``ptprepack`` not closses hdf5 source if it not finds data)
+    # sort index if have any processed data (needed because ``ptprepack`` not closses hdf5 source if it not finds data)
+    if cfg['in'].get('time_last'):
         failed_storages = h5move_tables(cfg['out'])
         print('Ok.', end=' ')
-        h5index_sort(cfg['out'], out_storage_name=cfg['out']['db_base'] + '-resorted.h5',
-                     in_storages=failed_storages)
+        h5index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5", in_storages=failed_storages)
 
 
 if __name__ == '__main__':

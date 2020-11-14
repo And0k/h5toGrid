@@ -11,7 +11,7 @@ from __future__ import print_function
 """
 import re
 from lxml import etree as ET  # import lxml.etree
-
+from pathlib import Path
 rs = '(?P<val>^\d{1,3})\. *(?P<key>[^\n;]+)(?:.*$)'
 ro = re.compile(rs, re.MULTILINE)  # |re.IGNORECASE
 
@@ -68,13 +68,11 @@ if __name__ == '__main__':
 
     cfg['out']['digits'] = cfg_prepare(cfg)
     if 'path' not in cfg['out']:
-        fileDir = os_path.dirname(os_path.abspath(cfg['in']['path']))
-        cfg['out']['path'] = os_path.join(fileDir, os_path.basename(cfg['out']['name']))
-    fileDir, filenameF = pathAndMask(*[cfg['out'][spec] if spec in
-                                                                    cfg['out'] else None for \
-                                       spec in ['path', 'name', 'ext']])
-    filenameB, ext = os_path.splitext(filenameF)
-    cfg['out']['path'], writeMode, msgFile = name_output_file(fileDir, filenameB, ext, False)
+        cfg['out']['path'] = cfg['in']['path'] / os_path.basename(cfg['out']['name'])
+    cfg['out']['path'] = Path(*pathAndMask(*[cfg['out'][spec] if spec in cfg['out'] else None for \
+        spec in ['path', 'name', 'ext']]))
+    cfg['out']['path'], writeMode, msgFile = name_output_file(
+        cfg['out']['path'].parent, cfg['out']['path'].stem, cfg['out']['path'].suffix, False)
     root = ET.Element('TTF')
     child1 = ET.SubElement(root, 'Subscription')
     child1.set('Id', "WinRiver Processed Data")

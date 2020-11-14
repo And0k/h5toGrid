@@ -300,7 +300,7 @@ def interactive_deleter(x: Optional[Sequence] = None,
 
     interactive_deleter(x=bot_edge_path_dist,
         y_kwrgs=(('source', bot_edge_path_Pres), ('depth', bot_edge_Dep)),
-        mask_label='closest to bottom', mask=max_spyke_ok['soft'],
+        mask_label='closest to bottom', mask=max_spike_ok['soft'],
         title='Bottom edge of CTD path filtering')
 
 

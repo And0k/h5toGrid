@@ -1,0 +1,2 @@
+input:
+  db_path: data/data_out.h5

@@ -1,9 +1,9 @@
     
 in:
   path_cruise: d:\WorkData\BalticSea\200818_Pregolya,Lagoon-inclinometer
-  raw_subdir: 1сент20.zip  #_Experiment.rar
+  raw_subdir: wavegage.rar  #_Experiment.rar
   probes: # [2]
-  probes_prefix: incl
+  probes_prefix: w
   raw_pattern: "*{prefix:}{number:0>3}*.[tT][xX][tT]"
 
 #  timerange_zeroing_dict:
@@ -11,12 +11,12 @@ in:
   db_coefs: d:\WorkData\~configuration~\inclinometr\190710incl.h5
 
 filter:
-  min_date: {0: 2020-06-30T21:10:00} # 2020-08-18T12:00:00
-  max_date: {0: now}  # 2030-01-01T00:00:00
+  min_date: {0: 2020-08-18T12:00:00}
+  max_date: {0: 2030-01-01T00:00:00}
 
 out:
   # db_name: out_send.h5  # default: "incl.h5"
-  aggregate_period_s: [Null, 2, 600, 7200]  # Null means no average
+  aggregate_period_s: [Null, 2, 600, 3600]  # Null means no average
 
 
 program:

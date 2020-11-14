@@ -37,7 +37,6 @@ sleep(8)
 store_in, store_out = store_out, store_in
 h5move_tables({
     'db_path_temp': store_in,
-    'db_base': Path(store_out).stem,
     'db_path': store_out,
     'tables': [tbl],
     'tables_log': [],
@@ -56,7 +55,6 @@ with pd.HDFStore(store_in, 'r') as sr, pd.HDFStore(store_out, 'w') as sw:
 store_in, store_out = store_out, str(Path(store_out).with_name('sort_man_ptp.h5'))
 h5move_tables({
     'db_path_temp': store_in,
-    'db_base': Path(store_out).stem,
     'db_path': store_out,
     'tables': [tbl],
     'tables_log': [],

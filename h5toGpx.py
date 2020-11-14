@@ -38,8 +38,8 @@ def my_argparser():
     s.add('--table_nav', help='table where to search coordinates. If empty then use data tables',
              default='navigation')
 
-    s = p.add_argument_group('out',
-                                 'Output files: paths, formats... - not calculation intensive affecting parameters')
+    s = p.add_argument_group('out', 'Output files: paths, formats... ' \
+                             ' - not calculation intensive affecting parameters')
     s.add('--select_from_tablelog_ranges_index',
               help='if set to 0 (or -1) then use only 1 data point per log row and retrieve navigation at data points only (to calc dist) else if None then use all data for ranges specified in log rows and saves tracks (not points)')
     s.add('--gpx_names_funs_list', default='i+1',
@@ -48,7 +48,7 @@ def my_argparser():
               help='tracks/waypoints names of combined gpx. Possibilites are the same as for gpx_names_funs_list item. Default function will keep combined values same as individual')
     s.add('--gpx_names_fun_format', default='{}',
               help='name\'s format to display gpx_names_funs_(list/combined) result')
-    s.add('--dir', default='',
+    s.add('--path', default='',
               help='directory to place output files')
 
     s = p.add_argument_group('process', 'calculation parameters')
@@ -293,7 +293,7 @@ def save_to_csv(nav, datetimeindex, filepath):
     rnav.to_csv(filepath, sep='\t')
 
     # if True:
-    #     f = open(cfg['out']['dir'] + tblD + '.txt', 'w+');
+    #     f = open(cfg['out']['path'].with_name(f'{tblD}.txt', 'w+');
     #     #np.savetxt(f, np.atleast_2d(rnav_dt.names), '%s', delimiter='\t') - not works
     #     header= rnav_dt.names
     #     rnav.view()
@@ -336,13 +336,12 @@ def main(new_arg=None):
     if new_arg == '<return_cfg>':  # to help testing
         return cfg
     l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+    if not cfg['out']['path'].is_absolute():
+        # set path relative to cfg['in']['db_path']
+        cfg['out']['path'] = cfg['in']['db_path'].with_name(str(cfg['out']['path']))
 
     l.warning('\n {}({}) is gonna save gpx to ..{} dir. '.format(
-        this_prog_basename(__file__), cfg['in']['db_path'], cfg['out']['dir']))
-
-    if not os_path.isabs(cfg['out']['dir']):
-        # set path relative to cfg['in']['db_path']
-        cfg['out']['dir'] = os_path.join(os_path.dirname(cfg['in']['db_path']), cfg['out']['dir'])
+        this_prog_basename(__file__), cfg['in']['db_path'], cfg['out']['path'].parent))
 
     if cfg['out']['select_from_tablelog_ranges'] is None:
         gpx_symbols = None
@@ -435,7 +434,7 @@ def main(new_arg=None):
                             e.__traceback__)
 
                     save_to_gpx(
-                        dfD, Path(cfg['out']['dir']) / (str_time_long + tblD_safe),
+                        dfD, cfg['out']['path'].with_name(f'{str_time_long}{tblD_safe}'),
                         gpx_obj_namef=gpx_names_fun_result, cfg_proc=cfg['process'])
 
                     if len(cfg['in']['tables']) > 1:
@@ -465,6 +464,7 @@ def main(new_arg=None):
                                    dt_check_tolerance=cfg['process']['dt_search_nav_tolerance'],
                                    query_range_lims=(time_points[0], dfL['DateEnd'][-1])
                                    )[0]
+                cols_nav = nav2add.columns  # not all columns may be loaded
                 # Try get non NaN from dfL if it has needed columns (we used to write there edges' data with _st/_en suffixes)
                 isna = nav2add.isna()
                 dfL_col_suffix = 'st' if cfg['out']['select_from_tablelog_ranges'] == 0 else 'en'
@@ -491,13 +491,11 @@ def main(new_arg=None):
                 #         cfg['out']['gpx_names_funs'][itbl]), [], 'eval'))
                 #
                 save_to_gpx(nav2add_cur,
-                            os_path.join(cfg['out']['dir'],
-                                         'stations_' + file_from_tblname(tblD, cfg['in']['tables_log'][0])),
+                            cfg['out']['path'] / f"stations_{file_from_tblname(tblD, cfg['in']['tables_log'][0])}",
                             gpx_obj_namef=gpx_names_fun, waypoint_symbf=gpx_symbols,
                             cfg_proc=cfg['process']
                             )
-                # save_to_csv(nav2add, dfL.index, os_path.join(
-                #     cfg['out']['dir'], 'nav' + tblD + '.txt'))
+                # save_to_csv(nav2add, dfL.index, cfg['out']['path'].with_name(f'nav{tblD}.txt'))
                 if False:  # Show table info
                     store.get_storer(tblD).table
 
@@ -537,8 +535,8 @@ def main(new_arg=None):
 
             save_to_gpx(
                 df_rnav_combined,
-                Path(cfg['out']['dir']) /
-                ('all_' + file_from_tblname(','.join(tbl_names_all_shortened), cfg['in']['tables_log'][0])),
+                cfg['out']['path'].with_name(
+                    'all_' + file_from_tblname(','.join(tbl_names_all_shortened), cfg['in']['tables_log'][0])),
                 gpx_obj_namef=gpx_names_fun, waypoint_symbf=gpx_symbols, cfg_proc=cfg['process'])
     print('Ok')
 

@@ -73,8 +73,8 @@ if True:  # Faluse:  #    #   # Real data
                     '--blocksize_int', block_10Mbt_str,
                     '--table', re.sub('^inkl_0', 'incl',
                                       re.sub('^[\d_]*', '', in_file.stem).lower()),
-                    '--date_min', '17.10.2018 14:30:00',  # ; UTC, not output data < date_min
-                    '--date_max', '18.10.2018 07:40:00',  # ; UTC, not output data > date_max
+                    '--min_date', '17.10.2018 14:30:00',  # ; UTC, not output data < min_date
+                    '--max_date', '18.10.2018 07:40:00',  # ; UTC, not output data > max_date
                     '--db_path', path_db,
                     '--log', str(scripts_path / 'log/csv2h5_inclin_Kondrashov.log'),
                     '--b_raise_on_err', '0',  # ?! need fo this file only?

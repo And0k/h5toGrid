@@ -13,7 +13,7 @@ Allows to specify some of args:
     - data processing parameters:
 
         :path_cruise:
-        :dir_incl: or :in_file:
+        :dir_incl: or :file_in:
         :path_db:
         :probes:
         ...
@@ -42,6 +42,7 @@ import inclinometer.incl_h5spectrum as incl_h5spectrum
 import veuszPropagate
 from utils_time import pd_period_to_timedelta
 from utils2init import path_on_drive_d, init_logging, open_csv_or_archive_of_them, st, cfg_from_args, my_argparser_common_part
+from magneticDec import mag_dec
 
 version = '0.0.1'
 
@@ -56,12 +57,13 @@ def my_argparser():
     """
 
     p = my_argparser_common_part({'description': 'incl_load version {}'.format(version) + """
-----------------------------
+---------------------------------------------------
 Processing raw inclinometer data,
-Saving result in Pandas HDF5 store (*.h5) and *.csv
-----------------------------"""}, version)
+Saving result to indexed Pandas HDF5 store (*.h5) and *.csv
+-----------------------------------------------------------"""}, version)
     # Configuration sections
-    s = p.add_argument_group('in', 'all about input files')
+    s = p.add_argument_group('in',
+                             'All about input files')
     s.add('--path_cruise', default='.',  # nargs=?,
              help='Directory where inclinometer data will be stored, subdirs:'
                   '"_raw": required, with raw file(s)')
@@ -77,8 +79,7 @@ Saving result in Pandas HDF5 store (*.h5) and *.csv
                   I have used "incl" for inclinometers, "w" for wavegauges. Note: only if "incl" in probes_prefix the 
                   Kondrashov format is used else it must be in Baranov's format''')
 
-
-    s.add('--db_coefs', default=r'd:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe\190710incl.h5',
+    s.add('--db_coefs', default=r'd:\WorkData\~configuration~\inclinometr\190710incl.h5',
              help='coefs will be copied from this hdf5 store to output hdf5 store')
     s.add('--timerange_zeroing_list', help='See incl_h5clc')
     s.add('--timerange_zeroing_dict', help='See incl_h5clc. Example: incl14: [2020-07-10T21:31:00, 2020-07-10T21:39:00]')
@@ -86,25 +87,31 @@ Saving result in Pandas HDF5 store (*.h5) and *.csv
              help='add this correction to loading datetime data. Can use other suffixes instead of "seconds"')
     s.add('--dt_from_utc_hours', default='0',
              help='add this correction to loading datetime data. Can use other suffixes instead of "hours"')
+    s.add('--azimuth_add_float_dict', help='degrees, adds this value to velocity direction (will sum with _azimuth_shift_deg_ coef)')
 
-    s = p.add_argument_group('filter', 'filter all data based on min/max of parameters')
-    s.add('--date_min_dict', default='0: 2020-06-28T18:00',
+    s = p.add_argument_group('filter',
+                             'Filter all data based on min/max of parameters')
+    s.add('--min_date_dict', default='0: 2020-06-28T18:00',
              help='minimum time for each probe, use probe number 0 to set default value')
-    s.add('--date_max_dict', default='0: now',
+    s.add('--max_date_dict', default='0: now',
              help='maximum time for each probe, use probe number 0 to set default value')
 
-
-    s = p.add_argument_group('out', 'all about output files')
+    s = p.add_argument_group('out',
+                             'All about output files')
     s.add('--db_name', help='output hdf5 file name, do not set for auto using dir name')
     s.add('--aggregate_period_s_int_list', default='',
               help='bin average data in this intervals will be placed in separate section in output DB and csv for '
                    '[None, 300, 600], default: None, 2, 600, 3600 if "w" in [in][probes_prefix] else 7200')
+    s.add('--aggregate_period_s_not_to_text_int_list', default='None', help='do not save text files for this aggregate periods')
 
-    s = p.add_argument_group('program', 'program behaviour')
+    s = p.add_argument_group('program',
+                             'Program behaviour')
     s.add('--step_start_int', default='1', choices=['1', '2', '3', '4'],
                help='step to start')
     s.add('--step_end_int', default='2', choices=['1', '2', '3', '4'],
                help='step to end (inclusive, or if less than start then will run one start step only)')
+    s.add('--dask_scheduler',
+               help='can be "synchronous" (for help debugging) or "distributed"')
     return (p)
 
 
@@ -120,7 +127,7 @@ def main(new_arg=None, **kwargs):
     cfg = cfg_from_args(my_argparser(), new_arg, **kwargs)
     cfg['in']['db_coefs'] = Path(cfg['in']['db_coefs'])
     for path_field in ['db_coefs', 'path_cruise']:
-        if ~cfg['in'][path_field].is_absolute():
+        if not cfg['in'][path_field].is_absolute():
             cfg['in'][path_field] = (cfg['in']['cfgFile'].parent / cfg['in'][path_field]).resolve().absolute()  # cfg['in']['cfgFile'].parent /
 
     def constant_factory(val):
@@ -128,7 +135,7 @@ def main(new_arg=None, **kwargs):
             return val
         return default_val
 
-    for lim in ('date_min', 'date_max'):
+    for lim in ('min_date', 'max_date'):
         cfg['filter'][lim] = defaultdict(constant_factory(cfg['filter'][lim].get('0', cfg['filter'][lim].get(0))),
                                          cfg['filter'][lim])
 
@@ -140,28 +147,32 @@ def main(new_arg=None, **kwargs):
         from dask.cache import Cache
         cache = Cache(2e9)  # Leverage two gigabytes of memory
         cache.register()    # Turn cache on globally
-    if False:  # True:  # False:  #
-        l.warning('using "synchronous" scheduler for debugging')
-        import dask
-        dask.config.set(scheduler='synchronous')
-
-    if False:  # True:  other scheduler
-        from dask.distributed import Client
-        client = Client(
-            processes=False)  # navigate to http://localhost:8787/status to see the diagnostic dashboard if you have Bokeh installed
-        # processes=False: avoide inter-worker communication for computations releases the GIL (numpy, da.array)  # without is error
+    if cfg['program']['dask_scheduler']:
+        if cfg['program']['dask_scheduler'] == 'distributed':
+            from dask.distributed import Client
+            client = Client(
+                processes=False)  # navigate to http://localhost:8787/status to see the diagnostic dashboard if you have Bokeh installed
+            # processes=False: avoide inter-worker communication for computations releases the GIL (numpy, da.array)  # without is error
+        else:
+            if cfg['program']['dask_scheduler'] == 'synchronous':
+                l.warning('using "synchronous" scheduler for debugging')
+            import dask
+            dask.config.set(scheduler=cfg['program']['dask_scheduler'])
 
     # Run steps :
     st.start = cfg['program']['step_start']
     st.end = cfg['program']['step_end']
     st.go = True
 
-    dir_incl = '' if 'inclinometer' in str(cfg['in']['path_cruise']) else 'inclinometer'
-    if not cfg['out']['db_name']:  # set name by 'path_cruise' name or parent if it is  "*inclinometer*"
-        cfg['out']['db_name'] = re.match(
-            '(^[\d_]*).*', (lambda p: p.name if dir_incl else p.parent.name)(cfg['in']['path_cruise'])
-            ).group(1).strip('_') + 'incl.h5'
-    db_path = cfg['in']['path_cruise'] / cfg['out']['db_name']
+    if not cfg['out']['db_name']:  # set name by 'path_cruise' name or parent if it has digits at start. priority for name  is  "*inclinometer*"
+        for p in (lambda p: [p, p.parent])(cfg['in']['path_cruise']):
+            m = re.match('(^[\d_]*).*', p.name)
+            if m:
+                break
+        cfg['out']['db_name'] = f"{m.group(1).strip('_')}incl.h5"
+    cfg['in']['path_cruise'].glob('*inclinometer*')
+    dir_incl = next((d for d in cfg['in']['path_cruise'].glob('*inclinometer*') if d.is_dir()), cfg['in']['path_cruise'])
+    db_path = dir_incl / cfg['out']['db_name']
     # ---------------------------------------------------------------------------------------------
     def fs(probe, name):
         return 5
@@ -189,7 +200,8 @@ def main(new_arg=None, **kwargs):
         i_proc_probe = 0  # counter of processed probes
         i_proc_file = 0  # counter of processed files
         # patten to identify only _probe_'s raw data files that need to correct '*INKL*{:0>2}*.[tT][xX][tT]':
-        raw_parent = cfg['in']['path_cruise'] / dir_incl / '_raw'
+
+        raw_parent = dir_incl / '_raw'
         dir_out = raw_parent / re.sub(r'[.\\/ ]', '_', cfg['in']['raw_subdir'])  # sub replaces multilevel subdirs to 1 level that correct_fun() can only make
         raw_parent /= cfg['in']['raw_subdir']
         for probe in probes:
@@ -208,23 +220,23 @@ def main(new_arg=None, **kwargs):
                 elif not cfg['in']['raw_subdir']:
                     continue
 
-            for in_file in (raw_found or open_csv_or_archive_of_them(raw_parent, binary_mode=False, pattern=raw_pattern_file)):
-                in_file = correct_fun(in_file)
-                if not in_file:
+            for file_in in (raw_found or open_csv_or_archive_of_them(raw_parent, binary_mode=False, pattern=raw_pattern_file)):
+                file_in = correct_fun(file_in)
+                if not file_in:
                     continue
-
+                tbl = f"{cfg['in']['probes_prefix']}{probe:0>2}"
+                # tbl = re.sub('^((?P<i>inkl)|w)_0', lambda m: 'incl' if m.group('i') else 'w',  # correct name
+                #              re.sub('^[\d_]*|\*', '', file_in.stem).lower()),  # remove date-prefix if in name
                 csv2h5(
                     [str(Path(__file__).parent / 'ini' / f"csv_inclin_{'Kondrashov' if subs_made else 'Baranov'}.ini"),
-                    '--path', str(in_file),
+                    '--path', str(file_in),
                     '--blocksize_int', '50_000_000',  # 50Mbt
-                    '--table', re.sub('^((?P<i>inkl)|w)_0', lambda m: 'incl' if m.group('i') else 'w',  # correct name
-                                      re.sub('^[\d_]*|\*', '', in_file.stem).lower()),  # remove date-prefix if in name
-
+                    '--table', tbl,
                     '--db_path', str(db_path),
                     # '--log', str(scripts_path / 'log/csv2h5_inclin_Kondrashov.log'),
                     # '--b_raise_on_err', '0',  # ?
                     '--b_interact', '0',
-                    '--fs_float', f'{fs(probe, in_file.stem)}',
+                    '--fs_float', f'{fs(probe, file_in.stem)}',
                     '--dt_from_utc_seconds', str(cfg['in']['dt_from_utc'].total_seconds()),
                     '--b_del_temp_db', '1',
                     ] +
@@ -235,14 +247,13 @@ def main(new_arg=None, **kwargs):
                     ]
                    ),
                     **{'filter': {
-                         'date_min': cfg['filter']['date_min'][probe],
-                         'date_max': cfg['filter']['date_max'][probe],
+                         'min_date': cfg['filter']['min_date'][probe],
+                         'max_date': cfg['filter']['max_date'][probe],
                         }
                     }
                 )
 
                 # Get coefs:
-                tbl = f"{cfg['in']['probes_prefix']}{probe:0>2}"
                 l.info(f"Adding coefficients to {db_path}/{tbl} from {cfg['in']['db_coefs']}")
                 try:
                     h5copy_coef(cfg['in']['db_coefs'], db_path, tbl)
@@ -254,7 +265,7 @@ def main(new_arg=None, **kwargs):
                     h5copy_coef(None, db_path, tbl, dict_matrices=dict_matrices_for_h5(tbl=tbl))
                 i_proc_file += 1
             else:
-                print(probe, end=': no, ')
+                print('no', raw_pattern_file, end=', ')
             i_proc_probe += 1
         print('Ok:', i_proc_probe, 'probes,', i_proc_file, 'files processed.')
 
@@ -263,6 +274,18 @@ def main(new_arg=None, **kwargs):
         # if aggregate_period_s is None then not average and write to *_proc_noAvg.h5 else loading from that h5 and writing to _proc.h5
         if not cfg['out']['aggregate_period_s']:
             cfg['out']['aggregate_period_s'] = [None, 2, 600, 3600 if 'w' in cfg['in']['probes_prefix'] else 7200]
+
+        if cfg['in']['azimuth_add']:
+            if 'Lat' in cfg['in']['azimuth_add']:
+                from datetime import datetime
+                # add magnetic declination,° for used coordinates
+                # todo: get time
+                azimuth_add = mag_dec(cfg['in']['azimuth_add']['Lat'], cfg['in']['azimuth_add']['Lon'], datetime(2020, 9, 10), depth=-1)
+            else:
+                azimuth_add = 0
+            if 'constant' in cfg['in']['azimuth_add']:
+                # and add constant. For example, subtruct declination at the calibration place if it was applied
+                azimuth_add += cfg['in']['azimuth_add']['constant']  # add -6.65644183° to account for calibration in Kaliningrad
         for aggregate_period_s in cfg['out']['aggregate_period_s']:
             if aggregate_period_s is None:
                 db_path_in = db_path
@@ -274,7 +297,8 @@ def main(new_arg=None, **kwargs):
             args = [Path(incl_h5clc.__file__).with_name(f'incl_h5clc_{db_path.stem}.yaml'),
                     # if no such file all settings are here
                     '--db_path', str(db_path_in),
-                    '--tables_list', 'incl.*',  #!   'incl.*|w\d*'  inclinometers or wavegauges w\d\d # 'incl09',
+                    # !   'incl.*|w\d*'  inclinometers or wavegauges w\d\d # 'incl09':
+                    '--tables_list', 'incl.*' if not cfg['in']['probes'] else f"incl.*(?:{'|'.join('{:0>2}'.format(p) for p in cfg['in']['probes'])})",
                     '--aggregate_period', f'{aggregate_period_s}S' if aggregate_period_s else '',
                     '--out.db_path', str(db_path_out),
                     '--table', f'V_incl_bin{aggregate_period_s}' if aggregate_period_s else 'V_incl',
@@ -284,33 +308,35 @@ def main(new_arg=None, **kwargs):
                     # '--chunksize', '20000',
                     # '--not_joined_h5_path', f'{db_path.stem}_proc.h5',
                     ]
+            # if aggregate_period_s <= 5:   # [s], do not need split csv for big average interval
+            #     args += (['--split_period', '1D'])
             if aggregate_period_s is None:  # proc. parameters (if we have saved proc. data then when aggregating we are not processing)
-
                 args += (
                     ['--max_dict', 'M[xyz]:4096',
                      # Note: for Baranov's prog 4096 is not suited
                      # '--timerange_zeroing_dict', "incl19: '2019-11-10T13:00:00', '2019-11-10T14:00:00'\n,"  # not works - use kwarg
                      # '--timerange_zeroing_list', '2019-08-26T04:00:00, 2019-08-26T05:00:00'
+                     '--split_period', '1D'
                     ] if subs_made else
                     ['--bad_p_at_bursts_starts_peroiod', '1H',
                     ])
             # csv splitted by 1day (default for no avg) and monolith csv if aggregate_period_s==600
-            # if aggregate_period_s in [None, 300, 600]:
-            args += ['--text_path', str(db_path.parent / 'text_output')]
-
+            if aggregate_period_s not in cfg['out']['aggregate_period_s_not_to_text']:  # , 300, 600]:
+                args += ['--text_path', str(db_path.parent / 'text_output')]
             kwarg = {'in': {
-                'date_min': cfg['filter']['date_min'][0],
-                'date_max': cfg['filter']['date_max'][0],
-                'timerange_zeroing':  cfg['in']['timerange_zeroing']
+                'min_date': cfg['filter']['min_date'][0],
+                'max_date': cfg['filter']['max_date'][0],
+                'timerange_zeroing':  cfg['in']['timerange_zeroing'],
+                'azimuth_add': azimuth_add
                 }
                 }
             # If need all data to be combined one after one:
             # set_field_if_no(kwarg, 'in', {})
             # kwarg['in'].update({
             #
-            #         'tables': [f'incl{i:0>2}' for i in date_min.keys() if i!=0],
-            #         'dates_min': date_min.values(),  # in table list order
-            #         'dates_max': date_max.values(),  #
+            #         'tables': [f'incl{i:0>2}' for i in min_date.keys() if i!=0],
+            #         'dates_min': min_date.values(),  # in table list order
+            #         'dates_max': max_date.values(),  #
             #         })
             # set_field_if_no(kwarg, 'out', {})
             # kwarg['out'].update({'b_all_to_one_col': 'True'})
@@ -331,8 +357,8 @@ def main(new_arg=None, **kwargs):
             '--tables_list', f"{cfg['in']['probes_prefix']}.*",  # inclinometers or wavegauges w\d\d  ## 'w02', 'incl.*',
             # '--aggregate_period', f'{aggregate_period_s}S' if aggregate_period_s else '',
 
-            '--date_min', datetime64_str(cfg['filter']['date_min'][0]),
-            '--date_max', datetime64_str(cfg['filter']['date_max'][0]),  # '2019-09-09T16:31:00',  #17:00:00
+            '--min_date', datetime64_str(cfg['filter']['min_date'][0]),
+            '--max_date', datetime64_str(cfg['filter']['max_date'][0]),  # '2019-09-09T16:31:00',  #17:00:00
             # '--max_dict', 'M[xyz]:4096',  # use if db_path is not ends with _proc_noAvg.h5 i.e. need calc velocity
             '--out.db_path', f"{db_path.stem.replace('incl', cfg['in']['probes_prefix'])}_proc_psd.h5",
             # '--table', f'psd{aggregate_period_s}' if aggregate_period_s else 'psd',
@@ -381,7 +407,7 @@ def main(new_arg=None, **kwargs):
         else:
             # Generate periodic intervals
             t_interval_start, t_intervals_end = intervals_from_period(datetime_range=np.array(
-                [cfg['filter']['date_min']['0'], cfg['filter']['date_max']['0']],
+                [cfg['filter']['min_date']['0'], cfg['filter']['max_date']['0']],
                 # ['2018-08-11T18:00:00', '2018-09-06T00:00:00'],
                 # ['2019-02-11T13:05:00', '2019-03-07T11:30:00'],
                 # ['2018-11-16T15:19', '2018-12-14T14:35'],
@@ -405,7 +431,9 @@ def main(new_arg=None, **kwargs):
 
                 try:  # skipping absent probes
                     start_end = h5q_interval2coord(
-                        {'db_path': str(db_path), 'table': f'/{probe_name}'}, (t_interval_start, t_interval_end))
+                        db_path=str(db_path),
+                        table=f'/{probe_name}',
+                        t_interval=(t_interval_start, t_interval_end))
                     if not len(start_end):
                         break  # no data
                 except KeyError:

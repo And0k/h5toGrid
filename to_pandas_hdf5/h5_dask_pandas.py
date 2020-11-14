@@ -19,7 +19,7 @@ from tables.exceptions import HDF5ExtError, ClosedFileError
 
 from other_filters import despike
 # my
-from to_pandas_hdf5.h5toh5 import h5remove_table, TemporaryMoveChilds
+from to_pandas_hdf5.h5toh5 import h5remove_table, ReplaceTableKeepingChilds, df_data_append_fun, df_log_append_fun
 from utils2init import Ex_nothing_done, set_field_if_no, standard_error_info
 from utils_time import timzone_view, tzUTC, multiindex_timeindex, multiindex_replace, minInterval
 
@@ -30,33 +30,36 @@ l = logging.getLogger(__name__)
 qstr_range_pattern = "index>=Timestamp('{}') & index<=Timestamp('{}')"
 
 
-def h5q_interval2coord(cfg_in: Mapping[str, Any],
-                       t_interval: Optional[Sequence[Union[str, pd.Timestamp]]] = None) -> pd.Index:
+def h5q_interval2coord(
+    db_path,
+    table,
+    t_interval: Optional[Sequence[Union[str, pd.Timestamp]]] = None,
+    timerange = None) -> pd.Index:
     """
     Edge coordinates of index range query
     As it is nealy part of h5toh5.h5select() may be depreshiated? See Note
-    :param t_interval: array or list with strings convertable to pandas.Timestamp
-    :param: cfg_in, dict with fields:
-        db_path, str
-        table, str
+    :param: db_path, str
+    :param: table, str
+    :param: t_interval: array or list with strings convertable to pandas.Timestamp
+    :param: timerange: same as t_interval (but must be flat numpy array)
     :return: ``qstr_range_pattern`` edge coordinates
     Note: can use instead:
     >>> from to_pandas_hdf5.h5toh5 import h5select
-    ... with pd.HDFStore(cfg_in['db_path'], mode='r') as store:
-    ...     df, bbad = h5select(store, cfg_in['table'], columns=None, query_range_lims=cfg_in['timerange'])
+    ... with pd.HDFStore(db_path, mode='r') as store:
+    ...     df, bbad = h5select(store, table, columns=None, query_range_lims=timerange)
 
     """
 
     if not t_interval:
-        t_interval = cfg_in['timerange']
+        t_interval = timerange
     if not (isinstance(t_interval, list) and isinstance(t_interval[0], str)):
         t_interval = np.array(t_interval).ravel()
 
     qstr = qstr_range_pattern.format(*t_interval)
-    with pd.HDFStore(cfg_in['db_path'], mode='r') as store:
-        l.debug("loading range from %s/%s: %s ", cfg_in['db_path'], cfg_in['table'], qstr)
+    with pd.HDFStore(db_path, mode='r') as store:
+        l.debug("loading range from %s/%s: %s ", db_path, table, qstr)
         try:
-            ind_all = store.select_as_coordinates(cfg_in['table'], qstr)
+            ind_all = store.select_as_coordinates(table, qstr)
         except Exception as e:
             l.debug("- not loaded: %s", e)
             raise
@@ -68,27 +71,29 @@ def h5q_interval2coord(cfg_in: Mapping[str, Any],
     return ind
 
 
-def h5q_intervals_indexes_gen(cfg_in: Mapping[str, Any],
+def h5q_intervals_indexes_gen(db_path,
+                              table: str,
                               t_prev_interval_start: pd.Timestamp,
-                              t_intervals_start: Iterable[pd.Timestamp]) -> Iterator[pd.Index]:
+                              t_intervals_start: Iterable[pd.Timestamp],
+                              i_range=None) -> Iterator[pd.Index]:
     """
     Yields start and end coordinates (0 based indexes) of hdf5 store table index which values are next nearest  to intervals start input
-    :param cfg_in, dict with fields: db_path and table, str (see h5q_interval2coord)
-        can have fields:
-         i_range: Sequence, 1st and last element will limit the range of returned result
-    :param t_prev_interval_start:
+    :param db_path
+    :param table, str (see h5q_interval2coord)
+    :param t_prev_interval_start: first index value
     :param t_intervals_start:
+    :param i_range: Sequence, 1st and last element will limit the range of returned result
     :return: Iterator[pd.Index] of lower and upper int limits (adjasent intervals)
     """
 
     for t_interval_start in t_intervals_start:
         # load_interval
-        start_end = h5q_interval2coord(cfg_in, [t_prev_interval_start.isoformat(), t_interval_start.isoformat()])
+        start_end = h5q_interval2coord(db_path, table, [t_prev_interval_start.isoformat(), t_interval_start.isoformat()])
         if len(start_end):
-            if 'i_range' in cfg_in:  # skip intervals that not in index range
-                start_end = minInterval([start_end], [cfg_in['i_range']], start_end[-1])[0]
+            if i_range is not None:  # skip intervals that not in index range
+                start_end = minInterval([start_end], [i_range], start_end[-1])[0]
                 if not len(start_end):
-                    if 0 < cfg_in['i_range'][-1] < start_end[0]:
+                    if 0 < i_range[-1] < start_end[0]:
                         raise Ex_nothing_done
                     continue
             yield start_end
@@ -123,8 +128,14 @@ def h5q_ranges_gen(cfg_in: Mapping[str, Any], df_intervals: pd.DataFrame):
             yield df
 
 
-def h5_load_range_by_coord(cfg_in: Mapping[str, Any], range_coordinates: Optional[Sequence] = None,
-                           columns=None) -> dd.DataFrame:
+def h5_load_range_by_coord(
+        db_path,
+        table,
+        range_coordinates: Optional[Sequence] = None,
+        columns=None,
+        chunksize=None,
+        sorted_index=None,
+        **kwargs) -> dd.DataFrame:
     """
     Load (range by intenger indexes of) hdf5 data to dask dataframe
     :param range_coordinates: control/limit range of data loading:
@@ -132,19 +143,25 @@ def h5_load_range_by_coord(cfg_in: Mapping[str, Any], range_coordinates: Optiona
         empty tuple - raise Ex_nothing_done
         None, to load all data
     :param cfg_in: dict, with fields:
-        db_path, str
-        table, str
+    :param db_path, str
+    :param table, str
         dask.read_hdf() parameters:
-            chunksize,
-            sorted_index (optional): bool, default True
+    :param chunksize,
+    :param sorted_index (optional): bool, default True
     :param columns: passed without change to dask.read_hdf()
     """
-    set_field_if_no(cfg_in, 'sorted_index', True)
+    if sorted_index is None:
+        sorted_index = True
+
     if range_coordinates is None:  # not specify start and stop.
         print("h5_load_range_by_coord(all)")
         # ?! This is only option in dask to load sorted index
-        ddpart = dd.read_hdf(cfg_in['db_path'], cfg_in['table'], chunksize=cfg_in['chunksize'],
-                             lock=True, mode='r', columns=columns, sorted_index=cfg_in['sorted_index'])
+        ddpart = dd.read_hdf(db_path, table,
+                             chunksize=chunksize,
+                             lock=True,
+                             mode='r',
+                             columns=columns,
+                             sorted_index=sorted_index)
     elif not len(range_coordinates):
         raise Ex_nothing_done('no data')
     else:
@@ -152,20 +169,24 @@ def h5_load_range_by_coord(cfg_in: Mapping[str, Any], range_coordinates: Optiona
         if not ddpart_size:
             return dd.from_array(
                 np.zeros(0, dtype=[('name', 'O'), ('index', 'M8')]))  # DataFrame({},'NoData', {}, [])  # None
-        if ddpart_size < cfg_in['chunksize']:
-            chunksize = ddpart_size  # !? needed to not load more data than need
-        else:
-            chunksize = ddpart_size  # !? else loads more data than needs. Do I need to adjust chunksize to divide ddpart_on equal parts?
+        # if ddpart_size < chunksize:
+        #     chunksize = ddpart_size  # !? needed to not load more data than need
+        # else:
+        chunksize = ddpart_size  # !? else loads more data than needs. Do I need to adjust chunksize to divide ddpart_on equal parts?
         # sorted_index=cfg_in['sorted_index'] not works with start/stop so loading without
-        ddpart = dd.read_hdf(cfg_in['db_path'], cfg_in['table'], chunksize=chunksize,
-                             lock=True, mode='r', columns=columns,
-                             start=range_coordinates[0], stop=range_coordinates[-1])
+        ddpart = dd.read_hdf(db_path, table,
+                             chunksize=chunksize,
+                             lock=True,
+                             mode='r',
+                             columns=columns,
+                             start=range_coordinates[0],
+                             stop=range_coordinates[-1])
         # because of no 'sorted_index' we need:
-        ddpart = ddpart.reset_index().set_index(ddpart.index.name or 'index', sorted=cfg_in['sorted_index'])  # 'Time'
+        ddpart = ddpart.reset_index().set_index(ddpart.index.name or 'index', sorted=sorted_index)  # 'Time'
     return ddpart
 
 
-def i_bursts_starts_dd(tim, dt_between_blocks=None):
+def i_bursts_starts_dd(tim, dt_between_blocks: Optional[np.timedelta64] = None):
     raise NotImplementedError
     """ Determine starts of burst in datafreame's index and mean burst size
     :param: tim, dask array or dask index: "Dask Index Structure"
@@ -215,7 +236,7 @@ def i_bursts_starts_dd(tim, dt_between_blocks=None):
 
 
 # @+node:korzh.20180520212556.1: *4* i_bursts_starts
-def i_bursts_starts(tim, dt_between_blocks=None) -> Tuple[np.array, int]:
+def i_bursts_starts(tim, dt_between_blocks: Optional[np.timedelta64] = None) -> Tuple[np.array, int, np.timedelta64]:
     """
     Starts of bursts in datafreame's index and mean burst size by calculating difference between each index value
     :param: tim, pd.datetimeIndex
@@ -223,9 +244,10 @@ def i_bursts_starts(tim, dt_between_blocks=None) -> Tuple[np.array, int]:
             Must be greater than delta time within block
             If None then auto find: greater than min of two first intervals + 1s
             If np.inf returns (array(0), len(tim))
-    return: (i_burst, mean_burst_size)
-         i_burst - indexes of starts of bursts, with first element is 0 (points to start of data)
-         mean_burst_size - mean burst size
+    return (i_burst, mean_burst_size, max_hole):
+    - i_burst: indexes of starts of bursts, with first element is 0 (points to start of data)
+    - mean_burst_size: mean burst size
+    - max_hole: max time distance between bursts found
 
     >>> tim = pd.date_range('2018-04-17T19:00', '2018-04-17T20:10', freq='2ms').to_series()
     ... di_burst = 200000  # start of burst in tim i.e. burst period = period between samples in tim * period (period is a freq argument)
@@ -236,15 +258,18 @@ def i_bursts_starts(tim, dt_between_blocks=None) -> Tuple[np.array, int]:
     (array([  0, 100, 200, 300, 400, 500, 600, 700, 800, 900]), 100.0)
     # same from i_bursts_starts(tim, dt_between_blocks=pd.Timedelta(minutes=2))
     """
+    dt_zero = np.timedelta64(0)
+    max_hole = dt_zero
+
     if isinstance(tim, pd.DatetimeIndex):
         tim = tim.values
     if not len(tim):
-        return np.int32([]), 0
+        return np.int32([]), 0, max_hole
 
     dtime = np.diff(tim)
 
     # Checking time is increasing
-    dt_zero = np.timedelta64(0)
+
     if np.any(dtime <= dt_zero):
         l.warning('Not increased time detected (%d+%d, first at %d)!',
                   np.sum(dtime < dt_zero), np.sum(dtime == dt_zero), np.flatnonzero(dtime <= dt_zero)[0])
@@ -256,24 +281,54 @@ def i_bursts_starts(tim, dt_between_blocks=None) -> Tuple[np.array, int]:
     elif isinstance(dt_between_blocks, pd.Timedelta):
         dt_between_blocks = dt_between_blocks.to_timedelta64()
     elif dt_between_blocks is np.inf:
-        return np.int32([0]), len(tim)
+        return np.int32([0]), len(tim), max_hole
 
     # Indexes of burst starts
-    i_burst = np.append(0, np.flatnonzero(dtime > dt_between_blocks) + 1)
+    i_burst = np.flatnonzero(dtime > dt_between_blocks)
 
     # Calculate mean_block_size
-    if len(i_burst) > 1:
-        if len(i_burst) > 2:  # amount of data is sufficient to not include edge (likely part of burst) in statistics
-            mean_burst_size = np.mean(np.diff(i_burst[1:]))
-        elif len(i_burst) == 2:  # select biggest of two burst parts we only have
-            mean_burst_size = max(i_burst[1], len(tim) - i_burst[1])
+    if i_burst.size:
+        if i_burst.size > 1:  # amount of data is sufficient to not include edge (likely part of burst) in statistics
+            mean_burst_size = np.mean(np.diff(i_burst))
+        elif len(i_burst) == 1:  # select biggest of two burst parts we only have
+            i_burst_st = i_burst[0] + 1
+            mean_burst_size = max(i_burst_st, len(tim) - i_burst_st)
+
+        max_hole = dtime[i_burst].max()
     else:
         mean_burst_size = len(tim)
 
-    return i_burst, mean_burst_size
+    return np.append(0, i_burst + 1), mean_burst_size, max_hole
 
 
 # ----------------------------------------------------------------------
+
+
+def add_tz_if_need(v, tim: Union[pd.Index, dd.Index]) -> pd.Timestamp:
+    """
+    If tim has tz then ensure v has too
+    :param v: time value that need be comparable with tim
+    :param tim: series/index from wich tz will be copied. If dask.dataframe.Index mast have known divisions
+    :return: v with added timezone if need
+    """
+    try:
+        tz = getattr(tim.divisions[0] if isinstance(tim, dd.Index) else tim, 'tz')
+        try:
+            if v.tzname() is None:
+                v = v.tz_localize(tz=tz)
+        except AttributeError:
+            v = pd.Timestamp(v, tz='UTC')
+    except AttributeError:
+        try:  # if v had time zone then pd.Timestamp(v, tz=None) not works
+            if v.tzname() is not None:
+                v = v.astimezone(None)  # so need this
+        except AttributeError:
+            v = pd.Timestamp(v)
+            if v.tz:  # not None?
+                v = v.astimezone(None)
+    return v
+
+
 def filterGlobal_minmax(a, tim=None, cfg_filter=None, b_ok=True) -> pd.Series:
     """
     Filter min/max limits
@@ -285,124 +340,123 @@ def filterGlobal_minmax(a, tim=None, cfg_filter=None, b_ok=True) -> pd.Series:
     :return: boolean pandas.Series
     """
 
-    def filt_max_or_min(array, flim, fval):
+    def filt_max_or_min(array, lim, v):
         """
         Emplicitly logical adds new check to b_ok
         :param array: numpy array or pandas series to filter
-        :param flim:
+        :param lim:
         :return: array of good rows or None
         """
         nonlocal b_ok  # :param b_ok: logical array
-        if fval is None:
+        if v is None:
             return
         if isinstance(array, da.Array):
-            if flim == 'min':
-                b_ok &= (array > fval).compute()  # da.logical_and(b_ok, )
-            elif flim == 'max':
-                b_ok &= (array < fval).compute()  # da.logical_and(b_ok, )
+            if lim == 'min':
+                b_ok &= (array > v).compute()  # da.logical_and(b_ok, )
+            elif lim == 'max':
+                b_ok &= (array < v).compute()  # da.logical_and(b_ok, )
         else:
-            if flim == 'min':           # matplotlib error when stop in PyCharm debugger!
-                b_ok &= (array > fval)  # da.logical_and(b_ok, )
-            elif flim == 'max':
-                b_ok &= (array < fval)  # da.logical_and(b_ok, )
+            if lim == 'min':           # matplotlib error when stop in PyCharm debugger!
+                b_ok &= (array > v)  # da.logical_and(b_ok, )
+            elif lim == 'max':
+                b_ok &= (array < v)  # da.logical_and(b_ok, )
 
     if tim is None:
         tim = a.index
 
-    for fkey, fval in cfg_filter.items():  # between(left, right, inclusive=True)
+    for key, v in cfg_filter.items():  # between(left, right, inclusive=True)
         try:
-            fkey, flim = fkey.rsplit('_', 1)
+            key, lim = key.rsplit('_', 1)
         except ValueError:  # not enough values to unpack
             continue  # not filter field
 
         # swap if need (depreciate?):
-        if fkey in ('min', 'max'):
-            fkey, flim = flim, fkey
+        if key in ('min', 'max'):
+            key, lim = lim, key
         # else:
         #     continue        # not filter field
-        # fkey may be lowercase(field) when parsed from *.ini so need find field yet:
+        # key may be lowercase(field) when parsed from *.ini so need find field yet:
         field = [field for field in (a.dtype.names if isinstance(a, np.ndarray
                                                                  ) else a.columns.to_numpy()) if
-                 field.lower() == fkey.lower()]
+                 field.lower() == key.lower()]
         if field:
             field = field[0]
             if field == 'date':
-                # fval= pd.to_datetime(fval, utc=True)
-                fval = pd.Timestamp(fval, tz='UTC')
-                filt_max_or_min(tim, flim, fval)
+                # v= pd.to_datetime(v, utc=True)
+                v = pd.Timestamp(v, tz='UTC')
+                filt_max_or_min(tim, lim, v)
             else:
-                filt_max_or_min(a[field], flim, fval)
+                filt_max_or_min(a[field], lim, v)
 
-        elif fkey == 'date':  # 'index':
-            # fval= pd.to_datetime(fval, utc=True)
-            if fval:
-                tz = None
-                # if tim has tz then ensure fval has too
-                if tim.tz:
-                    try:
-                        if fval.tzname() is None:
-                            fval = fval.tz_localize(tz=tim.tz)
-                    except AttributeError:
-                        fval = pd.Timestamp(fval, tz='UTC')
-                else:
-                    try:  # if fval had time zone then pd.Timestamp(fval, tz=None) not works
-                        if fval.tzname() is not None:
-                            fval = fval.astimezone(None)    # so need this
-                    except AttributeError:
-                        fval = pd.Timestamp(fval)
-                        if fval.tz: # not None?
-                            fval = fval.astimezone(None)
-                filt_max_or_min(tim, flim, fval)
-        elif fkey in ('dict', 'b_bad_cols_in_file'):
+        elif key == 'date':  # 'index':
+            # v= pd.to_datetime(v, utc=True)
+            if v:
+                filt_max_or_min(tim, lim, add_tz_if_need(v, tim))
+        elif key in ('dict', 'b_bad_cols_in_file'):
             pass
         else:
-            l.warning('filter warning: no field "{}"!'.format(fkey))
+            l.warning('filter warning: no field "{}"!'.format(key))
     return pd.Series(b_ok, index=tim)
 
 
-def filter_global_minmax(a, cfg_filter=None):
+
+def filter_global_minmax(a: Union[pd.DataFrame, dd.DataFrame],
+                         cfg_filter: Optional[Mapping[str, Any]] = None
+                         ) -> Union[pd.DataFrame, dd.DataFrame]:
     """
     Query that filters rows where some values outside min/max limits
-    :param a:           dask or pandas Dataframe. If need filter datime columns their name must start with 'date'
-    :param cfg_filter:  dict with keys:
-        max_'col', min_'col', where 'col' must be in _a_ (case insensitive) or 'date' for filter by index
-        to filter lower/upper values
-        values are float or ifs str repr - to compare with col/index values
+    :param a:           dask or pandas Dataframe. If need filter datetime columns their name must start with 'date'
+    :param cfg_filter: dict with
+       keys: max_`col`, min_`col`, where `col` must be in _a_ (case insensitive) to filter lower/upper values of `col`
+             or 'date' for filter by index
+       values: are float or ifs str repr - to compare with col/index values
     :return: dask bool array of good rows (or array if tim is not dask and only tim is filtered)
     """
+    if cfg_filter is None:
+        return a
 
     qstrings = []
-    for fkey_full, fval in cfg_filter.items():  # between(left, right, inclusive=True)
+
+    # key may be lowercase(field) when parsed from *.ini so need find field yet:
+    cols = {col.lower(): col for col in (a.dtype.names if isinstance(a, np.ndarray) else a.columns.values)}
+
+    for lim_key, v in cfg_filter.items():  # between(left, right, inclusive=True)
         try:
-            flim, fkey = fkey_full.rsplit('_', 1)
+            lim, key = lim_key.rsplit('_', 1)
         except ValueError:  # not enough values to unpack
             continue  # not filter field
 
-        if flim not in ('min', 'max'):
+        if lim not in ('min', 'max') or v is None:  # last saves from AttributeError: 'NaTType' object has no attribute 'tz'
             continue
 
-        # fkey may be lowercase(field) when parsed from *.ini so need find field yet:
-        col = [col for col in (a.dtype.names if isinstance(a, np.ndarray
-                                                           ) else a.columns.get_values()) if
-               col.lower() == fkey.lower()]
-        if col:
-            col = col[0]
-            if col.starts_with('date'):  # have datetime column
-                # cf[fkey_full] = pd.Timestamp(fval, tz='UTC')
-                fval = "Timestamp('{}')".format(fval)
-        elif fkey == 'date':  # 'index':
-            # fval= pd.to_datetime(fval, utc=True)
-            # cf[flim + '_' + fkey] = pd.Timestamp(fval, tz='UTC') not works for queries (?!)
+        if key == 'date':  # 'index':
+            # v= pd.to_datetime(v, utc=True)
+            # cf[lim + '_' + key] = pd.Timestamp(v, tz='UTC') not works for queries (?!)
             col = 'index'
-            fval = "Timestamp('{}')".format(fval)
+            # tim = a.index
+            # tim = a.Time.apply(lambda x: x.tz_localize(None), meta=[('ts', 'datetime64[ns]')])
+            v = "Timestamp('{}')".format(add_tz_if_need(v, a.index))
         else:
-            l.warning('filter warning: no column "{}"!'.format(fkey))
-            continue
+            try:
+                col = cols[key.lower()]
+                if col.starts_with('date'):  # have datetime column
+                    # cf[lim_key] = pd.Timestamp(v, tz='UTC')
+                    v = "Timestamp('{}')".format(add_tz_if_need(v, a[col]))
+            except KeyError:
+                l.warning('filter warning: no column "{}"!'.format(key))
+                continue
 
         # Add expression to query string
-        qstrings.append(f"{col}{'>' if flim == 'min' else '<'}{fval}")
+        qstrings.append(f"{col}{'>' if lim == 'min' else '<'}{v}")
+    # numexpr.set_num_threads(1)
+    try:
+        return a.query(' & '.join(qstrings)  #, **({} if not hasattr(a, '_meta') else {'meta': a._meta}
+                   ) if any(qstrings) else a
 
-    return a.query(' & '.join(qstrings)) if any(qstrings) else a
+    except (TypeError, ValueError):  # Cannot compare tz-naive and tz-aware datetime-like objects
+        l.exception('filter_global_minmax error')
+        return a
+
     # @cf['{}_{}] not works in dask
 
 
@@ -412,7 +466,7 @@ def filter_local(d: Union[pd.DataFrame, dd.DataFrame, Mapping[str, pd.Series], M
     """
     Filtering values without changing output size: set to NaN if exceed limits
     :param d: DataFrame
-    :param cfg: must have field 'filter'. This is a dict with dicts "min" and "max" having fields with:
+    :param cfg_filter: This is a dict with dicts "min" and "max" having fields with:
      - keys equal to column names to filter or regex strings to selelect columns: "*" or "[" must be present to detect
     it as regex.
      - values are min and max limits consequently.
@@ -423,17 +477,17 @@ def filter_local(d: Union[pd.DataFrame, dd.DataFrame, Mapping[str, pd.Series], M
         # todo: check if is better to use between(left, right, inclusive=True)
         if not cfg_filter.get(limit):
             continue
-        for fkey, fval in cfg_filter[limit].items():
-            if ('*' in fkey) or ('[' in fkey):  # get multiple keys by regex
-                keys = [c for c in d.columns if re.fullmatch(fkey, c)]
-                d[keys] = d[keys].where(f_compare(d[keys], fval))
-                fkey = ', '.join(keys)  # for logging only
+        for key, v in cfg_filter[limit].items():
+            if ('*' in key) or ('[' in key):  # get multiple keys by regex
+                keys = [c for c in d.columns if re.fullmatch(key, c)]
+                d[keys] = d[keys].where(f_compare(d[keys], v))
+                key = ', '.join(keys)  # for logging only
             else:
                 try:
-                    d[fkey] = d[fkey].where(f_compare(d[fkey], fval))
+                    d[key] = d[key].where(f_compare(d[key], v))
                 except KeyError as e:  # allow redundant parameters in config
                     l.warning('Can not filter this parameer %s', standard_error_info(e))
-            l.debug('filtering %s(%s) = %g', limit, fkey, fval)
+            l.debug('filtering %s(%s) = %g', limit, key, v)
     return d
 
 
@@ -455,18 +509,18 @@ def filter_local_arr(d: Mapping[str, Sequence],
         # todo: check if is better to use between(left, right, inclusive=True)
         if not cfg_filter.get(limit):
             continue
-        for fkey, fval in cfg_filter[limit].items():
-            if ('*' in fkey) or ('[' in fkey):  # get multiple keys by regex
+        for key, v in cfg_filter[limit].items():
+            if ('*' in key) or ('[' in key):  # get multiple keys by regex
                 # Filter multiple columns at once
-                keys = [c for c in d.columns if re.fullmatch(fkey, c)]
-                d[keys][f_compare(d[keys], fval)] = np.NaN
-                fkey = ', '.join(keys)  # for logging only
+                keys = [c for c in d.columns if re.fullmatch(key, c)]
+                d[keys][f_compare(d[keys], v)] = np.NaN
+                key = ', '.join(keys)  # for logging only
             else:
                 try:
-                    d[fkey][f_compare(d[fkey], fval)] = np.NaN
+                    d[key][f_compare(d[key], v)] = np.NaN
                 except KeyError as e:  # allow redundant parameters in config
                     l.warning('Can not filter this parameer %s', standard_error_info(e))
-            l.debug('filtering %s(%s) = %g', limit, fkey, fval)
+            l.debug('filtering %s(%s) = %g', limit, key, v)
     return d
 
 
@@ -502,7 +556,7 @@ def filt_blocks_array(x, i_starts, func=None):
 # @+node:korzh.20180604062900.1: *4* filt_blocks_da
 def filt_blocks_da(dask_array, i_starts, i_end=None, func=None, *args):
     """
-    Filter each block of numpy array separate using provided function.
+    Apply function to each block of numpy array separately (function is interp by default, can be provided other to, for example, filter array)
     :param dask_array: dask array, to filter, may be with unknown chunks as for dask series.values
     :param i_starts: numpy array, indexes of starts of bocks
     :param i_end: len(dask_array) if None then last element of i_starts must be equal to it else i_end should not be in i_starts
@@ -740,27 +794,19 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
                 # pd.api.types.infer_dtype(df_cor.loc[df_cor.index[0], col], df.loc[df.index[0], col])
     if b_df_cor_changed:
         # Update all cfg_out['db'] store data
-        with TemporaryMoveChilds(cfg_out, tbl_parent):
-            try:
-                h5remove_table(cfg_out, tbl_parent)
-                cfg_out['db'].flush()
-                # cfg_out['db'].remove(tbl_parent)
-            except KeyError as e:
-                print('was removed?')
+        try:
+            with ReplaceTableKeepingChilds([df_cor, df], tbl_parent, cfg_out, df_append_fun):
                 pass
-            try:  # df = df_cor.append(df); cfg_out['db'][tbl_parent] = df
-                df_append_fun(cfg_out, tbl_parent, df_cor)
-                df_append_fun(cfg_out, tbl_parent, df)
-            except Exception as e:
-                l.error('%s Can not write to store. May be data corrupted. %s', msg_func, standard_error_info(e))
-                raise (e)
-            except HDF5ExtError as e:
-                l.exception(e)
-                raise (e)
+        except Exception as e:
+            l.error('%s Can not write to store. May be data corrupted. %s', msg_func, standard_error_info(e))
+            raise (e)
+        except HDF5ExtError as e:
+            l.exception(e)
+            raise (e)
     else:
         # Uppend corrected data to cfg_out['db'] store
         try:
-            df_append_fun(cfg_out, tbl_parent, df)
+            df_append_fun(df, tbl_parent, cfg_out)
         except Exception as e:
             l.error('%s Can not write to store. May be data corrupted. %s', msg_func, standard_error_info(e))
             raise (e)
@@ -853,14 +899,10 @@ def h5add_log(cfg_out: Dict[str, Any], df, log: Union[pd.DataFrame, Mapping, Non
                                             index=log['Date0'] if isinstance(log['Date0'], pd.DatetimeIndex) else [
                                                 log['Date0']])  # index='Date0' not work for dict
 
-    def df_append_fun(cfg_out, tbl_name, df):
-        cfg_out['db'].append(tbl_name, df, data_columns=True, expectedrows=cfg_out['nfiles'], index=False,
-                             min_itemsize={'values': cfg_out['logfield_fileName_len']})
-
     try:
-        df_append_fun(cfg_out, cfg_out['table_log'], log)
+        df_log_append_fun(log, cfg_out['table_log'], cfg_out)
     except ValueError as e:
-        h5append_on_inconsistent_index(cfg_out, cfg_out['table_log'], log, df_append_fun, e, 'append log')
+        h5append_on_inconsistent_index(cfg_out, cfg_out['table_log'], log, df_log_append_fun, e, 'append log')
     except ClosedFileError as e:
         l.warning('Check code: On reopen store update store variable')
 
@@ -898,7 +940,7 @@ def h5_append(cfg_out: Dict[str, Any],
             table_log
     '''
 
-    df_len = len(df) if tim is None else len(tim)  # use computed values once for faster dask
+    df_len = len(df) if tim is None else len(tim)  # use computed values if possible for faster dask
     if df_len:  # dask.dataframe.empty is not implemented
         if cfg_out.get('b_insert_separator'):
             # Add separatiion row of NaN
@@ -928,22 +970,14 @@ def h5_append(cfg_out: Dict[str, Any],
             if df_len <= 10000 and isinstance(df, dd.DataFrame):
                 df = df.compute()  # dask not writes "all NaN" rows
 
-        def df_append_fun(cfg_out, tbl_name, df, **kwargs):
-            df.to_hdf(cfg_out['db'], tbl_name, append=True, data_columns=cfg_out.get('data_columns', True),
-                      format='table', dropna=not cfg_out.get('b_insert_separator'), index=False, **kwargs)
             # , compute=False
             # cfg_out['db'].append(cfg_out['table'], df, data_columns=True, index=False,
             #              chunksize=cfg_out['chunksize'])
 
         try:
-            df_append_fun(cfg_out, cfg_out['table'], df)
+            df_data_append_fun(df, cfg_out['table'], cfg_out)
         except ValueError as e:
-            # def df_append_fun(cfg_out, tbl_name, df):
-            # cfg_out['db'].append(tbl_name,
-            #              df_cor.append(df, verify_integrity=True),
-            #              data_columns=True, index=False,
-            #              chunksize=cfg_out['chunksize'])
-            h5append_on_inconsistent_index(cfg_out, cfg_out['table'], df, df_append_fun, e, msg_func)
+            h5append_on_inconsistent_index(cfg_out, cfg_out['table'], df, df_data_append_fun, e, msg_func)
         except TypeError as e:  # (, AttributeError)?
             if isinstance(df, dd.DataFrame):
                 last_nan_row = df.loc[df.index.compute()[-1]].compute()
@@ -951,7 +985,7 @@ def h5_append(cfg_out: Dict[str, Any],
                 # df.query("index > Timestamp('{}')".format(t_end.tz_convert(None)), meta) #df.query(f"index > {t_end}").compute()
                 if all(last_nan_row.isna()):
                     l.exception(f'{msg_func}: dask not writes separator? Repeating using pandas')
-                    df_append_fun(cfg_out, cfg_out['table'], last_nan_row, min_itemsize={c: 1 for c in (
+                    df_data_append_fun(last_nan_row, cfg_out['table'], cfg_out, min_itemsize={c: 1 for c in (
                         cfg_out['data_columns'] if cfg_out.get('data_columns', True) is not True else df.columns)})
                     # sometimes pandas/dask get bug (thinks int is a str?): When I add row of NaNs it tries to find ``min_itemsize`` and obtain NaN (for float too, why?) this lead to error
                 else:

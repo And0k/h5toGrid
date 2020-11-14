@@ -72,13 +72,12 @@ def main(new_arg=None):
         return cfg
     print('\n' + this_prog_basename(__file__), 'started', end=' ')
 
-    if not os_path.isabs(cfg['out']['dir']):
-        # set path relative to cfg['in']['db_path']
-        cfg['out']['dir'] = os_path.join(os_path.dirname(cfg['in']['db_path']), cfg['out']['dir'])
+    if not cfg['out']['path'].is_absolute():
+        cfg['out']['path'] = cfg['in']['db_path'].parent / cfg['out']['path']  # set relative to cfg['in']['db_path']
 
     try:
         print(end='Data ')
-        cfg['in'] = init_file_names(cfg['in'])  # may interact
+        cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(**cfg['in'])  # may interact
     except Ex_nothing_done as e:
         print(e.message)
         return  # or raise FileNotFoundError?
@@ -105,7 +104,7 @@ def main(new_arg=None):
         #     gpx_names = eval(compile('lambda i: str({})'.format(
         #         cfg['out']['gpx_names_funs'][itbl]), [], 'eval'))
         #
-        save_to_gpx(rnav_df_join[-len(nav2add):], os_path.join(cfg['out']['dir'], 'fileNames'),
+        save_to_gpx(rnav_df_join[-len(nav2add):], cfg['out']['path'].with_name('fileNames'),
                     gpx_obj_namef=gpx_names_fun, waypoint_symbf=gpx_symbols, cfg_proc=cfg['process'])
 
 

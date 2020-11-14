@@ -5,8 +5,8 @@ in:
   period: '2H'               # pandas offset string (D, 5D, H, ...) ['D' ]
   overlap: 0.5
   chunksize: 1000000         # 'chunksize_percent': 10,  # we'll repace this with burst size if it suit
-  date_min: 2019-07-21T20:00:00Z
-  date_max: 2019-08-18T01:45:00Z
+  min_date: 2019-07-21T20:00:00Z
+  max_date: 2019-08-18T01:45:00Z
 
 out:
   db_path: 'incl_proc.h5'

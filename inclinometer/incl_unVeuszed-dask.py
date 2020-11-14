@@ -445,8 +445,11 @@ try:
 
     if True:
         # zeroing
-        start_end = h5q_interval2coord(cfg['out'], USEcalibr0V_time[0])
-        a = h5_load_range_by_coord(cfg['out'], start_end)
+        start_end = h5q_interval2coord(
+            db_path=cfg['out']['db_path'],
+            table=cfg['out']['table'],
+            t_interval=USEcalibr0V_time[0])
+        a = h5_load_range_by_coord(**cfg['out'], range_coordinates=start_end)
         Ag, Ah = zeroing(a, Ag_old, Cg, Ah_old)
         if np.allclose(Ag, Ag_old):
             raise Ex_nothing_done('zeroing coefficients are not changed')

@@ -25,7 +25,7 @@ class test_1(unittest.TestCase):
                 start='2018-04-18T11:00:00', end='2018-04-18T18:00:00', periods=8, tz='UTC')),
             # pd.to_datetime(['2018-04-18T11:00:00', ...
             npartitions=1)
-        self.cfg_filter = {'date_min': datetime.strptime('2018-04-18T13:00:00', '%Y-%m-%dT%H:%M:%S'),
+        self.cfg_filter = {'min_date': datetime.strptime('2018-04-18T13:00:00', '%Y-%m-%dT%H:%M:%S'),
                            'max_Temp': 40
                            }
 

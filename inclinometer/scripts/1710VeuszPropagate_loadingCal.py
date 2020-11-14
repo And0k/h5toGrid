@@ -49,7 +49,7 @@ def main():
     if not cfg:
         exit(0)
 
-    file_cal_pattern = os_path.join(cfg['in']['dir'], '171121zeroing/INKL_{:03}_data.txt')
+    file_cal_pattern = cfg['in']['path'].with_name('171121zeroing/INKL_{:03}_data.txt')
     iFile = cfg['in']['start_file']  # inclinometers are numbered from 1
     cfgin_update = None
     while True:

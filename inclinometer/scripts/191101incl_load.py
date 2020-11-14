@@ -107,7 +107,7 @@ probes = []  # 14, 7, 23, 30, 32  [3, 13] [7][12,19,14,15,7,11,4,9]  [11, 9, 10,
 db_name = None  # '191210incl.h5'  # 191224incl 191108incl.h5 190806incl#29,30,33.h5 190716incl 190806incl 180418inclPres
 
 # dafault and specific to probe limits (use "i_proc_file" index instead "probe" if many files for same probe)
-date_min = defaultdict(
+min_date = defaultdict(
     lambda: '2020-06-28T18:00', {
 #'2020-06-28T15:30','2020-06-30T22:00','2020-05-14T13:00'
 # 13: '2020-05-14T11:49:00',
@@ -119,7 +119,7 @@ date_min = defaultdict(
 #  '2020-03-17T13:00','2019-12-10T13:00','2020-01-17T13:00''2019-08-07T14:10:00''2019-11-19T16:00''2019-11-19T12:30''2019-11-08T12:20' 2019-11-08T12:00 '2019-11-06T12:35''2019-11-06T10:50''2019-07-16T17:00:00' 2019-06-20T14:30:00  '2019-07-21T20:00:00', #None,
 # 0: #'2019-08-07T16:00:00' '2019-08-17T18:00', 0: '2018-04-18T07:15',# 1: '2018-05-10T15:00',
 
-date_max = defaultdict(lambda: '2020-07-27T09:00', {  # 'now'
+max_date = defaultdict(lambda: '2020-07-27T09:00', {  # 'now'
 # '2020-06-28T16:30','2020-07-13T14:10'
 # 13: '2020-05-14T12:02',
 # 3: '2020-05-14T12:15',
@@ -195,8 +195,8 @@ if st(1):  # Can not find additional not corrected files for same probe if alrea
                 '--blocksize_int', '50_000_000',  # 50Mbt
                 '--table', re.sub('^((?P<i>inkl)|w)_0', lambda m: 'incl' if m.group('i') else 'w',  # correct name
                                   re.sub('^[\d_]*|\*', '', in_file.stem).lower()),  # remove date-prefix if in name
-                '--date_min', datetime64_str(date_min[probe]),  # use i_proc_file instead probe if many files for same probe
-                '--date_max', datetime64_str(date_max[probe]),
+                '--min_date', datetime64_str(min_date[probe]),  # use i_proc_file instead probe if many files for same probe
+                '--max_date', datetime64_str(max_date[probe]),
                 '--db_path', str(db_path),
                 # '--log', str(scripts_path / 'log/csv2h5_inclin_Kondrashov.log'),
                 # '--b_raise_on_err', '0',  # ?
@@ -215,7 +215,7 @@ if st(1):  # Can not find additional not corrected files for same probe if alrea
                  )
 
             # Get coefs:
-            db_coefs = r'd:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe\190710incl.h5'
+            db_coefs = r'd:\WorkData\~configuration~\inclinometr\190710incl.h5'
             try:
                 tbl = f'{prefix}{probe:0>2}'
                 l.info(f"Adding coefficients to {db_path}/{tbl} from {db_coefs}")
@@ -245,8 +245,8 @@ if st(2):
                 '--db_path', str(db_path_in),
                 '--tables_list', 'incl.*',  #!   'incl.*|w\d*'  inclinometers or wavegauges w\d\d # 'incl09',
                 '--aggregate_period', f'{aggregate_period_s}S' if aggregate_period_s else '',
-                '--date_min', datetime64_str(date_min[0]),  # '2019-08-18T06:00:00',
-                '--date_max', datetime64_str(date_max[0]),  # '2019-09-09T16:31:00',  #17:00:00
+                '--min_date', datetime64_str(min_date[0]),  # '2019-08-18T06:00:00',
+                '--max_date', datetime64_str(max_date[0]),  # '2019-09-09T16:31:00',  #17:00:00
                 '--out.db_path', str(db_path_out),
                 '--table', f'V_incl_bin{aggregate_period_s}' if aggregate_period_s else 'V_incl',
                 '--verbose', 'INFO',  #'DEBUG' get many numba messages
@@ -276,9 +276,9 @@ if st(2):
         # set_field_if_no(kwarg, 'in', {})
         # kwarg['in'].update({
         #
-        #         'tables': [f'incl{i:0>2}' for i in date_min.keys() if i!=0],
-        #         'dates_min': date_min.values(),  # in table list order
-        #         'dates_max': date_max.values(),  #
+        #         'tables': [f'incl{i:0>2}' for i in min_date.keys() if i!=0],
+        #         'dates_min': min_date.values(),  # in table list order
+        #         'dates_max': max_date.values(),  #
         #         })
         # set_field_if_no(kwarg, 'out', {})
         # kwarg['out'].update({'b_all_to_one_col': 'True'})
@@ -299,8 +299,8 @@ if st(3):  # Can be done at any time after step 1
         '--tables_list', f'{prefix}.*',  # inclinometers or wavegauges w\d\d  ## 'w02', 'incl.*',
         # '--aggregate_period', f'{aggregate_period_s}S' if aggregate_period_s else '',
 
-        '--date_min', datetime64_str(date_min[0]),
-        '--date_max', datetime64_str(date_max[0]),  # '2019-09-09T16:31:00',  #17:00:00
+        '--min_date', datetime64_str(min_date[0]),
+        '--max_date', datetime64_str(max_date[0]),  # '2019-09-09T16:31:00',  #17:00:00
         # '--max_dict', 'M[xyz]:4096',  # use if db_path is not ends with _proc_noAvg.h5 i.e. need calc velocity
         '--out.db_path', f'{db_path.stem.replace("incl", prefix)}_proc_psd.h5',
         # '--table', f'psd{aggregate_period_s}' if aggregate_period_s else 'psd',
@@ -349,7 +349,7 @@ if st(4):
     else:
         # Generate periodic intervals
         t_interval_start, t_intervals_end = intervals_from_period(datetime_range=np.array(
-            [date_min[0], date_max[0]],
+            [min_date[0], max_date[0]],
             # ['2018-08-11T18:00:00', '2018-09-06T00:00:00'],
             # ['2019-02-11T13:05:00', '2019-03-07T11:30:00'],
             # ['2018-11-16T15:19', '2018-12-14T14:35'],
@@ -373,7 +373,9 @@ if st(4):
 
             try:  # skipping absent probes
                 start_end = h5q_interval2coord(
-                    {'db_path': str(db_path), 'table': f'/{probe_name}'}, (t_interval_start, t_interval_end))
+                    db_path=str(db_path),
+                    table=f'/{probe_name}',
+                    t_interval=(t_interval_start, t_interval_end))
                 if not len(start_end):
                     break  # no data
             except KeyError:

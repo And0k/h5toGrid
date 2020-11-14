@@ -11,13 +11,13 @@ import numpy as np
 import pandas as pd
 from numba import jit
 
-if __debug__:
-    from matplotlib import pyplot as plt
+# if __debug__:  'commented because functions in this file used by dask in separate threads so start plot here is problematic
+#     from matplotlib import pyplot as plt
 from dateutil.tz import tzoffset
 from pathlib import Path, PurePath
 from utils2init import set_field_if_no, FakeContextIfOpen, open_csv_or_archive_of_them, standard_error_info, dir_create_if_need
 from functools import partial
-
+from utils_time_corr import plot_bad_time_in_thread
 l = logging.getLogger(__name__)
 tzUTC = tzoffset('UTC', 0)
 century = b'20'
@@ -512,8 +512,9 @@ def day_jumps_correction(cfg_in: Mapping[str, Any], t: Union[np.ndarray, pd.Date
         ijumps = np.argsort(jumps)
         jumps = np.append(jumps[ijumps], len(t))
         bjumpU = np.append(np.ones(lU, np.bool8), np.zeros(lD, np.bool8))[ijumps]
-        if __debug__:
-            plt.plot(t, color='r', alpha=0.5)  # ; plt.show()
+        t_orig = t
+        # if __debug__:  # if run  under debugger
+        #     plt.plot(t, color='r', alpha=0.5)  # ; plt.show()
         for bjU, jSt, jEn in zip(bjumpU[::2], jumps[:-1:2], jumps[1::2]):  # apply_day_shifting
             t_datetime = datetime.fromtimestamp(t[jSt].astype(datetime) * 1e-9, tzUTC) if isinstance(t, np.ndarray) else t[jSt]
             if bjU:
@@ -524,11 +525,15 @@ def day_jumps_correction(cfg_in: Mapping[str, Any], t: Union[np.ndarray, pd.Date
                 t[jSt:jEn] += dT_day_jump
                 print('date correction to {:%d.%m.%y}UTC: day jumps down was '
                       'detected in [{}:{}] rows'.format(t_datetime, jSt, jEn))
-        if __debug__:
-            plt.plot(t)  # ; plt.show()
+        # if __debug__:
+        #     plt.plot(t)  # ; plt.show()
+        plot_bad_time_in_thread(cfg_in, t, np.ones_like(t, np.bool_), None, t_orig,
+                                None, 'day_jumps_corr', 'day jumps correction')
+
     return t
 
 # ----------------------------------------------------------------------
+#@meta_out(partial(out_fields, keys_del={'yyyy', 'mm', 'dd', 'HH', 'MM', 'SS'}, add_before={'Time': 'M8[ns]'})) - not need if only date returns
 def proc_loaded_chain_Baranov(a: Union[pd.DataFrame, np.ndarray],
                               cfg_in: Optional[Mapping[str, Any]] = None,
                               csv_specific_param: Optional[Mapping[str, Any]] = None) -> pd.DatetimeIndex:
@@ -563,6 +568,7 @@ def proc_loaded_chain_Baranov(a: Union[pd.DataFrame, np.ndarray],
     return convertNumpyArrayOfStrings(date, 'datetime64[ns]')  # convert ISO8601 date strings
 
 
+proc_loaded_inclin_Baranov = proc_loaded_chain_Baranov  # to find this function by csv_inclin_Baranov.ini config file name
 
 
 def concat_to_iso8601(a: pd.DataFrame) -> pd.Series:
@@ -845,45 +851,45 @@ def correct_kondrashov_txt(file_in: Union[str, Path, BinaryIO, TextIO], file_out
     return file_out
 
 
-def correct_baranov_txt(file_in: Union[str, PurePath], file_out: Optional[PurePath] = None,
-                        dir_out: Optional[PurePath] = None) -> Path:
-    """
-    Replaces bad strings in csv file and writes corrected file which named by replacing 'W_0' by 'w' in file_in
-    :param file_in:
-    :return: name of file to write.
-    """
-    # 2019	11	18	18	00	00	02316	22206	16128	31744	32640	33261	32564	32529
-    #
-    # 2019	11	18	18	00	00	02342	22204	16128	31744	32576	33149	32608	32582
-    fsub = f_repl_by_dict([
-        b'^\r?(?P<use>20\d{2}(\t\d{1,2}){5}(\t\d{5}){8}).*',
-        b'^.+'])
-    # last element in list is used to delete non captured by previous: it has no group so sub() returns empty line,
-    # that will be checked and deleted
-
-    file_in = Path(file_in)
-    if file_out:
-        pass
-    elif dir_out:
-        file_out = dir_out / mod_incl_name(file_in.name)
-    else: # autofind out path
-        file_out = file_in.with_name(mod_incl_name(file_in.name))  # re.sub(r'W_?0*(\d{2})', r'w\1', file_in.name)
-
-    if file_out.is_file():
-        l.warning(f'skipping of pre-correcting csv file {file_in.name} to {file_out}: destination exist')
-        return file_out
-    elif not file_in.is_file():
-        print(f'{file_in} not found')
-        return None
-    else:
-        l.warning('preliminary correcting csv file {} by removing irregular rows, writing to {}.'.format(
-            file_in.name, str(file_out)))
-    sum_deleted = rep_in_file(file_in, file_out, fsub)
-
-    if sum_deleted:
-        l.warning('{} bad line deleted'.format(sum_deleted))
-
-    return file_out
+# def correct_baranov_txt(file_in: Union[str, PurePath], file_out: Optional[PurePath] = None,
+#                         dir_out: Optional[PurePath] = None) -> Path:
+#     """
+#     Replaces bad strings in csv file and writes corrected file which named by replacing 'W_0' by 'w' in file_in
+#     :param file_in:
+#     :return: name of file to write.
+#     """
+#     # 2019	11	18	18	00	00	02316	22206	16128	31744	32640	33261	32564	32529
+#     #
+#     # 2019	11	18	18	00	00	02342	22204	16128	31744	32576	33149	32608	32582
+#     fsub = f_repl_by_dict([
+#         b'^\r?(?P<use>20\d{2}(\t\d{1,2}){5}(\t\d{5}){8}).*',
+#         b'^.+'])
+#     # last element in list is used to delete non captured by previous: it has no group so sub() returns empty line,
+#     # that will be checked and deleted
+#
+#     file_in = Path(file_in)
+#     if file_out:
+#         pass
+#     elif dir_out:
+#         file_out = dir_out / mod_incl_name(file_in.name)
+#     else: # autofind out path
+#         file_out = file_in.with_name(mod_incl_name(file_in.name))  # re.sub(r'W_?0*(\d{2})', r'w\1', file_in.name)
+#
+#     if file_out.is_file():
+#         l.warning(f'skipping of pre-correcting csv file {file_in.name} to {file_out}: destination exist')
+#         return file_out
+#     elif not file_in.is_file():
+#         print(f'{file_in} not found')
+#         return None
+#     else:
+#         l.warning('preliminary correcting csv file {} by removing irregular rows, writing to {}.'.format(
+#             file_in.name, str(file_out)))
+#     sum_deleted = rep_in_file(file_in, file_out, fsub)
+#
+#     if sum_deleted:
+#         l.warning('{} bad line deleted'.format(sum_deleted))
+#
+#     return file_out
 
 
 def correct_txt(
@@ -970,6 +976,28 @@ def correct_txt(
     return file_out
 
 
+def correct_baranov_txt(
+        file_in: Union[str, Path, BinaryIO, TextIO],
+        file_out: Optional[Path] = None,
+        dir_out: Optional[PurePath] = None, **kwargs) -> Path:
+    """
+    Replaces bad strings in csv file and writes corrected file which named by replacing 'W_0' by 'w' in file_in
+    :param file_in:
+    :return: name of file to write.
+    """
+    # 2019	11	18	18	00	00	02316	22206	16128	31744	32640	33261	32564	32529
+    #
+    # 2019	11	18	18	00	00	02342	22204	16128	31744	32576	33149	32608	32582
+    return correct_txt(
+        file_in, file_out, dir_out,
+        mod_file_name=mod_incl_name,
+        sub_str_list=[
+            b'^\r?(?P<use>20\d{2}(\t\d{1,2}){5}(\t\d{5}){8}).*',
+            b'^.+'],
+        **kwargs
+    )
+
+
 def correct_idronaut_terminal_txt(
         file_in: Union[str, Path, BinaryIO, TextIO],
         file_out: Optional[Path] = None,
@@ -988,6 +1016,7 @@ def correct_idronaut_terminal_txt(
             ],
         **kwargs
     )
+
 
 # navigation loaders -------------------------------------------------------------
 

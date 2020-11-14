@@ -54,9 +54,11 @@ Create vsz file for each source
 file based on vsz pattern
 ----------------------------"""}, version)
 
-    s = p.add_argument_group('in', 'data')
+    # Configuration sections
+    s = p.add_argument_group('in',
+                             'all about input files')
     s.add('--path',
-             help='path to source file(s) to generate list of their names (usually *.csv or *.txt) or hdf5 store')
+             help='path to source file(s) to generate list of their names (usually *.csv or *.txt) or pytables hdf5 store')
     s.add('--pattern_path',
              help='path to ".vsz" file to use as pattern')  # '*.h5'
     s.add('--import_method',
@@ -78,7 +80,8 @@ file based on vsz pattern
     s.add('--min_time', help='%%Y-%%m-%%dT%%H:%%M:%%S, optional, allows range table_log rows')
     s.add('--max_time', help='%%Y-%%m-%%dT%%H:%%M:%%S, optional, allows range table_log rows')
 
-    s = p.add_argument_group('out', 'all about output files')
+    s = p.add_argument_group('out',
+                             'all about output files')
     s.add('--export_pages_int_list', default='0',
               help='pages numbers to export, comma separated (1 is first), 0 = all')
     s.add('--b_images_only', default='False',
@@ -102,7 +105,8 @@ file based on vsz pattern
     s.add('--exclude_files_ends_with_list', default='coef.txt, -.txt, test.txt',
              help='exclude files which ends with this srings')
 
-    s = p.add_argument_group('program', 'program behaviour')
+    s = p.add_argument_group('program',
+                             'program behaviour')
     s.add('--export_timeout_s_float', default='0',
                help='export asyncroniously with this timeout, s (tryed 600s?)')
     s.add('--load_timeout_s_float', default='180',
@@ -436,7 +440,7 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
     :param in_full: full name of source data file to load in veusz pattern (usually csv)
     :param cfg: dict with keys:
         out:
-            dir, paths - pattern path
+            path, paths - pattern paths
             b_images_only, b_update_existed - command line arguments - see my_argparser()
         in:
             before_next - modify Veusz pattern data by execute Veusz commands if have fields:
@@ -464,7 +468,7 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
 
 
         out_name = filename_fun(in_full.stem) + cfg['out']['add_to_filename']
-        out_vsz_full = (Path(cfg['out']['dir']) / out_name).with_suffix('.vsz')
+        out_vsz_full = Path(cfg['out']['path']).with_name(out_name).with_suffix('.vsz')
 
         # if ifile < cfg['in']['start_file']:
         #     continue
@@ -503,8 +507,8 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
 
         def do_load_vsz(in_full, veusze, load_vsz):
             in_ext = in_full.suffix.lower()
-            vsz_load = in_full if in_ext == '.vsz' else \
-                cfg['out']['paths'][-1]  # load same filePattern (last in list) if data file not "vsz"
+            # load same filePattern (last in list) if data file not "vsz":
+            vsz_load = in_full if in_ext == '.vsz' else cfg['out']['paths'][-1]
             if cfg['out']['b_images_only']:
                 veusze = load_vsz(vsz_load, veusze)[0]  # veusze.Load(in_full.with_suffix('.vsz'))
             else:
@@ -516,7 +520,7 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
                         veusze.SetVerbose()  # nothing changes
                 # Relative path from new vsz to data, such as u'txt/160813_0010.txt'
                 try:
-                    file_name_r = in_full.relative_to(cfg['out']['dir'])
+                    file_name_r = in_full.relative_to(cfg['out']['path'].parent)
                 except ValueError as e:
                     # l.exception('path not related to pattern')
                     file_name_r = in_full
@@ -584,8 +588,8 @@ def co_savings(cfg: Dict[str, Any]) -> Iterator[None]:
         veusze = None
         if __name__ != '__main__':
             path_prev = os_getcwd()
-            os_chdir(cfg['out']['dir'])
-        print('Saving to {}'.format(Path(cfg['out']['dir']).absolute()))
+            os_chdir(cfg['out']['path'].parent)
+        print('Saving to {}'.format(cfg['out']['path'].parent.absolute()))
         try:
             while True:
                 veusze, log = yield ()
@@ -655,7 +659,7 @@ def co_send_data(gen_veusz_and_logs, cfg, cor_savings):
         cfgin_update = yield (vsz_data, log)  # to test here run veusze.Save('-.vsz')
         # cfg['in'].update(cfgin_update)  # only update of cfg.in.add_custom_expressions is tested
 
-        file_name_r = Path(log['out_vsz_full']).relative_to(cfg['out']['dir'])
+        file_name_r = Path(log['out_vsz_full']).relative_to(cfg['out']['path'].parent)
         veusze_commands(veusze, cfgin_update, file_name_r)
         cor_savings.send((veusze, log))
 
@@ -694,7 +698,7 @@ def main(new_arg=None, veusze=None, **kwargs):
         if not cfg['out']['b_images_only']:
             raise NotImplementedError('Provided out in not "b_images_only" mode!')
         cfg['out']['nfiles'] = len(cfg['out']['paths'])
-        cfg['out']['dir'] = cfg['out']['paths'][0].parent
+        cfg['out']['path'] = cfg['out']['paths'][0]
         print(end=f"\n- {cfg['out']['nfiles']} output files to export images...")
         pass
     else:
@@ -706,9 +710,10 @@ def main(new_arg=None, veusze=None, **kwargs):
         try:
             # Using cfg['out'] to store pattern information
             if not Path(cfg['in']['pattern_path']).is_absolute():
-                cfg['in']['pattern_path'] = Path(cfg['in']['path']).with_name(cfg['in']['pattern_path'])
+                cfg['in']['pattern_path'] = Path(cfg['in']['path']).with_name(str(cfg['in']['pattern_path']))
             cfg['out']['path'] = cfg['in']['pattern_path']
-            cfg['out'] = init_file_names(cfg['out'], b_interact=False)  # find it
+            cfg['out']['paths'], cfg['out']['nfiles'], cfg['out']['path'] = init_file_names(
+                **cfg['out'], b_interact=False)
         except Ex_nothing_done as e:
             if not cfg['out']['b_images_only']:
                 l.warning(f'{e.message} - no pattern. Specify it or use "b_images_only" mode!')
@@ -718,12 +723,13 @@ def main(new_arg=None, veusze=None, **kwargs):
         cfg['in']['paths'] = cfg['out']['paths']  # have all we need to export
     else:
         try:
-            cfg['in'] = init_file_names(cfg['in'], cfg['program']['b_interact'])
+            cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
+                **cfg['in'], b_interact=cfg['program']['b_interact'])
         except Ex_nothing_done as e:
             print(e.message)
             return  # or raise FileNotFoundError?
 
-    dir_from_cfg(cfg['out'], 'export_dir')
+    cfg['out']['export_dir'] = dir_from_cfg(cfg['out']['path'].parent, cfg['out']['export_dir'])
 
     if 'restore_config' in cfg['program']['before_next']:
         cfg['in_saved'] = cfg['in'].copy()
@@ -757,7 +763,7 @@ def main(new_arg=None, veusze=None, **kwargs):
     nfiles = 0
     try:  # if True:
         path_prev = os_getcwd()
-        os_chdir(cfg['out']['dir'])
+        os_chdir(cfg['out']['path'].parent)
         if cfg['program']['return'] == '<corutines_in_cfg>':
             cfg['co']['savings'] = cor_savings
             cfg['co']['gen_veusz_and_logs'] = load_to_veusz(in_fulls, cfg)
@@ -777,7 +783,7 @@ def main(new_arg=None, veusze=None, **kwargs):
         else:
             # Cycle without obtaining Veusz data (or implemented by user's cfg['program']['f_custom_in_cycle'])
             for veusze, log in load_to_veusz(in_fulls, cfg, veusze):
-                file_name_r = Path(log['out_vsz_full']).relative_to(cfg['out']['dir'])
+                file_name_r = Path(log['out_vsz_full']).relative_to(cfg['out']['path'].parent)
                 if cfg['program'].get('f_custom_in_cycle'):
                     cfgin_update = cfg['program']['f_custom_in_cycle'](veusze, log)
                     veusze_commands(veusze, cfgin_update, file_name_r)

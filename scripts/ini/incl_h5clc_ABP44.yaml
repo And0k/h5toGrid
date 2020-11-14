@@ -3,8 +3,8 @@
   'db_path': 'd:/workData/BalticSea/181005_ABP44/181005_ABP44.h5'
   'tables': ['.*inclinometers/incl.*']
   'chunksize': 1000000         # 'chunksize_percent': 10,  # we'll repace this with burst size if it suit
-  'date_min': '22.10.2018 12:30:00'
-  'date_max': '27.10.2018 06:30:00'
+  'min_date': '22.10.2018 12:30:00'
+  'max_date': '27.10.2018 06:30:00'
   #'max_g_minus_1' used only to replace bad with NaN
   'split_period': '999D'                # pandas offset string (Y, D, 5D, H, ...) ['D' ]
   'aggregate_period': '2S'     # pandas offset string (Y, D, 5D, H, ...)

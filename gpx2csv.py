@@ -84,7 +84,8 @@ def main(new_arg):
     l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
     print('\n' + this_prog_basename(__file__), end=' started. ')
     try:
-        cfg['in'] = init_file_names(cfg['in'], cfg['program']['b_interact'])
+        cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
+            **cfg['in'], b_interact=cfg['program']['b_interact'])
     except Ex_nothing_done as e:
         print(e.message)
         return ()

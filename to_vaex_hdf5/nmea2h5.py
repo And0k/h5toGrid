@@ -10,13 +10,15 @@ import os
 import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, Mapping, Optional, List, Sequence, Tuple, Union
+
 from omegaconf import OmegaConf, DictConfig
+import hydra
 
 import pandas as pd
 # import vaex
 import pynmea2
 
-from to_vaex_hdf5.cfg_structured import *
+from to_vaex_hdf5.cfg_dataclasses import *
 from utils2init import init_file_names, Ex_nothing_done, this_prog_basename, standard_error_info, LoggingStyleAdapter
 
 # from csv2h5_vaex import argparser_files, with_prog_config
@@ -92,17 +94,41 @@ hydra.output_subdir = 'cfg'
 # hydra.conf.HydraConf.hydra_logging = 'colorlog'
 # hydra.conf.HydraConf.job_logging = 'colorlog'
 
+
+
+defaults = [dict([item]) for item in {
+    'input': 'nmea_files',  # Load the config "nmea_files" from the config group "input"
+    'out': 'hdf5_vaex_files',  # Set as MISSING to require the user to specify a value on the command line.
+    'filter': 'filter',
+    'program': 'program',
+    #'search_path': 'empty.yml' not works
+     }.items()]
+
+
+@dataclass
+class Config:
+
+    # this is unfortunately verbose due to @dataclass limitations
+    defaults: List[Any] = field(default_factory=lambda: defaults)
+
+    # Hydra will populate this field based on the defaults list
+    input: Any = MISSING
+    out: Any = MISSING
+    filter: Any = MISSING
+    program: Any = MISSING
+
+
 cs = ConfigStore.instance()
-cs.store(group='input', name='nmea_files', node=ConfigIn)
+cs.store(group='input', name='nmea_files', node=ConfigInput)
 cs.store(group='out', name='hdf5_vaex_files', node=ConfigOut)
 cs.store(group='filter', name='filter', node=ConfigFilter)
 cs.store(group='program', name='program', node=ConfigProgram)
 #cs.store(group='hydra', name='hydra', node=ConfigProgram)
 # Registering the Config class with the name 'config'.
-cs.store(name='cfg', node=Config)
+cs.store(name='nmea2h5', node=Config)
 
-#config_path = 'ini/nmea2h5.yml'
-@hydra.main(config_name="cfg")
+
+@hydra.main(config_name="nmea2h5", config_path = 'cfg')
 def main(cfg: DictConfig):
     """
     ----------------------------
@@ -141,7 +167,8 @@ def main_init(cfg: DictConfig) -> DictConfig:
 
     print('\n' + this_prog_basename(__file__), end=' started. ')
     try:
-        init_file_names(cfg.input, cfg.program.b_interact)  # changes cfg.input
+        cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
+            **cfg.input, b_interact=cfg.program.b_interact)
     except Ex_nothing_done as e:
         print(e.message)
         return ()
@@ -183,11 +210,11 @@ def do(cfg):
         df_filter_and_save_to_h5(cfg['out'], cfg, df)
     failed_storages = h5move_tables(cfg['out'], tbl_names=cfg['out']['tables_have_wrote'])
     print('Finishing...' if failed_storages else 'Ok.', end=' ')
+    # Sort if have any processed data, else don't because ``ptprepack`` not closes hdf5 source if it not finds data
     if cfg['in'].get('time_last'):
-        # if have any processed data that need to be sorted (not the case for the routes and waypoints), also needed because ``ptprepack`` not closes hdf5 source if it not finds data
         cfg['out']['b_remove_duplicates'] = True
-        h5index_sort(cfg['out'], out_storage_name=cfg['out']['db_base'] + '-resorted.h5', in_storages=failed_storages,
-                     tables=cfg['out']['tables_have_wrote'])
+        h5index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5",
+                     in_storages=failed_storages, tables=cfg['out']['tables_have_wrote'])
 
 if __name__ == '__main__':
     main()

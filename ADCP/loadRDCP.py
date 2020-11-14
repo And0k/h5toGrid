@@ -155,8 +155,8 @@ if __name__ == '__main__':
 
     print('found: ', end='')
     paths = [f for f in dir_walker(
-        cfg['Veusz files']['dir'],
-        cfg['Veusz files']['filemask'],
+        cfg['Veusz files']['path'].parent,
+        cfg['Veusz files']['path'].name,
         bGoodFile=filt_fileCur,
         bGoodDir=filt_dirCur)]
     nFiles = len(paths)

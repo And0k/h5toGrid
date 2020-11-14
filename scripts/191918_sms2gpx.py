@@ -13,5 +13,5 @@ path_cruise = Path(r'd:\WorkData\BalticSea\191018_Trackers')
 SMS2GPX(['',
          '--path', str(path_cruise / 'sms.xml'),
          '--contacts_names', 'Tracker1, Tracker2, Tracker3',
-         '--date_min', '18.10.2019 09:00:00'
+         '--min_date', '18.10.2019 09:00:00'
          ])

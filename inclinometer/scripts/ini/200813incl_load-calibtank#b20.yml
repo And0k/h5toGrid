@@ -12,8 +12,8 @@ in:
   dt_from_utc_seconds: -648563489  # (np.datetime64('2000-01-01T00:00:00') - np.datetime64('2020-07-20T12:31:29')).view(np.int64)
 
 filter:
-  date_min: {0: 2020-07-20T11:40:00}
-  date_max: {0: 2020-07-20T14:30:00}
+  min_date: {0: 2020-07-20T11:40:00}
+  max_date: {0: 2020-07-20T14:30:00}
 
 out:
   db_name: 200807_calibr-tank-b.h5

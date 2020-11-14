@@ -46,7 +46,7 @@ if st(3):  # False: #
         '--header', 'N, Time(text), Lat, Lon, , DepEcho',
         '--coltime_integer', '1',
         '--fun_date_from_filename', "pd.to_datetime(file_stem[:6], format='%y%m%d')",
-        '--b_make_time_inc', 'False',
+        '--sort', 'False',
         '--b_interact', '0',
         # '--fs_float', '4'
         ])
@@ -58,7 +58,7 @@ if st(4):  # nav with depth is in next section
             '--path', str(path_cruise / r'navigation\source_OpenCPN\*.gpx'),
             '--tables_list', ',navigation,',  # skip waypoints
             '--table_prefix', r'',
-            # '--date_min', '2019-07-17T14:00:00',
+            # '--min_date', '2019-07-17T14:00:00',
             ])
 
 if st(5):  # False: #

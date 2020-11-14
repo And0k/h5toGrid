@@ -41,7 +41,7 @@ if st(1, 'Save gpx navigation to DB'):
                 '--tables_list', ',navigation,',  # skip waypoints
                 '--table_prefix', r'',
                 #'--b_search_in_subdirs', if set True to get rid of this loop then will be problems with overlapped data files
-                # '--date_min', '2019-07-17T14:00:00',
+                # '--min_date', '2019-07-17T14:00:00',
                 '--b_interact', '0',
                 '--b_skip_if_up_to_date', '0',  # '1' coerce to delete data loaded in same table in previous steps
                 '--min_dict', f'{min_coord}',  # use at least -32768 to replace it by NaN
@@ -59,7 +59,7 @@ if st(2, 'Save NMEA navigation to DB'):
         f'out.table=navigation',  # skip waypoints
         'out.b_skip_if_up_to_date=0',  # '1' not implemented but would coerce to delete data loaded in same table in previous steps # todo implement
         # '--table_prefix', r'',
-        # '--date_min', '2019-07-17T14:00:00',
+        # '--min_date', '2019-07-17T14:00:00',
         'program.b_interact=0',
         f'+filter.min={{{min_coord}, DepEcho:4}}',
         f'+filter.max={{{max_coord}, DepEcho:1500}}',
@@ -286,7 +286,6 @@ if False:
                       format='table', dropna=True, index=False)
     h5move_tables({
         'db_path_temp': path_db.with_name('_not_sorted.h5'),
-        'db_base': path_db.stem,
         'db_path': path_db,
         'tables': [tbl_log],
         'tables_log': [],

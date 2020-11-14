@@ -94,13 +94,15 @@ def main(new_arg=None):
         if not Path(cfg['in']['pattern_path']).is_absolute():
             cfg['in']['pattern_path'] = str(cfg['in']['path'].parent.joinpath(cfg['in']['pattern_path']))
         set_field_if_no(cfg['out'], 'path', cfg['in']['pattern_path'])
-        cfg['out'] = init_file_names(cfg['out'], b_interact=cfg['program']['b_interact'])
+        cfg['out']['paths'], cfg['out']['nfiles'], cfg['out']['path'] = init_file_names(
+            **cfg['out'], b_interact=cfg['program']['b_interact'])
     except Ex_nothing_done as e:
         print(e.message, ' - no pattern')
         return  # or raise FileNotFoundError?
     try:
         print(end='Data ')
-        cfg['in'] = init_file_names(cfg['in'], b_interact=False)  # do not bother 2nd time
+        cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
+            **cfg['in'], b_interact=False)  # do not bother user 2nd time
     except Ex_nothing_done as e:
         print(e.message)
         return  # or raise FileNotFoundError?
@@ -110,7 +112,7 @@ def main(new_arg=None):
         cfg['in_saved'] = cfg['in'].copy()
     # cfg['loop'] = asyncio.get_event_loop()
     # cfg['export_timeout_s'] = 600
-    dir_from_cfg(cfg['out'], 'export_dir')
+    cfg['out']['export_dir'] = dir_from_cfg(cfg['out']['path'], cfg['out']['export_dir'])
 
     veuszPropagate.load_vsz = veuszPropagate.load_vsz_closure(cfg['program']['veusz_path'])
     gen_veusz_and_logs = veuszPropagate.load_to_veusz(veuszPropagate.ge_names(cfg), cfg, None)

@@ -21,6 +21,6 @@ def test_main():
             '--path', str((path_data / r'*.gpx').absolute()),
             '--tables_list', ',navigation,',  # skip waypoints
             '--table_prefix', r'',
-            # '--date_min', '2019-07-17T14:00:00',
+            # '--min_date', '2019-07-17T14:00:00',
             '--b_interact', '0',
             ])

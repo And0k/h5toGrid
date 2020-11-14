@@ -19,66 +19,67 @@ from h5toGpx import main as h5toGpx
 from grid2d_vsz import main as grid2d_vsz
 
 st.go = True   # False #
-st.start = 115   # 5 30 70 80
-st.end = 115   # 60 80 120
+st.start = 110   # 5 30 70 80
+st.end = 110   # 60 80 120
 
-path_cruise = Path(r'd:\WorkData\BalticSea\200630_AI55')
+path_cruise = Path(r'd:\workData\BalticSea\201001_ABP46')
 path_db = path_cruise / path_cruise.with_suffix('.h5').name  # same name as dir
 
 # Stop before steps that need manual preparings (70) i.e. set end < 70 at first
 # Gridding (last step) needs debugging if interactive filtering is needed
 # ---------------------------------------------------------------------------------------------
 
-# if st(1, 'Save gpx navigation to DB'):
-#     # Save navigation to DB
-#     gpx2h5(['',
-#             '--db_path', str(path_db),
-#             '--path', str(path_cruise / r'navigation\_raw\*.gpx'),
-#             '--tables_list', ',navigation,',  # skip waypoints
-#             '--table_prefix', r'',
-#             # '--min_date', '2019-07-17T14:00:00',
-#             '--b_interact', '0',
-#             ])
-if st(5, "Save Supervisor's navigation to DB"):
+min_coord = 'Lat:53, Lon:10'
+max_coord = 'Lat:60, Lon:24'
+if st(1, 'Save gpx navigation to DB'):
     # Save navigation to DB
-    csv2h5(['ini/csv_nav_supervisor.ini',
-            '--db_path', str(path_db),
-            '--path', str(path_cruise / r'navigation\bridge\??????.txt'),
-            '--table', 'navigation',  # skip waypoints
-            #'--b_remove_duplicates', 'True',
-            #'--csv_specific_param_dict', 'DepEcho_add:4.5',
-            '--min_dict', 'DepEcho:6',
-            '--b_interact', '0',
-            ])
+    for folder in (['OpenCPN']):
+        gpx2h5(['',
+                '--db_path', str(path_db),
+                '--path', str(path_cruise / 'navigation' / folder / '*.gpx'),
+                '--tables_list', ',navigation,',  # skip waypoints
+                '--table_prefix', r'',
+                #'--b_search_in_subdirs', if set True to get rid of this loop then will be problems with overlapped data files
+                # '--min_date', '2019-07-17T14:00:00',
+                '--b_interact', '0',
+                #'--b_skip_if_up_to_date', '0',  # '1' coerce to delete data loaded in same table in previous steps
+                '--min_dict', f'{min_coord}',  # use at least -32768 to replace it by NaN
+                '--max_dict', f'{max_coord}',
+                '--sort', 'delete_inversions',
+                ])
 
 
 device = 'CTD_Idronaut_OS310'
 device_veusz_prefix = 'i0_'
+common_ctd_params_list = [
+    '--db_path', str(path_db),
+    '--table', f'{device}',
+    '--min_dict', f'Cond:5, Sal:3, SigmaT:2, O2:-2, O2ppm:-2, pH:6.8, {min_coord}, SoundVel:1440',  # del zeros & strange big negative values
+    '--max_dict', f'O2:170, O2ppm:15, {max_coord}',
+    ]
+common_ctd_params_dict = {'in': {
+    'fun_proc_loaded': proc_loaded_corr,
+    'csv_specific_param': {'O2_add': -0.357,
+                          'O2ppm_add': -0.0332,
+                          # 'Temp_add': 0.254, And convert to ITS90
+                          'Sal_add': -0.003,
+                          }
+    }}
 
-if st(10, f'Save {device} data to DB'):  # False: #
+if st(10, f'Save {device} data to DB recorded by REDAS software'):
     # Save {device} data to DB
     csv2h5(['ini/csv_CTD_IdrRedas.ini',
-        '--path', r'd:\WorkData\BalticSea\200630_AI55\CTD_Idronaut_OS310\_raw_txt\txt\Ioffe*.txt', # str(path_cruise / device / r'_raw_txt\Ioffe*.txt') '[20|42]*.txt'
-        '--db_path', str(path_db),
-        '--table', f'{device}',
-        '--dt_from_utc_hours', '0', #'2'
+        '--path', str(path_cruise / device / '_raw_txt' / 'ABP46[0-9]*.txt'), # str(path_cruise / device / r'_raw_txt\Ioffe*.txt') '[20|42]*.txt'
+        #'--dt_from_utc_hours', '0', #'2'
         '--header',
-        'Time(text),Pres(float),Temp90(float),Cond(float),Sal(float),SigmaT(float),O2(float),O2ppm(float),pH(float),Eh(float),'
-        'SoundVel,Lat,Lon',
+        'Time(text),Pres(float),Temp90(float),Cond(float),Sal(float),SigmaT(float),O2(float),O2ppm(float),pH(float),'
+        'Eh(float),SoundVel,Lat,Lon',
         '--delimiter_chars', r'\t',  # ''\s+',
         '--b_interact', '0',
         '--cols_not_use_list', 'N',
         # '--b_raise_on_err', '0'
-        '--min_dict', 'O2:-2, O2ppm:-2',  # del strange big negative values
-        ],
-        **{'in': {
-           'fun_proc_loaded': proc_loaded_corr,
-           'csv_specific_param': {'O2_add': -0.357,
-                                  'O2ppm_add': -0.0332,
-                                  # 'Temp_add': 0.254, And convert to ITS90
-                                  'Sal_add': -0.003,
-                                  }
-           }}
+        ] + common_ctd_params_list,
+        **common_ctd_params_dict
         )
 
 if st(20, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params'):  # False: #
@@ -88,9 +89,12 @@ if st(20, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params
     st.go = () != CTD_calc(['ini/CTD_calc-find_runs.ini',
               '--db_path', str(path_db),
               '--tables_list', f'{device}',
-              '--min_samples', '50',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
-              '--min_dp', '9',
-              '--b_keep_minmax_of_bad_files', 'True',
+              #'--table_nav', '',       # uncomment if nav data only in CTD data file
+              '--min_samples', '95',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
+              '--min_dp', '6',
+              # Followig Not Helped!
+              '--dt_between_min_minutes', '5',  # default 1s lead to split when commnication with sonde lost
+              # '--b_keep_minmax_of_bad_files', 'True',
               # '--b_skip_if_up_to_date', 'True', - not works. Delete previous table manually, and from ~not_sorted!
 
               # '--out.tables_list', '',
@@ -130,13 +134,72 @@ if st(30, f'Draw {device} data profiles'):  # False: #
                          #'--add_custom_list', f'{device_veusz_prefix}USE_time_search_runs',  # 'i3_USE_timeRange',
                          # '--add_custom_expressions',
                          # """'[["{log_row[Index]:%Y-%m-%dT%H:%M:%S}", "{log_row[DateEnd]:%Y-%m-%dT%H:%M:%S}"]]'""",
-                         # '--export_pages_int_list', '1', #'--b_images_only', 'True'
+                         '--export_pages_int_list', '8', #'--b_images_only', 'True'
+                         '--b_update_existed', 'True',  # todo: allow "delete_overlapped" time named files
                          '--b_interact', '0',
-                         #'--b_update_existed', 'True', # todo: delete_overlapped
-                         '--b_images_only', 'True'
+                         '--b_images_only', 'True'      # mandatory
                          #'--min_time', '2020-07-08T03:35:00',
                          #'--max_time', '2020-06-30T22:37:00',
                          ])
+
+
+
+def merge_two_runs(df_log, irow_to, irow_from=None):
+    """
+    Merge 2 runs: copy ends data to row to keep from log's next row and then delete it
+    :param df_log:
+    :param irow_to:
+    :param irow_from:
+    :return:
+    """
+    if irow_from is None:
+        irow_from = irow_to + 1
+    df_merging = df_log.iloc[[irow_to, irow_from], :]
+    k = input(f'{df_merging} rows selected (from, to). merge ? [y/n]:\n')
+    if k.lower()!='y':
+        print('done nothing')
+        return
+    cols_en = ['DateEnd'] + [col for col in df_log.columns if col.endswith('en')]
+    ind_to, ind_from = df_merging.index
+    df_log.loc[ind_to, cols_en] = df_log.loc[ind_from, cols_en]
+    cols_sum = ['rows', 'rows_filtered']
+    df_log.loc[ind_to, cols_sum] += df_log.loc[ind_from, cols_sum]
+    df_log.drop(ind_from, inplace=True)
+    print('ok, 10 nearest rows became:', df_log.iloc[(irow_from-5):(irow_to+5), :])
+
+
+if False:
+    # Merge each needed runs
+    import pandas as pd
+    from to_pandas_hdf5.h5toh5 import h5move_tables  #, h5index_sort, h5init
+
+    tbl = f'/{device}'
+    tbl_log = tbl + '/logRuns'
+    with pd.HDFStore(path_db) as store:
+        #     store = pd.HDFStore(path_db)
+        df_log = store[tbl_log]
+
+    # repeat if need:
+    merge_two_runs(df_log, irow_to, irow_from=None)
+
+    # write back
+    with pd.HDFStore(path_db.with_name('_not_sorted.h5')) as store_tmp:
+        try:
+            del store_tmp[tbl_log]
+        except KeyError:
+            pass
+        df_log.to_hdf(store_tmp, tbl_log, append=True, data_columns=True,
+                      format='table', dropna=True, index=False)
+    h5move_tables({
+        'db_path_temp': path_db.with_name('_not_sorted.h5'),
+        'db_path': path_db,
+        'tables': [tbl_log],
+        'tables_log': [],
+        'addargs': ['--checkCSI', '--verbose']
+        })
+
+    # Now run step 30 with veuszPropagate seting: '--b_update_existed', 'False' to save only modified vsz/images. After that delete old vsz and its images
+
 
 if False: #st(40)  # may not comment always because can not delete same time more than once
     # Deletng bad runs from DB:
@@ -165,7 +228,7 @@ if st(50, 'Extract navigation data at time station starts to GPX waypoints'):  #
          '--tables_list', f'{device}',
          '--tables_log_list', 'logRuns',
          '--gpx_names_funs_list', """i+1""",
-         '--gpx_names_fun_format', '{:03d}',
+         '--gpx_names_fun_format', '{:02d}',
          '--select_from_tablelog_ranges_index', '0',
          '--dt_search_nav_tolerance_minutes', '1'  # to trigger interpolate
          ])
@@ -193,12 +256,12 @@ if st(80, 'Gridding'):  # and False: #
     grid2d_vsz(['ini/grid2d_vsz.ini', '--db_path', str(path_db),
                 '--table_sections', r'navigation/sectionsCTD_routes',
                 '--subdir', 'CTD-sections',
-                '--begin_from_section_int', '11', #'1',  # values <= 1 means no skip
+                '--begin_from_section_int', '1', #'1',  # values <= 1 means no skip
                 '--data_columns_list', "Temp, Sal, SigmaTh, O2, O2ppm, Eh, pH, soundV",
                 # 'Eh, pH',  todo: N^2 - need calc before
                 '--max_depth', '250', #'250',
                 '--filter_depth_wavelet_level_int', '4',  # 4, 5, 5, 4, 6, 4, 4, 5
-                '--convexing_ctd_bot_edge_max', '50',
+                '--convexing_ctd_bot_edge_max', '40',  # set < bottom because it is harder to recover than delete
                 # '--x_resolution', '0.2',
                 # '--y_resolution', '5',
                 '--dt_search_nav_tolerance_seconds', '120',
@@ -207,7 +270,7 @@ if st(80, 'Gridding'):  # and False: #
                 '--b_temp_on_its90', 'True',  # modern probes
                 '--blank_level_under_bot', '-220',
                 # '--interact', 'False',
-                '--b_reexport_images', 'True'
+                #'--b_reexport_images', 'True'
                 ])
 
     # todo: bug: bad top and bottom edges
@@ -227,8 +290,7 @@ if st(110, 'Export csv with some new calculated paremeters'):  # False: #
         '--out.tables_list', 'None',
         ])
 
-
-if st(115, 'Export csv for Obninsk'):  # False: #
+if st(115, 'Export csv for Obninsk'):
     m = re.match(r'[\d_]*(?P<abbr_cruise>[^\d]*)(?P<i_cruise>.*)', path_cruise.name)
     i_cruise = int(m.group('i_cruise'))
     text_file_name_add = f"E090005O2_{m.group('abbr_cruise')}_{i_cruise}_H10_"
@@ -238,7 +300,7 @@ if st(115, 'Export csv for Obninsk'):  # False: #
         f'input.db_path="{path_db}"',
         f'input.tables=[{device}]',
         f'input.tables_log=[{device}/logRuns]',
-        f"out.text_path={path_cruise / 'txt_for_Obninsk'}",
+        f"out.text_path={path_cruise / device / 'txt_for_Obninsk'}",
         f'out.text_date_format="%Y-%m-%dT%H:%M:%S"',
         f'out.text_float_format="%.6g"',
         f'out.file_name_fun="f\'{text_file_name_add}{{i+1:0>2}}.csv\'"',
@@ -253,22 +315,6 @@ if st(115, 'Export csv for Obninsk'):  # False: #
             ]),
         'out.sep=";"'
         ])
-
-
-    CTD_calc([  # 'CTD_calc-find_runs.ini',
-        '--db_path', str(path_db),
-        '--tables_list', f'{device}',
-        '--tables_log', '{}/logRuns',
-        # '--min_samples', '99',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
-        # '--min_dp', '9',
-        # '--b_keep_minmax_of_bad_files', 'True',
-        '--path_csv', str(path_cruise / device / 'txt_processed'),
-        '--data_columns_list', 'Pres, Temp90, Cond, Sal, O2, O2ppm, pH, Eh, Lat, Lon, SA, sigma0, depth, soundV',  #
-        '--b_skip_if_up_to_date', 'True',
-        # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
-        '--out.tables_list', 'None',
-        ])
-
 
 if st(120, 'Meteo'):
     csv2h5([
@@ -341,7 +387,6 @@ if st(230, f'Draw {device} data profiles'):  # False: #
     # save all vsz files that uses separate code
     from to_pandas_hdf5.h5toh5 import h5log_names_gen
     import re
-    from subprocess import Popen, PIPE, STDOUT
 
     cfg_in = {
         'log_row': {},

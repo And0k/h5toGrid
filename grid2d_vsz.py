@@ -30,7 +30,7 @@ from scipy.ndimage.filters import gaussian_filter1d
 from shapely.geometry import MultiPolygon, asPolygon, Polygon
 
 from graphics import make_figure, interactive_deleter
-from other_filters import rep2mean, is_works, too_frequent_values, waveletSmooth, despike, check_time_diff, move2GoodI, \
+from other_filters import rep2mean, is_works, too_frequent_values, waveletSmooth, despike, check_time_diff, i_move2good, \
     inearestsorted, closest_node
 from to_pandas_hdf5.CTD_calc import add_ctd_params
 from to_pandas_hdf5.h5toh5 import h5select
@@ -463,7 +463,7 @@ def load_cur_veusz_section(cfg: Mapping[str, Any],
     vsz_names = [Path(v).name for v in cfg['vsz_files']['paths'] if good_name(Path(v).name)]
     if vsz_names:  # Load data from Veusz vsz
         l.warning('%s\nOpening matched %s as source...', navp_d['msg'], vsz_names[0])
-        vsz_path = cfg['vsz_files']['path'] / vsz_names[0]
+        vsz_path = cfg['vsz_files']['path'].with_name(vsz_names[0])
         vsze, ctd_dict = load_vsz(vsz_path, vsze, prefix='CTD')
         # vsz_path = vsz_path.with_suffix('')  # for comparbility with result of 'else' part below
         b_new_vsz = False
@@ -488,9 +488,10 @@ def load_cur_veusz_section(cfg: Mapping[str, Any],
         stem_no_inv = Path(cfg['vsz_files']['paths'][0]).stem
         if stem_no_inv.endswith('Inv'): stem_no_inv = stem_no_inv[:-3]
         len_stem_time_st = len(navp_d['stem_time_st'])
-        vsz_path = cfg['vsz_files']['path'] / (navp_d['stem_time_st'] + (
-            stem_no_inv[len_stem_time_st:] if len_stem_time_st < len(stem_no_inv) else 'Z'
-        ) + ('Inv' if navp_d['b_invert'] else ''))
+        vsz_path = cfg['vsz_files']['path'].with_name(''.join([
+            navp_d['stem_time_st'],
+            stem_no_inv[len_stem_time_st:] if len_stem_time_st < len(stem_no_inv) else 'Z',
+            'Inv' if navp_d['b_invert'] else '']))
         vsze.Save(str(vsz_path.with_suffix('.vsz')))
         b_new_vsz = True
         vsze, ctd_dict = load_vsz(veusze=vsze, prefix='CTD')
@@ -961,15 +962,15 @@ def data_sort_to_nav(navp: pd.DataFrame,
         ctd_prm['ends'] = np.delete(ctd_prm['ends'], ctd_idel)
         ctd_bdel = np.zeros_like(ctd_prm['starts'], bool);
         ctd_bdel[np.int32(ctd_idel)] = True
-        navp_ictd = move2GoodI(navp_ictd, ctd_bdel)
+        navp_ictd = i_move2good(navp_ictd, ctd_bdel)
         if np.flatnonzero(np.bincount(navp_ictd) > 1):  # inavp_with_many_runs =
             print("dbstop here: set manualy what to exclude")
     # remove rows
     bDel |= ctd.Pres.isna().values
     if any(bDel):
         ctd = ctd[~bDel]
-        ctd_prm['starts'] = move2GoodI(ctd_prm['starts'], bDel)
-        ctd_prm['ends'] = move2GoodI(ctd_prm['ends'], bDel, 'right')
+        ctd_prm['starts'] = i_move2good(ctd_prm['starts'], bDel)
+        ctd_prm['ends'] = i_move2good(ctd_prm['ends'], bDel, 'right')
 
     # Sort CTD data in order of points.
 
@@ -1102,11 +1103,11 @@ def filt_depth(cfg: Mapping[str, Any], s_ndepth: pd.Series) -> Tuple[np.ndarray,
 
         ax.plot(np.flatnonzero(ok), bed[ok], color='g', alpha=0.9, label='despike')
 
-        # Smooth some big spykes and noise              # cfg['process']['filter_depth_wavelet_level']=11
+        # Smooth some big spikes and noise              # cfg['process']['filter_depth_wavelet_level']=11
         depth_filt, ax = waveletSmooth(depth_filt, 'db4', cfg['process']['filter_depth_wavelet_level'], ax,
                                        label='Depth')
 
-        # Smooth small high frequency noise (do not use if big spykes exist!)
+        # Smooth small high frequency noise (do not use if big spikes exist!)
         sGood = ok.sum()  # ok[:] = False  # to use max of data as bed
         # to make depth follow lowest data execute: depth_filt[:] = 0
         n_smooth = 5  # 30
@@ -1412,7 +1413,8 @@ def main(new_arg=None):
     load_vsz = load_vsz_closure(cfg['program']['veusz_path'])
     try:
         # dir_walker
-        cfg['vsz_files'] = init_file_names(cfg['vsz_files'], b_interact=False)
+        cfg['vsz_files']['paths'], cfg['vsz_files']['nfiles'], cfg['vsz_files']['path'] = init_file_names(
+            **cfg['vsz_files'], b_interact=False)
 
         # Load data #################################################################
         with pd.HDFStore(cfg['in']['db_path'], mode='r') as cfg['in']['db']:
@@ -1621,7 +1623,7 @@ def main(new_arg=None):
 
 
                 # filter it
-                max_spyke_variants= [1, 5]; colors='gb'  #soft and hard filtering
+                max_spike_variants= [1, 5]; colors='gb'  #soft and hard filtering
                 if __debug__:
                     plt.style.use('bmh')
                     f, ax = plt.subplots()
@@ -1630,13 +1632,13 @@ def main(new_arg=None):
                     ax.plot(edge_dist, edge_bed, color='c', label='depth')
 
 
-                for max_spyke, key, clr in zip(max_spyke_variants, ok_edge.dtype.fields.keys(), colors):
-                    ok_edge[key]= ~bSpike1pointUp(edge_depth, max_spyke)
+                for max_spike, key, clr in zip(max_spike_variants, ok_edge.dtype.fields.keys(), colors):
+                    ok_edge[key]= ~b1spike_up(edge_depth, max_spike)
                     ok_edge[key][[0, -1]] = True #not filter edges
                     if __debug__:
 
                         ax.plot(edge_dist[ok_edge[key]], edge_depth[ok_edge[key]],
-                                color=clr, label= '{} spyke height= {}'.format(key, max_spyke))
+                                color=clr, label= '{} spike height= {}'.format(key, max_spike))
 
                 """
                 # Creating bottom edge of CTD path polygon.

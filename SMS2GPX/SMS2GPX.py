@@ -60,8 +60,8 @@ Convert SMS *.xml to *.gpx
     s = p.add_argument_group('process', 'calculation parameters')
     # s.add_argument('--b_missed_coord_to_zeros',
     #                     help='out all points even if no coordinates, but replace them to zeros')
-    s.add_argument('--date_min',
-                        help='UTC, not output data with < date_min (if date is smaller then treat it as bad, so tries get from stamp if b_all_time_from_stamp is False. If it smaller too then data discard, format like in 13.05.2017 09:00:00')
+    s.add_argument('--min_date',
+                        help='UTC, not output data with < min_date (if date is smaller then treat it as bad, so tries get from stamp if b_all_time_from_stamp is False. If it smaller too then data discard, format like in 13.05.2017 09:00:00')
 
     s = p.add_argument_group('program', 'Program behaviour')
     s.add_argument('--log',
@@ -106,7 +106,7 @@ lat:54.735578\nlong:20.544967\nspeed:0.07 \nT:19/10/13 05:03\nbat:100%\nhttp://m
     bWriteWithoutCoord = 'b_write_without_coord' in cfg['process'] and cfg['process']['b_write_without_coord']
     bAllTimeFromStamp = 'b_all_time_from_stamp' in cfg['process'] and cfg['process']['b_all_time_from_stamp']
     # min_str_date= cfg['process']['min_str_date'] if 'min_str_date' in cfg['process'] else datetime.strptime('01.01.2010', '%d.%m.%Y')
-    date_min = cfg['process']['date_min'] if 'date_min' in cfg['process'] else datetime.strptime('01.01.2010',
+    min_date = cfg['process']['min_date'] if 'min_date' in cfg['process'] else datetime.strptime('01.01.2010',
                                                                                                  '%d.%m.%Y')
     re_msgBad = re.compile(f'^(?P<Comment>[^T]*){r_time}.*')
 
@@ -128,7 +128,7 @@ lat:54.735578\nlong:20.544967\nspeed:0.07 \nT:19/10/13 05:03\nbat:100%\nhttp://m
         """
         if bAllTimeFromStamp or (b_year_first is None):
             time_b = getFromStamp(node)
-            if time_b < date_min:
+            if time_b < min_date:
                 return None
         else:
             try:
@@ -136,10 +136,10 @@ lat:54.735578\nlong:20.544967\nspeed:0.07 \nT:19/10/13 05:03\nbat:100%\nhttp://m
                     m_groupTime,
                     r'%y/%m/%d %H:%M' if b_year_first else r'%d/%m/%y %H:%M'
                     ) - cfg['in']['dt_from_utc']
-                if time_b < date_min: raise ValueError
+                if time_b < min_date: raise ValueError
             except ValueError:
                 time_b = getFromStamp(node)
-                if time_b > date_min:
+                if time_b > min_date:
                     print('bad time: "' + m_groupTime + '" replaced by stamp')
                 else:
                     return None
@@ -213,7 +213,7 @@ lat:54.735578\nlong:20.544967\nspeed:0.07 \nT:19/10/13 05:03\nbat:100%\nhttp://m
                     Comment = body if bWriteComments else None  # Consider full message as comment
                     try:
                         time_b = getFromStamp(neighbor)
-                        if time_b < date_min:
+                        if time_b < min_date:
                             continue  # raise ValueError
                     except:
                         time_b = None

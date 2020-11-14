@@ -74,7 +74,7 @@ def config_in(
         b_raise_on_err=True,
         max_text_width=1000,
         blocksize_int=20000000,
-        b_make_time_inc=True,
+        sort=True,
         **kwargs        # keep for clize
         ):
     """
@@ -99,7 +99,7 @@ def config_in(
     :param max_text_width: maximum length of text fields (specified by "(text)" in header) for dtype in numpy loadtxt
     :param chunksize_percent_float: percent of 1st file length to set up hdf5 store tabe chunk size
     :param blocksize_int: bytes, chunk size for loading and processing csv
-    :param b_make_time_inc: if time not sorted then modify time values trying to affect small number of values. This is different from sorting rows which is performed at last step after the checking table in database
+    :param sort: if time not sorted then modify time values trying to affect small number of values. This is different from sorting rows which is performed at last step after the checking table in database
     :param fun_date_from_filename: function(file_stem: str, century: Optional[str]=None) -> Any[compartible to input of pandas.to_datetime()]: to get date from filename to time column in it.
 
     :param csv_specific_param_dict: not default parameters for function in csv_specific_proc.py used to load data
@@ -243,7 +243,8 @@ def main(cfg_in, cfg_out, cfg_filter, cfg_program):  #
         lf = LoggingStyleAdapter(init_logging(logging, None, cfg.program.log, cfg.rogram.verbose))
         print('\n' + this_prog_basename(__file__), end=' started. ')
         try:
-            cfg['in'] = init_file_names(cfg_in, cfg.rogram.b_interact)
+            cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
+                **cfg['in'], b_interact=cfg['program']['b_interact'])
         except Ex_nothing_done as e:
             print(e.message)
             return ()

@@ -89,7 +89,7 @@ t_start_utc = {
     }
     
 
-date_min_NOT_USED = {   # not output data < date_min, UTC
+min_date_NOT_USED = {   # not output data < min_date, UTC
         30: '2019-07-09T17:54',
         34: '2019-07-10T15:10',
         31: '2019-07-10T16:59',
@@ -114,7 +114,7 @@ date_min_NOT_USED = {   # not output data < date_min, UTC
 
     }    
 
-date_max = defaultdict(lambda: None, {
+max_date = defaultdict(lambda: None, {
     7:  '2019-07-11T17:21',
     4:  '2019-07-11T17:41',
     11: '2019-07-11T18:04',
@@ -124,20 +124,20 @@ date_max = defaultdict(lambda: None, {
     19: '2019-09-03T19:00',
     })
 
-date_min = defaultdict(lambda x: '2019-11-06T10:50', 0)
-date_max = defaultdict(lambda x: '2019-11-06T12:20', 0)
+min_date = defaultdict(lambda x: '2019-11-06T10:50', 0)
+max_date = defaultdict(lambda x: '2019-11-06T12:20', 0)
 """
 # dafault and specific to probe limits
-date_min = defaultdict(lambda: None, {9: '2019-12-23T17:00'})  # '2019-11-06T12:35''2019-11-06T13:34'
-date_max = defaultdict(lambda: None, {9: '2019-12-23T17:35'})
+min_date = defaultdict(lambda: None, {9: '2019-12-23T17:00'})  # '2019-11-06T12:35''2019-11-06T13:34'
+max_date = defaultdict(lambda: None, {9: '2019-12-23T17:35'})
 
-date_min = defaultdict(
+min_date = defaultdict(
     lambda: '2020-06-10T12:50',
     # '2020-01-17T13:00','2019-11-19T12:30',  # '2019-11-08T12:20', 2019-11-08T12:00 '2019-11-06T12:35', # '2019-11-06T10:50' '2019-07-16T17:00:00' 2019-06-20T14:30:00  '2019-07-21T20:00:00', #None,
     {  # 0: #'2019-08-07T16:00:00' '2019-08-17T18:00', 0: '2018-04-18T07:15',
         # 1: '2018-05-10T15:00',
         })
-date_max = defaultdict(
+max_date = defaultdict(
     lambda: '2020-06-10T15:20',
     #  '2020-01-17T15:00','2019-11-06T13:34','2019-11-06T12:20' '2019-08-31T16:38:00' '2019-07-19T17:00:00', # '2019-08-18T01:45:00', # None,
     {  # 0:  # '2019-09-09T17:00:00' '2019-09-06T04:00:00' '2019-08-27T02:00', 0: '2018-05-07T11:55',
@@ -156,12 +156,12 @@ def dt_from_utc_2000(probe):
                                                            )) / np.timedelta64(1, 's')) if t_start_utc.get(probe) else 0
 
 
-def f_next_date_min(key):
+def f_next_min_date(key):
     """one by one work"""
-    d_search = {**t_start_utc, **date_min}
+    d_search = {**t_start_utc, **min_date}
     try:
         val = d_search[key]
-    except KeyError:  # key is not in date_min/t_start_utc. Nothing to compare
+    except KeyError:  # key is not in min_date/t_start_utc. Nothing to compare
         return None
 
     for k, v in sorted(d_search.items(), key=lambda x: x[1]):
@@ -202,9 +202,9 @@ if start == 1:
                 '--blocksize_int', '10000000',  # 10Mbt
                 '--table', re.sub('^inkl_0', 'incl',
                                   re.sub('^[\d_]*|\*', '', in_file.stem).lower()),
-                '--date_min', np.datetime_as_string(np.datetime64(date_min[probe], 's')),  # + np.timedelta64(0, 'm')
-                '--date_max', np.datetime_as_string(np.datetime64(date_max[probe], 's')),
-                # f_next_date_min(probe) '2019-07-04T21:00:00',
+                '--min_date', np.datetime_as_string(np.datetime64(min_date[probe], 's')),  # + np.timedelta64(0, 'm')
+                '--max_date', np.datetime_as_string(np.datetime64(max_date[probe], 's')),
+                # f_next_min_date(probe) '2019-07-04T21:00:00',
                 '--db_path', str(db_path),
                 '--log', str(scripts_path / 'log/csv2h5_inclin_Kondrashov.log'),
                 # '--b_raise_on_err', '0',  # ?! need fo this file only?

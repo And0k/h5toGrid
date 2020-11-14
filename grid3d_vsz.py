@@ -84,8 +84,8 @@ tbl_sec_points = f'{tblN}/sectionsCTD_waypoints'  # '1608_CTDsections_waypoints'
 
 cfg = {'gpx': {}, 'vsz_files': {}, 'db_path': Path(db_path),
        'filter': {'min': {'Lat': 10, 'Lon': 10}, 'max': {'Lat': 70, 'Lon': 70}}}
-cfg['vsz_files'] = {'path': cfg['db_path'].parent / 'CTD-sections', 'filemask': '??????_????Z*.vsz'}
-cfg['program'] = {'log': cfg['vsz_files']['path'] / 'CTDprofilesEnds.txt'}
+cfg['vsz_files'] = {'path': Path(cfg['db_path'].parent / 'CTD-sections' / '??????_????Z*.vsz')}
+cfg['program'] = {'log': cfg['vsz_files']['path'].with_name('CTDprofilesEnds.txt')}
 # cfg['program']['logs']= 'CTDprofilesEnds.txt'
 cfg['program']['veusz_path'] = u'C:\\Program Files (x86)\\Veusz'  # directory of Veusz
 load_vsz = load_vsz_closure(Path(cfg['program']['veusz_path']))
@@ -101,7 +101,7 @@ b_filter_time = False
 path_dir_temp = cfg['db_path'].with_name('_subproduct')
 # ----------------------------------------------------------------------
 # dir_walker
-vszFs = list(cfg['vsz_files']['path'].glob(cfg['vsz_files']['filemask']))  #cfg['vsz_files']['filemask'])]
+vszFs = list(Path.glob(cfg['vsz_files']['path']))
 print('Process {} sections'.format(len(vszFs)))
 # Load data #################################################################
 bFirst = True

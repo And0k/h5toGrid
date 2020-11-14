@@ -319,7 +319,7 @@ except ValueError:  # some default value if no holes
 h5init(cfg['in'], cfg['out'])  # cfg['in'] = {}
 try:
     cfg['out']['b_skip_if_up_to_date'] = False  # not copy prev data: True not implemented
-    store, dfLogOld = h5temp_open(cfg['out'])
+    dfLogOld, store, cfg['out']['b_skip_if_up_to_date'] = h5temp_open(**cfg['out'])
     # with pd.HDFStore(fileOut, mode='w') as store:
     # Append to Store
     if df.empty:  # log['rows']==0
@@ -338,7 +338,7 @@ if b_appended:
         # sleep(2)
     failed_storages = h5move_tables(cfg['out'])
     print('Ok.', end=' ')
-    h5index_sort(cfg['out'], out_storage_name=cfg['out']['db_base'] + '-resorted.h5',
+    h5index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5",
                  in_storages=failed_storages)
 
 # @+node:korzh.20180520131532.4: ** garbage

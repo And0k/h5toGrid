@@ -89,8 +89,8 @@ def my_argparser(varargs=None):
                              help='path to pytables hdf5 store to load data. May use patterns in Unix shell style')
     s.add('--tables_list',   help='table names in hdf5 store to get data. Uses regexp')
     s.add('--chunksize_int', help='limit loading data in memory', default='50000')
-    s.add('--date_min',      help='time range min to use', default='2019-01-01T00:00:00')
-    s.add('--date_max',      help='time range max to use')
+    s.add('--min_date',      help='time range min to use', default='2019-01-01T00:00:00')
+    s.add('--max_date',      help='time range max to use')
     s.add('--fs_float',      help='sampling frequency of input data, Hz')
 
     s = p.add_argument_group('filter',
@@ -273,54 +273,56 @@ def gen_intervals(starts_time: Union[np.ndarray, pd.Series], dt_interval: Any) -
 
 
 def h5q_starts2coord(
-        cfg_in: Mapping[str, Any],
-        starts_time: Optional[Union[np.ndarray, pd.Series, list]] = None,
-        dt_interval: Optional[timedelta] = None
+        db_path,
+        table,
+        starts_time: Union[np.ndarray, pd.Series, list],
+        dt_interval: timedelta
         ) -> pd.Index:
     """
     Edge coordinates of index range query
     As it is nealy part of h5toh5.h5select() may be depreshiated? See Note
     :param starts_time: array or list with strings convertable to pandas.Timestamp
     :param dt_interval: pd.TimeDelta
-    :param: cfg_in, dict with fields:
-        db_path, str
-        table, str
-        time_intervals_start, to use instead _starts_time_ if it is None
+    :param db_path, str
+    :param table, str
     :return: ``qstr_range_pattern`` edge coordinates
+    See also: h5_dask_pandas.h5q_interval2coord
     Note: can use instead:
     >>> from to_pandas_hdf5.h5toh5 import h5select
-    ... with pd.HDFStore(cfg_in['db_path'], mode='r') as store:
-    ...     df, bbad = h5select(store, cfg_in['table'], columns=None, query_range_lims=cfg_in['timerange'])
+    ... with pd.HDFStore(db_path, mode='r') as store:
+    ...     df, bbad = h5select(store, table, columns=None, query_range_lims=timerange)
 
     """
     # qstr_range_pattern = f"index>=st[{i}] & index<=en[{i}]"
-    if starts_time is None:
-        starts_time = cfg_in['time_intervals_start']
     if not (isinstance(starts_time, list) and isinstance(starts_time[0], str)):
         starts_time = np.array(starts_time).ravel()
-    if dt_interval is None:
-        dt_interval = cfg_in['dt_interval']
 
-    print(f"loading {len(starts_time)} ranges from {cfg_in['db_path']}/{cfg_in['table']}: ")
+    print(f"loading {len(starts_time)} ranges from {db_path}/{table}: ")
     ind_st_last = 0
-    with pd.HDFStore(cfg_in['db_path'], mode='r') as store:
-        table_pytables = store.get_storer(cfg_in['table']).table
+    with pd.HDFStore(db_path, mode='r') as store:
+        table_pytables = store.get_storer(table).table
         to_end = table_pytables.nrows
         for i, (st, en) in enumerate(gen_intervals(starts_time, dt_interval)):
             qstr = "index>=st & index<=en"
-            ind_all = store.select_as_coordinates(cfg_in['table'], qstr, start=ind_st_last)
+            ind_all = store.select_as_coordinates(table, qstr, start=ind_st_last)
             # ind_lim = table_pytables.get_where_list("(index>=st) & (index<=en)", condvars={
             # "st": np.int64(lim), "en": np.int64(lim + dt_interval)}, start=st_last, step=table_pytables.nrows)
             nrows = len(ind_all)
             if nrows:
                 l.debug('%d. [%s, %s] - %drows', i + 1, st, en, nrows)
                 ind_st_en = ind_all[[0, -1]]  # .values
-                ind_lim_last = ind_st_en[-1]
+                ind_st_last = ind_st_en[0]  # can not use last because intervals may overlap
             else:  # no data
                 # l.debug('%d. [%s, %s] - no data', i + 1, st, en)
+                try:  # Check that will no more data
+                    nd_all = store.select_as_coordinates(table, "index>=st", start=ind_st_last)
+                    if nd_all.empty:
+                        break
+                except MemoryError:
+                    pass
                 continue
             yield ind_st_en
-
+    #
     # [t_prev_interval_start.isoformat(), t_interval_start.isoformat()])
 
 
@@ -342,7 +344,7 @@ def h5_velocity_by_intervals_gen(cfg: Mapping[str, Any], cfg_out: Mapping[str, A
     """
     # Prepare cycle
     if cfg_out.get('split_period'):
-        # variant 1. genereate ragular intervals (may be with overlap)
+        # variant 1. generate regular intervals (may be with overlap)
         def gen_loaded(tbl):
             cfg['in']['table'] = tbl
             # To obtain ``t_intervals_start`` used in query inside gen_data_on_intervals(cfg_out, cfg)
@@ -354,14 +356,18 @@ def h5_velocity_by_intervals_gen(cfg: Mapping[str, Any], cfg_out: Mapping[str, A
                     cfg_out['split_period'])
                 t_intervals_start = (
                         t_intervals_start.to_numpy(dtype="datetime64[ns]")[np.newaxis].T + dt_shifts).flatten()
-                if cfg['in']['date_max']:
+                if cfg['in']['max_date']:
                     idel = t_intervals_start.searchsorted(
-                        np.datetime64(cfg['in']['date_max'] - pd_period_to_timedelta(cfg_out['split_period'])))
+                        np.datetime64(cfg['in']['max_date'] - pd_period_to_timedelta(cfg_out['split_period'])))
                     t_intervals_start = t_intervals_start[:idel]
                 cfg['in']['time_intervals_start'] = t_intervals_start  # to save queried time - see main()
-            for start_end in h5q_starts2coord(cfg['in'], t_intervals_start, dt_interval=cfg['proc']['dt_interval']):
-                a = h5_load_range_by_coord(cfg['in'], start_end)
-                d, i_burst = filt_data_dd(a, cfg['in'])
+            for start_end in h5q_starts2coord(
+                    cfg['in']['db_path'], cfg['in']['table'], t_intervals_start,
+                    dt_interval=cfg['proc']['dt_interval']
+                    ):
+                a = h5_load_range_by_coord(**cfg['in'], range_coordinates=start_end)
+                d, i_burst = filt_data_dd(a, cfg['in']['dt_between_bursts'], cfg['in']['dt_hole_warning'],
+                                          cfg['in'].get('min_p'), cfg['filter'])
                 n_bursts = len(i_burst)
                 if n_bursts > 1:  # 1st is always 0
                     l.info('gaps found: (%s)! at %s', n_bursts - 1, i_burst[1:] - 1)
@@ -623,7 +629,8 @@ def main(new_arg=None, **kwargs):
     multitaper.warn = l.warning  # module is not installed but copied. so it can not import this dependace
 
     try:
-        cfg['in'] = init_file_names(cfg['in'], cfg['program']['b_interact'], path_field='db_path')
+        cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
+            **{**cfg['in'], 'path': cfg['in']['db_path']}, b_interact=cfg['program']['b_interact'])
     except Ex_nothing_done as e:
         print(e.message)
         return ()
@@ -639,10 +646,10 @@ def main(new_arg=None, **kwargs):
     else:
         cfg['proc']['dt_interval'] = np.timedelta64(cfg['proc']['dt_interval'])
         # cfg['proc']['dt_interval'] = np.timedelta64('5', 'm') * 24
-        cfg['proc']['time_intervals_start'] = np.array(cfg['proc']['time_intervals_center'], np.datetime64) - \
-                                              cfg['proc']['dt_interval'] / 2
-    # minimum time between blocks, required in filt_data_dd().
-    cfg['in']['burst_min'] = None  # If None report any interval bigger then min(1st, 2nd)
+        cfg['proc']['time_intervals_start'] = np.array(cfg['proc']['time_intervals_center'], np.datetime64) - cfg['proc']['dt_interval'] / 2
+    # minimum time between blocks, required in filt_data_dd() for data quality control messages:
+    cfg['in']['dt_between_bursts'] = None  # If None report any interval bigger then min(1st, 2nd)
+    cfg['in']['dt_hole_warning'] = np.timedelta64(2,'s')
 
     cfg_out['chunksize'] = cfg['in']['chunksize']
     h5init(cfg['in'], cfg_out)
@@ -909,10 +916,10 @@ def psd_calc_other_methods(df, prm: Mapping[str, Any]):
             'tables': ['incl.*'],
             'split_period': '2H',  # pandas offset string (D, 5D, H, ...)
             'overlap': 0.5,
-            'date_min': datetime.strptime('2018-11-16T15:30:00', '%Y-%m-%dT%H:%M:%S'),
-            'date_max': datetime.strptime('2018-12-14T14:35:00', '%Y-%m-%dT%H:%M:%S'),
-            # 'date_min': datetime.strptime('2019-02-11T14:00:00', '%Y-%m-%dT%H:%M:%S'),
-            # 'date_max': datetime.strptime('2019-02-28T14:00:00', '%Y-%m-%dT%H:%M:%S'),              #.replace(tzinfo=timezone.utc), gets dask error
+            'min_date': datetime.strptime('2018-11-16T15:30:00', '%Y-%m-%dT%H:%M:%S'),
+            'max_date': datetime.strptime('2018-12-14T14:35:00', '%Y-%m-%dT%H:%M:%S'),
+            # 'min_date': datetime.strptime('2019-02-11T14:00:00', '%Y-%m-%dT%H:%M:%S'),
+            # 'max_date': datetime.strptime('2019-02-28T14:00:00', '%Y-%m-%dT%H:%M:%S'),              #.replace(tzinfo=timezone.utc), gets dask error
             'chunksize': 1000000,  # 'chunksize_percent': 10,  # we'll repace this with burst size if it suit
             # 'max_g_minus_1' used only to replace bad with NaN
         },

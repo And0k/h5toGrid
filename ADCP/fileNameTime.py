@@ -82,7 +82,8 @@ if __name__ == '__main__':
         raise (e)
 
     try:
-        cfg['in'] = init_file_names(cfg['in'])
+        cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
+            **cfg['in'], b_interact=cfg['program']['b_interact'])
     except Ex_nothing_done as e:
         print(e.message)
         exit()
@@ -166,7 +167,7 @@ if __name__ == '__main__':
             continue
         # add time shift specified in configuration .ini
         date = np.atleast_1d(date)
-        tim, b_ok = time_corr(date, cfg['in'], b_make_time_inc=True)
+        tim, b_ok = time_corr(date, cfg['in'], sort=True)
         # Save last time to can filter next file
         cfg['in']['time_last'] = date[-1]
         log_item['rows'] = 1

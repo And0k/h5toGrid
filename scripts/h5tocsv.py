@@ -70,66 +70,63 @@ will be sabstituted with correspondng input file names.
         file_names_add = eval(compile(cfg['out']['file_names_add_fun'], [], 'eval'))
     else:
         file_names_add = lambda i: str(i) + '.csv'
-    iSt = 1
+    rec_num_st = 1
     with pd.HDFStore(cfg['in']['path'], mode='r') as storeIn:
-        for tblD, fileOutN in zip(cfg['in']['table'],
+        for tbl, fileOutN in zip(cfg['in']['table'],
                                   cfg['out']['file_names']):
             if False:  # Show table info
-                storeIn.get_storer(tblD).table  # ?
+                storeIn.get_storer(tbl).table  # ?
                 nodes = sorted(storeIn.root.__members__)  # , key=number_key
                 print(nodes)
                 # storeIn.get_node('CTD_Idronaut(Redas)').logFiles        # next level nodes
-            print(tblD, end='. ')
+            print(tbl, end='. ')
             bFirst_data_from_table = True
-            tblL = tblD + '/logFiles'
-            dfL = storeIn[tblL]
+            df_log = storeIn[f'{tbl}/logFiles']
 
             # Get navigation at data points
-            qstr = qstr_trange_pattern.format(dfL.index[0], dfL['DateEnd'][-1])
+            qstr = qstr_trange_pattern.format(df_log.index[0], df_log['DateEnd'][-1])
             print('loading all needed nav: ', qstr, end='... ')
             Nav = storeIn.select(cfg['in']['table_nav'], qstr, columns=[])
             Nind_st = storeIn.select_as_coordinates(cfg['in']['table_nav'], qstr)[0]
-            dfL.index = dfL.index.tz_convert('UTC')
-            Nind = inearestsorted(Nav.index.values, dfL.index.values)
+            df_log.index = df_log.index.tz_convert('UTC')
+            Nind = inearestsorted(Nav.index.values, df_log.index.values)
 
             # strLog= '{0:%d.%m.%Y %H:%M:%S} - {1:%d. %H:%M:%S%z}\t{2}rows'\t{2}rows'.format(
-            #     dfL.index[0], dfL.index[-1], dfL.size) #\t{Lat}\t{Lon}\t{strOldVal}->\t{mag}
+            #     df_log.index[0], df_log.index[-1], df_log.size) #\t{Lat}\t{Lon}\t{strOldVal}->\t{mag}
             # print(strLog)
 
             # Check time difference between nav found and time of requested points
-            dT = np.array(Nav.index[Nind].values - dfL.index.values, 'timedelta64[ns]')
+            dT = np.array(Nav.index[Nind].values - df_log.index.values, 'timedelta64[ns]')
             bBad = np.any(abs(dT) > np.timedelta64(cfg['process']['dt_search_nav_tolerance']))
             if np.any(bBad):
                 print('Bad nav. data coverage: difference to nearest point in time [min]:')
                 print('\n'.join(['{}. {}:\t{}{:.1f}'.format(i, tdat, m, dt.seconds / 60) for i, tdat, m, dt in
-                                 zip(np.flatnonzero(bBad), dfL.index[bBad],
+                                 zip(np.flatnonzero(bBad), df_log.index[bBad],
                                      np.where(dT[bBad].astype(np.int64)
                                               < 0, '-', '+'), np.abs(dT[bBad]))]))
             Nind += Nind_st
             nav2add = storeIn.select(cfg['in']['table_nav'], where=Nind,
                                      columns=cfg['out']['nav_cols'])
-            print("{} rows loaded".format(dfL.shape[0]))
+            print("{} rows loaded".format(df_log.shape[0]))
 
             # Save waypoints to csv
-            fname = fileOutN + '_POS.csv'
-            fileOutPN = os_path.join(fileOutP, fname)
-            nav2add = nav2add.assign(Date=dfL.index, Identific=np.arange(start=iSt, stop=iSt + dfL.shape[0])
-                                     ).set_index(np.arange(start=iSt, stop=iSt + dfL.shape[0]), drop=False)
+            fileOutPN = os_path.join(fileOutP, f'{fileOutN}_POS.csv')
+            nav2add = nav2add.assign(Date=df_log.index, Identific=np.arange(start=rec_num_st, stop=rec_num_st + df_log.shape[0])
+                                     ).set_index(np.arange(start=rec_num_st, stop=rec_num_st + df_log.shape[0]), drop=False)
             nav2add[['Identific', 'Date', 'Lat', 'Lon']].to_csv(
                 fileOutPN, mode='a', header=not os_path.isfile(fileOutPN),
                 date_format=date_format_ISO9115, float_format='%2.8f', index_label='Rec_num')
             if True:
-                for i, r in enumerate(dfL.itertuples(), start=iSt):  # name=None
+                for i, r in enumerate(df_log.itertuples(), start=rec_num_st):  # name=None
                     print('.', end='')
                     sys_stdout.flush()
                     # str_time_short= '{:%d %H:%M}'.format(r.Index.to_datetime())
                     # timeUTC= r.Index.tz_convert(None).to_datetime()
                     # str_time_long= ('{:'+date_format_ISO9115+'}').format(timeUTC)
-                    fname = fileOutN + file_names_add(i)
 
                     # Save station data
                     qstr = qstr_trange_pattern.format(r.Index, r.DateEnd)
-                    Dat = storeIn.select(tblD, qstr)
+                    Dat = storeIn.select(tbl, qstr)
                     Dat = Dat.assign(Date=Dat.index.tz_convert(None), Identific=i).set_index(
                         np.arange(1, Dat.shape[0] + 1), drop=False)
                     cols = Dat.columns.tolist()
@@ -142,12 +139,12 @@ will be sabstituted with correspondng input file names.
 
                     # cols = list(df.columns.values)
                     # pd.merge(ind, Dat) #Dat.join
-                    Dat[cfg['out']['data_columns']].to_csv(os_path.join(fileOutP, fname),
+                    Dat[cfg['out']['data_columns']].to_csv(os_path.join(fileOutP, f'{fileOutN}{file_names_add(i)}'),
                                                                     date_format=date_format_ISO9115,
                                                                     float_format='%4.4g',
                                                                     index_label='Rec_num')  # to_string, line_terminator='\r\n'
 
-            iSt += nav2add.shape[0]
+            rec_num_st += nav2add.shape[0]
             print('')
         if len(cfg['in']['table']) > 1:
             # Save combined data to gpx
