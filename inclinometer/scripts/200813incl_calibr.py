@@ -8,10 +8,15 @@ sys.path.append(str(Path(scripts_path).parent.resolve()))  # os.getcwd()
 from inclinometer.incl_calibr import main as incl_calibr
 
 
-step = 2  # 1
+step = 1  # 2
+
 
 if step == 1:
-    incl_calibr(['ini/200813incl_calibr-lab-b.yml'])
+    incl_calibr(['ini/201219incl_load-caliblab.yml'])
+    """
+    200813incl_calibr-lab-b.yml'])
+    """
+
 
 if step == 2:
     """ ### Coefs to convert inclination to |V| and zero calibration (not heading) ###
@@ -30,7 +35,7 @@ if step == 2:
     from veuszPropagate import __file__ as file_veuszPropagate
 
 
-    probes = np.arange(12,31)  #[23,30,32] 17,18 [3,12,15,19,1,13,14,16] [1,4,5,7,11,12]  # [4,5,11,12]   #[29, 30, 33]  # [3, 14, 15, 16, 19]
+    probes = np.arange(12,40)  #[23,30,32] 17,18 [3,12,15,19,1,13,14,16] [1,4,5,7,11,12]  # [4,5,11,12]   #[29, 30, 33]  # [3, 14, 15, 16, 19]
     channels_list = ['M', 'A']  # []
 
     # stand data - input for 1st step

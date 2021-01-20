@@ -1,0 +1,33 @@
+# @package _global_
+defaults:
+  - incl_calibr_hy
+
+input:
+  path_cruise: d:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe
+  raw_subdir: 201218
+  probes: ['36', '37', '38']
+  probes_prefix: incl
+  raw_pattern: "*{prefix:}{number:0>2}*.[tT][xX][tT]"
+
+#  timerange_zeroing_dict:
+#    incl14: [2020-07-10T21:31:00, 2020-07-10T21:39:00]
+  db_path: d:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe\190710incl.h5  # db_coefs?
+
+filter:
+  min_date: {'36': 18.12.2020 14:14:30,
+             '37': 18.12.2020 15:02:30,
+             '38': 18.12.2020 13:28:45,
+            }
+  max_date: {'36': 18.12.2020 14:38:50,
+             '37': 18.12.2020 15:24:35,
+             '38': 18.12.2020 13:58:30
+            }
+
+out:
+  db_path: 201218_calibr-lab.h5
+  aggregate_period_s: [Null, 2, 600, 7200]
+
+# not implemented:
+#program:
+#  step_start: 1
+#  step_end: 1

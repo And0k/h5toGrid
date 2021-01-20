@@ -37,7 +37,7 @@ A = TypeVar('A')
 def fallible(*exceptions, logger=None) \
         -> Callable[[Callable[..., A]], Callable[..., Optional[A]]]:
     """
-    Decorator (very loosely inspired by the Maybe monad and lifting)
+    Decorator (very loosely inspired by the Maybe monad and lifting) to return None if specified errors are caught
     :param exceptions: a list of exceptions to catch
     :param logger: pass a custom logger; None means the default logger,
                    False disables logging altogether.
@@ -368,7 +368,7 @@ def type_fix(name: str, opt: Any) -> Tuple[str, Any]:
         suffix = key_splitted[-1] if key_splitted_len > 1 else ''
     name_out = None
     try:
-        if suffix in {'list', 'names'}:  # , '_ends_with_list' -> '_ends_with'
+        if suffix in {'list', 'names'}:  # , '_endswith_list' -> '_endswith'
             # parse list
             name_out = '_'.join(key_splitted[0:-1])
             if not opt:
@@ -815,7 +815,7 @@ def cfg_from_args(p, arg_add, **kwargs):
                         for ends in suffixes:
                             if key_level1.endswith(ends):
                                 new_name = key_level1[:-len(ends)]
-                                if ends == 'date' and new_name.endswith('min') or new_name.endswith('max'):  # exclusion for min_date and max_date
+                                if ends == '_date' and new_name.startswith(('min', 'max')):  # exclusion for min_date and max_date
                                     break  # todo: exclude all excisions that leave only special prefixes
                                 v[new_name] = opt
                                 del v[key_level1]
@@ -1004,8 +1004,8 @@ def generator_good_between(i_start=None, i_end=None):
 def init_file_names(
         path=None, filemask=None, ext=None,
         b_search_in_subdirs=False,
-        exclude_dirs_ends_with=('bad', 'test'),
-        exclude_files_ends_with=None,
+        exclude_dirs_endswith=('bad', 'test'),
+        exclude_files_endswith=None,
         start_file=0,
         end_file=None,
         b_interact=True,
@@ -1020,8 +1020,8 @@ def init_file_names(
 
     - path: name of file
     - filemask', 'ext': optional - path mask or it's part
-        exclude_files_ends_with - additional filter for ends in file's names
-        b_search_in_subdirs, exclude_dirs_ends_with - to search in dirs recursively
+        exclude_files_endswith - additional filter for ends in file's names
+        b_search_in_subdirs, exclude_dirs_endswith - to search in dirs recursively
         start_file, end_file - exclude files before and after this values in search list result
     :param path_field: assigns path to this field initially
     :param b_interact: do ask user to proceed? If false proseed silently
@@ -1035,7 +1035,7 @@ def init_file_names(
     path = set_cfg_path_filemask(path, filemask, ext, cfg_search_parent)
 
     # Filter unused directories and files
-    filt_dirCur = lambda f: bGood_dir(f, namesBadAtEdge=exclude_dirs_ends_with)
+    filt_dirCur = lambda f: bGood_dir(f, namesBadAtEdge=exclude_dirs_endswith)
 
     def skip_to_start_file(fun):
         if start_file or end_file:
@@ -1047,9 +1047,9 @@ def init_file_names(
             return call_skip
         return fun
 
-    def skip_files_ends_with(fun):
-        call_skip = lambda *args, **kwargs: fun(*args, namesBadAtEdge=exclude_files_ends_with) if \
-            exclude_files_ends_with else fun(*args, namesBadAtEdge=('coef.txt',))
+    def skip_files_endswith(fun):
+        call_skip = lambda *args, **kwargs: fun(*args, namesBadAtEdge=exclude_files_endswith) if \
+            exclude_files_endswith else fun(*args, namesBadAtEdge=('coef.txt',))
         return call_skip
 
     def print_file_name(fun):
@@ -1067,7 +1067,7 @@ def init_file_names(
         print_file_name = lambda fun: fun
 
     @print_file_name
-    @skip_files_ends_with
+    @skip_files_endswith
     @skip_to_start_file
     def filt_file_cur(fname, mask, namesBadAtEdge):
         # if fnmatch(fname, mask) and bGood_NameEdge(fname, namesBadAtEdge):
@@ -1464,7 +1464,7 @@ class LoggingStyleAdapter(logging.LoggerAdapter):
         super(LoggingStyleAdapter, self).__init__(logger, extra or {})
 
     def process(self, msg, kwargs):
-        return ('[%s] %s' % (self.extra['id'], msg) if 'id' in self.extra else msg,
+        return (f'[{self.extra["id"]}] {msg}' if 'id' in self.extra else msg,
                 kwargs)
 
     def log(self, level, msg, *args, **kwargs):
@@ -1531,7 +1531,7 @@ def open_csv_or_archive_of_them(filename: Union[PurePath, Iterable[Union[Path, s
     read_mode = 'rb' if binary_mode else 'r'
 
 
-
+    # not iterates inside many archives so if have iterator then just yield them opened
     if hasattr(filename, '__iter__') and not isinstance(filename, (str, bytes)):
         for text_file in filename:
             if pattern and not fnmatch(text_file, pattern):

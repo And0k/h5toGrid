@@ -254,7 +254,7 @@ if st(115, 'Export csv for Obninsk'):  # False: #
         'out.sep=";"'
         ])
 
-
+if False:
     CTD_calc([  # 'CTD_calc-find_runs.ini',
         '--db_path', str(path_db),
         '--tables_list', f'{device}',

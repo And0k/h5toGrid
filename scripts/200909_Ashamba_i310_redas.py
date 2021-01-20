@@ -20,7 +20,7 @@ from to_vaex_hdf5.nmea2h5 import main as nmea2h5
 
 
 st.go = True   # False #
-st.start = 1   # 5 30 70 80
+st.start = 110   # 5 30 70 80
 st.end = 230   # 60 80 120
 
 path_cruise = Path(r'd:\WorkData\BlackSea\200909_Ashamba')

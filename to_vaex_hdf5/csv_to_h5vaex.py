@@ -59,10 +59,13 @@ except ImportError:
             TYPES = None
 
 
+
+
 if __name__ == '__main__':
     lf = None  # see main(): l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
 else:
     lf = LoggingStyleAdapter(logging.getLogger(__name__))
+
 
 def h5pandas_to_vaex_file_names(file_in: Union[None, str, PurePath] = None, path_out_str: Optional[str] = None):
     """
@@ -117,10 +120,10 @@ def h5pandas_to_vaex_combine(tmp_search_pattern: str,
         lf.warning('Overwriting {:s}!', path_out_str)
     if check_files_number:
         assert len(hdf5_list) == check_files_number, "Incorrect number of files"
+        lf.info('Combining {:d} found {:s} files to {:s}', check_files_number, tmp_search_pattern, PurePath(path_out_str).name)
     else:
         check_files_number = len(hdf5_list)
-    lf.info('Combining {:s} to {:s}', tmp_search_pattern, PurePath(path_out_str).name)
-
+        lf.info('Combining {:s} to {:s}', tmp_search_pattern, PurePath(path_out_str).name)
     master_df = vaex.open_many(hdf5_list)
     try:
         master_df.export_hdf5(**{'path': path_out_str, 'progress': True, **export_hdf5_args})
@@ -221,11 +224,12 @@ def determine_numpy_types(file_handle, headers=None, messytables_types=None, num
          chunksize: 10000,
          delimiter: '\t'}.
     :return: tuple of
-        dtype: dict of numpy types determined for each column: short str representation without alignment information,
-        statistics:
-            'has_nans': bool numpy array of lengh number of columns,
-            'unique_vals': dict for each column: empty set or set of unique values if its number found was small
-        dates_formats:
+    - dtype: dict of numpy types determined for each column: short str representation without alignment information,
+    - dates_formats:
+    - statistics:
+        'has_nans': bool numpy array of lengh number of columns,
+        'unique_vals': dict for each column: empty set or set of unique values if its number found was small
+
     """
     read_csv_args_with_defaults = {
         'filepath_or_buffer': file_handle.name,
@@ -247,12 +251,13 @@ def determine_numpy_types(file_handle, headers=None, messytables_types=None, num
         h: ('S1' if isinstance(typ, messytables.types.DateType) or h.endswith('Date')  # we will parse dates separately
             else None if isinstance(typ, messytables.types.StringType)  # may be numeric
         else 'int8')
-        for h, typ in zip(headers, messytables_types)}  # we will replace Nones
-
+        for h, typ in zip(headers, messytables_types)
+        }  # we will replace Nones
     statistics = {
         'has_nans': np.zeros(len(headers), np.bool),
         'unique_vals': {h: set() for h in headers}  # will insert values if only if < 10 unique in chunk
         }
+    print(f'Determine types in text data by analyzing {read_csv_args_with_defaults["chunksize"]}-rows length chunks:')
     try:
         for ichunk, chunk in enumerate(pd.read_csv(**read_csv_args_with_defaults)):
             notna = chunk.notna()
@@ -263,14 +268,13 @@ def determine_numpy_types(file_handle, headers=None, messytables_types=None, num
             num_values_tested += num_values_in_chunk
             if (num_values_tested > num_values_enough).all():
                 break
-            print(f'chunk {ichunk}: {chunk.iloc[0]}')
+            print(ichunk, end=', ')
 
             # Correct type by pandas
             any_values = num_values_in_chunk > 0  # if no data nobody can determine type
             types_of_cols_with_vals = pd.Series(messytables_types, index=chunk.columns)[any_values]
             for (col, typ) in types_of_cols_with_vals.items():
-                str_by_pandas = (chunk[
-                                     col].dtype == 'object')  # in ('object', 'string_', 'unicode_')  or pd.api.types.is_string_dtype(chunk[col])
+                str_by_pandas = (chunk[col].dtype == 'object')  # in ('object', 'string_', 'unicode_')  or pd.api.types.is_string_dtype(chunk[col])
                 # Pandas ever determined col type as a string?
                 if str_by_pandas or np.dtype(types[col]).kind == 'S':
                     if not str_by_pandas:
@@ -313,11 +317,11 @@ def determine_numpy_types(file_handle, headers=None, messytables_types=None, num
         lf.exception('Pandas reading error')
 
     dtype = {h: np.dtype(t).str[1:] for h, t in types.items()}  # compressed representation
-    # formats for post convertion to dates where messytables determined date types
+    # formats for post conversion to dates where messytables determined date types
     dates_formats = {h: typ.format for h, typ in zip(headers, messytables_types) if
                      isinstance(typ, messytables.types.DateType)}
 
-    return dtype, statistics, dates_formats
+    return dtype, dates_formats, statistics
 
     # csv converters to 'M8[ns]'
 
@@ -365,18 +369,21 @@ def coerce_to_exact_dtype(s: Sequence, dtype, replace_bad=None):
     return nums
 
 
-def csv_to_h5(read_csv_args, to_hdf_args, dates_formats: Mapping[str, str],
-              correct_fun: Tuple[None, bool, Callable[[pd.DataFrame], None]] = None,
-              processing: Optional[Mapping[Tuple[Tuple[str], Tuple[str]], Callable[[Any], Any]]] = None,
-              out_cols: Optional[Sequence] = None, continue_row=False):
+def csv_to_h5(
+        read_csv_args,
+        to_hdf_args,
+        dates_formats: Mapping[str, str],
+        correct_fun: Tuple[None, bool, Callable[[pd.DataFrame], None]] = None,
+        processing: Optional[Mapping[Tuple[Tuple[str], Tuple[str]], Callable[[Any], Any]]] = None,
+        out_cols: Optional[Sequence] = None,
+        continue_row=False,
+        vaex_format: Optional[bool]=None
+        ):
     """
     Read csv and write to hdf5
     :param read_csv_args: dict, must have keys:
         filepath_or_buffer, chunksize
     :param to_hdf_args:
-        vaex_format: bool how to write chunks:
-            True: to many vaex hdf5 files. They at end will be converted to single vaex hdf5 file
-            False: appending to single pandas hdf5 table
         path_or_buf: default = read_csv_args['filepath_or_buffer'].with_suffix('vaex.h5' if vaex_format else '.h5')
         mode: default = 'w' if not continue_row else 'a',
         key: hdf5 group name in hdf5 file where store data
@@ -393,35 +400,40 @@ def csv_to_h5(read_csv_args, to_hdf_args, dates_formats: Mapping[str, str],
     useful to continue after program interrupting or csv appending. If not exist then start from row 0 giving it index 0.
     If continue_row = integer then start from this row, giving starting index = continue_row
     :param correct_fun: function applied to each chunk returned by read_csv() which is a frame of column data of type str
+    :param vaex_format: bool how to write chunks:
+    - True: to many vaex hdf5 files. They at end will be converted to single vaex hdf5 file
+    - False: appending to single pandas hdf5 table
+    - None: evaluates to True if to_hdf_args['path_or_buf'] has next to last suffix ".vaex" else to False
+
     :return:
     """
     if to_hdf_args.get('path_or_buf'):
-        if to_hdf_args.get('vaex_format') is None:
-            to_hdf_args['vaex_format'] = Path(str(to_hdf_args['path_or_buf']).strip()).suffixes[:-1] == ['.vaex']
+        if vaex_format is None:
+            vaex_format = Path(str(to_hdf_args['path_or_buf']).strip()).suffixes[:-1] == ['.vaex']
     else:  # give default name to output file
         to_hdf_args['path_or_buf'] = Path(read_csv_args['filepath_or_buffer']).with_suffix(
-            f'{".vaex" if to_hdf_args.get("vaex_format") else ""}.h5'
+            f'{".vaex" if vaex_format else ""}.h5'
             )
 
-    # prepare vaex/pandas storing
-    if to_hdf_args.get('vaex_format'):
+    # Deal with vaex/pandas storing difference
+    if vaex_format:
         open_for_pandas_to_hdf = None
-        tmp_save_pattern, tmp_search_pattern = h5pandas_to_vaex_file_names(path_out_str=str(to_hdf_args['path_or_buf']))
+        tmp_save_pattern, tmp_search_pattern = h5pandas_to_vaex_file_names(
+            path_out_str=str(to_hdf_args['path_or_buf'])
+            )
         ichunk = None
     else:
-        if 'vaex_format' in to_hdf_args:
-            del to_hdf_args['vaex_format']  # remove redounded item
         def open_for_pandas_to_hdf(path_or_buf):
             return pd.HDFStore(
                 to_hdf_args['path_or_buf'],
                 to_hdf_args.get('mode', 'a' if continue_row else 'w')
                 )
 
-    # find csv row to start
+    # Find csv row to start
     msg_start = f'Converting in chunks of {read_csv_args["chunksize"]} rows.'
     if continue_row is True:  # isinstance(continue_same_csv, bool)
         try:
-            if to_hdf_args.get('vaex_format'):
+            if vaex_format:
 
                 hdf5_list = glob.glob(tmp_search_pattern)
                 if len(hdf5_list):      # continue interrupted csv_to_h5()
@@ -450,12 +462,13 @@ def csv_to_h5(read_csv_args, to_hdf_args, dates_formats: Mapping[str, str],
         lf.info('{:s} {:d}...', msg_start, continue_row)
         read_csv_args['skiprows'] = read_csv_args.get('skiprows', 0) + continue_row
     else:
-        lf.info('{:s} beging from csv row 0, giving it index 0...', msg_start)
+        lf.info('{:s} begining from csv row 0, giving it index 0...', msg_start)
 
     dtypes = read_csv_args['dtype']
 
-    # Set default output cols
+    # Set default output cols if not set
     if out_cols is None and processing:
+        # we will out all we will have except processing inputs if they are not mentioned in processing outputs
         cols_in_used = set()
         cols_out_used = set()
         for (c_in, c_out) in processing.keys():
@@ -467,7 +480,7 @@ def csv_to_h5(read_csv_args, to_hdf_args, dates_formats: Mapping[str, str],
             del out_cols[col]
     cols_out_used = set(out_cols if out_cols is not None else dtypes.keys())
 
-    # prepare conversion to user specified types
+    # Group cols for conversion by types specified
     str_cols = []
     int_and_nans_cols = []
     other_cols = []
@@ -482,6 +495,7 @@ def csv_to_h5(read_csv_args, to_hdf_args, dates_formats: Mapping[str, str],
     str_not_dates = list(set(str_cols).difference(dates_formats.keys()))
     min_itemsize = {col: int(dtypes[col][1:]) for col in str_not_dates}
 
+    # Read csv, process, write hdf5
     with open(read_csv_args['filepath_or_buffer'], 'r') as read_csv_buf, \
             FakeContextIfOpen(open_for_pandas_to_hdf, to_hdf_args['path_or_buf']) as to_hdf_buf:
         read_csv_args.update({
@@ -566,7 +580,7 @@ def csv_to_h5(read_csv_args, to_hdf_args, dates_formats: Mapping[str, str],
                 chunk[col] = chunk[col].str.slice(stop=max_len)  # apply(lambda x: x[:max_len]) not handles <NA>
             chunk[str_not_dates] = chunk[str_not_dates].astype(str)
 
-            # Upply specified data processing
+            # Apply specified data processing
             if processing:
                 for (cols_in, c_out), fun in processing.items():
                     cnv_result = fun(chunk[list(cols_in)])
@@ -584,18 +598,23 @@ def csv_to_h5(read_csv_args, to_hdf_args, dates_formats: Mapping[str, str],
             # if chunk['wlaWID'].duplicated()
 
             try:
-                if open_for_pandas_to_hdf:
-                    (chunk if out_cols is None else chunk[out_cols]).to_hdf(**to_hdf_args)
-                else:  # better to move this command upper and proc. by vaex instead of pandas
+                if vaex_format:
                     df = vaex.from_pandas(chunk if out_cols is None else chunk[out_cols])
                     df.export_hdf5(tmp_save_pattern.format(ichunk))
+                else:  # better to move this command upper and proc. by vaex instead of pandas
+                    (chunk if out_cols is None else chunk[out_cols]).to_hdf(**to_hdf_args)
                 #rows_processed += rows_in_chunk  # think we red always the same length exept last which length value will not be used
 
             except Exception as e:
                 lf.exception('write error')
                 pass
-        lf.extra['id'] = ''
-    if not open_for_pandas_to_hdf:  # have vaex chunk files => combine them by using vaex export_hdf5():
+        try:
+            del lf.extra['id']
+        except KeyError:
+            lf.info('was no more data rows to read')
+
+    # If vaex store was specified then we have chunk files that we combine now by export_hdf5():
+    if vaex_format:
         h5pandas_to_vaex_combine(tmp_search_pattern, str(to_hdf_args['path_or_buf']), check_files_number=ichunk+1)
 
 

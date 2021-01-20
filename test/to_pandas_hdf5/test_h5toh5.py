@@ -10,8 +10,8 @@ sys.path.append(str(Path(scripts_path).parent.resolve()))
 from to_pandas_hdf5.h5toh5 import h5move_tables
 
 
-store_in = r'd:\workData\BalticSea\200819_AI56\200819_AI56.h5'
-store_out = r'd:\workData\BalticSea\200819_AI56\200819_AI56_nav.h5'
+store_in = Path(r'd:\workData\BalticSea\200819_AI56\200819_AI56.h5')
+store_out = Path(r'd:\workData\BalticSea\200819_AI56\200819_AI56_nav.h5')
 tbl = 'navigation'
 # create temp test table from existed
 with pd.HDFStore(store_in, 'r') as sr, pd.HDFStore(store_out, 'w') as sw:

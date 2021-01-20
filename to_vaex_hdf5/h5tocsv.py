@@ -6,7 +6,7 @@
   Created: 15.09.2020
   Modified: 20.09.2020
 """
-import os, sys
+import sys
 import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, Mapping, Optional, List, Sequence, Tuple, Union
@@ -20,12 +20,11 @@ import pandas as pd
 
 import to_vaex_hdf5.cfg_dataclasses
 
-from utils2init import init_file_names, Ex_nothing_done, this_prog_basename, standard_error_info, LoggingStyleAdapter, dir_create_if_need, ini2dict, FakeContextIfOpen, set_field_if_no
+from utils2init import LoggingStyleAdapter, dir_create_if_need, FakeContextIfOpen, set_field_if_no
 
 # from csv2h5_vaex import argparser_files, with_prog_config
 from to_pandas_hdf5.csv2h5 import h5_dispenser_and_names_gen
 from to_pandas_hdf5.h5toh5 import h5move_tables, h5index_sort, h5init, h5log_rows_gen, h5find_tables
-from to_pandas_hdf5.gpx2h5 import df_rename_cols
 from to_pandas_hdf5.CTD_calc import get_runs_parameters
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
@@ -39,24 +38,6 @@ VERSION = '0.0.1'
 # def version():
 #     """Show the version"""
 #     return 'version {0}'.format(VERSION)
-
-
-# @dataclass hydra_conf(hydra.conf.HydraConf):
-#     run: field(default_factory=lambda: defaults)dir
-
-hydra.output_subdir = 'cfg'
-# hydra.conf.HydraConf.output_subdir = 'cfg'
-# hydra.conf.HydraConf.run.dir = './outputs/${now:%Y-%m-%d}_${now:%H-%M-%S}'
-
-cs_store_name = Path(__file__).stem
-cs, ConfigType = to_vaex_hdf5.cfg_dataclasses.hydra_cfg_store(cs_store_name, {
-    'input': ['in_hdf5'],  # Load the config "in_hdf5" from the config group "input"
-    'out': ['out_csv'],  # Set as MISSING to require the user to specify a value on the command line.
-    'filter': ['filter'],
-    'program': ['program'],
-    # 'search_path': 'empty.yml' not works
-    })
-
 
 
 def dd_to_csv(
@@ -242,7 +223,21 @@ def interp_vals(df: pd.DataFrame, cols: Mapping[str, str] = None,
 
 
 
+# @dataclass hydra_conf(hydra.conf.HydraConf):
+#     run: field(default_factory=lambda: defaults)dir
 
+hydra.output_subdir = 'cfg'
+# hydra.conf.HydraConf.output_subdir = 'cfg'
+# hydra.conf.HydraConf.run.dir = './outputs/${now:%Y-%m-%d}_${now:%H-%M-%S}'
+
+cs_store_name = Path(__file__).stem
+cs, ConfigType = to_vaex_hdf5.cfg_dataclasses.hydra_cfg_store(cs_store_name, {
+    'input': ['in_hdf5'],  # Load the config "in_hdf5" from the config group "input"
+    'out': ['out_csv'],  # Set as MISSING to require the user to specify a value on the command line.
+    'filter': ['filter'],
+    'program': ['program'],
+    # 'search_path': 'empty.yml' not works
+    })
 
 
 cfg = {}
@@ -270,7 +265,7 @@ def main(config: ConfigType) -> None:
 
     """
     global cfg
-    cfg = main_init(config)
+    cfg = to_vaex_hdf5.cfg_dataclasses.main_init(config, cs_store_name)
     #h5init(cfg['in'], cfg['out'])
     #cfg['out']['dt_from_utc'] = 0
 
@@ -335,67 +330,6 @@ def main(config: ConfigType) -> None:
         i_log_row_st += df_log.shape[0]
 
     print('Ok>', end=' ')
-
-
-
-def main_init(cfg):
-
-    """
-    Common startup initializer:
-        - finds input files
-        - asks user to proceed if need
-    :param cfg:
-    :return:
-    Note: if new_arg=='<cfg_from_args>' returns cfg but it will be None if argument
-     argv[1:] == '-h' or '-v' passed to this code
-    argv[1] is cfgFile. It was used with cfg files:
-        'csv2h5_nav_supervisor.ini'
-        'csv2h5_IdrRedas.ini'
-        'csv2h5_Idronaut.ini'
-    """
-    # global lf
-    # if cfg.search_path is not None:
-    #     override_path = hydra.utils.to_absolute_path(cfg.search_path)
-    #     override_conf = OmegaConf.load(override_path)
-    #     cfg = OmegaConf.merge(cfg, override_conf)
-
-    print("Working directory : {}".format(os.getcwd()))
-    print(omegaconf.OmegaConf.to_yaml(cfg))
-
-    # cfg = cfg_from_args(argparser_files(), **kwargs)
-    if not cfg.program.return_:
-        print('Can not initialise')
-        return cfg
-    elif cfg.program.return_ == '<cfg_from_args>':  # to help testing
-        return cfg
-
-    hydra.verbose = 1 if cfg.program.verbose == 'DEBUG' else 0  # made compatible to my old cfg
-
-    print('\n' + this_prog_basename(__file__), end=' started. ')
-    cfg_t = ini2dict(cfg)  # fields named with type pre/suffixes are converted
-    # OmegaConf.update(cfg, "in", cfg.input, merge=False)  # error
-    # to allow non primitive types (cfg.out['db']) and special words field names ('in'):
-    # cfg = omegaconf.OmegaConf.to_container(cfg)
-
-
-    cfg_in = cfg_t.pop('input')
-    try:
-        # with omegaconf.open_dict(cfg_in):
-        cfg_in['paths'], cfg_in['nfiles'], cfg_in['path'] = init_file_names(
-            **{**cfg_in, 'path': cfg_in['db_path']},
-            b_interact=cfg['program']['b_interact']
-            )
-    except Ex_nothing_done as e:
-        print(e.message)
-        return {}
-    except FileNotFoundError as e:  #
-        print('Initialisation error:', e.message, 'Calling arguments:', sys_argv_save)
-        raise
-
-    cfg_in['cfgFile'] = cs_store_name
-
-    cfg_t['in'] = cfg_in
-    return cfg_t
 
 
 def main_call(cmd_line_list:Optional[List[str]] = None, fun: Callable[[Any], Any] = main) -> Dict:

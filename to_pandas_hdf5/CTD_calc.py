@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from os import path as os_path
 from sys import stdout as sys_stdout
 from typing import Any, Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
-
+from pathlib import PurePath, Path
 import numpy as np
 import pandas as pd
 
@@ -82,6 +82,8 @@ process it and save HDF5/CSV
              help='When calc CTD parameters treat Temp have red on ITS-90 scale. (i.e. same as "temp90")')
     s.add('--path_coef',
              help='path to file with coefficients. Used for processing of Neil Brown CTD data')
+    s.add('--lat_float', help='Latitude used to calc SA if no such data column')
+    s.add('--lon_float', help='Longitude used to calc SA if no such data column')
 
     s = p.add_argument_group('out',
                              'all about output files')
@@ -89,8 +91,8 @@ process it and save HDF5/CSV
     s.add('--out.db_path', help='hdf5 store file path')
     s.add('--out.tables_list',
               help='table name in hdf5 store to write data. If not specified then it is same as input tables_list (only new subtable will created here), else it will be generated on base of path of input files')
-    # s.add('--tables_list',
-    #     #           help='tables names in hdf5 store to write data (comma separated)')
+    s.add('--out.tables_log_list',
+             help='table name in hdf5 store to save intervals. If contains "logRuns" then runs will be found first')
     s.add('--path_csv',
               help='path to output directory of csv file(s)')
     s.add('--data_columns_list',
@@ -425,12 +427,13 @@ def log_runs(df_raw: pd.DataFrame,
         'fileChangeTime': [cfg['in']['fileChangeTime']] * len(imin),
         })
 
-
+    times_min, times_max = df_raw.index[[imin, imax]]
     log.update(
-        get_runs_parameters(df_raw, cols_good_data=cfg['extract_runs']['cols'],
+        get_runs_parameters(df_raw, df_raw.index[imin], df_raw.index[imax],
+                            cols_good_data=cfg['extract_runs']['cols'],
                             dt_search_nav_tolerance=cfg['out'].get('dt_search_nav_tolerance', timedelta(minutes=2)),
-                            **{k: cfg['in'].get(k) for k in ['dt_from_utc', 'db', 'db_path', 'table_nav']}))
-
+                            **{k: cfg['in'].get(k) for k in ['dt_from_utc', 'db', 'db_path', 'table_nav']}
+                ))
     l.info('updating log with %d row%s...', imin.size, 's' if imin.size > 1 else '')
 
     # list means save only log but not data
@@ -585,6 +588,17 @@ def get_runs_parameters(df_raw, times_min, times_max, cols_good_data: Union[str,
     return log
 
 
+def coord_data_col_ensure(df: pd.DataFrame, log_row):
+    for coord in ['Lat', 'Lon']:
+        if coord in df.columns:
+            ok = df[coord].notna()
+            if any(ok):
+                df[coord].interpolate(method='time', inplace=True)
+                continue
+        # if existed data in column not sufficient then copy from log_row's start coordinate
+        df[coord] = getattr(log_row, f'{coord}_st')
+
+
 def add_ctd_params(df_in: MutableMapping[str, Sequence], cfg: Mapping[str, Any], lon=16.7, lat=55.2):
     """
     Calculate all parameters from 'sigma0', 'depth', 'soundV', 'SA' that is specified in cfg['out']['data_columns']
@@ -692,28 +706,30 @@ def main(new_arg=None):
     else:
         file_names_add = lambda i: '.csv'  # f'_{i}.csv'
 
-    if True:  # try:
-        # Prepare data for output store and open it
-        if cfg['out']['tables'] == ['None']:
-            # will not write new data table and its log
-            cfg['out']['tables'] = None
-            cfg['out']['tables_log'] = None  # for _runs cfg will be redefined (this only None case that have sense?)
-        if cfg['out']['tables'] is not None and not len(cfg['out']['tables']):
-            cfg['out']['tables'] = cfg['in']['tables']
-        h5init(cfg['in'], cfg['out'])
-        # store, dfLogOld = h5temp_open(**cfg['out'])
+
+    # Prepare data for output store and open it
+    if cfg['out']['tables'] == ['None']:
+        # will not write new data table and its log
+        cfg['out']['tables'] = None
+        # cfg['out']['tables_log'] = None  # for _runs cfg will be redefined (this only None case that have sense?)
+
+    h5init(cfg['in'], cfg['out'])
+    # store, dfLogOld = h5temp_open(**cfg['out'])
 
     cfg_fileN = os_path.splitext(cfg['in']['cfgFile'])[0]
-    if cfg_fileN.endswith('_runs'):
-        # Only after filter
+    out_tables_log = cfg['out'].get('tables_log')
+    if cfg_fileN.endswith('_runs') or (bool(out_tables_log) and 'logRuns' in out_tables_log[0]):
+
+        # Will calculate only after filter  # todo: calculate derived parameters before were they are bad (or replace all of them if any bad?)
         func_before_cycle = lambda x: None
-        func_before_filter = lambda df, cfg: df
+        func_before_filter = lambda df, log_row, cfg: df
         func_after_filter = lambda df, cfg: log_runs(df, cfg, cfg['out']['log'])
-        # todo: calculate derived parameters before were they are bad (or replace all of them if any bad?)
+
         # this table will be added:
         cfg['out']['tables_log'] = [cfg['out']['tables'][0] + '/logRuns']
         cfg['out']['b_log_ready'] = True  # to not apdate time range in h5_append()
-        # not affect main data table and switch off not compatible options:
+
+        # Settings to not affect main data table and switch off not compatible options:
         cfg['out']['tables'] = []
         cfg['out']['b_skip_if_up_to_date'] = False  # todo: If False check it: need delete all previous result of CTD_calc() or set min_time > its last log time. True not implemented?
         cfg['program']['b_log_display'] = False  # can not display multiple rows log
@@ -729,7 +745,13 @@ def main(new_arg=None):
                 func_before_filter = process_brown
         else:
             func_before_cycle = lambda x: None
-            func_before_filter = add_ctd_params
+
+            def ctd_coord_and_params(df: pd.DataFrame, log_row, cfg):
+                coord_data_col_ensure(df, log_row)
+                return add_ctd_params(df, cfg)
+
+
+            func_before_filter = ctd_coord_and_params
         func_after_filter = lambda df, cfg: df  # nothing after filter
 
     func_before_cycle(cfg)  # prepare: usually assign data to cfg['for']
@@ -768,7 +790,7 @@ def main(new_arg=None):
                     print('.', end='')
                     sys_stdout.flush()
 
-                    path_raw = Path(r.fileName)
+                    path_raw = PurePath(r.fileName)
                     cfg['out']['log'].update(fileName=path_raw.name, fileChangeTime=r.fileChangeTime)
                     # save current state
                     cfg['in']['file_stem'] = cfg['out']['log']['fileName']  # for exmple to can extract date in subprogram
@@ -793,7 +815,7 @@ def main(new_arg=None):
                         cfg['in']['lat'] = np.nanmean((r.Lat_st, r.Lat_en))
                         cfg['in']['lon'] = np.nanmean((r.Lon_st, r.Lon_en))
 
-                    df = func_before_filter(df_raw, cfg=cfg)
+                    df = func_before_filter(df_raw, log_row=r, cfg=cfg)
 
                     if df.size:  # size is zero means save only log but not data
                         # filter, updates cfg['out']['log']['rows']

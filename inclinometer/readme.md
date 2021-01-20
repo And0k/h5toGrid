@@ -9,7 +9,7 @@ contains steps:
 4. _veuszPropagate_ - make graphics according to a given Veusz template
  
 ## Calibration of inclinometers - 190901incl_calibr.py
-_incl_calibr_: According to calibration data at the stand:
+_incl_calibr_: Uses calibration data at the stand:
 1. Soft iron
 The obtained coefficients are applied to the data in the pool for further adjustment of the coefficients.
 

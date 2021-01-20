@@ -70,9 +70,9 @@ to Pandas HDF5 store*.h5
              help='path to source file(s) to parse. Use patterns in Unix shell style')
     s.add('--b_search_in_subdirs', default='False',
              help='search in subdirectories, used if mask or only dir in path (not full path)')
-    s.add('--exclude_dirs_ends_with_list', default='toDel, -, bad, test, TEST',
+    s.add('--exclude_dirs_endswith_list', default='toDel, -, bad, test, TEST',
              help='exclude dirs which ends with this srings. This and next option especially useful when search recursively in many dirs')
-    s.add('--exclude_files_ends_with_list', default='coef.txt, -.txt, test.txt',
+    s.add('--exclude_files_endswith_list', default='coef.txt, -.txt, test.txt',
              help='exclude files which ends with this srings')
     s.add('--b_skip_if_up_to_date', default='True',
              help='exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it before procesing of next files: 1. Program copyes all data to temporary storage and 2. deletes old data there if found. 3. New data uppended. 4. Data tables copyed back with deleting original data')

@@ -19,6 +19,6 @@ out:
   aggregate_period_s: [Null, 2, 600, 7200]  # Null means no average
 
 
-program:
-  step_start: 1
-  step_end: 2
+#  program:
+#    step_start: 1
+#    step_end: 2

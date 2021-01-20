@@ -436,10 +436,9 @@ def h5select(store: pd.HDFStore,
 
 def h5temp_open(
         db_path: Path,
-        db_path_temp: Path,
-
-        tables: Optional[List[str]],
-        tables_log: Optional[List[str]],
+        db_path_temp: Optional[Path]=None,
+        tables: Optional[List[str]]=None,
+        tables_log: Optional[List[str]]=None,
         db=None,
         b_skip_if_up_to_date: bool = False,
         b_use_old_temporary_tables: bool = False,
@@ -456,7 +455,7 @@ def h5temp_open(
     Parameters are fields that is set when called h5init(cfg_in, cfg_out):
     :param: db_path,
     :param: db_path_temp
-    :param: tables, tables_log - if tables is None return (do nothing), else opens HDF5 store and tries to work with ``tables_log``
+    :param: tables, tables_log - if tables is None then returns (does nothing), else opens HDF5 store and tries to work with ``tables_log``
     :param: b_skip_if_up_to_date:
     :param: b_use_old_temporary_tables, bool, defult False - not copy tables from dest to temp
     :param: b_overwrite: remove all existed data in tables where going to write
@@ -464,7 +463,7 @@ def h5temp_open(
     :return: (df_log, db, b_skip_if_up_to_date)
         - df_log: dataframe of log from store if cfg_in['b_skip_if_up_to_date']==True else None.
         - db: pandas HDF5 store - opened db_path_temp
-        - b_skip_if_up_to_date:
+        - b_skip_if_up_to_date: flag remains same as it was inputted or changed to False if can not skip
     Modifies (creates): db - handle of opened pandas HDF5 store
     """
     df_log = None
@@ -472,7 +471,7 @@ def h5temp_open(
         l.warning('DB is already opened: handle detected!')
 
     if tables is None:
-        return None  # skipping open, may be need if not need write
+        return None, None, False  # skipping open, may be need if not need write
     else:
         print('saving to', db_path_temp / ','.join(tables), end=':\n')
 
@@ -1146,7 +1145,7 @@ def h5init(cfg_in: Mapping[str, Any], cfg_out: MutableMapping[str, Any]) -> None
     - tables, tables_log: tables names of data and log (metadata) - based on cfg_in and cfg_in['raw_dir_words']
     - db_path_temp: temporary h5 file name
     % other %
-    - nfiles: default 1, copied from cfg_in - to set store.append() 'expectedrows' argument
+    - nfiles: default 1, copied from cfg_in - I use it somewhere to set store.append() 'expectedrows' argument
     - b_skip_if_up_to_date: default False, copied from cfg_in
     - chunksize: default None
     - logfield_fileName_len: default 255
@@ -1174,8 +1173,9 @@ def h5init(cfg_in: Mapping[str, Any], cfg_out: MutableMapping[str, Any]) -> None
     dir_create_if_need(cfg_out['db_path'].parent)
     cfg_out['db_path'] = cfg_out['db_path'].with_suffix('.h5')
 
-    # Will save to temporary file initially
+    # temporary file path
     set_field_if_no(cfg_out, 'db_path_temp', cfg_out['db_path'].with_name(f"{cfg_out['db_path'].stem}_not_sorted.h5"))
+
     set_field_if_no(cfg_out, 'nfiles', cfg_in.get('nfiles', 1))
 
     if 'tables' in cfg_out and cfg_out['tables']:
@@ -1186,15 +1186,19 @@ def h5init(cfg_in: Mapping[str, Any], cfg_out: MutableMapping[str, Any]) -> None
     else:
         table_auto = cfg_in.get('table')
         if not table_auto:
-            _, _, table_auto = getDirBaseOut(
-                cfg_out['db_path'],
-                cfg_in.get('raw_dir_words') or ['raw', '_raw', 'source', '_source', 'WorkData', 'workData']
-                )
-        if not table_auto:
-            table_auto = Path(cfg_in['cfgFile']).stem
-            l.warning('Can not dertermine table_name from file structure. '
-                      'Set [tables] in ini! Now use table_name "%s"', table_auto)
-        cfg_out['tables'] = [table_auto]
+            if cfg_in.get('tables') and len(cfg_in.get('tables')) == 1:
+                cfg_out['tables'] = cfg_in['tables']
+            else:
+                if not table_auto:
+                    _, _, table_auto = getDirBaseOut(
+                        cfg_out['db_path'],
+                        cfg_in.get('raw_dir_words') or ['raw', '_raw', 'source', '_source', 'WorkData', 'workData']
+                        )
+                if not table_auto:
+                    table_auto = Path(cfg_in['cfgFile']).stem
+                    l.warning('Can not dertermine table_name from file structure. '
+                              'Set [tables] in ini! Now use table_name "%s"', table_auto)
+                cfg_out['tables'] = [table_auto]
         set_field_if_no(cfg_out, 'tables_log', [f'{table_auto}/logFiles'])
 
 

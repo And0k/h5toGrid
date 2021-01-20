@@ -435,13 +435,13 @@ def filter_global_minmax(a: Union[pd.DataFrame, dd.DataFrame],
             col = 'index'
             # tim = a.index
             # tim = a.Time.apply(lambda x: x.tz_localize(None), meta=[('ts', 'datetime64[ns]')])
-            v = "Timestamp('{}')".format(add_tz_if_need(v, a.index))
+            v = f"Timestamp('{add_tz_if_need(v, a.index)}')"
         else:
             try:
                 col = cols[key.lower()]
-                if col.starts_with('date'):  # have datetime column
+                if col.startswith('date'):  # have datetime column
                     # cf[lim_key] = pd.Timestamp(v, tz='UTC')
-                    v = "Timestamp('{}')".format(add_tz_if_need(v, a[col]))
+                    v = f"Timestamp('{add_tz_if_need(v, a[col])}')"
             except KeyError:
                 l.warning('filter warning: no column "{}"!'.format(key))
                 continue
@@ -450,11 +450,9 @@ def filter_global_minmax(a: Union[pd.DataFrame, dd.DataFrame],
         qstrings.append(f"{col}{'>' if lim == 'min' else '<'}{v}")
     # numexpr.set_num_threads(1)
     try:
-        return a.query(' & '.join(qstrings)  #, **({} if not hasattr(a, '_meta') else {'meta': a._meta}
-                   ) if any(qstrings) else a
-
+        return a.query(' & '.join(qstrings)) if any(qstrings) else a
     except (TypeError, ValueError):  # Cannot compare tz-naive and tz-aware datetime-like objects
-        l.exception('filter_global_minmax error')
+        l.exception('filter_global_minmax filtering "%s" error! Continuing...', ' & '.join(qstrings))
         return a
 
     # @cf['{}_{}] not works in dask
@@ -556,12 +554,12 @@ def filt_blocks_array(x, i_starts, func=None):
 # @+node:korzh.20180604062900.1: *4* filt_blocks_da
 def filt_blocks_da(dask_array, i_starts, i_end=None, func=None, *args):
     """
-    Apply function to each block of numpy array separately (function is interp by default, can be provided other to, for example, filter array)
+    Apply function to each block of numpy array separately (function is , can be provided other to, for example, filter array)
     :param dask_array: dask array, to filter, may be with unknown chunks as for dask series.values
     :param i_starts: numpy array, indexes of starts of bocks
     :param i_end: len(dask_array) if None then last element of i_starts must be equal to it else i_end should not be in i_starts
     # specifing this removes warning 'invalid value encountered in less'
-    :param func: interp(NaNs) used if None
+    :param func: numpy.interp by default interp(NaNs) used if None
     returns: dask array of same size as x with func upplied
 
     >>> Pfilt = filt_blocks_da(a['P'].values, i_burst, i_end=len(a))
@@ -572,7 +570,7 @@ def filt_blocks_da(dask_array, i_starts, i_end=None, func=None, *args):
     : True
     """
     if func is None:
-        func = np.interpolate
+        func = np.interp
     if i_end:
         i_starts = np.append(i_starts, i_end)
     else:
@@ -944,21 +942,23 @@ def h5_append(cfg_out: Dict[str, Any],
     if df_len:  # dask.dataframe.empty is not implemented
         if cfg_out.get('b_insert_separator'):
             # Add separatiion row of NaN
-            msg_func = f'h5_append({df_len}rows+1dummy)'
+            msg_func = f'{df_len}rows+1dummy'
             cfg_out.setdefault('fs')
             df = h5_append_dummy_row(df, cfg_out['fs'], tim)
             df_len += 1
         else:
-            msg_func = f'h5_append({df_len}rows)'
-        l.info('%s... ', msg_func)
+            msg_func = f'{df_len}rows'
+
 
         # Save to store
         # check/set tables names
         if 'tables' in cfg_out:
             if cfg_out['tables'] is None:
+                l.info('selected(%s)... ', msg_func)
                 return
             set_field_if_no(cfg_out, 'table', cfg_out['tables'][0])
 
+        l.info('h5_append(%s)... ', msg_func)
         set_field_if_no(cfg_out, 'nfiles', 1)
 
         if (cfg_out['chunksize'] is None) and ('chunksize_percent' in cfg_out):  # based on first file

@@ -938,8 +938,7 @@ def despike(x: np.ndarray,
         return x, ax
     offsets_blocks = np.broadcast(offsets, blocks)
     # instead of using NaNs because of numpy warnings on compare below
-    y = np.ma.fix_invalid(x,
-                          copy=True)  # suppose the default fill value is big enough to be filtered by masked_where() below.  x.copy()
+    y = np.ma.fix_invalid(x, copy=True)  # suppose the default fill value is big enough to be filtered by masked_where() below.  x.copy()
     len_x = len(x)
     std = np.empty((len_x,), np.float64)
     mean = np.empty((len_x,), np.float64)

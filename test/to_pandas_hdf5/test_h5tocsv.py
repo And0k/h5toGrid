@@ -63,8 +63,10 @@ def test_main() -> None:
     i_cruise = 55
     text_file_name_add = f'E090005O2_AI_{i_cruise}_H10_'
 
+    # compensate for pytest args
     sys_argv_save = sys.argv
     sys.argv = sys.argv[1:]
+
     main_call([
         f'input.db_path="{path_db}"',
         f'input.tables=[{tbl_data}]',

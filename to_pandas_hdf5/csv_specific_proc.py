@@ -626,6 +626,11 @@ def proc_loaded_inclin_Kondrashov(a: Union[pd.DataFrame, np.ndarray], cfg_in: Ma
     return a.assign(Time=tim_index).loc[:, list(proc_loaded_inclin_Kondrashov.meta_out(cfg_in['dtype_out']).keys())]
 
 
+
+# same but do not use csv_specific_param (key = 'invert_magnitometr') here
+proc_loaded_wavegage_Kondrashov = proc_loaded_inclin_Kondrashov
+
+
 def f_repl_by_dict(replist: Iterable[AnyStr], binary_str=True) -> Callable[[Match[AnyStr]], AnyStr]:  # , repldictvalues={None: b''}
     """
     Returns fuction ``fsub()`` that returns replacement using ``regex.sub()``. ``fsub(line)`` uses multiple altenative
@@ -768,15 +773,22 @@ def mod_incl_name(file_in: Union[str, PurePath]):
     """ Change name of corrected (regular table format) csv file of raw inclinometer/wavegage data"""
     file_in = PurePath(file_in)
     file_in_name = file_in.name.lower().replace('inkl', 'incl')  # main replacement that marks result file
-    file_in_name = re.sub('((?P<prefix>incl|w))_0*(?P<number>\d\d)',
+    file_in_name, b_known_names = re.subn(r'((?P<prefix>incl|w))_0*(?P<number>\d\d)',
            lambda m: f"{m.group('prefix')}{m.group('number')}",
            file_in_name
            )
+    if not b_known_names:
+        file_in_name, b_known_names = re.subn(r'voln_v*(?P<number>\d\d)',
+                                              lambda m: f"w{m.group('number')}",
+                                              file_in_name
+                                              )
+        if not b_known_names:
+            print('Not known probe name:', file_in)
     file_out = file_in.with_name(file_in_name)  # r'inkl_?0*(\d{2})', r'incl\1'
     return file_out
 
 
-def correct_kondrashov_txt(file_in: Union[str, Path, BinaryIO, TextIO], file_out: Optional[Path] = None,
+def correct_kondrashov_txt_w(file_in: Union[str, Path, BinaryIO, TextIO], file_out: Optional[Path] = None,
                            dir_out: Optional[PurePath] = None) -> Path:
     """
     Replaces bad strings in csv file and writes corrected file which named by replacing 'inkl_0' by 'incl' in file_in
@@ -911,10 +923,6 @@ def correct_txt(
     :param sub_str_list: f_repl_by_dict() argument that will be decoded here to str if need
     :param kwargs: rep_in_file() keyword arguments except first 3 and 'binary_mode'
     :return: name of file to write.
-
-    Supported _file_in_ format examples:
-    # 2018,4,30,23,59,53,-1088,-640,-15648,-14,74,556,7.82,5.50
-    # 2018,12,1,0,0,0,-544,-1136,-15568,-44,90,550,7.82,5.50
     """
 
     is_opened = isinstance(file_in, (io.TextIOBase, io.RawIOBase))
@@ -974,6 +982,28 @@ def correct_txt(
         l.warning('{} bad line deleted'.format(sum_deleted))
 
     return file_out
+
+def correct_kondrashov_txt(
+        file_in: Union[str, Path, BinaryIO, TextIO],
+        file_out: Optional[Path] = None,
+        dir_out: Optional[PurePath] = None, **kwargs) -> Path:
+    """
+    Replaces bad strings in csv file and writes corrected file which named by replacing 'W_0' by 'w' in file_in
+    :param file_in:
+    :return: name of file to write.
+
+    Supported _file_in_ format examples:
+    # 2018,4,30,23,59,53,-1088,-640,-15648,-14,74,556,7.82,5.50
+    # 2018,12,1,0,0,0,-544,-1136,-15568,-44,90,550,7.82,5.50
+    """
+    return correct_txt(
+        file_in, file_out, dir_out,
+        mod_file_name=mod_incl_name,
+        sub_str_list=[
+            b'^(?P<use>20\d{2}(,\d{1,2}){5}(,\-?\d{1,6}){6}(,\d{1,2}\.\d{2})(,\-?\d{1,3}\.\d{2})).*',
+            b'^.+'],
+        **kwargs
+    )
 
 
 def correct_baranov_txt(

@@ -65,8 +65,8 @@ def config_in(
         # "in" default parameters
         path='.',
         b_search_in_subdirs=False,
-        exclude_dirs_ends_with_list='toDel, -, bad, test, TEST',
-        exclude_files_ends_with_list='coef.txt, -.txt, test.txt',
+        exclude_dirs_endswith_list='toDel, -, bad, test, TEST',
+        exclude_files_endswith_list='coef.txt, -.txt, test.txt',
         b_skip_if_up_to_date=True,
         dt_from_utc_seconds=0,
         dt_from_utc_hours=0,
@@ -82,8 +82,8 @@ def config_in(
 
     :param path: path to source file(s) to parse. Use patterns in Unix shell style
     :param b_search_in_subdirs: search in subdirectories, used if mask or only dir in path (not full path)
-    :param exclude_dirs_ends_with_list: exclude dirs which ends with this srings. This and next option especially useful when search recursively in many dirs
-    :param exclude_files_ends_with_list: exclude files which ends with this srings
+    :param exclude_dirs_endswith_list: exclude dirs which ends with this srings. This and next option especially useful when search recursively in many dirs
+    :param exclude_files_endswith_list: exclude files which ends with this srings
     :param b_skip_if_up_to_date: exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files
     :param dt_from_utc_seconds: add this correction to loading datetime data. Can use other suffixes instead of "seconds"
     :param dt_from_utc_hours: add this correction to loading datetime data. Can use other suffixes instead of "hours"

@@ -19,7 +19,7 @@ from h5toGpx import main as h5toGpx
 from grid2d_vsz import main as grid2d_vsz
 
 st.go = True   # False #
-st.start = 110   # 5 30 70 80
+st.start = 115   # 5 30 70 80
 st.end = 110   # 60 80 120
 
 path_cruise = Path(r'd:\workData\BalticSea\201001_ABP46')
@@ -104,6 +104,7 @@ if st(20, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params
 if st(30, f'Draw {device} data profiles'):  # False: #
     from to_pandas_hdf5.h5toh5 import h5log_names_gen
     import re
+    from os import chdir as os_chdir
 
     cfg_in = {
         'log_row': {},
@@ -117,10 +118,6 @@ if st(30, f'Draw {device} data profiles'):  # False: #
         '{Index:%y%m%d_%H%M}-{DateEnd:%H%M}.vsz'.format_map(r),
         bytes("time_range = ['{:%Y-%m-%dT%H:%M:%S}', '{:%Y-%m-%dT%H:%M:%S}']".format(r['Index'], r['DateEnd'] + pd.Timedelta(300, "s")), 'utf-8')]
     pattern_code = cfg_in['pattern_path'].read_bytes()  #encoding='utf-8'
-
-    from os import getcwd as os_getcwd, chdir as os_chdir
-    path_prev = os_getcwd()
-    argv_prev = sys.argv
 
     os_chdir(cfg_in['pattern_path'].parent)
     for filename, str_expr in h5log_names_gen(cfg_in, f_row):
@@ -316,6 +313,7 @@ if st(115, 'Export csv for Obninsk'):
         'out.sep=";"'
         ])
 
+
 if st(120, 'Meteo'):
     csv2h5([
         'ini/csv_meteo.ini', '--path',  # to_pandas_hdf5/
@@ -387,6 +385,7 @@ if st(230, f'Draw {device} data profiles'):  # False: #
     # save all vsz files that uses separate code
     from to_pandas_hdf5.h5toh5 import h5log_names_gen
     import re
+    from os import chdir as os_chdir
 
     cfg_in = {
         'log_row': {},
@@ -403,9 +402,8 @@ if st(230, f'Draw {device} data profiles'):  # False: #
         bytes("time_range = ['{:%Y-%m-%dT%H:%M:%S}', '{:%Y-%m-%dT%H:%M:%S}']".format(r['Index'], r['DateEnd'] + pd.Timedelta(300, "s")), 'utf-8')]
     pattern_code = cfg_in['pattern_path'].read_bytes()  #encoding='utf-8'
 
-    from os import getcwd as os_getcwd, chdir as os_chdir
-    path_prev = os_getcwd()
-    argv_prev = sys.argv
+    # path_prev = os_getcwd()
+    # argv_prev = sys.argv
 
     os_chdir(cfg_in['pattern_path'].parent)
     path_vsz_all = []

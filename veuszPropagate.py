@@ -100,17 +100,17 @@ file based on vsz pattern
               help='string will be appended to output filenames. If input is from hdf5 table then filename is name of table, this will be added to it')
 
     # candidates to move out to common part
-    s.add('--exclude_dirs_ends_with_list', default='-, bad, test, TEST, toDel-',
+    s.add('--exclude_dirs_endswith_list', default='-, bad, test, TEST, toDel-',
              help='exclude dirs which ends with this srings. This and next option especially useful when search recursively in many dirs')
-    s.add('--exclude_files_ends_with_list', default='coef.txt, -.txt, test.txt',
+    s.add('--exclude_files_endswith_list', default='coef.txt, -.txt, test.txt',
              help='exclude files which ends with this srings')
 
     s = p.add_argument_group('program',
                              'program behaviour')
     s.add('--export_timeout_s_float', default='0',
-               help='export asyncroniously with this timeout, s (tryed 600s?)')
+               help='export asyncroniously with this timeout, s (tried 600s?)')
     s.add('--load_timeout_s_float', default='180',
-               help='export asyncroniously with this timeout, s (tryed 600s?)')
+               help='export asyncroniously with this timeout, s (tried 600s?)')
     s.add('--veusz_path', default=default_veusz_path,
                help='directory of Veusz like /usr/lib64/python3.6/site-packages/veusz-2.1.1-py3.6-linux-x86_64.egg/veusz')
     s.add('--before_next_list', default=',',
@@ -301,9 +301,12 @@ def load_vsz_closure(veusz_path: PurePath=default_veusz_path, load_timeout_s: Op
                 os_chdir(path_prev)          # recover
 
         if file_exists:
-            # veusze.Load(str(Path(vsz).name)) with timeout:  # not tried veusze.serv_socket.settimeout(60)
-            SingletonTimeOut.run(partial(veusze.Load, str(Path(vsz).name)), load_timeout_s)
-            sleep(1)
+            if load_timeout_s:
+                # veusze.Load(str(Path(vsz).name)) with timeout:  # not tried veusze.serv_socket.settimeout(60)
+                SingletonTimeOut.run(partial(veusze.Load, str(Path(vsz).name)), load_timeout_s)
+                sleep(1)
+            else:
+                veusze.Load(Path(vsz).name)
 
         if prefix is None:
             return veusze, None

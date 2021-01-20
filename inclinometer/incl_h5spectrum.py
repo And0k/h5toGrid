@@ -96,9 +96,12 @@ def my_argparser(varargs=None):
     s = p.add_argument_group('filter',
                              'Filter all data based on min/max of parameters')
     s.add('--min_dict',
-        help='List with items in  "key:value" format. Filter out (set to NaN) data of ``key`` columns if it is below ``value``')
+        help='List with items in  "key:value" format. Filter out (not load), data of ``key`` columns if it is below ``value``')
     s.add('--max_dict',
         help='List with items in  "key:value" format. Filter out data of ``key`` columns if it is above ``value``')
+    s.add('--min_Pressure',      help='min value of Pressure range use. Note: to filer {parameter} NaNs - use some value in min_{parameter} or max_{parameter}. Example of filtering out only nans of Pressure using very big min_dict value: "--min_Pressure -1e15"', default='-1e15')
+    s.add('--max_Pressure',      help='max value of Pressure range to use')
+
 
     s = p.add_argument_group('out',
                              'Parameters of output files')
@@ -498,6 +501,7 @@ def psd_mt(x, dpss, weights, dt, n_fft, freq_mask, adaptive_if_can=None, eigvals
 
     # The following is equivalent to this, but uses less memory:
     # x_mt = fftpack.fft(x[:, np.newaxis, :] * dpss, n=n_fft)
+
     for idx, sig in enumerate(x - np.mean(x, axis=-1, keepdims=True)):  # remove mean
         x_mt[idx] = np.fft.rfft(sig[..., np.newaxis, :] * dpss, n=n_fft)[..., freq_mask]
 
@@ -680,6 +684,7 @@ def main(new_arg=None, **kwargs):
         nc_psd.variables['time_interval'][:] = cfg['proc']['dt_interval']
     # Dataframe of accumulating results: adding result columns in cycle with appending source table name to column names
     dfs_all = None
+    # Initialasing variables to search data time range of calculated
     time_good_min = pd.Timestamp.max
     time_good_max = pd.Timestamp.min
     prm['length'] = None
@@ -740,10 +745,9 @@ def main(new_arg=None, **kwargs):
         if prm['eigvals'].any():
             for var_name in cols:
                 nc_tbl.variables[var_name][out_row, :] = call_with_valid_kwargs(psd_mt, df[var_name].to_numpy(), **prm)[0, :]
-            if np.datetime64(time_good_min, 'ns') > df.index[
-                0].to_numpy():  # use values to not deal with tz-naive/aware timestamps
+            if time_good_min.to_numpy('<M8[ns]') > df.index[0].to_numpy('<M8[ns]'):  # to_numpy() get values to avoid tz-naive/aware comparing restrictions
                 time_good_min = df.index[0]
-            if np.datetime64(time_good_max.value, 'ns') < df.index[-1].to_numpy():
+            if time_good_max.to_numpy('<M8[ns]') < df.index[-1].to_numpy('<M8[ns]'):
                 time_good_max = df.index[-1]
         else:
             for var_name in cols:

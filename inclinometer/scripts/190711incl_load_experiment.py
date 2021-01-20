@@ -40,9 +40,10 @@ from utils_time import intervals_from_period
 from utils2init import path_on_drive_d
 
 path_cruise = path_on_drive_d(
-    r'd:\WorkData\_experiment\inclinometer\200610_tank_ex[4,5,7,9,10,11][3,12,13,14,15,16,19]'
+    r'd:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe\_raw\201218'
     )
 r"""
+d:\WorkData\_experiment\inclinometer\200610_tank_ex[4,5,7,9,10,11][3,12,13,14,15,16,19]
 d:\WorkData\_experiment\inclinometer\200117_tank[23,30,32]
 d:\workData\BalticSea\191119_Filino
 d:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe

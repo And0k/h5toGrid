@@ -87,7 +87,7 @@ def test_determine_messytables_types(paths, get_file_handle):
 @pytest.mark.parametrize('paths', [path_data_full])
 def test_determine_numpy_types(paths, get_file_handle):
     file_handle = get_file_handle(paths)
-    dtype, cols_with_nans, dates_formats = determine_numpy_types(file_handle)
+    dtype, dates_formats, statistics = determine_numpy_types(file_handle)
     assert dtype == dtype_data_full
 
 @pytest.mark.parametrize('source_type', ['str', 'string', None])

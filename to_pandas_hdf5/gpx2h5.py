@@ -87,9 +87,9 @@ def my_argparser():
                    'if True and b_skip_if_up_to_date= True then not replace temporary storage with current storage before adding data to the temporary storage')
 
     # candidates to move out to common part
-    s.add('--exclude_dirs_ends_with_list', default='-, bad, test, TEST, toDel-',
+    s.add('--exclude_dirs_endswith_list', default='-, bad, test, TEST, toDel-',
              help='exclude dirs which ends with this srings. This and next option especially useful when search recursively in many dirs')
-    s.add('--exclude_files_ends_with_list', default='coef.txt, -.txt, test.txt',
+    s.add('--exclude_files_endswith_list', default='coef.txt, -.txt, test.txt',
              help='exclude files which ends with this srings')
 
     s = p.add_argument_group('filter',

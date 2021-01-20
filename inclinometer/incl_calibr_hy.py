@@ -10,11 +10,14 @@ import logging
 import re
 import sys
 from pathlib import Path
-from typing import Any, Mapping, Tuple, Dict
+from typing import Any, Callable, Mapping, Optional, Tuple, Dict, List
+from omegaconf import MISSING
+import hydra
 
 import numpy as np
 import pandas as pd
 from scipy import linalg
+from dataclasses import dataclass, field
 
 if __debug__:
     import matplotlib
@@ -40,55 +43,98 @@ except Exception as e:  # if __file__ is wrong
     scripts_path = drive_d.joinpath('Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))
 # from inclinometer.incl_calibr import calibrate, calibrate_plot, coef2str
-from inclinometer.h5inclinometer_coef import h5copy_coef, l
+from inclinometer.h5inclinometer_coef import h5copy_coef
 from inclinometer.incl_h5clc import incl_calc_velocity_nodask
-from utils2init import cfg_from_args, this_prog_basename, init_logging, standard_error_info
+from utils2init import this_prog_basename, standard_error_info, LoggingStyleAdapter
+# init_file_names, Ex_nothing_done, this_prog_basename, standard_error_info, dir_create_if_need, ini2dict, FakeContextIfOpen, set_field_if_no
 from to_pandas_hdf5.h5toh5 import h5select, h5find_tables
 from other_filters import is_works, despike
 from graphics import make_figure
 
-if __name__ != '__main__':
-    l = logging.getLogger(__name__)
+from to_vaex_hdf5.cfg_dataclasses import hydra_cfg_store, ConfigInHdf5_Simple, ConfigProgram, main_init
+#from to_vaex_hdf5.h5tocsv import main_call
 
 
-def my_argparser():
+lf = LoggingStyleAdapter(logging.getLogger(__name__))
+VERSION = '0.0.1'
+
+
+# @dataclass hydra_conf(hydra.conf.HydraConf):
+#     run: field(default_factory=lambda: defaults)dir
+hydra.output_subdir = 'cfg'
+# hydra.conf.HydraConf.output_subdir = 'cfg'
+# hydra.conf.HydraConf.run.dir = './outputs/${now:%Y-%m-%d}_${now:%H-%M-%S}'
+
+
+@dataclass
+class ConfigFilter:
     """
-    Configuration parser options and its description
-    :return p: configargparse object of parameters
+    "filter": excludes some data:
+
+    no_works_noise: is_works() noise argument for each channel: excludes data if too small changes
+    blocks: List[int] ='21, 7' despike() argument
+    offsets: List[float] despike() argument
+    std_smooth_sigma: float = 4, help='despike() argument
     """
-    from utils2init import my_argparser_common_part
+    #Optional[Dict[str, float]] = field(default_factory= dict) leads to .ConfigAttributeError/ConfigKeyError: Key 'Sal' is not in struct
+    min_date: Optional[Dict[str, str]] = field(default_factory=dict)
+    max_date: Optional[Dict[str, str]] = field(default_factory=dict)
+    no_works_noise: Dict[str, float] = field(default_factory=lambda: {'M': 10, 'A': 100})
+    blocks: List[int] = field(default_factory=lambda: [21, 7])
+    offsets: List[float] = field(default_factory=lambda: [1.5, 2])
+    std_smooth_sigma: float = 4
 
-    p = my_argparser_common_part({'description':
-                                      'Grid data from Pandas HDF5, VSZ files '
-                                      'and Pandas HDF5 store*.h5'})
 
-    s = p.add_argument_group('in', 'data from hdf5 store')
-    s.add('--db_path', help='hdf5 store file path where to load source data and write resulting coef')  # '*.h5'
-    s.add('--tables_list', help='tables names list or pattern to find tables to load data')
-    s.add('--channels_list',
-             help='channel can be "magnetometer" or "M" for magnetometer and any else for accelerometer',
-             default='M, A')
-    s.add('--chunksize_int', help='limit loading data in memory', default='50000')
-    s.add('--timerange_list', help='time range to use')
-    s.add('--timerange_dict', help='time range to use for each inclinometer number (consisted of digits in table name)')
-    s.add('--timerange_nord_list', help='time range to zeroing nord. Not zeroing Nord if not used')
-    s.add('--timerange_nord_dict', help='time range to zeroing nord for each inclinometer number (consisted of digits in table name)')
-    s = p.add_argument_group('filter', 'excludes some data')
-    s.add('--no_works_noise_float_dict', default='M:10, A:100',
-                 help='is_works() noise argument for each channel: excludes data if too small changes')
-    s.add('--blocks_int_list', default='21, 7', help='despike() argument')
-    s.add('--offsets_float_list', default='1.5, 2', help='despike() argument')
-    s.add('--std_smooth_sigma_float', default='4', help='despike() argument')
+@dataclass
+class ConfigOut:
+    """
+    "out": all about output files:
 
-    s = p.add_argument_group('out', 'where write resulting coef (additionally)')
-    s.add('--out.db_path',
-              help='hdf5 store file path where to write resulting coef. Writes to tables that names configured for input data (cfg[in].tables) in this file')
+    db_path: hdf5 store file path where to write resulting coef. Writes to tables that names configured for input data (cfg[in].tables) in this file
+    """
+    db_path: str = ''
+    aggregate_period_s: List[Any] = field(default_factory=lambda: [None, 2, 600, 7200])
 
-    s = p.add_argument_group('program', 'program behaviour')
-    s.add('--return', default='<end>',  # nargs=1,
-               choices=['<cfg_from_args>', '<gen_names_and_log>', '<end>'],
-               help='<cfg_from_args>: returns cfg based on input args only and exit, <gen_names_and_log>: execute init_input_cols() and returns... - see main()')
-    return (p)
+
+@dataclass
+class ConfigInHdf5InclCalibr(ConfigInHdf5_Simple):
+    """
+    Same as ConfigInHdf5_Simple + specific (inclinometr calibration) data properties:
+    channels: List: (, channel can be "magnetometer" or "M" for magnetometer and any else for accelerometer',
+    chunksize: limit loading data in memory (default='50000')
+    timerange_list: time range to use
+    timerange_dict: time range to use for each inclinometer number (consisted of digits in table name)')
+    timerange_nord_list: time range to zeroing north. Not zeroing Nord if not used')
+    timerange_nord_dict: time range to zeroing north for each inclinometer number (consisted of digits in table name)')
+
+    """
+    path_cruise: str = MISSING
+    raw_subdir: str = MISSING
+    probes: List[str] = field(default_factory=list)
+    probes_prefix: str = MISSING
+    raw_pattern: str = "*{prefix:}{number:0>2}*.[tT][xX][tT]"
+
+    channels: List[str] = field(default_factory=lambda: ['M', 'A'])
+    chunksize: int = 50000
+    timerange: List[str] = field(default_factory=list)
+    timerange_dict: Dict[str, str] = field(default_factory=dict)  # Dict[int, str] not supported in omegaconf
+    timerange_nord: List[str] = field(default_factory=list)
+    timerange_nord_dict: Dict[str, str] = field(default_factory=dict)  # Dict[int, str] not supported in omegaconf
+
+
+
+cs_store_name = Path(__file__).stem
+cs, ConfigType = hydra_cfg_store(
+    cs_store_name,
+    {
+        'input': ['in_hdf5__incl_calibr'],  # Load the config ConfigInHdf5_InclCalibr from the config group "input"
+        'out': ['out'],  # Set as MISSING to require the user to specify a value on the command line.
+        'filter': ['filter'],
+        'program': ['program'],
+    },
+    module=sys.modules[__name__]
+    )
+
 
 
 def load_hdf5_data(store, table=None, t_intervals=None,
@@ -177,14 +223,14 @@ def filter_channes(a3d: np.ndarray, a_time=None, fig=None, fig_save_prefix=None,
             #     ax_title=f'despike({ch})', lines='clear')
 
             ax.legend(prop={'size': 10}, loc='upper right')
-            l.info('despike(%s, offsets=%s, blocks=%s) deleted %s',
-                   ch, offsets, blocks, n_nans_after - n_nans_before)
+            lf.info('despike({:s}, offsets={}, blocks={}) deleted {:d}',
+                    ch, offsets, blocks, n_nans_after - n_nans_before)
         plt.show()
         if fig_save_prefix:  # dbstop
             try:
                 ax.figure.savefig(fig_save_prefix + (ax_title + '.png'), dpi=300, bbox_inches="tight")
             except Exception as e:
-                l.warning(f'Can not save fig: {standard_error_info(e)}')
+                lf.warning(f'Can not save fig: {standard_error_info(e)}')
         # Dep_filt = rep2mean(a_f, b_ok, a_time)  # need to execute waveletSmooth on full length
 
     # ax.plot(np.flatnonzero(b_ok), Depth[b_ok], color='g', alpha=0.9, label=ch)
@@ -462,10 +508,10 @@ def zeroing_azimuth(store, tbl, timerange_nord, coefs=None, cfg_in=None):
         - other, needed in load_hdf5_data() and optionally in incl_calc_velocity_nodask()
     :return: azimuth_shift_deg
     """
-    l.debug('Zeroing Nord direction')
+    lf.debug('Zeroing Nord direction')
     df = load_hdf5_data(store, table=tbl, t_intervals=timerange_nord)
     if df.empty:
-        l.info('Zero calibration range out of data scope')
+        lf.info('Zero calibration range out of data scope')
         return
     dfv = incl_calc_velocity_nodask(df, **coefs, cfg_filter=cfg_in, cfg_proc=
     {'calc_version': 'trigonometric(incl)', 'max_incl_of_fit_deg': 70})
@@ -476,7 +522,7 @@ def zeroing_azimuth(store, tbl, timerange_nord, coefs=None, cfg_in=None):
 
     # coefs['M']['A'] = rotate_z(coefs['M']['A'], dfv_mean.Vdir[0])
     azimuth_shift_deg = -np.degrees(np.arctan2(*dfv_mean.to_numpy()))
-    l.info('Nord azimuth shifting coef. found: %s degrees', azimuth_shift_deg)
+    lf.info('Nord azimuth shifting coef. found: {:f} degrees', azimuth_shift_deg)
     return azimuth_shift_deg
 
 
@@ -531,9 +577,9 @@ def dict_matrices_for_h5(coefs=None, tbl=None, channels=None):
             dummies.append('Vabs0')
 
     if dummies or not b_have_coefs:
-        l.warning('Coping coefs, %s - dummy!', ','.join(dummies) if b_have_coefs else 'all')
+        lf.warning('Coping coefficients, {:s} - dummy!', ','.join(dummies) if b_have_coefs else 'all')
     else:
-        l.info('Coping coefs')
+        lf.info('Coping coefficients')
 
     # Fill dict_matrices with coefs values
     dict_matrices = {}
@@ -560,35 +606,52 @@ def dict_matrices_for_h5(coefs=None, tbl=None, channels=None):
     return dict_matrices
 
 
-# ###################################################################################
-def main(new_arg=None):
+
+
+cfg = {}
+
+@hydra.main(config_name=cs_store_name)  # adds config store cs_store_name data/structure to :param config
+def main(config: ConfigType) -> None:
     """
+    ----------------------------
+    Calculates coefficients from
+    data of Pandas HDF5 store*.h5
+    and saves them back
+    ----------------------------
     1. Obtains command line arguments (for description see my_argparser()) that can be passed from new_arg and ini.file
     also.
-    2. Loads device data of calibration in laboratory from cfg['in']['db_path']
+    2. Loads device data of calibration in laboratory from hdf5 database (cfg['in']['db_path'])
     2. Calibrates configured by cfg['in']['channels'] channels ('accelerometer' and/or 'magnetometer'): soft iron
     3. Wrong implementation - not use cfg['in']['timerange_nord']! todo: Rotate compass using cfg['in']['timerange_nord']
-    :param new_arg: returns cfg if new_arg=='<cfg_from_args>' but it will be None if argument
+    :param config: returns cfg if new_arg=='<cfg_from_args>' but it will be None if argument
      argv[1:] == '-h' or '-v' passed to this code
     argv[1] is cfgFile. It was used with cfg files:
 
-    :return:
+
     """
+    global cfg, l
+    cfg = main_init(config, cs_store_name, __file__=None)
 
-    global l
+    # input data tables may be defined by 'probes_prefix' and 'probes' fields of cfg['in']
+    if cfg['in']['probes'] or not len(cfg['in']['tables']):
+        if cfg['in']['probes']:
+           cfg['in']['tables'] = [f"{cfg['in']['probes_prefix']}{probe:0>2}" for probe in cfg['in']['probes']]
+        elif cfg['in']['probes_prefix']:
+            cfg['in']['tables'] = [f"{cfg['in']['probes_prefix']}.*"]
+        # else:  # default config
+        #     cfg['in']['tables'] = ['.*']
 
-    cfg = cfg_from_args(my_argparser(), new_arg)
-    if not cfg:
-        return
-    if cfg['program']['return'] == '<cfg_from_args>':  # to help testing
-        return cfg
+    #h5init(cfg['in'], cfg['out'])
+    #cfg['out']['dt_from_utc'] = 0
+    # cfg = cfg_from_args(my_argparser(), new_arg)
 
-    l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
-    l.info("%s(%s) channels: %s started. ",
-           this_prog_basename(__file__), cfg['in']['tables'], cfg['in']['channels'])
+    lf.info(
+        "{:s}({:s}) for channels: {} started. ",
+        this_prog_basename(__file__), ', '.join(cfg['in']['tables']), cfg['in']['channels']
+        )
     fig = None
     fig_filt = None
-    channel = 'accelerometer'  # 'magnetometer'
+
     fig_save_dir_path = cfg['in']['db_path'].parent
     with pd.HDFStore(cfg['in']['db_path'], mode='r') as store:
         if len(cfg['in']['tables']) == 1:
@@ -596,7 +659,7 @@ def main(new_arg=None):
         coefs = {}
         for itbl, tbl in enumerate(cfg['in']['tables'], start=1):
             probe_number = int(re.findall('\d+', tbl)[0])
-            l.info(f'{itbl}. {tbl}: ')
+            lf.info(f'{itbl}. {tbl}: ')
             if isinstance(cfg['in']['timerange'], Mapping):  # individual interval for each table
                 if probe_number in cfg['in']['timerange']:
                     timerange = cfg['in']['timerange'][probe_number]
@@ -606,6 +669,8 @@ def main(new_arg=None):
                 timerange = cfg['in']['timerange']  # same interval for each table
             a = load_hdf5_data(store, table=tbl, t_intervals=timerange)
             # iUseTime = np.searchsorted(stime, [np.array(s, 'datetime64[s]') for s in np.array(strTimeUse)])
+
+            # Calibrate channels of 'accelerometer' or/and 'magnetometer'
             coefs[tbl] = {}
             for channel in cfg['in']['channels']:
                 print(f' channel "{channel}"', end=' ')
@@ -616,7 +681,7 @@ def main(new_arg=None):
                     b_ok = np.zeros(a.shape[0], bool)
                     for component in ['x', 'y', 'z']:
                         b_ok |= is_works(a[col_str + component], noise=cfg['filter']['no_works_noise'][channel])
-                    l.info('Filtered not working area: %2.1f%%', (b_ok.size - b_ok.sum())*100/b_ok.size)
+                    lf.info('Filtered not working area: {:2.1f}%', (b_ok.size - b_ok.sum())*100/b_ok.size)
                     # vec3d = np.column_stack(
                     #     (a[col_str + 'x'], a[col_str + 'y'], a[col_str + 'z']))[:, b_ok].T  # [slice(*iUseTime.flat)]
                     vec3d = a.loc[b_ok, [col_str + 'x', col_str + 'y', col_str + 'z']].to_numpy(float).T
@@ -633,7 +698,7 @@ def main(new_arg=None):
                 fig = calibrate_plot(vec3d, A, b, fig, window_title=window_title)
                 fig.savefig(fig_save_dir_path / (window_title + '.png'), dpi=300, bbox_inches="tight")
                 A_str, b_str = coef2str(A, b)
-                l.info('Calibration coefficients calculated: \nA = \n%s\nb = \n%s', A_str, b_str)
+                lf.info('Calibration coefficients calculated: \nA = \n{:s}\nb = \n{:s}', A_str, b_str)
                 coefs[tbl][channel] = {'A': A, 'b': b}
 
             # Zeroing Nord direction
@@ -644,10 +709,10 @@ def main(new_arg=None):
                 coefs[tbl]['M']['azimuth_shift_deg'] = zeroing_azimuth(
                     store, tbl, timerange_nord, calc_vel_flat_coef(coefs[tbl]), cfg['in'])
             else:
-                l.info('no zeroing Nord')
-    # Write coefs
+                lf.info('not zeroing North')
+    # Write coefs to each of output tables named same as input
     for cfg_output in (['in', 'out'] if cfg['out'].get('db_path') else ['in']):
-        l.info(f"Write to {cfg[cfg_output]['db_path']}")
+        lf.info('Writing to {}', cfg[cfg_output]['db_path'])
         for itbl, tbl in enumerate(cfg['in']['tables'], start=1):
             # i_search = re.search('\d*$', tbl)
             # for channel in cfg['in']['channels']:
@@ -666,6 +731,31 @@ def main(new_arg=None):
             #                 pass
             dict_matrices = dict_matrices_for_h5(coefs[tbl], tbl, cfg['in']['channels'])
             h5copy_coef(None, cfg[cfg_output]['db_path'], tbl, dict_matrices=dict_matrices)
+
+    print('Ok>', end=' ')
+
+
+
+def main_call(
+        cmd_line_list: Optional[List[str]] = None,
+        fun: Callable[[], Any] = main
+        ) -> Dict:
+    """
+    Adds command line args, calls fun, then restores command line args
+    :param cmd_line_list: command line args of hydra commands or config options selecting/overwriting
+
+    :return: global cfg
+    """
+
+    sys_argv_save = sys.argv
+    if cmd_line_list is not None:
+        sys.argv += cmd_line_list
+
+    # hydra.conf.HydraConf.run.dir = './outputs/${now:%Y-%m-%d}_${now:%H-%M-%S}'
+    fun()
+    sys.argv = sys_argv_save
+    return cfg
+
 
 
 if __name__ == '__main__':
