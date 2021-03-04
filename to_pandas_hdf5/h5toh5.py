@@ -473,7 +473,7 @@ def h5temp_open(
     if tables is None:
         return None, None, False  # skipping open, may be need if not need write
     else:
-        print('saving to', db_path_temp / ','.join(tables), end=':\n')
+        print('saving to', db_path_temp / ','.join(tables).strip('/'), end=':\n')
 
     try:
         try:  # open temporary output file
@@ -1163,10 +1163,13 @@ def h5init(cfg_in: Mapping[str, Any], cfg_out: MutableMapping[str, Any]) -> None
     set_field_if_no(cfg_out, 'b_remove_duplicates', False)
     set_field_if_no(cfg_out, 'b_use_old_temporary_tables', True)
     if cfg_out.get('b_insert_separator') is None:
-        cfg_file = PurePath(cfg_in['cfgFile']).stem
-        cfg_out['b_insert_separator'] = '_ctd_' in cfg_file.lower()
+        if 'cfgFile' in cfg_in:
+            cfg_file = PurePath(cfg_in['cfgFile']).stem
+            cfg_out['b_insert_separator'] = '_ctd_' in cfg_file.lower()
+        # else:
+        #     cfg_out['b_insert_separator'] = False
 
-    # Automatic db file and tables names
+        # Automatic db file and tables names
     if not (cfg_out.get('db_path') and cfg_out['db_path'].is_absolute()):
         path_in = Path(cfg_in.get('path' if 'path' in cfg_in else 'db_path')).parent
         cfg_out['db_path'] = path_in / (f'{path_in.stem}_out' if not cfg_out.get('db_path') else cfg_out['db_path'])

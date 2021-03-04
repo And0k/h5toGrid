@@ -361,7 +361,8 @@ def main(new_arg=None, **kwargs):
             if cfg['in']['probes']:
                 tables_list_regex += "(?:{})".format('|'.join('{:0>2}'.format(p) for p in cfg['in']['probes']))
 
-            args = [# Path(incl_h5clc.__file__).with_name(f'incl_h5clc_{db_path.stem}.yaml'),# if no such file all settings are here
+            args = [
+                    '../../empty.yml',  # all settings are here, so to not print 'using default configuration' we use some existed empty file
                     '--db_path', str(db_path_in),
                     '--tables_list', tables_list_regex,
                     '--aggregate_period', f'{aggregate_period_s}S' if aggregate_period_s else '',

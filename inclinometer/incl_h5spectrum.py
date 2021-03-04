@@ -640,6 +640,11 @@ def main(new_arg=None, **kwargs):
         return ()
     print('\n' + prog, end=' started. ')
 
+    cfg['in']['columns'] = ['Ve', 'Vn', 'Pressure']
+    # minimum time between blocks, required in filt_data_dd() for data quality control messages:
+    cfg['in']['dt_between_bursts'] = None  # If None report any interval bigger then min(1st, 2nd)
+    cfg['in']['dt_hole_warning'] = np.timedelta64(2, 's')
+
     cfg_out = cfg['out']
     if 'split_period' in cfg['out']:
         cfg['proc']['dt_interval'] = np.timedelta64(cfg['proc']['dt_interval'] if cfg['proc']['dt_interval'] else
@@ -651,13 +656,10 @@ def main(new_arg=None, **kwargs):
         cfg['proc']['dt_interval'] = np.timedelta64(cfg['proc']['dt_interval'])
         # cfg['proc']['dt_interval'] = np.timedelta64('5', 'm') * 24
         cfg['proc']['time_intervals_start'] = np.array(cfg['proc']['time_intervals_center'], np.datetime64) - cfg['proc']['dt_interval'] / 2
-    # minimum time between blocks, required in filt_data_dd() for data quality control messages:
-    cfg['in']['dt_between_bursts'] = None  # If None report any interval bigger then min(1st, 2nd)
-    cfg['in']['dt_hole_warning'] = np.timedelta64(2,'s')
 
     cfg_out['chunksize'] = cfg['in']['chunksize']
     h5init(cfg['in'], cfg_out)
-    # cfg_out_table = cfg_out['table']  need? save beacause will need to change
+    # cfg_out_table = cfg_out['table']  need? save because will need to change
     cfg_out['save_proc_tables'] = True  # False
 
     # cfg['proc'] = {}
@@ -694,6 +696,10 @@ def main(new_arg=None, **kwargs):
     for df, tbl_in, dataname in h5_velocity_by_intervals_gen(cfg, cfg_out):
         tbl = tbl_in.replace('incl', '_i')
         # _, (df, tbl, dataname) in h5_dispenser_and_names_gen(cfg['in'], cfg_out, fun_gen=h5_velocity_by_intervals_gen):
+
+        # interpolate to regular grid
+        df = df.resample(timedelta(seconds=1 / prm['fs'])).interpolate()
+
         len_data_cur = df.shape[0]
         if tbl_prev != tbl:
             itbl += 1
@@ -726,7 +732,7 @@ def main(new_arg=None, **kwargs):
             prm['weights'] = np.sqrt(prm['eigvals'])[np.newaxis, :, np.newaxis]
             # l.warning('new length (%s) is different to last (%s)', len_data_cur, prm['length'])
 
-        if not tbl in nc_psd.groups:
+        if tbl not in nc_psd.groups:
             nc_tbl = nc_psd.createGroup(tbl)
             cols = set()
             if 'Pressure' in df.columns:
@@ -741,10 +747,11 @@ def main(new_arg=None, **kwargs):
             out_row = 0
         nc_tbl.variables['time_start'][out_row], nc_tbl.variables['time_end'][out_row] = df.index[[0, -1]].values
 
-        # Calculate
+        # Calculate PSD
         if prm['eigvals'].any():
             for var_name in cols:
-                nc_tbl.variables[var_name][out_row, :] = call_with_valid_kwargs(psd_mt, df[var_name].to_numpy(), **prm)[0, :]
+
+                nc_tbl.variables[var_name][out_row, :] = call_with_valid_kwargs(psd_mt, df[var_name], **prm)[0, :]
             if time_good_min.to_numpy('<M8[ns]') > df.index[0].to_numpy('<M8[ns]'):  # to_numpy() get values to avoid tz-naive/aware comparing restrictions
                 time_good_min = df.index[0]
             if time_good_max.to_numpy('<M8[ns]') < df.index[-1].to_numpy('<M8[ns]'):

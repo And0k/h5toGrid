@@ -174,13 +174,24 @@ def h5_load_range_by_coord(
         # else:
         chunksize = ddpart_size  # !? else loads more data than needs. Do I need to adjust chunksize to divide ddpart_on equal parts?
         # sorted_index=cfg_in['sorted_index'] not works with start/stop so loading without
-        ddpart = dd.read_hdf(db_path, table,
-                             chunksize=chunksize,
-                             lock=True,
-                             mode='r',
-                             columns=columns,
-                             start=range_coordinates[0],
-                             stop=range_coordinates[-1])
+
+        for c in [False, True]:  # try with specified columns first
+            try:
+                ddpart = dd.read_hdf(db_path, table,
+                                     chunksize=chunksize,
+                                     lock=True,
+                                     mode='r',
+                                     columns=columns,
+                                     start=range_coordinates[0],
+                                     stop=range_coordinates[-1])
+                break
+            except KeyError:  # some of specified columns not exist
+                # use only existed columns
+                with pd.HDFStore(db_path, mode='r') as store:
+                    columns = store[table].columns.join(columns, how='inner')
+                print('found columns:', columns.values)
+
+
         # because of no 'sorted_index' we need:
         ddpart = ddpart.reset_index().set_index(ddpart.index.name or 'index', sorted=sorted_index)  # 'Time'
     return ddpart
@@ -193,9 +204,9 @@ def i_bursts_starts_dd(tim, dt_between_blocks: Optional[np.timedelta64] = None):
     :param: dt_between_blocks, pd.Timedelta or None - minimum time between blocks.
             Must be greater than delta time within block
             If None then auto find: greater than min of two first intervals + 1s       
-    return: (i_burst, mean_burst_size)
-         i_burst - indexes of starts of bursts
-         mean_burst_size - mean burst size
+    return: (i_burst, mean_burst_size) where:
+    - i_burst - indexes of starts of bursts,
+    - mean_burst_size - mean burst size.
 
     >>> tim = pd.date_range('2018-04-17T19:00', '2018-04-17T20:10', freq='2ms').to_series()
     ... di_burst = 200000  # start of burst in tim i.e. burst period = period between samples in tim * period (period is a freq argument) 
@@ -244,7 +255,7 @@ def i_bursts_starts(tim, dt_between_blocks: Optional[np.timedelta64] = None) -> 
             Must be greater than delta time within block
             If None then auto find: greater than min of two first intervals + 1s
             If np.inf returns (array(0), len(tim))
-    return (i_burst, mean_burst_size, max_hole):
+    return (i_burst, mean_burst_size, max_hole) where:
     - i_burst: indexes of starts of bursts, with first element is 0 (points to start of data)
     - mean_burst_size: mean burst size
     - max_hole: max time distance between bursts found
@@ -802,7 +813,7 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
             l.exception(e)
             raise (e)
     else:
-        # Uppend corrected data to cfg_out['db'] store
+        # Append corrected data to cfg_out['db'] store
         try:
             df_append_fun(df, tbl_parent, cfg_out)
         except Exception as e:
@@ -918,6 +929,7 @@ def h5_append(cfg_out: Dict[str, Any],
     :param df: pandas or dask datarame to append. If dask then log_dt_from_utc must be None (not assign log metadata here)
     :param log: dict which will be appended to child tables, cfg_out['tables_log']
     :param cfg_out: dict with fields:
+        db: opened hdf5 store in write mode
         table: name of table to update (or tables: list, then used only 1st element)
         table_log: name of chield table (or tables_log: list, then used only 1st element)
         tables: None - to return with done nothing!
@@ -961,14 +973,16 @@ def h5_append(cfg_out: Dict[str, Any],
         l.info('h5_append(%s)... ', msg_func)
         set_field_if_no(cfg_out, 'nfiles', 1)
 
-        if (cfg_out['chunksize'] is None) and ('chunksize_percent' in cfg_out):  # based on first file
-            cfg_out['chunksize'] = int(df_len * cfg_out['chunksize_percent'] / 1000) * 10
-            if cfg_out['chunksize'] < 10000: cfg_out['chunksize'] = 10000
-        elif cfg_out['chunksize'] is None:
-            cfg_out['chunksize'] = 10000
+        if 'chunksize' in cfg_out and cfg_out['chunksize'] is None:
+            if ('chunksize_percent' in cfg_out):  # based on first file
+                cfg_out['chunksize'] = int(df_len * cfg_out['chunksize_percent'] / 1000) * 10
+                if cfg_out['chunksize'] < 10000:
+                    cfg_out['chunksize'] = 10000
+            else:
+                cfg_out['chunksize'] = 10000
 
-            if df_len <= 10000 and isinstance(df, dd.DataFrame):
-                df = df.compute()  # dask not writes "all NaN" rows
+                if df_len <= 10000 and isinstance(df, dd.DataFrame):
+                    df = df.compute()  # dask not writes "all NaN" rows
 
             # , compute=False
             # cfg_out['db'].append(cfg_out['table'], df, data_columns=True, index=False,

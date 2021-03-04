@@ -659,6 +659,10 @@ def cfg_from_args(p, arg_add, **kwargs):
                 p = p(None)
             args = vars(p.parse_args())  # will generate SystemExit
 
+    # Type suffixes '_list', '_int' ... (we need to remove if type was converted, for example config loaded from yaml)
+    suffixes = {'_list', '_int', '_integer', '_index', '_float', '_b', '_bool', '_date', '_chars', '_dict'}
+    re_suffixes = re.compile(f"({'|'.join(suffixes)})+$")
+
     # Load options from ini file
     config, arg_source, arg_ext = cfgfile2dict(arg_source)
     if callable(p):  # todo: replace configargparse back to argparse to get rid of this double loading of ini/yaml?
@@ -677,6 +681,7 @@ def cfg_from_args(p, arg_add, **kwargs):
             p_groups[section_name] = p_sec
         return p_sec
 
+    # Overwrite hardcoded defaults from ini in p: this is how we make it 2nd priority and defaults - 3rd priority
     if config:
         prefix = '--'
         for section_name, section in config.items():
@@ -698,7 +703,7 @@ def cfg_from_args(p, arg_add, **kwargs):
                     # so override if in command line
                     if (len(sys.argv) > 1) and not isinstance(section[option_name], str):
                         for arg in sys.argv[2::2]:
-                            if arg[2:].startswith(option_name):
+                            if arg[2:].startswith(option_name) and option_name == re_suffixes.sub('', arg[2:]):
                                 b_override = True
                                 break
                         else:
@@ -714,17 +719,16 @@ def cfg_from_args(p, arg_add, **kwargs):
                     option_name_changed = f'{section_name}.{option_name}'
                     try:
                         p_sec.add(f'{prefix}{option_name_changed}', default=section[option_name])
-                    except configargparse.ArgumentError as e:
-                        # Changed option name was hardcoded so replase defaults defined there
+                    except configargparse.ArgumentError:
+                        # Changed option name was hardcoded so replace defaults defined there
                         p_sec._group_actions[p_sec_hardcoded_list.index(option_name_changed)].default = section[
                             option_name]
-                        # p_sec.set_defaults(
 
-            # overwrite hardcoded defaults from ini in p: this is how we make it 2nd priority and defaults - 3rd priority
+            # overwriting
             for option_name in ini_sec_options_same:
                 p_sec._group_actions[p_sec_hardcoded_list.index(option_name)].default = section[option_name]
 
-    # uppend arguments with my common options:
+    # Append arguments with my common options:
     p_sec = get_or_add_sec('program', p_groups, 'Program behaviour')
     try:
         p_sec.add_argument(
@@ -776,13 +780,10 @@ def cfg_from_args(p, arg_add, **kwargs):
 
             cfg[section_name] = cfg_section
 
-        if arg_ext.lower() in ('.yml', '.yaml'):
-            # Remove type suffixes '_list', '_int' ... (currently removing is needed for yaml files only)
-            suffixes = {'_list', '_int', '_integer', '_index', '_float', '_b', '_bool', '_date', '_chars', '_dict'}
-        else:
+        if arg_ext.lower() not in ('.yml', '.yaml'):
             # change types based on prefix/suffix
             cfg = ini2dict(cfg)
-            suffixes = ()
+        # else type suffixes will be removed in cycle below
 
         # Convert cfg['re mask'] descendants and all str (or list of str but not starting from '') chields beginning with 're_' to compiled regular expression object
         # lists in 're_' are joined to strings before compile (useful as list allows in yaml to use aliases for part of re expression)
@@ -812,14 +813,22 @@ def cfg_from_args(p, arg_add, **kwargs):
                             v[key_level1] = re.compile(opt)
                     elif not (opt is None or isinstance(opt, str)):
                         # type already converted, remove type suffixes here only
-                        for ends in suffixes:
-                            if key_level1.endswith(ends):
-                                new_name = key_level1[:-len(ends)]
-                                if ends == '_date' and new_name.startswith(('min', 'max')):  # exclusion for min_date and max_date
-                                    break  # todo: exclude all excisions that leave only special prefixes
+                        new_name, n_rep = re_suffixes.subn('', key_level1)
+                        if n_rep:
+                            # exclusion for min_date and max_date
+                            if not (key_level1.endswith('_date') and new_name.startswith(('min', 'max'))):
+                                # todo: exclude all excisions that leave only special prefixes
                                 v[new_name] = opt
                                 del v[key_level1]
-                                break
+
+                        # for ends in suffixes:
+                        #     if key_level1.endswith(ends):
+                        #         new_name = key_level1[:-len(ends)]
+                        #         if ends == '_date' and new_name.startswith(('min', 'max')):  # exclusion for min_date and max_date
+                        #             break  # todo: exclude all excisions that leave only special prefixes
+                        #         v[new_name] = opt
+                        #         del v[key_level1]
+                        #         break
                     else:
                         # type not converted, remove type suffixes and convert
                         new_name, val = type_fix(key_level1, opt)
@@ -830,11 +839,11 @@ def cfg_from_args(p, arg_add, **kwargs):
                                 v[new_name] = val
                         else:
                             # replace old key
-                            if not new_name in v:  # if not str (=> not default) parameter without suffixes added already
+                            if new_name not in v:  # if not str (=> not default) parameter without suffixes added already
                                 v[new_name] = val
                             elif v[new_name] and v[new_name] != val:
                                 print(f'config {key_level1} value {val} ignored: {key_level0}.{new_name} = {v[new_name]} keeped')
-                            del v[key_level1]
+                            del v[key_level1]   # already converted
 
         if kwargs:
             for key_level0, kwargs_level1 in kwargs.items():

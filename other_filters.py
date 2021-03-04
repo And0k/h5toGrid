@@ -65,8 +65,14 @@ def rep2mean(y, bOk=None, x=None):
 
 @njit
 def b1spike(a, max_spike=0):
+    """
+    Single spike detection
+    Note: change of a at edge bigger than max_spike is treated as spike too
+    :param a:
+    :param max_spike:
+    :return: bool array of where is spike in a
+    """
     diff_x = np.diff(a)
-
     b_single_spike_1 = lambda bad_u, bad_d: np.logical_or(
         np.logical_and(np.append(bad_d, True), np.append(True, bad_u)),  # spike to down
         np.logical_and(np.append(bad_u, True), np.append(True, bad_d)))  # spike up
@@ -76,8 +82,8 @@ def b1spike(a, max_spike=0):
 
 @njit
 def b1spike_up(a, max_spike):
-    diff_x = np.diff(a)
 
+    diff_x = np.diff(a)
     b_single_spike_1 = lambda bad_u, bad_d: \
         np.logical_and(np.append(bad_u, True), np.append(True, bad_d))  # spike up
     return b_single_spike_1(diff_x < -max_spike, diff_x > max_spike)
@@ -823,7 +829,7 @@ def coef_pyramid_plot(coefs, first=0, scale='uniform', ax=None):
     if ax is None:
         import matplotlib.pyplot as plt
         fig = plt.figure()
-        ax = fig.add_subplot(111, axisbg='lightgrey')
+        ax = fig.add_subplot(111)  #, axisbg='lightgrey'
     else:
         fig = ax.figure
 

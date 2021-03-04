@@ -50,8 +50,7 @@ if True:  # __debug__:
     matplotlib.rcParams['axes.linewidth'] = 1.5
     matplotlib.rcParams['figure.figsize'] = (16, 7)
     try:
-        matplotlib.use(
-            'Qt5Agg')  # must be before importing plt (rases error after although documentation sed no effect)
+        matplotlib.use('Qt5Agg')  # must be before importing plt (raises error after although docs said no effect)
     except ImportError:
         pass
     from matplotlib import pyplot as plt
@@ -167,11 +166,11 @@ def check_time_dif(tstart, t64st_data, dt_max=0, data_name=''):
 def write_grd_fun(gdal_geotransform):
     gdal_drv_grid = gdal.GetDriverByName('GS7BG')
 
-    def write_grd1(fileOut_grd, z):
+    def write_grd1(file_grd, z):
         nonlocal gdal_drv_grid, gdal_geotransform
-        gdal_raster = gdal_drv_grid.Create(str(fileOut_grd), z.shape[1], z.shape[0], 1, gdal.GDT_Float32)  #
+        gdal_raster = gdal_drv_grid.Create(str(file_grd), z.shape[1], z.shape[0], 1, gdal.GDT_Float32)  #
         if gdal_raster is None:
-            l.error('Could not create %s', fileOut_grd)
+            l.error('Could not create %s', file_grd)
             # continue #sys.exit(1)
         # georeference the image and set the projection
         gdal_raster.SetGeoTransform(gdal_geotransform)
@@ -1898,9 +1897,9 @@ def main(new_arg=None):
                             except Exception as e:
                                 l.error('\nCan not draw contour! ', exc_info=1)
                         # gdal_drv_grid.Register()
-                        fileOut_grd = cfg['out']['path'] / interp_method_subdir / (
+                        file_grd = cfg['out']['path'] / interp_method_subdir / (
                                 stem_time + label_param + '.grd')
-                        write_grd_this_geotransform(fileOut_grd, z)
+                        write_grd_this_geotransform(file_grd, z)
                         if b_1st:
                             b_1st = False
 

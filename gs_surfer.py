@@ -435,9 +435,136 @@ def export_all_grids(path_dir_out:Optional[Path]=None):
                         #     ovrl.Name= File + ovrl.Name Else ovrl.Name= Left(ovrl.Name,17)
 
 
+# --- 20.02.2021
+
+def xyz2d(xyz, b_show=False):
+    """
+
+    :param xyz: array of shape (N, 3) last dimention for x, y and z
+    :param b_show: show matplotlib plot of result grid
+    :return: (z2d, x_min, y_min, x_resolution, y_resolution) suits to input to save_grd()
+    """
+
+    x_uniq = np.unique(xyz[:,0])
+    y_uniq = np.unique(xyz[:,1])
+
+    idx = np.lexsort(xyz[:, :-1].T, axis=0)
+    if np.array_equal(idx, np.arange(xyz.shape[0])):
+        # input data is conformed to grid
+        idx = idx.reshape(y_uniq.size, x_uniq.size)
+        x2d, y2d, z2d = xyz[idx, :].T
+    else:
+        print('input data is not conformed to grid')
+        # I'm fairly sure there's a more efficient way of doing this...
+        def get_z(xyz, x, y):
+            ind = (xyz[:, (0, 1)] == (x, y)).all(axis=1)
+            row = xyz[ind, :]
+            return row[0, 2]
+
+        x2d, y2d = np.meshgrid(x_uniq, y_uniq)
+        z = np.array([get_z(xyz, x, y) for (x, y) in zip(np.ravel(x2d), np.ravel(y2d))])
+        z2d = z.reshape(x2d.shape)
+
+    x_min, x_max = x_uniq[[0, -1]]
+    y_min, y_max = y_uniq[[0, -1]]
+    x_resolution = np.diff(x2d[:2, 0]).item()
+    y_resolution = np.diff(y2d[0, :2]).item()
+
+    # check grid is ok
+    assert x_min == x2d[0, 0]
+    assert y_min == y2d[0, 0]
+    assert x_resolution == (x_max - x_min) / (x_uniq.size - 1)
+    assert y_resolution == (y_max - y_min) / (y_uniq.size - 1)
+
+    if b_show:
+        # graphics/interactivity
+        if True:  # __debug__:
+            import matplotlib
+
+            matplotlib.rcParams['axes.linewidth'] = 1.5
+            matplotlib.rcParams['figure.figsize'] = (16, 7)
+            try:
+                matplotlib.use(
+                    'Qt5Agg')  # must be before importing plt (raises error after although docs said no effect)
+            except ImportError:
+                pass
+            from matplotlib import pyplot as plt
+
+            matplotlib.interactive(True)
+            plt.style.use('bmh')
+
+        plt.pcolormesh(x2d, y2d, z2d)
+        plt.xlim(x_min, x_max)
+        plt.ylim(y_min, y_max)
+        plt.show()
+
+    return z2d, x_min, y_max, x_resolution, y_resolution
+
+
+def save_grd(z2d, x_min, y_max, x_resolution, y_resolution, file_grd):
+    """
+
+    :param z2d:
+    :param file_grd: str (if without suffix then ".grd" will be added) or Path of output Surfer grid
+    :return:
+    """
+
+    from grid2d_vsz import write_grd_fun
+
+    # (M, N): the rows and columns = an image with scalar data
+
+    gdal_geotransform = (x_min, x_resolution, 0, y_max, 0, -y_resolution)
+    # [0] координата x верхнего левого угла
+    # [1] ширина пиксела
+    # [2] поворот, 0, если изображение ориентировано на север
+    # [3] координата y верхнего левого угла
+    # [4] поворот, 0, если изображение ориентировано на север
+    # [5] высота пиксела
+    write_grd_this_geotransform = write_grd_fun(gdal_geotransform)
+
+    if not isinstance(file_grd, Path):
+        file_grd = Path(file_grd)
+        if file_grd.suffix != '.grd':
+            file_grd = file_grd.with_suffix('.grd')
+
+    write_grd_this_geotransform(file_grd, z2d)
+
+
+def xyz2grd(xyz, file_grd, b_show=False):
+    z2d, x_min, y_max, x_resolution, y_resolution = xyz2d(xyz, b_show)
+    save_grd(np.flipud(z2d.T), x_min, y_max, x_resolution, y_resolution, file_grd)
+
+
+def txt2grd(file_txt, z_names=('u', 'v', 'Wabs'), z_icols=(2, 3, 4), b_show=False):
+    """
+
+    :param file_txt: text file to read data: lat, lon, u, v, abs...
+    :param z_names: columns names for z values
+    :return:
+    """
+    file_txt = Path(file_txt)
+    file_parent = file_txt.parent
+    file_no_sfx = file_txt.stem
+
+    usecols = [0, 1]; usecols.extend(z_icols)
+    xyz = np.loadtxt(file_txt, usecols=usecols)
+    for z_name, i_z in zip(z_names, z_icols):
+        xyz2grd(xyz[:, (1, 0, i_z)], file_parent / f'{file_no_sfx}_{z_name}.grd', b_show)
+
+
+def many_txt2grd(file_txt_path, z_names=('u', 'v', 'Wabs'), z_icols=(2, 3, 4), b_show=False):
+    file_txt_path = Path(file_txt_path)
+    for i, file_txt in enumerate(file_txt_path.parent.glob(file_txt_path.name)):
+        print(i, end=', ')
+        txt2grd(file_txt, z_names, z_icols)
+
+#
 
 
 def main():
+    many_txt2grd(r'd:\WorkData\BalticSea\_other_data\_model\POM_GMasha\201001_ABP46\wind\*.txt')
+    return
+
     """
     Executes paste_srfs_data() with my settings, in particular paths on my computer
     :return:

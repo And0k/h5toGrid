@@ -75,7 +75,7 @@ to Pandas HDF5 store*.h5
     s.add('--exclude_files_endswith_list', default='coef.txt, -.txt, test.txt',
              help='exclude files which ends with this srings')
     s.add('--b_skip_if_up_to_date', default='True',
-             help='exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it before procesing of next files: 1. Program copyes all data to temporary storage and 2. deletes old data there if found. 3. New data uppended. 4. Data tables copyed back with deleting original data')
+             help='exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it before procesing of next files: 1. Program copyes all data to temporary storage and 2. deletes old data there if found. 3. New data appended. 4. Data tables copyed back with deleting original data')
     s.add('--dt_from_utc_seconds', default='0',
              help='source datetime data shift. This constant will be substructed just after the loading to convert to UTC. Can use other suffixes instead of "seconds"')
     s.add('--dt_from_utc_hours', default='0',
@@ -963,7 +963,7 @@ def h5_dispenser_and_names_gen(
     :param fun_gen: function with arguments (cfg_in, cfg_out, **kwargs), that
         - generates data labels, default are file's ``Path``s,
         - updates cfg_out['log'] fields 'fileName' (by current label) and 'fileChangeTime' needed to store and find
-        data. They named historically, in priciple, you can use any unique idetnificator composed of this two fields.
+        data. They named historically, in principle, you can use any unique identificator composed of this two fields.
 
     :return: Iterator that returns (i1, pname):
         - i1: index (starting with 1) of fun_gen generated data label (may be file)

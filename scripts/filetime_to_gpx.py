@@ -12,7 +12,7 @@ from utils2init import init_file_names, cfg_from_args, this_prog_basename, Ex_no
 
 def my_argparser():
     p = h5toGpx_parser()
-    # uppend arguments with my common options:
+    # Append arguments with my common options:
     s = [g for g in p._action_groups if g.title == 'in'][0]
     s.add('--path', default='.',  # nargs=?,
              help='path to source file(s) to parse. Use patterns in Unix shell style')

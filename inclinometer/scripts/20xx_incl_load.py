@@ -2,20 +2,18 @@
 from inclinometer.incl_load import main as incl_load
 
 incl_load([
-    'ini/incl_load_201202_Baltic_spit.yml',
+    # 'ini/incl_load_201202_Baltic_spit.yml',
+    'ini/incl_load_200919_Pregolya,Lagoon.yml',
+    # # wavegage:
+    # 'ini/incl_load_201202_Baltic_spit#w.yml',
 
-    ## wavegage:
-    '--probes_int_list', '1',
-    '--probes_prefix', 'w',  # 'voln' for step 1, 'w' for steps 2+,
-    '--raw_pattern', "*{prefix:}_V{number:0>2}*.[tT][xX][tT]",
-    '--aggregate_period_s_int_list', 'None, 2, 600, 3600',
-
+    # probe with 1800s burst period:
     # '--probes_int_list', '28',
     # '--aggregate_period_s_int_list', '1800',
 
-    '--step_start_int', '3',
-    '--step_end_int', '3',
-
+    '--step_start_int', '2',
+    '--step_end_int',   '2',
+    #'--aggregate_period_s_not_to_text_int_list', 'None, 2, 300, 3600', #,3600
     #'--load_timeout_s_float', '0'
 ])
 
@@ -37,6 +35,11 @@ incl_load([
     # '--time_start_utc_dict', '15: 2020-09-15T06:42:00',
     # '--dt_from_utc_days_dict', '10: -7',
    # '--aggregate_period_s_not_to_text_int_list', 'None,2,600,7200', #,3600
+   
+   # wavegage:
+    '--raw_pattern', "*{prefix:}_V{number:0>2}*.[tT][xX][tT]",
+    '--aggregate_period_s_int_list', 'None, 2, 600, 3600',   
+   
 # 'ini/200901incl_load.yml',
 # 'ini/200813incl_load-calibtank2#b.yml'
 # 'ini/200813incl_load-calibtank#b20.yml'
