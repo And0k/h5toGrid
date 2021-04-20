@@ -76,7 +76,7 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray], cfg_in: Mapping[str,
                     np.subtract, tim.values, np.timedelta64(cfg_in['dt_from_utc']), type_of_operation='<M8[ms]'
                     ), utc=True)
             # tim += np.timedelta64(pd.Timedelta(hours=hours_from_utc_f)) #?
-        lf.info('Time constant: {:s} {:s}', abs(cfg_in['dt_from_utc']),
+        lf.info('Time constant: {} {:s}', abs(cfg_in['dt_from_utc']),
                'subtracted' if cfg_in['dt_from_utc'] > timedelta(0) else 'added')
     else:
         if (not isinstance(date, pd.Series)) and (not isinstance(date, np.datetime64)):

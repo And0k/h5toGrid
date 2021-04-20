@@ -8,6 +8,7 @@
 """
 
 import logging
+import re
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -347,8 +348,13 @@ def h5_velocity_by_intervals_gen(cfg: Mapping[str, Any], cfg_out: Mapping[str, A
     """
     # Prepare cycle
     if cfg_out.get('split_period'):
-        # variant 1. generate regular intervals (may be with overlap)
+
         def gen_loaded(tbl):
+            """
+            Variant 1. Generate regular intervals (may be with overlap)
+            :param tbl:
+            :return:
+            """
             cfg['in']['table'] = tbl
             # To obtain ``t_intervals_start`` used in query inside gen_data_on_intervals(cfg_out, cfg)
             # we copy its content here:
@@ -364,13 +370,21 @@ def h5_velocity_by_intervals_gen(cfg: Mapping[str, Any], cfg_out: Mapping[str, A
                         np.datetime64(cfg['in']['max_date'] - pd_period_to_timedelta(cfg_out['split_period'])))
                     t_intervals_start = t_intervals_start[:idel]
                 cfg['in']['time_intervals_start'] = t_intervals_start  # to save queried time - see main()
+            cfg_filter = None
+            cfg_in_columns_saved = cfg['in']['columns']
             for start_end in h5q_starts2coord(
                     cfg['in']['db_path'], cfg['in']['table'], t_intervals_start,
                     dt_interval=cfg['proc']['dt_interval']
                     ):
                 a = h5_load_range_by_coord(**cfg['in'], range_coordinates=start_end)
-                d, i_burst = filt_data_dd(a, cfg['in']['dt_between_bursts'], cfg['in']['dt_hole_warning'],
-                                          cfg['in'].get('min_p'), cfg['filter'])
+                if cfg_filter is None:  # only 1 time
+                    # corrects columns if they are not exact mutch to faster h5_load_range_by_coord() next time
+                    cfg['in']['columns'] = a.columns  # temporary
+                    # and exclude absent fields to not filter warning of no such column in filt_data_dd()
+                    detect_filt = f"m(ax|in)_({'|'.join(cfg['in']['columns'])})"
+                    cfg_filter = {k: v for k, v in cfg['filter'].items() if re.match(detect_filt, k)}
+                d, i_burst = filt_data_dd(a, cfg['in']['dt_between_bursts'], cfg['in']['dt_hole_warning'], cfg_filter)
+
                 n_bursts = len(i_burst)
                 if n_bursts > 1:  # 1st is always 0
                     l.info('gaps found: (%s)! at %s', n_bursts - 1, i_burst[1:] - 1)
@@ -379,12 +393,17 @@ def h5_velocity_by_intervals_gen(cfg: Mapping[str, Any], cfg_out: Mapping[str, A
                     continue
                 start_end = df0.index[[0, -1]].values
                 yield df0, start_end
+            cfg['in']['columns'] = cfg_in_columns_saved  # recover to not affect next file
 
     else:
-        # variant 2. genereate intervals at specified start values with same width cfg['proc']['dt_interval']
         query_range_pattern = "index>=Timestamp('{}') & index<=Timestamp('{}')"
 
         def gen_loaded(tbl):
+            """
+            Variant 2. Generate intervals at specified start values with same width cfg['proc']['dt_interval']
+            :param tbl:
+            :return:
+            """
             for start_end in zip(cfg['in']['time_intervals_start'],
                                  cfg['in']['time_intervals_start'] + cfg['proc']['dt_interval']):
                 query_range_lims = pd.to_datetime(start_end)

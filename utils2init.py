@@ -524,7 +524,7 @@ def ini2dict(arg_source: Union[Mapping[str, Any], str, PurePath, None] = None):
     cfg = {key: {} for key in config}
     oname = None
     opt = None
-    # convert cpecific fields data types
+    # convert specific fields data types
     try:
         for sname, sec in config.items():
             if sname[:7] == 'TimeAdd':

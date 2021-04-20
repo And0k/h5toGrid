@@ -12,12 +12,15 @@ import logging
 import re
 import sys
 from collections import defaultdict
-import datetime
+from datetime import datetime, timedelta
+from time import sleep
 from pathlib import Path
+import glob
 from typing import Optional
 from functools import partial
 import numpy as np
 import pandas as pd
+from pandas.tseries.frequencies import to_offset
 
 # import my scripts
 from to_pandas_hdf5.csv2h5 import main as csv2h5
@@ -29,7 +32,7 @@ from inclinometer.incl_calibr import dict_matrices_for_h5
 import inclinometer.incl_h5clc as incl_h5clc
 import inclinometer.incl_h5spectrum as incl_h5spectrum
 import veuszPropagate
-from utils_time import pd_period_to_timedelta
+from utils_time import intervals_from_period # pd_period_to_timedelta
 from utils2init import path_on_drive_d, init_logging, open_csv_or_archive_of_them, st, cfg_from_args, my_argparser_common_part
 from magneticDec import mag_dec
 
@@ -65,8 +68,10 @@ Saving result to indexed Pandas HDF5 store (*.h5) and *.csv
              help='Note: Not affects steps 2, 3, set empty list to load all')
     s.add('--probes_prefix', default='incl',
              help='''Table name prefix in DB (and in raw files with modification described in --raw_pattern help).
-                  I have used "incl" for inclinometers, "w" for wavegauges. Note: only if "incl" or "voln" in 
-                  probes_prefix then the Kondrashov format is used else it must be in Baranov's format''')
+                  I have used "incl" for inclinometers, "w" for wavegauges. Note (at step 1): only if "incl" or "voln" 
+                  in probes_prefix then raw data must be in Kondrashov format else it in Baranov's format. For "voln" we
+                  replace "voln_v" with "w" when saving corrected raw files and use it to name tables so 
+                  only "w" in outputs and we replace "voln" with "w" to search tables''')
 
     s.add('--db_coefs', default=r'd:\WorkData\~configuration~\inclinometr\190710incl.h5',
              help='coefs will be copied from this hdf5 store to output hdf5 store')
@@ -78,7 +83,7 @@ Saving result to indexed Pandas HDF5 store (*.h5) and *.csv
              help='add this correction to loading datetime data. Can use other suffixes instead of "hours"')
     s.add('--dt_from_utc_days_dict',
              help='add this correction to loading datetime data. Can use other suffixes instead of "days"')
-    s.add('--time_start_utc_dict', help='Start time of probes started without time setting. Raw date must start from 2000-01-01T00:00')
+    s.add('--time_start_utc_dict', help='Start time of probes started without time setting: when raw date start is 2000-01-01T00:00')
     s.add('--azimuth_add_dict', help='degrees, adds this value to velocity direction (will sum with _azimuth_shift_deg_ coef)')
     
     s = p.add_argument_group('filter',
@@ -102,7 +107,7 @@ Saving result to indexed Pandas HDF5 store (*.h5) and *.csv
 
     s = p.add_argument_group('program',
                              'Program behaviour')
-    s.add('--step_start_int', default='1', choices=['1', '2', '3', '4', '40'],
+    s.add('--step_start_int', default='1', choices=[str(i) for i in  [1, 2, 3, 4, 40, 50]],
                help='step to start')
     s.add('--step_end_int', default='2', choices=['1', '2', '3', '4', '40'],
                help='step to end (inclusive, or if less than start then will run one start step only)')
@@ -150,13 +155,14 @@ def main(new_arg=None, **kwargs):
         cache = Cache(2e9)  # Leverage two gigabytes of memory
         cache.register()    # Turn cache on globally
 
-    if __debug__:
-        # because there was errors on debug when default scheduler used
-        cfg['program']['dask_scheduler'] = 'synchronous'
+    #if __debug__:
+        # # because there was errors on debug when default scheduler used
+        # cfg['program']['dask_scheduler'] = 'synchronous'
 
     if cfg['program']['dask_scheduler']:
         if cfg['program']['dask_scheduler'] == 'distributed':
             from dask.distributed import Client
+            # cluster = dask.distributed.LocalCluster(n_workers=2, threads_per_worker=1, memory_limit="5.5Gb")
             client = Client(processes=False)
             # navigate to http://localhost:8787/status to see the diagnostic dashboard if you have Bokeh installed
             # processes=False: avoide inter-worker communication for computations releases the GIL (numpy, da.array)  # without is error
@@ -179,12 +185,12 @@ def main(new_arg=None, **kwargs):
         cfg['out']['db_name'] = f"{m.group(1).strip('_')}incl.h5"
     cfg['in']['path_cruise'].glob('*inclinometer*')
     dir_incl = next((d for d in cfg['in']['path_cruise'].glob('*inclinometer*') if d.is_dir()), cfg['in']['path_cruise'])
-    db_path = dir_incl / cfg['out']['db_name']
+    db_path = dir_incl / '_raw' / cfg['out']['db_name']
     # ---------------------------------------------------------------------------------------------
-    def fs(probe, name):
-        if 'w' in name.lower():  # Baranov's wavegauge electronic
-            return 10  # 5
-        return 5
+    # def fs(probe, name):
+    #     if 'w' in name.lower():  # Baranov's wavegauge electronic
+    #         return 10  # 5
+    #     return 5
         # if probe < 20 or probe in [23, 29, 30, 32, 33]:  # 30 [4, 11, 5, 12] + [1, 7, 13, 30]
         #     return 5
         # if probe in [21, 25, 26] + list(range(28, 35)):
@@ -242,12 +248,16 @@ def main(new_arg=None, **kwargs):
         # patten to identify only _probe_'s raw data files that need to correct '*INKL*{:0>2}*.[tT][xX][tT]':
 
         raw_parent = dir_incl / '_raw'  # raw_parent /=
-        dir_out = raw_parent / re.sub(r'[.\\/ *?]', '_', cfg['in']['raw_subdir'])  # sub replaces multilevel subdirs to 1 level that correct_fun() can only make
+        if cfg['in']['raw_subdir'] is None:
+            cfg['in']['raw_subdir'] = ''
+
+        dir_out = raw_parent / re.sub(r'[.\\/ *?]', '_', cfg['in']['raw_subdir'])
+        # sub replaces multilevel subdirs to 1 level that correct_fun() can only make
 
         def dt_from_utc_2000(probe):
             """ Correct time of probes started without time setting. Raw date must start from  2000-01-01T00:00"""
-            return (datetime.datetime(year=2000, month=1, day=1) - cfg['in']['time_start_utc'][probe]
-                    ) if cfg['in']['time_start_utc'].get(probe) else datetime.timedelta(0)
+            return (datetime(year=2000, month=1, day=1) - cfg['in']['time_start_utc'][probe]
+                    ) if cfg['in']['time_start_utc'].get(probe) else timedelta(0)
 
         # convert cfg['in']['dt_from_utc'] keys to int
 
@@ -257,13 +267,13 @@ def main(new_arg=None, **kwargs):
             {int(p): dt_from_utc_2000(p) for p, v in cfg['in']['time_start_utc'].items()}
             )
         # make cfg['in']['dt_from_utc'][0] be default value
-        cfg['in']['dt_from_utc'] = defaultdict(constant_factory(cfg['in']['dt_from_utc'].pop(0, datetime.timedelta(0))),
+        cfg['in']['dt_from_utc'] = defaultdict(constant_factory(cfg['in']['dt_from_utc'].pop(0, timedelta(0))),
                                                cfg['in']['dt_from_utc'])
 
 
         for probe in probes:
             raw_found = []
-            raw_pattern_file = '/'.join([cfg['in']['raw_subdir'], cfg['in']['raw_pattern'].format(prefix=raw_root, number=probe)])
+            raw_pattern_file = str(Path(glob.escape(cfg['in']['raw_subdir'])) / cfg['in']['raw_pattern'].format(prefix=raw_root, number=probe))
             correct_fun = p_type[cfg['in']['probes_prefix']]['correct_fun']
             # if not archive:
             if (not re.match(r'.*(\.zip|\.rar)$', cfg['in']['raw_subdir'], re.IGNORECASE)) and raw_parent.is_dir():
@@ -301,9 +311,10 @@ def main(new_arg=None, **kwargs):
                    ['--csv_specific_param_dict', 'invert_magnitometr: True'
                     ] if probe_is_incl else []
                    ),
-                    **{'filter': {
-                         'min_date': cfg['filter']['min_date'][probe],
-                         'max_date': cfg['filter']['max_date'][probe],
+                    **{
+                    'filter': {
+                         'min_date': cfg['filter']['min_date'].get(probe, np.datetime64(0, 'ns')),
+                         'max_date': cfg['filter']['max_date'].get(probe, np.datetime64('now', 'ns')),  # simple 'now' works in sinchronious mode
                         }
                     }
                 )
@@ -325,7 +336,7 @@ def main(new_arg=None, **kwargs):
         print('Ok:', i_proc_probe, 'probes,', i_proc_file, 'files processed.')
 
 
-    if st(2, 'Calculate velocity and average'):
+    if st(2, 'Calculate physical parameters and average'):
         kwarg = {'in': {
             'min_date': cfg['filter']['min_date'][0],
             'max_date': cfg['filter']['max_date'][0],
@@ -341,7 +352,7 @@ def main(new_arg=None, **kwargs):
                 # add magnetic declination,° for used coordinates
                 # todo: get time
                 kwarg['proc']['azimuth_add'] = mag_dec(cfg['in']['azimuth_add']['Lat'], cfg['in']['azimuth_add']['Lon'],
-                                                       datetime.datetime(2020, 9, 10), depth=-1)
+                                                       datetime(2020, 9, 10), depth=-1)
             else:
                 kwarg['proc']['azimuth_add'] = 0
             if 'constant' in cfg['in']['azimuth_add']:
@@ -351,13 +362,13 @@ def main(new_arg=None, **kwargs):
         for aggregate_period_s in cfg['out']['aggregate_period_s']:
             if aggregate_period_s is None:
                 db_path_in = db_path
-                db_path_out = db_path.with_name(f'{db_path.stem}_proc_noAvg.h5')
+                db_path_out = dir_incl / f'{db_path.stem}_proc_noAvg.h5'
             else:
-                db_path_in = db_path.with_name(f'{db_path.stem}_proc_noAvg.h5')
-                db_path_out = f'{db_path.stem}_proc.h5'  # or separately: '_proc{aggregate_period_s}.h5'
+                db_path_in = dir_incl / f'{db_path.stem}_proc_noAvg.h5'
+                db_path_out = dir_incl / f'{db_path.stem}_proc.h5'  # or separately: '_proc{aggregate_period_s}.h5'
 
             # 'incl.*|w\d*'  inclinometers or wavegauges w\d\d # 'incl09':
-            tables_list_regex = f"{cfg['in']['probes_prefix']}.*"
+            tables_list_regex = f"{cfg['in']['probes_prefix'].replace('voln', 'w')}.*"
             if cfg['in']['probes']:
                 tables_list_regex += "(?:{})".format('|'.join('{:0>2}'.format(p) for p in cfg['in']['probes']))
 
@@ -387,7 +398,7 @@ def main(new_arg=None, **kwargs):
                     ])
                     # csv splitted by 1day (default for no avg) else csv is monolith
             if aggregate_period_s not in cfg['out']['aggregate_period_s_not_to_text']:  # , 300, 600]:
-                args += ['--text_path', str(db_path.parent / 'text_output')]
+                args += ['--text_path', str(dir_incl / 'text_output')]
             # If need all data to be combined one after one:
             # set_field_if_no(kwarg, 'in', {})
             # kwarg['in'].update({
@@ -404,6 +415,8 @@ def main(new_arg=None, **kwargs):
 
 
     if st(3, 'Calculate spectrograms'):  # Can be done at any time after step 1
+        min_Pressure = 7
+
         # add dict dates_min like {probe: parameter} of incl_clc to can specify param to each probe
         def raise_ni():
             raise NotImplementedError('Can not proc probes having different fs in one run: you need to do it separately')
@@ -411,12 +424,13 @@ def main(new_arg=None, **kwargs):
         args = [
             Path(incl_h5clc.__file__).with_name(f'incl_h5spectrum{db_path.stem}.yaml'),
             # if no such file all settings are here
-            '--db_path', str(db_path.with_name(f'{db_path.stem}_proc_noAvg.h5')),
+            '--db_path', str(dir_incl / f'{db_path.stem}_proc_noAvg.h5'),
             '--tables_list', f"{cfg['in']['probes_prefix']}.*",  # inclinometers or wavegauges w\d\d  ## 'w02', 'incl.*',
             # '--aggregate_period', f'{aggregate_period_s}S' if aggregate_period_s else '',
 
             '--min_date', datetime64_str(cfg['filter']['min_date'][0]),
             '--max_date', datetime64_str(cfg['filter']['max_date'][0]),  # '2019-09-09T16:31:00',  #17:00:00
+            '--min_Pressure', f'{min_Pressure}',
             # '--max_dict', 'M[xyz]:4096',  # use if db_path is not ends with _proc_noAvg.h5 i.e. need calc velocity
             '--out.db_path', f"{db_path.stem.replace('incl', cfg['in']['probes_prefix'])}_proc_psd.h5",
             # '--table', f'psd{aggregate_period_s}' if aggregate_period_s else 'psd',
@@ -444,25 +458,34 @@ def main(new_arg=None, **kwargs):
 
         incl_h5spectrum.main(args)
 
-    #
+
     if st(4, 'Draw in Veusz'):
-        b_images_only = True  # False
-        pattern_path = db_path.parent / r'vsz_5min\191119_0000_5m_incl19.vsz'  # r'vsz_5min\191126_0000_5m_w02.vsz'
+        pattern_path = dir_incl / r'processed_h5,vsz/201202-210326incl_proc#28.vsz'
+        # r'\201202_1445incl_proc#03_pattern.vsz'  #'
+        # db_path.parent / r'vsz_5min\191119_0000_5m_incl19.vsz'  # r'vsz_5min\191126_0000_5m_w02.vsz'
+
+        b_images_only = False
+        # importing in vsz index slices replacing:
+        pattern_str_slice_old = None
 
         # Length of not adjacent intervals, s (set None to not allow)
-        period = '1D'
-        length = '5m'  # period  # '1D'
+        # pandas interval in string or tuple representation '1D' of period between intervals and interval to draw
+        period_str = '0s'  # '1D'  #  dt
+        dt_str = '0s'  # '5m'
+        file_intervals = None
 
-        dt_custom_s = pd_period_to_timedelta(length) if length != period else None  # None  #  60 * 5
+        period = to_offset(period_str).delta
+        dt = to_offset(dt_str).delta  # timedelta(0)  #  60 * 5
 
-        if True:
+        if file_intervals and period and dt:
+
             # Load starts and assign ends
             t_intervals_start = pd.read_csv(
                 cfg['in']['path_cruise'] / r'vsz+h5_proc\intervals_selected.txt',
                 converters={'time_start': lambda x: np.datetime64(x, 'ns')}, index_col=0).index
             edges = (
                 pd.DatetimeIndex(t_intervals_start), pd.DatetimeIndex(t_intervals_start + dt_custom_s))  # np.zeros_like()
-        else:
+        elif period and dt:
             # Generate periodic intervals
             t_interval_start, t_intervals_end = intervals_from_period(datetime_range=np.array(
                 [cfg['filter']['min_date']['0'], cfg['filter']['max_date']['0']],
@@ -473,37 +496,48 @@ def main(new_arg=None, **kwargs):
                 'datetime64[s]'), period=period)
             edges = (pd.DatetimeIndex([t_interval_start]).append(t_intervals_end[:-1]),
                      pd.DatetimeIndex(t_intervals_end))
+        else:  # [min, max] edges for each probe
+            edges_dict = {pr: [cfg['filter']['min_date'][pr], cfg['filter']['max_date'][pr]] for pr in probes}
 
+        cfg_vp = {'veusze': None}
         for i, probe in enumerate(probes):
-            probe_name = f"{cfg['in']['probes_prefix']}{probe:02}"  # table name in db
+            # cfg_vp = {'veusze': None}
+            if edges_dict:  # custom edges for each probe
+                edges = [pd.DatetimeIndex([t]) for t in edges_dict[probe]]
+
+            # substr in file to rerplace probe_name_in_pattern (see below).
+            probe_name = f"_{cfg['in']['probes_prefix'].replace('incl', 'i')}{probe:02}"
+            tbl = None  # f"/{cfg['in']['probes_prefix']}{probe:02}"  # to check probe data exist in db else will not check
             l.info('Draw %s in Veusz: %d intervals...', probe_name, edges[0].size)
             # for i_interval, (t_interval_start, t_interval_end) in enumerate(zip(pd.DatetimeIndex([t_interval_start]).append(t_intervals_end[:-1]), t_intervals_end), start=1):
 
-            cfg_vp = {'veusze': None}
+
             for i_interval, (t_interval_start, t_interval_end) in enumerate(zip(*edges), start=1):
 
                 # if i_interval < 23: #<= 0:  # TEMPORARY Skip this number of intervals
                 #     continue
-                if period != length:
+                if period  and period != dt:
                     t_interval_start = t_interval_end - pd.Timedelta(dt_custom_s, 's')
 
-                try:  # skipping absent probes
-                    start_end = h5q_interval2coord(
-                        db_path=str(db_path),
-                        table=f'/{probe_name}',
-                        t_interval=(t_interval_start, t_interval_end))
-                    if not len(start_end):
-                        break  # no data
-                except KeyError:
-                    break  # device name not in specified range, go to next name
+                if tbl:
+                    try:  # skipping absent probes
+                        start_end = h5q_interval2coord(
+                            db_path=str(db_path),
+                            table=tbl,
+                            t_interval=(t_interval_start, t_interval_end))
+                        if not len(start_end):
+                            break  # no data
+                    except KeyError:
+                        break  # device name not in specified range, go to next name
 
-                pattern_path_new = pattern_path.with_name(f"{t_interval_start:%y%m%d_%H%M}_{length}_{probe_name}.vsz")
+
+                pattern_path_new = pattern_path.with_name(
+                    ''.join([f'{t_interval_start:%y%m%d_%H%M}', f'_{dt_str}' if dt else '', f'{probe_name}.vsz']))
 
                 # Modify pattern file
                 if not b_images_only:
-                    probe_name_old = re.match('.*((?:incl|w)\d*).*', pattern_path.name).groups()[0]
-                    bytes_slice = bytes('(({:d}, {:d}, None),)'.format(*(start_end + np.int32([-1, 1]))), 'ascii')
-
+                    pattern_type, pattern_number = re.match(r'.*(incl|w)_proc?#?(\d*).*', pattern_path.name).groups()
+                    probe_name_in_pattern = f"_{pattern_type.replace('incl', 'i')}{pattern_number}"
 
                     def f_replace(line):
                         """
@@ -512,14 +546,16 @@ def main(new_arg=None, **kwargs):
                         2. slice
                         """
                         # if i_interval == 1:
-                        line, ok = re.subn(bytes(probe_name_old, 'ascii'), bytes(probe_name, 'ascii'), line)
-                        if ok:  # can be only in same line
-                            line = re.sub(pattern_bytes_slice_old, bytes_slice, line)
+                        line, ok = re.subn(probe_name_in_pattern, probe_name, line)
+                        if ok and pattern_str_slice_old:  # can be only in same line
+                            str_slice = '(({:d}, {:d}, None),)'.format(
+                                *(start_end + np.int32([-1, 1])))  # bytes(, 'ascii')
+                            line = re.sub(pattern_str_slice_old, str_slice, line)
                         return line
 
 
-                    if not rep_in_file(pattern_path, pattern_path_new, f_replace=f_replace):
-                        l.warning('Veusz pattern not changed!')
+                    if not rep_in_file(pattern_path, pattern_path_new, f_replace=f_replace, binary_mode=False):
+                        l.warning('Veusz pattern not changed!')  # may be ok if we need draw pattern
                         # break
                     elif cfg_vp['veusze']:
                         cfg_vp['veusze'].Load(str(pattern_path_new))
@@ -535,28 +571,31 @@ def main(new_arg=None, **kwargs):
                 cfg_vp = veuszPropagate.main(
                     [Path(veuszPropagate.__file__).parent.with_name('veuszPropagate.ini'),
                      # '--data_yield_prefix', '-',
-                     '--path', str(db_path),  # use for custom loading from db and some source is required
-                     '--tables_list', f'/{probe_name}',  # 181022inclinometers/ \d*
+
+                     # '--path', str(db_path),  # if custom loading from db and some source is required
+                     '--tables_list', '', # switches to search vsz-files only # f'/{probe_name}',  # 181022inclinometers/ \d*
+
                      '--pattern_path', str(pattern_path_new),
                      # fr'd:\workData\BalticSea\190801inclinometer_Schuka\{probe_name}_190807_1D.vsz',
-                     # str(db_path.parent / dir_incl / f'{probe_name}_190211.vsz'), #warning: create file with small name
+                     # str(dir_incl / f'{probe_name}_190211.vsz'), #warning: create file with small name
                      # '--before_next', 'restore_config',
-                     # '--add_to_filename', f"_{t_interval_start:%y%m%d_%H%M}_{length}",
+                     # '--add_to_filename', f"_{t_interval_start:%y%m%d_%H%M}_{dt}",
                      '--filename_fun', f'lambda tbl: "{pattern_path_new.name}"',
                      '--add_custom_list',
-                     'USEtime',  # nAveragePrefer',
+                     f'USEtime__',  # f'USEtime{probe_name}', nAveragePrefer',
                      '--add_custom_expressions_list',
                      txt_time_range,
                      # + """
                      # ", 5"
                      # """,
                      '--b_update_existed', 'True',
-                     '--export_pages_int_list', '1, 2',  # 0 for all '6, 7, 8',  #'1, 2, 3'
+                     '--export_pages_int_list', '0',  # 0 for all '6, 7, 8',  #'1, 2, 3'
                      # '--export_dpi_int', '200',
-                     '--export_format', 'emf',
+                     '--export_format', 'jpg', #'emf',
                      '--b_interact', '0',
                      '--b_images_only', f'{b_images_only}',
                      '--return', '<embedded_object>',  # reuse to not bloat memory
+                     '--b_execute_vsz', 'True', '--before_next', 'Close()'  # Close() need if b_execute_vsz many files
                      ],
                     veusze=cfg_vp['veusze'])
 
@@ -604,6 +643,22 @@ def main(new_arg=None, **kwargs):
 
                              ],
                             **{'out': {'paths': path_vsz_all}})
+
+    if st(50, 'Export from existed Veusz files in dir'):
+        pattern_parent = db_path.parent  # r'vsz_5min\191126_0000_5m_w02.vsz''
+        pattern_path = str(pattern_parent / r'processed_h5,vsz' / '??????incl_proc#[1-9][0-9].vsz')  # [0-2,6-9]
+        veuszPropagate.main([
+            'ini/veuszPropagate.ini',
+             '--path', pattern_path,
+             '--pattern_path', pattern_path,
+             # '--export_pages_int_list', '1', #'--b_images_only', 'True'
+             '--b_interact', '0',
+             '--b_update_existed', 'True',  # todo: delete_overlapped
+             '--b_images_only', 'True',
+             '--load_timeout_s_float', str(cfg['program']['load_timeout_s']),
+             '--b_execute_vsz', 'True', '--before_next', 'Close()'  # Close() need if b_execute_vsz many files
+            ])
+
 
 
 if __name__ == '__main__':

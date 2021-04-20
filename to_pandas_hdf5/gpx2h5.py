@@ -19,7 +19,7 @@ import pandas as pd
 from gpxpy.gpx import GPX
 # my
 from utils2init import cfg_from_args, my_argparser_common_part, init_file_names, Ex_nothing_done, set_field_if_no, \
-    this_prog_basename, init_logging, standard_error_info
+    this_prog_basename, init_logging, standard_error_info, call_with_valid_kwargs
 from to_pandas_hdf5.csv2h5 import h5_dispenser_and_names_gen
 from to_pandas_hdf5.h5_dask_pandas import multiindex_timeindex, multiindex_replace, h5_append, \
     filterGlobal_minmax  # filter_global_minmax
@@ -203,61 +203,52 @@ def gpxConvert(cfg: Mapping[str, Any],
     return dfs
 
 
-def df_filter_and_save_to_h5(cfg_out, cfg, df, sort_time=None) -> Union[str, int]:
+def df_filter_and_save_to_h5(df, input, out, filter=None, sort_time=None) -> Union[str, int]:
     """
 
-    :param cfg_out: must have fields:
+    :param out: out cfg, must have fields:
       - log
-    :param cfg: dict with fields:
-      - in
-      - filter (optional)
-      - dt_from_utc: to correct cfg_out['log'] time  #???
+    :param in: cfg dict with fields... dt_from_utc: to correct out['log'] time  #???
+    :param filter (optional)
     :param df:
     :param key:
     :return: 'continue' if no data else 0
-    Modifies cfg_out: adds field 'tables_have_wrote': Set[Tuple[str, str]]
+    Modifies out: adds field 'tables_have_wrote': Set[Tuple[str, str]]
     """
     df_t_index, itm = multiindex_timeindex(df.index)
     # sorting will break multiindex?
-    df_t_index, b_ok = time_corr(df_t_index, cfg['in'], sort_time)  # need sort in tracks/segments only
+    df_t_index, b_ok = time_corr(df_t_index, input, sort_time)  # need sort in tracks/segments only
     df.index = multiindex_replace(df.index, df_t_index, itm)
 
-    if 'filter' in cfg:
+    if filter:
         rows_in = len(df)
-        bGood = filterGlobal_minmax(df, df.index, cfg['filter'])
+        bGood = filterGlobal_minmax(df, df.index, filter)
         df = df[bGood & b_ok]
-        cfg_out['log']['rows'] = len(df)
-        print('filtered out {} from {}.'.format(rows_in - cfg_out['log']['rows'], rows_in))
+        out['log']['rows'] = len(df)
+        print('filtered out {} from {}.'.format(rows_in - out['log']['rows'], rows_in))
     else:
         df = df[b_ok]
-        cfg_out['log']['rows'] = len(df)
+        out['log']['rows'] = len(df)
     if df.empty:
         print('No data => skip file')
         return 'continue'
 
     # # Log statistic
-    # cfg_out['log']['Date0'  ]= timzone_view(df_t_index[ 0], cfg['in']['dt_from_utc'])
-    # cfg_out['log']['DateEnd']= timzone_view(df_t_index[-1], cfg['in']['dt_from_utc'])
+    # out['log']['Date0'  ]= timzone_view(df_t_index[ 0], input['dt_from_utc'])
+    # out['log']['DateEnd']= timzone_view(df_t_index[-1], input['dt_from_utc'])
     # # Add separatiion row of NaN and save to store
-    # if cfg_out['b_insert_separator'] and itm is None:
+    # if out['b_insert_separator'] and itm is None:
     #     # 0 (can not use np.nan in int) [tim[-1].to_datetime() + timedelta(seconds = 0.5/cfg['fs'])]
     #     df_dummy.index= (df.index[-1] + (df.index[-1] - df.index[-2])/2,)
     #     df= df.append(df_dummy)
 
     # store.append(tables[key], df, data_columns= True, index= False)
     # # Log to store #or , index=False?
-    # dfLog= pd.DataFrame.from_records(cfg_out['log'], exclude= ['Date0'], index= [cfg_out['log']['Date0']]) #
-    # #dfLog= pd.DataFrame.from_dict(cfg_out['log']) #, index= 'Date0'
-    # store.append(tables_log[key], dfLog, data_columns= True, expectedrows= cfg['in']['nfiles'], index=False) #append
+    # dfLog= pd.DataFrame.from_records(out['log'], exclude= ['Date0'], index= [out['log']['Date0']]) #
+    # #dfLog= pd.DataFrame.from_dict(out['log']) #, index= 'Date0'
+    # store.append(tables_log[key], dfLog, data_columns= True, expectedrows= input['nfiles'], index=False) #append
 
-    h5_append(cfg_out, df, cfg_out['log'], log_dt_from_utc=cfg['in']['dt_from_utc'], tim=df_t_index)
-
-    _t = (cfg_out['table'], cfg_out['table_log'])
-    if 'tables_have_wrote' in cfg_out:
-        cfg_out['tables_have_wrote'].add(_t)
-    else:
-        cfg_out['tables_have_wrote'] = {_t}
-
+    h5_append(out, df, out['log'], log_dt_from_utc=input['dt_from_utc'], tim=df_t_index)
     return 0
 
 
@@ -351,11 +342,11 @@ def main(new_arg=None):
                         # redefine saving parameters
                         cfg['out']['table'] = tables_pattern.format(trackers_numbers[sn])
                         cfg['out']['table_log'] = tables_log_pattern.format(trackers_numbers[sn])
-                        df_filter_and_save_to_h5(cfg['out'], cfg, df, sort_time)
+                        call_with_valid_kwargs(df_filter_and_save_to_h5, df **cfg, input=cfg['in'], sort_time=sort_time)
                 else:
                     cfg['out']['table'] = tables[key]
                     cfg['out']['table_log'] = tables_log[key]
-                    df_filter_and_save_to_h5(cfg['out'], cfg, df, sort_time)
+                    call_with_valid_kwargs(df_filter_and_save_to_h5, df, **cfg, input=cfg['in'], sort_time=sort_time)
 
     # try:
     # if cfg['out']['b_remove_duplicates']:
@@ -399,13 +390,13 @@ def main(new_arg=None):
     #     failed_storages= h5move_tables(cfg['out'], cfg['out']['tables_have_wrote'])
 
     try:
-        failed_storages = h5move_tables(cfg['out'], tbl_names=cfg['out'].get('tables_have_wrote', {}))
+        failed_storages = h5move_tables(cfg['out'], tbl_names=cfg['out'].get('tables_have_wrote', set()))
         print('Finishing...' if failed_storages else 'Ok.', end=' ')
         # Sort if have any processed data that needs it (not the case for the routes and waypoints), else don't because ``ptprepack`` not closes hdf5 source if it not finds data
         if cfg['in'].get('time_last'):
             cfg['out']['b_remove_duplicates'] = True
             h5index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5", in_storages=failed_storages,
-                         tables=cfg['out'].get('tables_have_wrote', {}))
+                         tables=cfg['out'].get('tables_have_wrote', set()))
     except Ex_nothing_done:
         print('ok')
 

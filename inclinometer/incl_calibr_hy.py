@@ -51,7 +51,7 @@ from to_pandas_hdf5.h5toh5 import h5select, h5find_tables
 from other_filters import is_works, despike
 from graphics import make_figure
 
-from to_vaex_hdf5.cfg_dataclasses import hydra_cfg_store, ConfigInHdf5_Simple, ConfigProgram, main_init
+from to_vaex_hdf5.cfg_dataclasses import hydra_cfg_store, ConfigInHdf5_Simple, ConfigProgram, main_init, main_init_input_file
 #from to_vaex_hdf5.h5tocsv import main_call
 
 
@@ -631,7 +631,7 @@ def main(config: ConfigType) -> None:
     """
     global cfg, l
     cfg = main_init(config, cs_store_name, __file__=None)
-
+    cfg = main_init_input_file(cfg, cs_store_name)
     # input data tables may be defined by 'probes_prefix' and 'probes' fields of cfg['in']
     if cfg['in']['probes'] or not len(cfg['in']['tables']):
         if cfg['in']['probes']:

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field, make_dataclass
 from omegaconf import OmegaConf, MISSING  # Do not confuse with dataclass.MISSING
 import hydra
 from hydra.core.config_store import ConfigStore
+
 from utils2init import this_prog_basename, ini2dict, Ex_nothing_done, init_file_names
 
 @dataclass
@@ -85,6 +86,26 @@ class ConfigInHdf5_Simple:
 
 
 @dataclass
+class ConfigInAutofon:
+    time_interval: List[str] = field(default_factory=lambda: ['2021-04-08T12:00:00', 'now'])
+    # use already loaded coordinates instead of request:
+    path_local_xlsx: Optional[str] = None
+    dt_from_utc_hours: int = 0
+    # b_skip_if_up_to_date: bool = True
+
+
+@dataclass
+class ConfigProcess:
+    simplify_tracks_error_m = 0
+    dt_per_file_days = 356  # timedelta(days)
+    b_missed_coord_to_zeros: bool = False
+    period_tracks: Optional[str] = None
+    period_segments: Optional[str] = '1D'
+    anchor_coord: List[float] = field(default_factory=lambda: [44.56905, 37.97308])
+    anchor_depth: float = 0
+
+
+@dataclass
 class ConfigInHdf5(ConfigInHdf5_Simple):
     """
     Same as ConfigInHdf5_Simple + specific (CTD and navigation) data properties:
@@ -121,12 +142,12 @@ class ConfigOut:
     b_use_old_temporary_tables: bool = False
     b_remove_duplicates: bool = False
     b_skip_if_up_to_date: bool = True  # todo: link to ConfigIn
-    db_path_temp: Any = MISSING
+    db_path_temp: Any = None
     b_overwrite: Optional[bool] = False
-    db: Optional[Any] = False
+    db: Optional[Any] = None  # False?
     logfield_fileName_len: Optional[int] = 255
-    chunksize: Optional[int] = MISSING
-    nfiles: Optional[int] = MISSING
+    chunksize: Optional[int] = None
+    nfiles: Optional[int] = None
 
 
 @dataclass
@@ -211,6 +232,9 @@ def hydra_cfg_store(
     for group, names in cs_store_group_options.items():
         for name in names:
             class_name = ''.join(['Config'] + [s.title() for s in name.split('_')])
+            last_char = name[-1]
+            if last_char == '_':
+                class_name += last_char
             try:
                 cl = getattr(module, class_name)
                 cs.store(name=name, node=cl, group=group)
@@ -222,7 +246,28 @@ def hydra_cfg_store(
     return cs, Config
 
 
-def main_init(cfg, cs_store_name, __file__=None):
+def main_init_input_file(cfg_t, cs_store_name, in_file_field='db_path'):
+    cfg_in = cfg_t.pop('input')
+    cfg_in['cfgFile'] = cs_store_name
+    try:
+        # with omegaconf.open_dict(cfg_in):
+        cfg_in['paths'], cfg_in['nfiles'], cfg_in['path'] = init_file_names(
+            **{**cfg_in, 'path': cfg_in[in_file_field]},
+            b_interact=cfg_t['program']['b_interact']
+            )
+    except Ex_nothing_done as e:
+        print(e.message)
+        cfg_t['in'] = cfg_in
+        return cfg_t
+    except FileNotFoundError as e:  #
+        print('Initialisation error:', e.message, 'Calling arguments:', sys.argv)
+        raise
+
+    cfg_t['in'] = cfg_in
+    return cfg_t
+
+
+def main_init(cfg, cs_store_name, __file__=None, ):
 
     """
     Common startup initializer:
@@ -261,26 +306,9 @@ def main_init(cfg, cs_store_name, __file__=None):
     # OmegaConf.update(cfg, "in", cfg.input, merge=False)  # error
     # to allow non primitive types (cfg.out['db']) and special words field names ('in'):
     # cfg = omegaconf.OmegaConf.to_container(cfg)
-
-
-    cfg_in = cfg_t.pop('input')
-    try:
-        # with omegaconf.open_dict(cfg_in):
-        cfg_in['paths'], cfg_in['nfiles'], cfg_in['path'] = init_file_names(
-            **{**cfg_in, 'path': cfg_in['db_path']},
-            b_interact=cfg['program']['b_interact']
-            )
-    except Ex_nothing_done as e:
-        print(e.message)
-        return {}
-    except FileNotFoundError as e:  #
-        print('Initialisation error:', e.message, 'Calling arguments:', sys.argv)
-        raise
-
-    cfg_in['cfgFile'] = cs_store_name
-
-    cfg_t['in'] = cfg_in
     return cfg_t
+
+
 
 
 # defaults = [dict([item]) for item in {

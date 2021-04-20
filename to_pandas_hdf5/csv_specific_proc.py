@@ -695,9 +695,11 @@ def correct_old_zip_name_ru(name):
     return name_bytes.decode(encoding)
 
 
-def rep_in_file(file_in: Union[str, PurePath, BinaryIO, TextIO], file_out, f_replace: Callable[[bytes], bytes],
+def rep_in_file(file_in: Union[str, PurePath, BinaryIO, TextIO], file_out,
+                f_replace: Union[Callable[[bytes], bytes], Callable[[str], str]],
                 header_rows=0, block_size=None, min_out_length=2,
-                f_replace_in_header: Optional[Callable[[bytes], bytes]] = None, binary_mode=True) -> int:
+                f_replace_in_header: Optional[Callable[[bytes], bytes]] = None,
+                binary_mode=True) -> int:
     """
     Replacing text in a file, applying f_replace
     :param file_in: str/Path or opened file handle, file to read from

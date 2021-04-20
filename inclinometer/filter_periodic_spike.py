@@ -45,32 +45,28 @@ cs.store(name=cs_store_name, node=ConfigType)  # Registering the Config class wi
 #     )
 
 cfg_in = {
-    'db_path': Path(r'd:\workData\BalticSea\201202_Baltic_spit\inclinometer\201202incl.h5'),
+    'db_path': Path(r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\201202incl.h5'),
     'device': ConfigType.device,
     'table': f'/{ConfigType.device}',
     'col': 'P',
     'b_show': False,  # True
 
     'min_date': '2020-12-02T10:00',
-    'max_date': '2021-01-08T12:20',
+    'max_date': '2021-03-02T01:15:05', # 'now' '2021-01-08T12:20',
     }
 
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
-
+pattern_log_dt = '{:%y-%m-%d %H:%M:%S} \u2013 {:%m-%d %H:%M:%S}'
 
 def start_sinch(v, cur, max_shift, std_fraq_noise=0.2):
     """
-    find period index of out of sinch, best sinch correction and for how much periods it helps
+    Find period index of out of sinch, best sinch correction and for how much periods it helps
     :param v: array which values may be spikes
     :param cur: indices of supposed spike positions
     :param max_shift: shifts to check
     :param std_fraq_noise: reduce probability of adding shifts
-    :return: (best_shift, icur_add_en, n_helped) where:
-    - best_shift:
-    - ish_st: index of 1st out of sinch
-    - n_shifted: number of 1st consequent better spike values after shift
-
+    :return: spike positions: cur_out = cur + shifts[ishifts_best[...]]
     """
 
     shifts = np.empty(max_shift * 2 + 1, dtype=np.int8)
@@ -193,11 +189,13 @@ def filter_periodic_spike(
 
     # Filter small intervals
     di = np.diff(i_spike)
-    ok_di = di_period_min <= di
+    ok_di = di >= di_period_min
     # point is good only if diff to prev and after is ok (not detecting here cur point or next is really bad)
     b = (lambda small_d: np.append(small_d, True) & np.append(True, small_d))(ok_di)
-    i = i_spike[b]
-
+    try:
+        i = i_spike[b]
+    except IndexError as e:
+        return ser.index
     # save not used values in our filter to filter them later (if our filter will not removes them):
     i_spike = i_spike[~b]
 
@@ -214,9 +212,18 @@ def filter_periodic_spike(
     # mean spike freq:
     if di_period is None:
         di_period = np.mean(di_f[~bi_fill])
-        assert di_period < di_period_max
-        assert di_period_min <= di_period
-
+        if di_period > di_period_max:
+            lf.warning('mean spike freq in interval {:%y-%m-%d %H:%M:%S%Z} \u2013 {:%m-%d %H:%M:%S%Z} bigger than limit {} > {}! Using previous value {}',
+                       *ser.index[[0, -1]], di_period, di_period_max, filter_periodic_spike.di_period)
+            di_period = filter_periodic_spike.di_period
+        elif di_period < di_period_min:
+            lf.warning('mean spike freq in interval {:%y-%m-%d %H:%M:%S%Z} \u2013 {:%m-%d %H:%M:%S%Z} less than limit {} < {}! Using previous value {}',
+                       *ser.index[[0, -1]], di_period, di_period_max, filter_periodic_spike.di_period)
+            di_period = filter_periodic_spike.di_period
+        elif np.isnan(di_period):
+            di_period = filter_periodic_spike.di_period
+        else:
+            filter_periodic_spike.di_period = di_period
     # Save indexes of reliable spike data
     i_f_fill = []
 
@@ -231,59 +238,63 @@ def filter_periodic_spike(
     ## find 1st possible spike after ibad_last by substracting hole number of periods back to start from 1st reliable:
     bi_fill &= (i_f > ibad_last)[:-1]
     ii_fill = np.flatnonzero(bi_fill)
-    i_f0 = i_f[ii_fill[0]]
-    n_periods_to_st = np.int32((i_f0 - ibad_last)/di_period)
-    # add it to list of reliable spikes to fill from by start_sinch()
-    if n_periods_to_st:
-        i_f = np.append(np.int32(i_f0 - n_periods_to_st * di_period), i_f)
-        ii_fill = np.append(0, ii_fill+1)
-    #i_f_fill.append(np.int32(np.arange(i_f[0] - di_period, n_bad_start, -di_period))[::-1])
+    if ii_fill.size:
+        i_f0 = i_f[ii_fill[0]]
+        n_periods_to_st = np.int32((i_f0 - ibad_last)/di_period)
+        # add it to indexes of reliable spikes to fill from by start_sinch()
+        if n_periods_to_st:
+            i_f = np.append(np.int32(i_f0 - n_periods_to_st * di_period), i_f)
+            ii_fill = np.append(0, ii_fill+1)
+        #i_f_fill.append(np.int32(np.arange(i_f[0] - di_period, n_bad_start, -di_period))[::-1])
 
-    ## fill and save perionds  separately jn long intervals between and after last reliable spikes:
-    for st, en in zip(  # appending interval from last to end
-            i_f[np.append(ii_fill, -1)] + di_period,
-            np.append(i_f[ii_fill + 1] - di_period + max_shift, b.size)
-            ):
-        cur = np.int32(np.arange(st, en, di_period))
-        if not cur.size:
-            continue
-        #print(f'{cur[0]} ({ser.index[cur[0]]}): ~{cur.size} spikes shifting')
-        cur_sinch = start_sinch(ser.values, cur, max_shift=max_shift)
-        i_f_fill.append(cur_sinch)
+        ## fill and save perionds separately in long intervals between and after last reliable spikes:
+        for st, en in zip(  # appending interval from last to end
+                i_f[np.append(ii_fill, -1)] + di_period,
+                np.append(i_f[ii_fill + 1] - di_period + max_shift, len(ser))
+                ):
+            try:
+                cur = np.int32(np.arange(st, en, di_period))
+            except ValueError as e:
+                pass
+            if not cur.size:
+                continue
+            #print(f'{cur[0]} ({ser.index[cur[0]]}): ~{cur.size} spikes shifting')
+            cur_sinch = start_sinch(ser.values, cur, max_shift=max_shift)
+            i_f_fill.append(cur_sinch)
 
-        # # cumulative sinch error
-        # # last_diff = di_period - (en - cur[-1])
-        #
-        # # correct if we out of sinch
-        # while True:
-        #     shift, icur_en = start_sinch(ser.values, cur, max_shift=max_shift)
-        #     print(f'{cur[0]} ({ser.index[cur[0]]}): {icur_en} spikes shifted on {shift}')
-        #     if not shift:
-        #         i_f_fill.append(cur)
-        #         break
-        #
-        #     if icur_en:
-        #         i_f_fill.append(cur[:icur_en])
-        #     else:
-        #         icur_en = 1
-        #
-        #     cur = np.int32(np.arange(cur[icur_en] + shift, en, di_period))
-        #     if not cur.size:
-        #         break
-        #
-        #
-        # #  = i[cur[:icur_add_st]] > i[cur_add]
-        # # if bo_add.any():
-        # #     icur_add_st = np.flatnonzero(bo_add)[0]
-        # # else:
-        # #     i_f_fill.append(cur[:icur_add_st])
-        # #     i_f_fill.append(cur_add)
-        #
-        #
-        # # bo_sub = i[cur] > i[cur-1]
-        # # if bo_sub.any():
-        # #     icur_sub_st = np.flatnonzero(bo_sub)[0]
-        # #     cur_sub = np.int32(np.arange(cur[icur_sub_st]-1, en, di_period))
+            # # cumulative sinch error
+            # # last_diff = di_period - (en - cur[-1])
+            #
+            # # correct if we out of sinch
+            # while True:
+            #     shift, icur_en = start_sinch(ser.values, cur, max_shift=max_shift)
+            #     print(f'{cur[0]} ({ser.index[cur[0]]}): {icur_en} spikes shifted on {shift}')
+            #     if not shift:
+            #         i_f_fill.append(cur)
+            #         break
+            #
+            #     if icur_en:
+            #         i_f_fill.append(cur[:icur_en])
+            #     else:
+            #         icur_en = 1
+            #
+            #     cur = np.int32(np.arange(cur[icur_en] + shift, en, di_period))
+            #     if not cur.size:
+            #         break
+            #
+            #
+            # #  = i[cur[:icur_add_st]] > i[cur_add]
+            # # if bo_add.any():
+            # #     icur_add_st = np.flatnonzero(bo_add)[0]
+            # # else:
+            # #     i_f_fill.append(cur[:icur_add_st])
+            # #     i_f_fill.append(cur_add)
+            #
+            #
+            # # bo_sub = i[cur] > i[cur-1]
+            # # if bo_sub.any():
+            # #     icur_sub_st = np.flatnonzero(bo_sub)[0]
+            # #     cur_sub = np.int32(np.arange(cur[icur_sub_st]-1, en, di_period))
 
 
 
@@ -336,8 +347,14 @@ def main(config: ConfigType) -> None:  #
             df.index[[0, -1]], n_rows_before, config
             )
     # print(f"Loaded data {df.index[0]} - {df.index[-1]}: {n_rows_before} rows. Filtering {cfg_in['col']}...")
+    p_name = config['col_out']
+    df[p_name] = np.polyval(k, df[cfg_in['col']])
 
-    df[config['col_out']] = np.polyval(k, df[cfg_in['col']])
+    # Battery compensation
+    kBat = [1.7314032932363, -11.9301097967443]
+    df[p_name] -= np.polyval(kBat, df['Battery'])
+    MIN_P = 6  # P filtered below: to not delete spikes that may be used to find other spikes using ~constant period
+
     if config['cols_order']:
         df = df.loc[:, config['cols_order']]
     else:
@@ -345,7 +362,7 @@ def main(config: ConfigType) -> None:  #
 
     i_burst, mean_burst_size, max_hole = i_bursts_starts(df.index)
 
-    i_col = df.columns.get_loc(config['col_out'])
+    i_col = df.columns.get_loc(p_name)
 
     if cfg_in['b_show']:
         from matplotlib import pyplot as plt
@@ -385,6 +402,17 @@ def main(config: ConfigType) -> None:  #
             cfg_out['log']['fileName'] = str(st)
             sl = slice(st, en)
             ind_ok = filter_periodic_spike(df.iloc[sl, i_col], ax=ax)
+
+            # Filtering
+            bad_p = df.loc[ind_ok, p_name] < MIN_P
+            n_bad = bad_p.sum()
+            if n_bad:
+                lf.info('filtering {} > {}: deleting {} values in frame {}',
+                        p_name, MIN_P, n_bad, pattern_log_dt.format(*df.index[[0,-1]]))
+                ind_ok = ind_ok[~bad_p]
+                if not ind_ok.size:
+                    continue
+                # df.loc[bad_p, p_name] = np.NaN
 
             # save result
             h5_append(cfg_out, df.loc[ind_ok], cfg_out['log'])

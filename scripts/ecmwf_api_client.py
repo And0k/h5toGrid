@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 """
-download ERA5 data from Climate Data Store
+Download ERA5 data from Climate Data Store to NetCDF file
+See also netcdf2csv.py to convert result to csv
 """
 
 import logging
@@ -10,20 +11,20 @@ import pandas as pd
 
 #masha: 54.625    19.875
 #need: N54.61106 E19.84847
-lat_st = 54.625  # 54.75
-lon_st = 19.875  # 19.75
-# 60, 9, 53, 30,
+lat_st, lon_st = 54.9689, 20.2446  # Pionersky
+# lat_st, lon_st = 54.615, 19.841  # Baltic_spit
+
 dGrid = 0  # 0.25
 lat_en = lat_st + dGrid
 lon_en = lon_st + dGrid
-dir_save = r'd:\workData\BalticSea\201202_Baltic_spit\inclinometer\processed_h5,vsz'
-file_nc_name = f'area({lat_st},{lon_st},{lat_en},{lon_en}).nc'
+dir_save = r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\processed_h5,vsz'
+file_nc_name = f'wind@ECMWF-ERA5_area({lat_st},{lon_st},{lat_en},{lon_en}).nc'
 
 l = logging.getLogger(__name__)
 l.info(f'Downloading {file_nc_name}: to {dir_save}...')
 
 
-use_date_range_str = ['2020-12-01', '2021-01-31']  # ['2018-12-01', '2018-12-31']
+use_date_range_str = ['2020-09-01', '2021-03-31']  # ['2020-12-01', '2021-01-31']  # ['2018-12-01', '2018-12-31']
 use_date_range = [datetime.strptime(t, '%Y-%m-%d') for t in use_date_range_str]  # T%H:%M:%S
 file_date_prefix = '{:%y%m%d}-{:%m%d}'.format(*use_date_range)
 
@@ -59,7 +60,16 @@ if True:
             'format': 'netcdf',
             'time': [f'{i:02d}:00' for i in range(24)],
             'date': [f'{d}' for d in pd.period_range(*use_date_range_str, freq='D')],
-            'variable': ['10m_u_component_of_wind', '10m_v_component_of_wind'],
+            'variable': [
+                '10m_u_component_of_wind',
+                '10m_v_component_of_wind',
+                '10m_wind_gust_since_previous_post_processing',
+                'instantaneous_10m_wind_gust',
+                'mean_wave_direction',
+                'mean_wave_period',
+                'peak_wave_period',
+                'significant_height_of_combined_wind_waves_and_swell'
+                ],
             'area': [lat_st, lon_st, lat_en, lon_en],
             # 'year': '2021',
             # 'month': ['01', '02'],

@@ -11,6 +11,7 @@
   
   Created: 02.09.2016
 """
+import ast
 import logging
 import re
 from datetime import datetime
@@ -111,6 +112,8 @@ file based on vsz pattern
                help='export asyncroniously with this timeout, s (tried 600s?)')
     s.add('--load_timeout_s_float', default='180',
                help='export asyncroniously with this timeout, s (tried 600s?)')
+    s.add('--b_execute_vsz', default='False',
+              help='instead of Load() read vsz and execute its content line by line')
     s.add('--veusz_path', default=default_veusz_path,
                help='directory of Veusz like /usr/lib64/python3.6/site-packages/veusz-2.1.1-py3.6-linux-x86_64.egg/veusz')
     s.add('--before_next_list', default=',',
@@ -219,12 +222,16 @@ def veusz_data(veusze, prefix: str, suffix_prior: str = '') -> Dict[str, Any]:
     return vsz_data
 
 
-def load_vsz_closure(veusz_path: PurePath=default_veusz_path, load_timeout_s: Optional = 120) -> Callable[
+def load_vsz_closure(veusz_path: PurePath=default_veusz_path,
+                     load_timeout_s: Optional = 120,
+                     b_execute_vsz: bool = False
+                     ) -> Callable[
     [Union[str, PurePath], Optional[str], Optional[str], Optional[str]], Tuple[Any, Optional[Dict[str, Any]]]]:
     """
     See load_vsz inside
     :param veusz_path: pathlib Path to directory of embed.py
     :param load_timeout_s: rases asyncio.TimeoutError if loads longer
+    :param b_execute_vsz: can not use "Load" because of python expression in vsz is needed
     """
 
     # def import_veusz(veusz_path=u'C:\\Program Files (x86)\\Veusz'):
@@ -281,7 +288,8 @@ def load_vsz_closure(veusz_path: PurePath=default_veusz_path, load_timeout_s: Op
             else:
                 l.debug('keep same embedded window')
         else:  # isinstance(vsz, (str, PurePath)):
-            file_exists = Path(vsz).is_file()
+            vsz = Path(vsz)
+            file_exists = vsz.is_file()
             if file_exists:
                 l.debug(f'loading found vsz: {vsz}')
                 title = f'{vsz} - was found'
@@ -289,24 +297,74 @@ def load_vsz_closure(veusz_path: PurePath=default_veusz_path, load_timeout_s: Op
                 l.debug(f'creatig vsz: {vsz}')
                 title = f'{vsz} - was created'
 
-        if veusze is None:  # construct a Veusz embedded window
-            if __name__ != '__main__':       # if this not haven't done in main()
-                # Save right path in veusz.Embedded (closure)
+        if veusze is None:
+            # Veusz embedded window construction
+
+            # Save right path in veusz.Embedded (closure)
+            if __name__ != '__main__':       # if this haven't done in main()
                 path_prev = os_getcwd()      # to recover
-                os_chdir(Path(vsz).parent)   # allows veusze.Load(path) to work if _path_ is relative or relative paths is used in vsz
-            veusze = veusz.Embedded(title)
+                os_chdir(vsz.parent)   # allows veusze.Load(path) to work if _path_ is relative or relative paths is used in vsz
+            veusze = veusz.Embedded(title)   # , hidden=True
             # veusze.EnableToolbar()
             # veusze.Zoom('page')
+
             if __name__ != '__main__':
                 os_chdir(path_prev)          # recover
 
         if file_exists:
-            if load_timeout_s:
-                # veusze.Load(str(Path(vsz).name)) with timeout:  # not tried veusze.serv_socket.settimeout(60)
-                SingletonTimeOut.run(partial(veusze.Load, str(Path(vsz).name)), load_timeout_s)
-                sleep(1)
+            if not b_execute_vsz:
+                if load_timeout_s:
+                    # veusze.Load(str(vsz.name)) with timeout:  # not tried veusze.serv_socket.settimeout(60)
+                    SingletonTimeOut.run(partial(veusze.Load, str(vsz.name)), load_timeout_s)
+                    sleep(1)
+                else:
+                    veusze.Load(vsz.name)
             else:
-                veusze.Load(Path(vsz).name)
+
+                def load_by_exec(vsz, veusze):
+                    """
+                    Unsafe replasement for veusze.Load(vsz) to add variable argv
+                    Runs any python commands before 1st Title command of
+                    :param vsz:
+                    :return:
+                    """
+                    with vsz.open(encoding='utf-8') as v:
+                        # comine pure python lines
+                        lines = []
+                        for line in v:
+                            if line[:2].istitle():
+                                break
+                            lines.append(line)
+
+                        # dangerous for unknown vsz but we allow 1 time at beginning of file: to use for known vsz
+                        loc_exclude = locals().copy()
+                        del loc_exclude['veusze']
+                        loc = {'argv': ['veusz.exe', str(vsz)],
+                               'BASENAME': (lambda: vsz.stem)
+                               }
+                        # match = re.match
+                        exec('\n'.join(lines), {}, loc)
+                        loc.update(locals().copy())
+                        for k in loc_exclude.keys():
+                            del loc[k]
+
+                        basename_result = "'{}'".format(loc['BASENAME']())
+                        # eval Veusz commands
+                        eval(f"""veusze.{line}""")
+                        for line in v:
+                            if 'BASENAME()' in line:
+                                line = line.replace('BASENAME()', basename_result)  # only this helps in Custom Definitions expressions
+
+                            # cmd, params = line.split('(', maxsplit=1)
+                            eval(f"""veusze.{line}""", {}, loc)  # , {"__builtins__": {}}
+                            # from ast import literal_eval
+                            # params_dict = literal_eval(params.rsplit(')', maxsplit=1)[0])
+                            # getattr(veusze, cmd)(**params_dict)
+                    return
+
+                load_by_exec(vsz, veusze)
+
+
 
         if prefix is None:
             return veusze, None
@@ -546,7 +604,10 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
             # veusze.serv_socket.shutdown(socket.SHUT_RDWR); veusze.serv_socket.close()
             # veusze.startRemote()                                                           # no effect
 
-            load_vsz = load_vsz_closure(cfg['program']['veusz_path'], cfg['program']['load_timeout_s'])     # this is only unfreezes Veusz
+            load_vsz = load_vsz_closure(
+                cfg['program']['veusz_path'],
+                cfg['program']['load_timeout_s'],
+                cfg['program']['b_execute_vsz'])     # this is only unfreezes Veusz
             veusze = do_load_vsz(in_full, None, load_vsz)
 
         yield (veusze, log)
@@ -731,6 +792,10 @@ def main(new_arg=None, veusze=None, **kwargs):
         except Ex_nothing_done as e:
             print(e.message)
             return  # or raise FileNotFoundError?
+        except TypeError:  # expected str, bytes or os.PathLike object, not NoneType
+            # cfg['in']['path'] is None. May be it is not need
+            cfg['in']['paths'] = [cfg['in']['pattern_path']]  # dummy for compatibility
+            cfg['in']['nfiles'] = 1
 
     cfg['out']['export_dir'] = dir_from_cfg(cfg['out']['path'].parent, cfg['out']['export_dir'])
 
@@ -747,7 +812,11 @@ def main(new_arg=None, veusze=None, **kwargs):
     else:
         cfg['async'] = {'loop': None}
 
-    load_vsz = load_vsz_closure(cfg['program']['veusz_path'], cfg['program']['load_timeout_s'])
+    load_vsz = load_vsz_closure(
+        cfg['program']['veusz_path'],
+        cfg['program']['load_timeout_s'],
+        cfg['program']['b_execute_vsz']
+        )
     cfg['load_vsz'] = load_vsz
     cfg['co'] = {}
     if cfg['in']['table_log'] and cfg['in']['path'].suffix == '.h5' and not (

@@ -11,6 +11,8 @@ import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, Mapping, Optional, List, Sequence, Tuple, Union
 from datetime import timedelta
+from itertools import zip_longest
+
 import omegaconf  #, OmegaConf DictConfig, MISSING, open_dict OmegaConf, DictConfig, MISSING, open_dict
 import hydra
 from hydra.core.config_store import ConfigStore
@@ -28,8 +30,6 @@ from to_pandas_hdf5.h5toh5 import h5move_tables, h5index_sort, h5init, h5log_row
 from to_pandas_hdf5.CTD_calc import get_runs_parameters
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
-
-
 VERSION = '0.0.1'
 
 # def cmdline_help_mod(version, info):
@@ -117,19 +117,19 @@ def dd_to_csv(
 def h5_tables_gen(db_path, tables, tables_log, db=None) -> Iterator[Tuple[str, pd.HDFStore]]:
     """
     Generate table names with associated coefficients
-    :param cfg_in: dict with fields:
-      - tables: tables names search pattern or sequence of table names
-      - db_path:
+    :param tables: tables names search pattern or sequence of table names
+    :param tables_log: tables names for metadata of data in `tables`
+    :param db_path:
     :param cfg_out: not used but kept for the requirement of h5_dispenser_and_names_gen() argument
     :return: iterator that returns (table name, coefficients)
     updates cfg_in['tables'] - sets to list of found tables in store
     """
-    if len(tables_log) == 1:
-        tbl_log = tables_log[0] or '{}/logRuns'  # will be filled by each table from cfg['in']['tables']
+    # will be filled by each table from cfg['in']['tables']
+    tbl_log_pattern = (tables_log[0] or '{}/logRuns') if len(tables_log) == 1 else tables_log[0]
     with FakeContextIfOpen(lambda f: pd.HDFStore(f, mode='r'), file=db_path, opened_file_object=db) as store:
         if len(tables) == 1:
             tables = h5find_tables(store, tables[0])
-        for tbl in tables:
+        for tbl, tbl_log in zip_longest(tables, tables_log, fillvalue=tbl_log_pattern):
             yield tbl, tbl_log.format(tbl), store
 
 
@@ -266,6 +266,7 @@ def main(config: ConfigType) -> None:
     """
     global cfg
     cfg = to_vaex_hdf5.cfg_dataclasses.main_init(config, cs_store_name)
+    cfg = to_vaex_hdf5.cfg_dataclasses.main_init_input_file(cfg, cs_store_name)
     #h5init(cfg['in'], cfg['out'])
     #cfg['out']['dt_from_utc'] = 0
 

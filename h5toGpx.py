@@ -81,7 +81,12 @@ def write_file(fileOutPN, xml, mode='w'):
 
 
 def gpx_track_create(gpx, gpx_obj_namef):
-    # Create tracks in our GPX
+    '''
+    Create tracks in our GPX
+    :param gpx:
+    :param gpx_obj_namef:
+    :return:
+    '''
     gpx_track = {}
     print('track name: ', gpx_obj_namef)
     gpx_track[gpx_obj_namef] = GPX.GPXTrack(name=gpx_obj_namef)
@@ -112,22 +117,36 @@ def gpx_proc_and_save(gpx, gpx_obj_namef, cfg_proc, fileOutPN):
 gpx_names_funs = None  # need when eval gpx_obj_namef()?
 
 
-def save_to_gpx(nav_df: pd.DataFrame, fileOutPN, gpx_obj_namef, waypoint_symbf=None, cfg_proc=None):  #
-    '''
-    Save navigatin from dataframe to *.gpx file. track or waypoints.
-    Generate wayponts names and selects symbols from cfg['out']['gpx_symbols'] based on current row in nav_df
-    :param nav_df:          dataframe
-    :param fileOutPN:       *.gpx file full name without extension
-    :param gpx_obj_namef:           str or fun(waypoint number)
+def save_to_gpx(nav_df: pd.DataFrame, fileOutPN, gpx_obj_namef=None, waypoint_symbf=None, cfg_proc=None, gpx=None):  #
+    """
+    Save navigation from dataframe to *.gpx file. track or waypoints.
+    Generate waypoints names and selects symbols from cfg['out']['gpx_symbols'] based on current row in nav_df
+    :param nav_df: DataFrame with fields:
+        if waypoint_symbf: itbl, ...
+    :param fileOutPN:       *.gpx file full name without extension. Set None to not write (useful if need only gpx)
+    :param gpx_obj_namef:   str or fun(waypoint number). If None then we set it to fileOutPN.stem
     :param waypoint_symbf:  str or fun(nav_df record = row). If None saves track
-    :return:
-    '''
+    :param cfg_proc:
+        'simplify_tracks_error_m'
+        'dt_per_file'
+        'b_missed_coord_to_zeros'
+        period_segments or period_tracks: to split track by this in one file
+    :param gpx: gpx object to update. If None (default) then will be created here, updated and saved
+    :return: None
+    """
+
     if nav_df.empty:
         l.warning('no data')
         return
+    if gpx_obj_namef is None:
+        gpx_obj_namef = Path(fileOutPN).stem
     if cfg_proc is None:
-        cfg_proc = {}
-    gpx = GPX.GPX()
+        cfg_proc = {'dt_per_file': None}
+    elif not 'dt_per_file' in cfg_proc:
+        cfg_proc['dt_per_file'] = None
+    if gpx is None:
+        gpx = GPX.GPX()
+
     if waypoint_symbf:
         # , fun_symbol= 'Waypoint', fun_name= str
         if isinstance(waypoint_symbf, str):
@@ -144,8 +163,7 @@ def save_to_gpx(nav_df: pd.DataFrame, fileOutPN, gpx_obj_namef, waypoint_symbf=N
                 str_time_short = '{:%d %H:%M}'.format(r.Index.to_pydatetime())
                 timeUTC = r.Index.tz_convert(None).to_pydatetime()
                 str_time_long = '{:%d.%m.%y %H:%M:%S}'.format(timeUTC)
-
-                name = gpx_obj_namef(i, r, t)
+                name = gpx_obj_namef if isinstance(gpx_obj_namef, str) else gpx_obj_namef(i, r, t)
 
                 # remove duplicates by add letter
                 name_test_dup = name
@@ -173,8 +191,9 @@ def save_to_gpx(nav_df: pd.DataFrame, fileOutPN, gpx_obj_namef, waypoint_symbf=N
                 gpx.waypoints.append(gpx_waypoint)
         if isinstance(gpx_obj_namef, str):
             gpx.description = gpx_obj_namef
-        gpx.author_email = 'andrey.korzh@atlantic.ocean.ru'
-        write_file(fileOutPN, gpx.to_xml())
+        if fileOutPN:
+            gpx.author_email = 'andrey.korzh@atlantic.ocean.ru'
+            write_file(fileOutPN, gpx.to_xml())
     else:  # tracks
 
         # loc= np.zeros_like(nav_df.index, dtype= int)
@@ -183,20 +202,26 @@ def save_to_gpx(nav_df: pd.DataFrame, fileOutPN, gpx_obj_namef, waypoint_symbf=N
         # T= np.zeros_like(nav_df.index, dtype= pd.Timedelta)
 
         b_have_depth = ('DepEcho' in nav_df.columns)
-        if cfg_proc.get('period_segments'):
+        #b_have_speed = ('Speed' in nav_df.columns)
+        period_split = cfg_proc.get('period_segments') or cfg_proc.get('period_tracks')
+        if period_split:
+            period_split = pd_period_to_timedelta(period_split)
             t_intervals_start = pd.date_range(
                 start=nav_df.index[0].normalize(),
                 end=max(nav_df.index[-1],
-                        nav_df.index[-1].normalize() + pd_period_to_timedelta(cfg_proc['period_segments'])),
-                freq=cfg_proc['period_segments'])[1:]  # make last t_interval_start >= all_data[-1]
+                        nav_df.index[-1].normalize() + period_split),
+                freq=period_split)[1:]  # make last t_interval_start >= all_data[-1]
+            #format_time =
         else:
             t_intervals_start = nav_df.index[-1:]  # series with 1 last value
         t_interval_end = nav_df.index[0]
         n_intervals_without_data = 0
         part = 0
+        nav_df = nav_df.tz_convert('utc', copy=False)
         Tprev = nav_df.index[0].to_pydatetime()
         Tcur = Tprev
-        gpx_track = gpx_track_create(gpx, gpx_obj_namef)
+        if not cfg_proc.get('period_tracks'):
+            gpx_track = gpx_track_create(gpx, gpx_obj_namef)
         for t_interval_start in t_intervals_start:
             t_interval = slice(t_interval_end, t_interval_start)  # from previous last
             # USEtime = [[t_interval_end.isoformat(), t_interval_start.isoformat()]]
@@ -210,14 +235,20 @@ def save_to_gpx(nav_df: pd.DataFrame, fileOutPN, gpx_obj_namef, waypoint_symbf=N
                     print('30 intervals without data => think it is the end')
                     break
                 continue
-
             gpx_segment = GPX.GPXTrackSegment()
-            gpx_track[gpx_obj_namef].segments.append(gpx_segment)
+            if cfg_proc.get('period_tracks'):
+                track_name = f'{gpx_obj_namef}{t_interval_start:%y-%m-%d %H:%M}'
+                gpx_track = gpx_track_create(gpx, track_name)
+                gpx_track[track_name].segments.append(gpx_segment)
+            else:
+                gpx_track[gpx_obj_namef].segments.append(gpx_segment)
+
             for i, r in enumerate(nav_df_cur.itertuples()):
                 Tcur = r.Index.to_pydatetime()
-                gpx_point = GPX.GPXTrackPoint(latitude=r.Lat, longitude=r.Lon,
-                                              elevation=r.DepEcho if b_have_depth and not np.isnan(r.DepEcho) else None,
-                                              time=Tcur)  # , speed= speed_b, comment= Comment
+                gpx_point = GPX.GPXTrackPoint(
+                    latitude=r.Lat, longitude=r.Lon,
+                    elevation=r.DepEcho if b_have_depth and not np.isnan(r.DepEcho) else None,
+                    time=Tcur)  # , speed= speed_b, comment= Comment
                 gpx_segment.points.append(gpx_point)
                 # if i==1:
                 # gpx.description= gpx_obj_namef
@@ -226,7 +257,7 @@ def save_to_gpx(nav_df: pd.DataFrame, fileOutPN, gpx_obj_namef, waypoint_symbf=N
                 # tree = ET.parse(gpxxml)
                 # root = tree.getroot()
 
-            if cfg_proc['simplify_tracks_error_m']:
+            if cfg_proc.get('simplify_tracks_error_m'):
                 try:
                     gpx_segment.points = gpxpy_simplify_polyline(gpx_segment.points,
                                                                  cfg_proc['simplify_tracks_error_m'])
@@ -242,14 +273,16 @@ def save_to_gpx(nav_df: pd.DataFrame, fileOutPN, gpx_obj_namef, waypoint_symbf=N
                     except Exception as e:
                         l.exception('not succes. skip simplifying tracks', recursion_limit)
 
-            if Tcur - Tprev > cfg_proc['dt_per_file']:
+            if cfg_proc['dt_per_file'] and Tcur - Tprev > cfg_proc['dt_per_file']:  # save to next file
                 part += 1
-                gpx_proc_and_save(gpx, gpx_obj_namef, cfg_proc, str(fileOutPN) + 'part{part}')
+                if fileOutPN:
+                    gpx_proc_and_save(gpx, gpx_obj_namef, cfg_proc, f'{fileOutPN}part{part}')
                 gpx_track = gpx_track_create(gpx, gpx_obj_namef)
                 Tprev = Tcur
+        if fileOutPN:
+            gpx_proc_and_save(gpx, gpx_obj_namef, cfg_proc, fileOutPN)
 
-        gpx_proc_and_save(gpx, gpx_obj_namef, cfg_proc, fileOutPN)
-
+    return gpx
 
 # ___________________________________________________________________________
 def str_deg_minut_from_deg(Coord, strFormat, LetterPlus='', LetterMinus='-'):

@@ -475,6 +475,13 @@ def h5temp_open(
     else:
         print('saving to', db_path_temp / ','.join(tables).strip('/'), end=':\n')
 
+        # if table name in tables_log has placeholder then fill it
+        itbl = 0
+        for i, t in enumerate(tables_log):
+            if '{}' in t:
+                tables_log[i] = t.format(tables[itbl])
+            else:
+                itbl += 1
     try:
         try:  # open temporary output file
             if db_path_temp.is_file():
@@ -584,11 +591,13 @@ def df_data_append_fun(df, tbl_name, cfg_out, **kwargs):
     df.to_hdf(cfg_out['db'], tbl_name, append=True, data_columns=cfg_out.get('data_columns', True),
               format='table', dropna=not cfg_out.get('b_insert_separator'), index=False, **kwargs
               )
+    return tbl_name
 
 
 def df_log_append_fun(df, tbl_name, cfg_out):
     cfg_out['db'].append(tbl_name, df, data_columns=True, expectedrows=cfg_out['nfiles'], index=False,
                          min_itemsize={'values': cfg_out['logfield_fileName_len']})
+    return tbl_name
 
 
 def h5remove_table(db: pd.HDFStore, node: Optional[str] = None):
@@ -818,8 +827,7 @@ def create_indexes(cfg_out, cfg_table_keys):
     - fields specified in :param cfg_table_keys where values are table names that need index. Special field name:
         - 'tables_log': means that cfg_out['tables_log'] is a log table
     - 'index_level2_cols': second level for Multiindex (only 2 level supported, 1st is always named 'index')
-    :param cfg_table_keys: list of cfg_out field names having tables names that need index. Instead of using
-    'tables_log' for log tables the list can contain subsequences where log tables names fields will be after data table in each subsequence
+    :param cfg_table_keys: list of cfg_out field names having set of (tuples) names of tables that need index: instead of using 'tables_log' for log tables the set can contain subsequences where log tables names fields will be after data table in each subsequence
     :return:
     """
     l.debug('Creating index')

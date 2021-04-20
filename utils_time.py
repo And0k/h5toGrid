@@ -11,6 +11,7 @@ from typing import Optional
 from datetime import datetime
 import numpy as np
 import pandas as pd
+from pandas.tseries.frequencies import to_offset
 
 from utils2init import LoggingStyleAdapter
 
@@ -134,7 +135,7 @@ def timzone_view(t, dt_from_utc=0):
 # ----------------------------------------------------------------------
 def pd_period_to_timedelta(period: str) -> pd.Timedelta:
     """
-    Converts str to pd.Timedelta. May be better to use pd.Timedelta(*pd.to_offset(period))
+    Converts str to pd.Timedelta. May be better to use pd.Timedelta(*to_offset(period))
     :param period: str, in format of pandas offset string 'D' (Y, D, 5D, H, ...)
     :return:
     """
@@ -173,7 +174,7 @@ def intervals_from_period(
         datetime_range = [start, t_interval_last]
 
     if period:
-        period_timedelta = pd_period_to_timedelta(period)
+        period_timedelta = to_offset(period)  # pd_period_to_timedelta(
 
         # Set next start on the end of day if interval is bigger than day
         if period_timedelta >= pd.Timedelta(1, 'D'):

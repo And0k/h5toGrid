@@ -5,7 +5,8 @@
   Purpose: Update inclinometr Vabs coef in hdf5 tables
   Created: 01.03.2019
 
-Load coefs from Veusz fitting of force(inclination) to velocity data to hdf5 coef table
+Load coefs from Veusz fitting of force(inclination) to velocity data
+Save them to hdf5 coef table
 """
 
 import logging
@@ -40,7 +41,7 @@ def digits_first(text):
     return (lambda tdtd: (atoi(tdtd[1]), tdtd[0]))(re.split('(\d+)', text))
 
 
-def main(new_arg=None):
+def main(new_arg=None, veusze=None):
     """
     Note: if vsz data source have 'Ag_old_inv' variable then not invert coef. Else invert to use in vsz which not invert coefs
     :param new_arg:
@@ -112,10 +113,13 @@ def main(new_arg=None):
         cfg['in_saved'] = cfg['in'].copy()
     # cfg['loop'] = asyncio.get_event_loop()
     # cfg['export_timeout_s'] = 600
-    cfg['out']['export_dir'] = dir_from_cfg(cfg['out']['path'], cfg['out']['export_dir'])
+    cfg['out']['export_dir'] = dir_from_cfg(cfg['out']['path'].parent, cfg['out']['export_dir'])
 
-    veuszPropagate.load_vsz = veuszPropagate.load_vsz_closure(cfg['program']['veusz_path'])
-    gen_veusz_and_logs = veuszPropagate.load_to_veusz(veuszPropagate.ge_names(cfg), cfg, None)
+    veuszPropagate.load_vsz = veuszPropagate.load_vsz_closure(
+        cfg['program']['veusz_path'],
+        b_execute_vsz=cfg['program']['b_execute_vsz']
+        )
+    gen_veusz_and_logs = veuszPropagate.load_to_veusz(veuszPropagate.ge_names(cfg), cfg, veusze)
 
     names_get = ['Inclination_mean_use1', 'logVext1_m__s']  # \, 'Inclination_mean_use2', 'logVext2_m__s'
     names_get_fits = ['fit']  # , 'fit2'
@@ -219,13 +223,18 @@ def main(new_arg=None):
     print(f'Ok')
     print(txt_results)
     for n in names_get:
-        pd.DataFrame.from_dict(dict(zip(list(txt_results['fit1result'].keys()), vsz_data[n]))
-                               ).to_csv(
-            Path(cfg['out']['path']).with_name(f'average_for_fitting-{n}.txt'), sep='\t',
-            header=txt_results['fit1result'].keys, mode='a')
+        pd.DataFrame.from_dict(
+            dict(zip(list(txt_results['fit1result'].keys()), vsz_data[n]))
+            ).to_csv(
+                Path(cfg['out']['path']).with_name(f'average_for_fitting-{n}.txt'), sep='\t',
+                header=txt_results['fit1result'].keys, mode='a'
+            )
+    return {**vsz_data, 'veusze': veusze}
 
 
 if __name__ == '__main__':
+    # Example call
+
     cfg_out_db_path = path_on_drive_d(
         r'd:\WorkData\_experiment\inclinometer\190711_tank\190711incl.h5'
         # r'/mnt/D/workData/_experiment/_2019/inclinometer/190704_tank_ex2/190704incl.h5'

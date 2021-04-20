@@ -50,8 +50,8 @@ def test_main_init() -> None:
         nonlocal cfg
         nonlocal cfg_by_hydra_
         cfg_by_hydra_ = cfg_by_hydra
-        cfg = main_init(cfg_by_hydra)
-
+        cfg = to_vaex_hdf5.cfg_dataclasses.main_init(cfg_by_hydra, cs_store_name)
+        cfg = to_vaex_hdf5.cfg_dataclasses.main_init_input_file(cfg, cs_store_name)
     test_cs()
 
     assert cfg_by_hydra_['input']['db_path'] == str(path_db)

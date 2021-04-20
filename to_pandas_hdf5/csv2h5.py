@@ -875,9 +875,9 @@ def h5_names_gen(cfg_in, cfg_out: Mapping[str, Any], **kwargs) -> Iterator[Path]
     :param cfg_in: dict, must have fields:
         - paths: iterator - returns full file names
 
-    :param cfg_out: dict, need have field 'log', dict with fields needed for h5_dispenser_and_names_gen() and print info:
+    :param cfg_out: dict, with fields needed for h5_dispenser_and_names_gen() and print info:
         - Date0, DateEnd, rows: must have (should be updated) after yield
-        - log: current file info - else prints "file not processed"
+        - log: (will be created if absent) current file info - else prints "file not processed"
     """
     set_field_if_no(cfg_out, 'log', {})
     for name_full in cfg_in['paths']:
@@ -1148,8 +1148,10 @@ def main(new_arg=None, **kwargs):
             if cfg['in']['nfiles'] > 1:
                 l.info('%s. %s: ', i1_file, path_csv.name)
             # Loading and processing data
-            d, cfg['filter']['delayedfunc'] = read_csv(**{**cfg['in'], 'paths': [path_csv]}, **{
-                k: cfg['filter'].get(k) for k in ['min_date', 'max_date']})  # , b_ok_ds
+            d, cfg['filter']['delayedfunc'] = read_csv(
+                **{**cfg['in'], 'paths': [path_csv]},
+                **{k: cfg['filter'].get(k) for k in ['min_date', 'max_date']}
+                )  # , b_ok_ds
 
             if d is None:
                 l.warning('not processing')

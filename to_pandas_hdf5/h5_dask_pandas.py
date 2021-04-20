@@ -806,6 +806,7 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
         try:
             with ReplaceTableKeepingChilds([df_cor, df], tbl_parent, cfg_out, df_append_fun):
                 pass
+            return tbl_parent
         except Exception as e:
             l.error('%s Can not write to store. May be data corrupted. %s', msg_func, standard_error_info(e))
             raise (e)
@@ -815,7 +816,7 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
     else:
         # Append corrected data to cfg_out['db'] store
         try:
-            df_append_fun(df, tbl_parent, cfg_out)
+            return df_append_fun(df, tbl_parent, cfg_out)
         except Exception as e:
             l.error('%s Can not write to store. May be data corrupted. %s', msg_func, standard_error_info(e))
             raise (e)
@@ -880,16 +881,22 @@ def h5add_log(cfg_out: Dict[str, Any], df, log: Union[pd.DataFrame, Mapping, Non
         return
 
     # synchro "tables_log" and more user friendly but not so universal to code "table_log"
-    if not cfg_out.get('table_log'):
-        _t = cfg_out.get('tables_log')
-        if _t:
-            cfg_out['table_log'] = _t[0]
+
+    if cfg_out.get('table_log'):
+        table_log = cfg_out['table_log']
+    else:
+        table_log = cfg_out.get('tables_log')
+        if table_log:
+            if '{}' in table_log[0]:
+                table_log = table_log[0].format(cfg_out['table'])
+            else:
+                table_log = table_log[0]
+
         else:  # set default for (1st) data table
             try:
-                cfg_out['table_log'] = f"{cfg_out['table']}'/log'"
+                table_log = f"{cfg_out['table']}'/log'"
             except KeyError:
-                cfg_out['table_log'] = f"{cfg_out['tables'][0]}'/log'"
-
+                table_log = f"{cfg_out['tables'][0]}'/log'"
 
     set_field_if_no(cfg_out, 'logfield_fileName_len', 255)
 
@@ -909,11 +916,12 @@ def h5add_log(cfg_out: Dict[str, Any], df, log: Union[pd.DataFrame, Mapping, Non
                                                 log['Date0']])  # index='Date0' not work for dict
 
     try:
-        df_log_append_fun(log, cfg_out['table_log'], cfg_out)
+        return df_log_append_fun(log, table_log, cfg_out)
     except ValueError as e:
-        h5append_on_inconsistent_index(cfg_out, cfg_out['table_log'], log, df_log_append_fun, e, 'append log')
+        return h5append_on_inconsistent_index(cfg_out, table_log, log, df_log_append_fun, e, 'append log')
     except ClosedFileError as e:
         l.warning('Check code: On reopen store update store variable')
+
 
 
 def h5_append(cfg_out: Dict[str, Any],
@@ -948,6 +956,7 @@ def h5_append(cfg_out: Dict[str, Any],
         cfg_out: only if not defined already:
             cfg_out['table_log'] = cfg_out['tables_log'][0]
             table_log
+            tables_have_wrote list appended (or created) with tuple `(table, table_log)`
     '''
 
     df_len = len(df) if tim is None else len(tim)  # use computed values if possible for faster dask
@@ -987,11 +996,11 @@ def h5_append(cfg_out: Dict[str, Any],
             # , compute=False
             # cfg_out['db'].append(cfg_out['table'], df, data_columns=True, index=False,
             #              chunksize=cfg_out['chunksize'])
-
+        table = None
         try:
-            df_data_append_fun(df, cfg_out['table'], cfg_out)
+            table = df_data_append_fun(df, cfg_out['table'], cfg_out)
         except ValueError as e:
-            h5append_on_inconsistent_index(cfg_out, cfg_out['table'], df, df_data_append_fun, e, msg_func)
+            table = h5append_on_inconsistent_index(cfg_out, cfg_out['table'], df, df_data_append_fun, e, msg_func)
         except TypeError as e:  # (, AttributeError)?
             if isinstance(df, dd.DataFrame):
                 last_nan_row = df.loc[df.index.compute()[-1]].compute()
@@ -999,7 +1008,7 @@ def h5_append(cfg_out: Dict[str, Any],
                 # df.query("index > Timestamp('{}')".format(t_end.tz_convert(None)), meta) #df.query(f"index > {t_end}").compute()
                 if all(last_nan_row.isna()):
                     l.exception(f'{msg_func}: dask not writes separator? Repeating using pandas')
-                    df_data_append_fun(last_nan_row, cfg_out['table'], cfg_out, min_itemsize={c: 1 for c in (
+                    table = df_data_append_fun(last_nan_row, cfg_out['table'], cfg_out, min_itemsize={c: 1 for c in (
                         cfg_out['data_columns'] if cfg_out.get('data_columns', True) is not True else df.columns)})
                     # sometimes pandas/dask get bug (thinks int is a str?): When I add row of NaNs it tries to find ``min_itemsize`` and obtain NaN (for float too, why?) this lead to error
                 else:
@@ -1012,4 +1021,10 @@ def h5_append(cfg_out: Dict[str, Any],
             raise (e)
 
     # run even if df is empty becouse of possible needs to write log only
-    h5add_log(cfg_out, df, log, tim, log_dt_from_utc)
+    table_log = h5add_log(cfg_out, df, log, tim, log_dt_from_utc)
+
+    _t = (table, table_log)
+    if 'tables_have_wrote' in cfg_out:
+        cfg_out['tables_have_wrote'].add(_t)
+    else:
+        cfg_out['tables_have_wrote'] = {_t}

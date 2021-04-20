@@ -19,7 +19,7 @@ from pathlib import Path
 from datetime import timedelta, datetime
 from time import sleep
 from typing import Any, Callable, Dict, Iterator, Iterable, Mapping, MutableMapping, Optional, Sequence, Tuple, List, Union, TypeVar
-
+import dask
 import dask.array as da
 import dask.dataframe as dd
 import numpy as np
@@ -36,8 +36,8 @@ sys.path.append(str(scripts_path.parent.resolve()))
 # from utils2init import ini2dict
 # from scripts.incl_calibr import calibrate, calibrate_plot, coef2str
 # from other_filters import despike, rep2mean
-from utils2init import Ex_nothing_done, set_field_if_no, init_logging, cfg_from_args, init_file_names, \
-    my_argparser_common_part, this_prog_basename, dir_create_if_need
+from utils2init import Ex_nothing_done, call_with_valid_kwargs, set_field_if_no, init_logging, cfg_from_args, \
+     my_argparser_common_part, this_prog_basename, dir_create_if_need
 from utils_time import intervals_from_period, pd_period_to_timedelta
 from to_pandas_hdf5.h5toh5 import h5init, h5find_tables, h5remove_table, h5move_tables
 from to_pandas_hdf5.h5_dask_pandas import h5_append, h5q_intervals_indexes_gen, h5_load_range_by_coord, i_bursts_starts, \
@@ -141,7 +141,7 @@ def my_argparser(varargs=None):
     s.add('--text_path',
               help='path to save text files with processed velocity (each probe individually). No file if not defined')
     s.add('--text_date_format', default='%Y-%m-%d %H:%M:%S.%f',
-              help='Format of date column in output text files. Can use float or string representations')
+              help='Format of date column in output text files. (.%f will be removed from end when aggregate_period > 1s). Can use float or string representations')
     s.add('--text_columns_list',
               help='if not empty then saved text files will contain only specified here columns')
     s.add('--b_all_to_one_col',
@@ -922,17 +922,11 @@ def coef_zeroing(mean_countsG0, Ag_old, Cg, Ah_old):
     # @-others
 
 
-def filt_data_dd(
-    a,
-    dt_between_bursts=None,
-    dt_hole_warning: Optional[np.timedelta64] = None,
-    min_p=None,
-    cfg_filter=None) -> Tuple[dd.DataFrame, np.array]:
+def filt_data_dd(a, dt_between_bursts=None, dt_hole_warning: Optional[np.timedelta64] = None, cfg_filter=None) -> Tuple[dd.DataFrame, np.array]:
     """
     Filter and get burst starts (i.e. finds gaps in data)
     :param a:
     :param dt_between_bursts: minimum time interval between blocks to detect them and get its starts (i_burst), also repartition on found blocks if can i.e. if known_divisions
-    :param min_p, optional: used only if P in a.columns to delete a rows where a.P < min_p
     :param dt_hole_warning: numpy.timedelta64
     :param cfg_filter:
     :return: (a, i_burst) where:
@@ -946,11 +940,14 @@ def filt_data_dd(
         i_burst, mean_burst_size, max_hole = i_bursts_starts(tim, dt_between_blocks=dt_between_bursts)
 
         # filter
-        if 'P' in a.columns and min_p:
-            print('restricting time range by good Pressure')
-            # interp(NaNs) - removes warning 'invalid value encountered in less':
-            a['P'] = filt_blocks_da(a['P'].values, i_burst, i_end=len(a)).to_dask_dataframe(['P'], index=tim)
-            # todo: make filt_blocks_dd and replace filt_blocks_da: use a['P'] = a['P'].repartition(chunks=(tuple(np.diff(i_starts).tolist()),))...?
+
+        # this is will be done by filter_global_minmax() below
+        # if 'P' in a.columns and min_p:
+        #     print('restricting time range by good Pressure')
+        #     # interp(NaNs) - removes warning 'invalid value encountered in less':
+        #     a['P'] = filt_blocks_da(a['P'].values, i_burst, i_end=len(a)).to_dask_dataframe(['P'], index=tim)
+        #     # todo: make filt_blocks_dd and replace filt_blocks_da: use a['P'] = a['P'].repartition(chunks=(tuple(np.diff(i_starts).tolist()),))...?
+
         # decrease interval based on ini date settings and filtering and recalc bursts
         a = filter_global_minmax(a, cfg_filter=cfg_filter)
         tim = a.index.compute()  # History: MemoryError((6, 10868966), dtype('float64'))
@@ -969,19 +966,10 @@ def filt_data_dd(
         return a, i_burst
 
 
-def gen_data_on_intervals(
-    t_prev_interval_start: pd.Timestamp,
-    t_intervals_start: Iterable[pd.Timestamp],
-    db_path,
-    table,
-    columns=None,
-    chunksize=None,
-    sorted_index=None,
-    dt_between_bursts: Optional[np.timedelta64] = None,
-    dt_hole_warning: Optional[np.timedelta64] = None,
-    min_p=None,
-    cfg_filter=None,
-    **kwargs) -> Iterator[Tuple[dd.DataFrame, np.array]]:
+def gen_data_on_intervals(t_prev_interval_start: pd.Timestamp, t_intervals_start: Iterable[pd.Timestamp], db_path,
+                          table, columns=None, chunksize=None, sorted_index=None,
+                          dt_between_bursts: Optional[np.timedelta64] = None,
+                          dt_hole_warning: Optional[np.timedelta64] = None, cfg_filter=None, **kwargs) -> Iterator[Tuple[dd.DataFrame, np.array]]:
     """
     Yields loaded data of specified time interval(s)
     :param t_prev_interval_start: first index value
@@ -995,7 +983,7 @@ def gen_data_on_intervals(
     :param period: Optional[str] = '999D',
 
     params of filt_data_dd:
-    :param dt_between_bursts, dt_hole_warning, min_p, cfg_filter
+    :param dt_between_bursts, dt_hole_warning, cfg_filter
 
     other fields required by h5_load_range_by_coord() except range_coordinates:
     :param db_path,
@@ -1011,7 +999,7 @@ def gen_data_on_intervals(
         a = h5_load_range_by_coord(
             db_path, table, range_coordinates=start_end,
             columns=columns, chunksize=chunksize, sorted_index=sorted_index)
-        yield filt_data_dd(a, dt_between_bursts, dt_hole_warning, min_p, cfg_filter)
+        yield filt_data_dd(a, dt_between_bursts, dt_hole_warning, cfg_filter)
 
 
 def h5_names_gen(cfg_in: Mapping[str, Any], cfg_out: None = None
@@ -1169,7 +1157,8 @@ def gen_variables(
             l.info('%s. %s: ', n, tbl)  # itbl
             cfg_in_copy['table'] = tbl                           # for gen_data_on_intervals()
 
-            for i, (d, i_burst) in enumerate(gen_data_on_intervals(t_prev_interval_start, t_intervals_start, **cfg_in_copy)):
+            for i, (d, i_burst) in enumerate(
+                    gen_data_on_intervals(t_prev_interval_start, t_intervals_start, **cfg_in_copy)):
                 assert i == 0  # do not need the use of many intervals
                 cfg_in_copy['tables'] = cfg_in_copy['table']    # recover (seems not need now but may be for future use)
                 coefs_copy = coefs.copy() if coefs else None    # copy to not cumulate the coefs corrections in several cycles of generator consumer for same probe
@@ -1188,12 +1177,12 @@ def dd_to_csv(
         ):
     """
     Save to ascii if _text_path_ is not None
-    :param d:
+    :param d: dask dataframe
     :param text_path: None or directory path. If not a dir tries to create and if this fails (like if more than one level) then adds this as prefix to nemes
     :param text_date_format: If callable then create "Date" column by calling it (dd.index), retain index only if "Time" in text_columns. If string use it as format for index (Time) column
     :param text_columns: optional
-    :param aggregate_period: str or class with repr() to add "bin{}" suffix to files names
-    :param suffix:
+    :param aggregate_period: [seconds] str or class with repr() to add "bin{}" suffix to files names
+    :param suffix: str, will be added to filenamme with forbidden characters removed/replaced
     :param b_single_file: save all to one file or each partition individually
     """
     if text_path is None:
@@ -1216,38 +1205,55 @@ def dd_to_csv(
     def name_that_replaces_asterisk(i_partition):
         return f'{d.divisions[i_partition]:%y%m%d_%H%M}'
         # too long variant: '{:%y%m%d_%H%M}-{:%H%M}'.format(*d.partitions[i_partition].index.compute()[[0,-1]])
-
+    suffix_mod = re.sub(r'[\\/*?:"<>]', '', suffix.replace('incl', 'i').replace('|', ','))
     filename = combpath(
         text_path,
-        f"{name_that_replaces_asterisk(0) if b_single_file else '*'}{{}}_{suffix.replace('incl', 'i')}{ext}".format(
+        f"{name_that_replaces_asterisk(0) if b_single_file else '*'}{{}}_{suffix_mod}{ext}".format(
         f'bin{aggregate_period.lower()}' if aggregate_period else '',  # lower seconds: S -> s
         ))
 
-    with ProgressBar():
-        d_out = d.round({'Vdir': 4, 'inclination': 4, 'Pressure': 3})
-        # if not cfg_out.get('b_all_to_one_col'):
-        #     d_out.rename(columns=map_to_suffixed(d.columns, suffix))
-        if callable(text_date_format):
-            arg_out = {'index': bool(text_columns) and 'Time' in text_columns,
-                       'columns': bool(text_columns) or d_out.columns.insert(0, 'Date')
-                       }
-            d_out['Date'] = d_out.map_partitions(lambda df: text_date_format(df.index))
-        else:
-            arg_out = {'date_format': text_date_format,
-                       'columns': text_columns or None  # for write all columns if empty (replaces to None)
-                       }
 
-        if progress is not None:
-            progress(d_out)
-        d_out.to_csv(filename=filename,
-                     single_file=b_single_file,
-                     name_function=None if b_single_file else name_that_replaces_asterisk,  # 'epoch' not works
-                     float_format='%.5g',
-                     sep=sep,
-                     encoding="ascii",
-                     #compression='zip',
-                     **arg_out
-                     )
+    d_out = d.round({'Vdir': 4, 'inclination': 4, 'Pressure': 3})
+    # if not cfg_out.get('b_all_to_one_col'):
+    #     d_out.rename(columns=map_to_suffixed(d.columns, suffix))
+    if callable(text_date_format):
+        arg_out = {'index': bool(text_columns) and 'Time' in text_columns,
+                   'columns': bool(text_columns) or d_out.columns.insert(0, 'Date')
+                   }
+        d_out['Date'] = d_out.map_partitions(lambda df: text_date_format(df.index))
+    else:
+        arg_out = {'date_format': text_date_format,
+                   'columns': text_columns or None  # for write all columns if empty (replaces to None)
+                   }
+
+    if progress is None:
+        pbar = ProgressBar(dt=10)
+        pbar.register()
+
+
+    # with dask.config.set(scheduler='processes'):  # need because saving to csv mainly under GIL
+    to_csv = d_out.to_csv(filename=filename,
+                 single_file=b_single_file,
+                 name_function=None if b_single_file else name_that_replaces_asterisk,  # 'epoch' not works
+                 float_format='%.5g',
+                 sep=sep,
+                 encoding="ascii",
+                 #compression='zip',
+                 **arg_out,
+                 compute = False,
+                 compute_kwargs = {'scheduler': 'processes'}
+                 )
+
+    # pd.set_option('chained assignment', None)  # 'warn' (the default), 'raise' (raises an exception), or None (no checks are made).
+    # disabling the chain assigment pandas option made my ETL job go from running out of memory after 90 minutes to taking 17 minutes! I think we can close this issue since its related to pandas
+    if progress is None:
+        dask.compute(to_csv)
+        pbar.unregister()
+    else:
+        futures = client.compute(to_csv)
+        progress(futures)
+        # to_csv.result()
+        client.gather(futures)
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -1281,10 +1287,14 @@ def main(new_arg=None, **kwargs):
         aggregate_period_timedelta = pd_period_to_timedelta(cfg['out']['aggregate_period'])
         # Restricting number of counts=100000 in dask partition to not memory overflow
         split_for_memory = cfg['out']['split_period'] or 100000 * aggregate_period_timedelta
+
+        if cfg['out']['text_date_format'].endswith('.%f') and not np.any(aggregate_period_timedelta.components[-3:]):  # milliseconds=0, microseconds=0, nanoseconds=0
+            cfg['out']['text_date_format'] = cfg['out']['text_date_format'][:-len('.%f')]
     else:
         aggregate_period_timedelta = None
         # Restricting number of counts in dask partition by time period
         split_for_memory = cfg['out']['split_period'] or pd.Timedelta(1, 'D')
+
     # Also is possible to set cfg['in']['split_period'] to cycle in parts but not need because dask takes control of parts if cfg_out['split_period'] is set
 
     h5init(cfg['in'], cfg['out'])
@@ -1309,7 +1319,7 @@ def main(new_arg=None, **kwargs):
     dfs_all_list = []
     tbls = []
     dfs_all: Optional[pd.DataFrame] = None
-    cfg['out']['tables_have_wrote'] = []
+    cfg['out']['tables_have_wrote'] = set()
 
     # for itbl, (tbl, coefs) in h5_dispenser_and_names_gen(cfg['in'], cfg['out'], fun_gen=h5_names_gen):
     #     l.info('{}. {}: '.format(itbl, tbl))
@@ -1371,7 +1381,7 @@ def main(new_arg=None, **kwargs):
                 tables_wrote_now = h5_append_to(d, tbl, cfg['out'], log, msg=f'saving {tbl} (separately)',
                                                 print_ok=None)
                 if tables_wrote_now:
-                    cfg['out']['tables_have_wrote'].append(tables_wrote_now)
+                    cfg['out']['tables_have_wrote'].add(tables_wrote_now)
 
         dd_to_csv(d, cfg['out']['text_path'], cfg['out']['text_date_format'], cfg['out']['text_columns'],
                   cfg['out']['aggregate_period'], suffix=tbl, b_single_file=not cfg['out']['split_period'])
@@ -1405,7 +1415,7 @@ def main(new_arg=None, **kwargs):
         tables_wrote_now = h5_append_to(dfs_all, cfg_out_table, cfg['out'], log=dfs_all_log,
                                         msg='Saving accumulated data', print_ok='.')
         if tables_wrote_now:
-            cfg['out']['tables_have_wrote'].append(tables_wrote_now)
+            cfg['out']['tables_have_wrote'].add(tables_wrote_now)
 
 
     # close temporary output store
@@ -1415,16 +1425,19 @@ def main(new_arg=None, **kwargs):
     except Ex_nothing_done as e:
         l.warning('Tables not moved')
 
-
-    if dfs_all is not None and cfg['out']['b_all_to_one_col']:
-        # Save to 1 combined ascii with regular time interval filling absent values with 0
-        dd_to_csv(
+    # Concatenate several columns to
+    # - single ascii with regular time interval like 1-probe data or
+    # - parllel combined ascii (with many columns) dfs_all without any changes
+    if dfs_all is not None and len(cfg['out']['tables_have_wrote']) > 1:
+        call_with_valid_kwargs(dd_to_csv,
+            (lambda x:
+                  x.resample(rule=aggregate_period_timedelta)
+                  .first()
+                  .fillna(0) if cfg['out']['b_all_to_one_col'] else x)(     # absent values filling with 0
             dd.from_pandas(dfs_all, chunksize=500000)
-                .resample(rule=aggregate_period_timedelta)
-                .first()
-                .fillna(0),  # inserts zeros in holes
+            ),
             **cfg['out'],
-            suffix=','.join(cfg['in']['tables'])
+            suffix=f"[{','.join(cfg['in']['tables'])}]"
             )
 
     print('Ok.', end=' ')
