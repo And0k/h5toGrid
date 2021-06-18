@@ -7,6 +7,7 @@
   Modified: 29.08.2020
 """
 import logging
+import sys
 import re
 import warnings
 from codecs import open
@@ -16,6 +17,7 @@ from functools import partial
 from pathlib import Path, PurePath
 from time import sleep
 from typing import Any, Callable, Iterator, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
+from tables.exceptions import HDF5ExtError
 
 import dask.dataframe as dd
 import numpy as np
@@ -23,7 +25,7 @@ import pandas as pd
 from dask import delayed, compute, persist
 # my:
 from utils2init import init_file_names, Ex_nothing_done, set_field_if_no, cfg_from_args, my_argparser_common_part, \
-    this_prog_basename, init_logging, standard_error_info
+    this_prog_basename, init_logging, standard_error_info, ExitStatus
 from to_pandas_hdf5.h5_dask_pandas import h5_append, filter_global_minmax, filter_local
 from to_pandas_hdf5.h5toh5 import h5temp_open, h5remove_duplicates, h5remove_duplicates_by_loading, h5move_tables, \
     h5index_sort, h5init, h5del_obsolete, create_indexes
@@ -331,16 +333,16 @@ def set_filterGlobal_minmax(a: Union[pd.DataFrame, dd.DataFrame],
                             ) -> Tuple[Union[pd.DataFrame, dd.DataFrame], pd.DatetimeIndex]:
     """
     Finds bad with filterGlobal_minmax and removes it from a,tim
-    Adds 'rows' remained and 'rows_filtered' to log
+    Adds remaining 'rows' and 'rows_filtered' to log
 
     :param a:
     :param cfg_filter: filtering settings, do nothing if None, can has dict 'delayedfunc' if :param:a is a dask dataframe, that have fields:
       - args: delayed values to be args for to dask.compute(), last is len of a. Output will be used as args of function func:
       - func: function to execute on computed args
 
-    :param log: changes inplace - adds ['rows_filtered'] and ['rows'] - number of rows remained
+    :param log: changes inplace - adds ['rows_filtered'] and ['rows'] - number of remaining rows
     :param dict_to_save_last_time: dict where 'time_last' field will be updated
-    :return: dataframe with remained rows
+    :return: dataframe with remaining rows
 
     """
 
@@ -894,7 +896,7 @@ def h5_names_gen(cfg_in, cfg_out: Mapping[str, Any], **kwargs) -> Iterator[Path]
 
         # Log to logfile
         if cfg_out['log'].get('Date0'):
-            strLog = '{fileName}:\t{Date0:%d.%m.%Y %H:%M:%S}-{DateEnd:%d. %H:%M:%S%z}\t{rows}rows'.format(
+            strLog = '{fileName}:\t{Date0:%d.%m.%Y %H:%M:%S}-{DateEnd:%d.%m %H:%M:%S%z}\t{rows}rows'.format(
                 **cfg_out['log'])  # \t{Lat}\t{Lon}\t{strOldVal}->\t{mag}
         else:
             strLog = "file not processed"
@@ -928,7 +930,10 @@ def h5_close(cfg_out: Mapping[str, Any]) -> None:
         ns.update(frame.f_locals)
         code.interact(local=ns)
     finally:
-        cfg_out['db'].close()
+        try:
+            cfg_out['db'].close()
+        except HDF5ExtError:
+            l.exception(f"Error closing: {cfg_out['db']}")
         if cfg_out['db'].is_open:
             print('Wait store closing...')
             sleep(2)
@@ -974,22 +979,25 @@ def h5_dispenser_and_names_gen(
         - cfg_out['b_remove_duplicates'] and
         - that what fun_gen() do
     """
-
+    # copy data to temporary HDF5 store and open it or work with source data if
     dfLogOld, cfg_out['db'], cfg_out['b_skip_if_up_to_date'] = h5temp_open(**cfg_out)
     try:
         for i1, gen_out in enumerate(fun_gen(cfg_in, cfg_out, **kwargs), start=1):
-            # remove stored data and process file if it was changed
+            # if current file it is newer than its stored data then remove data and yield its info to process again
             if cfg_out['b_skip_if_up_to_date']:
-                have_older_data, have_duplicates = h5del_obsolete(cfg_out, cfg_out['log'], dfLogOld)
-                if have_older_data:
-                    continue
-                if have_duplicates:
-                    cfg_out['b_remove_duplicates'] = True  # normally no duplicates but will if detect
+                b_stored_newer, b_stored_dups = h5del_obsolete(
+                    cfg_out, cfg_out['log'], dfLogOld, cfg_out.get('field_to_del_older_records')
+                    )
+                if b_stored_newer:
+                    continue  # not need process: current file already loaded
+                if b_stored_dups:
+                    cfg_out['b_remove_duplicates'] = True  # normally no duplicates but we set if detect
 
             yield i1, gen_out
 
     except Exception as e:
         l.exception('\nError preparing data:')
+        sys.exit(ExitStatus.failure)
     finally:
         if b_close_at_end:
             h5_close(cfg_out)

@@ -52,6 +52,8 @@ def my_argparser():
 ---------------------------------------------------
 Processing raw inclinometer data,
 Saving result to indexed Pandas HDF5 store (*.h5) and *.csv
+
+saves loading log in inclinometer\scripts\log\csv2h5_inclin_Kondrashov.log
 -----------------------------------------------------------"""}, version)
     # Configuration sections
     s = p.add_argument_group('in',
@@ -68,15 +70,15 @@ Saving result to indexed Pandas HDF5 store (*.h5) and *.csv
              help='Note: Not affects steps 2, 3, set empty list to load all')
     s.add('--probes_prefix', default='incl',
              help='''Table name prefix in DB (and in raw files with modification described in --raw_pattern help).
-                  I have used "incl" for inclinometers, "w" for wavegauges. Note (at step 1): only if "incl" or "voln" 
-                  in probes_prefix then raw data must be in Kondrashov format else it in Baranov's format. For "voln" we
-                  replace "voln_v" with "w" when saving corrected raw files and use it to name tables so 
+                  I have used "incl" for inclinometers, "w" for wavegauges. Note (at step 1): only if probes_prefix
+                  starts with "incl" or is "voln" in  then raw data must be in Kondrashov format else Baranov's format.
+                  For "voln" we replace "voln_v" with "w" when saving corrected raw files and use it to name tables so 
                   only "w" in outputs and we replace "voln" with "w" to search tables''')
 
     s.add('--db_coefs', default=r'd:\WorkData\~configuration~\inclinometr\190710incl.h5',
              help='coefs will be copied from this hdf5 store to output hdf5 store')
-    s.add('--timerange_zeroing_list', help='See incl_h5clc')
-    s.add('--timerange_zeroing_dict', help='See incl_h5clc. Example: incl14: [2020-07-10T21:31:00, 2020-07-10T21:39:00]')
+    s.add('--time_range_zeroing_list', help='See incl_h5clc')
+    s.add('--time_range_zeroing_dict', help='See incl_h5clc. Example: incl14: [2020-07-10T21:31:00, 2020-07-10T21:39:00]')
     s.add('--dt_from_utc_seconds_dict',
              help='add this correction to loading datetime data. Can use other suffixes instead of "seconds"')
     s.add('--dt_from_utc_hours_dict',
@@ -95,7 +97,7 @@ Saving result to indexed Pandas HDF5 store (*.h5) and *.csv
 
     s = p.add_argument_group('out',
                              'All about output files')
-    s.add('--db_name', help='output hdf5 file name, do not set for auto using dir name')
+    s.add('--db_name', help='output hdf5 file name, if not set then dir name will be used. As next steps use DB saved on previous steps do not change between steps or you will need rename source DB accordingly')
     s.add('--aggregate_period_s_int_list', default='',
         help='bin average data in this intervals [s]. Default [None, 300, 600, 3600] if "w" in [in][probes_prefix]'
              ' else last in list is replaced to 7200. None means do not average. Output with result data for'
@@ -118,7 +120,7 @@ Saving result to indexed Pandas HDF5 store (*.h5) and *.csv
 
     return p
 
-
+#  @hydra.main(config_path="ini", config_name=Path(__file__).stem)
 def main(new_arg=None, **kwargs):
     """
 
@@ -150,7 +152,7 @@ def main(new_arg=None, **kwargs):
     #l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
 
 
-    if False:  # False. Experimental speedup but takes memory
+    if True:  # False. Experimental speedup but takes memory
         from dask.cache import Cache
         cache = Cache(2e9)  # Leverage two gigabytes of memory
         cache.register()    # Turn cache on globally
@@ -183,7 +185,7 @@ def main(new_arg=None, **kwargs):
             if m:
                 break
         cfg['out']['db_name'] = f"{m.group(1).strip('_')}incl.h5"
-    cfg['in']['path_cruise'].glob('*inclinometer*')
+
     dir_incl = next((d for d in cfg['in']['path_cruise'].glob('*inclinometer*') if d.is_dir()), cfg['in']['path_cruise'])
     db_path = dir_incl / '_raw' / cfg['out']['db_name']
     # ---------------------------------------------------------------------------------------------
@@ -220,7 +222,7 @@ def main(new_arg=None, **kwargs):
              'fs': 10,
              'format': 'Baranov',
             }),
-        {'incl':
+        {(lambda x: x if x.startswith('incl') else 'incl')(cfg['in']['probes_prefix']):
             {'correct_fun': partial(correct_txt,
                 mod_file_name= mod_incl_name,
                 sub_str_list=[b'^(?P<use>20\d{2}(,\d{1,2}){5}(,\-?\d{1,6}){6}(,\d{1,2}\.\d{2})(,\-?\d{1,3}\.\d{2})).*',
@@ -340,7 +342,7 @@ def main(new_arg=None, **kwargs):
         kwarg = {'in': {
             'min_date': cfg['filter']['min_date'][0],
             'max_date': cfg['filter']['max_date'][0],
-            'timerange_zeroing': cfg['in']['timerange_zeroing']
+            'time_range_zeroing': cfg['in']['time_range_zeroing']
             }, 'proc': {}
             }
         # if aggregate_period_s is None then not average and write to *_proc_noAvg.h5 else loading from that h5 and writing to _proc.h5
@@ -357,7 +359,7 @@ def main(new_arg=None, **kwargs):
                 kwarg['proc']['azimuth_add'] = 0
             if 'constant' in cfg['in']['azimuth_add']:
                 # and add constant. For example, subtruct declination at the calibration place if it was applied
-                kwarg['proc']['azimuth_add'] += cfg['in']['azimuth_add']['constant']  # add -6.65644183° to account for calibration in Kaliningrad
+                kwarg['proc']['azimuth_add'] += cfg['in']['azimuth_add']['constant']  # add -6.656 to account for calibration in Kaliningrad (mag deg = 6.656°)
 
         for aggregate_period_s in cfg['out']['aggregate_period_s']:
             if aggregate_period_s is None:
@@ -390,8 +392,8 @@ def main(new_arg=None, **kwargs):
                 # Note: for Baranov's prog 4096 is not suited:
                 args += (
                     ['--max_dict', 'M[xyz]:4096',
-                     # '--timerange_zeroing_dict', "incl19: '2019-11-10T13:00:00', '2019-11-10T14:00:00'\n,"  # not works - use kwarg
-                     # '--timerange_zeroing_list', '2019-08-26T04:00:00, 2019-08-26T05:00:00'
+                     # '--time_range_zeroing_dict', "incl19: '2019-11-10T13:00:00', '2019-11-10T14:00:00'\n,"  # not works - use kwarg
+                     # '--time_range_zeroing_list', '2019-08-26T04:00:00, 2019-08-26T05:00:00'
                      '--split_period', '1D'
                     ] if probe_is_incl else
                     ['--bad_p_at_bursts_starts_peroiod', '1H',
@@ -437,7 +439,7 @@ def main(new_arg=None, **kwargs):
             '--fs_float', str(p_type[cfg['in']['probes_prefix']]['fs']),  # f"{fs(probes[0], cfg['in']['probes_prefix'])}",
             # (lambda x: x == x[0])(np.vectorize(fs)(probes, prefix))).all() else raise_ni()
             #
-            # '--timerange_zeroing_list', '2019-08-26T04:00:00, 2019-08-26T05:00:00'
+            # '--time_range_zeroing_list', '2019-08-26T04:00:00, 2019-08-26T05:00:00'
             # '--verbose', 'DEBUG',
             # '--chunksize', '20000',
             '--b_interact', '0',

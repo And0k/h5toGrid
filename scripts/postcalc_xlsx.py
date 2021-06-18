@@ -1,5 +1,5 @@
 # @+leo-ver=5-thin
-# @+node:korzh.20180601111551.1: * @file postcalc.py
+# @+node:korzh.20180601111551.1: * @file postcalc_xlsx.py
 # @+others
 # @+node:korzh.20180601111755.1: ** o2% to ppm
 # from gsw.conversions import t90_from_t68, CT_from_t

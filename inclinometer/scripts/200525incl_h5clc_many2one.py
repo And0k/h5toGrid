@@ -38,7 +38,7 @@ paths_cruise = {
      5: '../proc/190721incl_proc.h5',
      4: '../../../190817_ANS42/inclinometer/190818incl_proc/190818incl_proc.h5'
     }
-timeranges = {
+time_ranges = {
     14: [['2019-07-16T17:00:00', '2019-07-19T16:30:00']],
      5: [['2019-07-21T20:00:00', '2019-08-18T01:45:00']],
      4: [['2019-08-18T06:30:00', '2019-08-26T15:50:00']],
@@ -92,16 +92,16 @@ if st(2):
             args += (
                 ['--max_dict', 'M[xyz]:4096',
                  # Note: for Baranov's prog 4096 is not suited!
-                 # '--timerange_zeroing_dict', "incl19: '2019-11-10T13:00:00', '2019-11-10T14:00:00'\n,"  # not works - use kwarg
-                 # '--timerange_zeroing_list', '2019-08-26T04:00:00, 2019-08-26T05:00:00'
+                 # '--time_range_zeroing_dict', "incl19: '2019-11-10T13:00:00', '2019-11-10T14:00:00'\n,"  # not works - use kwarg
+                 # '--time_range_zeroing_list', '2019-08-26T04:00:00, 2019-08-26T05:00:00'
                 ] if prefix == 'incl' else
                 ['--bad_p_at_bursts_starts_peroiod', '1H',
                 ])
-            kwarg = {}  # 'in': {'timerange_zeroing': {'incl19': ['2019-11-14T06:30:00', '2019-11-14T06:50:00']}}
+            kwarg = {}  # 'in': {'time_range_zeroing': {'incl19': ['2019-11-14T06:30:00', '2019-11-14T06:50:00']}}
         else:
             kwarg = {'in': {
-                'dates_min': {probe: timeranges[probe][0][0] for probe in probes},  # '2019-08-18T06:00:00',
-                'dates_max': {probe: timeranges[probe][0][1] for probe in probes},  # '2019-09-09T16:31:00',  #17:00:00
+                'dates_min': {probe: time_ranges[probe][0][0] for probe in probes},  # '2019-08-18T06:00:00',
+                'dates_max': {probe: time_ranges[probe][0][1] for probe in probes},  # '2019-09-09T16:31:00',  #17:00:00
                 }, 'out': {
                 'b_all_to_one_col': True,
                 'text_date_format': lambda t: (t - m_TimeStart_csv) / np.timedelta64(1, 'h'),

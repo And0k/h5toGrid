@@ -2,7 +2,7 @@
 in:
   db_path: 'd:\WorkData\_experiment\inclinometer\200807_Schukas\mag_components_calibration\200807_calibr-lab#b.h5'
   tables: ['incl_b.*']  # 'incl_b.*' or 'incl_b03'
-  timerange:
+  time_range:
 #    1: [2020-07-27T05:38:00, 2020-07-27T05:39:38]
 #    2: [2020-07-27T05:42:00, 2020-07-27T05:44:15]
 #    3: [2020-07-27T05:48:00, 2020-07-27T05:49:35]
@@ -13,7 +13,7 @@ in:
 #    8: [2020-07-27T05:48:00, 2020-07-27T05:59:46]
 #    9: [2020-07-27T05:48:00, 2020-07-27T06:18:04]
 #    10: [2020-07-27T05:48:00, 2020-07-27T06:26:08]
-  timerange_nord:
+  time_range_nord:
     #1: [2020-07-27T05:39:40, 2020-07-27T05:40:14]
 
   channels: [M, A]

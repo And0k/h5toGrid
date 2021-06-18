@@ -797,10 +797,10 @@ def main(new_arg=None):
                     cfg['in']['fileChangeTime'] = cfg['out']['log']['fileChangeTime']
 
                     if cfg['in']['b_skip_if_up_to_date']:
-                        have_older_data, have_duplicates = h5del_obsolete(cfg['out'], cfg['out']['log'], dfLogOld)
-                        if have_older_data:
+                        b_stored_newer, b_stored_dups = h5del_obsolete(cfg['out'], cfg['out']['log'], dfLogOld)
+                        if b_stored_newer:
                             continue
-                        if have_duplicates:
+                        if b_stored_dups:
                             cfg['out']['b_remove_duplicates'] = True
                     print('{}. {}'.format(ifile, path_raw.name), end=': ')
 
@@ -849,7 +849,7 @@ def main(new_arg=None):
                     if cfg['out']['log'].get('Date0') is not None and (
                             ('b_log_display' not in cfg['program']) or cfg['program']['b_log_display']):
                         str_log = '{fileName}:\t{Date0:%d.%m.%Y %H:%M:%S}-' \
-                                  '{DateEnd:%d. %H:%M:%S%z}\t{rows}rows'.format_map(
+                                  '{DateEnd:%d.%m %H:%M:%S%z}\t{rows}rows'.format_map(
                             cfg['out']['log'])  # \t{Lat}\t{Lon}\t{strOldVal}->\t{mag}
                         l.info(str_log)
                     else:

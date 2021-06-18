@@ -1,12 +1,11 @@
 import logging
-from typing import Any, List, Optional, Tuple, Union
+from typing import Any, List, Optional, Tuple
 
 import numpy as np
 import pywt
 
 from scipy.ndimage.filters import gaussian_filter1d
-import pandas as pd
-from numba import njit, objmode, typed, types
+from numba import njit, objmode, typed
 
 if __debug__:
     import matplotlib
@@ -1076,38 +1075,6 @@ def search_sorted_closest(sorted_array, value):
     else:
         inav_close -= 1
     return inav_close
-
-
-def check_time_diff(t_queried: Union[pd.Series, np.ndarray], t_found: Union[pd.Series, np.ndarray],
-                    dt_warn: Union[pd.Timedelta, np.timedelta64],
-                    mesage: str = 'Bad nav. data coverage: difference to nearest point in time [min]:',
-                    return_diffs: bool = False) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
-    """
-    Check time difference between found and requested time points and prints info if big difference is found
-    :param t_queried: pandas TimeSeries or numpy array of 'datetime64[ns]'
-    :param t_found:   pandas TimeSeries or numpy array of 'datetime64[ns]'
-    :param dt_warn: pd.Timedelta - prints info about bigger differences found only
-    :param return_diffs: if True also returns time differences (t_found - t_queried_values, 'timedelta64[ns]')
-    :return: mask where time difference is bigger than ``dt_warn`` and time differences if return_diffs=True
-    """
-    try:
-        if not np.issubdtype(t_queried.dtype, np.dtype('datetime64[ns]')):  # isinstance(, ) pd.Ti
-            t_queried_values = t_queried.values
-        else:
-            t_queried_values = t_queried
-    except TypeError:  # not numpy 'datetime64[ns]'
-        t_queried_values = t_queried.values
-
-    dT = np.array(t_found - t_queried_values, 'timedelta64[ns]')
-    bbad = abs(dT) > np.timedelta64(dt_warn)
-    if (mesage is not None) and np.any(bbad):
-        if mesage:
-            mesage = '\n'.join(['mesage'] + ['{}. {}:\t{}{:.1f}'.format(
-                i, tdat, m, dt / 60) for i, tdat, m, dt in zip(
-                np.flatnonzero(bbad), t_queried[bbad], np.where(dT[bbad].astype(np.int64) < 0, '-', '+'),
-                np.abs(dT[bbad]) / np.timedelta64(1, 's'))])
-        l.warning(mesage)
-    return (bbad, dT) if return_diffs else bbad
 
 
 # ##############################################################################

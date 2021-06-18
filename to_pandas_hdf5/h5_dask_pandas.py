@@ -9,6 +9,7 @@ import logging
 import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, Mapping, Optional, Sequence, Tuple, Union
+from dateutil.tz import tzutc
 
 import dask.array as da
 import dask.dataframe as dd
@@ -21,7 +22,7 @@ from other_filters import despike
 # my
 from to_pandas_hdf5.h5toh5 import h5remove_table, ReplaceTableKeepingChilds, df_data_append_fun, df_log_append_fun
 from utils2init import Ex_nothing_done, set_field_if_no, standard_error_info
-from utils_time import timzone_view, tzUTC, multiindex_timeindex, multiindex_replace, minInterval
+from utils_time import timzone_view, multiindex_timeindex, multiindex_replace, minInterval
 
 pd.set_option('io.hdf.default_format', 'table')
 
@@ -31,27 +32,27 @@ qstr_range_pattern = "index>=Timestamp('{}') & index<=Timestamp('{}')"
 
 
 def h5q_interval2coord(
-    db_path,
-    table,
-    t_interval: Optional[Sequence[Union[str, pd.Timestamp]]] = None,
-    timerange = None) -> pd.Index:
+        db_path,
+        table,
+        t_interval: Optional[Sequence[Union[str, pd.Timestamp]]] = None,
+        time_range: Optional[Sequence[Union[str, pd.Timestamp]]] = None) -> pd.Index:
     """
     Edge coordinates of index range query
     As it is nealy part of h5toh5.h5select() may be depreshiated? See Note
     :param: db_path, str
     :param: table, str
     :param: t_interval: array or list with strings convertable to pandas.Timestamp
-    :param: timerange: same as t_interval (but must be flat numpy array)
+    :param: time_range: same as t_interval (but must be flat numpy array)
     :return: ``qstr_range_pattern`` edge coordinates
     Note: can use instead:
     >>> from to_pandas_hdf5.h5toh5 import h5select
     ... with pd.HDFStore(db_path, mode='r') as store:
-    ...     df, bbad = h5select(store, table, columns=None, query_range_lims=timerange)
+    ...     df, bbad = h5select(store, table, columns=None, query_range_lims=time_range)
 
     """
 
     if not t_interval:
-        t_interval = timerange
+        t_interval = time_range
     if not (isinstance(t_interval, list) and isinstance(t_interval[0], str)):
         t_interval = np.array(t_interval).ravel()
 
@@ -71,11 +72,12 @@ def h5q_interval2coord(
     return ind
 
 
-def h5q_intervals_indexes_gen(db_path,
-                              table: str,
-                              t_prev_interval_start: pd.Timestamp,
-                              t_intervals_start: Iterable[pd.Timestamp],
-                              i_range=None) -> Iterator[pd.Index]:
+def h5q_intervals_indexes_gen(
+        db_path,
+        table: str,
+        t_prev_interval_start: pd.Timestamp,
+        t_intervals_start: Iterable[pd.Timestamp],
+        i_range: Optional[Sequence[Union[str, pd.Timestamp]]] = None) -> Iterator[pd.Index]:
     """
     Yields start and end coordinates (0 based indexes) of hdf5 store table index which values are next nearest  to intervals start input
     :param db_path
@@ -761,7 +763,7 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
 
     if b_correct_time:
         # change stored to UTC
-        df_cor.index = pd.DatetimeIndex(df_cor.index.tz_convert(tz=tzUTC))
+        df_cor.index = pd.DatetimeIndex(df_cor.index.tz_convert(tz='UTC'))
         b_df_cor_changed = True
 
     elif b_correct_cols:
@@ -777,6 +779,10 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
                 df = df.compute()
             df = align_columns(df, df_cor, columns=new_cols)
 
+    elif b_correct_str:
+        # todo: check
+        b_df_cor_changed = True  # as error if our string longer we need to increase store's limit
+
     for col, dtype in zip(df_cor.columns, df_cor.dtypes):
         d = df_cor[col]
         # if isinstance(d[0], pd.datetime):
@@ -786,7 +792,7 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
                     df_cor[col] = d.dt.tz_convert(tz=df[col].dt.tz)
                     b_df_cor_changed = True
             elif b_correct_str:
-                # todo: correct str length
+                # todo:
                 pass
             else:
                 try:
@@ -858,19 +864,18 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
 """
 
 
-# Log to store
 def h5add_log(cfg_out: Dict[str, Any], df, log: Union[pd.DataFrame, Mapping, None], tim, log_dt_from_utc):
     """
-    Updates (or creates if need) metadata table
+    Updates (or creates if need) metadata/log table in store
     :param cfg_out: dict with fields:
      - b_log_ready: if False or '' then updates log['Date0'], log['DateEnd'].
      - db: handle of opened hdf5 store
      - some of following fields (next will be tried if previous not defined):
          - table_log: str, path of log table
          - tables_log: List[str], path of log table in first element
-         - table: str, path of log table will be consructed by adding '/log'
-         - tables: List[str], path of log table will be consructed by adding '/log' to first element
-     - logfield_fileName_len: optiondal, fixed length of string format of 'fileName' hdf5 column
+         - table: str, path of log table will be constructed by adding '/log'
+         - tables: List[str], path of log table will be constructed by adding '/log' to first element
+     - logfield_fileName_len: optional, fixed length of string format of 'fileName' hdf5 column
     :param df:
     :param log: Mapping records or dataframe. updates 'Date0' and 'DateEnd' if no 'Date0' or it is {} or None
     :param tim:
@@ -938,8 +943,8 @@ def h5_append(cfg_out: Dict[str, Any],
     :param log: dict which will be appended to child tables, cfg_out['tables_log']
     :param cfg_out: dict with fields:
         db: opened hdf5 store in write mode
-        table: name of table to update (or tables: list, then used only 1st element)
-        table_log: name of chield table (or tables_log: list, then used only 1st element)
+        table: name of table to update (or tables: list, then used only 1st element). if not none tables[0] is ignored
+        table_log: name of chield table (or tables_log: list, then used only 1st element). if not none tables_log[0] is ignored
         tables: None - to return with done nothing!
                 list of str - to assign cfg_out['table'] = cfg_out['tables'][0]
         tables_log: list of str - to assign cfg_out['table_log'] = cfg_out['tables_log'][0]
@@ -1020,7 +1025,7 @@ def h5_append(cfg_out: Dict[str, Any],
             l.error(f'%s: Can not write to store. %s', msg_func, standard_error_info(e))
             raise (e)
 
-    # run even if df is empty becouse of possible needs to write log only
+    # run even if df is empty because may be writing the log is needed only
     table_log = h5add_log(cfg_out, df, log, tim, log_dt_from_utc)
 
     _t = (table, table_log)

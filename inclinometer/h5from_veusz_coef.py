@@ -2,7 +2,7 @@
 # coding:utf-8
 """
   Author:  Andrey Korzh <ao.korzh@gmail.com>
-  Purpose: Update inclinometr Vabs coef in hdf5 tables
+  Purpose: Update inclinometer magnetometer, accelerometer coef and Vabs coef in hdf5 tables using Veusz data
   Created: 01.03.2019
 
 Load coefs from Veusz fitting of force(inclination) to velocity data
@@ -43,6 +43,21 @@ def digits_first(text):
 
 def main(new_arg=None, veusze=None):
     """
+    For each veusz file according to in.pattern_path (see Veusz_propogate) and corresponded table name obtained using
+    regex out.re_tbl_from_vsz_name
+    1. gets data from Veusz file:
+    - Rcor
+    - coef_list[] = SETTING(in.widget)['d', 'c', 'b', 'a']
+    - coef_list[] += DATA(in.data_for_coef)
+    2. gets data (A and G) under table's group from out.path hdf5 file:
+    - ./coef/H/A
+    - ./coef/G/A
+    3. Saves :
+    - coef_list to ./coef/Vabs0
+    4. Updates:
+    - ./coef/H/A with Rcor @ A
+    - ./coef/G/A with Rcor @ G
+
     Note: if vsz data source have 'Ag_old_inv' variable then not invert coef. Else invert to use in vsz which not invert coefs
     :param new_arg:
     :return:
@@ -183,9 +198,9 @@ def main(new_arg=None, veusze=None):
                     # rotation operation in Veusz by inverting A_old. Now we want iclude this information in database coef only.
                     try:  # Checking that A_old_inv exist
                         A_old_inv = veusze.GetData('Ag_old_inv')
-                        is_old_used = True  # Rcor is not account for electronic is rotated.
+                        is_old_used = True  # Rcor is not accounted for electronic is rotated.
                     except KeyError:
-                        is_old_used = False  # Rcor is account for rotated electronic.
+                        is_old_used = False  # Rcor is accounted for rotated electronic.
 
                     if is_old_used:  # The rotation is done in vsz (A_old in vsz is inverted) so need rotate it back to
                         # use in vsz without such invertion

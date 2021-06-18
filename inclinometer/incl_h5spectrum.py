@@ -294,7 +294,7 @@ def h5q_starts2coord(
     Note: can use instead:
     >>> from to_pandas_hdf5.h5toh5 import h5select
     ... with pd.HDFStore(db_path, mode='r') as store:
-    ...     df, bbad = h5select(store, table, columns=None, query_range_lims=timerange)
+    ...     df, bbad = h5select(store, table, columns=None, query_range_lims=time_range)
 
     """
     # qstr_range_pattern = f"index>=st[{i}] & index<=en[{i}]"

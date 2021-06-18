@@ -93,6 +93,8 @@ file based on vsz pattern
               help='subdir relative to input path or absolute path to export images')
     s.add('--export_format', default='jpg',
               help='extention of images to export which defines format')
+    s.add('--export_suffix', default='#{out_name}',
+              help='will be added to each exported image before extension. {out_name} will be replaced with output vsz file name')
     s.add('--export_dpi_int_list', default='300',
               help='resolution (dpi) of images to export for all pages, defined in `export_pages_int_list`')
     s.add('--filename_fun', default='lambda tbl: tbl',
@@ -114,13 +116,15 @@ file based on vsz pattern
                help='export asyncroniously with this timeout, s (tried 600s?)')
     s.add('--b_execute_vsz', default='False',
               help='instead of Load() read vsz and execute its content line by line')
+    s.add('--hidden', default='False',
+              help='set to True to not show embedded window')
     s.add('--veusz_path', default=default_veusz_path,
                help='directory of Veusz like /usr/lib64/python3.6/site-packages/veusz-2.1.1-py3.6-linux-x86_64.egg/veusz')
     s.add('--before_next_list', default=',',
                help=''' "Close()" - each time reopens pattern,
     "restore_config" - saves and restores initial configuration (may be changed in data_yield mode: see data_yield_prefix argument)''')
     s.add('--f_custom_in_cycle',
-               help='''function evaluated in cycle: not implemented over command line''')  # todo: implement
+               help='''function evaluated in cycle: not implemented over command line''')
     s.add('--return', default='<end>',  # nargs=1,
                choices=['<cfg_from_args>', '<gen_names_and_log>', '<embedded_object>', '<end>'],
                help='<cfg_from_args>: returns cfg based on input args only and exit, <gen_names_and_log>: execute init_input_cols() and also returns fun_proc_loaded function... - see main()')
@@ -224,7 +228,8 @@ def veusz_data(veusze, prefix: str, suffix_prior: str = '') -> Dict[str, Any]:
 
 def load_vsz_closure(veusz_path: PurePath=default_veusz_path,
                      load_timeout_s: Optional = 120,
-                     b_execute_vsz: bool = False
+                     b_execute_vsz: bool = False,
+                     hidden=False
                      ) -> Callable[
     [Union[str, PurePath], Optional[str], Optional[str], Optional[str]], Tuple[Any, Optional[Dict[str, Any]]]]:
     """
@@ -232,6 +237,7 @@ def load_vsz_closure(veusz_path: PurePath=default_veusz_path,
     :param veusz_path: pathlib Path to directory of embed.py
     :param load_timeout_s: rases asyncio.TimeoutError if loads longer
     :param b_execute_vsz: can not use "Load" because of python expression in vsz is needed
+    :param hidden: set to True to not show embedded window
     """
 
     # def import_veusz(veusz_path=u'C:\\Program Files (x86)\\Veusz'):
@@ -304,7 +310,7 @@ def load_vsz_closure(veusz_path: PurePath=default_veusz_path,
             if __name__ != '__main__':       # if this haven't done in main()
                 path_prev = os_getcwd()      # to recover
                 os_chdir(vsz.parent)   # allows veusze.Load(path) to work if _path_ is relative or relative paths is used in vsz
-            veusze = veusz.Embedded(title)   # , hidden=True
+            veusze = veusz.Embedded(title, hidden=hidden)   # , hidden=True
             # veusze.EnableToolbar()
             # veusze.Zoom('page')
 
@@ -325,33 +331,40 @@ def load_vsz_closure(veusz_path: PurePath=default_veusz_path,
                     """
                     Unsafe replasement for veusze.Load(vsz) to add variable argv
                     Runs any python commands before 1st Title command of
+                    Replaces `argv` only if it is loaded by "from sys import argv" command
                     :param vsz:
                     :return:
                     """
                     with vsz.open(encoding='utf-8') as v:
                         # comine pure python lines
                         lines = []
+                        have_no_commands = False
                         for line in v:
                             if line[:2].istitle():
                                 break
-                            lines.append(line)
-
+                            lines.append(line.replace('from sys import argv', ''))
+                        else:
+                            have_no_commands = True
                         # dangerous for unknown vsz but we allow 1 time at beginning of file: to use for known vsz
                         loc_exclude = locals().copy()
                         del loc_exclude['veusze']
-                        loc = {'argv': ['veusz.exe', str(vsz)],
+                        loc = {**veusze.__dict__,
+                               'argv': ['veusz.exe', str(vsz)],
                                'BASENAME': (lambda: vsz.stem)
                                }
-                        # match = re.match
-                        exec('\n'.join(lines), {}, loc)
+                        exec('\n'.join(lines), loc, loc)
+                        if have_no_commands:
+                            return
+
+                        # eval Veusz commands
                         loc.update(locals().copy())
                         for k in loc_exclude.keys():
                             del loc[k]
 
                         basename_result = "'{}'".format(loc['BASENAME']())
-                        # eval Veusz commands
                         eval(f"""veusze.{line}""")
                         for line in v:
+                            # if line[:2].istitle(): # if not re.match(' *#', line):  #this checks are not needed if standard Veusz commands only left
                             if 'BASENAME()' in line:
                                 line = line.replace('BASENAME()', basename_result)  # only this helps in Custom Definitions expressions
 
@@ -375,7 +388,7 @@ def load_vsz_closure(veusz_path: PurePath=default_veusz_path,
 
 def export_images(veusze, cfg_out, suffix, b_skip_if_exists=False):
     """
-
+    Export pages
     :param veusze: Veusz embedded object
     :param cfg_out: must have fields 'export_pages' and 'export_dir': see command line arguments help
     :param suffix:
@@ -392,7 +405,7 @@ def export_images(veusze, cfg_out, suffix, b_skip_if_exists=False):
         if cfg_out['export_pages'][0] == 0 or (  # = b_export_all_pages
                 i in cfg_out['export_pages']):
             file_name = Path(cfg_out['export_dir']) / f"{key}{suffix}.{cfg_out['export_format']}"
-            if veusze.Get(key + '/hide') or (b_skip_if_exists and file_name.is_file()):
+            if veusze.Get(key + '/hide') or (b_skip_if_exists and file_name.is_file()):  # skip hidden
                 continue
             # Veusz partly blanks too big images on export - reduce
             dpi = dpi_list[min(i, len(dpi_list) - 1)]
@@ -555,6 +568,8 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
         if veusze:
             try:
                 b_closed = veusze.IsClosed()
+            except AttributeError:  # 'NoneType' object has no attribute 'cmds'
+                b_closed = True
             except Exception as e:
                 l.error('IsClosed() error', exc_info=True)
                 b_closed = True
@@ -607,7 +622,9 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
             load_vsz = load_vsz_closure(
                 cfg['program']['veusz_path'],
                 cfg['program']['load_timeout_s'],
-                cfg['program']['b_execute_vsz'])     # this is only unfreezes Veusz
+                cfg['program']['b_execute_vsz'],
+                cfg['program']['hidden']
+                )     # this is only unfreezes Veusz
             veusze = do_load_vsz(in_full, None, load_vsz)
 
         yield (veusze, log)
@@ -666,15 +683,17 @@ def co_savings(cfg: Dict[str, Any]) -> Iterator[None]:
                                                       index=[log['out_name']])
                     storeLog.append(Path(cfg['out']['path']).name, dfLog, data_columns=True,
                                     expectedrows=cfg['in']['nfiles'], index=False, min_itemsize={'index': 30})
+
+                export_suffix = cfg['out']['export_suffix'].format_map(log)
                 if cfg['async']['loop']:
                     try:  # yield from     asyncio.ensure_future(
                         # asyncio.wait_for(, cfg['async']['export_timeout_s'], loop=cfg['async']['loop'])
                         b = cfg['async']['loop'].run_until_complete(
-                            export_images_timed(veusze, cfg, '#' + log['out_name']))
+                            export_images_timed(veusze, cfg, export_suffix))
                     except asyncio.TimeoutError:
                         l.warning('can not export in time')
                 else:
-                    export_images(veusze, cfg['out'], '#' + log['out_name'])
+                    export_images(veusze, cfg['out'], export_suffix)
         except GeneratorExit:
             print('Ok>')
         finally:
@@ -753,7 +772,7 @@ def main(new_arg=None, veusze=None, **kwargs):
         return cfg
 
     l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
-    cfg['program']['log'] = l.root.handlers[0].baseFilename  # sinchronize obtained absolute file name
+    cfg['program']['log'] = l.root.handlers[0].baseFilename  # synchronize obtained absolute file name
 
     print('\n' + this_prog_basename(__file__), 'started', end=' ')
     __name__ = '__main__'  # indicate to other functions that they are called from main
@@ -783,7 +802,7 @@ def main(new_arg=None, veusze=None, **kwargs):
                 l.warning(f'{e.message} - no pattern. Specify it or use "b_images_only" mode!')
                 return  # or raise FileNotFoundError?
 
-    if (cfg['out']['b_images_only'] and cfg['out']['paths']):
+    if cfg['out']['b_images_only'] and cfg['out'].get('paths'):
         cfg['in']['paths'] = cfg['out']['paths']  # have all we need to export
     else:
         try:
@@ -815,7 +834,8 @@ def main(new_arg=None, veusze=None, **kwargs):
     load_vsz = load_vsz_closure(
         cfg['program']['veusz_path'],
         cfg['program']['load_timeout_s'],
-        cfg['program']['b_execute_vsz']
+        cfg['program']['b_execute_vsz'],
+        cfg['program']['hidden']
         )
     cfg['load_vsz'] = load_vsz
     cfg['co'] = {}

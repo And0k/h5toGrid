@@ -6,7 +6,7 @@ in:
   probes_prefix: w
   raw_pattern: "*{prefix:}{number:0>3}*.[tT][xX][tT]"
 
-#  timerange_zeroing_dict:
+#  time_range_zeroing_dict:
 #    14: [2020-07-10T21:31:00, 2020-07-10T21:39:00]
   db_coefs: d:\WorkData\~configuration~\inclinometr\190710incl.h5
 

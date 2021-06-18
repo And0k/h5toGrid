@@ -16,10 +16,12 @@ from sys import stdout as sys_stdout, platform
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 from collections import namedtuple
 
-import gdal
 import numpy as np
-import ogr
 import pandas as pd
+
+from osgeo import gdal, ogr
+# except ModuleNotFoundError as e:
+#     print(e.args[0], ' - may be not needed. Continue!')
 import pyproj  # import geog
 from third_party.descartes.patch import PolygonPatch  # !Check!
 from gsw import distance as gsw_distance  # from gsw.gibbs.earth  import distance
@@ -30,13 +32,13 @@ from scipy.ndimage.filters import gaussian_filter1d
 from shapely.geometry import MultiPolygon, asPolygon, Polygon
 
 from graphics import make_figure, interactive_deleter
-from other_filters import rep2mean, is_works, too_frequent_values, waveletSmooth, despike, check_time_diff, i_move2good, \
+from other_filters import rep2mean, is_works, too_frequent_values, waveletSmooth, despike, i_move2good, \
     inearestsorted, closest_node
 from to_pandas_hdf5.CTD_calc import add_ctd_params
 from to_pandas_hdf5.h5toh5 import h5select
 # my
 from utils2init import init_logging, Ex_nothing_done, standard_error_info
-from utils_time import datetime_fun, timzone_view, multiindex_timeindex
+from utils_time import datetime_fun, timzone_view, multiindex_timeindex, check_time_diff
 from veuszPropagate import load_vsz_closure, export_images  # , veusz_data
 
 Axes2d = namedtuple('axes2d', ('x', 'y'))

@@ -21,18 +21,27 @@ if __name__ != '__main__':
 
 
 def rot_matrix_x(c, s):
+    """ Rotation matrix to rotate 3D vector around x axis
+    :param c, s: - cos() and sin() of rotation angle
+    """
     return np.array([[1, 0, 0],
                      [0, c, -s],
                      [0, s, c]], np.float64)
 
 
 def rot_matrix_y(c, s):
+    """ Rotation matrix to rotate 3D vector around y axis
+    :param c, s: - cos() and sin() of rotation angle
+    """
     return np.array([[c, 0, s],
                      [0, 1, 0],
                      [-s, 0, c]], np.float64)
 
 
 def rot_matrix_z(c, s):
+    """ Rotation matrix to rotate 3D vector around z axis
+    :param c, s: - cos() and sin() of rotation angle
+    """
     return np.array([[c, -s, 0],
                      [s, c, 0],
                      [0, 0, 1]], np.float64)
@@ -48,7 +57,7 @@ def rotate_x(a2d, angle_degrees=None, angle_rad=None):
     """
     if angle_rad is None:
         angle_rad = np.radians(angle_degrees)
-    out2d = np.dot(rot_matrix_x(np.cos(angle_rad), np.sin(angle_rad)), a2d)
+    out2d = rot_matrix_x(np.cos(angle_rad), np.sin(angle_rad)) @ a2d  # np.dot()
     return out2d
 
 
@@ -76,7 +85,7 @@ def rotate_z(a2d, angle_degrees=None, angle_rad=None):
     """
     if angle_rad is None:
         angle_rad = np.radians(angle_degrees)
-    out2d = np.dot(rot_matrix_z(np.cos(angle_rad), np.sin(angle_rad)), a2d)
+    out2d = rot_matrix_z(np.cos(angle_rad), np.sin(angle_rad)) @ a2d  # np.dot()
     return out2d
 
 
@@ -117,6 +126,7 @@ def h5copy_coef(h5file_source=None, h5file_dest=None, tbl=None, tbl_source=None,
     :param h5file_source: name of any hdf5 file with existed coef to copy structure
     :param h5file_dest: name of hdf5 file to paste structure
     :param dict_matrices: dict of numpy arrays - to write or list of paths to coefs (to matrices) under tbl - to copy them
+    dict_matrices_for_h5() from inclinometer.incl_calibr helps to create standard paths from dict with fields Ag, Cg, ...
     # Example save H and C: 3x3 and 1x3, rotation and shift matrices
     >>> h5copy_coef(h5file_source,h5file_dest,tbl)
             dict_matrices={'//coef//H//A': H,

@@ -10,7 +10,7 @@ import logging
 import re
 import sys
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional, Tuple, Dict, List
+from typing import Any, Callable, Mapping, Optional, Tuple, Dict, List, Union
 from omegaconf import MISSING
 import hydra
 
@@ -45,13 +45,13 @@ sys.path.append(str(Path(scripts_path).parent.resolve()))
 # from inclinometer.incl_calibr import calibrate, calibrate_plot, coef2str
 from inclinometer.h5inclinometer_coef import h5copy_coef
 from inclinometer.incl_h5clc import incl_calc_velocity_nodask
-from utils2init import this_prog_basename, standard_error_info, LoggingStyleAdapter
+from utils2init import this_prog_basename, standard_error_info, LoggingStyleAdapter, set_field_if_no
 # init_file_names, Ex_nothing_done, this_prog_basename, standard_error_info, dir_create_if_need, ini2dict, FakeContextIfOpen, set_field_if_no
 from to_pandas_hdf5.h5toh5 import h5select, h5find_tables
 from other_filters import is_works, despike
 from graphics import make_figure
 
-from to_vaex_hdf5.cfg_dataclasses import hydra_cfg_store, ConfigInHdf5_Simple, ConfigProgram, main_init, main_init_input_file
+from to_vaex_hdf5.cfg_dataclasses import hydra_cfg_store, ConfigInHdf5_Simple, ConfigProgram, main_init, main_call, main_init_input_file  #  ConfigProgram is used indirectly
 #from to_vaex_hdf5.h5tocsv import main_call
 
 
@@ -92,8 +92,13 @@ class ConfigOut:
 
     db_path: hdf5 store file path where to write resulting coef. Writes to tables that names configured for input data (cfg[in].tables) in this file
     """
-    db_path: str = ''
+    db_paths: Optional[List[str]] = field(default_factory=list)
     aggregate_period_s: List[Any] = field(default_factory=lambda: [None, 2, 600, 7200])
+
+
+# @dataclass
+# class DictTimeRange(ConfigInHdf5_Simple):
+#     03: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -102,39 +107,42 @@ class ConfigInHdf5InclCalibr(ConfigInHdf5_Simple):
     Same as ConfigInHdf5_Simple + specific (inclinometr calibration) data properties:
     channels: List: (, channel can be "magnetometer" or "M" for magnetometer and any else for accelerometer',
     chunksize: limit loading data in memory (default='50000')
-    timerange_list: time range to use
-    timerange_dict: time range to use for each inclinometer number (consisted of digits in table name)')
-    timerange_nord_list: time range to zeroing north. Not zeroing Nord if not used')
-    timerange_nord_dict: time range to zeroing north for each inclinometer number (consisted of digits in table name)')
+    time_range_list: time range to use
+    time_range_dict: time range to use for each inclinometer number (consisted of digits in table name)')
+    time_range_nord_list: time range to zeroing north. Not zeroing Nord if not used')
+    time_range_nord_dict: time range to zeroing north for each inclinometer number (consisted of digits in table name)')
 
     """
-    path_cruise: str = MISSING
-    raw_subdir: str = MISSING
+    db_path: Optional[str] = MISSING
     probes: List[str] = field(default_factory=list)
     probes_prefix: str = MISSING
     raw_pattern: str = "*{prefix:}{number:0>2}*.[tT][xX][tT]"
 
     channels: List[str] = field(default_factory=lambda: ['M', 'A'])
     chunksize: int = 50000
-    timerange: List[str] = field(default_factory=list)
-    timerange_dict: Dict[str, str] = field(default_factory=dict)  # Dict[int, str] not supported in omegaconf
-    timerange_nord: List[str] = field(default_factory=list)
-    timerange_nord_dict: Dict[str, str] = field(default_factory=dict)  # Dict[int, str] not supported in omegaconf
+    # time_range: List[str] = field(default_factory=list)
+    time_range: Dict[int, Any] = field(default_factory=dict)  # Dict[int, str] not supported in omegaconf
+    time_range_nord: List[str] = field(default_factory=list)
+    time_range_nord_dict: Dict[str, str] = field(default_factory=dict)  # Dict[int, str] not supported in omegaconf
+    # Dict[Optional[str], Optional[List[str]]]
 
+@dataclass
+class ConfigProgramSt(ConfigProgram):
+    step_start: int = 1
+    step_end: int = 1
 
 
 cs_store_name = Path(__file__).stem
 cs, ConfigType = hydra_cfg_store(
-    cs_store_name,
+    f'base_{cs_store_name}',
     {
         'input': ['in_hdf5__incl_calibr'],  # Load the config ConfigInHdf5_InclCalibr from the config group "input"
         'out': ['out'],  # Set as MISSING to require the user to specify a value on the command line.
         'filter': ['filter'],
-        'program': ['program'],
+        'program': ['program_st'],
     },
     module=sys.modules[__name__]
     )
-
 
 
 def load_hdf5_data(store, table=None, t_intervals=None,
@@ -479,7 +487,7 @@ def calibrate_plot(raw3d: np.ndarray, a2d: np.ndarray, b, fig=None, window_title
     # ax2 = fig.add_subplot(122, projection='3d')
     ax2.set_title('calibrated')
     # plot points
-    ax2.scatter(s[0, :], s[1, :], s[2, :], color='g', marker='.', s=marker_size)  # , alpha=0.2  # s is markersize,
+    ax2.scatter(s[0, :], s[1, :], s[2, :], color='k', marker='.', s=marker_size)  # , alpha=0.2  # s is markersize,
     axes_connect_on_move(ax1, ax2)
     # plot unit sphere
     center = np.zeros(3, float)
@@ -494,22 +502,22 @@ def calibrate_plot(raw3d: np.ndarray, a2d: np.ndarray, b, fig=None, window_title
     return fig
 
 
-def zeroing_azimuth(store, tbl, timerange_nord, coefs=None, cfg_in=None):
+def zeroing_azimuth(store, tbl, time_range_nord, coefs=None, cfg_in=None):
     """
-    azimuth_shift_deg by calculating velocity (Ve, Vn) in cfg_in['timerange_nord'] interval of tbl data:
+    azimuth_shift_deg by calculating velocity (Ve, Vn) in cfg_in['time_range_nord'] interval of tbl data:
      taking median, calculating direction, multipling by -1
-    :param timerange_nord:
+    :param time_range_nord:
     :param store:
     :param tbl:
     :param coefs: dict with fields having values of array type with sizes:
     'Ag': (3, 3), 'Cg': (3, 1), 'Ah': (3, 3), 'Ch': array(3, 1), 'azimuth_shift_deg': (1,), 'kVabs': (n,)
     :param cfg_in: dict with fields:
-        - timerange_nord
+        - time_range_nord
         - other, needed in load_hdf5_data() and optionally in incl_calc_velocity_nodask()
     :return: azimuth_shift_deg
     """
     lf.debug('Zeroing Nord direction')
-    df = load_hdf5_data(store, table=tbl, t_intervals=timerange_nord)
+    df = load_hdf5_data(store, table=tbl, t_intervals=time_range_nord)
     if df.empty:
         lf.info('Zero calibration range out of data scope')
         return
@@ -606,11 +614,9 @@ def dict_matrices_for_h5(coefs=None, tbl=None, channels=None):
     return dict_matrices
 
 
-
-
 cfg = {}
 
-@hydra.main(config_name=cs_store_name)  # adds config store cs_store_name data/structure to :param config
+@hydra.main(config_name=cs_store_name, config_path="cfg")  # adds config store cs_store_name data/structure to :param config
 def main(config: ConfigType) -> None:
     """
     ----------------------------
@@ -622,7 +628,7 @@ def main(config: ConfigType) -> None:
     also.
     2. Loads device data of calibration in laboratory from hdf5 database (cfg['in']['db_path'])
     2. Calibrates configured by cfg['in']['channels'] channels ('accelerometer' and/or 'magnetometer'): soft iron
-    3. Wrong implementation - not use cfg['in']['timerange_nord']! todo: Rotate compass using cfg['in']['timerange_nord']
+    3. Wrong implementation - not use cfg['in']['time_range_nord']! todo: Rotate compass using cfg['in']['time_range_nord']
     :param config: returns cfg if new_arg=='<cfg_from_args>' but it will be None if argument
      argv[1:] == '-h' or '-v' passed to this code
     argv[1] is cfgFile. It was used with cfg files:
@@ -660,14 +666,14 @@ def main(config: ConfigType) -> None:
         for itbl, tbl in enumerate(cfg['in']['tables'], start=1):
             probe_number = int(re.findall('\d+', tbl)[0])
             lf.info(f'{itbl}. {tbl}: ')
-            if isinstance(cfg['in']['timerange'], Mapping):  # individual interval for each table
-                if probe_number in cfg['in']['timerange']:
-                    timerange = cfg['in']['timerange'][probe_number]
+            if isinstance(cfg['in']['time_range'], Mapping):  # individual interval for each table
+                if probe_number in cfg['in']['time_range']:
+                    time_range = cfg['in']['time_range'][probe_number]
                 else:
-                    timerange = None
+                    time_range = None
             else:
-                timerange = cfg['in']['timerange']  # same interval for each table
-            a = load_hdf5_data(store, table=tbl, t_intervals=timerange)
+                time_range = cfg['in']['time_range']  # same interval for each table
+            a = load_hdf5_data(store, table=tbl, t_intervals=time_range)
             # iUseTime = np.searchsorted(stime, [np.array(s, 'datetime64[s]') for s in np.array(strTimeUse)])
 
             # Calibrate channels of 'accelerometer' or/and 'magnetometer'
@@ -702,17 +708,18 @@ def main(config: ConfigType) -> None:
                 coefs[tbl][channel] = {'A': A, 'b': b}
 
             # Zeroing Nord direction
-            timerange_nord = cfg['in']['timerange_nord']
-            if isinstance(timerange_nord, Mapping):
-                timerange_nord = timerange_nord.get(probe_number)
-            if timerange_nord:
+            time_range_nord = cfg['in']['time_range_nord']
+            if isinstance(time_range_nord, Mapping):
+                time_range_nord = time_range_nord.get(probe_number)
+            if time_range_nord:
                 coefs[tbl]['M']['azimuth_shift_deg'] = zeroing_azimuth(
-                    store, tbl, timerange_nord, calc_vel_flat_coef(coefs[tbl]), cfg['in'])
+                    store, tbl, time_range_nord, calc_vel_flat_coef(coefs[tbl]), cfg['in'])
             else:
                 lf.info('not zeroing North')
     # Write coefs to each of output tables named same as input
-    for cfg_output in (['in', 'out'] if cfg['out'].get('db_path') else ['in']):
-        lf.info('Writing to {}', cfg[cfg_output]['db_path'])
+    for db_path in cfg['out']['db_paths']:
+        db_path = Path(db_path)
+        lf.info('Writing to {}', db_path)
         for itbl, tbl in enumerate(cfg['in']['tables'], start=1):
             # i_search = re.search('\d*$', tbl)
             # for channel in cfg['in']['channels']:
@@ -730,31 +737,31 @@ def main(config: ConfigType) -> None:
             #             except Exception as e:
             #                 pass
             dict_matrices = dict_matrices_for_h5(coefs[tbl], tbl, cfg['in']['channels'])
-            h5copy_coef(None, cfg[cfg_output]['db_path'], tbl, dict_matrices=dict_matrices)
+            h5copy_coef(None, db_path, tbl, dict_matrices=dict_matrices)
 
     print('Ok>', end=' ')
 
 
 
-def main_call(
-        cmd_line_list: Optional[List[str]] = None,
-        fun: Callable[[], Any] = main
-        ) -> Dict:
-    """
-    Adds command line args, calls fun, then restores command line args
-    :param cmd_line_list: command line args of hydra commands or config options selecting/overwriting
-
-    :return: global cfg
-    """
-
-    sys_argv_save = sys.argv
-    if cmd_line_list is not None:
-        sys.argv += cmd_line_list
-
-    # hydra.conf.HydraConf.run.dir = './outputs/${now:%Y-%m-%d}_${now:%H-%M-%S}'
-    fun()
-    sys.argv = sys_argv_save
-    return cfg
+# def main_call(
+#         cmd_line_list: Optional[List[str]] = None,
+#         fun: Callable[[], Any] = main
+#         ) -> Dict:
+#     """
+#     Adds command line args, calls fun, then restores command line args
+#     :param cmd_line_list: command line args of hydra commands or config options selecting/overwriting
+#
+#     :return: global cfg
+#     """
+#
+#     sys_argv_save = sys.argv
+#     if cmd_line_list is not None:
+#         sys.argv += cmd_line_list
+#
+#     # hydra.conf.HydraConf.run.dir = './outputs/${now:%Y-%m-%d}_${now:%H-%M-%S}'
+#     fun()
+#     sys.argv = sys_argv_save
+#     return cfg
 
 
 
@@ -765,21 +772,21 @@ if __name__ == '__main__':
     # inclinometer/190901incl_calibr.py
     # or here:
     if False:
-        timeranges = {
+        time_ranges = {
             30: ['2019-07-09T18:51:00', '2019-07-09T19:20:00'],
             12: ['2019-07-11T18:07:50', '2019-07-11T18:24:22'],
             5: ['2019-07-11T18:30:11', '2019-07-11T18:46:28'],
             4: ['2019-07-11T17:25:30', '2019-07-11T17:39:30'],
             }
 
-        timeranges_nord = {
+        time_ranges_nord = {
             # 30: ['2019-07-09T17:54:50', '2019-07-09T17:55:22'],
             # 12: ['2019-07-11T18:04:46', '2019-07-11T18:05:36'],
             }
 
         i = 14
 
-        # multiple timeranges not supported so calculate one by one probe?
+        # multiple time_ranges not supported so calculate one by one probe?
         probes = [i]
         main(['', '--db_path',
               r'd:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe\190710incl.h5',
@@ -788,10 +795,10 @@ if __name__ == '__main__':
               '--channels_list', 'M,A',  # 'M,', Note: empty element cause calc of accelerometer coef.
               '--tables_list', ', '.join(f'incl{i:0>2}' for i in probes),
               #    'incl02', 'incl03','incl04','incl05','incl06','incl07','incl08','incl09','incl10','incl11','incl12','incl13','incl14','incl15','incl17','incl19','incl20','incl16','incl18',
-              '--timerange_list', str_range(timeranges, i),
-              '--timerange_nord_list', str_range(timeranges_nord, i),
-              # '--timerange_list', "'2019-03-20T11:53:35', '2019-03-20T11:57:20'",
-              # '--timerange_list', "'2019-03-20T11:49:10', '2019-03-20T11:53:00'",
+              '--time_range_list', str_range(time_ranges, i),
+              '--time_range_nord_list', str_range(time_ranges_nord, i),
+              # '--time_range_list', "'2019-03-20T11:53:35', '2019-03-20T11:57:20'",
+              # '--time_range_list', "'2019-03-20T11:49:10', '2019-03-20T11:53:00'",
 
               # "'2018-10-03T18:18:30', '2018-10-03T18:20:00'",
               # "'2018-10-03T17:18:00', '2018-10-03T17:48:00'",
@@ -820,7 +827,7 @@ if __name__ == '__main__':
     #
     # cfg = {'in': {
     #     'db_path': r'd:\workData\BalticSea\171003_ANS36\inclinometr\171015_intercal_on_board\#*.TXT',
-    #     'use_timerange_list': ['2017-10-15T15:37:00', '2017-10-15T19:53:00'],
+    #     'use_time_range_list': ['2017-10-15T15:37:00', '2017-10-15T19:53:00'],
     #     'delimiter': ',',
     #     'skiprows': 13}}
     #

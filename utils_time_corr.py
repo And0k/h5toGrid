@@ -6,9 +6,10 @@ import numpy as np
 import pandas as pd
 
 from other_filters import find_sampling_frequency, longest_increasing_subsequence_i, rep2mean, repeated2increased, \
-    make_linear, check_time_diff, rep2mean_with_const_freq_ends
+    make_linear, rep2mean_with_const_freq_ends
 from utils2init import dir_create_if_need
-from utils_time import lf, datetime_fun
+from utils_time import lf, datetime_fun, check_time_diff
+
 #from to_pandas_hdf5.h5_dask_pandas import filter_global_minmax
 
 
@@ -280,7 +281,7 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray], cfg_in: Mapping[str,
         n_decrease = b_decrease.sum()
         if n_decrease > 0:
             lf.warning(
-                'Decreased time remained ({:d}) are masked!{:s}{:s}',
+                'Decreased remaining time ({:d}) are masked!{:s}{:s}',
                 n_decrease,
                 '\n'.join(' < '.join('{:%y.%m.%d %H:%M:%S.%f%z}'.format(_) for _ in tim[se].to_numpy()) for se in
                          np.flatnonzero(b_decrease)[:3, None] + np.int32([-1, 0])),

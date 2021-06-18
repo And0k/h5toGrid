@@ -1,3 +1,5 @@
 defaults:
-  - override hydra/job_logging: colorlog
-  - override hydra/hydra_logging: colorlog
+  - base_autofon_coord
+# not installed
+#  - override hydra/job_logging: colorlog
+#  - override hydra/hydra_logging: colorlog

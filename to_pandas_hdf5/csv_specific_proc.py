@@ -13,13 +13,13 @@ from numba import jit
 
 # if __debug__:  'commented because functions in this file used by dask in separate threads so start plot here is problematic
 #     from matplotlib import pyplot as plt
-from dateutil.tz import tzoffset
+from dateutil.tz import tzutc
 from pathlib import Path, PurePath
 from utils2init import set_field_if_no, FakeContextIfOpen, open_csv_or_archive_of_them, standard_error_info, dir_create_if_need
 from functools import partial
 from utils_time_corr import plot_bad_time_in_thread
 l = logging.getLogger(__name__)
-tzUTC = tzoffset('UTC', 0)
+
 century = b'20'
 
 @jit
@@ -516,7 +516,7 @@ def day_jumps_correction(cfg_in: Mapping[str, Any], t: Union[np.ndarray, pd.Date
         # if __debug__:  # if run  under debugger
         #     plt.plot(t, color='r', alpha=0.5)  # ; plt.show()
         for bjU, jSt, jEn in zip(bjumpU[::2], jumps[:-1:2], jumps[1::2]):  # apply_day_shifting
-            t_datetime = datetime.fromtimestamp(t[jSt].astype(datetime) * 1e-9, tzUTC) if isinstance(t, np.ndarray) else t[jSt]
+            t_datetime = datetime.fromtimestamp(t[jSt].astype(datetime) * 1e-9, tzutc()) if isinstance(t, np.ndarray) else t[jSt]
             if bjU:
                 t[jSt:jEn] -= dT_day_jump
                 print('date correction to {:%d.%m.%y}UTC: day jumps up was '
@@ -860,7 +860,7 @@ def correct_kondrashov_txt_w(file_in: Union[str, Path, BinaryIO, TextIO], file_o
     sum_deleted = rep_in_file(file_in, file_out, fsub, header_rows=3, binary_mode=binary_mode)
 
     if sum_deleted:
-        l.warning('{} bad line deleted'.format(sum_deleted))
+        l.warning('{} bad lines deleted'.format(sum_deleted))
 
     return file_out
 
@@ -981,7 +981,7 @@ def correct_txt(
     sum_deleted = rep_in_file(file_in, file_out, fsub, binary_mode=binary_mode, **kwargs)
 
     if sum_deleted:
-        l.warning('{} bad line deleted'.format(sum_deleted))
+        l.warning('{} bad lines deleted'.format(sum_deleted))
 
     return file_out
 

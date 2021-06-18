@@ -10,11 +10,13 @@
 import os, sys
 from typing import Any, Callable, Optional, Dict, List, Mapping, Sequence, Tuple, Union
 from dataclasses import dataclass, field, make_dataclass
-from omegaconf import OmegaConf, MISSING  # Do not confuse with dataclass.MISSING
+from omegaconf import OmegaConf, MISSING, MissingMandatoryValue  # Do not confuse with dataclass.MISSING
 import hydra
 from hydra.core.config_store import ConfigStore
 
-from utils2init import this_prog_basename, ini2dict, Ex_nothing_done, init_file_names
+from utils2init import this_prog_basename, ini2dict, Ex_nothing_done, init_file_names, standard_error_info, LoggingStyleAdapter
+
+lf = LoggingStyleAdapter(__name__)
 
 @dataclass
 class ConfigInput:
@@ -86,26 +88,6 @@ class ConfigInHdf5_Simple:
 
 
 @dataclass
-class ConfigInAutofon:
-    time_interval: List[str] = field(default_factory=lambda: ['2021-04-08T12:00:00', 'now'])
-    # use already loaded coordinates instead of request:
-    path_local_xlsx: Optional[str] = None
-    dt_from_utc_hours: int = 0
-    # b_skip_if_up_to_date: bool = True
-
-
-@dataclass
-class ConfigProcess:
-    simplify_tracks_error_m = 0
-    dt_per_file_days = 356  # timedelta(days)
-    b_missed_coord_to_zeros: bool = False
-    period_tracks: Optional[str] = None
-    period_segments: Optional[str] = '1D'
-    anchor_coord: List[float] = field(default_factory=lambda: [44.56905, 37.97308])
-    anchor_depth: float = 0
-
-
-@dataclass
 class ConfigInHdf5(ConfigInHdf5_Simple):
     """
     Same as ConfigInHdf5_Simple + specific (CTD and navigation) data properties:
@@ -124,7 +106,7 @@ class ConfigInHdf5(ConfigInHdf5_Simple):
 
 
 @dataclass
-class ConfigOut:
+class ConfigOutSimple:
     """
     "out": all about output files:
 
@@ -135,10 +117,8 @@ class ConfigOut:
     :param b_remove_duplicates: Set True if you see warnings about
     """
     db_path: Any = ''
-    table: str = 'navigation'
     tables: List[str] = field(default_factory=list)
-    tables_log: List[str] = field(default_factory=list)
-    b_insert_separator: bool = True
+    tables_log: List[str] = field(default_factory=lambda: ['{}/log'])
     b_use_old_temporary_tables: bool = False
     b_remove_duplicates: bool = False
     b_skip_if_up_to_date: bool = True  # todo: link to ConfigIn
@@ -148,6 +128,19 @@ class ConfigOut:
     logfield_fileName_len: Optional[int] = 255
     chunksize: Optional[int] = None
     nfiles: Optional[int] = None
+
+
+@dataclass
+class ConfigOut(ConfigOutSimple):
+    """
+    "out": all about output files:
+
+    :param table: table name in hdf5 store to write data. If not specified then will be generated on base of path of input files. Note: "*" is used to write blocks in autonumbered locations (see dask to_hdf())
+    :param b_insert_separator: insert NaNs row in table after each file data end
+    """
+    table: str = 'navigation'
+    tables_log: List[str] = field(default_factory=list)  # overwrited parent
+    b_insert_separator: bool = True
 
 
 @dataclass
@@ -207,7 +200,7 @@ def hydra_cfg_store(
         ) -> Tuple[ConfigStore, object]:
     """
     Registering Structured config with defaults specified by dataclasses in ConfigStore
-    :param cs_store_name:
+    :param cs_store_name: config name
     :param cs_store_group_options:
         - keys: config group names
         - values: list of str, - group option names used for:
@@ -215,7 +208,9 @@ def hydra_cfg_store(
           - Dataclasses to use, - finds names constructed nealy like `Config{capwords(name)}` - must exist in `module`.
           - setting 1st values item as default option for a group
     :param module: module where to search Dataclasses names, default: current module
-    :return:
+    :return: (cs, Config)
+    cs: ConfigStore
+    Config: configuration dataclass
     """
 
     # Config class (type of result configuration) with assigning defaults to 1st cs_store_group_options value
@@ -247,6 +242,14 @@ def hydra_cfg_store(
 
 
 def main_init_input_file(cfg_t, cs_store_name, in_file_field='db_path'):
+    """
+    - finds input files paths
+    - renames cfg['input'] to cfg['in'] and fills its field 'cfgFile' to cs_store_name
+    :param cfg_t:
+    :param cs_store_name:
+    :param in_file_field:
+    :return:
+    """
     cfg_in = cfg_t.pop('input')
     cfg_in['cfgFile'] = cs_store_name
     try:
@@ -268,21 +271,17 @@ def main_init_input_file(cfg_t, cs_store_name, in_file_field='db_path'):
 
 
 def main_init(cfg, cs_store_name, __file__=None, ):
+    """
+    - prints parameters
+    - prints message that program (__file__ or cs_store_name) started
+    - converts cfg parameters to types according to its prefixes/suffixes names (see ini2dict())
 
-    """
-    Common startup initializer:
-        - finds input files
-        - asks user to proceed if need
-        - prints message that program (__file__ or cs_store_name) started
     :param cfg:
+    :param cs_store_name:
+    :param __file__:
     :return:
-    Note: if new_arg=='<cfg_from_args>' returns cfg but it will be None if argument
-     argv[1:] == '-h' or '-v' passed to this code
-    argv[1] is cfgFile. It was used with cfg files:
-        'csv2h5_nav_supervisor.ini'
-        'csv2h5_IdrRedas.ini'
-        'csv2h5_Idronaut.ini'
     """
+
     # global lf
     # if cfg.search_path is not None:
     #     override_path = hydra.utils.to_absolute_path(cfg.search_path)
@@ -290,6 +289,7 @@ def main_init(cfg, cs_store_name, __file__=None, ):
     #     cfg = OmegaConf.merge(cfg, override_conf)
 
     print("Working directory : {}".format(os.getcwd()))
+    # todo: print only if config changed
     print(OmegaConf.to_yaml(cfg))
 
     # cfg = cfg_from_args(argparser_files(), **kwargs)
@@ -302,12 +302,46 @@ def main_init(cfg, cs_store_name, __file__=None, ):
     hydra.verbose = 1 if cfg.program.verbose == 'DEBUG' else 0  # made compatible to my old cfg
 
     print('\n' + this_prog_basename(__file__) if __file__ else cs_store_name, end=' started. ')
-    cfg_t = ini2dict(cfg)  # fields named with type pre/suffixes are converted
+    try:
+        cfg_t = ini2dict(cfg)  # fields named with type pre/suffixes are converted
+    except MissingMandatoryValue as e:
+        lf.error(standard_error_info(e))
+        raise Ex_nothing_done()
+    except Exception:
+        lf.exception('startup error')
+
     # OmegaConf.update(cfg, "in", cfg.input, merge=False)  # error
     # to allow non primitive types (cfg.out['db']) and special words field names ('in'):
     # cfg = omegaconf.OmegaConf.to_container(cfg)
     return cfg_t
 
+
+def main_call(
+        cmd_line_list: Optional[List[str]],
+        fun: Callable[[], Any]
+        ) -> Dict:
+    """
+    Adds command line args, calls fun, then restores command line args. Replaces shortcut "in." in them to "input."
+    :param cmd_line_list: command line args of hydra commands or config options selecting/overwriting.
+    :param fun: function that uses command line args, usually called ``main``
+    :return: ``main()``
+    """
+
+    sys_argv_save = sys.argv
+    if cmd_line_list is not None:
+        cmd_line_list_upd = sys.argv
+        len_in_rep = len('in.')
+        for c in cmd_line_list:
+            if c.startswith('in.'):
+                cmd_line_list_upd.append(f'input.{c[len_in_rep:]}')
+            else:
+                cmd_line_list_upd.append(c)
+        sys.argv = cmd_line_list_upd
+
+    # hydra.conf.HydraConf.run.dir = './outputs/${now:%Y-%m-%d}_${now:%H-%M-%S}'
+    out = fun()
+    sys.argv = sys_argv_save
+    return out
 
 
 

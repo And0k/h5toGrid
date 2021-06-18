@@ -125,7 +125,7 @@ def griddata_by_surfer(
 
 def objpath_fill(re_ovr, re_shp=None) -> Dict[Tuple[int, str], Any]:
     """
-    Finds paths to objects/propeerties having data, return dict of paths with values that points to data
+    Finds paths to objects/properties having data and returns it as dict with values that points to data
 
     :param path_dir_out:
     :param re_ovr: saves only matched overlays' properties
@@ -155,7 +155,7 @@ def objpath_fill(re_ovr, re_shp=None) -> Dict[Tuple[int, str], Any]:
                                     'SetScaling': {'Type': constants.srfVSMagnitude, 'Minimum': ovrl.MinMagnitude,
                                          'Maximum': ovrl.MaxMagnitude}  # also saves comand to recover vector limits that is needed after grid replacing
                                     }
-                        #elif :
+                        # elif:
                         else:
                             data = None
                         if data:
@@ -204,11 +204,13 @@ def objpath_fill(re_ovr, re_shp=None) -> Dict[Tuple[int, str], Any]:
     return obj_path
 
 
-def gen_objects(obj_path, srf: Optional[str]=None) -> Iterator[Tuple[Tuple[Any, Union[int, str, None]], Any]]:
+def gen_objects(obj_path: Dict[Tuple[Any, Any], Any],
+                srf: Optional[str] = None
+                ) -> Iterator[Tuple[Tuple[Any, Union[int, str, None]], Any]]:
     """
-    Finds obj of currently open doc or srf of all that obj_path points to and yields them with obj_path's values
-    :param obj_path:
-    :param srf: Surfer plot file name
+    Finds all objects that `obj_path` points to and yields them with `obj_path`'s values
+    :param obj_path: dict as returned by objpath_fill()
+    :param srf: Surfer plot file name (*.srf) if str else currently opened Surfer.Document if None
     :return: ((ovrl, ovr_i), data_dict)
     """
     doc = Surfer.ActiveDocument if srf is None else Surfer.Documents.Open(srf)
@@ -439,8 +441,8 @@ def export_all_grids(path_dir_out:Optional[Path]=None):
 
 def xyz2d(xyz, b_show=False):
     """
-
-    :param xyz: array of shape (N, 3) last dimention for x, y and z
+    Reshape 2d array xyz of 3 columns (x,y,z) to 2d grid of z with size of (x, y).
+    :param xyz: array of shape (N, 3) last dimension for x, y and z
     :param b_show: show matplotlib plot of result grid
     :return: (z2d, x_min, y_min, x_resolution, y_resolution) suits to input to save_grd()
     """
@@ -505,6 +507,7 @@ def save_grd(z2d, x_min, y_max, x_resolution, y_resolution, file_grd):
     """
 
     :param z2d:
+    :param x_min, y_max, x_resolution, y_resolution: z2d coordinates parameters
     :param file_grd: str (if without suffix then ".grd" will be added) or Path of output Surfer grid
     :return:
     """
@@ -549,7 +552,7 @@ def txt2grd(file_txt, z_names=('u', 'v', 'Wabs'), z_icols=(2, 3, 4), b_show=Fals
     usecols = [0, 1]; usecols.extend(z_icols)
     xyz = np.loadtxt(file_txt, usecols=usecols)
     for z_name, i_z in zip(z_names, z_icols):
-        xyz2grd(xyz[:, (1, 0, i_z)], file_parent / f'{file_no_sfx}_{z_name}.grd', b_show)
+        xyz2grd(xyz[:, (1, 0, i_z)], file_parent / f'{file_no_sfx}_{z_name}.grd', b_show)  # y = lat, x = lon
 
 
 def many_txt2grd(file_txt_path, z_names=('u', 'v', 'Wabs'), z_icols=(2, 3, 4), b_show=False):
@@ -559,6 +562,23 @@ def many_txt2grd(file_txt_path, z_names=('u', 'v', 'Wabs'), z_icols=(2, 3, 4), b
         txt2grd(file_txt, z_names, z_icols)
 
 #
+
+def invert_bln(file_bln_in, file_bln_out=None, delimiter=','):
+    """
+    Only one polygon supported.
+    :param file_bln_in:
+    :param file_bln_out:
+    :param delimiter: if not ',' useful to invert 1st column of text files of other types
+    :return:
+    """
+    if not file_bln_out:
+        p_in = Path(file_bln_in)
+        file_bln_out = p_in.with_name(f'{p_in.stem}_out').with_suffix(p_in.suffix)
+    with open(file_bln_in, 'rb') as f:
+        header = f.readline()
+        bln = np.loadtxt(f, dtype={'names': ('x', 'y'), 'formats': ('f4', 'f4')}, skiprows=0, delimiter=delimiter)
+    bln['x'] = bln['x'].max() - bln['x']
+    np.savetxt(file_bln_out, bln, fmt='%g', delimiter=delimiter, header=header.strip().decode('latin'), comments='', encoding='ascii')
 
 
 def main():

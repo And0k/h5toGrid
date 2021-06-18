@@ -259,12 +259,12 @@ if st(2):
             args += (
                 ['--max_dict', 'M[xyz]:4096',
                  # Note: for Baranov's prog 4096 is not suited
-                 # '--timerange_zeroing_dict', "incl19: '2019-11-10T13:00:00', '2019-11-10T14:00:00'\n,"  # not works - use kwarg
-                 # '--timerange_zeroing_list', '2019-08-26T04:00:00, 2019-08-26T05:00:00'
+                 # '--time_range_zeroing_dict', "incl19: '2019-11-10T13:00:00', '2019-11-10T14:00:00'\n,"  # not works - use kwarg
+                 # '--time_range_zeroing_list', '2019-08-26T04:00:00, 2019-08-26T05:00:00'
                 ] if prefix == 'incl' else
                 ['--bad_p_at_bursts_starts_peroiod', '1H',
                 ])
-            kwarg = {'in': {'timerange_zeroing': {'incl14': ['2020-07-10T21:31:00', '2020-07-10T21:39:00']}}}  #{} {'incl14': ['2019-11-14T06:30:00', '2019-11-14T06:50:00']}}}
+            kwarg = {'in': {'time_range_zeroing': {'incl14': ['2020-07-10T21:31:00', '2020-07-10T21:39:00']}}}  #{} {'incl14': ['2019-11-14T06:30:00', '2019-11-14T06:50:00']}}}
         else:
             kwarg = {}
         # csv splitted by 1day (default for no avg) and monolit csv if aggregate_period_s==600
@@ -307,7 +307,7 @@ if st(3):  # Can be done at any time after step 1
         '--fs_float', f'{fs(probes[0], prefix)}',
         # (lambda x: x == x[0])(np.vectorize(fs)(probes, prefix))).all() else raise_ni()
         #
-        # '--timerange_zeroing_list', '2019-08-26T04:00:00, 2019-08-26T05:00:00'
+        # '--time_range_zeroing_list', '2019-08-26T04:00:00, 2019-08-26T05:00:00'
         # '--verbose', 'DEBUG',
         # '--chunksize', '20000',
         '--b_interact', '0',

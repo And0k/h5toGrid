@@ -69,10 +69,10 @@ def my_argparser():
              help='channel can be "magnetometer" or "M" for magnetometer and any else for accelerometer',
              default='M, A')
     s.add('--chunksize_int', help='limit loading data in memory', default='50000')
-    s.add('--timerange_list', help='time range to use')
-    s.add('--timerange_dict', help='time range to use for each inclinometer number (consisted of digits in table name)')
-    s.add('--timerange_nord_list', help='time range to zeroing nord. Not zeroing Nord if not used')
-    s.add('--timerange_nord_dict', help='time range to zeroing nord for each inclinometer number (consisted of digits in table name)')
+    s.add('--time_range_list', help='time range to use')
+    s.add('--time_range_dict', help='time range to use for each inclinometer number (consisted of digits in table name)')
+    s.add('--time_range_nord_list', help='time range to zeroing nord. Not zeroing Nord if not used')
+    s.add('--time_range_nord_dict', help='time range to zeroing nord for each inclinometer number (consisted of digits in table name)')
     s = p.add_argument_group('filter', 'excludes some data')
     s.add('--no_works_noise_float_dict', default='M:10, A:100',
                  help='is_works() noise argument for each channel: excludes data if too small changes')
@@ -95,7 +95,8 @@ def load_hdf5_data(store, table=None, t_intervals=None,
                    query_range_pattern="index>=Timestamp('{}') & index<=Timestamp('{}')"):
     """
     Load data
-    :param t_intervals: even sequence of datetimes or strings convertable to index type values. Each pair defines edges of data that will be concatenated. 1st and last must be min and max values in sequence.
+    :param t_intervals: even sequence of datetimes or strings convertible to index type values. Each pair defines edges
+    of data that will be concatenated. 1st and last must be min and max values in sequence.
     :param table:
     :return:
     """
@@ -448,22 +449,22 @@ def calibrate_plot(raw3d: np.ndarray, a2d: np.ndarray, b, fig=None, window_title
     return fig
 
 
-def zeroing_azimuth(store, tbl, timerange_nord, coefs=None, cfg_in=None):
+def zeroing_azimuth(store, tbl, time_range_nord, coefs=None, cfg_in=None):
     """
-    azimuth_shift_deg by calculating velocity (Ve, Vn) in cfg_in['timerange_nord'] interval of tbl data:
+    azimuth_shift_deg by calculating velocity (Ve, Vn) in cfg_in['time_range_nord'] interval of tbl data:
      taking median, calculating direction, multipling by -1
-    :param timerange_nord:
+    :param time_range_nord:
     :param store:
     :param tbl:
     :param coefs: dict with fields having values of array type with sizes:
     'Ag': (3, 3), 'Cg': (3, 1), 'Ah': (3, 3), 'Ch': array(3, 1), 'azimuth_shift_deg': (1,), 'kVabs': (n,)
     :param cfg_in: dict with fields:
-        - timerange_nord
+        - time_range_nord
         - other, needed in load_hdf5_data() and optionally in incl_calc_velocity_nodask()
     :return: azimuth_shift_deg
     """
     l.debug('Zeroing Nord direction')
-    df = load_hdf5_data(store, table=tbl, t_intervals=timerange_nord)
+    df = load_hdf5_data(store, table=tbl, t_intervals=time_range_nord)
     if df.empty:
         l.info('Zero calibration range out of data scope')
         return
@@ -495,28 +496,51 @@ def channel_cols(channel: str) -> Tuple[str, str]:
     return (col_str, coef_str)
 
 
-def dict_matrices_for_h5(coefs=None, tbl=None, channels=None):
+def dict_matrices_for_h5(coefs=None, tbl=None, channels=None, to_nested_keys=False):
     """
 
     :param coefs: some fields from: {'M': {'A', 'b', 'azimuth_shift_deg'} 'A': {'A', 'b', 'azimuth_shift_deg'}, 'Vabs0'}
     :param tbl: should include probe number in name. Example: "incl_b01"
     :param channels: some from default ['M', 'A']: magnetometer, accelerometer
+    :param to_nested_keys: 
     :return: dict_matrices
     """
+
+
     if channels is None:
         channels = ['M', 'A']
 
     # Fill coefs where not specified
     dummies = []
     b_have_coefs = coefs is not None
-    if not b_have_coefs:
+
+    if b_have_coefs:
+        if to_nested_keys is None:
+            coefs = coefs.copy()  # todo: deep copy better!
+        else:
+            # convert coefs fields to be nested under channels
+
+            if to_nested_keys is True:
+                to_nested_keys = {'Ch': ('M', 'b'), 'Ah': ('M', 'A'), 'azimuth_shift_deg': ('M', 'azimuth_shift_deg'),
+                                  'Cg': ('A', 'b'), 'Ag': ('A', 'A')}
+            channels = set(c for c,k in to_nested_keys.values())
+            c = {k:{} for k in channels}
+            for channel, (ch_name, coef_name) in to_nested_keys.items():
+                c[ch_name][coef_name] = coefs.get(channel)
+            c.update({k: v for k, v in coefs.items() if k not in to_nested_keys})
+            # old convention
+            if c.get('Vabs0') is None and 'kVabs' in c:
+                c['Vabs0'] = c.pop('kVabs')
+            coefs = c
+    else:
         coefs = {}  # dict(zip(channels,[None]*len(channels)))
 
     for channel in channels:
         if not coefs.get(channel):
-            coefs[channel] = ({'A': np.identity(3) * 0.00173, 'b': np.zeros((3, 1))} if channel == 'M' else
-                              {'A': np.identity(3) * 6.103E-5, 'b': np.zeros((3, 1))}
-                              )
+            coefs[channel] = (
+                {'A': np.identity(3) * 0.00173, 'b': np.zeros((3, 1))} if channel == 'M' else
+                {'A': np.identity(3) * 6.103E-5, 'b': np.zeros((3, 1))}
+                )
             if b_have_coefs:
                 dummies.append(channel)
         if channel == 'M':
@@ -567,7 +591,7 @@ def main(new_arg=None):
     also.
     2. Loads device data of calibration in laboratory from cfg['in']['db_path']
     2. Calibrates configured by cfg['in']['channels'] channels ('accelerometer' and/or 'magnetometer'): soft iron
-    3. Wrong implementation - not use cfg['in']['timerange_nord']! todo: Rotate compass using cfg['in']['timerange_nord']
+    3. Wrong implementation - not use cfg['in']['time_range_nord']! todo: Rotate compass using cfg['in']['time_range_nord']
     :param new_arg: returns cfg if new_arg=='<cfg_from_args>' but it will be None if argument
      argv[1:] == '-h' or '-v' passed to this code
     argv[1] is cfgFile. It was used with cfg files:
@@ -597,14 +621,14 @@ def main(new_arg=None):
         for itbl, tbl in enumerate(cfg['in']['tables'], start=1):
             probe_number = int(re.findall('\d+', tbl)[0])
             l.info(f'{itbl}. {tbl}: ')
-            if isinstance(cfg['in']['timerange'], Mapping):  # individual interval for each table
-                if probe_number in cfg['in']['timerange']:
-                    timerange = cfg['in']['timerange'][probe_number]
+            if isinstance(cfg['in']['time_range'], Mapping):  # individual interval for each table
+                if probe_number in cfg['in']['time_range']:
+                    time_range = cfg['in']['time_range'][probe_number]
                 else:
-                    timerange = None
+                    time_range = None
             else:
-                timerange = cfg['in']['timerange']  # same interval for each table
-            a = load_hdf5_data(store, table=tbl, t_intervals=timerange)
+                time_range = cfg['in']['time_range']  # same interval for each table
+            a = load_hdf5_data(store, table=tbl, t_intervals=time_range)
             # iUseTime = np.searchsorted(stime, [np.array(s, 'datetime64[s]') for s in np.array(strTimeUse)])
             coefs[tbl] = {}
             for channel in cfg['in']['channels']:
@@ -637,12 +661,12 @@ def main(new_arg=None):
                 coefs[tbl][channel] = {'A': A, 'b': b}
 
             # Zeroing Nord direction
-            timerange_nord = cfg['in']['timerange_nord']
-            if isinstance(timerange_nord, Mapping):
-                timerange_nord = timerange_nord.get(probe_number)
-            if timerange_nord:
+            time_range_nord = cfg['in']['time_range_nord']
+            if isinstance(time_range_nord, Mapping):
+                time_range_nord = time_range_nord.get(probe_number)
+            if time_range_nord:
                 coefs[tbl]['M']['azimuth_shift_deg'] = zeroing_azimuth(
-                    store, tbl, timerange_nord, calc_vel_flat_coef(coefs[tbl]), cfg['in'])
+                    store, tbl, time_range_nord, calc_vel_flat_coef(coefs[tbl]), cfg['in'])
             else:
                 l.info('no zeroing Nord')
     # Write coefs
@@ -675,21 +699,21 @@ if __name__ == '__main__':
     # inclinometer/190901incl_calibr.py
     # or here:
     if False:
-        timeranges = {
+        time_ranges = {
             30: ['2019-07-09T18:51:00', '2019-07-09T19:20:00'],
             12: ['2019-07-11T18:07:50', '2019-07-11T18:24:22'],
             5: ['2019-07-11T18:30:11', '2019-07-11T18:46:28'],
             4: ['2019-07-11T17:25:30', '2019-07-11T17:39:30'],
             }
 
-        timeranges_nord = {
+        time_ranges_nord = {
             # 30: ['2019-07-09T17:54:50', '2019-07-09T17:55:22'],
             # 12: ['2019-07-11T18:04:46', '2019-07-11T18:05:36'],
             }
 
         i = 14
 
-        # multiple timeranges not supported so calculate one by one probe?
+        # multiple time_ranges not supported so calculate one by one probe?
         probes = [i]
         main(['', '--db_path',
               r'd:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe\190710incl.h5',
@@ -698,10 +722,10 @@ if __name__ == '__main__':
               '--channels_list', 'M,A',  # 'M,', Note: empty element cause calc of accelerometer coef.
               '--tables_list', ', '.join(f'incl{i:0>2}' for i in probes),
               #    'incl02', 'incl03','incl04','incl05','incl06','incl07','incl08','incl09','incl10','incl11','incl12','incl13','incl14','incl15','incl17','incl19','incl20','incl16','incl18',
-              '--timerange_list', str_range(timeranges, i),
-              '--timerange_nord_list', str_range(timeranges_nord, i),
-              # '--timerange_list', "'2019-03-20T11:53:35', '2019-03-20T11:57:20'",
-              # '--timerange_list', "'2019-03-20T11:49:10', '2019-03-20T11:53:00'",
+              '--time_range_list', str_range(time_ranges, i),
+              '--time_range_nord_list', str_range(time_ranges_nord, i),
+              # '--time_range_list', "'2019-03-20T11:53:35', '2019-03-20T11:57:20'",
+              # '--time_range_list', "'2019-03-20T11:49:10', '2019-03-20T11:53:00'",
 
               # "'2018-10-03T18:18:30', '2018-10-03T18:20:00'",
               # "'2018-10-03T17:18:00', '2018-10-03T17:48:00'",
@@ -730,7 +754,7 @@ if __name__ == '__main__':
     #
     # cfg = {'in': {
     #     'db_path': r'd:\workData\BalticSea\171003_ANS36\inclinometr\171015_intercal_on_board\#*.TXT',
-    #     'use_timerange_list': ['2017-10-15T15:37:00', '2017-10-15T19:53:00'],
+    #     'use_time_range_list': ['2017-10-15T15:37:00', '2017-10-15T19:53:00'],
     #     'delimiter': ',',
     #     'skiprows': 13}}
     #

@@ -67,7 +67,7 @@ latitudes = f.variables[lat_name][:]
 longitudes = f.variables[lon_name][:]
 
 
-if method == 'file_for_each_time':    # METHOD 1
+if method == 'file_for_each_time':      # METHOD 1
     # Extract each time as a 2D pandas DataFrame and write it to CSV
     Path.mkdir(output_dir, parents=True, exist_ok=True)
     for v in variables:
@@ -76,7 +76,7 @@ if method == 'file_for_each_time':    # METHOD 1
             print(f'Writing time {t} to {filename}')
             df = pd.DataFrame(f.variables[v][i, :, :], index=latitudes, columns=longitudes)
             df.to_csv(filename)
-elif method == 'one_file':  # METHOD 2
+elif method == 'one_file':              # METHOD 2
     # Write data as a table with 4+ columns: time, value0, value1... for each (latitude, longitude)
     filename = output_dir / f'{times[0]:%y%m%d_%H%M}{file_path.stem}.csv'
     print(f'Writing data in tabular form to {filename} (this may take some time)...')

@@ -19,17 +19,23 @@ except Exception as e:
 
 from os import path as os_path, listdir as os_listdir, access as os_access, R_OK as os_R_OK, W_OK as os_W_OK
 from ast import literal_eval
+import enum
 from fnmatch import fnmatch
 from datetime import timedelta, datetime
 from codecs import open
 import configparser
 import configargparse
+import logging
 import re
 from pathlib import Path, PurePath
+from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional, Iterable, Iterator, BinaryIO, Sequence, TextIO, TypeVar, Tuple, Union
 import io
 from functools import wraps
-from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional, Iterable, Iterator, BinaryIO, Sequence, TextIO, TypeVar, Tuple, Union
-import logging
+
+if sys.platform == "win32":
+    from win32event import CreateMutex
+    from win32api import CloseHandle, GetLastError
+    from winerror import ERROR_ALREADY_EXISTS
 
 A = TypeVar('A')
 
@@ -84,9 +90,12 @@ class Ex_nothing_done(Exception):
     def __init__(self, msg=''):
         self.message = f'{msg} => nothing done. For help use "-h" option'
 
-
-class Error_in_config_parameter(Exception):
-    pass
+def rerase(msg_before, e: Exception):
+    try:
+        e.message = msg_before + e.message
+    except AttributeError:  # no message attribute
+        e.args = (msg_before,) + e.args
+    raise
 
 
 readable = lambda f: os_access(f, os_R_OK)
@@ -522,7 +531,7 @@ def ini2dict(arg_source: Union[Mapping[str, Any], str, PurePath, None] = None):
 
     config, arg_source, arg_ext = cfgfile2dict(arg_source)
     cfg = {key: {} for key in config}
-    oname = None
+    oname = '...'
     opt = None
     # convert specific fields data types
     try:
@@ -547,8 +556,9 @@ def ini2dict(arg_source: Union[Mapping[str, Any], str, PurePath, None] = None):
                 # cfg[sname]= dict(config.items(sname)) # for sname in config.sections()]
     except Exception as e:  # ValueError, TypeError
         # l.exception(e)
-        raise Error_in_config_parameter(
-            '[{}].{} = "{}": {}'.format(sname, oname, str(opt), e.args[0])).with_traceback(e.__traceback__)
+        rerase(f'Error_in_config_parameter: [{sname}].{oname} = "{str(opt)}": {e.args[0]} > ', e)
+        # e.with_traceback(e.__traceback__) from e
+
     set_field_if_no(cfg, 'in', {})
     cfg['in']['cfgFile'] = arg_source
     return cfg
@@ -1380,8 +1390,14 @@ def init_logging(logging, logger_name=__name__, log_file=None, level_file='INFO'
             l.handlers.clear()  # or if have good handlers return l
     else:
         l = logging.getLogger(logger_name)
-
-    logging.basicConfig(filename=Path(log_file), format='%(asctime)s %(message)s', level=level_file)
+    try:
+        filename = Path(log_file)
+        b_default_path = not filename.parent.exists()
+    except FileNotFoundError:
+        b_default_path = True
+    if b_default_path:
+        filename = Path(__file__).parent / 'logs' / filename.name
+    logging.basicConfig(filename=filename, format='%(asctime)s %(message)s', level=level_file)
 
     # set up logging to console
     console = logging.StreamHandler()
@@ -1391,6 +1407,10 @@ def init_logging(logging, logger_name=__name__, log_file=None, level_file='INFO'
     console.setFormatter(formatter)
     l.addHandler(console)
     l.propagate = True  # to default
+
+    if b_default_path:
+        l.warning('Bad log path: %s! Using new path with default dir: %s', log_file, filename)
+
     return l
 
 
@@ -1470,6 +1490,8 @@ class LoggingStyleAdapter(logging.LoggerAdapter):
     also prepends message with [self.extra['id']]
     """
     def __init__(self, logger, extra=None):
+        if isinstance(logger, str):
+            logger = logging.getLogger(logger)
         super(LoggingStyleAdapter, self).__init__(logger, extra or {})
 
     def process(self, msg, kwargs):
@@ -1680,6 +1702,53 @@ def call_with_valid_kwargs(func: Callable[[Any], Any], *args, **kwargs):
     """
     valid_keys = kwargs.keys() & func.__code__.co_varnames[len(args):func.__code__.co_argcount]
     return func(*args, **{k: kwargs[k] for k in valid_keys})
+
+
+
+@enum.unique
+class ExitStatus(enum.IntEnum):
+    """Portable definitions for the standard POSIX exit codes.
+    https://github.com/johnthagen/exitstatus/blob/master/exitstatus.py
+    """
+    success = 0
+    """Indicates successful program completion."""
+
+    failure = 1
+    """Indicates unsuccessful program completion in a general sense."""
+
+
+if sys.platform == "win32":
+    class GetMutex:
+        """ Limits application to single instance
+            Provides a method by which an application can ensure that only one
+            instance of it can be running at any given time.
+        Usage:
+            if (app := GetMutex()).IsRunning():
+                print("Application is already running")
+                sys.exit()
+        """
+
+        def __init__(self):
+            thisfile   = str(Path(sys.argv[0]).resolve()).replace('\\', '/')
+            self.name  = f"{thisfile}_{{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}}"
+            self.mutex = CreateMutex(None, False, self.name)
+            self.error = GetLastError()
+
+        def IsRunning(self):
+            return (self.error == ERROR_ALREADY_EXISTS)
+
+        def __del__(self):
+            if self.mutex: CloseHandle(self.mutex)
+
+
+
+
+
+
+
+
+
+
 
 
 """

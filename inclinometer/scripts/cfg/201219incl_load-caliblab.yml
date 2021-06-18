@@ -9,7 +9,7 @@ input:
   probes_prefix: incl
   raw_pattern: "*{prefix:}{number:0>2}*.[tT][xX][tT]"
 
-#  timerange_zeroing_dict:
+#  time_range_zeroing_dict:
 #    incl14: [2020-07-10T21:31:00, 2020-07-10T21:39:00]
   db_path: d:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe\190710incl.h5  # db_coefs?
 

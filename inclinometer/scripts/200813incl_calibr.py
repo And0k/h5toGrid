@@ -35,29 +35,29 @@ if step == 2:
     from veuszPropagate import __file__ as file_veuszPropagate
 
 
-    probes = np.arange(10,40)  #[23,30,32] 17,18 [3,12,15,19,1,13,14,16] [1,4,5,7,11,12]  # [4,5,11,12]   #[29, 30, 33]  # [3, 14, 15, 16, 19]
+    probes = np.arange(1,31)  #[23,30,32] 17,18 [3,12,15,19,1,13,14,16] [1,4,5,7,11,12]  # [4,5,11,12]   #[29, 30, 33]  # [3, 14, 15, 16, 19]
     channels_list = ['M', 'A']  # []
 
     # Output coefficients here:
     # 1. stand data (same as input for 1st step)
     db_path_calibr_scalling = path_on_drive_d(
-        r'D:\WorkData\~configuration~\inclinometr\190710incl.h5'
-        # r'd:\WorkData\_experiment\inclinometer\200807_Schukas\mag_components_calibration\200807_calibr-lab#b.h5'
+        # r'D:\WorkData\~configuration~\inclinometr\190710incl.h5'
+        r'd:\WorkData\_experiment\inclinometer\_Schukas\210603_lab\_raw\210603incl.h5'
         )
     # 2. tank data
     db_path_tank = path_on_drive_d(  # path to load calibration data: newer first
-        r'd:\WorkData\_experiment\inclinometer\210331_tank[4,5,9,10,11,19,28,33,36,37,38]\210331incl.h5'
-        # r'd:\WorkData\_experiment\inclinometer\200807_Schukas\200807_calibr-tank-b.h5'
+        # r'd:\WorkData\_experiment\inclinometer\210331_tank[4,5,9,10,11,19,28,33,36,37,38]\210331incl.h5'
+        r'd:\WorkData\_experiment\inclinometer\_Schukas\200807_tank[b01-b30]\200807_calibr-tank-b.h5'
         )
 
     vsz_data = {'veusze': None}
     for i, probe in enumerate(probes):
-        # incl_calibr not supports multiple timeranges so calculate one by one probe
-        tbl = f'incl{probe:0>2}'  # note: regex result from veusz name by re_tbl_from_vsz_name below must be same
+        # incl_calibr not supports multiple time_ranges so calculate one by one probe
+        tbl = f'incl_b{probe:0>2}'  # note: regex result from veusz name by re_tbl_from_vsz_name below must be same
         # f'incl_b{probe:0>2}'
         vsz_path = db_path_tank.with_name(f'{tbl}.vsz')  # {db_path_tank.stem}
-        vsz_data = h5from_veusz_coef(
-            [str(Path(file_veuszPropagate).with_name('veuszPropagate.ini')),
+        vsz_data = h5from_veusz_coef([
+            'empty.yml',  #str(Path(file_veuszPropagate).with_name('veuszPropagate.ini')),
             '--data_yield_prefix', 'Inclination',
             '--path', str(vsz_path),
             '--pattern_path', str(vsz_path),
@@ -65,7 +65,7 @@ if step == 2:
             # '/fitV(force)/grid1/graph/fit1/values',
             '--data_for_coef', 'max_incl_of_fit_t',
             '--out.path', str(db_path_tank),
-            '--re_tbl_from_vsz_name', '\D*\d*',
+            '--re_tbl_from_vsz_name', r'\D*\d*',
             '--channels_list', 'M,A',
             '--b_update_existed', 'True',  # to not skip.
             '--export_pages_int_list', '',  #4 0 = all
@@ -74,7 +74,6 @@ if step == 2:
             '--return', '<embedded_object>',  # reuse to not bloat memory
             ],
             veusze=vsz_data['veusze'])
-
 
         if vsz_data is not None:
             # if step == 3:

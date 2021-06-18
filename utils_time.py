@@ -7,12 +7,13 @@
 """
 import logging
 import re
-from typing import Optional
+from typing import Optional, Union, Tuple
 from datetime import datetime
 import numpy as np
 import pandas as pd
 from pandas.tseries.frequencies import to_offset
 
+from other_filters import l
 from utils2init import LoggingStyleAdapter
 
 if __debug__:
@@ -24,13 +25,13 @@ if __debug__:
 # from builtins import input
 # from debug import __debug___print
 # from  pandas.tseries.offsets import DateOffset
-from dateutil.tz import tzoffset
+from dateutil.tz import tzoffset, tzutc
 # my:
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
 
 dt64_1s = np.int64(1e9)
-tzUTC = tzoffset('UTC', 0)
+# tzUTC = tzutc()  older version "tzoffset('UTC', 0)" is not compatible if compare dates (pandas?) so expecting issues
 
 
 # def numpy_to_datetime(arr):
@@ -39,9 +40,9 @@ tzUTC = tzoffset('UTC', 0)
 
 def datetime_fun(fun, *args, type_of_operation='<M8[s]', type_of_result='<M8[s]'):
     """
-    :param x: array
-    :param fun: function to apply on x
-    :param type_of_operation: type to convert x before apply fun to not overflow
+    :param fun, args: function and its arguments array to apply on
+    :param type_of_operation: type to convert args before apply fun to not overflow
+    :param type_of_result: type to convert result after
     :return: fun result of type type_of_operation
 
     >>> import pandas as pd; df_index = pd.DatetimeIndex(['2017-10-20 12:36:32', '2017-10-20 12:41:32'], dtype='datetime64[ns]', name='time', freq=None)
@@ -110,13 +111,8 @@ def timzone_view(t, dt_from_utc=0):
     :return: t with applied timezone dt_from_utc
       Assume that if time zone of tz-naive Timestamp is naive then it is UTC
     """
-    if dt_from_utc == 0:
-        # dt_from_utc = pd.Timedelta(0)
-        tzinfo = tzUTC
-    elif dt_from_utc == pd.Timedelta(0):
-        tzinfo = tzUTC
-    else:
-        tzinfo = tzoffset(None, pd.to_timedelta(dt_from_utc).total_seconds())  # better pd.datetime.timezone?
+    tzinfo = 'UTC' if dt_from_utc in (0, pd.Timedelta(0)) else tzoffset(
+        None, pd.to_timedelta(dt_from_utc).total_seconds())  # better pd.datetime.timezone?
 
     if isinstance(t, pd.DatetimeIndex) or isinstance(t, pd.Timestamp):
         if t.tz is None:
@@ -226,6 +222,35 @@ def minInterval(iLims1, iLims2, L):
     return maxmin(positiveInd(iLims1, L), positiveInd(iLims2, L))
 
 
+def check_time_diff(t_queried: Union[pd.Series, np.ndarray], t_found: Union[pd.Series, np.ndarray],
+                    dt_warn: Union[pd.Timedelta, np.timedelta64],
+                    mesage: str = 'Bad nav. data coverage: difference to nearest point in time [min]:',
+                    return_diffs: bool = False) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+    """
+    Check time difference between found and requested time points and prints info if big difference is found
+    :param t_queried: pandas TimeSeries or numpy array of 'datetime64[ns]'
+    :param t_found:   pandas TimeSeries or numpy array of 'datetime64[ns]'
+    :param dt_warn: pd.Timedelta - prints info about bigger differences found only
+    :param return_diffs: if True also returns time differences (t_found - t_queried_values, 'timedelta64[ns]')
+    :return: mask where time difference is bigger than ``dt_warn`` and time differences if return_diffs=True
+    """
+    try:
+        if not np.issubdtype(t_queried.dtype, np.dtype('datetime64[ns]')):  # isinstance(, ) pd.Ti
+            t_queried_values = t_queried.values
+        else:
+            t_queried_values = t_queried
+    except TypeError:  # not numpy 'datetime64[ns]'
+        t_queried_values = t_queried.values
+
+    dT = np.array(t_found - t_queried_values, 'timedelta64[ns]')
+    bbad = abs(dT) > np.timedelta64(dt_warn)
+    if (mesage is not None) and np.any(bbad):
+        if mesage:
+            mesage = '\n'.join([mesage] + ['{}. {}:\t{}{:.1f}'.format(i, tdat, m, dt / 60) for i, tdat, m, dt in zip(
+                np.flatnonzero(bbad), t_queried[bbad], np.where(dT[bbad].astype(np.int64) < 0, '-', '+'),
+                np.abs(dT[bbad]) / np.timedelta64(1, 's'))])
+        lf.warning(mesage)
+    return (bbad, dT) if return_diffs else bbad
 
 # str_time_short= '{:%d %H:%M}'.format(r.Index.to_datetime())
 # timeUTC= r.Index.tz_convert(None).to_datetime()

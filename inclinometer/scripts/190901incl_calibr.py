@@ -43,7 +43,7 @@ d:\WorkData\_experiment\_2018\inclinometer\181004_tank[1-20]\181004_KTIz.h5
 
 step = 2  # one step for one program's run
 # ---------------------------------------------------------------------------------------------
-for i, probe in enumerate(probes):  # incl_calibr not supports multiple timeranges so calculate one by one probe
+for i, probe in enumerate(probes):  # incl_calibr not supports multiple time_ranges so calculate one by one probe
     # tank data - used to output coefficients in both steps
     db_path_tank = path_on_drive_d(  # path to load calibration data: newer first
         r'd:\WorkData\_experiment\inclinometer\200610_tank_ex[4,5,7,9,10,11][3,12,13,14,15,16,19]\200610_tank.h5' if probe in
@@ -67,7 +67,7 @@ for i, probe in enumerate(probes):  # incl_calibr not supports multiple timerang
     tbl = f'incl{probe:0>2}'
     if step == 1:
         # Soft magnetic at the stand
-        timeranges = {
+        time_ranges = {
             23: ['2019-07-10T17:29:00', '2019-07-10T17:47:56'],
             32: ['2019-07-10T18:46:05', '2019-07-10T18:58:32'],
             30: ['2019-07-09T18:37:00', '2019-07-09T18:44:00', '2019-07-09T19:00:00', '2019-07-09T19:20:00'],
@@ -98,8 +98,8 @@ for i, probe in enumerate(probes):  # incl_calibr not supports multiple timerang
             '--db_path', str(db_path_calibr_scalling),
             '--channels_list', ','.join(channels_list),  # 'M,', Note: empty element cause calc of accelerometer coef.
             '--tables_list', tbl,
-            '--timerange_list', str_range(timeranges, probe),
-            # '--timerange_nord_list', str_range(timeranges_nord, probe),
+            '--time_range_list', str_range(time_ranges, probe),
+            # '--time_range_nord_list', str_range(time_ranges_nord, probe),
             '--out.db_path', str(db_path_tank),  # save here addititonally
             ])
 
@@ -145,7 +145,7 @@ for i, probe in enumerate(probes):  # incl_calibr not supports multiple timerang
         h5copy_coef(db_path_tank, db_path_calibr_scalling, tbl, ok_to_replace_group=True)
 
     if step == 3:
-        timeranges_nord = {
+        time_ranges_nord = {
             1: ['2019-07-11T18:48:35', '2019-07-11T18:49:20'],
             #  7: ['2019-07-11T16:53:40', '2019-07-11T16:54:10'], ???
             # 30: ['2019-07-09T17:54:50', '2019-07-09T17:55:22'],
@@ -159,19 +159,19 @@ for i, probe in enumerate(probes):  # incl_calibr not supports multiple timerang
             16: ['2019-09-03T19:22:20', '2019-09-03T19:22:54'],
 
             }
-        if timeranges_nord.get(probe):
+        if time_ranges_nord.get(probe):
             # Recalc zeroing_azimuth with zeroed scaling coefs
             cfg_in = {
                 'tables': [tbl],
                 'db_path': db_path_tank,
-                'timerange_nord': timeranges_nord[probe]}
+                'time_range_nord': time_ranges_nord[probe]}
             with pd.HDFStore(db_path_calibr_scalling, mode='r') as store:
                 for tbl, coefs in h5_names_gen(cfg_in):
                     del coefs['azimuth_shift_deg']  # to calculate shift of uncorrected data
                     # Calculation:
                     dict_matrices = {'//coef//H//azimuth_shift_deg': zeroing_azimuth(
-                        store, tbl, timeranges_nord[probe], coefs, cfg_in)}
+                        store, tbl, time_ranges_nord[probe], coefs, cfg_in)}
             h5copy_coef(None, db_path_tank, tbl, dict_matrices=dict_matrices)
             h5copy_coef(db_path_tank, db_path_calibr_scalling, tbl, ok_to_replace_group=True)
         else:
-            l.warning('Inlab timeranges_nord not defined')
+            l.warning('Inlab time_ranges_nord not defined')

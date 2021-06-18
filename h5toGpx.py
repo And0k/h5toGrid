@@ -9,7 +9,7 @@ import sys
 from os import path as os_path
 from pathlib import Path
 
-import gpxpy.gpx as GPX  # xml.etree.ElementTree as ET
+from gpxpy.gpx import GPX, GPXTrack, GPXTrackPoint, GPXTrackSegment, GPXWaypoint  # xml.etree.ElementTree as ET
 import numpy as np
 import pandas as pd
 from gpxpy.geo import simplify_polyline as gpxpy_simplify_polyline
@@ -89,7 +89,7 @@ def gpx_track_create(gpx, gpx_obj_namef):
     '''
     gpx_track = {}
     print('track name: ', gpx_obj_namef)
-    gpx_track[gpx_obj_namef] = GPX.GPXTrack(name=gpx_obj_namef)
+    gpx_track[gpx_obj_namef] = GPXTrack(name=gpx_obj_namef)
     gpx_track[gpx_obj_namef].name = gpx_obj_namef  # noticed that constructor not apply it
     gpx.tracks.append(gpx_track[gpx_obj_namef])
     # Create segment in this GPX track:
@@ -145,7 +145,7 @@ def save_to_gpx(nav_df: pd.DataFrame, fileOutPN, gpx_obj_namef=None, waypoint_sy
     elif not 'dt_per_file' in cfg_proc:
         cfg_proc['dt_per_file'] = None
     if gpx is None:
-        gpx = GPX.GPX()
+        gpx = GPX()
 
     if waypoint_symbf:
         # , fun_symbol= 'Waypoint', fun_name= str
@@ -175,7 +175,7 @@ def save_to_gpx(nav_df: pd.DataFrame, fileOutPN, gpx_obj_namef=None, waypoint_sy
                     name = name_test_dup
                 w_names.add(name)
 
-                gpx_waypoint = GPX.GPXWaypoint(
+                gpx_waypoint = GPXWaypoint(
                     latitude=r.Lat,
                     longitude=r.Lon,
                     time=timeUTC,
@@ -235,9 +235,10 @@ def save_to_gpx(nav_df: pd.DataFrame, fileOutPN, gpx_obj_namef=None, waypoint_sy
                     print('30 intervals without data => think it is the end')
                     break
                 continue
-            gpx_segment = GPX.GPXTrackSegment()
+            gpx_segment = GPXTrackSegment()
             if cfg_proc.get('period_tracks'):
-                track_name = f'{gpx_obj_namef}{t_interval_start:%y-%m-%d %H:%M}'
+                fmt = '%y-%m-%d' if t_interval_start.second==0 and t_interval_start.hour==0 else '%y-%m-%d %H:%M'
+                track_name = f'{gpx_obj_namef} {t_interval_start:{fmt}}'
                 gpx_track = gpx_track_create(gpx, track_name)
                 gpx_track[track_name].segments.append(gpx_segment)
             else:
@@ -245,7 +246,7 @@ def save_to_gpx(nav_df: pd.DataFrame, fileOutPN, gpx_obj_namef=None, waypoint_sy
 
             for i, r in enumerate(nav_df_cur.itertuples()):
                 Tcur = r.Index.to_pydatetime()
-                gpx_point = GPX.GPXTrackPoint(
+                gpx_point = GPXTrackPoint(
                     latitude=r.Lat, longitude=r.Lon,
                     elevation=r.DepEcho if b_have_depth and not np.isnan(r.DepEcho) else None,
                     time=Tcur)  # , speed= speed_b, comment= Comment
@@ -283,8 +284,9 @@ def save_to_gpx(nav_df: pd.DataFrame, fileOutPN, gpx_obj_namef=None, waypoint_sy
             gpx_proc_and_save(gpx, gpx_obj_namef, cfg_proc, fileOutPN)
 
     return gpx
-
 # ___________________________________________________________________________
+
+
 def str_deg_minut_from_deg(Coord, strFormat, LetterPlus='', LetterMinus='-'):
     """
     Convert array of coordinates in (degrees) to (degrees and minutes) and

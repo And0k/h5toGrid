@@ -151,9 +151,9 @@ def my_argparser(varargs=None):
 
     s = p.add_argument_group('proc',
                              'Processing parameters')
-    s.add('--timerange_zeroing_list',
+    s.add('--time_range_zeroing_list',
              help='if specified then rotate data in this interval such that it will have min mean pitch and roll, display "info" warning about')
-    s.add('--timerange_zeroing_dict',
+    s.add('--time_range_zeroing_dict',
              help='{table: [start, end]}, rotate data in this interval only for specified probe number(s) data such that it will have min mean pitch and roll, the about "info" warning will be displayed. Probe number is int number consisted of digits in table name')
     s.add('--azimuth_add_float', help='degrees, adds this value to velocity direction (will sum with _azimuth_shift_deg_ coef)')
     s.add('--calc_version', default='trigonometric(incl)',
@@ -198,7 +198,7 @@ def f_pitch(Gxyz):
     :param Gxyz: shape = (3,len) Accelerometer data
     :return: angle, radians, shape = (len,)
     """
-    return -np.arctan(Gxyz[0, :] / np.linalg.norm(Gxyz[1:, :]))
+    return -np.arctan(Gxyz[0, :] / np.linalg.norm(Gxyz[1:, :], axis=0))
     # =arctan2(Gxyz[0,:], sqrt(square(Gxyz[1,:])+square(Gxyz[2,:])) )')
 
 
@@ -319,6 +319,11 @@ def f_linear_k(x0, g, g_coefs):
 
 @njit(fastmath=True)
 def f_linear_end(g, x, x0, g_coefs):
+    """
+    :param g, x, g_coefs: function and its arguments to calc g(x, *g_coefs)
+    :param x0: argument where g(...) replace with linear function if x > x0
+    :return:
+    """
     g0 = g(x0, g_coefs)
     return np.where(x < x0, g(x, g_coefs), g0 + (x - x0) * f_linear_k(x0, g, g_coefs))
 
@@ -377,7 +382,7 @@ def fInclination(Gxyz: np.ndarray):
     return np.arctan2(np.linalg.norm(Gxyz[:-1, :], axis=0), Gxyz[2, :])
 
 
-# @allow_dask not need because not used explicit np/da lib references
+# @allow_dask not need because explicit np/da lib references are not used
 #@njit("f8[:,:](f8[:,:], f8[:,:], f8[:,:])") - failed for dask array
 def fG(Axyz: Union[np.ndarray, da.Array],
        Ag: Union[np.ndarray, da.Array],
@@ -1065,12 +1070,12 @@ def h5_append_to(dfs: Union[pd.DataFrame, dd.DataFrame],
                   {} if log is None else log)  # , cfg_out['log'], log_dt_from_utc=cfg_in['dt_from_utc'], 'tables': None, 'tables_log': None
         # dfs_all.to_hdf(cfg_out['db_path'], tbl, append=True, format='table', compute=True)
         if print_ok: print(print_ok, end=' ')
-        return tables_dict.values()
+        return tuple(tables_dict.values())  # convert to tuple to can add to set of written tables groups
     else:
         print('No data.', end=' ')
 
 
-def gen_variables(
+def gen_subconfigs(
         cfg_out: MutableMapping[str, Any],
         db_path=None,
         split_period=None,
@@ -1222,9 +1227,14 @@ def dd_to_csv(
                    }
         d_out['Date'] = d_out.map_partitions(lambda df: text_date_format(df.index))
     else:
-        arg_out = {'date_format': text_date_format,
-                   'columns': text_columns or None  # for write all columns if empty (replaces to None)
-                   }
+        if text_date_format in ('s', '%Y-%m-%d %H:%M:%S'):                   # speedup
+            d_out.index = d_out.index.dt.tz_convert(None).dt.ceil(freq='s')  # very speedups!
+            arg_out = {'columns': text_columns or None  # for write all columns if empty (replaces to None)
+                       }
+        else:
+            arg_out = {'date_format': text_date_format,  # lead to very long saving (tenths howers) for 2s and smaller resolution data!
+                       'columns': text_columns or None  # for write all columns if empty (replaces to None)
+                       }
 
     if progress is None:
         pbar = ProgressBar(dt=10)
@@ -1243,9 +1253,9 @@ def dd_to_csv(
                  compute = False,
                  compute_kwargs = {'scheduler': 'processes'}
                  )
+    # disabling the chain assigment pandas option made my ETL job go from running out of memory after 90 minutes to taking 17 minutes! I think we can close this issue since its related to pandas - not helps:
+    #pd.set_option('chained_assignment', None)  #  'warn' (the default), 'raise' (raises an exception), or None (no checks are made).
 
-    # pd.set_option('chained assignment', None)  # 'warn' (the default), 'raise' (raises an exception), or None (no checks are made).
-    # disabling the chain assigment pandas option made my ETL job go from running out of memory after 90 minutes to taking 17 minutes! I think we can close this issue since its related to pandas
     if progress is None:
         dask.compute(to_csv)
         pbar.unregister()
@@ -1254,6 +1264,7 @@ def dd_to_csv(
         progress(futures)
         # to_csv.result()
         client.gather(futures)
+
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -1326,19 +1337,19 @@ def main(new_arg=None, **kwargs):
     #     cfg['in']['table'] = tbl  # to get data by gen_intervals()
     #     for d, i_burst in (gen_data_on_intervals if False else gen_data_on_intervals_from_many_sources)(cfg):
     #         assert i_burst == 0  # this is not a cycle
-    for itbl, tbl, coefs, d in gen_variables(cfg['out'], fun_gen=h5_names_gen, **cfg['in']):
+    for itbl, tbl, coefs, d in gen_subconfigs(cfg['out'], fun_gen=h5_names_gen, **cfg['in']):
         d = filter_local(d, cfg['filter'])  # d[['Mx','My','Mz']] = d[['Mx','My','Mz']].mask(lambda x: x>=4096)
         probe_number = int(re.findall('\d+', tbl)[0])
 
         if not cfg['in']['db_path'].stem.endswith('proc_noAvg'):
             # Zeroing
-            if cfg['in']['timerange_zeroing']:
+            if cfg['in']['time_range_zeroing']:
                 # individual or same interval for each table:
-                timerange_zeroing = cfg['in']['timerange_zeroing'].get(probe_number) if isinstance(
-                    cfg['in']['timerange_zeroing'], Mapping) else cfg['in']['timerange_zeroing']
+                time_range_zeroing = cfg['in']['time_range_zeroing'].get(probe_number) if isinstance(
+                    cfg['in']['time_range_zeroing'], Mapping) else cfg['in']['time_range_zeroing']
 
-                if timerange_zeroing:
-                    d_zeroing = d.loc[slice(*pd.to_datetime(timerange_zeroing, utc=True)), ('Ax', 'Ay', 'Az')]
+                if time_range_zeroing:
+                    d_zeroing = d.loc[slice(*pd.to_datetime(time_range_zeroing, utc=True)), ('Ax', 'Ay', 'Az')]
                     l.info('Zeroing data: average %d points in interval %s - %s', len(d_zeroing),
                            d_zeroing.divisions[0], d_zeroing.divisions[-1])
                     mean_countsG0 = np.atleast_2d(d_zeroing.mean().values.compute()).T
@@ -1403,7 +1414,7 @@ def main(new_arg=None, **kwargs):
 
         gc.collect()  # frees many memory. Helps to not crash
 
-
+    #
     # Combined data to hdf5
     if aggregate_period_timedelta:
         dfs_all = pd.concat(dfs_all_list, sort=True, axis=(0 if cfg['out']['b_all_to_one_col'] else 1))
@@ -1417,7 +1428,7 @@ def main(new_arg=None, **kwargs):
         if tables_wrote_now:
             cfg['out']['tables_have_wrote'].add(tables_wrote_now)
 
-
+    #
     # close temporary output store
     h5_close(cfg['out'])
     try:
