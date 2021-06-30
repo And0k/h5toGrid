@@ -87,7 +87,7 @@ def test_rep_in_file():
 def cfg():
     path_cruise = path_on_drive_d('/mnt/D/Work/_Python3/And0K/h5toGrid/test/csv2h5/data')  #
     get_cfg = partial(main, [
-        os.path.join(scripts_path, 'ini/csv_inclin_Kondrashov.ini'),
+        os.path.join(scripts_path, 'cfg/csv_inclin_Kondrashov.ini'),
         '--path', os.path.join(path_cruise, 'inclin_Kondrashov_180430.txt'),
         '--b_interact', 'False',
         '--return', '<gen_names_and_log>',
@@ -136,6 +136,6 @@ def test_csv2h5(cfg):
         df = d1.compute()  # [list(cfg_out['dtype'].names)].set_index(tim)
         assert isinstance(df, pd.DataFrame)
 
-    # csv2h5(['ini/csv_inclin_Kondrashov.ini',
+    # csv2h5(['cfg/csv_inclin_Kondrashov.ini',
 #        '--path', os_path.join(path_cruise, r'inclin_Kondrashov_180430.txt'),
 #        ])

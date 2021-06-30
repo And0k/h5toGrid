@@ -32,7 +32,7 @@ def st(current):
 
 if st(10):  # False: #
     # Save CTD_SST_48Mc Underway to DB
-    bin2h5(['ini/bin_Brown.ini',
+    bin2h5(['cfg/bin_Brown.ini',
             '--path', str(path_raw / '[0-9]*.bin'),  #'2019*[0-9].bin'
             # \CTD_NeilBrown_Mark3\_raw\20191013_170300.bin
             '--db_path', str(path_db_raw),
@@ -49,7 +49,7 @@ if st(20):  # False: #
     # Extract CTD runs (if files are not splitted on runs).
     # Note: Saves extended log needed by pattern used in next step with veuszPropagate
     # todo: be able provide log with (Lat,Lon) separately
-    CTD_calc(['ini/CTD_calc_Brown.ini',
+    CTD_calc(['cfg/CTD_calc_Brown.ini',
               '--db_path', str(path_db_raw),
               '--tables_list', f'{device}',
               '--out.db_path', str(path_db),
@@ -66,7 +66,7 @@ if st(20):  # False: #
 
 if st(30):  # False: #
     # Draw {device} data profiles
-    veuszPropagate.main(['ini/veuszPropagate.ini',
+    veuszPropagate.main(['cfg/veuszPropagate.ini',
                          '--path', str(path_db),
                          '--pattern_path', str(path_cruise / device / '~pattern~.vsz'),
                          '--table_log', f'/{device}/logRuns',
@@ -101,7 +101,7 @@ if start <= 40 and False:  #: # may not comment always because can not delete sa
 
 if st(50):  # False: #
     # Extract navigation data at time station starts to GPX waypoints
-    h5toGpx(['ini/h5toGpx_CTDs.ini',
+    h5toGpx(['cfg/h5toGpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'{device}',  # CTD_Idronaut_OS316',
              '--tables_log_list', 'logRuns',
@@ -114,7 +114,7 @@ if st(50):  # False: #
 go = True
 if start <= 60 and False:
     # Extract navigation data at runs/starts to GPX tracks. Useful to indicate where no nav?
-    h5toGpx(['ini/h5toGpx_CTDs.ini',
+    h5toGpx(['cfg/h5toGpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'{device}',
              '--tables_log_list', 'logRuns',
@@ -134,7 +134,7 @@ if st(70):  # False: #
 if st(80):  # False: #
     # Gridding
     # Note: Prepare veusz "zabor" pattern before
-    grid2d_vsz(['ini/grid2d_vsz.ini', '--db_path', str(path_db),
+    grid2d_vsz(['cfg/grid2d_vsz.ini', '--db_path', str(path_db),
                 '--table_sections', r'navigation/sectionsCTD_routes',
                 '--subdir', 'CTD-sections',
                 '--begin_from_section_int', '1',  # values <= 1 means no skip
@@ -180,7 +180,7 @@ if st(200):  # False: #
     # Save {device} data to DB
     # Save {device} data to DB
     csv2h5([
-        'ini/csv_CTD_Idronaut.ini',
+        'cfg/csv_CTD_Idronaut.ini',
         '--path', str(path_cruise / device / '_raw' / '19*.txt'),
         '--db_path', str(path_db),
         '--table', f'{device}',
@@ -209,7 +209,7 @@ if st(220):  # False: #
 
 if st(230):  # False: #
     # Draw {device} data profiles
-    veuszPropagate.main(['ini/veuszPropagate.ini',
+    veuszPropagate.main(['cfg/veuszPropagate.ini',
                          '--path', str(path_db),
                          '--pattern_path', str(path_cruise / device / '~pattern~.vsz'),
                          '--table_log', f'/{device}/logRuns',
@@ -224,7 +224,7 @@ if st(230):  # False: #
 
 if st(250):  # False: #
     # Extract navigation data at time station starts to GPX waypoints
-    h5toGpx(['ini/h5toGpx_CTDs.ini',
+    h5toGpx(['cfg/h5toGpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'{device_prev}, {device}',
              '--tables_log_list', 'logRuns',
@@ -256,7 +256,7 @@ if st(300):  # False: #
 # go = True
 if st(310):  # False: #
     # Export treckers tracks to GPX tracks
-    h5toGpx(['ini/h5toGpx_nav_all.ini',
+    h5toGpx(['cfg/h5toGpx_nav_all.ini',
              '--db_path', str(path_db_device.with_name(
             path_db_device.stem + '_not_sorted.h5')),
              '--tables_list', f'{device}.*',

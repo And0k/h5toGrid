@@ -38,7 +38,7 @@ if st(1, 'Save gpx navigation to DB'):
             ])
 
 if st(5, "Save Supervisor's navigation to DB"):
-    csv2h5(['ini/csv_nav_supervisor.ini',
+    csv2h5(['cfg/csv_nav_supervisor.ini',
             '--db_path', str(path_db),
             '--path', str(path_cruise / r'navigation\bridge\20????.txt'),
             '--table', 'navigation',  # skip waypoints
@@ -53,7 +53,7 @@ if st(6, "Save bathymetry to DB from HYPACK's export of SES2000 echosounder data
     # (saved gpx data is sparse and coinsedence of time samples is seldom, but need to check and delete duplicates)
 
     arg = [
-        'ini/csv_nav_HYPACK_SES2000.ini',
+        'cfg/csv_nav_HYPACK_SES2000.ini',
         '--db_path', str(path_db),
         '--b_skip_if_up_to_date', '0',          # needed to keep overlapped data from other data sources
         '--b_interact', '0',
@@ -78,7 +78,7 @@ device_veusz_prefix = 'i3_'
 
 if st(10, f'Save {device} data to DB'):  # False: #
     csv2h5([
-        'ini/csv_CTD_Idronaut.ini',
+        'cfg/csv_CTD_Idronaut.ini',
         '--path', str(path_cruise / device / '_raw_txt' / '20*[0-9].txt'),
         '--db_path', str(path_db),
         '--table', f'{device}',
@@ -103,7 +103,7 @@ if st(10, f'Save {device} data to DB'):  # False: #
 if st(20, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params'):  # False: # (if files are not splitted on runs).
     # Note: extended logRuns fields needed in Veusz in next step
     # todo: be able provide log with (Lat,Lon) separately, improve start message if calc runs, check interpolation
-    st.go = () != CTD_calc(['ini/CTD_calc-find_runs.ini',
+    st.go = () != CTD_calc(['cfg/CTD_calc-find_runs.ini',
               '--db_path', str(path_db),
               '--tables_list', f'{device}',
               '--min_samples', '400',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
@@ -160,7 +160,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
         # stdout=subprocess.PIPE) #
 
 
-    veuszPropagate.main(['ini/veuszPropagate.ini',
+    veuszPropagate.main(['cfg/veuszPropagate.ini',
                          '--path', str(cfg_in['pattern_path'].with_name('??????_????-????.vsz')),  #path_db),
                          '--pattern_path', f"{cfg_in['pattern_path']}_",  # here used to auto get export dir only. must not be not existed file path
                          #'--table_log', f'/{device}/logRuns',
@@ -196,7 +196,7 @@ if False: #st(40)  # may not comment always because can not delete same time mor
 
 if st(50, 'Extract navigation data at time station starts to GPX waypoints'):  # False: #
     h5toGpx([
-    'ini/h5toGpx_CTDs.ini',
+    'cfg/h5toGpx_CTDs.ini',
     '--db_path', str(path_db),
     '--tables_list', f'{device}',
     '--tables_log_list', 'logRuns',
@@ -210,7 +210,7 @@ if st(50, 'Extract navigation data at time station starts to GPX waypoints'):  #
 if False: # st(60, 'Extract navigation data at runs/starts to GPX tracks.'):
     # Useful to indicate where no nav?
     h5toGpx([
-        'ini/h5toGpx_CTDs.ini',
+        'cfg/h5toGpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'{device}',
              '--tables_log_list', 'logRuns',
@@ -231,7 +231,7 @@ if st(70, 'Save waypoints/routes from _manually_ prepared gpx to hdf5'):  # Fals
 
 if st(80, 'Gridding'):  # and False: #
     # Note: Prepare veusz "zabor" pattern before
-    grid2d_vsz(['ini/grid2d_vsz.ini', '--db_path', str(path_db),
+    grid2d_vsz(['cfg/grid2d_vsz.ini', '--db_path', str(path_db),
                 '--table_sections', r'navigation/sectionsCTD_routes',
                 '--subdir', 'CTD-sections',
                 '--begin_from_section_int', '1', #'1',  # values <= 1 means no skip
@@ -271,7 +271,7 @@ if st(110, 'Export csv with some new calculated paremeters'):  # False: #
 
 if st(120, 'Meteo'):
     csv2h5([
-        'ini/csv_meteo.ini', '--path',  # to_pandas_hdf5/
+        'cfg/csv_meteo.ini', '--path',  # to_pandas_hdf5/
         str(path_cruise / r"meteo\ship's_meteo_st_source\*.mxt"), '--header',
         'date(text),Time(text),t_air,Vabs_m__s,Vdir,dew_point,Patm,humidity,t_w,precipitation',
         '--coldate_integer', '0', '--coltime_integer', '1',
@@ -285,7 +285,7 @@ if st(120, 'Meteo'):
 
 if st(130, 'extract all navigation tracks'):
     # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5toGpx)
-    h5toGpx(['ini/h5toGpx_nav_all.ini',
+    h5toGpx(['cfg/h5toGpx_nav_all.ini',
              '--db_path', str(path_db),
              '--tables_list', 'navigation',
              '--simplify_tracks_error_m_float', '10',

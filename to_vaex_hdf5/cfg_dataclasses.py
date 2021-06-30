@@ -289,8 +289,9 @@ def main_init(cfg, cs_store_name, __file__=None, ):
     #     cfg = OmegaConf.merge(cfg, override_conf)
 
     print("Working directory : {}".format(os.getcwd()))
-    # todo: print only if config changed
-    print(OmegaConf.to_yaml(cfg))
+
+    # print not empty / not False values # todo: print only if config changed instead
+    print(OmegaConf.to_yaml({k0: {k1: v1 for k1, v1 in v0.items() if v1} for k0, v0 in cfg.items()}))
 
     # cfg = cfg_from_args(argparser_files(), **kwargs)
     if not cfg.program.return_:

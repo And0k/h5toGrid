@@ -142,10 +142,10 @@ def main(new_arg=None, **kwargs):
             return val
         return default_val
 
-    for lim in ('min_date', 'max_date'):
+    for lim_str, lim_default in (('min_date', np.datetime64('2000-01-01', 'ns')), ('max_date', np.datetime64('now', 'ns'))):
         # convert keys to int because they must be comparable to probes_int_list (for command line arguments keys are allways strings, in yaml you can set string or int)
-        _ = {int(k): v for k, v in cfg['filter'][lim].items()}
-        cfg['filter'][lim] = defaultdict(constant_factory(_.get(0)), _)
+        _ = {int(k): v for k, v in cfg['filter'][lim_str].items()}
+        cfg['filter'][lim_str] = defaultdict(constant_factory(_.get(0, lim_default)), _)
 
 
     l = init_logging(logging, None, None, 'INFO')
@@ -297,7 +297,7 @@ def main(new_arg=None, **kwargs):
                 # tbl = re.sub('^((?P<i>inkl)|w)_0', lambda m: 'incl' if m.group('i') else 'w',  # correct name
                 #              re.sub('^[\d_]*|\*', '', file_in.stem).lower()),  # remove date-prefix if in name
                 csv2h5(
-                    [str(Path(__file__).parent / 'ini' / f"csv_{'inclin' if probe_is_incl else 'wavegage'}_{p_type[cfg['in']['probes_prefix']]['format']}.ini"),
+                    [str(Path(__file__).parent / 'cfg' / f"csv_{'inclin' if probe_is_incl else 'wavegage'}_{p_type[cfg['in']['probes_prefix']]['format']}.ini"),
                     '--path', str(file_in),
                     '--blocksize_int', '50_000_000',  # 50Mbt
                     '--table', tbl,
@@ -315,8 +315,8 @@ def main(new_arg=None, **kwargs):
                    ),
                     **{
                     'filter': {
-                         'min_date': cfg['filter']['min_date'].get(probe, np.datetime64(0, 'ns')),
-                         'max_date': cfg['filter']['max_date'].get(probe, np.datetime64('now', 'ns')),  # simple 'now' works in sinchronious mode
+                         'min_date': cfg['filter']['min_date'][probe],
+                         'max_date': cfg['filter']['max_date'][probe],  # simple 'now' works in sinchronious mode
                         }
                     }
                 )
@@ -628,7 +628,7 @@ def main(new_arg=None, **kwargs):
                 path_vsz_all.append(path_vsz)
 
         os_chdir(cfg['in']['pattern_path'].parent)
-        veuszPropagate.main(['ini/veuszPropagate.ini',
+        veuszPropagate.main(['cfg/veuszPropagate.ini',
                              '--path', str(cfg['in']['pattern_path'].with_name('??????_????_*.vsz')),  # db_path),
                              '--pattern_path', f"{cfg['in']['pattern_path']}_",
                              # here used to auto get export dir only. may not be _not existed file path_ if ['out']['paths'] is provided
@@ -650,7 +650,7 @@ def main(new_arg=None, **kwargs):
         pattern_parent = db_path.parent  # r'vsz_5min\191126_0000_5m_w02.vsz''
         pattern_path = str(pattern_parent / r'processed_h5,vsz' / '??????incl_proc#[1-9][0-9].vsz')  # [0-2,6-9]
         veuszPropagate.main([
-            'ini/veuszPropagate.ini',
+            'cfg/veuszPropagate.ini',
              '--path', pattern_path,
              '--pattern_path', pattern_path,
              # '--export_pages_int_list', '1', #'--b_images_only', 'True'

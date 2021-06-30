@@ -878,7 +878,7 @@ def h5add_log(cfg_out: Dict[str, Any], df, log: Union[pd.DataFrame, Mapping, Non
      - logfield_fileName_len: optional, fixed length of string format of 'fileName' hdf5 column
     :param df:
     :param log: Mapping records or dataframe. updates 'Date0' and 'DateEnd' if no 'Date0' or it is {} or None
-    :param tim:
+    :param tim: used to get 'Date0' and 'DateEnd' if they are none or not cfg_out.get('b_log_ready')
     :param log_dt_from_utc:
     :return:
     """
@@ -905,12 +905,14 @@ def h5add_log(cfg_out: Dict[str, Any], df, log: Union[pd.DataFrame, Mapping, Non
 
     set_field_if_no(cfg_out, 'logfield_fileName_len', 255)
 
-    if (log.get('Date0') is None) or not cfg_out.get('b_log_ready'):
+    if (log.get('DateEnd') is None) and not cfg_out.get('b_log_ready'):
         # or (table_log.split('/')[-1].startswith('logFiles')):
         log['Date0'], log['DateEnd'] = timzone_view(
             (tim if tim is not None else
-             df.index.compute() if isinstance(df, dd.DataFrame) else
-             df.index)[[0, -1]], log_dt_from_utc)
+                df.index.compute() if isinstance(df, dd.DataFrame) else
+                    df.index)[[0, -1]],
+             log_dt_from_utc
+            )
     # dfLog = pd.DataFrame.from_dict(log, np.dtype(np.unicode_, cfg_out['logfield_fileName_len']))
     if not isinstance(log, pd.DataFrame):
         try:

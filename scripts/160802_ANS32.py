@@ -38,12 +38,12 @@ decimate_rate = 100
 device_tbl = f'{device}_d{decimate_rate}'
 if go:  # True: #
     csv2h5([
-        'ini/csv_Baklan.ini', '--db_path', str(path_db),
+        'cfg/csv_Baklan.ini', '--db_path', str(path_db),
         '--path', str(path_cruise / device / '20*p1.txt'),
         '--delimiter_chars', '\\t',
         '--table', device_tbl])
 if go:  # True: #
-    h5toGpx([f'ini/h5toGpx_{device}.ini', '--db_path', str(path_db),
+    h5toGpx([f'cfg/h5toGpx_{device}.ini', '--db_path', str(path_db),
              '--select_from_tablelog_ranges_index', '0'])
 # also to get gpx is possible to execute ../scripts/filetime_to_gpx.py without csv2h5
 
@@ -61,7 +61,7 @@ go = False
 # extract all navigation tracks
 if False:  # True: #
     # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5toGpx)
-    h5toGpx(['ini/h5toGpx_nav_all.ini',
+    h5toGpx(['cfg/h5toGpx_nav_all.ini',
              '--path_cruise', str(path_cruise),
              '--tables_list', 'navigation',
              '--simplify_tracks_error_m_float', '10',

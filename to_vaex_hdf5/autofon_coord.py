@@ -4,7 +4,7 @@
   Author:  Andrey Korzh <ao.korzh@gmail.com>
   Purpose: Load coordinates from autofon (http://www.autofon.ru/autofon/item/seplus) GPS trackers to GPX files and HDF5 pandas store
   Created: 08.04.2021
-  Modified: 09.04.2021
+  Modified: 29.06.2021
 """
 import sys
 import logging
@@ -25,8 +25,8 @@ from tabulate import tabulate
 from gpxpy.gpx import GPX
 # import pyproj   # from geopy import Point, distance
 from h5toGpx import save_to_gpx  # gpx_track_create
-# from to_pandas_hdf5.h5_dask_pandas import h5_append, filter_global_minmax, filter_local
-from to_pandas_hdf5.h5toh5 import unzip_if_need, df_log_append_fun
+from to_pandas_hdf5.h5_dask_pandas import h5_append  #, filter_global_minmax, filter_local
+from to_pandas_hdf5.h5toh5 import unzip_if_need, df_log_append_fun, h5remove_tables
 
 import to_vaex_hdf5.cfg_dataclasses
 from utils2init import LoggingStyleAdapter, FakeContextIfOpen, set_field_if_no, Ex_nothing_done, call_with_valid_kwargs, ExitStatus, GetMutex
@@ -35,7 +35,7 @@ from utils2init import LoggingStyleAdapter, FakeContextIfOpen, set_field_if_no, 
 from to_pandas_hdf5.csv2h5 import h5_dispenser_and_names_gen
 from to_pandas_hdf5.h5toh5 import h5move_tables, h5index_sort, h5init, h5_rem_last_rows
 from to_pandas_hdf5.gpx2h5 import df_rename_cols, df_filter_and_save_to_h5
-from gps_tracker.mail_parse import spot_tracker_data_from_mbox
+from gps_tracker.mail_parse import spot_tracker_data_from_mbox, spot_from_gmail
 # from inclinometer.incl_h5clc import dekart2polar_df_v_en
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
@@ -97,6 +97,7 @@ def save2gpx(nav_df: pd.DataFrame,
     :param path: gpx path
     :param process: fields:
         anchor_coord: List[float], [Lat, Lon] degrees
+        anchor_coord_dict: Dict[time_str, List[float]], {time_str: [Lat, Lon]} degrees
         anchor_depth: float, m
     :param gpx: gpxpy.gpx
     :param dt_from_utc:
@@ -108,15 +109,23 @@ def save2gpx(nav_df: pd.DataFrame,
         None,
         gpx_obj_namef=track_name, cfg_proc=process, gpx=gpx)
 
+    if any(process['anchor_coord_dict']):
+        key_last = list(process['anchor_coord_dict'].keys())[-1]
+        lat_lon = process['anchor_coord_dict'][key_last]
+        tim = [pd.Timestamp(key_last, tz='utc')]
+    else:
+        lat_lon = process['anchor_coord']
+        tim = nav_df.index[[0]]
+
     return save_to_gpx(
         pd.DataFrame(
             {
-                'Lat': process['anchor_coord'][0],
-                'Lon': process['anchor_coord'][1],
+                'Lat': lat_lon[0],
+                'Lon': lat_lon[1],
                 'DepEcho': process['anchor_depth'],
                 'itbl': 0
              },
-            index=nav_df.index[[0]]
+            index=tim
                      ),
         path.with_name(f"{nav_df.index[0]:%y%m%d_%H%M}{track_name}"),
         waypoint_symbf='Anchor',
@@ -359,29 +368,27 @@ def loading(
     :return: pandas DataFrame
     """
     mid = tables2mid[table]
-
+    device_type, device_number = re.match(r'.*(sp|tr)#?(\d*).*', table).groups()
     if path_raw_local:
-        pattern_type, pattern_number = re.match(r'.*(sp|tr)#?(\d*).*', table).groups()
-        if pattern_type=='sp':  # satellite based tracker
+        if device_type =='sp':  # satellite based tracker
             if isinstance(path_raw_local, str):
                 path_raw_local = Path(path_raw_local)
             if path_raw_local.suffix != '.xlsx':
                 # Load list_of_lists from mailbox
                 time_lat_lon = spot_tracker_data_from_mbox(path_raw_local,
-                                subject_end=f': {pattern_number}',
+                                subject_end=f': {device_number}',
                                 time_start=time_interval[0])
                 nav_df = pd.DataFrame(time_lat_lon,
                                       columns=['Time', 'Lat', 'Lon']).astype(
                                         {'Lat': np.float32, 'Lon': np.float32}
                                         )
-                nav_df = nav_df
                 nav_df['Time'] -= dt_from_utc
                 nav_df.set_index('Time', inplace=True)  # pd.DatetimeIndex(nav_df['Time']
                 nav_df.sort_index(inplace=True)
                 nav_df = nav_df.tz_localize('utc', copy=False)
             else:
                 xls = pd.read_excel(path_raw_local,
-                                    sheet_name=f'{pattern_number} Positions & Events',
+                                    sheet_name=f'{device_number} Positions & Events',
                                     usecols='B,D',
                                     skiprows=4,
                                     index_col=0)
@@ -402,7 +409,20 @@ def loading(
 
 
         nav_df = nav_df.truncate(*time_interval, copy=False)  # [k] - dt_from_utc for k in [0,1] .tz_localize('utc')
-        tim_last_coord = pd.Timestamp.now(tz='UTC')
+        tim_last_coord = pd.Timestamp.now(tz='utc')
+    elif device_type == 'sp':  # satellite based tracker
+        # download and parse from gmail
+        time_lat_lon = spot_from_gmail(
+            device_number=device_number,
+            time_start=time_interval[0] - dt_from_utc)
+        nav_df = pd.DataFrame(time_lat_lon,
+                              columns=['Time', 'Lat', 'Lon']).astype(
+            {'Lat': np.float32, 'Lon': np.float32}
+            )
+        nav_df['Time'] -= dt_from_utc
+        nav_df.set_index('Time', inplace=True)  # pd.DatetimeIndex(nav_df['Time']
+        nav_df.sort_index(inplace=True)
+        nav_df = nav_df.tz_localize('utc', copy=False)
     else:
         url = 'http://176.9.114.139:9002/jsonapi'
         key_pwd = 'key=d7f1c7a5e53f48a5b1cb0cf2247d93b6&pwd=ao.korzh@yandex.ru'
@@ -538,11 +558,13 @@ class ConfigProcessAutofon:
     period_tracks: Optional[str] = None
     period_segments: Optional[str] = '1D'
     anchor_coord: List[float] = field(default_factory=lambda: [44.56905, 37.97308])
+    anchor_coord_dict: Dict[Any, Any] = field(default_factory=dict)  # {time: [Lat, Lon]}
     anchor_depth: float = 0
     # detect absent data to try download again. Default is '10min' for gprs and '20min' for satellite based tracker:
     dt_max_hole: Optional[str] = None
     # detect absent data only in this interval back from last data. Default is '1D' for gprs and '0D' for satellite based tracker:
     dt_max_wait: Optional[str] = None
+    b_reprocess: bool = False  # reprocess all data (previously calculated dx, dy...) from Lat, Lon, DateTimeIndex
 
 
 @dataclass
@@ -602,7 +624,8 @@ def proc_and_h5save(df, tbl, cfg_in, out, process, bin: Optional[str] = None, ro
     Calculates displacement, bin average and saves to HDF5 and GPX
     For averaged data tables if Course column exist then from Course and dr calculates averaged 'speed_x' and 'speed_y'
      with dropping 'Course'.
-    :param df: data, will be modified
+    :param df: DataFrame with datetime index and columns:
+        Lat, Lon: coordinates
     :param tbl: table name where to save result in Pandas HDF5 store
     Configuration dicts:
     :param cfg_in:
@@ -657,9 +680,21 @@ def proc_and_h5save(df, tbl, cfg_in, out, process, bin: Optional[str] = None, ro
 
     df.dropna(subset=['Lat', 'Lon'], inplace=True)  # *.gpx will be not compatible to GPX if it will have NaN values
 
+    if process['anchor_coord_dict']:
+        anchor_lat_lon = np.zeros((2, len(df)), np.float32)
+        if any(process['anchor_coord']):
+            anchor_lat_lon += np.float32(process['anchor_coord'])[:, None]
+        anchor_times = pd.DatetimeIndex(process['anchor_coord_dict'].keys(), tz='utc')
+        i_starts = np.searchsorted(df.index, anchor_times).tolist()
+        for i_st, i_en, lat_lon in zip(i_starts, i_starts[1:] + [len(df)], process['anchor_coord_dict'].values()):
+            anchor_lat_lon[:, i_st:i_en] = np.float32(lat_lon)[:, None]
+        anchor_coord = anchor_lat_lon[::-1, :]
+    else:
+        anchor_coord = process['anchor_coord'][::-1] if any(process['anchor_coord']) else 0
+
     # Calculate parameters
     df.loc[:, ['dx', 'dy', 'dr', 'Vdir']] = dx_dy_dist_bearing(
-        *process['anchor_coord'][::-1],
+        *anchor_coord,
         *df[['Lon', 'Lat']].values.T
         )
     # course, azimuth2, distance = geod.inv(  # compute forward and back azimuths, plus distance
@@ -955,7 +990,6 @@ def main(config: ConfigType) -> None:
     if cfg['process']['dt_max_wait'] is None:
         cfg['process']['dt_max_wait'] = '0D' if b_sp else '1D'
 
-    dt_max_wait: Optional[str] = '1D'
     # we will download data that overlaps existed data so need delete to not deal with duplicates:
     out['b_skip_if_up_to_date'] = True
     out['field_to_del_older_records'] = 'index'  # new data priority (based on time only)
@@ -998,6 +1032,34 @@ def main(config: ConfigType) -> None:
                                                )
         except (Ex_nothing_done, TimeoutError):
             sys.exit(ExitStatus.failure)
+
+        if cfg['process']['b_reprocess']:
+            # load previous source data (only columns as in df_loaded) and append it with new df_loaded to reprocess all
+            df = None
+            df_log = None
+            select_where = f"index < Timestamp('{df_loaded.index[-1]}')"
+            try:
+                df = out['db'].select(tbl, where=select_where)
+                df_log = out['db'].select(tbl_log, where=select_where)
+            except KeyError:  # 'No object named tr2 in the file': Was table occasionally deleted?
+                lf.info('Nothing found to reprocess in temp db')
+            if df is None or df_log is None or df_log.empty:
+                try:
+                    with pd.HDFStore(out['db_path'], mode='r') as store_in:
+                        df = store_in.select(tbl, where=select_where)
+                        df_log = store_in.select(tbl_log, where=select_where)
+                except OSError: # ... .h5` does not exist
+                    lf.info('Nothing to reprocess in db. Not need load/remove')
+            if df is not None:  # selected df.index < df_loaded.index[-1]
+                df_loaded = df[df_loaded.columns].append(df_loaded)
+                h5remove_tables(out['db'], [tbl], [])
+                if df_log.empty:  # empty log is not normal but skip if so
+                    lf.warning('log is empty')
+                else:
+                    # with ReplaceTableKeepingChilds([df], tbl, cfg, df_log_append_fun):
+                    #     pass
+                    df_log_append_fun(df_log, tbl_log, {**out, **{'nfiles': None}})
+                    #h5_append({'table': tbl, **out}, [], df_log, log_dt_from_utc=cfg_in['dt_from_utc'])
 
         proc_and_h5save(df_loaded, tbl, cfg_in, out, cfg['process'])  # Write to temporary store
 

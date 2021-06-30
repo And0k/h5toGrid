@@ -1,0 +1,34 @@
+    
+in:
+  path_cruise: 'd:\WorkData\BalticSea\_Pregolya,Lagoon\210519-inclin+RDCP'
+  # 200919-inclinometer
+  # raw_subdir: 'Преголя, ноябрь-декабрь 2020.rar'
+  #Balt_spit.zip
+  probes:     [10]
+  probes_prefix: incl
+  raw_pattern: "*{prefix:}{number:0>3}*.[tT][xX][tT]"
+
+#  time_range_zeroing_dict:
+#    14: [2020-07-10T21:31:00, 2020-07-10T21:39:00]
+
+  db_coefs: d:\WorkData\~configuration~\inclinometr\190710incl.h5
+
+
+#filter:
+#
+#
+#  min_date: { 0: 2021-05-19T10:10:00,
+#            }
+#  max_date: { 0: 2021-05-19T16:36:00,
+#            }
+
+
+
+out:
+  # db_name: out_send.h5  # default: "incl.h5"
+  aggregate_period_s: [Null, 2, 300, 600, 7200]  #,   [300]  #[2, 300, 600, 7200]  # Null, Null means no average
+
+
+program:
+  step_start: 2
+  step_end: 2

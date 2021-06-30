@@ -1077,14 +1077,14 @@ def h5_append_to(dfs: Union[pd.DataFrame, dd.DataFrame],
 
 def gen_subconfigs(
         cfg_out: MutableMapping[str, Any],
-        db_path=None,
-        split_period=None,
         db_paths=None,
         tables=None,
         dates_min=None,
         dates_max=None,
         fun_gen=h5_names_gen,
-        **kwargs) -> Iterator[Tuple[dd.DataFrame, np.array]]:
+        split_period=None,
+        # db_path=None,
+        **cfg_in_common) -> Iterator[Tuple[dd.DataFrame, np.array]]:
     """
     Wraps h5_dispenser_and_names_gen() to deal with many db_paths, tables, dates_min and dates_max
     :param cfg_out: dict with fields:
@@ -1094,25 +1094,27 @@ def gen_subconfigs(
     :param dates_min,
     :param dates_max
 
-    cfg_in fields:
-    :param: db_path: Union[str, Path], str/path of real path or multiple paths joined by '|' to be splitted in list cfg['db_paths'],
+    other fields originated from cfg['in']:
+    :param: cfg_in_common: single valued fields which will be replaced by earlier described fields:
+       - db_path: Union[str, Path], str/path of real path or multiple paths joined by '|' to be splitted in list cfg['db_paths'],
+       - table:
+       - min_date:
+       - max_date:
     :param: split_period, optional - generate dataframes in parts with this period
     :param fun_gen:
+
     :return: dict with plural named keys having list values
     """
 
-    cfg_in = locals()
+    # cfg_in = locals()
     cfg_many = {}
-    names_many_to_one = {
-        'db_paths': 'db_path',
-        'tables': 'table',
-        'dates_min': 'min_date',
-        'dates_max': 'max_date'}
-    for k, v in names_many_to_one.items():
+    for k, v in [  # single_name_to_many_vals
+            ('db_path', db_paths),
+            ('table', tables),
+            ('min_date', dates_min),
+            ('max_date', dates_max)]:
         try:
-            _ = cfg_in.pop(k)
-            if _:
-                cfg_many[v] = _
+            cfg_many[k] = v or cfg_in_common[k]
         except KeyError:
             continue
 
@@ -1152,7 +1154,7 @@ def gen_subconfigs(
 
     n = 1
     for d_source in gen_sources_dict(cfg_many):
-        cfg_in_copy = cfg_in.copy()  # exclude the possibility of next cycles be depended on changes in previous
+        cfg_in_copy = cfg_in_common.copy()  # exclude the possibility of next cycles be depended on changes in previous
         cfg_in_copy.update(d_source)
         cfg_in_copy['tables'] = [cfg_in_copy['table']]            # for h5_dispenser_and_names_gen()
         t_prev_interval_start, t_intervals_start = intervals_from_period(

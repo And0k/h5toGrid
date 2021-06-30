@@ -22,7 +22,7 @@ start = 13
 if st(1):  # False: #
     # Save CTD_SST_48Mc Underway to DB
     csv2h5([
-        'ini/csv_CTD_Sea&Sun.ini',
+        'cfg/csv_CTD_Sea&Sun.ini',
         '--path', os_path.join(path_cruise, 'CTD_SST_48Mc#1253\Time_in_TOB=UTC\18*[0-9].TOB'),
         '--dt_from_utc_hours', '0',
         '--header', 'Number,Date(text),Time(text),Pres,Temp,Sal,O2,O2ppm,SIGMA,Cond,Vbatt,SVel',
@@ -55,7 +55,7 @@ if st(5):  # False: #
 
 if st(7):  # False: #
     # Draw SST 48M data profiles
-    veuszPropagate.main(['ini/veuszPropagate.ini',
+    veuszPropagate.main(['cfg/veuszPropagate.ini',
                          '--db_path', path_db,
                          '--pattern_path',
                          os_path.join(path_cruise, r'CTD_SST_48Mc#1253\profiles\181005_1810-1813.vsz'),
@@ -90,7 +90,7 @@ if st(8):  #: # may not comment always because can not delete same time more tha
 
 if st(9):  # False: #
     # Extract navigation data at time station starts to GPX waypoints
-    h5toGpx(['ini/h5toGpx_CTDs.ini',
+    h5toGpx(['cfg/h5toGpx_CTDs.ini',
              '--db_path', path_db,
              '--tables_list', 'CTD_SST_48Mc',
              '--tables_log_list', 'logRuns',
@@ -102,7 +102,7 @@ if st(9):  # False: #
 
 if st(11):
     # Extract navigation data at runs/starts to GPX tracks
-    h5toGpx(['ini/h5toGpx_CTDs.ini',
+    h5toGpx(['cfg/h5toGpx_CTDs.ini',
              '--db_path', path_db,
              '--tables_list', 'CTD_SST_48Mc',
              '--tables_log_list', 'logRuns',
@@ -120,7 +120,7 @@ if st(13):  # False: #
 go = True
 if st(15):  # False: #
     # Gridding
-    grid2d_vsz(['ini/grid2d_vsz.ini', '--db_path', path_db,
+    grid2d_vsz(['cfg/grid2d_vsz.ini', '--db_path', path_db,
                 '--table_sections', r'navigation/sectionsCTD_routes',
                 '--subdir', 'CTD-sections',
                 '--begin_from_section_int', '1',
@@ -145,7 +145,7 @@ if st(10):  # False: #
 # go = True
 if st(11):  # False: #
     # Export trackers tracks to GPX tracks
-    h5toGpx(['ini/h5toGpx_nav_all.ini',
+    h5toGpx(['cfg/h5toGpx_nav_all.ini',
              '--db_path', path_db,
              '--tables_list', 'tracker{}',
              '--select_from_tablelog_ranges_index', None,  # Export tracks
@@ -156,7 +156,7 @@ if st(11):  # False: #
 # extract all navigation tracks
 if False:  # True: #
     # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5toGpx)
-    h5toGpx(['ini/h5toGpx_nav_all.ini',
+    h5toGpx(['cfg/h5toGpx_nav_all.ini',
              '--path_cruise', path_cruise,
              '--tables_list', 'navigation',
              '--simplify_tracks_error_m_float', '10',

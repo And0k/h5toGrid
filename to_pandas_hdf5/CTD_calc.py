@@ -714,7 +714,7 @@ def main(new_arg=None):
         # cfg['out']['tables_log'] = None  # for _runs cfg will be redefined (this only None case that have sense?)
 
     h5init(cfg['in'], cfg['out'])
-    # store, dfLogOld = h5temp_open(**cfg['out'])
+    # store, df_log_old = h5temp_open(**cfg['out'])
 
     cfg_fileN = os_path.splitext(cfg['in']['cfgFile'])[0]
     out_tables_log = cfg['out'].get('tables_log')
@@ -762,10 +762,10 @@ def main(new_arg=None):
     qstr_trange_pattern = "index>=Timestamp('{}') & index<=Timestamp('{}')"
     iSt = 1
 
-    dfLogOld, cfg['out']['db'], cfg['out']['b_skip_if_up_to_date'] = h5temp_open(**cfg['out'])
+    df_log_old, cfg['out']['db'], cfg['out']['b_skip_if_up_to_date'] = h5temp_open(**cfg['out'])
     b_out_db_is_different = cfg['out']['db'] is not None and cfg['out']['db_path_temp'] != cfg['in']['db_path']
     # Cycle for each table, for each row in log:
-    # for path_csv in gen_names_and_log(cfg['out'], dfLogOld):
+    # for path_csv in gen_names_and_log(cfg['out'], df_log_old):
     with FakeContextIfOpen(lambda f: pd.HDFStore(f, mode='r'),
                            cfg['in']['db_path'],
                            None if b_out_db_is_different else cfg['out']['db']
@@ -797,7 +797,7 @@ def main(new_arg=None):
                     cfg['in']['fileChangeTime'] = cfg['out']['log']['fileChangeTime']
 
                     if cfg['in']['b_skip_if_up_to_date']:
-                        b_stored_newer, b_stored_dups = h5del_obsolete(cfg['out'], cfg['out']['log'], dfLogOld)
+                        b_stored_newer, b_stored_dups = h5del_obsolete(cfg['out'], cfg['out']['log'], df_log_old)
                         if b_stored_newer:
                             continue
                         if b_stored_dups:

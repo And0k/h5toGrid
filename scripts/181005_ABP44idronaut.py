@@ -22,7 +22,7 @@ start = 1
 go = True
 if st(1):  # False: #
     # Draw CTD_Idronaut#493 data profiles
-    veuszPropagate.main(['ini/veuszPropagate.ini',
+    veuszPropagate.main(['cfg/veuszPropagate.ini',
                          '--path', os_path.join(path_cruise, r'CTD_Idronaut#493\18*[0-9].txt'),
                          '--pattern_path', os_path.join(path_cruise, r'CTD_Idronaut#493\181009_0154.vsz'),
                          '--before_next', 'restore_config',
@@ -39,7 +39,7 @@ go = False
 if st(2):  # False: #
     # Save CTD_Idronaut#493 to DB
     csv2h5([
-        'ini/csv_CTD_Idronaut.ini',
+        'cfg/csv_CTD_Idronaut.ini',
         '--path', os_path.join(path_cruise, r'CTD_Idronaut#493\18*[0-9].txt'),
         '--dt_from_utc_hours', '2',
         '--header', 'Number,Date(text),Time(text),Pres,Temp,Sal,O2,O2ppm,SIGMA,Cond,Vbatt',
@@ -60,7 +60,7 @@ if st(3):  # False: #
 
 if st(4):  # False: #
     # Extract navigation data at time station starts to GPX waypoints
-    h5toGpx(['ini/h5toGpx_CTDs.ini',
+    h5toGpx(['cfg/h5toGpx_CTDs.ini',
              '--db_path', path_db,
              '--tables_list', 'CTD_Idronaut#493',
              '--select_from_tablelog_ranges_index', '0'
@@ -73,7 +73,7 @@ if st(5):  # False: #
 
 if st(6):  # False: #
     # Gridding
-    grid2d_vsz(['ini/grid2d_vsz.ini', '--db_path', path_db,
+    grid2d_vsz(['cfg/grid2d_vsz.ini', '--db_path', path_db,
                 '--table_sections', r'navigation/sectionsCTD_routes',
                 '--subdir', 'CTD-sections',
                 '--data_columns_list', 'Temp, Sal, SigmaTh, O2, O2ppm'  # 'N^2'
@@ -93,7 +93,7 @@ if st(10):  # False: #
 # go = True
 if st(11):  # False: #
     # Export treckers tracks to GPX tracks
-    h5toGpx(['ini/h5toGpx_nav_all.ini',
+    h5toGpx(['cfg/h5toGpx_nav_all.ini',
              '--db_path', path_db,
              '--tables_list', 'tracker{}',
              '--select_from_tablelog_ranges_index', None,  # Export tracks
@@ -104,7 +104,7 @@ if st(11):  # False: #
 # extract all navigation tracks
 if False:  # True: #
     # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5toGpx)
-    h5toGpx(['ini/h5toGpx_nav_all.ini',
+    h5toGpx(['cfg/h5toGpx_nav_all.ini',
              '--path_cruise', path_cruise,
              '--tables_list', 'navigation',
              '--simplify_tracks_error_m_float', '10',

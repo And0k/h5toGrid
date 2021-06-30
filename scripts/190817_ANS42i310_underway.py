@@ -41,7 +41,7 @@ if st(1):  # nav with depth is in next section
             ])
 
 if st(5):
-    csv2h5(['ini/csv_nav_supervisor.ini',
+    csv2h5(['cfg/csv_nav_supervisor.ini',
             '--db_path', str(path_db),
             '--path', str(path_cruise / r'navigation\bridge\??????.txt'),
             '--table', 'navigation',  # skip waypoints
@@ -53,7 +53,7 @@ if st(5):
 if st(10):  # False: #
     # Save {device} data to DB
     csv2h5([
-        'ini/csv_CTD_Idronaut.ini',
+        'cfg/csv_CTD_Idronaut.ini',
         '--path', str(path_cruise / device / '_raw' / '[19|42]*.txt'),
         '--db_path', str(path_db),
         '--table', f'{device}',
@@ -82,7 +82,7 @@ if st(20):  # False: #
 
 if st(30):  # False: #
     # Draw {device} data profiles
-    veuszPropagate.main(['ini/veuszPropagate.ini',
+    veuszPropagate.main(['cfg/veuszPropagate.ini',
                          '--path', str(path_db),
                          '--pattern_path', str(path_cruise / device / '190818_0124-0125.vsz'),
                          '--table_log', f'/{device}/logRuns',
@@ -117,7 +117,7 @@ if st(40) and False:  #: # may not comment always because can not delete same ti
 
 if st(50):  # False: #
     # Extract navigation data at time station starts to GPX waypoints
-    h5toGpx(['ini/h5toGpx_CTDs.ini',
+    h5toGpx(['cfg/h5toGpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'{device}',
              '--tables_log_list', 'logFiles',
@@ -129,7 +129,7 @@ if st(50):  # False: #
 
 if st(50):  # False: #
     # Extract navigation data at time station starts to GPX waypoints
-    h5toGpx(['ini/h5toGpx_CTDs.ini',
+    h5toGpx(['cfg/h5toGpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'{device}, CTD_Idronaut_OS316',
              '--tables_log_list', 'logRuns',
@@ -142,7 +142,7 @@ if st(50):  # False: #
 go = True
 if start <= 60 and False:
     # Extract navigation data at runs/starts to GPX tracks. Useful to indicate where no nav?
-    h5toGpx(['ini/h5toGpx_CTDs.ini',
+    h5toGpx(['cfg/h5toGpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'{device}',
              '--tables_log_list', 'logRuns',
@@ -162,7 +162,7 @@ if st(70):  # False: #
 if st(80):  # False: #
     # Gridding
     # Note: Prepare veusz "zabor" pattern before
-    grid2d_vsz(['ini/grid2d_vsz.ini', '--db_path', str(path_db),
+    grid2d_vsz(['cfg/grid2d_vsz.ini', '--db_path', str(path_db),
                 '--table_sections', r'navigation/sectionsCTD_routes',
                 '--subdir', 'CTD-sections',
                 '--begin_from_section_int', '1',  # values <= 1 means no skip
@@ -182,7 +182,7 @@ go = False
 # extract all navigation tracks
 if st(90):  # True: #
     # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5toGpx)
-    h5toGpx(['ini/h5toGpx_nav_all.ini',
+    h5toGpx(['cfg/h5toGpx_nav_all.ini',
              '--db_path', str(path_db),
              '--tables_list', 'navigation',
              '--simplify_tracks_error_m_float', '10',
@@ -195,7 +195,7 @@ go = True
 # Meteo
 if st(100):  # True: #
     csv2h5([
-        'ini/csv_meteo.ini', '--path',  # to_pandas_hdf5/
+        'cfg/csv_meteo.ini', '--path',  # to_pandas_hdf5/
         str(path_cruise / r"meteo\ship's_meteo_st_source\*.mxt"), '--header',
         'date(text),Time(text),t_air,Vabs_m__s,Vdir,dew_point,Patm,humidity,t_w,precipitation',
         '--coldate_integer', '0', '--coltime_integer', '1',
@@ -231,7 +231,7 @@ if st(200):  # False: #
 
     # Save {device} data to DB
     csv2h5([
-        'ini/csv_CTD_Idronaut.ini',
+        'cfg/csv_CTD_Idronaut.ini',
         '--path', str(path_cruise / device / '_raw' / '19*[0-9].txt'),
         '--db_path', str(path_db),
         '--table', f'{device}',
@@ -262,7 +262,7 @@ if st(220):  # False: #
 
 if st(230):  # False: #
     # Draw {device} data profiles
-    veuszPropagate.main(['ini/veuszPropagate.ini',
+    veuszPropagate.main(['cfg/veuszPropagate.ini',
                          '--path', str(path_db),
                          '--pattern_path', str(path_cruise / device / '~.vsz'),
                          '--table_log', f'/{device}/logRuns',

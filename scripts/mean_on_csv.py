@@ -59,7 +59,7 @@ path_data = '/mnt/D/workData/_experiment/_2018/inclinometr/180605Pcalibr/inclPre
 # '/mnt/D/workData/_experiment/_2018/inclinometr/180605Pcalibr/inclPres14/*.txt'
 
 cfg = main([
-    str(path_h5toGrid / 'scripts' / 'ini' / 'csv_chain_Baranov.ini'),
+    str(path_h5toGrid / 'scripts' / 'cfg' / 'csv_chain_Baranov.ini'),
     '--path', path_data,
     '--b_interact', 'False',
     '--header', 'yyyy(text),mm(text),dd(text),HH(text),MM(text),SS(text),P,X1,X2',

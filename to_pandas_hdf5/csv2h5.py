@@ -980,13 +980,13 @@ def h5_dispenser_and_names_gen(
         - that what fun_gen() do
     """
     # copy data to temporary HDF5 store and open it or work with source data if
-    dfLogOld, cfg_out['db'], cfg_out['b_skip_if_up_to_date'] = h5temp_open(**cfg_out)
+    df_log_old, cfg_out['db'], cfg_out['b_skip_if_up_to_date'] = h5temp_open(**cfg_out)
     try:
         for i1, gen_out in enumerate(fun_gen(cfg_in, cfg_out, **kwargs), start=1):
             # if current file it is newer than its stored data then remove data and yield its info to process again
             if cfg_out['b_skip_if_up_to_date']:
                 b_stored_newer, b_stored_dups = h5del_obsolete(
-                    cfg_out, cfg_out['log'], dfLogOld, cfg_out.get('field_to_del_older_records')
+                    cfg_out, cfg_out['log'], df_log_old, cfg_out.get('field_to_del_older_records')
                     )
                 if b_stored_newer:
                     continue  # not need process: current file already loaded

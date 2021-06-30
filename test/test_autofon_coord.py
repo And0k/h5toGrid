@@ -70,31 +70,56 @@ def test_file_raw_local(file_raw_local):
 
 
 path_db = Path(
-    r'd:/workData/BalticSea/210515_tracker/current@sp2/210611_1300sp2.h5' #.replace('@', '\@')
+    r'data/tracker/out/tracker.h5'
+    # r'd:/workData/BalticSea/210515_tracker/current@sp2/210611_1300sp2.h5' #.replace('@', '\@')
     # r'd:\WorkData\BlackSea\210408_trackers\tr0\210408trackers.h5'
-    )
+    ).absolute()
+
 
 @pytest.mark.parametrize(
     'file_raw_local', [
-     # "c:/Users/and0k/AppData/Roaming/Thunderbird/Profiles/qwd33vkh.default-release/Mail/Local Folders/AB_SIO_RAS_tracker",
-     '"{}"'.format(str(path_db.with_name('ActivityReport.xlsx')).replace('\\', '/'))
+        None,  # load from GMail
+        # "c:/Users/and0k/AppData/Roaming/Thunderbird/Profiles/qwd33vkh.default-release/Mail/Local Folders/AB_SIO_RAS_tracker",
+        # '"{}"'.format(str(path_db.with_name('ActivityReport.xlsx')).replace('\\', '/'))
+        str(path_db.parent.with_name('SPOT_ActivityReport_sp4.xlsx')).replace('\\', '/'),
+        str(path_db.parent.with_name('SPOT_ActivityReport_sp4_updated.xlsx')).replace('\\', '/')  # has 3 new rows for updating checking
     ])
 def test_call_example_sp4(file_raw_local):
-
     device = ['sp4']  # 221912
-
     sys_argv_save = sys.argv
     sys.argv = [__file__]
-
     main_call([
         f'input.path_raw_local="{file_raw_local}"',
         'input.time_interval=[2021-06-02T13:49, now]',
         'input.dt_from_utc_hours=2',
         'process.anchor_coord=[54.616175, 19.84136]', #tr0: 54.616175, 19.84134166
+        "++process.anchor_coord_dict={"
+        r"2021-06-02T13\:50:[54.62355, 19.82249],"
+        r"2021-06-02T14\:00:[54.62039, 19.83019],"
+        r"2021-06-02T14\:10:[54.61916, 19.83516]"
+        "}",
+        'process.b_reprocess=True',
         'process.anchor_depth=15',
         'process.period_tracks=1D',
-        r'out.db_path="{}"'.format(str(path_db).replace('\\', '/')),
+        'out.db_path="{}"'.format(str(path_db).replace('\\', '/')),
         'out.tables=[{}]'.format(','.join([f'"{d}"' for d in device]))
         ])
+    sys.argv = sys_argv_save
 
+
+def test_call_example_sp2(file_raw_local=None):
+    device = ['sp2']
+    sys_argv_save = sys.argv
+    sys.argv = [__file__]
+    main_call([
+        f'input.path_raw_local="{file_raw_local}"',
+        'input.time_interval=[2021-06-25T15:35:00, now]',
+        'input.dt_from_utc_hours=2',
+        'process.anchor_coord=[54.62457, 19.82311]', #tr0: 54.616175, 19.84134166
+        'process.b_reprocess=True',
+        'process.anchor_depth=15',
+        'process.period_tracks=1D',
+        'out.db_path="{}"'.format(str(path_db.with_name('tracker_sp2.h5')).replace('\\', '/')),
+        'out.tables=[{}]'.format(','.join([f'"{d}"' for d in device]))
+        ])
     sys.argv = sys_argv_save

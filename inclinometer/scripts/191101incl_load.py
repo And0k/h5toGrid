@@ -190,7 +190,7 @@ if st(1):  # Can not find additional not corrected files for same probe if alrea
                 continue
 
             csv2h5(
-                [scripts_path / f"ini/csv_inclin_{'Kondrashov' if prefix == 'incl' else 'Baranov'}.ini",
+                [scripts_path / f"cfg/csv_inclin_{'Kondrashov' if prefix == 'incl' else 'Baranov'}.ini",
                 '--path', str(in_file),
                 '--blocksize_int', '50_000_000',  # 50Mbt
                 '--table', re.sub('^((?P<i>inkl)|w)_0', lambda m: 'incl' if m.group('i') else 'w',  # correct name

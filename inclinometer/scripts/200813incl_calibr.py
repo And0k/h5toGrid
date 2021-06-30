@@ -12,7 +12,7 @@ step = 2  # 1
 
 
 if step == 1:
-    incl_calibr(['ini/201219incl_load-caliblab.yml'])
+    incl_calibr(['cfg/201219incl_load-caliblab.yml'])
     """
     200813incl_calibr-lab-b.yml'])
     """

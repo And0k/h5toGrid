@@ -22,7 +22,7 @@ start = 7
 if st(1):  # False: #
     # Save {device} data to DB
     csv2h5([
-        'ini/csv_CTD_Idronaut.ini',
+        'cfg/csv_CTD_Idronaut.ini',
         '--path', str(path_cruise / device / '_raw_txt' / '[19|45]*[0-9].txt'),
         '--db_path', str(path_db),
         '--table', f'{device}',
@@ -39,7 +39,7 @@ if st(1):  # False: #
 if st(3):  # False: #
     # Save depth to DB (saved gpx data is sparse and coinsedence of time samples is seldom, but need to check and delete duplicates)
     csv2h5([
-        'ini/csv_nav_HYPACK.ini',
+        'cfg/csv_nav_HYPACK.ini',
         '--path', str(path_cruise / r'navigation\echosounder_EA400\*.txt'),
         '--db_path', str(path_db),
         '--table', 'navigation',
@@ -76,7 +76,7 @@ if st(5):  # False: #
 
 if st(7):  # False: #
     # Draw {device} data profiles
-    veuszPropagate.main(['ini/veuszPropagate.ini',
+    veuszPropagate.main(['cfg/veuszPropagate.ini',
                          '--path', str(path_db),
                          '--pattern_path', str(path_cruise / device / '190714_0757.vsz'),
                          '--table_log', f'/{device}/logRuns',
@@ -111,7 +111,7 @@ if start <= 8 and False:  #: # may not comment always because can not delete sam
 
 if st(9):  # False: #
     # Extract navigation data at time station starts to GPX waypoints
-    h5toGpx(['ini/h5toGpx_CTDs.ini',
+    h5toGpx(['cfg/h5toGpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'{device}',
              '--tables_log_list', 'logRuns',
@@ -123,7 +123,7 @@ if st(9):  # False: #
 
 if st(11):
     # Extract navigation data at runs/starts to GPX tracks
-    h5toGpx(['ini/h5toGpx_CTDs.ini',
+    h5toGpx(['cfg/h5toGpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'{device}',
              '--tables_log_list', 'logRuns',
@@ -141,7 +141,7 @@ if st(13):  # False: #
 # go = True
 if st(15):  # False: #
     # Gridding
-    grid2d_vsz(['ini/grid2d_vsz.ini', '--db_path', str(path_db),
+    grid2d_vsz(['cfg/grid2d_vsz.ini', '--db_path', str(path_db),
                 '--table_sections', r'navigation/sectionsCTD_routes',
                 '--subdir', 'CTD-sections',
                 '--begin_from_section_int', '1',
@@ -157,7 +157,7 @@ go = False
 # extract all navigation tracks
 if False:  # True: #
     # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5toGpx)
-    h5toGpx(['ini/h5toGpx_nav_all.ini',
+    h5toGpx(['cfg/h5toGpx_nav_all.ini',
              '--path_cruise', str(path_cruise),
              '--tables_list', 'navigation',
              '--simplify_tracks_error_m_float', '10',

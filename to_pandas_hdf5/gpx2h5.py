@@ -205,7 +205,7 @@ def gpxConvert(cfg: Mapping[str, Any],
 
 def df_filter_and_save_to_h5(df, input, out, filter=None, sort_time=None) -> Union[str, int]:
     """
-
+    Filters and appends df to out['table'] in opened out['db'], and corresponded row to out['table_log'] table
     :param out: out cfg, must have fields:
       - log
     :param in: cfg dict with fields... dt_from_utc: to correct out['log'] time  #???

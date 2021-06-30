@@ -335,7 +335,7 @@ def main(new_arg=None, **kwargs):
     # type_log_files = namedtuple('type_log_files', ['label','iStart'])
     # log.sort(axis=0, order='log_item['Date0']')#sort files by time
 
-    dfLogOld, cfg['out']['db'], cfg['out']['b_skip_if_up_to_date'] = h5temp_open(**cfg['out'])
+    df_log_old, cfg['out']['db'], cfg['out']['b_skip_if_up_to_date'] = h5temp_open(**cfg['out'])
     if 'log' in cfg['program'].keys():
         f = open(PurePath(sys_argv[0]).parent / cfg['program']['log'], 'a', encoding='cp1251')
         f.writelines(datetime.now().strftime('\n\n%d.%m.%Y %H:%M:%S> processed '

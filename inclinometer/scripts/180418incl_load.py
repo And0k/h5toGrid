@@ -51,7 +51,7 @@ if True:  # Faluse:  #    #   # Real data
                 in_file = correct_fun(in_file)
                 if not in_file:
                     continue
-                csv2h5([scripts_path / 'ini/csv_inclin_Baranov.ini',
+                csv2h5([scripts_path / 'cfg/csv_inclin_Baranov.ini',
                         '--path', str(in_file),  #
                         '--blocksize_int', block_10Mbt_str,
                         '--table', re.sub('^[\d_]*', '', in_file.stem),  # delete all first digits (date part)
@@ -68,7 +68,7 @@ if True:  # Faluse:  #    #   # Real data
             in_file = path_cruise / f'INKL_{probe:03d}.TXT'  # '_source/incl_txt/180510_INKL10.txt' # r'_source/180418_INKL09.txt'
 
             in_file_cor = correct_kondrashov_txt(in_file)
-            csv2h5([scripts_path / 'ini/csv_inclin_Kondrashov.ini',
+            csv2h5([scripts_path / 'cfg/csv_inclin_Kondrashov.ini',
                     '--path', str(in_file_cor),
                     '--blocksize_int', block_10Mbt_str,
                     '--table', re.sub('^inkl_0', 'incl',
@@ -87,7 +87,7 @@ else:
         '/mnt/D/Work/_Python3/And0K/h5toGrid/test/csv2h5/data')  # r'd:\workData\_source\BalticSea\180418'
     path_db = str(path_cruise / '180418incl09.h5')
     if False:  # True:  #
-        csv2h5([scripts_path / 'ini/csv_inclin_Baranov.ini',
+        csv2h5([scripts_path / 'cfg/csv_inclin_Baranov.ini',
                 '--path', str(path_cruise / 'inclinpres_Baranov_180418.txt'),
                 '--blocksize_int', block_10Mbt_str,
                 '--db_path', str(path_db),
@@ -95,7 +95,7 @@ else:
                 ])
 
     if True:  # True:  #
-        csv2h5([scripts_path / 'ini/csv_inclin_Kondrashov.ini',
+        csv2h5([scripts_path / 'cfg/csv_inclin_Kondrashov.ini',
                 '--path', str(path_cruise / 'inclin_Kondrashov_180430.txt'),
                 '--blocksize_int', '1000',
                 '--db_path', str(path_db),

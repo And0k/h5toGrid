@@ -220,7 +220,7 @@ def main(cfg_in, cfg_out, cfg_filter, cfg_program):  #
     # - hydra.job_logging: colorlog  # if installed ("pip install hydra_colorlog --upgrade")
     # - hydra.hydra_logging: colorlog
 
-    config_path = 'ini/nmea2h5.yml'
+    config_path = 'cfg/nmea2h5.yml'
 
     @hydra.main(config_name="cfg")
     def main_cfg(cfg: DictConfig):  # hydra required arg, not use when call

@@ -23,7 +23,7 @@ start = 15
 if st(1):  # False: #
     # Save {device} data to DB
     csv2h5([
-        'ini/csv_CTD_Idronaut.ini',
+        'cfg/csv_CTD_Idronaut.ini',
         '--path', str(path_cruise / device / '_raw_txt' / '[19|45]*.txt'),
         '--db_path', str(path_db),
         '--table', f'{device}',
@@ -52,7 +52,7 @@ if st(5):  # False: #
 
 if st(7):  # False: #
     # Draw {device} data profiles
-    veuszPropagate.main(['ini/veuszPropagate.ini',
+    veuszPropagate.main(['cfg/veuszPropagate.ini',
                          '--path', str(path_db),
                          '--pattern_path', str(path_cruise / device / '190713_2131.vsz'),
                          '--table_log', f'/{device}/logRuns',
@@ -86,7 +86,7 @@ if start <= 8 and False:  #: # may not comment always because can not delete sam
 
 if st(9):  # False: #
     # Extract navigation data at time station starts to GPX waypoints
-    h5toGpx(['ini/h5toGpx_CTDs.ini',
+    h5toGpx(['cfg/h5toGpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'CTD_Idronaut_OS316, {device}',
              '--tables_log_list', 'logRuns',
@@ -99,7 +99,7 @@ if st(9):  # False: #
 go = True
 # if st(11):
 #     # Extract navigation data at runs/starts to GPX tracks. Useful to indicate where no nav?
-#     h5toGpx(['ini/h5toGpx_CTDs.ini',
+#     h5toGpx(['cfg/h5toGpx_CTDs.ini',
 #              '--db_path', str(path_db),
 #              '--tables_list', f'{device}',
 #              '--tables_log_list', 'logRuns',
@@ -117,7 +117,7 @@ if st(13):  # False: #
 
 if st(15):  # False: #
     # Gridding
-    grid2d_vsz(['ini/grid2d_vsz.ini', '--db_path', str(path_db),
+    grid2d_vsz(['cfg/grid2d_vsz.ini', '--db_path', str(path_db),
                 '--table_sections', r'navigation/sectionsCTD_routes',
                 '--subdir', 'CTD-sections',
                 '--begin_from_section_int', '2',  # 0,1 means no skip
@@ -134,7 +134,7 @@ go = False
 # extract all navigation tracks
 if False:  # True: #
     # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5toGpx)
-    h5toGpx(['ini/h5toGpx_nav_all.ini',
+    h5toGpx(['cfg/h5toGpx_nav_all.ini',
              '--db_path', str(path_db),
              '--tables_list', 'navigation',
              '--simplify_tracks_error_m_float', '10',

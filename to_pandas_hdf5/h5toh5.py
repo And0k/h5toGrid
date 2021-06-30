@@ -13,7 +13,7 @@ import sys  # from sys import argv
 import warnings
 from os import path as os_path, getcwd as os_getcwd, chdir as os_chdir, remove as os_remove
 from time import sleep
-from typing import Any, Dict, Iterable, Iterator, Mapping, MutableMapping, Optional, Sequence, Tuple, Union, List, Set
+from typing import Any, Dict, Iterable, Iterator, Mapping, MutableMapping, Optional, Sequence, Tuple, Union, List, Set, Callable
 
 import numpy as np
 import pandas as pd
@@ -665,14 +665,14 @@ def h5remove_table(db: pd.HDFStore, node: Optional[str] = None):
 
 def h5remove_tables(db: pd.HDFStore, tables: Iterable[str], tables_log: Iterable[str], db_path_temp=None):
     """
-    Removes tables and tables_log from db with retrying if error. Flashes operation
+    Removes (tables + tables_log) from db in sorted order with not trying to delete deleted children.
+    Retries on error, flashes operation
     :param db: pandas hdf5 store
     tables names:
-    :param tables,
-    :param tables_log:
-
-    :param db_path_temp
-    :return:
+    :param tables: list of str
+    :param tables_log: list of str
+    :param db_path_temp: path of db. Used to reopen db if removing from `db` is not succeed
+    :return: db
     """
     name_prev = ''  # used to filter already deleted children (how speed up?)
     for tbl in sorted(tables + tables_log):
@@ -707,7 +707,11 @@ class ReplaceTableKeepingChilds:
         cfg_out must have field: 'db' - handle of opened store
     """
 
-    def __init__(self, dfs, tbl_parent, cfg_out, write_fun=None):
+    def __init__(self,
+                 dfs: Union[pd.DataFrame, List[pd.DataFrame]],
+                 tbl_parent: str,
+                 cfg_out: Dict[str, Any],
+                 write_fun: Optional[Callable[[pd.DataFrame, str, Dict[str, Any]], None]] = None):
         self.cfg_out = cfg_out
         self.tbl_parent = tbl_parent
         self.dfs = [dfs] if isinstance(dfs, pd.DataFrame) else dfs

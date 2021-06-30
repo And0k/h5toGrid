@@ -16,11 +16,11 @@ path_db = os_path.join(path_cruise, '170614Strahov.h5')
 if False:  # True: #
     # CTD_Idronaut#494 data
     if False:  # True: #
-        veuszPropagate('ini/veuszPropagate.ini')
+        veuszPropagate('cfg/veuszPropagate.ini')
 
     # CTD_Idronaut_OS320 data
     if True:  # True: #
-        veuszPropagate(['ini/veuszPropagate.ini',
+        veuszPropagate(['cfg/veuszPropagate.ini',
                         '--path', path_in_OS320,
                         '--pattern_path', r'd:\workData\BalticSea\170614_ANS34\CTD_Idronaut_OS320\171012_0816.vsz',
                         '--import_method', 'ImportFileCSV',
@@ -45,7 +45,7 @@ if True:  # False: #
     # CTD_Idronaut#493 (sinked)
     if False:  # True: #
         csv2h5([
-            'ini/csv_CTD_Idronaut.ini',
+            'cfg/csv_CTD_Idronaut.ini',
             '--path', os_path.join(path_cruise, r'CTD_Idronaut#493\txt\17????_????.txt'),
             '--header',
             'date(text),txtT(text),Pres(float),Temp(float),Cond(float),Sal(float),O2(float),O2ppm(float),pH(float),Eh(float),ChlA(float),Turb(float)',
@@ -53,7 +53,7 @@ if True:  # False: #
 
     # CTD
     if False:  # True: #
-        csv2h5(['ini/csv_CTD_Idronaut.ini',
+        csv2h5(['cfg/csv_CTD_Idronaut.ini',
                 # '--path', 'd:\workData\BalticSea\170614_ANS34\CTD_Idronaut#494\txt\*_.txt'
                 ])
 
@@ -61,7 +61,7 @@ if True:  # False: #
     # Replace all "/20(\d\d)\.(\d*) " to "/20$1 00:00:00.$2 " in REDAS txt output before!
     if False:  # True: #
         csv2h5([
-            'ini/csv_CTD_IdrRedas.ini',
+            'cfg/csv_CTD_IdrRedas.ini',
             '--path', path_in_OS320,
             '--header',
             'Time(text),Pres(float),Temp(float),Cond(float),Sal(float),SigmaT(float),O2,O2ppm,SoundVel,Lat(float),Lon(float)',
@@ -71,7 +71,7 @@ if True:  # False: #
     # CTD_SST_M48
     if False:  # True: #
         csv2h5([
-            'ini/csv_CTD_Sea&Sun.ini',
+            'cfg/csv_CTD_Sea&Sun.ini',
             '--path', path_in_SST_M48,
             '--header', 'Date(text),Time(text),Pres,Temp,Sal,SIGMA,Cond,SOUND,Vbatt',
             '--cols_not_use_list', 'SIGMA,SOUND,Vbatt',
@@ -79,12 +79,12 @@ if True:  # False: #
             '--table', 'CTD_SST_M48'])
     # navigation
     if False:  # True: #
-        csv2h5(['ini/csv_nav_supervisor.ini'])
+        csv2h5(['cfg/csv_nav_supervisor.ini'])
 
     # Meteo
     if False:  # True: #
         csv2h5([
-            'ini/csv_meteo.ini', '--path',  # to_pandas_hdf5/
+            'cfg/csv_meteo.ini', '--path',  # to_pandas_hdf5/
             os_path.join(path_cruise, r"meteo\ship's_meteo_st_source\*.mxt"), '--header',
             'date(text),Time(text),t_air,Vabs_m__s,Vdir,dew_point,Patm,humidity,t_w,precipitation',
             '--coldate_integer', '0', '--coltime_integer', '1',
@@ -97,12 +97,12 @@ if True:  # False: #
     # BAKLAN Matlab txt ouput
     if False:  # True: #
         csv2h5([
-            'ini/csv_Baklan.ini', '--db_path', path_db,
+            'cfg/csv_Baklan.ini', '--db_path', path_db,
             '--path', os_path.join(path_cruise, r'Baklan\20*p1.txt'),
             '--delimiter_chars', '\\t',
             '--table', 'Baklan_d100'])
     if False:  # True: #
-        h5toGpx(['ini/h5toGpx_Baklan.ini', '--db_path', path_db,
+        h5toGpx(['cfg/h5toGpx_Baklan.ini', '--db_path', path_db,
                  '--select_from_tablelog_ranges_index', '0'])
     # also to get gpx is possible to execute ../scripts/filetime_to_gpx.py without csv2h5
 
@@ -120,14 +120,14 @@ if True:  # False: #
 # extract navigation data at time station starts to GPX waypoints
 if False:  # True: #
     # sys.argv[0]= argv0
-    h5toGpx(['ini/h5toGpx_CTDs.ini',
+    h5toGpx(['cfg/h5toGpx_CTDs.ini',
              '--select_from_tablelog_ranges_index', '0'
              ])
 
 # extract all navigation tracks
 if False:  # True: #
     # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5toGpx)
-    h5toGpx(['ini/h5toGpx_nav_all.ini',
+    h5toGpx(['cfg/h5toGpx_nav_all.ini',
              '--path_cruise', path_cruise,
              '--tables_list', 'navigation',
              '--simplify_tracks_error_m_float', '10',
@@ -146,7 +146,7 @@ if False:  # True: #
 
 # Gridding
 if True:  # False: #
-    grid2d_vsz(['ini/grid2d_vsz.ini', '--db_path', path_db,
+    grid2d_vsz(['cfg/grid2d_vsz.ini', '--db_path', path_db,
                 '--table_sections', r'navigation/sectionsBaklan_d100_waypoints',
                 '--subdir', 'CTD-sections/Baklan',
                 '--data_columns_list', 'Temp, Sal, SigmaTh, N^2, eps3varSh'  # 'N^2'

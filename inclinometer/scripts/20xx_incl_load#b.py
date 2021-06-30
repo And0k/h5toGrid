@@ -1,12 +1,12 @@
 from inclinometer.incl_load import main as incl_load
 incl_load([
-    'ini/210603incl_load#b-caliblab.yml',
+    'cfg/210603incl_load#b-caliblab.yml',
 ])
 
 
 
 # incl_load([
-#     'ini/200907incl_load#b.yml',
+#     'cfg/200907incl_load#b.yml',
 #     '--raw_subdir', 'incl-amk81/INKL_B02.rar',
 #     '--min_date_dict', '2: 2020-09-07T16:30:00',  # '0: 2020-09-07T02:00:00',
 #     '--min_date_dict', '2: 2020-09-09T15:30:00',
@@ -17,10 +17,10 @@ incl_load([
 #     #'--dask_scheduler', 'synchronous'
 #
 # # '../tests/data/inclinometer/200813incl_load#b-sent.yml'
-# # 'ini/200813incl_load#b-paths_relative_to_scripts.yml', #'--step_start_int', '2'
-# # 'ini/200813incl_load-calibtank#b20.yml'
-# # 'ini/200813incl_load-caliblab-b.yml'
-# # 'ini/200813incl_load-calibtank-b.yml'
+# # 'cfg/200813incl_load#b-paths_relative_to_scripts.yml', #'--step_start_int', '2'
+# # 'cfg/200813incl_load-calibtank#b20.yml'
+# # 'cfg/200813incl_load-caliblab-b.yml'
+# # 'cfg/200813incl_load-calibtank-b.yml'
 # ])
 
 # import sys

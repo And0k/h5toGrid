@@ -17,7 +17,7 @@ path_db= (Path(r'data') / '200520_Nord3-nav&ctd_loaded.h5').absolute()  # Path(_
 #path_data= Path('data')
 device = 'CTD_Idronaut_OS310'
 def test_main():
-    main(['ini/CTD_calc-find_runs.ini',
+    main(['cfg/CTD_calc-find_runs.ini',
         '--db_path', str(path_db),
         '--tables_list', f'{device}',
         '--min_samples', '50',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m

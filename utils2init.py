@@ -494,7 +494,7 @@ def type_fix(name: str, opt: Any) -> Tuple[str, Any]:
             return name, float(opt)
 
         if 'path' in {suffix, prefix}:
-            return name, Path(opt)
+            return name, Path(opt) if opt not in ('Null', 'None') else None
 
         return name, opt
     except (TypeError, AttributeError, ValueError) as e:

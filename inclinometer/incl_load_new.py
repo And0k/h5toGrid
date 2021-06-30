@@ -302,7 +302,7 @@ def main(config: ConfigType) -> None:
                 # tbl = re.sub('^((?P<i>inkl)|w)_0', lambda m: 'incl' if m.group('i') else 'w',  # correct name
                 #              re.sub('^[\d_]*|\*', '', file_in.stem).lower()),  # remove date-prefix if in name
                 csv2h5(
-                    [str(Path(__file__).parent / 'ini' / f"csv_{'inclin' if probe_is_incl else 'wavegage'}_{p_type[cfg['in']['probes_prefix']]['format']}.ini"),
+                    [str(Path(__file__).parent / 'cfg' / f"csv_{'inclin' if probe_is_incl else 'wavegage'}_{p_type[cfg['in']['probes_prefix']]['format']}.ini"),
                     '--path', str(file_in),
                     '--blocksize_int', '50_000_000',  # 50Mbt
                     '--table', tbl,
@@ -369,7 +369,7 @@ def main(config: ConfigType) -> None:
     # coefs['Ag'] = rotate_x(coefs['Ag'], angle_degrees=180)
     # coefs['Ah'] = rotate_x(coefs['Ah'], angle_degrees=180)
 
-    # dfLogOld, cfg_out['db'], cfg_out['b_skip_if_up_to_date'] = h5temp_open(**cfg_out)
+    # df_log_old, cfg_out['db'], cfg_out['b_skip_if_up_to_date'] = h5temp_open(**cfg_out)
     for i1, (tbl, coefs) in enumerate(h5_names_gen(cfg_in), start=1):
         # using property of rotation around same axis: R(x, θ1)@R(x, θ2) = R(x, θ1 + θ2)
         coefs['Ag'] = coefs['Ag'] @ rot_matrix_x(np.cos(np.pi), np.sin(np.pi))

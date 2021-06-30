@@ -16,26 +16,112 @@ from codecs import open
 import warnings
 
 from magneticDec import mag_dec
-from ..utils2init import ini2dict
-
-loadRDCP_INI = os_path.join(os_path.dirname(sys.argv[0]), 'loadRDCP.ini')
-# Path to this file may be overwrited here (only one line after first "\" will be used):
-# loadRDCP_INI = r'\
-# d:\workData\_source\KaraSea\150816_Kartesh-river_Ob\ADVS_RDI#17937 — копия\magneticDec.ini
-# \\\
-# '
-# loadRDCP_INI = first_of_paths_text(loadRDCP_INI) #Get only first path from strDir
-#
-cfg = ini2dict(loadRDCP_INI)
-strCmdPattern = ' '.join((cfg['Geomag']['path'], cfg['Geomag']['pathmodel'], '{0} D M{1} {2} {3}'))
+from utils2init import ini2dict, dir_walker, readable, bGood_dir, bGood_file
 
 
-# isertDeclination
+from pathlib import Path
+import numpy as np
+
+from grid2d_vsz import save_shape, to_polygon
+
+
+def main():
+
+    a1d = load_rdcp_aux(
+        r'd:\WorkData\BalticSea\_Pregolya,Lagoon\210519-inclin+RDCP\RDCP\txt\TxtExportAuxSensors.txt'
+        )
+
+
+
+    print(a1d)
+
+
+def load_rdcp_aux(file_in, file_out=None, delimiter='\t'):
+    """
+    loads RDCP Aux Sensors txt file of format:
+    Date - Time Battery Heading Pitch Roll Reference Temperature Conductivity Oxygen 3835 4017 Turbidity 3612 Depth Salinity Speed of sound
+    2021-05-19 10:19:51 11.99 62.69 -35.179 -26.823 692.000 17.225 0.308 70.320 199.219 6.539 2012.194 0.170 1507.2
+
+    :param file_bln_in:
+    :param file_bln_out:
+    :param delimiter: if not ',' useful to invert 1st column of text files of other types
+    :return:
+    """
+    if not file_out:
+        p_in = Path(file_in)
+        file_out = p_in.with_name(f'{p_in.stem}_out').with_suffix(p_in.suffix)
+    with open(file_in, 'rb') as f:
+        header = f.readline()
+        # gsw_z_from_p()
+        # a1D.P_dBar = a1D.a4017 / 10;
+        # a1D.O2 = a1D('Oxygen 3835');
+        col_names = 'Time Battery Heading Pitch Roll Reference Temperature Conductivity O2 P_dBar Turbidity Depth Salinity SoundV'.split()
+        n_float_cols = len(col_names) - 1
+        formats = ['M8[s]'] + ['f4'] * n_float_cols
+        dtype = {
+            'names': col_names,
+            'formats': formats
+        }
+        a1d = np.loadtxt(f, dtype=dtype, skiprows=0, delimiter=delimiter)
+    a1d['P_dBar'] = a1d['P_dBar'] / 10 - 11.1
+
+    p_min = 0
+    p_max = 15
+    b_good = (p_min < a1d['P_dBar']) & (a1d['P_dBar'] < p_max)
+
+    b_excel_time = True
+    if b_excel_time:
+        excel_dates_offset_s  = np.int64(np.datetime64(datetime(1899, 12, 30), 's'))
+        dtype['formats'][0] = 'f8'
+        a1d_float_time = (np.int64(a1d['Time'].astype('M8[s]')) - excel_dates_offset_s) / (24 * 3600)  # days, Excel time
+        a1d = a1d.astype(dtype)
+        a1d['Time'] = a1d_float_time
+        np.savetxt(file_out, a1d,
+                   fmt='\t'.join(['%.10f'] + ['%g']*n_float_cols),
+                   delimiter=delimiter,
+                   header='\t'.join(col_names),
+                   comments='',
+                   encoding='ascii'
+                   )
+
+        p_max_show = 20
+        save_shape(
+            file_out.with_name(f'{p_in.stem}_P'),
+            to_polygon(a1d_float_time[b_good], a1d['P_dBar'][b_good], p_max_show),
+            'BNA'
+            )
+
+        np.savetxt(file_out.with_name(f'{p_in.stem}_P').with_suffix('.txt'), a1d[['Time', 'P_dBar']][b_good],
+                   fmt='\t'.join(['%.10f'] + ['%g']),
+                   delimiter=delimiter,
+                   header='\t'.join(col_names),
+                   comments='',
+                   encoding='ascii'
+                   )
+    else:
+        np.savetxt(file_out, a1d,
+                   fmt='\t'.join(['%s'] + ['%g']*n_float_cols),
+                   delimiter=delimiter,
+                   header='\t'.join(col_names),
+                   comments='',
+                   encoding='ascii'
+                   )
+
+
 def repInFile(nameFull, cfg, result):  # result is previous or with ['nameNavFull']= None, ['nav1D']= None
-    # replace text in file nameFull
-    # cfg['re mask'] is compiled patterns of re modeule to search:
-    #  ['sourceDate'] - date from nameFull
-    #  
+    """
+    replaces (inserts?) declination text in file nameFull
+
+    :param nameFull:
+    :param cfg:
+        - 're mask': compiled patterns of re modeule to search ['sourceDate'] - date from nameFull
+    :param result:
+    :return:
+    """
+
+    sys.path.append(r'd:\Work\_Python\_fromMat')
+    from _other.mat73_to_pickle import read_mat73, datetime2matlab
+
     nameD, nameFE = os_path.split(nameFull)
 
     # 1. Get date from file name:
@@ -109,7 +195,7 @@ def repInFile(nameFull, cfg, result):  # result is previous or with ['nameNavFul
                 if result['nameNavFull'] != nameNavFull:
                     result['nameNavFull'] = nameNavFull
                     result['nav1D'] = read_mat73('nav1D', result['nameNavFull'])
-                ix = np_searchsorted(result['nav1D']['Time'], datetime2matlab(result['Date']))
+                ix = np.searchsorted(result['nav1D']['Time'], datetime2matlab(result['Date']))
                 if ix >= len(result['nav1D']['Time']):
                     warnings.warn('last time in nav < data time')
                 elif ix <= 0:
@@ -142,14 +228,22 @@ def repInFile(nameFull, cfg, result):  # result is previous or with ['nameNavFul
         # warnings.warn('not found position of replace pattern')
     return (result)  # Lat, Lon, Date, strOldVal, mag, nameNavFull, nav1D)
 
+def old_repInFile_for_vszs():
+    """add magnetic declination constant to specified files
+    """
 
-if __name__ == '__main__':
-    from utils2init import dir_walker, readable, bGood_dir, bGood_file
-    from _other.mat73_to_pickle import read_mat73, datetime2matlab
-    from numpy import searchsorted as np_searchsorted
+    loadRDCP_INI = os_path.join(os_path.dirname(sys.argv[0]), 'loadRDCP.ini')
+    # Path to this file may be overwrited here (only one line after first "\" will be used):
+    # loadRDCP_INI = r'\
+    # d:\workData\_source\KaraSea\150816_Kartesh-river_Ob\ADVS_RDI#17937 — копия\magneticDec.ini
+    # \\\
+    # '
+    # loadRDCP_INI = first_of_paths_text(loadRDCP_INI) #Get only first path from strDir
+    #
+    cfg = ini2dict(loadRDCP_INI)
+    strCmdPattern = ' '.join((cfg['Geomag']['path'], cfg['Geomag']['pathmodel'], '{0} D M{1} {2} {3}'))
 
-    sys.path.append(r'd:\Work\_Python\_fromMat')
-    ''' Filter used directories and files '''
+    # Filter used directories and files
     filt_dirCur = lambda f: readable(f) and bGood_dir(f, namesBadAtEdge=(r'bad', r'test'))
     filt_fileCur = lambda f, mask: bGood_file(f, mask, namesBadAtEdge=(r'coef'))
 
@@ -164,7 +258,7 @@ if __name__ == '__main__':
         print('(0 files) => nothing done')
         # exit?
     else:
-        s = raw_input('\n(' + str(nFiles) + r' files). Process it? Y/n: ')
+        s = input('\n(' + str(nFiles) + r' files). Process it? Y/n: ')
         if 'n' in s or 'N' in s:
             print('nothing done')
         else:
@@ -197,6 +291,11 @@ if __name__ == '__main__':
                 print('The end. There are errors: ', e.message)
             finally:
                 f.close()
+
+
+if __name__ == '__main__':
+    main()
+
 """    
     #Test1:
     geoLat= 44; geoLon= 55
