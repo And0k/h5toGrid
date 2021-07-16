@@ -263,7 +263,7 @@ def autofon_df_from_dict(g, dt_from_utc: timedelta):
             for p_id in prm:
                 if s_cur == p_id:
                     if p_detected[p_id]:
-                        lf.warning(f'Have multiple messages for {prm[p_id]}!')  # never occurred
+                        lf.warning('Have multiple messages for {}!', prm[p_id])  # never occurred
                         p[p_id] += p_cur
                     else:
                         p_detected[p_id] = True
@@ -993,7 +993,7 @@ def main(config: ConfigType) -> None:
     # we will download data that overlaps existed data so need delete to not deal with duplicates:
     out['b_skip_if_up_to_date'] = True
     out['field_to_del_older_records'] = 'index'  # new data priority (based on time only)
-    out['b_use_old_temporary_tables'] = True     # reuse previous temporary data
+    out['b_reuse_temporary_tables'] = True     # reuse previous temporary data
     msg_start_fmt = '{} {} {:%y-%m-%d %H:%M:%S%Z} \u2013 {:%m-%d %H:%M:%S%Z}{}'
 
     # Loading data from internet cycle
@@ -1121,7 +1121,7 @@ def main(config: ConfigType) -> None:
 
 
         if any(unzip_if_need(out['tables_have_wrote'])):
-            # not need to remove temp db if want use out['b_use_old_temporary_tables'] option: but temporary tables remains else set out['b_del_temp_db'] = True
+            # not need to remove temp db if want use out['b_reuse_temporary_tables'] option: but temporary tables remains else set out['b_del_temp_db'] = True
             h5move_and_sort(out)
 
     try:

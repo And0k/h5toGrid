@@ -62,7 +62,6 @@ print('Process {} sections'.format(len(vszFs)))
 bFirst = True
 timeEnd_Last = np.datetime64('0')
 f = None
-g = None
 try:
 
     with pd.HDFStore(cfg['input_h5store']['path'], mode='r') as storeIn:
@@ -165,7 +164,8 @@ try:
         CTDout['Dist'][bUseDist] = dist
 
         # Save to files #
-        format_str = '{:s}' + '\t{:f}' * Ncols_noTime + '\n'
+        fmt_tab_float = '\t{:f}'
+        format_str = f"{{:s}}{fmt_tab_float * Ncols_noTime}\n"
 
         if 'logs' in cfg['program'].keys():
             fileN_time_st = os_path.splitext(os_path.basename(vszF))[0]  # '{:%y%m%d_%H%M}'.format(CTDout['Dist'])
@@ -198,3 +198,4 @@ except Exception as e:
 finally:
     if f:
         f.close()
+g = None

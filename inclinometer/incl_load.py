@@ -13,11 +13,11 @@ import re
 import sys
 from collections import defaultdict
 from datetime import datetime, timedelta
-from time import sleep
+from functools import partial
 from pathlib import Path
 import glob
 from typing import Optional
-from functools import partial
+
 import numpy as np
 import pandas as pd
 from pandas.tseries.frequencies import to_offset
@@ -142,7 +142,8 @@ def main(new_arg=None, **kwargs):
             return val
         return default_val
 
-    for lim_str, lim_default in (('min_date', np.datetime64('2000-01-01', 'ns')), ('max_date', np.datetime64('now', 'ns'))):
+    for lim_str, lim_default in (('min_date', np.datetime64('2000-01-01', 'ns')),
+                                 ('max_date', np.datetime64('now', 'ns'))):
         # convert keys to int because they must be comparable to probes_int_list (for command line arguments keys are allways strings, in yaml you can set string or int)
         _ = {int(k): v for k, v in cfg['filter'][lim_str].items()}
         cfg['filter'][lim_str] = defaultdict(constant_factory(_.get(0, lim_default)), _)
@@ -350,16 +351,23 @@ def main(new_arg=None, **kwargs):
             cfg['out']['aggregate_period_s'] = [None, 2, 600, 7200 if probe_is_incl else 3600]
 
         if cfg['in']['azimuth_add']:
+            msgs = []
             if 'Lat' in cfg['in']['azimuth_add']:
                 # add magnetic declination,° for used coordinates
                 # todo: get time
-                kwarg['proc']['azimuth_add'] = mag_dec(cfg['in']['azimuth_add']['Lat'], cfg['in']['azimuth_add']['Lon'],
-                                                       datetime(2020, 9, 10), depth=-1)
+                kwarg['proc']['azimuth_add'] = mag_dec(
+                    cfg['in']['azimuth_add']['Lat'], cfg['in']['azimuth_add']['Lon'],
+                    datetime(2020, 9, 10), depth=-1
+                    )
+                msgs.append("magnetic declination: {kwarg['proc']['azimuth_add']}")
             else:
                 kwarg['proc']['azimuth_add'] = 0
-            if 'constant' in cfg['in']['azimuth_add']:
+            if cfg['in']['azimuth_add'].get('constant'):
                 # and add constant. For example, subtruct declination at the calibration place if it was applied
                 kwarg['proc']['azimuth_add'] += cfg['in']['azimuth_add']['constant']  # add -6.656 to account for calibration in Kaliningrad (mag deg = 6.656°)
+                msgs.append("constant: {cfg['in']['azimuth_add']['constant']}")
+            if kwarg['proc']['azimuth_add']:
+                print('azimuth correction: ', kwarg['proc']['azimuth_add'], ',°:', 'plus '.join(msgs))
 
         for aggregate_period_s in cfg['out']['aggregate_period_s']:
             if aggregate_period_s is None:

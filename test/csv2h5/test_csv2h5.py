@@ -59,7 +59,7 @@ def test_h5init():
         'chunksize': None,
         'b_skip_if_up_to_date': False,
         'b_remove_duplicates': False,
-        'b_use_old_temporary_tables': True,
+        'b_reuse_temporary_tables': True,
         'nfiles': 1,
         'tables': ['200901incl_load'],
         'tables_log': ['200901incl_load/logFiles'],

@@ -19,14 +19,14 @@ Allows to specify some of args:
         ...
 
 """
-from datetime import datetime
 import re
 import sys
 from collections import defaultdict
+from datetime import datetime, timedelta
+from functools import partial
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Tuple, Dict, List
-from functools import partial
 import numpy as np
 import pandas as pd
 import hydra
@@ -37,7 +37,7 @@ import to_vaex_hdf5.cfg_dataclasses
 from to_vaex_hdf5.cfg_dataclasses import hydra_cfg_store, ConfigInHdf5_Simple, ConfigProgram, main_init, main_init_input_file
 
 from to_pandas_hdf5.csv2h5 import main as csv2h5
-from to_pandas_hdf5.csv_specific_proc import correct_kondrashov_txt, rep_in_file, correct_baranov_txt
+from to_pandas_hdf5.csv_specific_proc import mod_incl_name, rep_in_file, correct_txt #correct_kondrashov_txt, correct_baranov_txt
 from to_pandas_hdf5.h5_dask_pandas import h5q_interval2coord
 from inclinometer.h5inclinometer_coef import h5copy_coef
 from inclinometer.incl_calibr import dict_matrices_for_h5
@@ -45,7 +45,7 @@ from inclinometer.incl_calibr import dict_matrices_for_h5
 import inclinometer.incl_h5clc as incl_h5clc
 import inclinometer.incl_h5spectrum as incl_h5spectrum
 import veuszPropagate
-from utils_time import pd_period_to_timedelta
+from utils_time import intervals_from_period # pd_period_to_timedelta
 from utils2init import path_on_drive_d, init_logging, open_csv_or_archive_of_them, st, cfg_from_args, my_argparser_common_part
 from utils2init import this_prog_basename, standard_error_info, LoggingStyleAdapter
 from magneticDec import mag_dec
@@ -142,12 +142,12 @@ def device_in_out_paths(
         device_dir_pattern=None
         ):
     """
-
+    Determines device_path and db_path. Required input args are `path_cruise` or `db_path` and device_short_name
     :param db_path:
     :param path_cruise:
     :param device_short_name:
     :param device_dir_pattern: pattern to find device data under cruise dir (use 1st matched)
-    :return:
+    :return: device_path, db_path
     """
 
     # set name by 'path_cruise' name or parent if it has digits at start. priority for name  is  "*inclinometer*"

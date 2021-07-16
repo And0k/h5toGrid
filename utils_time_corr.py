@@ -315,7 +315,7 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray], cfg_in: Mapping[str,
     else:
         lf.debug('time not need to be sorted')
         b_ok = np.ones(tim.size, np.bool8)
-    # make initial shape: paste back NaNs
+    # make initial shape: paste NaNs back
     if n_bad_in and cfg_in.get('keep_input_nans'):
         # place initially bad elements back
         t, t_in = (np.NaN + np.empty_like(b_ok_in)), t
@@ -355,9 +355,11 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
     :return:
     """
     save_format_suffix = '.png'
-    # output figure
-    fig_name = '{:%y%m%d_%H%M}-{:%H%M}'.format(*tim_range if (tim_range is not None and tim_range[0]) else (
-        tim.iloc[[0, -1]] if isinstance(tim, pd.Series) else (x for x in tim[[0, -1]].astype('M8[m]').astype(datetime))))
+    # output figure name
+    fig_name = '{:%y%m%d_%H%M}-{:%H%M}'.format(*(
+        tim_range if (tim_range is not None and tim_range[0]) else
+        tim[[0, -1]] if isinstance(tim, (pd.DatetimeIndex, pd.Series)) else
+        (x for x in tim[[0, -1]].astype('M8[m]').astype(datetime))))
     if 'path' in cfg_in and path_save_image:
         path_save_image = Path(path_save_image)
         if not path_save_image.is_absolute():
@@ -367,11 +369,31 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
             # work have done before
             return
 
+    # prepare saving/exporting method
+    if isinstance(fig_name, Path):
+        lf.info('saving figure to {!s}', fig_name)
+        if save_format_suffix != '.html':
+            from selenium.common.exceptions import SessionNotCreatedException
+            try:
+                # To png/svg
+                chrome_options = Options()
+                chrome_options.add_argument("--headless")
 
-    #import os
-    #os.environ["PATH"] += f'{os.pathsep}'
+                chrome_options.binary_location = r'C:\Program Files (x86)\Slimjet\Slimjet.exe'
+                chrome_driver_path = r'c:\Programs\_net\Silenium\chromedriver83.exe'
 
-    # create a new plot with a datetime axis type
+                # os.environ["webdriver.chrome.driver"] = chrome_driver_path  # seems not works
+                web_driver = webdriver.Chrome(executable_path=chrome_driver_path, options=chrome_options)
+            except SessionNotCreatedException:
+                lf.exception('Can not save png so will save html instead')
+                save_format_suffix = '.html'
+        if save_format_suffix == '.html':
+            # To static HTML file: big size but with interactive zoom, datashader?
+            output_file(fig_name.with_suffix('.html'), title=msg)
+            # web_driver.get("http://www.python.org")  # for testing
+
+
+    # Create a new plot with a datetime axis type
     p = figure(plot_width=1400, plot_height=700, y_axis_type="datetime")   # plt.figure('Decreasing time corr')
     p.title.text = 'Decreasing time corr'
 
@@ -393,25 +415,11 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
 
     # show(p)  # show the results
 
-    # output figure
-    if isinstance(fig_name, Path):
-        lf.info('saving figure to {:s}', fig_name)
-        if save_format_suffix == '.html':
-            # To static HTML file: big size but with interactive zoom, datashader?
-            output_file(fig_name.with_suffix(".html"), title=msg)
-        else:
-            # To png/svg
-            chrome_options = Options()
-            chrome_options.add_argument("--headless")
+    # export figure
+    if isinstance(fig_name, Path) and save_format_suffix != '.html':
+       (export_png if save_format_suffix == '.png' else export_svgs)(
+            p, filename=fig_name.with_suffix(save_format_suffix), webdriver=web_driver)
 
-            chrome_options.binary_location = r'C:\Program Files (x86)\Slimjet\Slimjet.exe'
-            chrome_driver_path = r'c:\Programs\_net\Silenium\chromedriver83.exe'
 
-            # os.environ["webdriver.chrome.driver"] = chrome_driver_path  # seems not works
-            web_driver = webdriver.Chrome(executable_path=chrome_driver_path, options=chrome_options)
-            # web_driver.get("http://www.python.org")  # for testing
-
-            (export_png if save_format_suffix == '.png' else export_svgs)(
-                p, filename=fig_name.with_suffix(save_format_suffix), webdriver=web_driver)
 
 

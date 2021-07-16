@@ -1,5 +1,4 @@
 import sys
-from functools import partial
 from pathlib import Path
 import re
 import numpy as np
@@ -139,36 +138,10 @@ if st(30, f'Draw {device} data profiles'):  # False: #
                          #'--max_time', '2020-06-30T22:37:00',
                          ])
 
-
-
-def merge_two_runs(df_log, irow_to, irow_from=None):
-    """
-    Merge 2 runs: copy ends data to row to keep from log's next row and then delete it
-    :param df_log:
-    :param irow_to:
-    :param irow_from:
-    :return:
-    """
-    if irow_from is None:
-        irow_from = irow_to + 1
-    df_merging = df_log.iloc[[irow_to, irow_from], :]
-    k = input(f'{df_merging} rows selected (from, to). merge ? [y/n]:\n')
-    if k.lower()!='y':
-        print('done nothing')
-        return
-    cols_en = ['DateEnd'] + [col for col in df_log.columns if col.endswith('en')]
-    ind_to, ind_from = df_merging.index
-    df_log.loc[ind_to, cols_en] = df_log.loc[ind_from, cols_en]
-    cols_sum = ['rows', 'rows_filtered']
-    df_log.loc[ind_to, cols_sum] += df_log.loc[ind_from, cols_sum]
-    df_log.drop(ind_from, inplace=True)
-    print('ok, 10 nearest rows became:', df_log.iloc[(irow_from-5):(irow_to+5), :])
-
-
 if False:
     # Merge each needed runs
     import pandas as pd
-    from to_pandas_hdf5.h5toh5 import h5move_tables  #, h5index_sort, h5init
+    from to_pandas_hdf5.h5toh5 import h5move_tables, merge_two_runs  #, h5index_sort, h5init
 
     tbl = f'/{device}'
     tbl_log = tbl + '/logRuns'

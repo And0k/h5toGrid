@@ -442,7 +442,7 @@ def main(new_arg=None):
 
                 for irow, r in enumerate(dfL.itertuples()):  # iterrows()
                     qstr = qstr_trange_pattern.format(r.Index, r.DateEnd)
-                    print(qstr, end='... ')
+                    print(qstr, end='… ')
                     try:
                         dfD = store.select(cfg['in']['table_nav'
                                            ] if cfg['in']['table_nav'] else tblD, qstr,

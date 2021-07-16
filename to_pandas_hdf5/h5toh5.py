@@ -143,6 +143,11 @@ def unzip_if_need(lst_of_lsts: Iterable[Union[Iterable[str], str]]) -> Iterator[
 
 
 def unzip_if_need_enumerated(lst_of_lsts: Iterable[Union[Iterable[str], str]]) -> Iterator[Tuple[int, str]]:
+    """
+    Enumerate each group of elements from 0. If element is not a group (str) just yeild it with index 0
+    :param lst_of_lsts:
+    :return:
+    """
     for lsts in lst_of_lsts:
         if isinstance(lsts, str):
             yield (0, lsts)
@@ -355,7 +360,7 @@ def h5sel_interpolate(i_queried, store, tbl_name, columns=None, time_points=None
     else:
         t = time_points.tz_localize(df.index.tzinfo)
     # try:
-    new_index = df.index | t  # pd.Index(timzone_view(time_points, dt_from_utc=df.index.tzinfo._utcoffset))
+    new_index = df.index.union(t)  # pd.Index(timzone_view(time_points, dt_from_utc=df.index.tzinfo._utcoffset))
     # except TypeError as e:  # if Cannot join tz-naive with tz-aware DatetimeIndex
     #     new_index = timzone_view(df.index, dt_from_utc=0) | pd.Index(timzone_view(time_points, dt_from_utc=0))
 
@@ -446,7 +451,7 @@ def h5temp_open(
         tables_log: Optional[List[str]]=None,
         db=None,
         b_skip_if_up_to_date: bool = False,
-        b_use_old_temporary_tables: bool = False,
+        b_reuse_temporary_tables: bool = False,
         b_overwrite: bool = False,
         **kwargs
         ) -> Tuple[Optional[pd.DataFrame], Optional[pd.HDFStore], bool]:
@@ -462,7 +467,7 @@ def h5temp_open(
     :param: db_path_temp
     :param: tables, tables_log - if tables is None then returns (does nothing), else opens HDF5 store and tries to work with ``tables_log``
     :param: b_skip_if_up_to_date:
-    :param: b_use_old_temporary_tables, bool, default False - not copy tables from dest to temp
+    :param: b_reuse_temporary_tables, bool, default False - not copy tables from dest to temp
     :param: b_overwrite: remove all existed data in tables where going to write
     :param: kwargs: not used, for use convenience
     :return: (df_log, db, b_skip_if_up_to_date)
@@ -480,8 +485,8 @@ def h5temp_open(
     else:
         print('saving to', db_path_temp / ','.join(tables).strip('/'), end=':\n')
 
-        # if table name in tables_log has placeholder then fill it
-        tables_log = [t.format(tables[i]) for i, t in enumerate(tables_log)]
+        if tables:  # if table name in tables_log has placeholder then fill it
+            tables_log = [t.format(tables[i]) for i, t in enumerate(tables_log)]
 
         # Side effect code removed:
         #  itbl = 0
@@ -496,13 +501,13 @@ def h5temp_open(
         try:  # open temporary output file
             if db_path_temp.is_file():
                 db = pd.HDFStore(db_path_temp)
-                if not b_use_old_temporary_tables:
+                if not b_reuse_temporary_tables:
                     h5remove_tables(db, tables, tables_log)
         except IOError as e:
             print(e)
 
         if not b_overwrite:
-            if not b_use_old_temporary_tables:
+            if not b_reuse_temporary_tables:
                 # Copying previous store data to temporary one
                 l.info('Copying previous store data to temporary one:')
                 tbl = 'is absent'
@@ -561,7 +566,7 @@ def h5temp_open(
 
         if b_overwrite:
             df_log = None
-            if not b_use_old_temporary_tables:  # Remove existed tables to write
+            if not b_reuse_temporary_tables:  # Remove existed tables to write
                 h5remove_tables(db, tables, tables_log)
         else:
             df_log = [db[tbl_log] for tbl_log in tables_log if tbl_log and (tbl_log in db)]
@@ -684,7 +689,7 @@ def h5remove_tables(db: pd.HDFStore, tables: Iterable[str], tables_log: Iterable
                 name_prev = tbl
                 break
             except ClosedFileError as e:  # file is not open
-                l.error('wating %s (/3) because of error: %s', i, str(e))
+                l.error('waiting %s (/3) because of error: %s', i, str(e))
                 sleep(i)
             # except HDF5ExtError as e:
             #     break  # nothing to remove
@@ -901,7 +906,7 @@ def create_indexes(cfg_out, cfg_table_keys):
 
 
 def h5move_tables(cfg_out,
-                  tbl_names: Union[Sequence[str], Sequence[Sequence[str]], None]=None,
+                  tbl_names: Union[Sequence[str], Sequence[Sequence[str]], None] = None,
                   **kwargs
                   ) -> Dict[str, str]:
     """
@@ -925,10 +930,14 @@ def h5move_tables(cfg_out,
         tbl_names = cfg_out['tables'] + cfg_out['tables_log']
         tables_top_level = (cfg_out['tables'] if len(cfg_out['tables']) else cfg_out['tables_log'])
     else:
-        tables_top_level = [tbl[0] for tbl in tbl_names]
+        tables_top_level = []
+        tbl_prev = ''
+        for i, tbl in unzip_if_need_enumerated(tbl_names):
+            if i == 0 and not tbl.startswith(f'{tbl_prev}/'):
+                tables_top_level.append(tbl)
+                tbl_prev = tbl
     tables = list(unzip_if_need(tbl_names))
     if tables:
-        tbl = tables[0]
         l.info('moving tables %s to %s:', ', '.join(tables), cfg_out['db_path'].name)
     else:
         raise Ex_nothing_done('no tables to move')
@@ -1027,8 +1036,7 @@ def h5index_sort(cfg_out,
                  in_storages: Optional[Mapping[str, str]]=None,
                  tables: Optional[Iterable[Union[str, Tuple[str]]]] = None) -> None:
     """
-    Checks if tables in store have sorted index and if not then sort it by loading, sorting and saving data
-    Not tries to sort nonmonotonic data
+    Checks if tables in store have sorted index and if not then sort it by loading, sorting and saving data.
     :param cfg_out: dict - must have fields:
         'db_path': store where tables will be checked
         'db_path_temp': source of not sorted tables for h5move_tables() if index is not monotonic
@@ -1108,7 +1116,7 @@ def h5index_sort(cfg_out,
                     plt.plot(df_index)      # np.diff(df.index)
                     plt.show()
 
-                if not itm is None:
+                if itm is not None:
                     l.warning('sorting multiindex...')
                     df = df.sort_index()    # inplace=True
                     if df.index.is_monotonic:
@@ -1225,16 +1233,15 @@ def h5del_obsolete(cfg_out: MutableMapping[str, Any],
                    field_to_del_older_records=None) -> Tuple[bool, bool]:
     """
     Check that current file has been processed and it is up to date
-    Removes all data (!) from the store table and log table where:
-    `t_data` >= `t_start`
-    `t_data`  - time indices of existed data
-    `t_start` - time index of current data or nearest log record index (see :param:field_to_del_older_records description)
+    Removes all data (!) from the store table and log table where time indices of existed data >= `t_start`,
+    where `t_start` - time index of current data or nearest log record index
+          (see :param:field_to_del_older_records description)
 
     Also removes duplicates in the table if found duplicate records in the log
     :param cfg_out: dict, must have field
         'db' - handle of opened store
-        'b_use_old_temporary_tables' - for message
-        'tables_log', 'tables' - to able check and deleting
+        'b_reuse_temporary_tables' - for message
+        'tables_log', 'tables' - metadata and data tables where check and deleting
     :param log: current data dict, must have fields needed for compare:
         'fileName' - in format as in log table to able find duplicates
         'fileChangeTime', datetime - to able find outdate data
@@ -1258,8 +1265,9 @@ def h5del_obsolete(cfg_out: MutableMapping[str, Any],
     if cfg_out['tables'] is None or df_log is None:
         return b_stored_newer, b_stored_dups
     if field_to_del_older_records:
+        # priority to the new data
         if field_to_del_older_records == 'index':
-            # - deletes data after time_holes start (depended on index_start_wait)
+            # - deletes data after df_log.index[0]
             # - updates db/tbl_log.DateEnd to be consisted to remaining data.
             t_start = log['index']
             if t_start is None:
@@ -1268,26 +1276,25 @@ def h5del_obsolete(cfg_out: MutableMapping[str, Any],
                 # better?:
                 # h5remove_tables(db, tables, tables_log, db_path_temp=None)
                 # return b_stored_newer, b_stored_dups
-
-            # h5_rem_last_rows(cfg_out['db'], zip(cfg_out['tables'], cfg_out['tables_log']), [df_log_cur], t_start):
-            #   if not     return None, 'new start'            # failed to use previous data
             df_log_cur = df_log
         else:  # not tested
             b_cur = df_log[field_to_del_older_records] >= log[field_to_del_older_records]
             df_log_cur = df_log[b_cur]
             if not df_log_cur.empty:
                 t_start = df_log_cur.index[0]
+        # removing
         h5_rem_last_rows(cfg_out['db'], zip(cfg_out['tables'], cfg_out['tables_log']), [df_log_cur], t_start)
     else:
+        # stored data will be replaced only if have same fileName with 'fileChangeTime' older than new
         df_log_cur = df_log[df_log['fileName'] == log['fileName']]
         n_log_rows = len(df_log_cur)
         if n_log_rows:
             if n_log_rows > 1:
                 b_stored_dups = True
-                print('Duplicate entries in log => will be removed from tables! (detected "{}")'.format(log['fileName']))
+                print('Multiple entries in log for same file ("{}") detected. Will be check for dups'.format(log['fileName']))
                 cfg_out['b_remove_duplicates'] = True
-                if cfg_out['b_use_old_temporary_tables']:
-                    print('Consider set [out].b_use_old_temporary_tables=0,[in].b_skip_if_up_to_date=0')
+                if cfg_out['b_reuse_temporary_tables']:
+                    print('Consider set [out].b_reuse_temporary_tables=0,[in].b_skip_if_up_to_date=0')
                 print('Continuing...')
                 imax = df_log_cur['fileChangeTime'].argmax()  # np.argmax([r.to_pydatetime() for r in ])
                 df_log_cur = df_log_cur.iloc[imax]  # [np.arange(len(df_log_cur)) != imax]
@@ -1296,18 +1303,18 @@ def h5del_obsolete(cfg_out: MutableMapping[str, Any],
                 n_log_rows = 0  # not need delete data
 
             # to return info about newer stored data:
-            last_file_change_time = df_log_cur['fileChangeTime'].iat[imax].to_pydatetime()
+            last_file_change_time = df_log_cur['fileChangeTime'].to_pydatetime()
             if last_file_change_time >= log['fileChangeTime']:
                 b_stored_newer = True  # can skip current file, because we have newer data records
                 print('>', end='')
-
-            # delete all next records of current file
-            if n_log_rows and not h5_rem_rows(
-                    cfg_out['db'], zip(cfg_out['tables'], cfg_out['tables_log']),
-                    qstr="index>=Timestamp('{}')".format(df_log_cur.index[0]),
-                    qstr_log="fileName=='{}'".format(df_log_cur['fileName'][0])):
-                b_stored_newer = False  # deleted
-                b_stored_dups = False   # deleted
+            else:
+                # delete all next records of current file
+                if n_log_rows and not h5_rem_rows(
+                        cfg_out['db'], zip(cfg_out['tables'], cfg_out['tables_log']),
+                        qstr="index>=Timestamp('{}')".format(df_log_cur.index[0]),
+                        qstr_log="fileName=='{}'".format(df_log_cur['fileName'][0])):
+                    b_stored_newer = False  # deleted
+                    b_stored_dups = False   # deleted
     return b_stored_newer, b_stored_dups
 
 
@@ -1333,7 +1340,7 @@ def h5init(cfg_in: Mapping[str, Any], cfg_out: MutableMapping[str, Any]) -> None
     - chunksize: default None
     - logfield_fileName_len: default 255
     - b_remove_duplicates: default False
-    - b_use_old_temporary_tables: default False
+    - b_reuse_temporary_tables: default False
 
     :return: None
     """
@@ -1344,7 +1351,7 @@ def h5init(cfg_in: Mapping[str, Any], cfg_out: MutableMapping[str, Any]) -> None
     set_field_if_no(cfg_out, 'b_skip_if_up_to_date', cfg_in['b_skip_if_up_to_date' \
         ] if 'b_skip_if_up_to_date' in cfg_in else False)
     set_field_if_no(cfg_out, 'b_remove_duplicates', False)
-    set_field_if_no(cfg_out, 'b_use_old_temporary_tables', True)
+    set_field_if_no(cfg_out, 'b_reuse_temporary_tables', True)
     if cfg_out.get('b_insert_separator') is None:
         if 'cfgFile' in cfg_in:
             cfg_file = PurePath(cfg_in['cfgFile']).stem
@@ -1408,7 +1415,7 @@ def query_time_range(min_time=None, max_time=None, **kwargs) -> str:
 
 
 def h5log_rows_gen(
-        db_path,
+        db_path: Union[str, Path],
         table_log: str,
         min_time=None, max_time=None,
         query_range=None,
@@ -1424,14 +1431,14 @@ def h5log_rows_gen(
     :param query_range: query str to limit the range of table_log rows to load
         Example table_log name: cfg_in['table_log'] ='/CTD_SST_48M/logRuns'
     :param kwargs: not used
-    Yeilds dicts where keys: col names, values: current row values of tbl_intervals = cfg_in['table_log']
+    Yields dicts where keys: col names, values: current row values of tbl_intervals = cfg_in['table_log']
     """
     if query_range is None:
         query_range = query_time_range(min_time, max_time)
     with FakeContextIfOpen(lambda f: pd.HDFStore(f, mode='r'), file=db_path, opened_file_object=db) as store:
         # with pd.HDFStore(db_path, mode='r') as store:
         if db_path:
-            print("loading from {db_path}: ".format(db_path), end='')
+            print(f'loading from "{db_path}": ', end='')
         for n, rp in enumerate(store.select(table_log, where=query_range).itertuples()):
             r = dict(zip(rp._fields, rp))
             yield (r)  # r.Index, r.DateEnd
@@ -1450,3 +1457,27 @@ def h5log_names_gen(cfg_in, f_row_to_name=lambda r: '{Index:%y%m%d_%H%M}-{DateEn
     for row in h5log_rows_gen(**cfg_in):
         cfg_in['log_row'] = row
         yield f_row_to_name(row)
+
+
+def merge_two_runs(df_log: pd.DataFrame, irow_to: int, irow_from: Optional[int] = None):
+    """
+    Merge 2 runs: copy metadata about profile end (columns with that ends with 'en') to row `irow_to` from `irow_from` and then delete it
+    :param df_log: DataFrame to be modified (metadata table)
+    :param irow_to: row index where to replace metadata columns that ends with 'en' and increase 'rows' and 'rows_filtered' columns by data from row `irow_from`
+    :param irow_from: index of row that will be deleted after copying its data
+    :return: None
+    """
+    if irow_from is None:
+        irow_from = irow_to + 1
+    df_merging = df_log.iloc[[irow_to, irow_from], :]
+    k = input(f'{df_merging} rows selected (from, to). merge ? [y/n]:\n')
+    if k.lower() != 'y':
+        print('done nothing')
+        return
+    cols_en = ['DateEnd'] + [col for col in df_log.columns if col.endswith('en')]
+    ind_to, ind_from = df_merging.index
+    df_log.loc[ind_to, cols_en] = df_log.loc[ind_from, cols_en]
+    cols_sum = ['rows', 'rows_filtered']
+    df_log.loc[ind_to, cols_sum] += df_log.loc[ind_from, cols_sum]
+    df_log.drop(ind_from, inplace=True)
+    print('ok, 10 nearest rows became:', df_log.iloc[(irow_from-5):(irow_to+5), :])

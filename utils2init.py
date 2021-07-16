@@ -489,8 +489,8 @@ def type_fix(name: str, opt: Any) -> Tuple[str, Any]:
             name_out = '_'.join(key_splitted[0:-1])
             return name_out, opt.replace('\\t', '\t').replace('\\ \\', ' ')
         if prefix in {'fixed', 'float', 'max', 'min'}:
-            # this snameion is at end because includes frequently used 'max'&'min' which not
-            # nesesary for floats, so set to float only if have no other special format words
+            # this prefixes is at end because of 'max'&'min' which can be not for float,
+            # so set to float only if have no other special format words
             return name, float(opt)
 
         if 'path' in {suffix, prefix}:
@@ -826,7 +826,7 @@ def cfg_from_args(p, arg_add, **kwargs):
                         new_name, n_rep = re_suffixes.subn('', key_level1)
                         if n_rep:
                             # exclusion for min_date and max_date
-                            if not (key_level1.endswith('_date') and new_name.startswith(('min', 'max'))):
+                            if not (key_level1.endswith('_date') and new_name.startswith(('min', 'max', 'b_'))):
                                 # todo: exclude all excisions that leave only special prefixes
                                 v[new_name] = opt
                                 del v[key_level1]

@@ -25,7 +25,7 @@ def do_calc_sbe(V, t, P, S, tim,
     # calculated values
 
     data = oxygen_concentration(V, t, P, S, tim, slope, Voff, tau20, d_t, d_p, CBA, e)
-    data = hysteresis_on_pres_cor_sbe(data, tim, P, h1 = -0.033, h2 = 5000, h3 = 1450)
+    data = hysteresis_on_pres_cor_sbe(data, tim, P, h1=-0.033, h2=5000, h3=1450)
 
     # convert from ml/l to mg/l
     return data * 1.42903
@@ -39,7 +39,7 @@ def do_calc_sbe(V, t, P, S, tim,
     # return data * 44.660
     
 
-def oxygen_concentration(V, t, P, S, tim, slope, Voff, tau20, d_t, d_p, CBA, e):
+def oxygen_concentration(V, t, P, S, tim, slope, Voff, tau20, c_t, c_p, CBA, e):
     """
     Calculates oxygen concentration. Implementation of the oxygen concentration equation
     specified in Seabird Application Note 64.
@@ -52,37 +52,39 @@ def oxygen_concentration(V, t, P, S, tim, slope, Voff, tau20, d_t, d_p, CBA, e):
     :param slope: Oxygen slope
     :param Voff: Sensor output offset voltage
     :param tau20: Sensor time constant at 20 deg C and 1 Atm
-    :param d_t:
-    :param d_p: Compensation coefficient for pressure effect on time constant
+    :param c_t:
+    :param c_p: Compensation coefficient for pressure effect on time constant
     :param CBA: Compensation coefficients for temperature effect on membrane permeability
     :param e: Compensation coefficient for pressure effect on membrane permeability (Atkinson et al, 1996)
     :return oxygen: Oxygen concentration, mL/L
     """
     oxsol = oxygen_solubility(t, S)
-    tauTP = tau20 * exp(d_t * (t - 20.0) + d_p * P)
+    tau_tp = tau20 * exp(c_t * (t - 20.0) + c_p * P)
     # Estimate of sensor output change over time
-    dVdt = ediff1d(V, to_begin=0.0) / ediff1d(tim, to_begin=0.0)
+    dV_dt = ediff1d(V, to_begin=0) / ediff1d(tim, to_begin=1)
     K = t + 273.15
-    return slope * (V + Voff + tauTP * dVdt) * polyval(append(CBA, 1.0), t) * exp(e * P / K) * oxsol
+    return slope * (V + Voff + tau_tp * dV_dt) * polyval(append(CBA, 1.0), t) * exp(e * P / K) * oxsol
 
 
-def ox_saturation_idr(o2_cnt, t, P, o2_cal, t_cal, c1, c_t= - 0.029, c_p= 0.000115):
+def ox_saturation_idr(o2_cnt, t, P, o2_cnt_cal, t_cal, c1: float = 1.05, c_t: float = -0.029, c_p: float = 0.000115):
     """
-    Calculation of % saturation
+    Calculation of % saturation. See "Ocean Seven 316Plus CTD Operator's manual" by Idronaut S.r.l
 
     :param o2_cnt: Oxygen sensor reading in counts
     :param t: Temperature sensor reading in °C
-    :param P: Pressure reading in dbar
-    :param o2_cal: Oxygen sensor reading in counts during calibration
+    :param P: Pressure reading in dBar
+    :param o2_cnt_cal: Oxygen sensor reading in counts during calibration
     :param t_cal: Temperature sensor reading in °C during calibration
     :param c1: Stirring effect and barometric pressure compensation
-    :param c_t, c_p: proprietary coefficients are required for the calculation of % saturation to compensate the
+    :param c_t,
+    :param c_p: proprietary coefficients are required for the calculation of % saturation to compensate the
 IDRONAUT membrane permeability to oxygen due to the temperature and pressure variation respectively
     :return: Saturation, %
     """
 
-    slope= o2_cal / exp(t_cal * c_t) / 100
-    return o2_cnt * slope * c1 * exp(c_t * t + c_p * P)
+    slope = o2_cnt_cal / exp(t_cal * c_t) / 100
+    tau_tp = exp(c_t * t + c_p * P)
+    return o2_cnt * (slope * c1) * tau_tp
 
 
 def oxygen_solubility(t, S):

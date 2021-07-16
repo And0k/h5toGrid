@@ -113,13 +113,13 @@ class ConfigOutSimple:
     :param db_path: hdf5 store file path
     :param table: table name in hdf5 store to write data. If not specified then will be generated on base of path of input files. Note: "*" is used to write blocks in autonumbered locations (see dask to_hdf())
     :param b_insert_separator: insert NaNs row in table after each file data end
-    :param b_use_old_temporary_tables: Warning! Set True only if temporary storage already have good data! If True and b_skip_if_up_to_date= True then not replace temporary storage with current storage before adding data to the temporary storage
+    :param b_reuse_temporary_tables: Warning! Set True only if temporary storage already have good data! If True and b_skip_if_up_to_date= True then not replace temporary storage with current storage before adding data to the temporary storage
     :param b_remove_duplicates: Set True if you see warnings about
     """
     db_path: Any = ''
     tables: List[str] = field(default_factory=list)
     tables_log: List[str] = field(default_factory=lambda: ['{}/log'])
-    b_use_old_temporary_tables: bool = False
+    b_reuse_temporary_tables: bool = False
     b_remove_duplicates: bool = False
     b_skip_if_up_to_date: bool = True  # todo: link to ConfigIn
     db_path_temp: Any = None

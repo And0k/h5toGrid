@@ -496,7 +496,8 @@ def filter_local(d: Union[pd.DataFrame, dd.DataFrame, Mapping[str, pd.Series], M
             else:
                 try:
                     d[key] = d[key].where(f_compare(d[key], v))
-                except KeyError as e:  # allow redundant parameters in config
+                except (KeyError, TypeError) as e:  # allow redundant parameters in config
+                    # It is strange, but we have "TypeError: cannot do slice indexing on DatetimeIndex with these indexers [key] of type str" if just no "key" column
                     l.warning('Can not filter this parameer %s', standard_error_info(e))
             l.debug('filtering %s(%s) = %g', limit, key, v)
     return d
@@ -864,7 +865,7 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
 """
 
 
-def h5add_log(cfg_out: Dict[str, Any], df, log: Union[pd.DataFrame, Mapping, None], tim, log_dt_from_utc):
+def h5add_log(log: Union[pd.DataFrame, Mapping, None], cfg_out: Dict[str, Any], tim, df, log_dt_from_utc):
     """
     Updates (or creates if need) metadata/log table in store
     :param cfg_out: dict with fields:
@@ -905,8 +906,7 @@ def h5add_log(cfg_out: Dict[str, Any], df, log: Union[pd.DataFrame, Mapping, Non
 
     set_field_if_no(cfg_out, 'logfield_fileName_len', 255)
 
-    if (log.get('DateEnd') is None) and not cfg_out.get('b_log_ready'):
-        # or (table_log.split('/')[-1].startswith('logFiles')):
+    if (not cfg_out.get('b_log_ready')) or (log.get('DateEnd') is None):
         log['Date0'], log['DateEnd'] = timzone_view(
             (tim if tim is not None else
                 df.index.compute() if isinstance(df, dd.DataFrame) else
@@ -918,9 +918,10 @@ def h5add_log(cfg_out: Dict[str, Any], df, log: Union[pd.DataFrame, Mapping, Non
         try:
             log = pd.DataFrame(log).set_index('Date0')
         except ValueError as e:  # , Exception
-            log = pd.DataFrame.from_records(log, exclude=['Date0'],
-                                            index=log['Date0'] if isinstance(log['Date0'], pd.DatetimeIndex) else [
-                                                log['Date0']])  # index='Date0' not work for dict
+            log = pd.DataFrame.from_records(
+                log, exclude=['Date0'],
+                index=log['Date0'] if isinstance(log['Date0'], pd.DatetimeIndex) else [log['Date0']]
+                )  # index='Date0' not work for dict
 
     try:
         return df_log_append_fun(log, table_log, cfg_out)
@@ -965,18 +966,17 @@ def h5_append(cfg_out: Dict[str, Any],
             table_log
             tables_have_wrote list appended (or created) with tuple `(table, table_log)`
     '''
-
+    table = None
     df_len = len(df) if tim is None else len(tim)  # use computed values if possible for faster dask
     if df_len:  # dask.dataframe.empty is not implemented
         if cfg_out.get('b_insert_separator'):
-            # Add separatiion row of NaN
+            # Add separati3on row of NaN
             msg_func = f'{df_len}rows+1dummy'
             cfg_out.setdefault('fs')
             df = h5_append_dummy_row(df, cfg_out['fs'], tim)
             df_len += 1
         else:
             msg_func = f'{df_len}rows'
-
 
         # Save to store
         # check/set tables names
@@ -999,11 +999,6 @@ def h5_append(cfg_out: Dict[str, Any],
 
                 if df_len <= 10000 and isinstance(df, dd.DataFrame):
                     df = df.compute()  # dask not writes "all NaN" rows
-
-            # , compute=False
-            # cfg_out['db'].append(cfg_out['table'], df, data_columns=True, index=False,
-            #              chunksize=cfg_out['chunksize'])
-        table = None
         try:
             table = df_data_append_fun(df, cfg_out['table'], cfg_out)
         except ValueError as e:
@@ -1028,9 +1023,9 @@ def h5_append(cfg_out: Dict[str, Any],
             raise (e)
 
     # run even if df is empty because may be writing the log is needed only
-    table_log = h5add_log(cfg_out, df, log, tim, log_dt_from_utc)
+    table_log = h5add_log(log, cfg_out, tim, df, log_dt_from_utc)
 
-    _t = (table, table_log)
+    _t = (table, table_log) if table else (table_log,)
     if 'tables_have_wrote' in cfg_out:
         cfg_out['tables_have_wrote'].add(_t)
     else:

@@ -105,7 +105,7 @@ to Pandas HDF5 store*.h5
     s.add('--delimiter_chars',
              help='parameter of dask.read_csv(). Default None is useful for fixed length format')
     s.add('--max_text_width', default='1000',
-             help='maximum length of text fields (specified by "(text)" in header) for dtype in numpy loadtxt')
+             help='maximum length of text fields (specified by "(text)" in header) for dtype in numpy.loadtxt')
     s.add('--chunksize_percent_float',
              help='percent of 1st file length to set up hdf5 store tabe chunk size')
     s.add('--blocksize_int', default='20000000',
@@ -128,7 +128,7 @@ to Pandas HDF5 store*.h5
     #           help='tables names in hdf5 store to write data (comma separated)')
     s.add('--b_insert_separator',
               help='insert NaNs row in table after each file data end')
-    s.add('--b_use_old_temporary_tables', default='False',
+    s.add('--b_reuse_temporary_tables', default='False',
               help='Warning! Set True only if temporary storage already have good data!'
                    'if True and b_skip_if_up_to_date= True then program will not replace temporary storage with current storage before adding data to the temporary storage')
     s.add('--b_remove_duplicates', default='False', help='Set True if you see warnings about')
@@ -1010,6 +1010,7 @@ def get_fun_proc_loaded_converters(cfg_in: MutableMapping[str, Any]
     in dependance to cfg_in['cfgFile'] name
     :param cfg_in:
     :return fun_proc_loaded: Callable if cfgFile name match found or cfg_in['fun_proc_loaded'] specified explicitly else None
+    Modifies: cfg_in['converters'] if cfg_file ends with 'IdrRedas' or 'csv_iso_time'
     """
 
     cfg_file = Path(cfg_in['cfgFile']).stem
@@ -1102,7 +1103,7 @@ def main(new_arg=None, **kwargs):
         return cfg
 
     l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
-    print('\n' + this_prog_basename(__file__), end=' started. ')
+    print('\n', this_prog_basename(__file__), end=' started. ')
     try:
         cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
             **cfg['in'], b_interact=cfg['program']['b_interact'])
@@ -1110,7 +1111,11 @@ def main(new_arg=None, **kwargs):
         print(e.message)
         return ()
 
-    # Prepare loading and writing cpecific to format
+    # Prepare loading and writing specific to format
+    # prepare if need extract date from file name
+    if cfg['in'].get('fun_date_from_filename') and isinstance(cfg['in']['fun_date_from_filename'], str):
+        cfg['in']['fun_date_from_filename'] = eval(
+            compile("lambda file_stem, century=None: {}".format(cfg['in']['fun_date_from_filename']), '', 'eval'))
     cfg['in']['fun_proc_loaded'] = get_fun_proc_loaded_converters(cfg['in'])
     cfg['in'] = init_input_cols(cfg['in'])
     # cfg['out']['dtype'] = cfg['in']['dtype_out']
@@ -1131,6 +1136,7 @@ def main(new_arg=None, **kwargs):
         t = getattr(cfg['in']['fun_proc_loaded'], 'meta_out', None)  # save before wrapping
         if t is not None:  # if attribute then it lost during partil wrapping so add it back
             fun_proc_loaded = partial(cfg['in']['fun_proc_loaded'], csv_specific_param=cfg['in']['csv_specific_param'])
+
             def fun_proc_loaded_folowed_proc_loaded_corr(a, cfg_in):
                 a = fun_proc_loaded(a, cfg_in)
                 a = to_pandas_hdf5.csv_specific_proc.proc_loaded_corr(a, cfg_in, cfg['in']['csv_specific_param'])

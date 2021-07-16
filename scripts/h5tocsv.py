@@ -85,7 +85,7 @@ will be sabstituted with correspondng input file names.
 
             # Get navigation at data points
             qstr = qstr_trange_pattern.format(df_log.index[0], df_log['DateEnd'][-1])
-            print('loading all needed nav: ', qstr, end='... ')
+            print('loading all needed nav: ', qstr, end='… ')
             Nav = storeIn.select(cfg['in']['table_nav'], qstr, columns=[])
             Nind_st = storeIn.select_as_coordinates(cfg['in']['table_nav'], qstr)[0]
             df_log.index = df_log.index.tz_convert('UTC')

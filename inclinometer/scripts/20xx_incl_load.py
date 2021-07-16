@@ -3,42 +3,42 @@ from inclinometer.incl_load import main as incl_load
 
 
 
-for st_en in [
-    '15:56-16:35',
-    '14:38-15:28',
-    '13:16-13:49',
-    '12:28-13:01',
-    '10:11-11:44']:
-    st, en = st_en.split('-')
-    incl_load([
-        'cfg/210519incl_load_Pregolya,Lagoon.yml',
-        '--min_date_dict', f'0: 2021-05-19T{st}:00',
-        '--max_date_dict', f'0: 2021-05-19T{en}:50',  # '16: 2020-10-21T16:10:33, 15: 2020-10-21T17:46:05',
-        '--step_start_int', '2',  # '50', #'2',
-        '--step_end_int', '2',  # '2',
-        '--dask_scheduler', 'synchronous'
-        ])
+# for st_en in [
+#     '15:56-16:35',
+#     '14:38-15:28',
+#     '13:16-13:49',
+#     '12:28-13:01',
+#     '10:11-11:44']:
+#     st, en = st_en.split('-')
+#     incl_load([
+#         'cfg/210519incl_load_Pregolya,Lagoon.yml',
+#         '--min_date_dict', f'0: 2021-05-19T{st}:00',
+#         '--max_date_dict', f'0: 2021-05-19T{en}:50',  # '16: 2020-10-21T16:10:33, 15: 2020-10-21T17:46:05',
+#         '--step_start_int', '2',  # '50', #'2',
+#         '--step_end_int', '2',  # '2',
+#         '--dask_scheduler', 'synchronous'
+#         ])
 
 
-# incl_load([
-#     # 'cfg/incl_load_201202_BalticSpit.yml',
+incl_load([
+    # 'cfg/incl_load_201202_BalticSpit.yml',
 #     'cfg/210519incl_load_Pregolya,Lagoon.yml',
 #     '--min_date_dict', '0: 2020-12-18T13:28:00',
 #     '--max_date_dict', '0: 2020-12-18T15:29:50',  # '16: 2020-10-21T16:10:33, 15: 2020-10-21T17:46:05',
 #
-#     # # wavegage:
-#     # 'cfg/incl_load_201202_BalticSpit#w.yml',
-#
-#     # probe with 1800s burst period:
-#     # '--probes_int_list', '04, 14, 36, 37, 38',  # '28, 33',  #3, 5, 9, 10, 11, 15, 19'
-#     # '--aggregate_period_s_int_list', '2, 600, 1800, 7200',  # '',  # None,  300,  3600
-#     #'--aggregate_period_s_not_to_text_int_list', 'None, 2',       # default=None, use 2 for speedup. 300, 7200, ,3600  # exclude too long saving op
+    # wavegage:
+    'cfg/incl_load_201202_BalticSpit#w.yml',
+    #
+    # probe with 1800s burst period:
+    # '--probes_int_list', '04, 14, 36, 37, 38',  # '28, 33',  #3, 5, 9, 10, 11, 15, 19'
+    # '--aggregate_period_s_int_list', 'None, 2, 600, 1800, 7200',  # '',  # None,  300,  3600
+#    '--aggregate_period_s_not_to_text_int_list', 'None, 2',       # default=None, use 2 for speedup. 300, 7200, ,3600  # exclude too long saving op
 #     '--step_start_int', '2',  # '50', #'2',
 #     '--step_end_int',   '2',  # '2',
 #
 #      #'--load_timeout_s_float', '0'
 #     # '--dask_scheduler', 'distributed'  # 'synchronous'  #   may be not affect incl_h5clc
-# ])
+])
 
 
 """    

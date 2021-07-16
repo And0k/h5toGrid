@@ -1,8 +1,8 @@
 # 15min each hour
 in:
   path_cruise: d:\workData\BalticSea\201202_BalticSpit
-  raw_subdir: 201202\[i30,w02]_get210419.rar  # do not point to corrected files in get210326_w_rar - todo: allow
-  probes:     [2]
+  raw_subdir: 201202[i23,32,w4,5,6]get210623.zip  # 201202\[i30,w02]_get210419.rar  # do not point to corrected files in get210326_w_rar - todo: allow
+  probes:     [4, 5, 6]  # [2]
   probes_prefix: 'voln'  # 'voln' for step 1, for steps 2+ it will be auto renamed to 'w'
   raw_pattern: "*{prefix:}_V{number:0>2}*.[tT][xX][tT]"
 
@@ -11,9 +11,14 @@ in:
 
 filter:
   # wavegage
-  min_date: { 0: 2020-12-02T16:00:00,   #10:00:00,
-#             01: 2020-12-02T13:00:00
-              02: 2020-12-03T12:30:00
+#  min_date: { 0: 2020-12-02T16:00:00,   #10:00:00,
+##             01: 2020-12-02T13:00:00
+#              02: 2020-12-03T12:30:00,
+#              04: 2020-12-02T14:45:00,
+#              05: 2020-12-02T14:45:00,
+#              06: 2020-12-02T10:00:00
+#            }
+  min_date: { 0: 2020-12-01T18:30:00  # to search temperature dependance on air
             }
   max_date: { 0: now,
 #             01: 2021-01-08T12:20:00
@@ -24,10 +29,10 @@ filter:
 
 out:
   # Note: "_proc_noAvg" db_name stem suffix will be auto added for aggregate_period_s=None:
-  db_name: 201202incl.h5              # default: "*incl.h5".
-  aggregate_period_s: [2, 300, 3600]  # [Null, 2, 600, 3600] Null means no average
+  db_name: 201202pres_cal.h5              # default: "*incl.h5".
+  aggregate_period_s: [Null, 2, 300, 3600]  # [Null, 2, 600, 3600] Null means no average
   # 300 will give 3 averaged points at start of each hour because of the 900s per hour working interval
 
 program:
-  step_start: 2
-  step_end: 3
+  step_start: 1
+  step_end: 1

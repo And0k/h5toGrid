@@ -11,6 +11,7 @@ from typing import Optional, Union, Tuple
 from datetime import datetime
 import numpy as np
 import pandas as pd
+from numba import jit
 from pandas.tseries.frequencies import to_offset
 
 from other_filters import l
@@ -254,3 +255,26 @@ def check_time_diff(t_queried: Union[pd.Series, np.ndarray], t_found: Union[pd.S
 
 # str_time_short= '{:%d %H:%M}'.format(r.Index.to_datetime())
 # timeUTC= r.Index.tz_convert(None).to_datetime()
+@jit
+def matlab2datetime64ns(matlab_datenum: np.ndarray) -> np.ndarray:
+    """
+    Matlab serial day to numpy datetime64[ns] conversion
+    :param matlab_datenum: serial day from 0000-00-00
+    :return: numpy datetime64[ns] array
+    """
+
+    origin_day = -719529  # np.int64(np.datetime64('0000-01-01', 'D') - np.timedelta64(1, 'D'))
+    day_ns = 24 * 60 * 60 * 1e9
+
+    # LOCAL_ZONE_m8= np.timedelta64(tzlocal().utcoffset(datetime.now()))
+    return ((matlab_datenum + origin_day) * day_ns).astype('datetime64[ns]')  # - LOCAL_ZONE_m8
+
+
+def date_from_filename(file_stem: str, century: str = '20'):
+    """
+    Reformat string from "%y%d%m" (format usually used to record dates in file names) to "%y-%d-%m" ISO 8601 format
+    :param file_stem: str of length >= 6, should start from date in "%y%d%m" format
+    :param century: str of length 2
+    :return:
+    """
+    return f"{century}{'-'.join(file_stem[(slice(k, k + 2))] for k in (6, 3, 0))}"

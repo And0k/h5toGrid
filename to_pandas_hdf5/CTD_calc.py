@@ -422,12 +422,11 @@ def log_runs(df_raw: pd.DataFrame,
 
     log.update(  # pd.DataFrame(, index=log_update['_st'].index).rename_axis('Date0')
         {'rows': imax - imin,
-        'rows_filtered': imin - np.append(0, imax[:-1]),  # rows between runs down
+        'rows_filtered': imax - np.append(imin[1:], len(df_raw)),  # rows between runs down. old: imin - np.append(0, imax[:-1])
         'fileName': [os_path.basename(cfg['in']['file_stem'])] * len(imin),
         'fileChangeTime': [cfg['in']['fileChangeTime']] * len(imin),
         })
 
-    times_min, times_max = df_raw.index[[imin, imax]]
     log.update(
         get_runs_parameters(df_raw, df_raw.index[imin], df_raw.index[imax],
                             cols_good_data=cfg['extract_runs']['cols'],
@@ -538,7 +537,7 @@ def get_runs_parameters(df_raw, times_min, times_max, cols_good_data: Union[str,
             df_nav_col = store.select(
                 table_nav,
                 where="index>=Timestamp('{}') & index<=Timestamp('{}') & {} > 0".format(
-                    *(time_points[[0, -1]] + np.array((-dt_search_nav_tolerance, dt_search_nav_tolerance))), col),
+                    *(time_points[[0, -1]] + np.array(dt_search_nav_tolerance, 'm8[s]') * [-1, 1]), col),
                 columns=[col])
             try:
                 vals = df_nav_col[col].values
@@ -639,7 +638,7 @@ def add_ctd_params(df_in: MutableMapping[str, Sequence], cfg: Mapping[str, Any],
         ctd['soundV'] = gsw.sound_speed_t_exact(ctd['SA'], ctd['Temp90'], ctd['Pres'])
 
     if 'depth' in params_to_calc:
-        ctd['depth'] = np.abs(gsw.z_from_p(np.abs(ctd['Pres']), lat))
+        ctd['depth'] = np.abs(gsw.z_from_p(np.abs(ctd['Pres'].to_numpy()), lat))  # to_numpy() works against NotImplementedError: Cannot apply ufunc <ufunc 'z_from_p'> to mixed DataFrame and Series inputs.
     if 'sigma0' in params_to_calc:
         CT = gsw.CT_from_t(ctd['SA'], ctd['Temp90'], ctd['Pres'])
         ctd['sigma0'] = gsw.sigma0(ctd['SA'], CT)
@@ -673,7 +672,7 @@ def main(new_arg=None):
         return cfg
 
     l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
-    print('\n' + this_prog_basename(__file__), end=' started. ')
+    print('\n', this_prog_basename(__file__), end=' started. ')
     try:
         cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
             **{**cfg['in'], 'path': cfg['in']['db_path']}, b_interact=cfg['program']['b_interact'])
@@ -727,7 +726,7 @@ def main(new_arg=None):
 
         # this table will be added:
         cfg['out']['tables_log'] = [cfg['out']['tables'][0] + '/logRuns']
-        cfg['out']['b_log_ready'] = True  # to not apdate time range in h5_append()
+        cfg['out']['b_log_ready'] = True  # to not update time range in h5_append() from data having only metadata
 
         # Settings to not affect main data table and switch off not compatible options:
         cfg['out']['tables'] = []

@@ -1,5 +1,4 @@
 import sys
-from functools import partial
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -254,7 +253,6 @@ if st(80, 'Gridding'):  # and False: #
     # todo: bug: bad top and bottom edges
 
 if st(110, 'Export csv with some new calculated paremeters'):  # False: #
-    # Extract CTD runs (if files are not splitted on runs):
     CTD_calc([  # 'CTD_calc-find_runs.ini',
         '--db_path', str(path_db),
         '--tables_list', f'{device}',

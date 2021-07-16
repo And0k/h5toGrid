@@ -1,0 +1,36 @@
+# 54.7396999 19.5789835 86.37 30062021 222129.06 0.00
+
+in:
+  path: 'd:/WorkData/BalticSea/210701_ASV/navigation/EA600/L*.xyz'
+  dt_from_utc_hours: 0
+  delimiter_chars: '\ \'
+  skiprows: 0  # skip header
+  #function cfg_input_cols_init depends from this:
+  header: 'Lat,Lon,DepEcho,Date(text),Time(text),zeros'
+  #coltime_integer: 3  # program will find "Time" in header
+  cols_not_use_list: 'zeros'
+  #cols_use_list: Lat,Lon,DepEcho
+  max_text_width: 11
+  #b_raise_on_err: False
+  b_skip_if_up_to_date: True
+  #keep_input_nans: True    # duplicated time is replaced to NaNs, where time is same the other data is too - not need interp
+  sort: False   # HYPACK can get unsorted rows:
+  # fun_date_from_filename: "pd.to_datetime(file_stem[5:12], format='%d%m%y')",
+
+filter:
+  min_dict:
+    DepEcho: 1
+    Lat: 0  # -100
+    Lon: 0  # -100
+  #min_date= 17.06.2017 21:50:00  # UTC, not output data < min_date
+  #max_date= 31.12.2017 00:00:00  # UTC, not output data > max_date
+
+out:
+  table: 'navigation'
+  b_insert_separator: False  # insert NaNs between files
+  #b_reuse_temporary_tables: False  # Warning! If True and b_skip_if_up_to_date= True then not replace temporary file with result before proc.
+  #chunksize_percent_float: 5  # this is big files, use smaller chanks to load them faster
+  b_remove_duplicates: True  # False. Set True if you see warnings about
+
+program:
+  log: 'log/csv2h5_nav_HYPACK_EA600.log'  # log operations

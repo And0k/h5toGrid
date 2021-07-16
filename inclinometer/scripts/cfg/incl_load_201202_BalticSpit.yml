@@ -1,9 +1,8 @@
-    
 in:
   path_cruise: d:\workData\BalticSea\201202_BalticSpit
-  raw_subdir: 201202\[i30,w02]_get210419.rar   # 201201[i33],210108-9[i5,9,19,28]
+  raw_subdir: 201202[i23,32,w4,5,6]get210623.zip  # 201202\[i30,w02]_get210419.rar 201201[i33],210108-9[i5,9,19,28]
   # Balt_spit.zip
-  probes:   [30]  # [3, 5, 9, 10, 11, 15, 19, 28, 33]
+  probes:   [23, 32]  #30 [3, 5, 9, 10, 11, 15, 19, 28, 33]
   probes_prefix: incl
   raw_pattern: "*{prefix:}{number:0>3}*.[tT][xX][tT]"
 
@@ -67,8 +66,11 @@ filter:
 out:
   # db_name: out_send.h5  # default: "incl.h5"
   aggregate_period_s: [Null, 2, 300, 600, 1800, 7200]  # Null means no average
+  # probe with 1800s burst period:
+  # '--probes_int_list', '04, 14, 36, 37, 38',  # '28, 33',  #3, 5, 9, 10, 11, 15, 19'
+  # '--aggregate_period_s_int_list', 'None, 2, 600, 1800, 7200',  # '',  # None,  300,  3600
 
 
 program:
-  step_start: 1
+  step_start: 2
   step_end: 2

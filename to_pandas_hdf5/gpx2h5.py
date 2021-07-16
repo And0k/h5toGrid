@@ -82,7 +82,7 @@ def my_argparser():
 
     s.add('--b_insert_separator', default='False',
               help='insert NaNs row in table after each file data end')
-    s.add('--b_use_old_temporary_tables', default='False',
+    s.add('--b_reuse_temporary_tables', default='False',
               help='Warning! Set True only if temporary storage already have good data!'
                    'if True and b_skip_if_up_to_date= True then not replace temporary storage with current storage before adding data to the temporary storage')
 
@@ -262,7 +262,7 @@ def main(new_arg=None):
         return cfg
 
     l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
-    print('\n' + this_prog_basename(__file__), end=' started. ')
+    print('\n', this_prog_basename(__file__), end=' started. ')
 
     try:
         cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
@@ -272,19 +272,13 @@ def main(new_arg=None):
         print(e.message)
         exit()
 
-    df_dummy = pd.DataFrame(
-        np.full(1, np.NaN, dtype=np.dtype({
-            'formats': ['float64', 'float64'],
-            'names': cfg['out']['tracks_cols'][1:]})),
-        index=(pd.NaT,))  # used for insert separator lines
-
     if 'routes_cols' not in cfg['in']:
         cfg['in']['routes_cols'] = cfg['in']['waypoints_cols']
     if 'routes_cols' not in cfg['out']:
         cfg['out']['routes_cols'] = cfg['out']['waypoints_cols']  # cfg['in']['routes_cols']  #
     # Writing
     if True:  # try:
-        l.warning('processing ' + str(cfg['in']['nfiles']) + ' file' + 's:' if cfg['in']['nfiles'] > 1 else ':')
+        l.warning('processing %d file%s', cfg['in']['nfiles'], 's:' if cfg['in']['nfiles'] > 1 else ':')
         cfg['out']['log'] = {}
         set_field_if_no(cfg['out'], 'table_prefix', PurePath(cfg['in']['path']).stem)
         cfg['out']['table_prefix'] = cfg['out']['table_prefix'].replace('-', '')

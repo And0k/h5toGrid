@@ -71,7 +71,7 @@ def gen_queries(ranges, patterns, margins, param_names=None, print_patern='_'.jo
         for c, margin, qstr_pattern in zip(centers, margins, patterns):
             qstr_list.append(qstr_pattern.format(c - margin, c + margin))
         centers_dict = dict(zip(param_names, centers))
-        print(f'\n{print_patern}'.format(**centers_dict), end='... ')
+        print(f'\n{print_patern}'.format(**centers_dict), end='… ')
         yield (centers_dict, ' and '.join(qstr_list))
 
 

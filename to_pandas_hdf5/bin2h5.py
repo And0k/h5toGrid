@@ -63,7 +63,7 @@ to Pandas HDF5 store*.h5
     #           help='tables names in hdf5 store to write data (comma separated)')
     s.add('--b_insert_separator', default='True',
               help='insert NaNs row in table after each file data end')
-    s.add('--b_use_old_temporary_tables', default='False',
+    s.add('--b_reuse_temporary_tables', default='False',
               help='Warning! Set True only if temporary storage already have good data!'
                    'if True and b_skip_if_up_to_date= True then not replace temporary storage with current storage before adding data to the temporary storage')
     s.add('--b_remove_duplicates', default='False', help='Set True if you see warnings about')
@@ -281,7 +281,7 @@ def main(new_arg=None, **kwargs):
         return cfg
 
     l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
-    print('\n' + this_prog_basename(__file__), end=' started. ')
+    print('\n', this_prog_basename(__file__), end=' started. ')
     try:
         cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
             **cfg['in'], b_interact= cfg['program']['b_interact'])
