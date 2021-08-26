@@ -18,17 +18,16 @@ lf = LoggingStyleAdapter(logging.getLogger(__name__))
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
 
-def get_gmails_data(json_cred, q, parse_body: Callable[[str], Any], cfg_dir=None):
+def get_gmails_data(json_cred, q: str, parse_body: Callable[[str], Any], cfg_dir=None):
     """
 
     :param json_cred: json file name downloaded from https://console.cloud.google.com/apis/credentials
-    :param q:
+    :param q: example: "from:someuser@example.com rfc822msgid:<somemsgid@example.com> is:unread"
     :param parse_body:
     :param cfg_dir: to read checked token (save to *.picle 1st time). If None then same path and stem as json_cred used
     :return:
     """
     print('reading messages from my email...')
-    data = []
 
     # Variable creds will store the user access token.
     # If no valid token found, we will create one.
@@ -58,18 +57,58 @@ def get_gmails_data(json_cred, q, parse_body: Callable[[str], Any], cfg_dir=None
     service = build('gmail', 'v1', credentials=creds)
 
     # request a list of all the messages
-    result = service.users().messages().list(userId='me', q=q, maxResults=1000000).execute()  # 'from: '
+    max_results = 500  # max allowed.
+    # => if messages each 5 min then per day = 24*60/5 = 288 messages, Max time interval will be 500/(288/24) ~= 41 hour
+    resource_msg = service.users().messages()
+    messages_ids = resource_msg.list(userId='me', q=q, maxResults=max_results, includeSpamTrash=True).execute().get('messages')
+    if messages_ids is None:  # shoud be [{'id': x1, y1: z1, ...}, {'id': x2, y3: z2, ...}, ...].
+        lf.info('no new messages matched "{}"', q)
+        return []
+    # The add() below will fill this list
+    data = []
 
-    # We can also pass maxResults to get any number of emails. Like this:
-    # result = service.users().messages().list(maxResults=200, userId='me').execute()
-    messages = result.get('messages')
+    def append_data(id, msg, err):
+        # id is given because this will not be called in the same order
+        if err:
+            print(err)
+        else:
+            try:
+                # Get value of 'payload' from dictionary 'txt'
+                payload = msg['payload']
+                if payload is None:
+                    return
+                # headers = payload['headers']
+                #
+                # # Look for Subject and Sender Email in the headers
+                # for d in headers:
+                #     if d is None:
+                #         continue
 
-    # messages is a list of dictionaries where each dictionary contains a message id.
+                body = base64.b64decode(payload['body']['data'].replace('-', '+').replace('_', '/'))
+                data.append(parse_body(body.decode(errors='ignore')))
+            except Exception as e:
+                lf.exception('Read message')
+                pass
 
-    # iterate through all the messages
-    for msg in messages:
+    batch = service.new_batch_http_request()
+
+    for i, msg_id in enumerate(messages_ids, start=1):
+        request = resource_msg.get(userId='me', id=msg_id['id'])
+        batch.add(request=request, callback=append_data)
+        if i % 100 == 0:  # 100 is the inner request count limit (else will be googleapiclient.errors.HttpError)
+            batch.execute()
+            batch = service.new_batch_http_request()
+    if i % 100 != 0:
+        batch.execute()
+    #service.close()
+    return data
+
+    # old code:
+
+    # Iterate through all the messages
+    for msg in messages_ids:
         # Get the message from its id
-        txt = service.users().messages().get(userId='me', id=msg['id']).execute()
+        txt = service.users().messages().get(id=msg['id']).execute()  # userId='me',
         try:
             # Get value of 'payload' from dictionary 'txt'
             payload = txt['payload']
@@ -86,7 +125,7 @@ def get_gmails_data(json_cred, q, parse_body: Callable[[str], Any], cfg_dir=None
                 if d['name'] == 'From':
                     sender = d['value']
 
-            body = base64.b64decode(payload['body']['data'].replace('-', '+').replace('_', '/'))
+
 
             # # Get the data and decode it with base 64 decoder.
             # parts = payload.get('parts')[0]
@@ -102,7 +141,7 @@ def get_gmails_data(json_cred, q, parse_body: Callable[[str], Any], cfg_dir=None
             # print("From: ", sender)
             # print("Message: ", body)
             # print('\n')
-            data.append(parse_body(body.decode(errors='ignore')))
+            data.append()
 
         except Exception as e:
             lf.exception('Read message')
