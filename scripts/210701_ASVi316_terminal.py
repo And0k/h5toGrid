@@ -18,10 +18,10 @@ from h5toGpx import main as h5toGpx
 from grid2d_vsz import main as grid2d_vsz
 
 st.go = True   # False #
-st.start = 80  # 5 30 70 80 115
+st.start = 115  # 5 30 70 80 115
 st.end = 80   # 60 80 120
 
-path_cruise = Path(r'd:\WorkData\BalticSea\210701_ASV')
+path_cruise = Path(r'd:\WorkData\BalticSea\210701_ASV51')
 path_db = path_cruise / path_cruise.with_suffix('.h5').name  # same name as dir
 
 # Stop before steps that need manual preparings (70) i.e. set end < 70 at first
@@ -60,7 +60,15 @@ if st(6, "Save bathymetry to DB from *.xyz export of EA600 echosounder data"):
         # '--b_remove_duplicates', 'True'
         # '--header', 'Lat,Lon,DepEcho,Date(text),Time(text),zeros',
         # '--skiprows_integer', '0'
-    ])
+        ],
+        **{'in': {
+            'csv_specific_param': {
+                'DepEcho_fun': lambda x: np.polyval(         # approximation for Sound speed correction
+                    [0.0004000000018551386, 0.9362000000550506, 0.600399992957307], x
+                    )
+                }
+           }}
+        )
 
 
 device = 'CTD_Idronaut_OS316#494'
@@ -87,7 +95,7 @@ common_ctd_params_dict = {
 
 
 if st(10, f'Save {device} data (uploaded from its memory) to DB'):
-    for sub_dir in ('weel_memory', ''): #
+    for sub_dir in ('weel_memory', ''):  #
         csv2h5(['cfg/csv_CTD_Idronaut.ini',
             '--path', str(path_cruise / device / '_raw_txt' / sub_dir / '2107*.txt'),
             #'--dt_from_utc_hours', '0', #'2'
@@ -96,7 +104,7 @@ if st(10, f'Save {device} data (uploaded from its memory) to DB'):
             '--delimiter_chars', '\\ \\',  # ''\s+',
             '--b_interact', '0',
             #'--cols_not_use_list', 'N',
-            # '--b_raise_on_err', '0'
+            # '--on_bad_lines', 'warn'
             ] + common_ctd_params_list,
             **common_ctd_params_dict
             )
@@ -125,7 +133,7 @@ if False:  # st(12, f'Save {device} data to DB recorded in terminal mode'):
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--b_interact', '0',
         #'--cols_not_use_list', 'N',
-        # '--b_raise_on_err', '0'
+        # '--on_bad_lines', 'warn'
         #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
         ] + common_ctd_params_list,
         **common_ctd_params_dict
@@ -141,8 +149,8 @@ if st(20, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params
               '--db_path', str(path_db),
               '--tables_list', f'{device}',
               #'--table_nav', '',       # uncomment if nav data only in CTD data file
-              '--min_samples', '35',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
-              '--min_dp', '6',
+              '--min_samples', '100',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
+              '--min_dp', '10',
               # Followig Not Helped!
               '--dt_between_min_minutes', '5',  # default 1s lead to split when commnication with sonde lost
               # '--b_keep_minmax_of_bad_files', 'True',
@@ -183,7 +191,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
                          # '--add_custom_expressions',
                          # """'[["{log_row[Index]:%Y-%m-%dT%H:%M:%S}", "{log_row[DateEnd]:%Y-%m-%dT%H:%M:%S}"]]'""",
                          '--export_pages_int_list', '0', #'--b_images_only', 'True'
-                         '--b_update_existed', 'True',  # todo: allow "delete_overlapped" time named files
+                         '--b_update_existed', 'False',  # todo: allow "delete_overlapped" time named files
                          '--b_interact', '0',
                          '--b_images_only', 'True',      # mandatory
                          '--b_execute_vsz', 'True'
@@ -203,7 +211,7 @@ if False:
         df_log = store[tbl_log]
 
     # repeat if need:
-    irow_to = 85
+    irow_to = 130  # 85
     merge_two_runs(df_log, irow_to, irow_from=None)
 
     # write back
@@ -225,7 +233,7 @@ if False:
     # Now run step 30 with veuszPropagate seting: '--b_update_existed', 'False' to save only modified vsz/images. After that delete old vsz and its images
 
 
-if False: #st(40)  # may not comment always because can not delete same time more than once
+if False:  # st(40)  # may not comment always because can not delete same time more than once
     # Deletng bad runs from DB:
     import pandas as pd
 
@@ -272,15 +280,14 @@ if False: # st(60, 'Extract navigation data at runs/starts to GPX tracks.'):    
 
 if st(70, 'Save waypoints/routes from _manually_ prepared gpx to hdf5'):  # False: #
     gpx2h5(['', '--path', str(path_cruise / r'navigation\CTD-sections=routes.gpx'),
-            '--table_prefix',
-            r'navigation/sectionsCTD'])  # need copy result from {path_db}_not_sorted manually, todo: auto copy
+            '--table_prefix', r'navigation/sectionsCTD'])  # need copy result from {path_db}_not_sorted manually, todo: auto copy
 
-if st(80, 'G5ridding'):  # and False: #
+if st(80, 'Gridding'):  # and False: #
     # Note: Prepare veusz "zabor" pattern before
     grid2d_vsz(['cfg/grid2d_vsz.ini', '--db_path', str(path_db),
                 '--table_sections', r'navigation/sectionsCTD_routes',
                 '--subdir', 'CTD-sections',
-                '--begin_from_section_int', '2', #'1',  # values <= 1 means no p
+                '--begin_from_section_int', '2', #'1',  # values <= 1 means no skip
                 '--data_columns_list', "Temp, Sal, SigmaTh, O2, O2ppm, soundV",
                 # 'Eh, pH',  todo: N^2 - need calc before
                 '--max_depth', '250', #'250',
@@ -299,7 +306,7 @@ if st(80, 'G5ridding'):  # and False: #
 
     # todo: bug: bad top and bottom edges
 
-if st(110, 'Export csv with some new calculated paremeters'):  # False: #
+if st(110, 'Export csv with some new calculated parameters'):  # False: #
     CTD_calc([  # 'CTD_calc-find_runs.ini',
         '--db_path', str(path_db),
         '--tables_list', f'{device}',
@@ -308,7 +315,7 @@ if st(110, 'Export csv with some new calculated paremeters'):  # False: #
         # '--min_dp', '9',
         # '--b_keep_minmax_of_bad_files', 'True',
         '--path_csv', str(path_cruise / device / 'txt_processed'),
-        '--data_columns_list', 'Pres, Temp90, Cond, Sal, O2, O2ppm, pH, Eh, Lat, Lon, SA, sigma0, depth, soundV',  #
+        '--data_columns_list', 'Pres, Temp90, Cond, Sal, O2, O2ppm, SA, sigma0, depth, soundV',  #, pH, Eh  , Lat, Lon
         '--b_skip_if_up_to_date', 'True',
         # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
         '--out.tables_list', 'None',
@@ -322,9 +329,9 @@ if st(115, 'Export csv for Obninsk'):
     from to_vaex_hdf5.h5tocsv import main_call as h5tocsv
     h5tocsv([
         f'input.db_path="{path_db}"',
-        f'input.tables=[{device}]',
-        f'input.tables_log=[{device}/logRuns]',
-        f"out.text_path={path_cruise / device / 'txt_for_Obninsk'}",
+        f'input.tables=["{device}"]',
+        f'input.tables_log=["{device}/logRuns"]',
+        fr"out.text_path='{path_cruise / device / 'txt_for_Obninsk'}'",
         f'out.text_date_format="%Y-%m-%dT%H:%M:%S"',
         f'out.text_float_format="%.6g"',
         f'out.file_name_fun="f\'{text_file_name_add}{{i+1:0>2}}.csv\'"',
@@ -334,7 +341,7 @@ if st(115, 'Export csv for Obninsk'):
         ''.join([
             f'+out.cols={{rec_num: "i + 1", identific: "i_log_row + 1", station: "{i_cruise * 1000 + 1} + i_log_row", ',
             ', '.join([p if ':' in p else f'{p}: {p}' for p in
-                       'Pres;Temp:Temp90;Cond;Sal;O2;O2ppm;SigmaT;SoundVel'.split(';')]),
+                       'Pres;Temp:Temp90;Cond;Sal;O2;O2ppm'.split(';')]), #;SigmaT;SoundVel
             '}'
             ]),
         'out.sep=";"'
@@ -349,7 +356,7 @@ if st(120, 'Meteo'):
         '--coldate_integer', '0', '--coltime_integer', '1',
         '--cols_not_use_list', 't_w,precipitation',  # bad constant data
         '--delimiter_chars', ',', '--max_text_width', '12',
-        '--b_raise_on_err', 'False', '--b_insert_separator', 'False',
+        '--on_bad_lines', 'warn', '--b_insert_separator', 'False',
         '--chunksize_percent_float', '500',
         '--fs_float', '60',
         '--skiprows', '0'
@@ -382,7 +389,7 @@ if st(210, f'Save {device} data to DB'):  # False: #
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--b_interact', '0',
         #'--cols_not_use_list', 'N',
-        # '--b_raise_on_err', '0'
+        # '--on_bad_lines', 'warn'
         #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
         ],
         **{'in': {
@@ -487,7 +494,7 @@ if st(250, 'Extract navigation data at time station starts to GPX waypoints'):  
     '--dt_search_nav_tolerance_minutes', '1'  # to trigger interpolate
     ])
 
-if st(260, 'Export csv with some new calculated paremeters'):  # False: #
+if st(260, 'Export csv with some new calculated parameters'):  # False: #
     # Extract CTD runs (if files are not splitted on runs):
     CTD_calc([  # 'CTD_calc-find_runs.ini',
         '--db_path', str(path_db),

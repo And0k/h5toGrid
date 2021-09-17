@@ -69,67 +69,67 @@ to Pandas HDF5 store*.h5
     # Configuration sections
     s = p.add_argument_group('in', 'all about input files')
     s.add('--path', default='.',  # nargs=?,
-             help='path to source file(s) to parse. Use patterns in Unix shell style')
+          help='path to source file(s) to parse. Use patterns in Unix shell style')
     s.add('--b_search_in_subdirs', default='False',
-             help='search in subdirectories, used if mask or only dir in path (not full path)')
+          help='search in subdirectories, used if mask or only dir in path (not full path)')
     s.add('--exclude_dirs_endswith_list', default='toDel, -, bad, test, TEST',
-             help='exclude dirs which ends with this srings. This and next option especially useful when search recursively in many dirs')
+          help='exclude dirs which ends with this srings. This and next option especially useful when search recursively in many dirs')
     s.add('--exclude_files_endswith_list', default='coef.txt, -.txt, test.txt',
-             help='exclude files which ends with this srings')
+          help='exclude files which ends with this srings')
     s.add('--b_skip_if_up_to_date', default='True',
-             help='exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it before procesing of next files: 1. Program copyes all data to temporary storage and 2. deletes old data there if found. 3. New data appended. 4. Data tables copyed back with deleting original data')
+          help='exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it before procesing of next files: 1. Program copyes all data to temporary storage and 2. deletes old data there if found. 3. New data appended. 4. Data tables copyed back with deleting original data')
     s.add('--dt_from_utc_seconds', default='0',
-             help='source datetime data shift. This constant will be substructed just after the loading to convert to UTC. Can use other suffixes instead of "seconds"')
+          help='source datetime data shift. This constant will be substructed just after the loading to convert to UTC. Can use other suffixes instead of "seconds"')
     s.add('--dt_from_utc_hours', default='0',
-             help='source datetime data shift. This constant will be substructed just after the loading to convert to UTC. Can use other suffixes instead of "hours"')
+          help='source datetime data shift. This constant will be substructed just after the loading to convert to UTC. Can use other suffixes instead of "hours"')
     s.add('--fs_float',
-             help='sampling frequency, uses this value to calculate intermediate time values between time changed values (if same time is assined to consecutive data)')
+          help='sampling frequency, uses this value to calculate intermediate time values between time changed values (if same time is assined to consecutive data)')
     s.add('--fs_old_method_float',
-             help='sampling frequency, same as ``fs_float``, but courses the program to use other method. If smaller than mean data frequency then part of data can be deleted!(?)')
+          help='sampling frequency, same as ``fs_float``, but courses the program to use other method. If smaller than mean data frequency then part of data can be deleted!(?)')
     s.add('--header',
-             help='comma separated list matched to input data columns to name variables. To autoadd exclude column from loading use ",,". Can contain type suffix i.e.'
+          help='comma separated list matched to input data columns to name variables. To autoadd exclude column from loading use ",,". Can contain type suffix i.e.'
              '- (float): (default),'
              '- (text): required if read_csv() can not convert to float/time, and if specific converter used, '
              '- (time): for ISO 8601 format (only?)')
     s.add('--cols_load_list',
-             help='comma separated list of names from header to be loaded from csv. Do not use "/" char, or type suffixes like in ``header`` for them. Defaut - all columns')
+          help='comma separated list of names from header to be loaded from csv. Do not use "/" char, or type suffixes like in ``header`` for them. Defaut - all columns')
     s.add('--cols_not_use_list',
-             help='comma separated list of names from header to not be saved in hdf5 store.')
+          help='comma separated list of names from header to not be saved in hdf5 store.')
     s.add('--cols_use_list',
-             help='comma separated list of names from header to be saved in hdf5 store. Because of autodeleting converted (text) columns include them here if want to keep. New columns that created in csv_specific_proc() after read_csv() must also be here to get')
+          help='comma separated list of names from header to be saved in hdf5 store. Because of autodeleting converted (text) columns include them here if want to keep. New columns that created in csv_specific_proc() after read_csv() must also be here to get')
 
     s.add('--skiprows_integer', default='1',
-             help='skip rows from top. Use 1 to skip one line of header')
-    s.add('--b_raise_on_err', default='True',
-             help='if false then not rise error on rows which can not be loaded (only shows warning). Try set "comments" argument to skip them without warning')
+          help='skip rows from top. Use 1 to skip one line of header')
+    s.add('--on_bad_lines', default='error', choices=['error', 'warn', 'skip'],
+          help='if "warn" print a warning when a bad line is encountered and skip that line. See also "comments" argument to skip bad line without warning')
     s.add('--delimiter_chars',
-             help='parameter of dask.read_csv(). Default None is useful for fixed length format')
+          help='parameter of dask.read_csv(). Default None is useful for fixed length format')
     s.add('--max_text_width', default='1000',
-             help='maximum length of text fields (specified by "(text)" in header) for dtype in numpy.loadtxt')
+          help='maximum length of text fields (specified by "(text)" in header) for dtype in numpy.loadtxt')
     s.add('--chunksize_percent_float',
-             help='percent of 1st file length to set up hdf5 store tabe chunk size')
+          help='percent of 1st file length to set up hdf5 store tabe chunk size')
     s.add('--blocksize_int', default='20000000',
-             help='bytes, chunk size for loading and processing csv')
+          help='bytes, chunk size for loading and processing csv')
     s.add('--sort', default='True',
-             help='if time not sorted then modify time values trying to affect small number of values. This is different from sorting rows which is performed at last step after the checking table in database')
+          help='if time not sorted then modify time values trying to affect small number of values. This is different from sorting rows which is performed at last step after the checking table in database')
     s.add('--fun_date_from_filename',
-             help='function(file_stem: str, century: Optional[str]=None) -> Any[compartible to input of pandas.to_datetime()]: to get date from filename to time column in it.')
+          help='function(file_stem: str, century: Optional[str]=None) -> Any[compartible to input of pandas.to_datetime()]: to get date from filename to time column in it.')
     s.add('--fun_proc_loaded',
-             help='function(df: Dataframe, cfg_in: Optional[Mapping[str, Any]] = None) -> Dataframe/DateTimeIndex: to update/calculate new parameters from loaded data  before filtering. If output is Dataframe then function should have meta_out attribute which is Callable[[np.dtype, Iterable[str], Mapping[str, dtype]], Dict[str, np.dtype]]')
+          help='function(df: Dataframe, cfg_in: Optional[Mapping[str, Any]] = None) -> Dataframe/DateTimeIndex: to update/calculate new parameters from loaded data  before filtering. If output is Dataframe then function should have meta_out attribute which is Callable[[np.dtype, Iterable[str], Mapping[str, dtype]], Dict[str, np.dtype]]')
     s.add('--csv_specific_param_dict',
-             help='not default parameters for function in csv_specific_proc.py used to load data')
+          help='not default parameters for function in csv_specific_proc.py used to load data')
 
     s = p.add_argument_group('out',
                              'all about output files')
     s.add('--db_path', help='hdf5 store file path')
     s.add('--table',
-              help='table name in hdf5 store to write data. If not specified then will be generated on base of path of input files. Note: "*" is used to write blocks in autonumbered locations (see dask to_hdf())')
+           help='table name in hdf5 store to write data. If not specified then will be generated on base of path of input files. Note: "*" is used to write blocks in autonumbered locations (see dask to_hdf())')
     # s.add('--tables_list',
     #           help='tables names in hdf5 store to write data (comma separated)')
     s.add('--b_insert_separator',
-              help='insert NaNs row in table after each file data end')
+           help='insert NaNs row in table after each file data end')
     s.add('--b_reuse_temporary_tables', default='False',
-              help='Warning! Set True only if temporary storage already have good data!'
+           help='Warning! Set True only if temporary storage already have good data!'
                    'if True and b_skip_if_up_to_date= True then program will not replace temporary storage with current storage before adding data to the temporary storage')
     s.add('--b_remove_duplicates', default='False', help='Set True if you see warnings about')
     s.add('--b_del_temp_db', default='False', help='temporary h5 file will be deleted after operation')
@@ -141,13 +141,13 @@ to Pandas HDF5 store*.h5
     s.add('--min_dict', help='List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is below ``value``')
     s.add('--max_dict', help='List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is above ``value``')
     s.add('--b_bad_cols_in_file_name', default='True',
-              help='find string "<Separator>no_<col1>[,<col2>]..." in file name and set all values of col1[, col2] to NaN. Here <Separator> is one of -_()[, ')
+           help='find string "<Separator>no_<col1>[,<col2>]..." in file name and set all values of col1[, col2] to NaN. Here <Separator> is one of -_()[, ')
 
     s = p.add_argument_group('program',
                              'program behaviour')
     s.add('--return', default='<end>',  # nargs=1,
                choices=['<cfg_from_args>', '<gen_names_and_log>', '<end>'],
-               help='<cfg_from_args>: returns cfg based on input args only and exit, <gen_names_and_log>: execute init_input_cols() and also returns fun_proc_loaded function... - see main()')
+            help='<cfg_from_args>: returns cfg based on input args only and exit, <gen_names_and_log>: execute init_input_cols() and also returns fun_proc_loaded function... - see main()')
     return (p)
 
 
@@ -490,7 +490,7 @@ def read_csv(paths: Sequence[Union[str, Path]],
         
         names=cfg_in['cols'][cfg_in['cols_load']]
         usecols=cfg_in['cols_load']
-        error_bad_lines=cfg_in['b_raise_on_err']
+        on_bad_lines=cfg_in['on_bad_lines']
         comment=cfg_in['comments']
         
         Other arguments corresponds to fields with same name:
@@ -519,7 +519,7 @@ def read_csv(paths: Sequence[Union[str, Path]],
     read_csv_args_to_cfg_in = {
         'dtype': 'dtype_raw',
         'names': 'cols',
-        'error_bad_lines': 'b_raise_on_err',
+        'on_bad_lines': 'on_bad_lines',
         'comment': 'comments',
         'delimiter': 'delimiter',
         'converters': 'converters',
@@ -545,10 +545,10 @@ def read_csv(paths: Sequence[Union[str, Path]],
             # engine=None, true_values=None, false_values=None, skipinitialspace=False,
             #     nrows=None, na_values=None, keep_default_na=True, na_filter=True, verbose=False,
             #     skip_blank_lines=True, parse_dates=False, infer_datetime_format=False, keep_date_col=False,
-            #     date_parser=None, dayfirst=False, iterator=False, chunksize=None, compression='infer',
+            #     date_parser=None, dayfirst=False, iterator=False, chunksize=1000000, compression='infer',
             #     thousands=None, decimal=b'.', lineterminator=None, quotechar='"', quoting=0,
             #     escapechar=None, encoding=None, dialect=None, tupleize_cols=None,
-            #      warn_bad_lines=True, skipfooter=0, skip_footer=0, doublequote=True,
+            #      on_bad_lines='warn', skipfooter=0, skip_footer=0, doublequote=True,
             #     delim_whitespace=False, as_recarray=None, compact_ints=None, use_unsigned=None,
             #     low_memory=True, buffer_lines=None, memory_map=False, float_precision=None)
         except ValueError as e:
@@ -565,8 +565,8 @@ def read_csv(paths: Sequence[Union[str, Path]],
     except Exception as e:  # for example NotImplementedError if bad file
         msg = 'Bad file. skip!'
         ddf = None
-        if cfg_in['b_raise_on_err']:
-            l.exception('%s\n Try set [in].b_raise_on_err = False\n', msg)
+        if cfg_in['on_bad_lines'] == 'error':
+            l.exception('%s\n Try set [in].on_bad_lines = skip\n', msg)
             raise (e)
         else:
             l.exception(msg)
@@ -820,7 +820,7 @@ def read_csv(paths: Sequence[Union[str, Path]],
 
 # @delayed
 # def loadtxt(cfg_in):
-#     if not cfg_in['b_raise_on_err']:
+#     if cfg_in['on_bad_lines'] != 'error':
 #         try:
 #             a= np.genfromtxt(nameFull, dtype= cfg_in['dtype'],
 #                 delimiter= cfg_in['delimiter'],
@@ -841,7 +841,7 @@ def read_csv(paths: Sequence[Union[str, Path]],
 #                           converters= cfg_in['converters'],
 #                           skiprows= cfg_in['skiprows'])
 #         except Exception as e:
-#             print('{}\n Try set [in].b_raise_on_err= False'.format(e))
+#             print('{}\n Try set [in].on_bad_lines = warn'.format(e))
 #             raise(e)
 #     return a
 
@@ -885,7 +885,7 @@ def h5_names_gen(cfg_in, cfg_out: Mapping[str, Any], **kwargs) -> Iterator[Path]
     for name_full in cfg_in['paths']:
         pname = Path(name_full)
 
-        cfg_out['log']['fileName'] = pname.name[-cfg_out['logfield_fileName_len']:-4]
+        cfg_out['log']['fileName'] = f'{pname.parent.name}/{pname.stem}'[-cfg_out['logfield_fileName_len']:]
         cfg_out['log']['fileChangeTime'] = datetime.fromtimestamp(pname.stat().st_mtime)
 
         try:
@@ -912,7 +912,7 @@ def h5_close(cfg_out: Mapping[str, Any]) -> None:
     """
     try:
         print('')
-        cfg_table_keys = ['tables_have_wrote'] if ('tables_have_wrote' in cfg_out) else ('tables', 'tables_log')
+        cfg_table_keys = ['tables_written'] if ('tables_written' in cfg_out) else ('tables', 'tables_log')
         if cfg_out['b_remove_duplicates']:
             tbl_dups = h5remove_duplicates_by_loading(cfg_out, cfg_table_keys=cfg_table_keys)
             # or h5remove_duplicates() but it can take very long time
@@ -937,6 +937,9 @@ def h5_close(cfg_out: Mapping[str, Any]) -> None:
         if cfg_out['db'].is_open:
             print('Wait store closing...')
             sleep(2)
+            if cfg_out['db'].is_open:
+                cfg_out['db_is_bad'] = True  # failed closing
+
         cfg_out['db'] = None
         return
 
@@ -944,8 +947,10 @@ def h5_close(cfg_out: Mapping[str, Any]) -> None:
 def h5_dispenser_and_names_gen(
         cfg_in: Mapping[str, Any],
         cfg_out: Optional[MutableMapping[str, Any]] = None,
-        fun_gen: Callable[[Mapping[str, Any], Mapping[str, Any]], Iterator[Any]] = h5_names_gen,
-        b_close_at_end: Optional[bool] = True, **kwargs) -> Iterator[Tuple[int, Any]]:
+        fun_gen: Callable[[Mapping[str, Any], Mapping[str, Any], Any], Iterator[Any]] = h5_names_gen,
+        b_close_at_end: Optional[bool] = True,
+        **kwargs
+        ) -> Iterator[Tuple[int, Any]]:
     """
     Prepares HDF5 store to insert/update data and yields fun_gen(...) outputs:
         - Opens DB (see h5temp_open() requirements)
@@ -964,7 +969,7 @@ def h5_dispenser_and_names_gen(
             - 'fileName' - in format as in log table to able find duplicates
             - 'fileChangeTime', datetime - to able find outdate data
         - b_skip_if_up_to_date: if True then not yields previously processed files. But if file was changed 1. removes stored data and 2. yields fun_gen(...) result
-        - tables_have_wrote: sequence of table names where to create index
+        - tables_written: sequence of table names where to create index
     :param fun_gen: function with arguments (cfg_in, cfg_out, **kwargs), that
         - generates data labels, default are file's ``Path``s,
         - updates cfg_out['log'] fields 'fileName' (by current label) and 'fileChangeTime' needed to store and find
@@ -1044,7 +1049,9 @@ def get_fun_proc_loaded_converters(cfg_in: MutableMapping[str, Any]
     try:
         fun_suffix = fun_suffix.replace('&', '_and_')  # sea_and_sun
         suffix_st = len('proc_loaded_')
-        fun_names = [f for f in dir(to_pandas_hdf5.csv_specific_proc) if f.startswith('proc_loaded_') and fun_suffix.endswith(f[suffix_st:])]
+        fun_names = [f for f in dir(to_pandas_hdf5.csv_specific_proc) if
+                     f.startswith('proc_loaded_') and fun_suffix.endswith(f[suffix_st:])
+                     ]
         if len(fun_names) == 1:
             fun_proc_loaded = getattr(to_pandas_hdf5.csv_specific_proc, fun_names[0])
             return fun_proc_loaded
@@ -1053,28 +1060,6 @@ def get_fun_proc_loaded_converters(cfg_in: MutableMapping[str, Any]
                                  len(fun_names), cfg_file)
     except AttributeError:
         l.debug('No fun_proc_loaded')  # fun_proc_loaded is not needed probably
-
-    # if cfg_file.endswith('Sea&Sun'):
-    #     fun_proc_loaded = to_pandas_hdf5.csv_specific_proc.proc_loaded_sea_and_sun
-    # elif cfg_file.endswith('Idronaut'):
-    #     fun_proc_loaded = to_pandas_hdf5.csv_specific_proc.proc_loaded_Idronaut
-    # elif cfg_file.endswith('nav_supervisor') or cfg_file.endswith('meteo'):
-    #     fun_proc_loaded = to_pandas_hdf5.csv_specific_proc.proc_loaded_nav_supervisor
-    # elif cfg_file.endswith('ctd_Schuka'):
-    #     fun_proc_loaded = to_pandas_hdf5.csv_specific_proc.proc_loaded_ctd_Schuka
-    # elif cfg_file.endswith('ctd_Schuka_HHMM'):
-    #     fun_proc_loaded = to_pandas_hdf5.csv_specific_proc.proc_loaded_ctd_Schuka_HHMM
-    # elif cfg_file.endswith('csv_log'):
-    #     fun_proc_loaded = to_pandas_hdf5.csv_specific_proc.proc_loaded_csv_log
-    # elif cfg_file.endswith('chain_Baranov') or cfg_file.endswith('inclin_Baranov'):
-    #     fun_proc_loaded = to_pandas_hdf5.csv_specific_proc.proc_loaded_chain_Baranov
-    # elif cfg_file.endswith('csv_Baklan'):
-    #     fun_proc_loaded = to_pandas_hdf5.csv_specific_proc.proc_loaded_Baklan
-    # elif cfg_file.endswith('inclin_Kondrashov'):
-    #     fun_proc_loaded = to_pandas_hdf5.csv_specific_proc.proc_loaded_inclin_Kondrashov
-    # elif cfg_file.endswith('nav_HYPACK'):
-    #     fun_proc_loaded = to_pandas_hdf5.csv_specific_proc.proc_loaded_nav_HYPACK
-    # return fun_proc_loaded
 
 
 def main(new_arg=None, **kwargs):
@@ -1130,12 +1115,17 @@ def main(new_arg=None, **kwargs):
             cfg['in']['fun_proc_loaded'] = lambda a, cfg_in, dummy=None: a['Date'] + np.array(
                 np.int32(1000 * a[cfg_in['col_index_name']]), dtype='m8[ms]')
 
-    if cfg['in'].get('csv_specific_param'):
-        # Add additional configured argument to fun_proc_loaded()
-        # and append it with proc_loaded_corr()
-        t = getattr(cfg['in']['fun_proc_loaded'], 'meta_out', None)  # save before wrapping
-        if t is not None:  # if attribute then it lost during partil wrapping so add it back
-            fun_proc_loaded = partial(cfg['in']['fun_proc_loaded'], csv_specific_param=cfg['in']['csv_specific_param'])
+    if cfg['in']['csv_specific_param']:
+        # Add additional argument 'csv_specific_param' to fun_proc_loaded() if required
+        # and append it with proc_loaded_corr() if fun_proc_loaded() has 'meta_out' attribute (else fun_proc_loaded()
+        # returns only time and we will run proc_loaded_corr() separately (see read_csv()))
+        meta_out = getattr(cfg['in']['fun_proc_loaded'], 'meta_out', None)
+        # if 'meta_out' attribute then it will lost during wrapping by "partial" so saved before
+        fun_proc_loaded = (partial(cfg['in']['fun_proc_loaded'], csv_specific_param=cfg['in']['csv_specific_param']) if
+                           'csv_specific_param' in cfg['in']['fun_proc_loaded'].__code__.co_varnames else
+                           cfg['in']['fun_proc_loaded']
+                           )
+        if meta_out is not None:  # only functions with 'meta_out' allowed to modify parameters in same step as loading
 
             def fun_proc_loaded_folowed_proc_loaded_corr(a, cfg_in):
                 a = fun_proc_loaded(a, cfg_in)
@@ -1143,8 +1133,8 @@ def main(new_arg=None, **kwargs):
                 return a
 
             cfg['in']['fun_proc_loaded'] = fun_proc_loaded_folowed_proc_loaded_corr
-            cfg['in']['fun_proc_loaded'].meta_out = t
-        # else: fun_proc_loaded returns only time. We need run proc_loaded_corr() separately (see read_csv())
+            cfg['in']['fun_proc_loaded'].meta_out = meta_out  # add lost parameter back
+
 
     if cfg['program']['return'] == '<return_cfg_step_fun_proc_loaded>':  # to help testing
         return cfg
@@ -1154,9 +1144,8 @@ def main(new_arg=None, **kwargs):
         return cfg
 
     cfg_out['log'] = {'fileName': None, 'fileChangeTime': None}
-    # for lim in ['min', 'max']:
-    #     cfg['filter'][f'{lim}_date'] = cfg['in'][f'date_{lim}']
-    if True:  # try:   # Writing
+
+    if True:  # try:
         ## Main circle ############################################################
         for i1_file, path_csv in h5_dispenser_and_names_gen(cfg['in'], cfg_out):
             if cfg['in']['nfiles'] > 1:

@@ -84,7 +84,7 @@ if st(2):
                 '--verbose', 'DEBUG',
                 # '--calc_version', 'polynom(force)',  # depreshiated
                 # '--chunksize', '20000',
-                # '--not_joined_h5_path', f'{db_path.stem}_proc.h5',
+                # '--not_joined_db_path', f'{db_path.stem}_proc.h5',
                 # '--text_date_format', '%g'
                 ]
         if aggregate_period_s is None:  # proc. parameters (if we have saved proc. data then when aggregating we are not processing)

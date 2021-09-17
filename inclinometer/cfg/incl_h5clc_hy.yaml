@@ -1,0 +1,9 @@
+defaults:
+  - base_incl_h5clc_hy
+# - probes: wavegages
+# if installed
+#  - override hydra/job_logging: colorlog
+#  - override hydra/hydra_logging: colorlog
+hydra:
+  searchpath:
+    - file://c:/temp/cfg_proc

@@ -171,7 +171,7 @@ def order_cols(df: pd.DataFrame,
             df_out[out_col] = df.eval(in_col)
 
     df_to_rename = df[dict_rename.keys()]
-    # removing index if exists because df.rename() renames only columns
+    # removing index if exists because df.rename() renames only columns and add it as column
     col_index = dict_rename.pop('index', None)  # index will be placed in this column
     if col_index:
         df_out[col_index] = df_out.index
@@ -231,7 +231,7 @@ hydra.output_subdir = 'cfg'
 # hydra.conf.HydraConf.run.dir = './outputs/${now:%Y-%m-%d}_${now:%H-%M-%S}'
 
 cs_store_name = Path(__file__).stem
-cs, ConfigType = to_vaex_hdf5.cfg_dataclasses.hydra_cfg_store(cs_store_name, {
+cs, ConfigType = to_vaex_hdf5.cfg_dataclasses.hydra_cfg_store(f'base_{cs_store_name}', {
     'input': ['in_hdf5'],  # Load the config "in_hdf5" from the config group "input"
     'out': ['out_csv'],  # Set as MISSING to require the user to specify a value on the command line.
     'filter': ['filter'],
@@ -242,7 +242,7 @@ cs, ConfigType = to_vaex_hdf5.cfg_dataclasses.hydra_cfg_store(cs_store_name, {
 
 cfg = {}
 
-@hydra.main(config_name=cs_store_name)  # adds config store cs_store_name data/structure to :param config
+@hydra.main(config_name=cs_store_name, config_path="cfg")  # adds config store data/structure to :param config
 def main(config: ConfigType) -> None:
     """
     ----------------------------
@@ -333,7 +333,10 @@ def main(config: ConfigType) -> None:
     print('Ok>', end=' ')
 
 
-def main_call(cmd_line_list:Optional[List[str]] = None, fun: Callable[[Any], Any] = main) -> Dict:
+def main_call(
+        cmd_line_list: Optional[List[str]] = None,
+        fun: Callable[[], Any] = main
+        ) -> Dict:
     """
     Adds command line args, calls fun, then restores command line args
     :param cmd_line_list: command line args of hydra commands or config options selecting/overwriting

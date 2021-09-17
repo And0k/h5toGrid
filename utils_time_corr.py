@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
+from win32com.client import Dispatch
 
 from other_filters import find_sampling_frequency, longest_increasing_subsequence_i, rep2mean, repeated2increased, \
     make_linear, rep2mean_with_const_freq_ends
@@ -78,12 +79,12 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray], cfg_in: Mapping[str,
                     ), utc=True)
             # tim += np.timedelta64(pd.Timedelta(hours=hours_from_utc_f)) #?
         lf.info('Time constant: {} {:s}', abs(cfg_in['dt_from_utc']),
-               'subtracted' if cfg_in['dt_from_utc'] > timedelta(0) else 'added')
+                'subtracted' if cfg_in['dt_from_utc'] > timedelta(0) else 'added')
     else:
-        if (not isinstance(date, pd.Series)) and (not isinstance(date, np.datetime64)):
+        if not isinstance(date[0], pd.Timestamp):  # isinstance(date, (pd.Series, np.datetime64))
             date = date.astype('datetime64[ns]')
         tim = pd.to_datetime(date, utc=True)  # .tz_localize('UTC')tz_convert(None)
-        #hours_from_utc_f = 0
+
     cfg_min_date = cfg_in.get('min_date')
     if cfg_min_date:
         cfg_min_date = pd.Timestamp(cfg_in['min_date'], tz='UTC')
@@ -339,11 +340,24 @@ from bokeh.io import export_png, export_svgs
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 
+
+
+def get_version_via_com(filename):
+    parser = Dispatch("Scripting.FileSystemObject")
+    try:
+        version = parser.GetFileVersion(filename)
+    except Exception:
+        return None
+    return version
+
+
 def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
                             tim: Union[pd.Series, pd.Index, np.ndarray, None] = None,
                             tim_range: Optional[Tuple[Any, Any]] = None, path_save_image=None, msg='') -> None:
     """
     # Used instead of plt that can hang (have UserWarning: Starting a Matplotlib GUI outside of the main thread will likely fail.)
+    To can export png the chromedriver must be placed to c:\Programs\_net\Selenium\chromedriver{chrome_version[:2]}.exe
+    On fail tries export html
     :param cfg_in:
     :param t: array of values to show their idel and b_ok parts, for example currently filtered part of tim, converted to array
     :param idel: indexes of t
@@ -380,7 +394,9 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
                 chrome_options.add_argument("--headless")
 
                 chrome_options.binary_location = r'C:\Program Files (x86)\Slimjet\Slimjet.exe'
-                chrome_driver_path = r'c:\Programs\_net\Silenium\chromedriver83.exe'
+                # version = [get_version_via_com(p) for p in paths if p is not None][0]
+                chrome_version = '88'  # get_version_via_com(chrome_options.binary_location)
+                chrome_driver_path = rf'c:\Programs\_net\Selenium\chromedriver{chrome_version[:2]}.exe'
 
                 # os.environ["webdriver.chrome.driver"] = chrome_driver_path  # seems not works
                 web_driver = webdriver.Chrome(executable_path=chrome_driver_path, options=chrome_options)

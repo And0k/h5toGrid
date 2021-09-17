@@ -431,8 +431,9 @@ def type_fix(name: str, opt: Any) -> Tuple[str, Any]:
                     name_out, val = type_fix(parent_name, field_value)
                     return field_name, val
 
-                dict_fixed = dict([val_type_fix(name_new, *n.strip().split(': ' if ': ' in n else ':')) for n in
-                      opt.split('\n,' if '\n' in opt else ',') if len(n)])
+                dict_fixed = dict([val_type_fix(name_new, *n.strip().split(': ' if ': ' in n else ':', maxsplit=1)
+                                                ) for n in opt.split('\n,' if '\n' in opt else ',') if len(n)
+                                   ])
             return name_out, dict_fixed
         if prefix == 'b':
             return name, literal_eval(opt)
@@ -540,6 +541,8 @@ def ini2dict(arg_source: Union[Mapping[str, Any], str, PurePath, None] = None):
                 d = {opt: float(opt) for opt in sec}
                 cfg[sname] = timedelta(**d)
             else:
+                if not hasattr(sec, 'items'):
+                    continue
                 opt_used = set()
                 for oname, opt in sec.items():
                     new_name, val = type_fix(oname, opt)

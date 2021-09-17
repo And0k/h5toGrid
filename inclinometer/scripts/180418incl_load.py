@@ -77,7 +77,7 @@ if True:  # Faluse:  #    #   # Real data
                     '--max_date', '18.10.2018 07:40:00',  # ; UTC, not output data > max_date
                     '--db_path', path_db,
                     '--log', str(scripts_path / 'log/csv2h5_inclin_Kondrashov.log'),
-                    '--b_raise_on_err', '0',  # ?! need fo this file only?
+                    '--on_bad_lines', 'warn',  # ?! need fo this file only?
                     '--b_interact', '0',
                     '--fs_float', '4.8'
                     ])

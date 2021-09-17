@@ -208,7 +208,7 @@ if start == 1:
                 # f_next_min_date(probe) '2019-07-04T21:00:00',
                 '--db_path', str(db_path),
                 '--log', str(scripts_path / 'log/csv2h5_inclin_Kondrashov.log'),
-                # '--b_raise_on_err', '0',  # ?! need fo this file only?
+                # '--on_bad_lines', 'warn',  # ?! need fo this file only?
                 '--b_interact', '0',
                 '--fs_float', f'{fs(probe)}',
                 '--dt_from_utc_seconds', f'{dt_from_utc_2000(probe)}',

@@ -16,7 +16,7 @@ device = 'CTD_Idronaut_OS310'
 path_cruise = Path(r'd:\workData\BalticSea\190817_ANS42')
 path_db = path_cruise / path_cruise.with_suffix('.h5').name  # same name as dir
 go = True  # False #
-start = 50
+start = 80
 # end = start + 1  # one step
 end = 81  # 81: Gridding end, 10000: no limit
 
@@ -62,7 +62,7 @@ if st(10):  # False: #
         'date(text),txtT(text),Pres(float),Temp(float),Cond(float),Sal(float),O2(float),O2ppm(float),pH(float),Eh(float)',
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--b_interact', '0',
-        # '--b_raise_on_err', '0'
+        # '--on_bad_lines', 'warn'
         ])
 
 if st(20):  # False: #
@@ -165,8 +165,8 @@ if st(80):  # False: #
     grid2d_vsz(['cfg/grid2d_vsz.ini', '--db_path', str(path_db),
                 '--table_sections', r'navigation/sectionsCTD_routes',
                 '--subdir', 'CTD-sections',
-                '--begin_from_section_int', '1',  # values <= 1 means no skip
-                '--data_columns_list', 'Eh, pH',  # Temp, Sal, SigmaTh, O2, O2ppm,  todo: N^2 - need calc before
+                '--begin_from_section_int', '2',  # values <= 1 means no skip
+                '--data_columns_list', 'Temp, Sal, SigmaTh, O2, O2ppm, Eh, pH',  # todo: N^2 - need calc before
                 '--filter_depth_wavelet_level_int', '2',  # 4, 2 for section 3
                 '--min_depth', '35',
                 '--max_depth', '110',
@@ -201,13 +201,13 @@ if st(100):  # True: #
         '--coldate_integer', '0', '--coltime_integer', '1',
         '--cols_not_use_list', 't_w,precipitation',  # bad constant data
         '--delimiter_chars', ',', '--max_text_width', '12',
-        '--b_raise_on_err', 'False', '--b_insert_separator', 'False',
+        '--on_bad_lines', 'warn', '--b_insert_separator', 'False',
         '--chunksize_percent_float', '500',
         '--fs_float', '60',
         '--skiprows', '0'
         ])
 
-# Export csv with new paremeters
+# Export csv with new parameters
 if st(110):  # False: #
     # Extract CTD runs (if files are not splitted on runs):
     CTD_calc([  # 'CTD_calc-find_runs.ini',
@@ -242,7 +242,7 @@ if st(200):  # False: #
         '--delimiter_chars', '\\ \\',  # ''\s+',
         # todo  '--f_set_nan_list', 'Turb, x < 0',
         '--b_interact', '0',
-        # '--b_raise_on_err', '0'
+        # '--on_bad_lines', 'warn'
         ])
 
 if st(220):  # False: #

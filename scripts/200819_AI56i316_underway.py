@@ -87,7 +87,7 @@ if st(10, f'Save {device} data to DB'):  # False: #
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--b_interact', '0',
         #'--cols_not_use_list', 'N',
-        # '--b_raise_on_err', '0'
+        # '--on_bad_lines', 'warn'
         #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
         ],
         **{'in': {
@@ -252,7 +252,7 @@ if st(80, 'Gridding'):  # and False: #
 
     # todo: bug: bad top and bottom edges
 
-if st(110, 'Export csv with some new calculated paremeters'):  # False: #
+if st(110, 'Export csv with some new calculated parameters'):  # False: #
     CTD_calc([  # 'CTD_calc-find_runs.ini',
         '--db_path', str(path_db),
         '--tables_list', f'{device}',
@@ -275,7 +275,7 @@ if st(120, 'Meteo'):
         '--coldate_integer', '0', '--coltime_integer', '1',
         '--cols_not_use_list', 't_w,precipitation',  # bad constant data
         '--delimiter_chars', ',', '--max_text_width', '12',
-        '--b_raise_on_err', 'False', '--b_insert_separator', 'False',
+        '--on_bad_lines', 'warn', '--b_insert_separator', 'False',
         '--chunksize_percent_float', '500',
         '--fs_float', '60',
         '--skiprows', '0'

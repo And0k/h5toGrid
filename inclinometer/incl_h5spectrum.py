@@ -306,8 +306,8 @@ def h5q_starts2coord(
     with pd.HDFStore(db_path, mode='r') as store:
         table_pytables = store.get_storer(table).table
         to_end = table_pytables.nrows
+        qstr = 'index>=st & index<=en'
         for i, (st, en) in enumerate(gen_intervals(starts_time, dt_interval)):
-            qstr = "index>=st & index<=en"
             ind_all = store.select_as_coordinates(table, qstr, start=ind_st_last)
             # ind_lim = table_pytables.get_where_list("(index>=st) & (index<=en)", condvars={
             # "st": np.int64(lim), "en": np.int64(lim + dt_interval)}, start=st_last, step=table_pytables.nrows)
@@ -316,18 +316,16 @@ def h5q_starts2coord(
                 l.debug('%d. [%s, %s] - %drows', i + 1, st, en, nrows)
                 ind_st_en = ind_all[[0, -1]]  # .values
                 ind_st_last = ind_st_en[0]  # can not use last because intervals may overlap
-            else:  # no data
+                yield ind_st_en
+            elif ind_st_last:  # no data after some data
                 # l.debug('%d. [%s, %s] - no data', i + 1, st, en)
                 try:  # Check that will no more data
                     nd_all = store.select_as_coordinates(table, "index>=st", start=ind_st_last)
                     if nd_all.empty:
                         break
                 except MemoryError:
-                    pass
-                continue
-            yield ind_st_en
-    #
-    # [t_prev_interval_start.isoformat(), t_interval_start.isoformat()])
+                    ind_st_last = 0  # only to not check more
+                    print('many data ahead...')  # it was just check for speed up
 
 
 def h5_velocity_by_intervals_gen(cfg: Mapping[str, Any], cfg_out: Mapping[str, Any]
@@ -340,9 +338,9 @@ def h5_velocity_by_intervals_gen(cfg: Mapping[str, Any], cfg_out: Mapping[str, A
             1.  'split_period', pandas interval str, as required by intervals_from_period() to cover all data by it
                 'overlap'
 
-            2.  'time_intervals_start' - manually specified starts of intercals
+            2.  'time_intervals_start' - manually specified intervals starts
 
-    :param cfg_out: fields must be provided:
+    :param cfg_out: dict with fields:
         - see h5_names_gen(cfg_in, cfg_out) requirements
     :return:
     """
@@ -400,7 +398,7 @@ def h5_velocity_by_intervals_gen(cfg: Mapping[str, Any], cfg_out: Mapping[str, A
 
         def gen_loaded(tbl):
             """
-            Variant 2. Generate intervals at specified start values with same width cfg['proc']['dt_interval']
+            Variant 2. Generate intervals at specified start values cfg['in']['time_intervals_start'] with same width cfg['proc']['dt_interval']
             :param tbl:
             :return:
             """
@@ -421,9 +419,9 @@ def h5_velocity_by_intervals_gen(cfg: Mapping[str, Any], cfg_out: Mapping[str, A
         for (tbl, coefs) in h5_names_gen(cfg['in'], cfg_out):
             # Get data in ranges
             for df0, start_end in gen_loaded(tbl):
-                if cfg['in']['db_path'].stem.endswith('proc_noAvg'):
+                if cfg['in']['db_path'].stem.endswith('proc_noAvg'):  # have processed data (not averaged)
                     df = df0
-                else:  # loading source data needed to be processed to calc velocity
+                else:  # loading source data and calculate velocity
                     df0 = filter_local(df0, cfg['filter'])
                     df = incl_calc_velocity_nodask(df0, **coefs, cfg_filter=cfg['in'], cfg_proc=cfg['proc'])
 

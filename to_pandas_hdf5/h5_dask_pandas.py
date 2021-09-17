@@ -5,12 +5,13 @@
   Purpose: load from/save to hdf5 using dask library
   Created: 10.10.2018
 """
+import glob
 import logging
-import re
 from pathlib import Path
+import re
 from typing import Any, Dict, Iterable, Iterator, Mapping, Optional, Sequence, Tuple, Union
 from dateutil.tz import tzutc
-
+import dask
 import dask.array as da
 import dask.dataframe as dd
 import numpy as np
@@ -18,15 +19,15 @@ import pandas as pd
 from dask.diagnostics import ProgressBar  # or distributed.progress when using the distributed scheduler
 from tables.exceptions import HDF5ExtError, ClosedFileError
 
-from other_filters import despike
 # my
+from other_filters import despike
 from to_pandas_hdf5.h5toh5 import h5remove_table, ReplaceTableKeepingChilds, df_data_append_fun, df_log_append_fun
-from utils2init import Ex_nothing_done, set_field_if_no, standard_error_info
+from utils2init import Ex_nothing_done, set_field_if_no, standard_error_info, dir_create_if_need, LoggingStyleAdapter
 from utils_time import timzone_view, multiindex_timeindex, multiindex_replace, minInterval
 
 pd.set_option('io.hdf.default_format', 'table')
 
-l = logging.getLogger(__name__)
+lf = LoggingStyleAdapter(logging.getLogger(__name__))
 
 qstr_range_pattern = "index>=Timestamp('{}') & index<=Timestamp('{}')"
 
@@ -58,17 +59,17 @@ def h5q_interval2coord(
 
     qstr = qstr_range_pattern.format(*t_interval)
     with pd.HDFStore(db_path, mode='r') as store:
-        l.debug("loading range from %s/%s: %s ", db_path, table, qstr)
+        lf.debug("loading range from {:s}/{:s}: {:s} ", db_path, table, qstr)
         try:
             ind_all = store.select_as_coordinates(table, qstr)
         except Exception as e:
-            l.debug("- not loaded: %s", e)
+            lf.debug("- not loaded: {:s}", e)
             raise
         if len(ind_all):
             ind = ind_all[[0, -1]]  # .values
         else:
             ind = []
-        l.debug('- gets %s', ind)
+        lf.debug('- gets {}', ind)
     return ind
 
 
@@ -79,7 +80,7 @@ def h5q_intervals_indexes_gen(
         t_intervals_start: Iterable[pd.Timestamp],
         i_range: Optional[Sequence[Union[str, pd.Timestamp]]] = None) -> Iterator[pd.Index]:
     """
-    Yields start and end coordinates (0 based indexes) of hdf5 store table index which values are next nearest  to intervals start input
+    Yields start and end coordinates (0 based indexes) of hdf5 store table index which values are next nearest to intervals start input
     :param db_path
     :param table, str (see h5q_interval2coord)
     :param t_prev_interval_start: first index value
@@ -135,30 +136,32 @@ def h5_load_range_by_coord(
         table,
         range_coordinates: Optional[Sequence] = None,
         columns=None,
-        chunksize=None,
-        sorted_index=None,
+        chunksize=1000000,
+        sorted_index=True,
         **kwargs) -> dd.DataFrame:
     """
-    Load (range by intenger indexes of) hdf5 data to dask dataframe
+    Load (range by integer indexes of) hdf5 data to dask dataframe
     :param range_coordinates: control/limit range of data loading:
         tuple of int, start and end indexes - limit returned dask dataframe by this range
         empty tuple - raise Ex_nothing_done
         None, to load all data
     :param cfg_in: dict, with fields:
-    :param db_path, str
+    :param db_path, str/Path
     :param table, str
         dask.read_hdf() parameters:
     :param chunksize,
-    :param sorted_index (optional): bool, default True
+    :param sorted_index: bool (optional), default True
     :param columns: passed without change to dask.read_hdf()
     """
-    if sorted_index is None:
-        sorted_index = True
+    if isinstance(db_path, Path):
+        db_path_esc = glob.escape(db_path)  # need for dask, not compatible with pandas if path contains "["
+    if isinstance(columns, pd.Index):
+        columns = columns.to_list()  # need for dask\dataframe\io\hdf.py (else ValueError: The truth value of a Index is ambiguous...)
 
     if range_coordinates is None:  # not specify start and stop.
         print("h5_load_range_by_coord(all)")
         # ?! This is only option in dask to load sorted index
-        ddpart = dd.read_hdf(db_path, table,
+        ddpart = dd.read_hdf(db_path_esc, table,
                              chunksize=chunksize,
                              lock=True,
                              mode='r',
@@ -179,10 +182,11 @@ def h5_load_range_by_coord(
 
         for c in [False, True]:  # try with specified columns first
             try:
-                ddpart = dd.read_hdf(db_path, table,
+                # todo: find out why not works any more with distributed sceduler
+                ddpart = dd.read_hdf(db_path_esc, table,
                                      chunksize=chunksize,
-                                     lock=True,
-                                     mode='r',
+                                     # lock=True,  default already
+                                     # mode='r',  default already
                                      columns=columns,
                                      start=range_coordinates[0],
                                      stop=range_coordinates[-1])
@@ -190,8 +194,8 @@ def h5_load_range_by_coord(
             except KeyError:  # some of specified columns not exist
                 # use only existed columns
                 with pd.HDFStore(db_path, mode='r') as store:
-                    columns = store[table].columns.join(columns, how='inner')
-                print('found columns:', columns.values)
+                    columns = store[table].columns.join(columns, how='inner').to_list()
+                print('found columns:', ', '.join(columns))
 
 
         # because of no 'sorted_index' we need:
@@ -219,9 +223,6 @@ def i_bursts_starts_dd(tim, dt_between_blocks: Optional[np.timedelta64] = None):
     (array([  0, 100, 200, 300, 400, 500, 600, 700, 800, 900]), 100.0)
     # same from i_bursts_starts(tim, dt_between_blocks=pd.Timedelta(minutes=2))
     """
-
-    # >>> da.diff(tim)
-    # ValueError: ('Arrays chunk sizes are unknown: %s', (nan,))
 
     if isinstance(tim, pd.DatetimeIndex):
         tim = tim.values
@@ -284,7 +285,7 @@ def i_bursts_starts(tim, dt_between_blocks: Optional[np.timedelta64] = None) -> 
     # Checking time is increasing
 
     if np.any(dtime <= dt_zero):
-        l.warning('Not increased time detected (%d+%d, first at %d)!',
+        lf.warning('Not increased time detected ({:d}+{:d}, first at {:d})!',
                   np.sum(dtime < dt_zero), np.sum(dtime == dt_zero), np.flatnonzero(dtime <= dt_zero)[0])
     # Checking dt_between_blocks
     if dt_between_blocks is None:
@@ -408,7 +409,7 @@ def filterGlobal_minmax(a, tim=None, cfg_filter=None, b_ok=True) -> pd.Series:
         elif key in ('dict', 'b_bad_cols_in_file'):
             pass
         else:
-            l.warning('filter warning: no field "{}"!'.format(key))
+            lf.warning('filter warning: no field "{}"!'.format(key))
     return pd.Series(b_ok, index=tim)
 
 
@@ -456,7 +457,7 @@ def filter_global_minmax(a: Union[pd.DataFrame, dd.DataFrame],
                     # cf[lim_key] = pd.Timestamp(v, tz='UTC')
                     v = f"Timestamp('{add_tz_if_need(v, a[col])}')"
             except KeyError:
-                l.warning('filter warning: no column "{}"!'.format(key))
+                lf.warning('filter warning: no column "{}"!'.format(key))
                 continue
 
         # Add expression to query string
@@ -465,14 +466,14 @@ def filter_global_minmax(a: Union[pd.DataFrame, dd.DataFrame],
     try:
         return a.query(' & '.join(qstrings)) if any(qstrings) else a
     except (TypeError, ValueError):  # Cannot compare tz-naive and tz-aware datetime-like objects
-        l.exception('filter_global_minmax filtering "%s" error! Continuing...', ' & '.join(qstrings))
+        lf.exception('filter_global_minmax filtering "{:s}" error! Continuing...', ' & '.join(qstrings))
         return a
 
     # @cf['{}_{}] not works in dask
 
 
 def filter_local(d: Union[pd.DataFrame, dd.DataFrame, Mapping[str, pd.Series], Mapping[str, dd.Series]],
-                 cfg_filter: Mapping[str, Any]
+                 cfg_filter: Mapping[str, Any], ignore_absent: Optional[set] = None
                  ) -> Union[pd.DataFrame, dd.DataFrame]:
     """
     Filtering values without changing output size: set to NaN if exceed limits
@@ -481,25 +482,28 @@ def filter_local(d: Union[pd.DataFrame, dd.DataFrame, Mapping[str, pd.Series], M
      - keys equal to column names to filter or regex strings to selelect columns: "*" or "[" must be present to detect
     it as regex.
      - values are min and max limits consequently.
+    :param ignore_absent: list of cfg_filter['min'] or cfg_filter['max'] fields to not warning if they are absent in d.
     :return: filtered d with bad values replaced by NaN
 
     """
-    for limit, f_compare in [('min', lambda x, v: x > v), ('max', lambda x, v: x < v)]:
+    for limit, f_compare in [('min', lambda x, lim: x > lim), ('max', lambda x, lim: x < lim)]:
         # todo: check if is better to use between(left, right, inclusive=True)
         if not cfg_filter.get(limit):
             continue
-        for key, v in cfg_filter[limit].items():
+        for key, lim in cfg_filter[limit].items():
             if ('*' in key) or ('[' in key):  # get multiple keys by regex
                 keys = [c for c in d.columns if re.fullmatch(key, c)]
-                d[keys] = d[keys].where(f_compare(d[keys], v))
+                d.loc[keys] = d.loc[keys].where(f_compare(d.loc[keys], lim))
                 key = ', '.join(keys)  # for logging only
             else:
                 try:
-                    d[key] = d[key].where(f_compare(d[key], v))
+                    d.loc[key] = d.loc[key].where(f_compare(d.loc[key], lim))
                 except (KeyError, TypeError) as e:  # allow redundant parameters in config
                     # It is strange, but we have "TypeError: cannot do slice indexing on DatetimeIndex with these indexers [key] of type str" if just no "key" column
-                    l.warning('Can not filter this parameer %s', standard_error_info(e))
-            l.debug('filtering %s(%s) = %g', limit, key, v)
+                    if not (ignore_absent and key in ignore_absent):
+                        lf.warning('Can not filter this parameter {:s}', standard_error_info(e))
+                    continue
+            lf.debug('filtering {:s}({:s}) = {:g}', limit, key, lim)
     return d
 
 
@@ -531,8 +535,8 @@ def filter_local_arr(d: Mapping[str, Sequence],
                 try:
                     d[key][f_compare(d[key], v)] = np.NaN
                 except KeyError as e:  # allow redundant parameters in config
-                    l.warning('Can not filter this parameer %s', standard_error_info(e))
-            l.debug('filtering %s(%s) = %g', limit, key, v)
+                    lf.warning('Can not filter this parameer {:s}', standard_error_info(e))
+            lf.debug('filtering {:s}({:s}) = {:g}', limit, key, v)
     return d
 
 
@@ -603,7 +607,29 @@ def filt_blocks_da(dask_array, i_starts, i_end=None, func=None, *args):
     # return y
 
 
-def export_df_to_csv(df, cfg_out, add_subdir='', add_suffix=''):
+def cull_empty_partitions(ddf: dd.DataFrame, lengths=None):
+    """
+    Remove empty partitions
+    :param: ddf
+    :return: ddf, lengths: dask dataframe without zero length partitions and its lengths
+    """
+    if lengths is None:
+        lengths = tuple(ddf.map_partitions(len).compute())
+    if all(lengths):
+        return ddf, lengths
+
+    delayed = ddf.to_delayed()
+    delayed_f = []
+    lengths_f = []
+    for df, len_df in zip(delayed, lengths):
+        if len_df:
+            delayed_f.append(df)
+            lengths_f.append(len_df)
+    ddf = dd.from_delayed(delayed_f, meta=delayed[lengths.index(0)].compute())
+    return ddf, lengths_f
+
+
+def df_to_csv(df, cfg_out, add_subdir='', add_suffix=''):
     """
     Exports df to Path(cfg_out['db_path']).parent / add_subdir / pattern_date.format(df.index[0]) + cfg_out['table'] + '.txt'
     where 'pattern_date' = '{:%y%m%d_%H%M}' without lower significant parts than cfg_out['period']
@@ -616,7 +642,7 @@ def export_df_to_csv(df, cfg_out, add_subdir='', add_suffix=''):
     modifies: creates if not exist:
         cfg_out['dir_export'] if 'dir_export' is not in cfg_out
         directory 'V,P_txt'
-    >>> export_df_to_csv(df, cfg['out'])
+    >>> df_to_csv(df, cfg['out'])
     """
     if 'dir_export' not in cfg_out:
         cfg_out['dir_export'] = Path(cfg_out['db_path']).parent / add_subdir
@@ -630,9 +656,108 @@ def export_df_to_csv(df, cfg_out, add_subdir='', add_suffix=''):
 
     fileN_time_st = pattern_date.format(df.index[0])
     path_export = cfg_out['dir_export'] / (fileN_time_st + cfg_out['table'] + add_suffix + '.txt')
-    print('export_df_to_csv "{}" is going...'.format(path_export.name), end='')
+    print('df_to_csv "{}" is going...'.format(path_export.name), end='')
     df.to_csv(path_export, index_label='DateTime_UTC', date_format='%Y-%m-%dT%H:%M:%S.%f')
     print('Ok')
+
+
+def dd_to_csv(
+        d: dd.DataFrame,
+        text_path=None,
+        text_date_format: Optional[str] = None,
+        text_columns=None,
+        aggregate_period=None,
+        suffix='',
+        b_single_file=True,
+        progress=None, client=None
+        ):
+    """
+    Save to ascii if _text_path_ is not None
+    :param d: dask dataframe
+    :param text_path: None or directory path. If not a dir tries to create and if this fails (like if more than one level) then adds this as prefix to nemes
+    :param text_date_format: If callable then create "Date" column by calling it (dd.index), retain index only if "Time" in text_columns. If string use it as format for index (Time) column
+    :param text_columns: optional
+    :param aggregate_period: [seconds] str or class with repr() to add "bin{}" suffix to files names
+    :param suffix: str, will be added to filenamme with forbidden characters removed/replaced
+    :param b_single_file: save all to one file or each partition individually
+    :param progress: progress bar object, used with client
+    :param client: dask.client, used with progress
+    """
+    if text_path is None:
+        return
+
+    tab = '\t'
+    sep = tab
+    ext = '.tsv' if sep == tab else '.csv'
+    lf.info('Saving *{:s}: {:s}', ext, '1 file' if b_single_file else f'{d.npartitions} files')
+    try:
+        dir_create_if_need(text_path)
+
+        def combpath(dir_or_prefix, s):
+            return str(dir_or_prefix / s)
+    except:
+        lf.exception('Dir not created!')
+
+        def combpath(dir_or_prefix, s):
+            return f'{dir_or_prefix}{s}'
+
+    def name_that_replaces_asterisk(i_partition):
+        return f'{d.divisions[i_partition]:%y%m%d_%H%M}'
+        # too long variant: '{:%y%m%d_%H%M}-{:%H%M}'.format(*d.partitions[i_partition].index.compute()[[0,-1]])
+
+    suffix_mod = re.sub(r'[\\/*?:"<>]', '', suffix.replace('incl', 'i').replace('|', ','))
+    filename = combpath(
+        text_path,
+        f"{name_that_replaces_asterisk(0) if b_single_file else '*'}{{}}_{suffix_mod}{ext}".format(
+        f'bin{aggregate_period.lower()}' if aggregate_period else '',  # lower seconds: S -> s
+        ))
+
+    d_out = d.round({'Vdir': 4, 'inclination': 4, 'Pressure': 3})
+    # if not cfg_out.get('b_all_to_one_col'):
+    #     d_out.rename(columns=map_to_suffixed(d.columns, suffix))
+    if callable(text_date_format):
+        arg_out = {'index': bool(text_columns) and 'Time' in text_columns,
+                   'columns': bool(text_columns) or d_out.columns.insert(0, 'Date')
+                   }
+        d_out['Date'] = d_out.map_partitions(lambda df: text_date_format(df.index))
+    else:
+        if text_date_format in ('s', '%Y-%m-%d %H:%M:%S'):                   # speedup
+            d_out.index = d_out.index.dt.tz_convert(None).dt.ceil(freq='s')  # very speedups!
+            arg_out = {'columns': text_columns or None  # for write all columns if empty (replaces to None)
+                       }
+        else:
+            arg_out = {'date_format': text_date_format,  # lead to very long saving (tenths howers) for 2s and smaller resolution data!
+                       'columns': text_columns or None  # for write all columns if empty (replaces to None)
+                       }
+
+    if progress is None:
+        pbar = ProgressBar(dt=10)
+        pbar.register()
+
+
+    # with dask.config.set(scheduler='processes'):  # need because saving to csv mainly under GIL
+    to_csv = d_out.to_csv(filename=filename,
+                 single_file=b_single_file,
+                 name_function=None if b_single_file else name_that_replaces_asterisk,  # 'epoch' not works
+                 float_format='%.5g',
+                 sep=sep,
+                 encoding="ascii",
+                 #compression='zip',
+                 **arg_out,
+                 compute = False,
+                 compute_kwargs = {'scheduler': 'processes'}
+                 )
+    # disabling the chain assigment pandas option made my ETL job go from running out of memory after 90 minutes to taking 17 minutes! I think we can close this issue since its related to pandas - not helps:
+    #pd.set_option('chained_assignment', None)  #  'warn' (the default), 'raise' (raises an exception), or None (no checks are made).
+
+    if progress is None:
+        dask.compute(to_csv)
+        pbar.unregister()
+    else:
+        futures = client.compute(to_csv)
+        progress(futures)
+        # to_csv.result()
+        client.gather(futures)
 
 
 def h5_append_dummy_row(df: Union[pd.DataFrame, dd.DataFrame],
@@ -695,7 +820,7 @@ def h5_append_dummy_row(df: Union[pd.DataFrame, dd.DataFrame],
 
 def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, msg_func):
     """
-
+    Align types: Make index to be UTC
     :param cfg_out:
     :param tbl_parent:
     :param df:
@@ -711,7 +836,7 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
     error_info_list = [s for s in e.args if isinstance(s, str)]
     msg = msg_func + ' Error:'.format(e.__class__) + '\n==> '.join(error_info_list)
     if not error_info_list:
-        l.error(msg)
+        lf.error(msg)
         raise e
     b_correct_time = False
     b_correct_str = False
@@ -720,34 +845,34 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
     if error_info_list[0].startswith(str_check) or error_info_list[0] == 'Not consistent index':
         if error_info_list[0] == 'Not consistent index':
             msg += 'Not consistent index detected'
-        l.error(msg + 'Not consistent index time zone? Changing index to standard UTC')
+        lf.error(msg + 'Not consistent index time zone? Changing index to standard UTC')
         b_correct_time = True
     elif error_info_list[0].startswith('Trying to store a string with len'):
         b_correct_str = True
-        l.error(msg + error_info_list[0])  # ?
+        lf.error(msg + error_info_list[0])  # ?
     elif error_info_list[0].startswith('cannot match existing table structure'):
         b_correct_cols = True
-        l.error(f'{msg} => Adding columns...')
+        lf.error(f'{msg} => Adding columns...')
         # raise e #?
     elif error_info_list[0].startswith('invalid combination of [values_axes] on appending data') or \
             error_info_list[0].startswith('invalid combination of [non_index_axes] on appending data'):
         # old pandas version has word "combinate" insted of "combination"!
         b_correct_cols = True
-        l.error(f'{msg} => Adding columns/convering type...')
+        lf.error(f'{msg} => Adding columns/convering type...')
     else:  # Can only append to Tables - need resave?
-        l.error(f'{msg} => Can not handle this error!')
+        lf.error(f'{msg} => Can not handle this error!')
         raise e
 
-    # Align types
-    # -----------
-    # Make index to be UTC
+
+
+
     df_cor = cfg_out['db'][tbl_parent]
     b_df_cor_changed = False
 
     def align_columns(df, df_ref, columns=None):
         """
 
-        :param df: changing dataframe. Will Updated Implisitly!
+        :param df: changing dataframe. Will update implicitly!
         :param df_ref: reference dataframe
         :param columns:
         :return: updated df
@@ -781,8 +906,8 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
             df = align_columns(df, df_cor, columns=new_cols)
 
     elif b_correct_str:
-        # todo: check
-        b_df_cor_changed = True  # as error if our string longer we need to increase store's limit
+        # error because our string longer => we need to increase store's limit
+        b_df_cor_changed = True
 
     for col, dtype in zip(df_cor.columns, df_cor.dtypes):
         d = df_cor[col]
@@ -804,7 +929,7 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
                         df_cor[col] = df_cor[col].astype(dtype_max)
                         b_df_cor_changed = True
                 except e:
-                    l.exception('Col "%s" have not numpy dtype?', col)
+                    lf.exception('Col "{:s}" have not numpy dtype?', col)
                     df_cor[col] = df_cor[col].astype(df[col].dtype)
                     b_df_cor_changed = True
                 # pd.api.types.infer_dtype(df_cor.loc[df_cor.index[0], col], df.loc[df.index[0], col])
@@ -815,20 +940,20 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
                 pass
             return tbl_parent
         except Exception as e:
-            l.error('%s Can not write to store. May be data corrupted. %s', msg_func, standard_error_info(e))
+            lf.error('{:s} Can not write to store. May be data corrupted. {:s}', msg_func, standard_error_info(e))
             raise (e)
         except HDF5ExtError as e:
-            l.exception(e)
+            lf.exception(e)
             raise (e)
     else:
         # Append corrected data to cfg_out['db'] store
         try:
             return df_append_fun(df, tbl_parent, cfg_out)
         except Exception as e:
-            l.error('%s Can not write to store. May be data corrupted. %s', msg_func, standard_error_info(e))
+            lf.error('{:s} Can not write to store. May be data corrupted. {:s}', msg_func, standard_error_info(e))
             raise (e)
         except HDF5ExtError as e:
-            l.exception(e)
+            lf.exception(e)
             raise (e)
 
 
@@ -928,7 +1053,7 @@ def h5add_log(log: Union[pd.DataFrame, Mapping, None], cfg_out: Dict[str, Any], 
     except ValueError as e:
         return h5append_on_inconsistent_index(cfg_out, table_log, log, df_log_append_fun, e, 'append log')
     except ClosedFileError as e:
-        l.warning('Check code: On reopen store update store variable')
+        lf.warning('Check code: On reopen store update store variable')
 
 
 
@@ -937,17 +1062,17 @@ def h5_append(cfg_out: Dict[str, Any],
               log,
               log_dt_from_utc=pd.Timedelta(0),
               tim=None):
-    '''
-    Append dataframe to Store: df to cfg_out['table'] ``table`` node and
-    append chield table with 1 row metadata including 'index' and 'DateEnd' which
+    """
+    Append dataframe to Store: df to cfg_out['table'] ``table`` node of opened cfg_out['db'] store and
+    append child table with 1 row metadata including 'index' and 'DateEnd' which
     is calculated as first and last elements of df.index
 
-    :param df: pandas or dask datarame to append. If dask then log_dt_from_utc must be None (not assign log metadata here)
+    :param df: pandas or dask dataframe to append. If dask then log_dt_from_utc must be None (not assign log metadata here)
     :param log: dict which will be appended to child tables, cfg_out['tables_log']
     :param cfg_out: dict with fields:
         db: opened hdf5 store in write mode
         table: name of table to update (or tables: list, then used only 1st element). if not none tables[0] is ignored
-        table_log: name of chield table (or tables_log: list, then used only 1st element). if not none tables_log[0] is ignored
+        table_log: name of child table (or tables_log: list, then used only 1st element). if not none tables_log[0] is ignored
         tables: None - to return with done nothing!
                 list of str - to assign cfg_out['table'] = cfg_out['tables'][0]
         tables_log: list of str - to assign cfg_out['table_log'] = cfg_out['tables_log'][0]
@@ -957,6 +1082,7 @@ def h5_append(cfg_out: Dict[str, Any],
             chunksize = len(df) * chunksize_percent / 100
     :param log_dt_from_utc: 0 or pd.Timedelta - to correct start and end time: index and DateEnd.
         Note: if log_dt_from_utc is None then start and end time: 'Date0' and 'DateEnd' fields of log must be filled right already
+    :param tim: df time index
     :return: None
     :updates:
         log:
@@ -964,8 +1090,8 @@ def h5_append(cfg_out: Dict[str, Any],
         cfg_out: only if not defined already:
             cfg_out['table_log'] = cfg_out['tables_log'][0]
             table_log
-            tables_have_wrote list appended (or created) with tuple `(table, table_log)`
-    '''
+            tables_written set addition (or creation) with tuple `(table, table_log)`
+    """
     table = None
     df_len = len(df) if tim is None else len(tim)  # use computed values if possible for faster dask
     if df_len:  # dask.dataframe.empty is not implemented
@@ -982,15 +1108,15 @@ def h5_append(cfg_out: Dict[str, Any],
         # check/set tables names
         if 'tables' in cfg_out:
             if cfg_out['tables'] is None:
-                l.info('selected(%s)... ', msg_func)
+                lf.info('selected({:s})... ', msg_func)
                 return
             set_field_if_no(cfg_out, 'table', cfg_out['tables'][0])
 
-        l.info('h5_append(%s)... ', msg_func)
+        lf.info('h5_append({:s})... ', msg_func)
         set_field_if_no(cfg_out, 'nfiles', 1)
 
         if 'chunksize' in cfg_out and cfg_out['chunksize'] is None:
-            if ('chunksize_percent' in cfg_out):  # based on first file
+            if 'chunksize_percent' in cfg_out:  # based on first file
                 cfg_out['chunksize'] = int(df_len * cfg_out['chunksize_percent'] / 1000) * 10
                 if cfg_out['chunksize'] < 10000:
                     cfg_out['chunksize'] = 10000
@@ -1009,24 +1135,24 @@ def h5_append(cfg_out: Dict[str, Any],
                 # df.compute().query("index >= Timestamp('{}')".format(df.index.compute()[-1].tz_convert(None))) ??? works
                 # df.query("index > Timestamp('{}')".format(t_end.tz_convert(None)), meta) #df.query(f"index > {t_end}").compute()
                 if all(last_nan_row.isna()):
-                    l.exception(f'{msg_func}: dask not writes separator? Repeating using pandas')
+                    lf.exception(f'{msg_func}: dask not writes separator? Repeating using pandas')
                     table = df_data_append_fun(last_nan_row, cfg_out['table'], cfg_out, min_itemsize={c: 1 for c in (
                         cfg_out['data_columns'] if cfg_out.get('data_columns', True) is not True else df.columns)})
                     # sometimes pandas/dask get bug (thinks int is a str?): When I add row of NaNs it tries to find ``min_itemsize`` and obtain NaN (for float too, why?) this lead to error
                 else:
-                    l.exception(msg_func)
+                    lf.exception(msg_func)
             else:
-                l.error('%s: Can not write to store. %s', msg_func, standard_error_info(e))
+                lf.error('{:s}: Can not write to store. {:s}', msg_func, standard_error_info(e))
                 raise (e)
         except Exception as e:
-            l.error(f'%s: Can not write to store. %s', msg_func, standard_error_info(e))
+            lf.error('{:s}: Can not write to store. {:s}', msg_func, standard_error_info(e))
             raise (e)
 
     # run even if df is empty because may be writing the log is needed only
     table_log = h5add_log(log, cfg_out, tim, df, log_dt_from_utc)
 
     _t = (table, table_log) if table else (table_log,)
-    if 'tables_have_wrote' in cfg_out:
-        cfg_out['tables_have_wrote'].add(_t)
+    if 'tables_written' in cfg_out:
+        cfg_out['tables_written'].add(_t)
     else:
-        cfg_out['tables_have_wrote'] = {_t}
+        cfg_out['tables_written'] = {_t}

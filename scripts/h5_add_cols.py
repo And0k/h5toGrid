@@ -22,7 +22,7 @@ tables = [f'V_incl_bin{bin}' for bin in (2, 600, 1800, 7200)]
 b_childs_to_log_rows = True
 
 # save to temp store
-tables_have_wrote = set()
+tables_written = set()
 store_out_temp = store_out.with_suffix('.noindex.h5')
 with pd.HDFStore(store_in, 'r') as sr, pd.HDFStore(store_out, 'r') as sw, pd.HDFStore(store_out_temp, 'w') as st:
     for tbl in tables:
@@ -36,7 +36,7 @@ with pd.HDFStore(store_in, 'r') as sr, pd.HDFStore(store_out, 'r') as sw, pd.HDF
             )
 
         # copy children
-        tables_have_wrote_cur = [tbl]
+        tables_written_cur = [tbl]
         nodes_cr = sr.get_storer(tbl).group.__members__
         cr = [f'/{tbl}/{g}' for g in nodes_cr if (g != 'table') and (g != '_i_table')]
         if cr:
@@ -51,12 +51,12 @@ with pd.HDFStore(store_in, 'r') as sr, pd.HDFStore(store_out, 'r') as sw, pd.HDF
                     except AttributeError:  # 'NoneType' object has no attribute 'startswith'
                         print('may be', sw, child_w, 'corrupted. Trying overwrite with', store_in, 'only values')
                         sw[child_w] = sr[child_r]
-                    tables_have_wrote_cur.append(child_w)
+                    tables_written_cur.append(child_w)
             else:
                 print('found {} cr of {}. Copying...'.format(len(nodes_cr), tbl))
                 for child_r in cr:
                     st._handle.copy_node(child_r, newparent=sw.get_storer(tbl).group, recursive=True, overwrite=True)
-        tables_have_wrote.add(tuple(tables_have_wrote_cur))
+        tables_written.add(tuple(tables_written_cur))
     st.flush()  # .flush(fsync=True
 sleep(8)
 
@@ -67,7 +67,7 @@ try:
         'db_path': store_out,
         'addargs': ['--overwrite']  # '--checkCSI'
         },
-        tbl_names=tables_have_wrote,
+        tbl_names=tables_written,
         # col_sort='Time'  # must exist
         )  # 'navigation/logFiles' will be copied as child
 except Ex_nothing_done as e:

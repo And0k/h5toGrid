@@ -1,6 +1,6 @@
 import numpy as np
 
-from grid2d_vsz import idata_from_tpoints
+from grid2d_vsz import *
 
 
 def test_idata_from_tpoints():
@@ -36,3 +36,29 @@ def test_idata_from_tpoints():
 
 # TestIdata_from_tpoints.test_idata_from_tpoints()
 # self.fail('Finish the test!')
+
+
+def test_add_data_at_edges():
+    """
+    Adding repeated/interpolated data at edges to help gridding
+    """
+    cfg={'x_resolution_use': 0.1, 'y_resolution_use': 0.1}  # {m, km}
+    ctd_dist = np.arange(0, 5, cfg['x_resolution_use'])  # km
+    edge_depth = [20, 30, 40, 30, 20]
+
+    ctd_prm = {
+        'starts': (st := np.arange(0, ctd_dist.size, ctd_dist.size // len(edge_depth))),
+        'ends': st - st[-1] + ctd_dist.size - 1,
+        }
+    ctd_depth = np.hstack([np.linspace(0, p_max, n_points) for p_max, n_points in zip(
+        edge_depth, ctd_prm['ends'] - ctd_prm['starts'] + 1
+        )])
+    # period is 1.5 times smaller than run size:
+    ctd_z = np.sin(ctd_dist*ctd_prm['starts'].size*1.5*np.pi / ctd_dist.max())
+    ctd_with_adds = add_data_at_edges(
+        ctd_dist=ctd_dist, ctd_depth=ctd_depth, ctd_z=ctd_z,
+        ctd_prm=ctd_prm, edge_depth=ctd_depth[ctd_prm['ends']], edge_dist=ctd_dist[ctd_prm['ends']],
+        ok_ctd=np.ones_like(ctd_dist, dtype=bool), ok_ends=np.ones_like(ctd_prm['ends'], dtype=bool),
+        cfg=cfg, x_limits=ctd_dist[[0,-1]]
+        )
+    ctd_with_adds

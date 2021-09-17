@@ -90,7 +90,7 @@ if True:  # False: #
             '--coldate_integer', '0', '--coltime_integer', '1',
             '--cols_not_use_list', 't_w,precipitation',  # bad constant data
             '--delimiter_chars', ',', '--max_text_width', '12',
-            '--b_raise_on_err', 'False', '--b_insert_separator', 'False',
+            '--on_bad_lines', 'warn', '--b_insert_separator', 'False',
             '--chunksize_percent_float', '500'
             ])
 

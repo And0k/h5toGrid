@@ -7,7 +7,7 @@
 """
 import logging
 import re
-from typing import Optional, Union, Tuple
+from typing import Optional, Union, Tuple, Sequence
 from datetime import datetime
 import numpy as np
 import pandas as pd
@@ -192,12 +192,12 @@ def intervals_from_period(
             if ends[-1] < datetime_range[-1]:
                 ends = ends.append(pd.DatetimeIndex(datetime_range[-1:]))
     else:
-        ends = pd.DatetimeIndex(datetime_range[-1:])
+        ends = pd.DatetimeIndex(datetime_range[1:])
 
     return start, ends
 
 
-def positiveInd(i: int, l: int) -> int:
+def positiveInd(i: Sequence, l: int) -> int:
     """
     Positive index
     :param i: index
@@ -208,19 +208,21 @@ def positiveInd(i: int, l: int) -> int:
     return np.where(ia < 0, l - ia, ia)
 
 
-def minInterval(iLims1, iLims2, L):
+def minInterval(range1: Sequence, range2: Sequence, length: int):
     """
     Intersect of two ranges
-    :param iLims1: range1: min and max indexes
-    :param iLims2: range2: min and max indexes
-    :param L: int, length of indexing array
+    :param range1: 1st and last elements are [min, max] of 1st range
+    :param range2: 1st and last elements are [min, max] of 2nd range
+    :param length: length of indexing array
     :return: tuple: (max of first iLims elements, min of last iLims elements)
     """
+    # todo: update to: [
+    # (lambda st, en: transpose([max(st), min(en)]))(*positiveInd([take(range1, [0, -1]), take(range2, [0, -1])], l).T)
+    # ]
+    def maxmin(lims1, lims2):
+        return np.transpose([max(lims1[:, 0], lims2[:, 0]), min(lims1[:, -1], lims2[:, -1])])
 
-    def maxmin(iL1, iL2):
-        return np.transpose([max(iL1[:, 0], iL2[:, 0]), min(iL1[:, -1], iL2[:, -1])])
-
-    return maxmin(positiveInd(iLims1, L), positiveInd(iLims2, L))
+    return maxmin(positiveInd(range1, length), positiveInd(range2, length))
 
 
 def check_time_diff(t_queried: Union[pd.Series, np.ndarray], t_found: Union[pd.Series, np.ndarray],

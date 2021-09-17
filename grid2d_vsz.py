@@ -1635,7 +1635,7 @@ def main(new_arg=None):
                 # - need direction to next route point and projection on it?
                 df_points = h5select(
                     cfg['in']['db'], cfg['in']['table_nav'], ['Lat', 'Lon', 'DepEcho'],
-                    ctd.time.iloc[np.append(ctd_prm['starts'], ctd_prm['ends'])],
+                    time_points=ctd.time.iloc[np.append(ctd_prm['starts'], ctd_prm['ends'])],
                     dt_check_tolerance=cfg['process']['dt_search_nav_tolerance'],
                     query_range_pattern=qstr
                     )[0]

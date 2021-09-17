@@ -46,7 +46,7 @@ def argparser_files(
         dt_from_utc_seconds=0,
         dt_from_utc_hours=0,
         skiprows_integer=1,
-        b_raise_on_err=True,
+        on_bad_lines='error',
         max_text_width=1000,
         blocksize_int=20000000,
         sort=True,
@@ -80,7 +80,8 @@ def argparser_files(
     :param cols_load_list: comma separated list of names from header to be saved in hdf5 store. Do not use "/" char, or type suffixes like in ``header`` for them. Defaut - all columns
     :param cols_not_use_list: comma separated list of names from header to not be saved in hdf5 store
     :param skiprows_integer: skip rows from top. Use 1 to skip one line of header
-    :param b_raise_on_err: if False then not rise error on rows which can not be loaded (only shows warning). Try set "comments" argument to skip them without warning
+    :param on_bad_lines: choices=['error', 'warn', 'skip'],
+        "warn" print a warning when a bad line is encountered and skip that line. See also "comments" argument to skip bad line without warning
     :param delimiter_chars: parameter of pandas.read_csv()
     :param max_text_width: maximum length of text fields (specified by "(text)" in header) for dtype in numpy loadtxt
     :param chunksize_percent_float: percent of 1st file length to set up hdf5 store tabe chunk size
@@ -293,7 +294,7 @@ def read_csv(paths: Sequence[Union[str, Path]], cfg_in: Mapping[str, Any]) -> Un
 
         names=cfg_in['cols'][cfg_in['cols_load']]
         usecols=cfg_in['cols_load']
-        error_bad_lines=cfg_in['b_raise_on_err']
+        on_bad_lines=cfg_in['on_bad_lines']
         comment=cfg_in['comments']
 
         Other arguments corresponds to fields with same name:
@@ -335,7 +336,7 @@ def read_csv(paths: Sequence[Union[str, Path]], cfg_in: Mapping[str, Any]) -> Un
                 # cfg_in['cols_load'],
                 converters=cfg_in['converters'],
                 skiprows=cfg_in['skiprows'],
-                error_bad_lines=cfg_in['b_raise_on_err'],
+                on_bad_lines=cfg_in['on_bad_lines'],
                 comment=cfg_in['comments'],
                 header=None,
                 blocksize=cfg_in['blocksize'])  # not infer
@@ -347,7 +348,7 @@ def read_csv(paths: Sequence[Union[str, Path]], cfg_in: Mapping[str, Any]) -> Un
             # engine=None, true_values=None, false_values=None, skipinitialspace=False,
             #     nrows=None, na_values=None, keep_default_na=True, na_filter=True, verbose=False,
             #     skip_blank_lines=True, parse_dates=False, infer_datetime_format=False, keep_date_col=False,
-            #     date_parser=None, dayfirst=False, iterator=False, chunksize=None, compression='infer',
+            #     date_parser=None, dayfirst=False, iterator=False, chunksize=1000000, compression='infer',
             #     thousands=None, decimal=b'.', lineterminator=None, quotechar='"', quoting=0,
             #     escapechar=None, encoding=None, dialect=None, tupleize_cols=None,
             #      warn_bad_lines=True, skipfooter=0, skip_footer=0, doublequote=True,
@@ -361,7 +362,7 @@ def read_csv(paths: Sequence[Union[str, Path]], cfg_in: Mapping[str, Any]) -> Un
                     # cfg_in['cols_load'],
                     delimiter=cfg_in['delimiter'], skipinitialspace=True, index_col=False,
                     converters=cfg_in['converters'], skiprows=cfg_in['skiprows'],
-                    error_bad_lines=cfg_in['b_raise_on_err'], comment=cfg_in['comments'],
+                    on_bad_lines=cfg_in['on_bad_lines'], comment=cfg_in['comments'],
                     header=None)
                 if i > 0:
                     raise NotImplementedError('list of files => need concatenate data')
@@ -369,8 +370,8 @@ def read_csv(paths: Sequence[Union[str, Path]], cfg_in: Mapping[str, Any]) -> Un
     except Exception as e:  # for example NotImplementedError if bad file
         msg = '- Bad file. skip!'
         ddf = None
-        if cfg_in['b_raise_on_err']:
-            l.exception('%s\n Try set [in].b_raise_on_err= False\n', msg)
+        if cfg_in['on_bad_lines'] == 'error':
+            l.exception('%s\n Try set [in].on_bad_lines = warn\n', msg)
             raise
         else:
             l.exception(msg)

@@ -1,0 +1,11 @@
+defaults:
+  - base_incl_h5clc_hy
+  #  - override probes: 210901incl
+  
+  - override hydra/job_logging: colorlog
+  - override hydra/hydra_logging: colorlog
+  - _self_  # just to prevent warning  
+
+
+#probes:  
+  #probes10:

@@ -328,7 +328,7 @@ def determine_numpy_types(file_handle, headers=None, messytables_types=None, num
 
 def coerce_to_exact_dtype(s: Sequence, dtype, replace_bad=None):
     """
-    Convertion with handling errors including Overflow to specific numpy dtype
+    Con version with handling errors including Overflow to specific numpy dtype
     :param s:
     :param dtype:
     :return:
@@ -616,7 +616,6 @@ def csv_to_h5(
     # If vaex store was specified then we have chunk files that we combine now by export_hdf5():
     if vaex_format:
         h5pandas_to_vaex_combine(tmp_search_pattern, str(to_hdf_args['path_or_buf']), check_files_number=ichunk+1)
-
 
 
 def csv_to_h5_vaex(read_csv_args, to_hdf_args, dates_formats: Mapping[str, str],

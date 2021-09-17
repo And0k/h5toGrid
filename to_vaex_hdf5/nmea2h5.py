@@ -209,13 +209,13 @@ def do(cfg):
         df_rename_cols(df, in_cols, out_cols)
         lf.info('write: ')
         call_with_valid_kwargs(df_filter_and_save_to_h5, df, **cfg, input=cfg['in'])
-    failed_storages = h5move_tables(cfg['out'], tbl_names=cfg['out']['tables_have_wrote'])
+    failed_storages = h5move_tables(cfg['out'], tbl_names=cfg['out']['tables_written'])
     print('Finishing...' if failed_storages else 'Ok.', end=' ')
     # Sort if have any processed data, else don't because ``ptprepack`` not closes hdf5 source if it not finds data
     if cfg['in'].get('time_last'):
         cfg['out']['b_remove_duplicates'] = True
         h5index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5",
-                     in_storages=failed_storages, tables=cfg['out']['tables_have_wrote'])
+                     in_storages=failed_storages, tables=cfg['out']['tables_written'])
 
 if __name__ == '__main__':
     main()

@@ -5,6 +5,7 @@ drive_d = 'D:' if sys.platform == 'win32' else '/mnt/D'  # to run on my Linux/Wi
 scripts_path = Path(drive_d + '/Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))
 # my funcs
+from utils2init import st
 import veuszPropagate
 from to_pandas_hdf5.csv2h5 import main as csv2h5
 from to_pandas_hdf5.gpx2h5 import main as gpx2h5
@@ -15,8 +16,10 @@ from grid2d_vsz import main as grid2d_vsz
 device = 'CTD_Idronaut_OS316'
 path_cruise = Path(r'd:\workData\BalticSea\190713_ABP45')
 path_db = path_cruise / path_cruise.with_suffix('.h5').name  # name by dir
-go = True  # False #
-start = 7
+
+st.go = True   # False #
+st.start = 80  # 5 30 70 80 115
+st.end = 80   # 60 80 120
 # ---------------------------------------------------------------------------------------------
 
 if st(1):  # False: #
@@ -33,7 +36,7 @@ if st(1):  # False: #
         '--delimiter_chars', '\\ \\',  # ''\s+',
         # todo  '--f_set_nan_list', 'Turb, x < 0',
         '--b_interact', '0',
-        # '--b_raise_on_err', '0'
+        # '--on_bad_lines', 'warn'
         ])
 
 if st(3):  # False: #
@@ -88,8 +91,7 @@ if st(7):  # False: #
                          '--b_update_existed', 'True'
                          ])
 
-go = False
-if start <= 8 and False:  #: # may not comment always because can not delete same time more than once
+if False:  #: # may not comment always because can not delete same time more than once
     # Deletng bad runs from DB:
     import pandas as pd
 
@@ -109,9 +111,9 @@ if start <= 8 and False:  #: # may not comment always because can not delete sam
             else:
                 print('Not found run with time {}'.format(t))
 
-if st(9):  # False: #
-    # Extract navigation data at time station starts to GPX waypoints
-    h5toGpx(['cfg/h5toGpx_CTDs.ini',
+if st(50, 'Extract navigation data at time station starts to GPX waypoints'):  # False: #
+    h5toGpx([
+        'cfg/h5toGpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'{device}',
              '--tables_log_list', 'logRuns',
@@ -119,11 +121,11 @@ if st(9):  # False: #
              '--gpx_names_fun_format', '{:s}{:03d}',
              '--select_from_tablelog_ranges_index', '0'
              ])
-    go = False  # Hey! Prepare gpx tracks _manually_ before continue.
+    st.go = False  # Hey! Prepare gpx tracks _manually_ before continue.
 
-if st(11):
-    # Extract navigation data at runs/starts to GPX tracks
-    h5toGpx(['cfg/h5toGpx_CTDs.ini',
+if False: # st(60, 'Extract navigation data at runs/starts to GPX tracks.'):    # Extract     # Useful to indicate where no nav?
+    h5toGpx([
+        'cfg/h5toGpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'{device}',
              '--tables_log_list', 'logRuns',
@@ -133,22 +135,25 @@ if st(11):
              '--gpx_names_funs_cobined', ''
              ])
 
-# go=False
-if st(13):  # False: #
-    # Save waypoints/routes from _manually_ prepared gpx to hdf5
+if st(70, 'Save waypoints/routes from _manually_ prepared gpx to hdf5'):  # False: #
     gpx2h5(['', '--path', str(path_cruise / r'navigation\CTD-sections=routes.gpx'),
             '--table_prefix', r'navigation/sectionsCTD'])
-# go = True
-if st(15):  # False: #
-    # Gridding
+
+if st(80, 'Gridding'):  # and False: #
+    # Note: Prepare veusz "zabor" pattern before
     grid2d_vsz(['cfg/grid2d_vsz.ini', '--db_path', str(path_db),
                 '--table_sections', r'navigation/sectionsCTD_routes',
                 '--subdir', 'CTD-sections',
                 '--begin_from_section_int', '1',
 
-                '--data_columns_list', 'Temp, Sal, SigmaTh, O2, O2ppm',  # N^2,
+                '--data_columns_list', 'Temp, Sal, SigmaTh, O2, O2ppm, Turb',  # N^2,
                 '--filter_depth_wavelet_level_int', '7',  # 6, (7 for 2)
                 '--depecho_add_float', '0',
+                '--convexing_ctd_bot_edge_max', '40',  # set < bottom because it is harder to recover than delete
+                '--min_depth', '35',
+                '--max_depth', '110',
+                # '--depecho_add_float', '0',
+                '--blank_level_under_bot', '-220',
                 ])
 
 go = False

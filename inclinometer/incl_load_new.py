@@ -308,7 +308,7 @@ def main(config: ConfigType) -> None:
                     '--table', tbl,
                     '--db_path', str(db_path),
                     # '--log', str(scripts_path / 'log/csv2h5_inclin_Kondrashov.log'),
-                    # '--b_raise_on_err', '0',  # ?
+                    # '--on_bad_lines', 'warn',  # ?
                     '--b_interact', '0',
                     '--fs_float', str(p_type[cfg['in']['probes_prefix']]['fs']),  #f'{fs(probe, file_in.stem)}',
                     '--dt_from_utc_seconds', str(cfg['in']['dt_from_utc'][probe].total_seconds()),
@@ -417,7 +417,7 @@ def main(config: ConfigType) -> None:
                     '--b_del_temp_db', '1',
                     # '--calc_version', 'polynom(force)',  # depreshiated
                     # '--chunksize', '20000',
-                    # '--not_joined_h5_path', f'{db_path.stem}_proc.h5',
+                    # '--not_joined_db_path', f'{db_path.stem}_proc.h5',
                     ]
             # if aggregate_period_s <= 5:   # [s], do not need split csv for big average interval
             #     args += (['--split_period', '1D'])

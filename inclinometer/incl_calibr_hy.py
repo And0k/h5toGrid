@@ -26,7 +26,7 @@ if __debug__:
     matplotlib.rcParams['figure.figsize'] = (16, 7)
     try:
         matplotlib.use(
-            'Qt5Agg')  # must be before importing plt (rases error after although documentation sed no effect)
+            'Qt5Agg')  # must be before importing plt (raises error after although documentation sed no effect)
     except ImportError:
         pass
     from matplotlib import pyplot as plt
@@ -57,11 +57,10 @@ from to_vaex_hdf5.cfg_dataclasses import hydra_cfg_store, ConfigInHdf5_Simple, C
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
 VERSION = '0.0.1'
-
+hydra.output_subdir = 'cfg'
 
 # @dataclass hydra_conf(hydra.conf.HydraConf):
 #     run: field(default_factory=lambda: defaults)dir
-hydra.output_subdir = 'cfg'
 # hydra.conf.HydraConf.output_subdir = 'cfg'
 # hydra.conf.HydraConf.run.dir = './outputs/${now:%Y-%m-%d}_${now:%H-%M-%S}'
 
@@ -76,7 +75,7 @@ class ConfigFilter:
     offsets: List[float] despike() argument
     std_smooth_sigma: float = 4, help='despike() argument
     """
-    #Optional[Dict[str, float]] = field(default_factory= dict) leads to .ConfigAttributeError/ConfigKeyError: Key 'Sal' is not in struct
+    # Optional[Dict[str, float]] = field(default_factory= dict) leads to .ConfigAttributeError/ConfigKeyError: Key 'Sal' is not in struct
     min_date: Optional[Dict[str, str]] = field(default_factory=dict)
     max_date: Optional[Dict[str, str]] = field(default_factory=dict)
     no_works_noise: Dict[str, float] = field(default_factory=lambda: {'M': 10, 'A': 100})
@@ -551,6 +550,17 @@ def channel_cols(channel: str) -> Tuple[str, str]:
 
 def dict_matrices_for_h5(coefs=None, tbl=None, channels=None):
     """
+    Create coefficients dict with fields of fixed size (fill with dummy values if no corresponded cosfs):
+    - A: for accelerometer:
+        - A: A 3x3 scale and rotation matrix
+        - C: U_G0 accelerometer 3x1 channels shifts
+    - M: for magnetometer:
+        - A: M 3x3 scale and rotation matrix
+        - C: U_B0 3x1 channels shifts
+        - azimuth_shift_deg: Psi0 magnetometer direction shift to the North, radians
+    - Vabs0: for calculation of velocity magnitude from inclination - 6 element vector:
+      - 5 coefs of trigonometric approx fun
+      - its linear extrapolation start, degrees
 
     :param coefs: some fields from: {'M': {'A', 'b', 'azimuth_shift_deg'} 'A': {'A', 'b', 'azimuth_shift_deg'}, 'Vabs0'}
     :param tbl: should include probe number in name. Example: "incl_b01"
@@ -616,7 +626,7 @@ def dict_matrices_for_h5(coefs=None, tbl=None, channels=None):
 
 cfg = {}
 
-@hydra.main(config_name=cs_store_name, config_path="cfg")  # adds config store cs_store_name data/structure to :param config
+@hydra.main(config_name=cs_store_name)  #, config_path="cfg" adds config store cs_store_name data/structure to :param config
 def main(config: ConfigType) -> None:
     """
     ----------------------------
@@ -635,7 +645,7 @@ def main(config: ConfigType) -> None:
 
 
     """
-    global cfg, l
+    global cfg
     cfg = main_init(config, cs_store_name, __file__=None)
     cfg = main_init_input_file(cfg, cs_store_name)
     # input data tables may be defined by 'probes_prefix' and 'probes' fields of cfg['in']

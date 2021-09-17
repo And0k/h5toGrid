@@ -123,3 +123,19 @@ def test_call_example_sp2(file_raw_local=None):
         'out.tables=[{}]'.format(','.join([f'"{d}"' for d in device]))
         ])
     sys.argv = sys_argv_save
+
+
+def test_call_example_tr2(db_path=r'd:\Work\_Python3\And0K\h5toGrid\test\data\tracker\210726_1000tr2.h5'):
+    device = ['tr2']
+    sys_argv_save = sys.argv
+    sys.argv = [__file__]
+    main_call([
+        'input.time_interval=[2021-07-26T10:00, now]',
+        'input.dt_from_utc_hours=2',
+        'process.anchor_coord=[54.62505, 19.82292]', #tr0: 54.616175, 19.84134166
+        'process.anchor_depth=15',
+        'process.period_tracks=1D',
+        'out.db_path="{}"'.format(str(db_path).replace('\\', '/')),
+        'out.tables=[{}]'.format(','.join([f'"{d}"' for d in device]))
+        ])
+    sys.argv = sys_argv_save

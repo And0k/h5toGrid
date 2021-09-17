@@ -160,8 +160,8 @@ def param_funs_closure(
         csv_specific_param: Mapping[str, Union[Callable[[str], Any], float]],
         cfg_in: Mapping[str, Any]) -> Mapping[str, Callable[[str], Any]]:
     """
-    Convert dict `csv_specific_param` to new dict by removing key suffixes and replace each value
-    to function of one Mapping like variable
+    Used by proc_loaded_corr(). Converts dict `csv_specific_param` to new dict by removing key suffixes and replace each
+    value with function of one Mapping like variable
     :param csv_specific_param:
     :param cfg_in: used to keep temporary variables between multiple calls in log_csv_specific_param_operation
     :return: dict of functions, having arguments of one Mapping like variable
@@ -180,15 +180,15 @@ def param_funs_closure(
     #         raise KeyError(f'Error in csv_specific_param: {k}: {v}')
     #     return fun_closure
 
-    for k, v in csv_specific_param.items():
-        param, fun_id = k.split('_')
+    for k, fun_or_const in csv_specific_param.items():
+        param, fun_id = k.rsplit('_', 1)
         if fun_id == 'fun':
 
-            def fun(param, v):
-                param_closure = param
-                v_closure = v
+            def fun(prm, fun):
+                param_closure = prm
+                v_closure = fun
 
-                params_closure = v.__code__.co_varnames
+                params_closure = fun.__code__.co_varnames
                 if len(params_closure) <= 1:
 
                     def fun_closure(x):
@@ -203,20 +203,20 @@ def param_funs_closure(
 
         elif fun_id == 'add':
 
-            def fun(param, v):
-                param_closure = param
-                v_closure = v
+            def fun(prm, const):
+                param_closure = prm
+                v_closure = const
 
                 def fun_closure(x):
                     return x[param_closure] + v_closure
 
-                # or a.eval(f"{param} = {param} + {v}", inplace=True)
+                # or a.eval(f"{prm} = {prm} + {const}", inplace=True)
                 return fun_closure
 
         else:
-            # raise KeyError(f'Error in csv_specific_param: {k}: {v}')
+            # raise KeyError(f'Error in csv_specific_param: {k}: {fun_or_const}')
             continue
-        params_funs[param] = fun(param, v)  # f"{param} = {v}({param})
+        params_funs[param] = fun(param, fun_or_const)  # f"{param} = {fun_or_const}({param})
 
     log_csv_specific_param_operation('', csv_specific_param, cfg_in)
     return params_funs
@@ -315,9 +315,6 @@ def proc_loaded_sea_and_sun(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[
 
     date = pd.to_datetime(a['Date'].str.decode('utf-8', errors='replace'), format='%d.%m.%Y') + \
            pd.to_timedelta(a['Time'].str.decode('utf-8', errors='replace'), unit='ms')
-
-    #params_funs = param_funs_closure(csv_specific_param, cfg_in)
-    #a = a.assign(**{'Time': date}, **params_funs)
 
     # check that used
     return a.assign(Time=date).loc[:, list(
@@ -656,8 +653,8 @@ def proc_loaded_inclin_Kondrashov(a: Union[pd.DataFrame, np.ndarray], cfg_in: Ma
     if csv_specific_param is not None:
         key = 'invert_magnitometr'
         if csv_specific_param.get(key):
-            magnitometer_channels = ['Mx', 'My', 'Mz']
-            a.loc[:, magnitometer_channels] = -a.loc[:, magnitometer_channels]
+            magnetometer_channels = ['Mx', 'My', 'Mz']
+            a.loc[:, magnetometer_channels] = -a.loc[:, magnetometer_channels]
             # log_csv_specific_param_operation('proc_loaded_inclin_Kondrashov', csv_specific_param, cfg_in) mod:
             key_logged = 'csv_specific_param_logged-proc_loaded_inclin_Kondrashov'
             if not cfg_in.get(key_logged):  # log 1 time i.e. in only one 1 dask partition
@@ -815,14 +812,14 @@ def rep_in_file(file_in: Union[str, PurePath, BinaryIO, TextIO], file_out,
 
 
 def mod_incl_name(file_in: Union[str, PurePath]):
-    """ Change name of corrected (regular table format) csv file of raw inclinometer/wavegage data"""
+    """ Change name of raw inclinometer/wavegage data file to name of corrected (regular table format) csv file"""
     file_in = PurePath(file_in)
     file_in_name = file_in.name.lower().replace('inkl', 'incl')  # 'incl' substring will be used to distinguish result file
     file_in_name, b_known_names = re.subn(r'((?P<prefix>incl|w))_0*(?P<number>\d\d)',
            lambda m: f"{m.group('prefix')}{m.group('number')}",
            file_in_name
            )
-    if not b_known_names:
+    if not (b_known_names or 'incl_b' in file_in_name):
         file_in_name, b_known_names = re.subn(r'voln_v*(?P<number>\d\d)',
                                               lambda m: f"w{m.group('number')}",
                                               file_in_name

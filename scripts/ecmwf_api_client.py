@@ -6,25 +6,28 @@ See also netcdf2csv.py to convert result to csv
 
 import logging
 from pathlib import Path
+from typing import Any, Callable, Dict, Iterator, Iterable, Mapping, MutableMapping, Optional, Sequence, Tuple, List, Union, TypeVar
 from datetime import datetime
 import pandas as pd
 
+from scripts.netcdf2csv import main as netcdf2csv
+
 #masha: 54.625    19.875
 #need: N54.61106 E19.84847
-lat_st, lon_st = 54.9689, 20.2446  # Pionersky
-# lat_st, lon_st = 54.615, 19.841  # Baltic_spit
+# lat_st, lon_st = 54.9689, 20.2446  # Pionersky
+lat_st, lon_st = 54.615, 19.841  # Baltic_spit
 
 dGrid = 0  # 0.25
 lat_en = lat_st + dGrid
 lon_en = lon_st + dGrid
-dir_save = r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\processed_h5,vsz'
+dir_save = r'd:\workData\BalticSea\201202_BalticSpit_inclinometer'
 file_nc_name = f'wind@ECMWF-ERA5_area({lat_st},{lon_st},{lat_en},{lon_en}).nc'
 
 l = logging.getLogger(__name__)
 l.info(f'Downloading {file_nc_name}: to {dir_save}...')
 
 
-use_date_range_str = ['2020-09-01', '2021-03-31']  # ['2020-12-01', '2021-01-31']  # ['2018-12-01', '2018-12-31']
+use_date_range_str = ['2020-09-01', '2021-09-16']  # ['2020-12-01', '2021-01-31']  # ['2018-12-01', '2018-12-31']
 use_date_range = [datetime.strptime(t, '%Y-%m-%d') for t in use_date_range_str]  # T%H:%M:%S
 file_date_prefix = '{:%y%m%d}-{:%m%d}'.format(*use_date_range)
 
@@ -75,10 +78,10 @@ if True:
             # 'month': ['01', '02'],
             # 'day' : [f'{i:02d}' for i in range(1, 32)],
         },
-        Path(dir_save) / file_nc_name
+        (path_nc:=(Path(dir_save) / file_nc_name))
     )
 
-
+    netcdf2csv(path_nc)
 
 
 if False: # old

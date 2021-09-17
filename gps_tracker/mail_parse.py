@@ -39,19 +39,21 @@ from gps_tracker.gmail_read import get_gmails_data
 #     except Exception as e:
 #         print(str(e))
 
-def spot_from_gmail(device_number, time_start):
+def spot_from_gmail(device_number: Union[str, int], time_start: datetime):
     """
 
     :param device_number:
-    :param time_start:
+    :param time_start: time in utc zone
     :return:
     """
-    ep = pd.Timestamp('1969-12-31 19:00:00', tz='utc')  # datetime( 0, tzinfo=timezone.utc)
+    ep = datetime(1970, 1, 1, tzinfo=timezone.utc)  # 'US/Pacific' PST -1 day, 16:00:00 STD
+
+    #ep = pd.Timestamp('1969-12-31 19:00:00', tz='utc')  # datetime( 0, tzinfo=timezone.utc)
     return get_gmails_data(
         str(Path.home() / 'client_secret_310771020112-fbq4dukacte2nevs4d7kc5decga1cahb.apps.googleusercontent.com.json'),
-        q=f'subject:"Position Alert Activated: {device_number}" after:{(time_start - ep).total_seconds()}',
+        q=f'subject:"Position Alert Activated: {device_number}" after:{round((time_start - ep).total_seconds())} from:alerts@maps.findmespot.com',
         parse_body=parse_spot_text
-    )
+        )
     # cfg_mail = safe_load(f_yml)
     # txt = read_email_from_gmail(**cfg_mail)  # ['smtp_server'], cfg_mail['from_email'], ['from_pwd']
 
@@ -165,9 +167,9 @@ def parse_spot_text(body: str) -> Tuple[datetime, float, float]:
     keys = ['Time', 'Lat/Lng']
     for key in keys:
         for i, row in enumerate(body.splitlines()):
-            # if need more filtering:
+            # More filtering
             # esn='3125300'
-            # if not row[0].conains(esn):
+            # if not row[0].contains(esn):
             #     return None
             if row.startswith(key):
                 try:
@@ -178,7 +180,7 @@ def parse_spot_text(body: str) -> Tuple[datetime, float, float]:
     return [datetime.strptime(data['Time'], '%m/%d/%Y %I:%M:%S %p')] + [float(k) for k in data['Lat/Lng'].split(', ')]
 
 
-def spot_tracker_data_from_mbox(mboxfile, subject_end, time_start):
+def spot_tracker_data_from_mbox(mboxfile, subject_end, time_start) -> List[Tuple[datetime, float, float]]:
     print('reading', mboxfile)
     data = []
 
@@ -229,7 +231,7 @@ def spot_tracker_data_from_mbox(mboxfile, subject_end, time_start):
 
 if True:  # if __name__ == '__main__':
     def test_load_gmail():
-        spot_from_gmail(device_number=2, time_start=datetime.fromisoformat('2014-01-01'))
+        spot_from_gmail(device_number=2, time_start=datetime.fromisoformat('2021-07-18T18:00+00:00'))
 
     def test_spot_tracker_data_from_mbox():
         spot_tracker_data_from_mbox(mboxfile,

@@ -55,7 +55,7 @@ if st(10):  # False: #
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--table', f'{device}',
         '--b_interact', '0'
-        # '--b_raise_on_err', '0',
+        # '--on_bad_lines', 'warn',
         ],
         **{'in': {
             'fun_proc_loaded': proc_loaded_sea_and_sun,
@@ -172,7 +172,7 @@ if st(80):  # False: #
 
 ########################################################################################
 go = False
-# Export csv with new paremeters
+# Export csv with new parameters
 if st(110):  # False: #
     # Extract CTD runs (if files are not splitted on runs):
     CTD_calc([  # 'CTD_calc-find_runs.ini',
@@ -208,7 +208,7 @@ if st(200):  # False: #
         'date(text),txtT(text),Pres(float),Temp(float),Cond(float),Sal(float),O2(float),O2ppm(float),pH(float),Eh(float)',
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--b_interact', '0',
-        # '--b_raise_on_err', '0'
+        # '--on_bad_lines', 'warn'
         ])
 
 if st(220):  # False: #

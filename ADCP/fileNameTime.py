@@ -76,7 +76,7 @@ if __name__ == '__main__':
             cfg['in']['skiprows'] = 0
             # cfg['in']['comments'],
             cfg['in']['coltime'] = 1
-            cfg['in']['b_raise_on_err'] = True
+            cfg['in']['on_bad_lines'] = 'error'
     except IOError as e:
         print('\n==> '.join([s for s in e.args if isinstance(s, str)]))  # e.message
         raise (e)
@@ -136,7 +136,7 @@ if __name__ == '__main__':
             str = fdata.readline()
         fdata = BytesIO(str.encode())
 
-        if 'b_raise_on_err' in cfg['in'] and not cfg['in']['b_raise_on_err']:
+        if 'on_bad_lines' in cfg['in'] and cfg['in']['on_bad_lines'] != 'error':
             try:
                 a = np.genfromtxt(fdata, dtype=cfg['in']['dtype'],
                                   delimiter=cfg['in']['delimiter'],
@@ -157,7 +157,7 @@ if __name__ == '__main__':
                                converters=cfg['in']['converters'],
                                skiprows=cfg['in']['skiprows'])
             except Exception as e:
-                print('{}\n Try set [in].b_raise_on_err= False'.format(e))
+                print('{}\n Try set [in].on_bad_lines = "warn"'.format(e))
                 raise (e)
         # Process a and get date date in ISO standard format
         try:

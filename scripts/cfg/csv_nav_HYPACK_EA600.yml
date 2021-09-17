@@ -11,7 +11,7 @@ in:
   cols_not_use_list: 'zeros'
   #cols_use_list: Lat,Lon,DepEcho
   max_text_width: 11
-  #b_raise_on_err: False
+  #on_bad_lines = warn
   b_skip_if_up_to_date: True
   #keep_input_nans: True    # duplicated time is replaced to NaNs, where time is same the other data is too - not need interp
   sort: False   # HYPACK can get unsorted rows:

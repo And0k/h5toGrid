@@ -1,35 +1,61 @@
 # 15min each hour
 in:
-  path_cruise: d:\workData\BalticSea\201202_BalticSpit
-  raw_subdir: 201202[i23,32,w4,5,6]get210623.zip  # 201202\[i30,w02]_get210419.rar  # do not point to corrected files in get210326_w_rar - todo: allow
-  probes:     [4, 5, 6]  # [2]
+  path_cruise: d:\workData\BalticSea\201202_BalticSpit_inclinometer\210726@i4,5,11,36,37,38,w2,5,6
+  # d:\workData\BalticSea\201202_BalticSpit
+  raw_subdir: 210726@i5,w5.rar
+  # get210827@i4,11,36,37,38,w6_Симагин.rar
+  # get210820@w2.rar
+  # get210813@i4,11,36,37,38,w6.rar
+  # 210710_1215[w2].rar
+  # 201202[i23,32,w4,5,6]get210623.zip  # 201202\[i30,w02]_get210419.rar  # do not point to corrected files in get210326_w_rar - todo: allow
+  probes:     [2, 5, 6]  # [4, 5, 6]
   probes_prefix: 'voln'  # 'voln' for step 1, for steps 2+ it will be auto renamed to 'w'
   raw_pattern: "*{prefix:}_V{number:0>2}*.[tT][xX][tT]"
 
   # wavegage
-  db_coefs: d:\workData\BalticSea\201202_BalticSpit\210108pres.h5  # todo: check pres. coef adding because fails to found on run
+  db_coefs: d:\workData\BalticSea\201202_BalticSpit_inclinometer\201202@i3,5,9,10,11,15,19,23,28,30,32,33,w1-6\_raw\201202incl.h5
+  # d:\workData\BalticSea\201202_BalticSpit\210108pres.h5  # todo: check pres. coef adding because fails to found on run
 
-filter:
-  # wavegage
-#  min_date: { 0: 2020-12-02T16:00:00,   #10:00:00,
+# wavegage
+  filter:
+  min_date:
+    05: 2021-07-26T16:00:00
+#    0: 2021-07-26T15:05:00
+#    02: 2021-07-26T15:05:00
+#    06: 2021-08-13T15:00:03
+#    06: 2021-07-26T17:10:00
+  max_date:
+    05: 2021-08-19T23:16:31
+    06: 2021-08-27T18:13:51
+#    0: 2021-08-13T14:00:00
+
+# 0: 2020-12-02T16:00:00,   #10:00:00,
 ##             01: 2020-12-02T13:00:00
 #              02: 2020-12-03T12:30:00,
 #              04: 2020-12-02T14:45:00,
 #              05: 2020-12-02T14:45:00,
 #              06: 2020-12-02T10:00:00
 #            }
-  min_date: { 0: 2020-12-01T18:30:00  # to search temperature dependance on air
-            }
-  max_date: { 0: now,
-#             01: 2021-01-08T12:20:00
-            }
 
-# min_Pressure:
+#    'cfg/incl_load_201202_BalticSpit#w.yml',
+#    '--raw_subdir', '210611_get210710[w2].rar',
+#    '--min_date_dict', '0: 2021-06-10T12:15:00',
+
+#filter:
+#  min_date: { 0: 2020-12-01T18:30:00  # to search temperature dependance on air
+#            }
+#  max_date: { 0: now,
+##             01: 2021-01-08T12:20:00
+#            }
+#  min:
+#    06:
+#      P: 4.3E5  # counts (no "Pressure")
 
 
 out:
   # Note: "_proc_noAvg" db_name stem suffix will be auto added for aggregate_period_s=None:
-  db_name: 201202pres_cal.h5              # default: "*incl.h5".
+  db_name: 210726pres@w5.h5
+  # 210611pres.h5              # default: "*incl.h5".
   aggregate_period_s: [Null, 2, 300, 3600]  # [Null, 2, 600, 3600] Null means no average
   # 300 will give 3 averaged points at start of each hour because of the 900s per hour working interval
 

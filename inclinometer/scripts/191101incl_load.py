@@ -199,7 +199,7 @@ if st(1):  # Can not find additional not corrected files for same probe if alrea
                 '--max_date', datetime64_str(max_date[probe]),
                 '--db_path', str(db_path),
                 # '--log', str(scripts_path / 'log/csv2h5_inclin_Kondrashov.log'),
-                # '--b_raise_on_err', '0',  # ?
+                # '--on_bad_lines', 'warn',  # ?
                 '--b_interact', '0',
                 '--fs_float', f'{fs(probe, in_file.stem)}',
                 # '--dt_from_utc_seconds', "{}".format(int((np.datetime64('00', 'Y') - np.datetime64(dt_from_utc[probe]
@@ -252,7 +252,7 @@ if st(2):
                 '--verbose', 'INFO',  #'DEBUG' get many numba messages
                 # '--calc_version', 'polynom(force)',  # depreshiated
                 # '--chunksize', '20000',
-                # '--not_joined_h5_path', f'{db_path.stem}_proc.h5',
+                # '--not_joined_db_path', f'{db_path.stem}_proc.h5',
                 ]
         if aggregate_period_s is None:  # proc. parameters (if we have saved proc. data then when aggregating we are not processing)
 

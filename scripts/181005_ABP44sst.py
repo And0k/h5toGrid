@@ -46,7 +46,7 @@ if st(2):  # False: #
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--table', 'CTD_SST_48Mc',
         '--b_interact', '0',
-        # '--b_raise_on_err', '0'
+        # '--on_bad_lines', 'warn'
         ])
 
 if st(4):  # False: #

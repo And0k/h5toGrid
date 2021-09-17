@@ -71,7 +71,7 @@ def config_in(
         dt_from_utc_seconds=0,
         dt_from_utc_hours=0,
         skiprows_integer=1,
-        b_raise_on_err=True,
+        on_bad_lines='error',
         max_text_width=1000,
         blocksize_int=20000000,
         sort=True,

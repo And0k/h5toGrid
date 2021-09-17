@@ -62,7 +62,8 @@ saves loading log in inclinometer\scripts\log\csv2h5_inclin_Kondrashov.log
              help='Directory where inclinometer data will be stored, subdirs:'
                   '"_raw": required, with raw file(s)')
     s.add('--raw_subdir', default='',
-             help='Optional zip/rar arhive name (data will be unpacked) or subdir in "path_cruise/_raw"')
+          help='Optional zip/rar arhive name (data will be unpacked) or subdir in "path_cruise/_raw". For multiple '
+               'files symbols * and ? not supported but `prefix` and `number` format strings are avalable as in `raw_pattern`')
     s.add('--raw_pattern', default="*{prefix:}{number:0>3}*.[tT][xX][tT]",
              help='Pattern to find raw files: Python "format" command pattern to format prefix and probe number.'
                   'where "prefix" is a --probes_prefix arg. that is in UPPER case and INCL replaced with INKL.')
@@ -87,7 +88,8 @@ saves loading log in inclinometer\scripts\log\csv2h5_inclin_Kondrashov.log
              help='add this correction to loading datetime data. Can use other suffixes instead of "days"')
     s.add('--time_start_utc_dict', help='Start time of probes started without time setting: when raw date start is 2000-01-01T00:00')
     s.add('--azimuth_add_dict', help='degrees, adds this value to velocity direction (will sum with _azimuth_shift_deg_ coef)')
-    
+    s.add('--db_path', help='input hdf5 file path, to load in step 2 and after the data from other database than created on step 1.')
+
     s = p.add_argument_group('filter',
                              'Filter all data based on min/max of parameters')
     s.add('--min_date_dict', default='0: 2020-06-28T18:00',
@@ -106,6 +108,8 @@ saves loading log in inclinometer\scripts\log\csv2h5_inclin_Kondrashov.log
              ' in columns named by parameter suffixed by probe number. Also result will be saved to text files with'
              ' names having date and suffixes for each probe and average value')
     s.add('--aggregate_period_s_not_to_text_int_list', default='None', help='do not save text files for this aggregate periods')
+    s.add('--split_period', default='1D',
+             help='pandas offset string (5D, H, ...) to proc and output in separate blocks. If saves to csv then writes in parts of this length, but if no bin averaging (aggregate_period) only')
 
     s = p.add_argument_group('program',
                              'Program behaviour')
@@ -211,7 +215,7 @@ def main(new_arg=None, **kwargs):
 
 
     probes = cfg['in']['probes'] or range(1, 41)  # sets default range, specify your values before line ---
-    raw_root, probe_is_incl = re.subn('INCL_?', 'INKL_', cfg['in']['probes_prefix'].upper())
+    raw_prefix, probe_is_incl = re.subn('INCL_?', 'INKL_', cfg['in']['probes_prefix'].upper())
 
     # some parameters that depends of probe type (indicated by probes_prefix)
     p_type = defaultdict(
@@ -254,40 +258,42 @@ def main(new_arg=None, **kwargs):
         if cfg['in']['raw_subdir'] is None:
             cfg['in']['raw_subdir'] = ''
 
-        dir_out = raw_parent / re.sub(r'[.\\/ *?]', '_', cfg['in']['raw_subdir'])
-        # sub replaces multilevel subdirs to 1 level that correct_fun() can only make
+        # Output dir name we create replacing multilevel subdirs to 1 level (that correct_fun() can only make)
+        dir_out = raw_parent / re.sub(r'[.\\/ *?]', '_', cfg['in']['raw_subdir'].format(prefix=raw_prefix, number=0))
 
         def dt_from_utc_2000(probe):
             """ Correct time of probes started without time setting. Raw date must start from  2000-01-01T00:00"""
             return (datetime(year=2000, month=1, day=1) - cfg['in']['time_start_utc'][probe]
                     ) if cfg['in']['time_start_utc'].get(probe) else timedelta(0)
 
-        # convert cfg['in']['dt_from_utc'] keys to int
-
+        # Convert cfg['in']['dt_from_utc'] keys to int
         cfg['in']['dt_from_utc'] = {int(p): v for p, v in cfg['in']['dt_from_utc'].items()}
-        # convert cfg['in']['t_start_utc'] to cfg['in']['dt_from_utc'] and keys to int
+        # Convert cfg['in']['t_start_utc'] to cfg['in']['dt_from_utc'] and keys to int
         cfg['in']['dt_from_utc'].update(    # overwriting the 'time_start_utc' where already exist
             {int(p): dt_from_utc_2000(p) for p, v in cfg['in']['time_start_utc'].items()}
             )
-        # make cfg['in']['dt_from_utc'][0] be default value
+        # Make cfg['in']['dt_from_utc'][0] be the default value
         cfg['in']['dt_from_utc'] = defaultdict(constant_factory(cfg['in']['dt_from_utc'].pop(0, timedelta(0))),
                                                cfg['in']['dt_from_utc'])
-
-
         for probe in probes:
             raw_found = []
-            raw_pattern_file = str(Path(glob.escape(cfg['in']['raw_subdir'])) / cfg['in']['raw_pattern'].format(prefix=raw_root, number=probe))
+            raw_subdir_for_probe = cfg['in']['raw_subdir'].format(prefix=raw_prefix, number=probe)
+            raw_pattern_file = str(Path(glob.escape(raw_subdir_for_probe)) /
+                                   cfg['in']['raw_pattern'].format(prefix=raw_prefix, number=probe))
             correct_fun = p_type[cfg['in']['probes_prefix']]['correct_fun']
             # if not archive:
-            if (not re.match(r'.*(\.zip|\.rar)$', cfg['in']['raw_subdir'], re.IGNORECASE)) and raw_parent.is_dir():
+            if (not re.match(r'.*(\.zip|\.rar)$', raw_subdir_for_probe, re.IGNORECASE)
+                ) and (dir_incl / raw_subdir_for_probe).is_dir():
                 raw_found = list(raw_parent.glob(raw_pattern_file))
             if not raw_found:
                 # Check if already have corrected files for probe generated by correct_txt(). If so then just use them
                 raw_found = list(dir_out.glob(f"{cfg['in']['probes_prefix']}{probe:0>2}.txt"))
                 if raw_found:
                     print('corrected csv file', [r.name for r in raw_found], 'found')
-                    correct_fun = lambda x, dir_out: x
-                elif not cfg['in']['raw_subdir']:
+
+                    def correct_fun(x, dir_out):
+                        return x
+                elif not raw_subdir_for_probe:
                     continue
 
             for file_in in (raw_found or open_csv_or_archive_of_them(raw_parent, binary_mode=False, pattern=raw_pattern_file)):
@@ -304,7 +310,7 @@ def main(new_arg=None, **kwargs):
                     '--table', tbl,
                     '--db_path', str(db_path),
                     # '--log', str(scripts_path / 'log/csv2h5_inclin_Kondrashov.log'),
-                    # '--b_raise_on_err', '0',  # ?
+                    # '--on_bad_lines', 'warn',
                     '--b_interact', '0',
                     '--fs_float', str(p_type[cfg['in']['probes_prefix']]['fs']),  #f'{fs(probe, file_in.stem)}',
                     '--dt_from_utc_seconds', str(cfg['in']['dt_from_utc'][probe].total_seconds()),
@@ -339,6 +345,12 @@ def main(new_arg=None, **kwargs):
         print('Ok:', i_proc_probe, 'probes,', i_proc_file, 'files processed.')
 
 
+
+    # 'incl.*|w\d*'  inclinometers or wavegauges w\d\d # 'incl09':
+    tables_list_regex = f"{cfg['in']['probes_prefix'].replace('voln', 'w')}.*"
+    if cfg['in']['probes']:
+        tables_list_regex += "(?:{})".format('|'.join('{:0>2}'.format(p) for p in cfg['in']['probes']))
+
     if st(2, 'Calculate physical parameters and average'):
         kwarg = {'in': {
             'min_date': cfg['filter']['min_date'][0],
@@ -371,16 +383,12 @@ def main(new_arg=None, **kwargs):
 
         for aggregate_period_s in cfg['out']['aggregate_period_s']:
             if aggregate_period_s is None:
-                db_path_in = db_path
+                db_path_in = cfg['in']['db_path'] or db_path  # allows user's db_path to load data in counts for step 2
                 db_path_out = dir_incl / f'{db_path.stem}_proc_noAvg.h5'
             else:
                 db_path_in = dir_incl / f'{db_path.stem}_proc_noAvg.h5'
                 db_path_out = dir_incl / f'{db_path.stem}_proc.h5'  # or separately: '_proc{aggregate_period_s}.h5'
 
-            # 'incl.*|w\d*'  inclinometers or wavegauges w\d\d # 'incl09':
-            tables_list_regex = f"{cfg['in']['probes_prefix'].replace('voln', 'w')}.*"
-            if cfg['in']['probes']:
-                tables_list_regex += "(?:{})".format('|'.join('{:0>2}'.format(p) for p in cfg['in']['probes']))
 
             args = [
                     '../../empty.yml',  # all settings are here, so to not print 'using default configuration' we use some existed empty file
@@ -393,7 +401,7 @@ def main(new_arg=None, **kwargs):
                     '--b_del_temp_db', '1',
                     # '--calc_version', 'polynom(force)',  # depreshiated
                     # '--chunksize', '20000',
-                    # '--not_joined_h5_path', f'{db_path.stem}_proc.h5',
+                    # '--not_joined_db_path', f'{db_path.stem}_proc.h5',
                     ]
 
             if aggregate_period_s is None:  # proc. parameters (if we have saved proc. data then when aggregating we are not processing)
@@ -402,9 +410,9 @@ def main(new_arg=None, **kwargs):
                     ['--max_dict', 'M[xyz]:4096',
                      # '--time_range_zeroing_dict', "incl19: '2019-11-10T13:00:00', '2019-11-10T14:00:00'\n,"  # not works - use kwarg
                      # '--time_range_zeroing_list', '2019-08-26T04:00:00, 2019-08-26T05:00:00'
-                     '--split_period', '1D'
+                     '--split_period', cfg['out']['split_period']
                     ] if probe_is_incl else
-                    ['--bad_p_at_bursts_starts_peroiod', '1H',
+                    [# '--bad_p_at_bursts_starts_peroiod', '1H',
                     ])
                     # csv splitted by 1day (default for no avg) else csv is monolith
             if aggregate_period_s not in cfg['out']['aggregate_period_s_not_to_text']:  # , 300, 600]:
@@ -425,7 +433,7 @@ def main(new_arg=None, **kwargs):
 
 
     if st(3, 'Calculate spectrograms'):  # Can be done at any time after step 1
-        min_Pressure = 7
+        min_Pressure = 0.5
 
         # add dict dates_min like {probe: parameter} of incl_clc to can specify param to each probe
         def raise_ni():
@@ -435,10 +443,12 @@ def main(new_arg=None, **kwargs):
             Path(incl_h5clc.__file__).with_name(f'incl_h5spectrum{db_path.stem}.yaml'),
             # if no such file all settings are here
             '--db_path', str(dir_incl / f'{db_path.stem}_proc_noAvg.h5'),
-            '--tables_list', f"{cfg['in']['probes_prefix']}.*",  # inclinometers or wavegauges w\d\d  ## 'w02', 'incl.*',
+            '--tables_list', tables_list_regex,
             # '--aggregate_period', f'{aggregate_period_s}S' if aggregate_period_s else '',
 
-            '--min_date', datetime64_str(cfg['filter']['min_date'][0]),
+            '--min_date', datetime64_str((lambda t: t.replace(second=0, microsecond=0, minute=0) +
+                                         timedelta(hours=t.minute//30))(cfg['filter']['min_date'][0])
+                                         ),  # round start to hours mainly for data with bursts that starts with hours
             '--max_date', datetime64_str(cfg['filter']['max_date'][0]),  # '2019-09-09T16:31:00',  #17:00:00
             '--min_Pressure', f'{min_Pressure}',
             # '--max_dict', 'M[xyz]:4096',  # use if db_path is not ends with _proc_noAvg.h5 i.e. need calc velocity

@@ -422,7 +422,7 @@ def log_runs(df_raw: pd.DataFrame,
 
     log.update(  # pd.DataFrame(, index=log_update['_st'].index).rename_axis('Date0')
         {'rows': imax - imin,
-        'rows_filtered': imax - np.append(imin[1:], len(df_raw)),  # rows between runs down. old: imin - np.append(0, imax[:-1])
+        'rows_filtered': np.append(imin[1:], len(df_raw)) - imax,  # rows between runs down. old: imin - np.append(0, imax[:-1])
         'fileName': [os_path.basename(cfg['in']['file_stem'])] * len(imin),
         'fileChangeTime': [cfg['in']['fileChangeTime']] * len(imin),
         })
@@ -626,7 +626,8 @@ def add_ctd_params(df_in: MutableMapping[str, Sequence], cfg: Mapping[str, Any],
             else:
                 print('Calc', '/'.join(params_coord_needed_for), f'using MANUAL INPUTTED coordinates: lat={lat}, lon={lon}')
 
-    if 'Temp90' not in ctd.columns:
+    pd_chained_assignment, pd.options.mode.chained_assignment = pd.options.mode.chained_assignment, None
+    if 'Temp90' not in ctd.columns:  # if isinstance(ctd, pd.DataFrame)
         if cfg['in'].get('b_temp_on_its90'):
             ctd['Temp90'] = ctd['Temp']
         else:
@@ -647,6 +648,7 @@ def add_ctd_params(df_in: MutableMapping[str, Sequence], cfg: Mapping[str, Any],
         ctd['Lat'] = lat
         ctd['Lon'] = lon
 
+    pd.options.mode.chained_assignment = pd_chained_assignment
     return ctd[cfg['out']['data_columns']]
 
 

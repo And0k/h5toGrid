@@ -30,7 +30,7 @@ if st(1):  # False: #
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--table', 'CTD_SST_48Mc',
         '--b_interact', '0',
-        # '--b_raise_on_err', '0'
+        # '--on_bad_lines', 'warn'
         ])
 
 if start <= 3 and False:  # go: #  # already done in scripts/181005_ABP44sst.py

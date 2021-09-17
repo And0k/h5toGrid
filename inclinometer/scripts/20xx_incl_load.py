@@ -1,7 +1,10 @@
 # import my scripts
 from inclinometer.incl_load import main as incl_load
 
+b_wavegage = not True  # False
 
+# import warnings
+# warnings.filterwarnings("error")
 
 # for st_en in [
 #     '15:56-16:35',
@@ -19,27 +22,41 @@ from inclinometer.incl_load import main as incl_load
 #         '--dask_scheduler', 'synchronous'
 #         ])
 
-
-incl_load([
-    # 'cfg/incl_load_201202_BalticSpit.yml',
-#     'cfg/210519incl_load_Pregolya,Lagoon.yml',
-#     '--min_date_dict', '0: 2020-12-18T13:28:00',
-#     '--max_date_dict', '0: 2020-12-18T15:29:50',  # '16: 2020-10-21T16:10:33, 15: 2020-10-21T17:46:05',
-#
-    # wavegage:
-    'cfg/incl_load_201202_BalticSpit#w.yml',
-    #
-    # probe with 1800s burst period:
-    # '--probes_int_list', '04, 14, 36, 37, 38',  # '28, 33',  #3, 5, 9, 10, 11, 15, 19'
-    # '--aggregate_period_s_int_list', 'None, 2, 600, 1800, 7200',  # '',  # None,  300,  3600
-#    '--aggregate_period_s_not_to_text_int_list', 'None, 2',       # default=None, use 2 for speedup. 300, 7200, ,3600  # exclude too long saving op
-#     '--step_start_int', '2',  # '50', #'2',
-#     '--step_end_int',   '2',  # '2',
-#
-#      #'--load_timeout_s_float', '0'
-#     # '--dask_scheduler', 'distributed'  # 'synchronous'  #   may be not affect incl_h5clc
-])
-
+#for raw_subdir in ['get210827@i4,11,36,37,38,w6_Симагин_rar']: #'get210813@i4,11,36,37,38,w6_rar',
+if True:
+    if b_wavegage:
+        incl_load([
+            'cfg/incl_load_201202_BalticSpit#w.yml',
+            '--db_path', r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\210726@i4,5,11,36,37,38,w2,5,6\_raw\210726incl.h5',
+            # '--raw_subdir', '210611_get210710[w2].rar',
+            # '--min_date_dict', '0: 2021-06-10T12:15:00',
+            #
+            # probe with 1800s burst period:
+            #   # '28, 33',  #3, 5, 9, 10, 11, 15, 19'
+            '--probes_int_list', '05',
+                # '--aggregate_period_s_int_list', 'None',
+            '--aggregate_period_s_int_list', 'None, 2, 300, 3600',  #', 'None2, 600, 7200',
+            # 'None, 2, 600, 1800, 7200',  # '',  # None,  300,  3600
+            #    '--aggregate_period_s_not_to_text_int_list', 'None, 2',
+            # default=None, use 2 for speedup. 300, 7200, ,3600  # exclude too long saving op
+            '--step_start_int', '2',  # '50', #'2',
+            '--step_end_int', '2',
+            #
+            #     # '--load_timeout_s_float', '0'
+            '--dask_scheduler', 'synchronous'  # '--dask_scheduler', 'distributed'  # 'synchronous'  #   may be not affect incl_h5clc
+            ])
+    else:
+        incl_load([
+        'cfg/incl_load_201202_BalticSpit.yml',
+        #'--raw_subdir', raw_subdir,
+        #'cfg/210519incl_load_Pregolya,Lagoon.yml',
+        '--probes_int_list', '05',  # '04, 11, 36, 37, 38',  #,
+        '--aggregate_period_s_int_list', 'None',  # '600, 7200',  # 2,
+        '--aggregate_period_s_not_to_text_int_list', 'None, 2, 600, 7200',
+        '--min_date_dict', '0: 2021-07-26T16:00:00',
+        #'--max_date_dict', '0: 2020-12-18T15:29:50',  # '16: 2020-10-21T16:10:33, 15: 2020-10-21T17:46:05',
+        '--step_start_int', '1',
+        ])
 
 """    
     'cfg/200901incl_load.yml',

@@ -213,7 +213,7 @@ def df_filter_and_save_to_h5(df, input, out, filter=None, sort_time=None) -> Uni
     :param df:
     :param key:
     :return: 'continue' if no data else 0
-    Modifies out: adds field 'tables_have_wrote': Set[Tuple[str, str]]
+    Modifies out: adds field 'tables_written': Set[Tuple[str, str]]
     """
     df_t_index, itm = multiindex_timeindex(df.index)
     # sorting will break multiindex?
@@ -344,7 +344,7 @@ def main(new_arg=None):
 
     # try:
     # if cfg['out']['b_remove_duplicates']:
-    #     for tbls in cfg['out']['tables_have_wrote']:
+    #     for tbls in cfg['out']['tables_written']:
     #         for tblName in tbls:
     #             cfg['out']['db'][tblName].drop_duplicates(keep='last', inplace= True)
     # print('Create index', end=', ')
@@ -381,16 +381,16 @@ def main(new_arg=None):
     #     code.interact(local=ns)
     # finally:
     #     cfg['out']['db'].close()
-    #     failed_storages= h5move_tables(cfg['out'], cfg['out']['tables_have_wrote'])
+    #     failed_storages= h5move_tables(cfg['out'], cfg['out']['tables_written'])
 
     try:
-        failed_storages = h5move_tables(cfg['out'], tbl_names=cfg['out'].get('tables_have_wrote', set()))
+        failed_storages = h5move_tables(cfg['out'], tbl_names=cfg['out'].get('tables_written', set()))
         print('Finishing...' if failed_storages else 'Ok.', end=' ')
         # Sort if have any processed data that needs it (not the case for the routes and waypoints), else don't because ``ptprepack`` not closes hdf5 source if it not finds data
         if cfg['in'].get('time_last'):
             cfg['out']['b_remove_duplicates'] = True
             h5index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5", in_storages=failed_storages,
-                         tables=cfg['out'].get('tables_have_wrote', set()))
+                         tables=cfg['out'].get('tables_written', set()))
     except Ex_nothing_done:
         print('ok')
 

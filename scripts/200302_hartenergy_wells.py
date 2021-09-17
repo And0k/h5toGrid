@@ -48,7 +48,7 @@ if st(10):  # False: #
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--table', f'{device}',
         '--b_interact', '0'
-        # '--b_raise_on_err', '0',
+        # '--on_bad_lines', 'worn',
         ],
         **{'in': {
             'fun_proc_loaded': proc_loaded_sea_and_sun,
@@ -167,7 +167,7 @@ if st(80):  # False: #
 
     # todo: bug: bad top and bottom edges
 
-# Export csv with some new calculated paremeters
+# Export csv with some new calculated parameters
 if st(110):  # False: #
     # Extract CTD runs (if files are not splitted on runs):
     CTD_calc([  # 'CTD_calc-find_runs.ini',
@@ -193,7 +193,7 @@ if st(120):  # True: #
         '--coldate_integer', '0', '--coltime_integer', '1',
         '--cols_not_use_list', 't_w,precipitation',  # bad constant data
         '--delimiter_chars', ',', '--max_text_width', '12',
-        '--b_raise_on_err', 'False', '--b_insert_separator', 'False',
+        '--on_bad_lines', 'warn', '--b_insert_separator', 'False',
         '--chunksize_percent_float', '500',
         '--fs_float', '60',
         '--skiprows', '0'

@@ -21,8 +21,8 @@ lf = LoggingStyleAdapter(__name__)
 @dataclass
 class ConfigInput:
     """
-    "in": all about input files:
-
+    "in": all about input files
+    Constructor arguments:
     :param path: path to source file(s) to parse. Use patterns in Unix shell style
     :param b_search_in_subdirs: search in subdirectories, used if mask or only dir in path (not full path)
     :param exclude_dirs_endswith_list: exclude dirs which ends with this srings. This and next option especially useful when search recursively in many dirs
@@ -37,7 +37,7 @@ class ConfigInput:
     :param cols_load_list: comma separated list of names from header to be saved in hdf5 store. Do not use "/" char, or type suffixes like in ``header`` for them. Defaut - all columns
     :param cols_not_use_list: comma separated list of names from header to not be saved in hdf5 store
     :param skiprows_integer: skip rows from top. Use 1 to skip one line of header
-    :param b_raise_on_err: if False then not rise error on rows which can not be loaded (only shows warning). Try set "comments" argument to skip them without warning
+    :param on_bad_lines: {{'error', 'warn', 'skip'}}, default 'error'. May be better to set "comments" argument to tune format?
     :param delimiter_chars: parameter of pandas.read_csv()
     :param max_text_width: maximum length of text fields (specified by "(text)" in header) for dtype in numpy loadtxt
     :param chunksize_percent_float: percent of 1st file length to set up hdf5 store tabe chunk size
@@ -54,7 +54,7 @@ class ConfigInput:
     b_skip_if_up_to_date: bool = True
     dt_from_utc = 0
     skiprows = 1
-    b_raise_on_err = True
+    on_bad_lines = 'error'
     max_text_width = 1000
     blocksize_int = 20000000
     sort = True
@@ -111,10 +111,11 @@ class ConfigOutSimple:
     "out": all about output files:
 
     :param db_path: hdf5 store file path
-    :param table: table name in hdf5 store to write data. If not specified then will be generated on base of path of input files. Note: "*" is used to write blocks in autonumbered locations (see dask to_hdf())
+    :param tables: tables names in hdf5 store to write data. If not specified then will be generated on base of path of input files. Note: "*" is used to write blocks in autonumbered locations (see dask to_hdf())
     :param b_insert_separator: insert NaNs row in table after each file data end
     :param b_reuse_temporary_tables: Warning! Set True only if temporary storage already have good data! If True and b_skip_if_up_to_date= True then not replace temporary storage with current storage before adding data to the temporary storage
     :param b_remove_duplicates: Set True if you see warnings about
+    :param chunksize: limit loading data in memory
     """
     db_path: Any = ''
     tables: List[str] = field(default_factory=list)
@@ -189,7 +190,7 @@ class ConfigProgram:
 
     return_: str = '<end>'
     b_interact: bool = False
-    log: str =''
+    log: str = ''
     verbose: str = 'INFO'
 
 
@@ -226,10 +227,7 @@ def hydra_cfg_store(
     # Registering groups schemas
     for group, names in cs_store_group_options.items():
         for name in names:
-            class_name = ''.join(['Config'] + [s.title() for s in name.split('_')])
-            last_char = name[-1]
-            if last_char == '_':
-                class_name += last_char
+            class_name = ''.join(['Config'] + [s.title() or '_' for s in name.split('_')])
             try:
                 cl = getattr(module, class_name)
                 cs.store(name=name, node=cl, group=group)
@@ -262,7 +260,7 @@ def main_init_input_file(cfg_t, cs_store_name, in_file_field='db_path'):
         print(e.message)
         cfg_t['in'] = cfg_in
         return cfg_t
-    except FileNotFoundError as e:  #
+    except FileNotFoundError as e:
         print('Initialisation error:', e.message, 'Calling arguments:', sys.argv)
         raise
 
@@ -291,11 +289,13 @@ def main_init(cfg, cs_store_name, __file__=None, ):
     print("Working directory : {}".format(os.getcwd()))
 
     # print not empty / not False values # todo: print only if config changed instead
-    print(OmegaConf.to_yaml({k0: {k1: v1 for k1, v1 in v0.items() if v1} for k0, v0 in cfg.items()}))
+    print(OmegaConf.to_yaml({
+        k0: ({k1: v1 for k1, v1 in v0.items() if v1} if hasattr(v0, 'items') else v0) for k0, v0 in cfg.items()
+        }))
 
     # cfg = cfg_from_args(argparser_files(), **kwargs)
     if not cfg.program.return_:
-        print('Can not initialise')
+        print('Can not initialise: there must be non empty program.return_ value')
         return cfg
     elif cfg.program.return_ == '<cfg_from_args>':  # to help testing
         return cfg
@@ -325,22 +325,34 @@ def main_call(
     Adds command line args, calls fun, then restores command line args. Replaces shortcut "in." in them to "input."
     :param cmd_line_list: command line args of hydra commands or config options selecting/overwriting.
     :param fun: function that uses command line args, usually called ``main``
-    :return: ``main()``
+    :return: fun() output
     """
-
-    sys_argv_save = sys.argv
+    if sys.argv[0].endswith('.py'):
+        cmd_line_list_upd = sys.argv[:1]
+    else:
+        config_path = '"file://{}"'.format(sys.argv[0].replace('\\', '/'))
+        cmd_line_list_upd = [
+            sys.argv[0],
+            f'hydra.searchpath=[{config_path}]'  # not works
+        ]
+    # todo: check colorlog installed before this:
+    cmd_line_list_upd += [
+        'hydra/job_logging=colorlog',
+        'hydra/hydra_logging=colorlog'
+        ]
     if cmd_line_list is not None:
-        cmd_line_list_upd = sys.argv
         len_in_rep = len('in.')
         for c in cmd_line_list:
             if c.startswith('in.'):
                 cmd_line_list_upd.append(f'input.{c[len_in_rep:]}')
             else:
                 cmd_line_list_upd.append(c)
-        sys.argv = cmd_line_list_upd
+    cmd_line_list_upd += sys.argv[1:]  # (+ ['--config-dir', config_path]) only relative and not works
+    sys_argv_save, sys.argv = sys.argv, cmd_line_list_upd
 
     # hydra.conf.HydraConf.run.dir = './outputs/${now:%Y-%m-%d}_${now:%H-%M-%S}'
     out = fun()
+
     sys.argv = sys_argv_save
     return out
 

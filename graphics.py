@@ -8,7 +8,7 @@
 """
 import logging
 from time import sleep
-from typing import Any, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, List, Callable, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -76,10 +76,6 @@ class MutableTuple(Sequence):
 # class Range(MutableTuple):
 #     __slots__ = 'start', 'end'
 
-
-plt_selected_x_range_arr = np.empty((2,), '<f8')
-
-
 # plt_select = namedtuple(
 #     typename='selected',
 #     field_names='x_range_arr x_range y_range_arr finish',
@@ -91,21 +87,26 @@ class Plt_select(MutableTuple):
 
 
 plt_select = Plt_select(
-    plt_selected_x_range_arr,
+    (plt_selected_x_range_arr := np.empty((2,), '<f8')),
     plt_selected_x_range_arr.copy(),
     plt_selected_x_range_arr.copy(),
     # plt_selected_x_range_arr.view(dtype=(np.record, [('start', '<f8'), ('end', '<f8')]))[0],
     False)
 
 
-def plot_prepare_input(ax, callback=None, mask=None, x=None, ys=None, lines=None):
+def plot_prepare_input(ax,
+                       callback: Optional[Callable[[Any, Any], None]] = None,
+                       mask: np.ndarray = None,
+                       x: Optional[np.ndarray] = None,
+                       ys: Sequence[np.ndarray] = None,
+                       lines: Sequence[Any] = None):
     """
     initiate RectangleSelector on ax to change plt_select.* variables accordingly
     :param ax: axis
     :param callback: if not None then may be 'fill mask' to change kwargs or provide your callable(eclick, erelease).
     Next arguments not used if callback is None.
     :param mask: mask to fill by False in selected range
-    :param x: array with same length as mask
+    :param x: array with same length as mask. If not sorted then last must be > 1st to detect it
     :param ys: sequence of arrays with same length as mask to fill by np.NaN in selected range
     :param lines: list of plot.line of length len(data - 1): data[0] is x data and next are
          y1, y2... data of same length as x data
@@ -113,6 +114,22 @@ def plot_prepare_input(ax, callback=None, mask=None, x=None, ys=None, lines=None
     """
     global plt_select
     print('Select bad x data region (click -> release)')
+    if x is None:
+
+        def selected_st_en():
+            return np.int64(plt_select.x_range_arr)
+    else:
+        if np.subtract(*x[[-1, 0]]) < 0:
+            sorter_x = x.argsort()  # arg for searchsorted?
+            x_sorted = x[sorter_x]
+
+            def selected_st_en():
+                t = sorter_x[np.searchsorted(x_sorted, plt_select.x_range_arr[::-1])] + 1
+                return sorted(t)
+        else:
+
+            def selected_st_en():
+                return np.searchsorted(x, plt_select.x_range_arr)
 
     def toggle_selector(event):
         """
@@ -138,8 +155,8 @@ def plot_prepare_input(ax, callback=None, mask=None, x=None, ys=None, lines=None
         """eclick and erelease are the press and release events"""
         plt_select.x_range_arr[:] = (eclick.xdata, erelease.xdata)
         plt_select.y_range_arr[:] = (eclick.ydata, erelease.ydata)
-        l.info("selected x and y ranges: (%3.2f, %3.2f), (%3.2f, %3.2f)", *plt_select.x_range_arr,
-               *plt_select.y_range_arr)
+        l.info("selected x and y ranges: (%3.2f, %3.2f), (%3.2f, %3.2f)",
+               *plt_select.x_range_arr, *plt_select.y_range_arr)
         # print(" The button you used were: %s %s" % (eclick.button, erelease.button))
 
     if callback is None:
@@ -150,16 +167,16 @@ def plot_prepare_input(ax, callback=None, mask=None, x=None, ys=None, lines=None
         def fill_mask_and_nan_data_callback(eclick, erelease):
             """
             uses outer scope variables:
-            ys
-            lines
-            mask
+            - ys
+            - lines
+            - mask: sets its elements to False in selected regions
             :param eclick:
             :param erelease:
             :return:
             """
             ranges_select_callback(eclick, erelease)
-            sl = slice(
-                *(np.int64(plt_select.x_range_arr) if x is None else np.searchsorted(x, plt_select.x_range_arr)))
+            sl = slice(*(selected_st_en()))
+            print(selected_st_en())
             mask[sl] = False  # np.diff(plt_select.x_range_arr) > 0
             for i in range(-1, -len(ys) - 1, -1):  # from the end
                 data = ys[i].copy()
@@ -247,31 +264,29 @@ def make_figure(x: Optional[Sequence] = None,
 
         if ax_invert:
             ax.yaxis.set_inverted(True)
-            # ax.invert_yaxis()
 
         if ax_title is not None:
             ax.set_title(ax_title)
 
+
+
         # lines will be returned allowing to change them
-        for i, (y_kwrg, color, alpha) in enumerate(
-                zip(y_kwrgs, ['r', 'c', 'g', 'm', 'b', 'y'][n_prev_lines:], [0.3] + [0.5] * (5 - n_prev_lines))):
-            y_data = y_kwrg.pop('data')  # changes y_kwrg temporaly to use as plot kwrgs
-            lines += ax.plot(x, y_data, **{'color': color, 'alpha': alpha, **y_kwrg})
-            y_kwrg['data'] = y_data  # recover y_kwrg
+        for i, (y_kwrg, color, alpha) in enumerate(zip(
+                y_kwrgs, ['r', 'c', 'g', 'm', 'b', 'y'][n_prev_lines:], [0.3] + [0.5] * (5 - n_prev_lines))):
+            y_data = (plot_kwrgs := dict(y_kwrg)).pop('data')  # removes 'data' from copy of y_kwrg to use as plot kwrgs
+            lines += ax.plot(x, y_data, **{'color': color, 'alpha': alpha, **plot_kwrgs})
 
         if mask_kwrgs is not None and mask_kwrgs.get('data') is not None:
             # add last line with already applied mask
-            mask_data = mask_kwrgs.pop('data')  # changes mask_kwrgs temporaly to use as plot kwrgs
-            y_masked = y_data.copy()
-            y_masked[~mask_data] = np.NaN
-            lines += ax.plot(x, y_masked, **{'color': 'r', 'label': 'masked initial', **mask_kwrgs})
-            mask_kwrgs['data'] = mask_data  # recover mask_kwrgs
+            mask_data = (plot_kwrgs := dict(mask_kwrgs)).pop('data')  # removes 'data' from copy of mask_kwrgs to use as plot kwrgs
+            y_data[~mask_data] = np.NaN
+            lines += ax.plot(x, y_data, **{'color': 'r', 'label': 'masked initial', **plot_kwrgs})
 
         ax.legend(prop={'size': 10}, loc='upper right')
         if position is not None:
             move_figure(ax.figure, *position)
     except Exception as e:
-        l.exception('make_figure error')  # print('fig error')
+        l.exception('make_figure error')
         return ax, lines
     return ax, lines
 
@@ -283,13 +298,13 @@ def interactive_deleter(x: Optional[Sequence] = None,
                         stop: Union[str, bool, None] = True,
                         **kwargs) -> np.ndarray:
     """
-    Modify mask graphically.
+    Modifies mask graphically.
     Note: If evolute in debug mode set argument stop=False else your program hangs!
     :param x:
     :param y_kwrgs:
     :param mask_kwrgs: dict with argumtents to plt.plot(x[mask_kwrgs['data']], y[-1][mask_kwrgs['data']], **mask0kwrgs)
         where:
-            mask_kwrgs['data']: mask
+            mask_kwrgs['data']: mask - will be interactively modified
             mask0kwrgs is mask_kwrgs without 'data'
     :param ax:
     :param stop: display figure again until user press "Q"
@@ -333,7 +348,7 @@ def interactive_deleter(x: Optional[Sequence] = None,
     if stop:  # dbstop to make stop if noninteruct
         f_number = ax.figure.number
         plt.show(block=False)  # ? (block=True - hangs) allows select bad regions (pycharm: not stops if dbsops before)
-        while ((not plt_select.finish) and plt.fignum_exists(f_number)):  # or get_fignums().
+        while (not plt_select.finish) and plt.fignum_exists(f_number):  # or get_fignums().
             # input()
             sleep(1)
             # plt.draw()

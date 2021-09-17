@@ -152,7 +152,7 @@ cfg['out']['chunksize'] = 50000
 # @+node:korzh.20180603070720.1: *3* functions
 # @+others
 # @+node:korzh.20180602125115.1: *4* h5q_interval2coord
-from to_pandas_hdf5.h5_dask_pandas import h5q_interval2coord, h5_load_range_by_coord, export_df_to_csv
+from to_pandas_hdf5.h5_dask_pandas import h5q_interval2coord, h5_load_range_by_coord, df_to_csv
 
 
 #   Veusz inline version of this (viv):
@@ -294,13 +294,13 @@ def waves_proc(df, i_burst, len_avg=600, i_burst_good_exactly=1):
     ###
 
     # save calculated parameters
-    export_df_to_csv(
+    df_to_csv(
         pd.DataFrame(ar_spectrum_characteristics, index=df.index[i_burst], columns=calc_spectrum_characteristics),
         cfg['out'],
         add_subdir='V,P_txt',
         add_suffix='spectrum_characteristics')
 
-    export_df_to_csv(
+    df_to_csv(
         pd.DataFrame(Sp, index=df.index[i_burst], columns=wfreq),
         cfg['out'],
         add_subdir='V,P_txt',
@@ -418,7 +418,7 @@ kVabs = np.float64([[0.361570991503], [0]])
 """
 Load or set default
 Ag_old, Cg: scaling coefficients for inclinometer
-Ah_old, Ch: scaling coefficients for magnitometer
+Ah_old, Ch: scaling coefficients for magnetometer
 """
 try:
 

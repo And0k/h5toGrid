@@ -6,7 +6,7 @@ drive_d = 'D:' if sys.platform == 'win32' else '/mnt/D'  # to run on my Linux/Wi
 scripts_path = Path(drive_d + '/Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))
 # my funcs
-from utils2init import st as st_full
+from utils2init import st
 import veuszPropagate
 from to_pandas_hdf5.csv2h5 import main as csv2h5
 from to_pandas_hdf5.gpx2h5 import main as gpx2h5
@@ -14,20 +14,20 @@ from to_pandas_hdf5.CTD_calc import main as CTD_calc
 from h5toGpx import main as h5toGpx
 from grid2d_vsz import main as grid2d_vsz
 
-# ---------------------------------------------------------------------------------------------
-device = 'CTD_SST_48Mc#1253'
+st.go = True   # False #
+st.start = 80  # 5 30 70 80 115
+st.end = 80   # 60 80 120
+
 path_cruise = Path(r'd:\workData\BalticSea\191215_ANS46')
 path_db = path_cruise / path_cruise.with_suffix('.h5').name  # same name as dir
+device = 'CTD_SST_48Mc#1253'
 device_veusz_prefix = 'ss_'
-go = True  # False #
-start = 130  # 5 70 110
-end = 120  # 60 80 120
-# Usually need stop before steps that need manual preparings (70): so stop at 60, and last step for device.
+
+# Stop before steps that need manual preparings (70) i.e. set end < 70 at first
 # Gridding (last step) needs debugging if interactive filtering is needed
 # ---------------------------------------------------------------------------------------------
-st = partial(st_full, start=start, end=end)
 
-if st(1) and False:  # nav with depth is in next section
+if st(1, 'Save gpx navigation to DB'):  # nav with depth is in next section
     # Save navigation to DB
     gpx2h5(['',
             '--db_path', str(path_db),
@@ -61,7 +61,7 @@ if st(10):  # False: #
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--table', f'{device}',
         '--b_interact', '0'
-        # '--b_raise_on_err', '0',
+        # '--on_bad_lines', 'warn',
         ],
         **{'in': {
             'fun_proc_loaded': proc_loaded_sea_and_sun,
@@ -88,7 +88,7 @@ if st(20):  # False: #
               # '--out.tables_list', '',
               ])
 
-if st(30):  # False: #
+if st(30, f'Draw {device} data profiles'):
     # Draw {device} data profiles
     veuszPropagate.main(['cfg/veuszPropagate.ini',
                          '--path', str(path_db),
@@ -103,7 +103,7 @@ if st(30):  # False: #
                          # '--b_images_only', 'True'
                          ])
 
-if start <= 40 and False:  #: # may not comment always because can not delete same time more than once
+if st(40) and False:  #: # may not comment always because can not delete same time more than once
     # Deletng bad runs from DB:
     import pandas as pd
 
@@ -123,8 +123,7 @@ if start <= 40 and False:  #: # may not comment always because can not delete sa
             else:
                 print('Not found run with time {}'.format(t))
 
-if st(50):  # False: #
-    # Extract navigation data at time station starts to GPX waypoints
+if st(50, 'Extract navigation data at time station starts to GPX waypoints'):  # False: #
     h5toGpx(['cfg/h5toGpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'{device}',  # CTD_Idronaut_OS316',
@@ -133,11 +132,10 @@ if st(50):  # False: #
              '--gpx_names_fun_format', '{:02d}',
              '--select_from_tablelog_ranges_index', '0'
              ])
-    go = False  # Hey! Prepare gpx tracks _manually_ before continue!
+    st.go = False  # Hey! Prepare gpx tracks _manually_ before continue!
 
-go = True
-if start <= 60 and False:
-    # Extract navigation data at runs/starts to GPX tracks. Useful to indicate where no nav?
+
+if False: # st(60, 'Extract navigation data at runs/starts to GPX tracks.'):    # Extract     # Useful to indicate where no nav?
     h5toGpx(['cfg/h5toGpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'{device}',
@@ -147,16 +145,13 @@ if start <= 60 and False:
              '--gpx_names_funs_list', '"i, row.Index"',
              '--gpx_names_funs_cobined', ''
              ])
+    st.go = False  # Hey! Prepare gpx tracks _manually_ before continue and rerun from st.start = 70!
 
-# go=False
-if st(70):  # False: #
-    # Save waypoints/routes from _manually_ prepared "CTD-sections=routes.gpx" to hdf5
+if st(70, 'Save waypoints/routes from _manually_ prepared gpx to hdf5'):  # False: #
     gpx2h5(['', '--path', str(path_cruise / r'navigation\CTD-sections=routes.gpx'),
-            '--table_prefix',
-            r'navigation/sectionsCTD'])  # need copy reult from {path_db}_not_sorted manually, todo: auto copy
+            '--table_prefix', r'navigation/sectionsCTD'])  # need copy result from {path_db}_not_sorted manually, todo: auto copy
 
-if st(80):  # False: #
-    # Gridding
+if st(80, 'Gridding'):  # and False: #
     # Note: Prepare veusz "zabor" pattern before
     grid2d_vsz(['cfg/grid2d_vsz.ini', '--db_path', str(path_db),
                 '--table_sections', r'navigation/sectionsCTD_routes',
@@ -166,7 +161,7 @@ if st(80):  # False: #
                 # 'Eh, pH',  todo: N^2 - need calc before
                 '--max_depth', '110',
                 '--filter_depth_wavelet_level_int', '7',  # 4, 2 for section 3
-                '--filter_ctd_bottom_edge_float', 'True',
+                '--convexing_ctd_bot_edge_max', '40',  # set < bottom because it is harder to recover than delete
                 # '--x_resolution', '0.2',
                 # '--y_resolution', '5',
                 '--dt_search_nav_tolerance_seconds', '120',
@@ -180,9 +175,7 @@ if st(80):  # False: #
 
     # todo: bug: bad top and bottom edges
 
-# Export csv with some new calculated paremeters
-if st(110):  # False: #
-    # Extract CTD runs (if files are not splitted on runs):
+if st(110, 'Export csv with some new calculated parameters'):  # False: #
     CTD_calc([  # 'CTD_calc-find_runs.ini',
         '--db_path', str(path_db),
         '--tables_list', f'{device}',
@@ -206,7 +199,7 @@ if st(120):  # True: #
         '--coldate_integer', '0', '--coltime_integer', '1',
         '--cols_not_use_list', 't_w,precipitation',  # bad constant data
         '--delimiter_chars', ',', '--max_text_width', '12',
-        '--b_raise_on_err', 'False', '--b_insert_separator', 'False',
+        '--on_bad_lines', 'warn', '--b_insert_separator', 'False',
         '--chunksize_percent_float', '500',
         '--fs_float', '60',
         '--skiprows', '0'

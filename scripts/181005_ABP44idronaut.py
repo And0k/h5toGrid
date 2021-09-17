@@ -47,7 +47,7 @@ if st(2):  # False: #
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--table', 'CTD_Idronaut#493',
         '--b_interact', '0',
-        # '--b_raise_on_err', '0'
+        # '--on_bad_lines', 'warn'
         ])
 
 if st(3):  # False: #
