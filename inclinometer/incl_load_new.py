@@ -247,7 +247,7 @@ def main(config: ConfigType) -> None:
         })
 
 
-    if st(1, 'Save inclinometer or wavegage data from ASCII to HDF5'):
+    if st(1, 'Save inclinometer or wavegauge data from ASCII to HDF5'):
         # Note: Can not find additional not corrected files for same probe if already have any corrected in search path (move them out if need)
 
         i_proc_probe = 0  # counter of processed probes
@@ -302,7 +302,7 @@ def main(config: ConfigType) -> None:
                 # tbl = re.sub('^((?P<i>inkl)|w)_0', lambda m: 'incl' if m.group('i') else 'w',  # correct name
                 #              re.sub('^[\d_]*|\*', '', file_in.stem).lower()),  # remove date-prefix if in name
                 csv2h5(
-                    [str(Path(__file__).parent / 'cfg' / f"csv_{'inclin' if probe_is_incl else 'wavegage'}_{p_type[cfg['in']['probes_prefix']]['format']}.ini"),
+                    [str(Path(__file__).parent / 'cfg' / f"csv_{'inclin' if probe_is_incl else 'wavegauge'}_{p_type[cfg['in']['probes_prefix']]['format']}.ini"),
                     '--path', str(file_in),
                     '--blocksize_int', '50_000_000',  # 50Mbt
                     '--table', tbl,
@@ -382,7 +382,7 @@ def main(config: ConfigType) -> None:
 
     # Calculate velocity and average
     if st(2):
-        # if aggregate_period_s is None then not average and write to *_proc_noAvg.h5 else loading from that h5 and writing to _proc.h5
+        # if aggregate_period_s is None then not average and write to *.proc_noAvg.h5 else loading from that h5 and writing to _proc.h5
         if not cfg['out']['aggregate_period_s']:
             cfg['out']['aggregate_period_s'] = [None, 2, 600, 3600 if 'w' in cfg['in']['probes_prefix'] else 7200]
 
@@ -400,9 +400,9 @@ def main(config: ConfigType) -> None:
         for aggregate_period_s in cfg['out']['aggregate_period_s']:
             if aggregate_period_s is None:
                 db_path_in = db_path
-                db_path_out = db_path.with_name(f'{db_path.stem}_proc_noAvg.h5')
+                db_path_out = db_path.with_name(f'{db_path.stem}.proc_noAvg.h5')
             else:
-                db_path_in = db_path.with_name(f'{db_path.stem}_proc_noAvg.h5')
+                db_path_in = db_path.with_name(f'{db_path.stem}.proc_noAvg.h5')
                 db_path_out = f'{db_path.stem}_proc.h5'  # or separately: '_proc{aggregate_period_s}.h5'
 
             args = [Path(incl_h5clc.__file__).with_name(f'incl_h5clc_{db_path.stem}.yaml'),
@@ -464,13 +464,13 @@ def main(config: ConfigType) -> None:
         args = [
             Path(incl_h5clc.__file__).with_name(f'incl_h5spectrum{db_path.stem}.yaml'),
             # if no such file all settings are here
-            '--db_path', str(db_path.with_name(f'{db_path.stem}_proc_noAvg.h5')),
+            '--db_path', str(db_path.with_name(f'{db_path.stem}.proc_noAvg.h5')),
             '--tables_list', f"{cfg['in']['probes_prefix']}.*",  # inclinometers or wavegauges w\d\d  ## 'w02', 'incl.*',
             # '--aggregate_period', f'{aggregate_period_s}S' if aggregate_period_s else '',
 
             '--min_date', datetime64_str(cfg['filter']['min_date'][0]),
             '--max_date', datetime64_str(cfg['filter']['max_date'][0]),  # '2019-09-09T16:31:00',  #17:00:00
-            # '--max_dict', 'M[xyz]:4096',  # use if db_path is not ends with _proc_noAvg.h5 i.e. need calc velocity
+            # '--max_dict', 'M[xyz]:4096',  # use if db_path is not ends with .proc_noAvg.h5 i.e. need calc velocity
             '--out.db_path', f"{db_path.stem.replace('incl', cfg['in']['probes_prefix'])}_proc_psd.h5",
             # '--table', f'psd{aggregate_period_s}' if aggregate_period_s else 'psd',
             '--fs_float', f"{fs(probes[0], cfg['in']['probes_prefix'])}",
@@ -627,7 +627,7 @@ def call_example(call_by_user=True):
     """
     # from to_vaex_hdf5.h5tocsv import main_call as h5tocsv
     path_db_in = Path(r'd:\WorkData\~configuration~\inclinometr\190710incl.h5')
-    path_db_out = Path(r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\_raw\201202incl.h5')
+    path_db_out = Path(r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\_raw\201202.raw.h5')
     device = ['tr0']  # 221912
     to_vaex_hdf5.cfg_dataclasses.main_call([  # '='.join(k,v) for k,v in pairwise([   # ["2021-04-08T08:35:00", "2021-04-14T11:45:00"]'
         'in.time_range=["2021-04-08T09:00:00", "now"]',   # UTC, max (will be loaded and updated what is absent)

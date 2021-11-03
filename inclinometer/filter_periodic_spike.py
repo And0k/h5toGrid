@@ -45,14 +45,17 @@ cs.store(name=cs_store_name, node=ConfigType)  # Registering the Config class wi
 #     )
 
 cfg_in = {
-    'db_path': Path(r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\201202incl.h5'),
+    'db_path': Path(
+        # r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\201202@i3,5,9,10,11,15,19,23,28,30,32,33,w1-6\201202..proc_noAvg.h5'
+        # r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\201202.raw.h5'
+        ),
     'device': ConfigType.device,
     'table': f'/{ConfigType.device}',
     'col': 'P',
     'b_show': False,  # True
 
     'min_date': '2020-12-02T10:00',
-    'max_date': '2021-03-02T01:15:05', # 'now' '2021-01-08T12:20',
+    'max_date': '2021-03-02T01:15:05',  # 'now' '2021-01-08T12:20',
     }
 
 
@@ -336,23 +339,31 @@ def pairwise(iterable):
     return zip(a, b)
 
 
-@hydra.main(config_name=cs_store_name)  # adds config store cs_store_name data/structure to param:config
+@hydra.main(config_name=cs_store_name, config_path="cfg")  # adds config store cs_store_name data/structure to param:config
 def main(config: ConfigType) -> None:  #
+    raw = 'raw' in cfg_in['db_path'].stem  # else "proc_noAvg" is in
     with pd.HDFStore(cfg_in['db_path'], mode='r') as store:
         df = store[cfg_in['table']][cfg_in['min_date']:cfg_in['max_date']]
-        k = store.get_node(f"{cfg_in['table']}/coef")[cfg_in['col']].read()
+        if raw:
+            k = store.get_node(f"{cfg_in['table']}/coef")[cfg_in['col']].read()
 
     n_rows_before = df.shape[0]
     lf.info('Loaded data {0[0]} - {0[1]}: {1} rows. Filtering {2[col_out]}...',
             df.index[[0, -1]], n_rows_before, config
             )
+
+    # too many messages if working on bursts  # todo: write through buffer
+    logger = logging.getLogger('to_pandas_hdf5.h5_dask_pandas')
+    logger.setLevel(logging.ERROR)
+
     # print(f"Loaded data {df.index[0]} - {df.index[-1]}: {n_rows_before} rows. Filtering {cfg_in['col']}...")
     p_name = config['col_out']
-    df[p_name] = np.polyval(k, df[cfg_in['col']])
+    if raw:
+        df[p_name] = np.polyval(k, df[cfg_in['col']])
 
-    # Battery compensation
-    kBat = [1.7314032932363, -11.9301097967443]
-    df[p_name] -= np.polyval(kBat, df['Battery'])
+        # Battery compensation
+        kBat = [1.7314032932363, -11.9301097967443]
+        df[p_name] -= np.polyval(kBat, df['Battery'])
     MIN_P = 6  # P filtered below: to not delete spikes that may be used to find other spikes using ~constant period
 
     if config['cols_order']:
@@ -415,6 +426,7 @@ def main(config: ConfigType) -> None:  #
                 # df.loc[bad_p, p_name] = np.NaN
 
             # save result
+
             h5_append(cfg_out, df.loc[ind_ok], cfg_out['log'])
             n_rows_after += ind_ok.size
 

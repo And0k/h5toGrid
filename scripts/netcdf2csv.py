@@ -9,6 +9,7 @@ mwd   Mean wave direction
 mwp   Mean wave period (Tm-1)
 pp1d  Peak wave period
 swh   Significant height of combined wind waves and swell (Hs)
+sp    surface_pressure
 """
 
 import netCDF4
@@ -18,8 +19,8 @@ from pathlib import Path
 import pandas as pd
 from typing import Any, Callable, Dict, Iterator, Iterable, Mapping, MutableMapping, Optional, Sequence, Tuple, List, Union, TypeVar
 import re
-from itertools import tee
-import difflib
+# from itertools import islice
+# import difflib
 
 
 def main(file_path: Union[Path, str],
@@ -41,14 +42,19 @@ def main(file_path: Union[Path, str],
     if output_dir is None:
         output_dir = file_path.parent
 
+    # Open netCDF4 file
+    f = netCDF4.Dataset(file_path)
+
     if variables is None:
-        variables = ['u10', 'v10', 'i10fg', 'fg10', 'mwd', 'mwp', 'pp1d', 'swh']
+        itim = list(f.variables.keys()).index('time')
+        variables = list(f.variables.keys())[(itim+1):]  # not in first 'longitude', 'latitude', 'expver', 'time',
+        # ['u10', 'v10', 'i10fg', 'fg10', 'mwd', 'mwp', 'pp1d', 'swh', 'sp']
+        del variables[variables.index('fg10')]
+        del variables[variables.index('i10fg')]
 
     if var_short_names is None:
         var_short_names = variables
 
-    # Open netCDF4 file
-    f = netCDF4.Dataset(file_path)
     # Extract variable
     t2m = f.variables[variables[0]]
 
@@ -126,7 +132,8 @@ def main(file_path: Union[Path, str],
 if __name__ == '__main__':
     #
     main(file_path=r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\wind@ECMWF-ERA5_area(54.615,19.841,54.615,19.841).nc'
-         )
+         )         # d:\workData\BalticSea\201202_BalticSpit_inclinometer\wind@ECMWF-ERA5_area(54.615,19.841,54.615,19.841).nc
+#
 # r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\processed_h5,vsz\wind@ECMWF-ERA5_area(54.615,19.841,54.615,19.841).nc'
 # d:\workData\BalticSea\201202_BalticSpit\inclinometer\processed_h5,vsz/wind@ECMWF-ERA5_area(54.9689,20.2446,54.9689,20.2446).nc'
 

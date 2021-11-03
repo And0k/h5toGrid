@@ -46,7 +46,7 @@ time_ranges = {
 
 #Path(p).relative_to(path_ref)
 paths_db_in = {path: (path_ref / path).resolve().parent.with_name(Path(path).name.replace('_proc',''))
-               for p, path in paths_cruise.items()}  # path_on_drive_d() f'{db_path.stem}_proc_noAvg.h5'
+               for p, path in paths_cruise.items()}  # path_on_drive_d() f'{db_path.stem}.proc_noAvg.h5'
 
 
 
@@ -69,7 +69,7 @@ m_TimeStart_csv = pd.Timestamp('2019-07-08T00:00:00Z')
 
 # Calculate velocity and average
 if st(2):
-    # if aggregate_period_s is None then not average and write to *_proc_noAvg.h5 else loading from that h5 and writing to _proc.h5
+    # if aggregate_period_s is None then not average and write to *.proc_noAvg.h5 else loading from that h5 and writing to _proc.h5
     for aggregate_period_s in [720]:   # [None, 2, 300, 600, 3600 if 'w' in prefix else 7200]
 
         args = [Path(incl_h5clc.__file__).with_name(f'incl_h5clc_many2one.yaml'),

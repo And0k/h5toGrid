@@ -1,14 +1,17 @@
 in:
-  path_cruise: d:\workData\BalticSea\201202_BalticSpit_inclinometer\210726@i4,5,11,36,37,38,w2,5,6
+  path_cruise: d:\workData\BalticSea\201202_BalticSpit_inclinometer\210827@P10m,P15m-i14,15,w1,4
+  # d:\workData\BalticSea\201202_BalticSpit_inclinometer\210922@E15m-i19,36,37,38,w2
+  # d:\workData\BalticSea\201202_BalticSpit_inclinometer\201202@i3,5,9,10,11,15,19,23,28,30,32,33,w1-6
+  # d:\workData\BalticSea\201202_BalticSpit_inclinometer\210726@i4,5,11,36,37,38,w2,5,6
   # d:\workData\BalticSea\201202_BalticSpit_inclinometer\210611[i15,w2]
   # d:\workData\BalticSea\201202_BalticSpit
-  raw_subdir: 210726@i5,w5.rar
-  # get210827@i4,11,36,37,38,w6_Симагин.rar
+  # raw_subdir: 201202/@i30,w02_get210419_rar
+  # @i23,32,w4,5,6_get210623_zip
+  # get210827@i4,11,36,37,38,w6_Симагин.rar # 210726@i5,w5.rar
   # 201202[i23,32,w4,5,6]get210623.zip
   # 201202\[i30,w02]_get210419.rar 201201[i33],210108-9[i5,9,19,28]
-  # Balt_spit.zip
-  # probes: [38]
-  #[23, 32]  #30 [3, 5, 9, 10, 11, 15, 19, 28, 33]
+  # probes: [19]  #[23, 32]
+  # [38] 30 [3, 5, 9, 10, 11, 15, 19, 28, 33]
   probes_prefix: incl
   raw_pattern: "*{prefix:}{number:0>3}*.[tT][xX][tT]"
 
@@ -17,11 +20,38 @@ in:
 
   db_coefs: d:\WorkData\~configuration~\inclinometr\190710incl.h5
 
-#filter:
-#  min_date: { 0: 2021-06-18T15:00:00,
-#  }
-#  max_date: { 0: 2021-07-22T11:02:45,
-#  }
+
+out:
+  # db_name: 210921raw_zero.h5  #  out_send.h5  default: "incl.h5"  #!
+  aggregate_period_s: [Null, 2, 300, 600, 1800, 7200]  # Null means no average
+  # probe with 1800s burst period:
+  # '--probes_int_list', '04, 14, 36, 37, 38',  # '28, 33',  #3, 5, 9, 10, 11, 15, 19'
+  # '--aggregate_period_s_int_list', 'None, 2, 600, 1800, 7200',  # '',  # None,  300,  3600
+
+filter:  # 19 и 11 12:35 - 12-45
+  min_date:
+    0: 2021-10-08T14:00
+    # 2021-08-27T17:37:58
+
+    # 2021-07-26T14:04:31
+#    19: 2021-07-26T18:01:44
+    #14: 2021-08-27T2:49:35
+    #15: 2021-08-27T16:07:01
+    #2021-09-22T12:50
+    # 0: 2021-09-21T12:35
+    # 2020-12-02T10:00:00
+    # 2020-12-03T09:00:00  # 2T10:00
+    # 2021-06-18T15:00:00,
+#  max_date:
+#    09: 2021-09-24T06:03:36
+#    14: 2021-09-30T00:20:09
+#    15: 2021-09-27T13:20:01
+    # 0: 2021-09-21T12:50
+    # 2021-03-26T16:00:00
+#             # 2020-12-03T12:20:00
+#             # 2020-12-02T15:40:00
+#             # 2021-07-22T11:02:45,
+#            }
 
 #filter:
 #  min_date: {  0: 2020-12-02T10:00:00,
@@ -74,14 +104,7 @@ in:
 #          }
 
 
-out:
-  # db_name: out_send.h5  # default: "incl.h5"
-  aggregate_period_s: [Null, 2, 300, 600, 1800, 7200]  # Null means no average
-  # probe with 1800s burst period:
-  # '--probes_int_list', '04, 14, 36, 37, 38',  # '28, 33',  #3, 5, 9, 10, 11, 15, 19'
-  # '--aggregate_period_s_int_list', 'None, 2, 600, 1800, 7200',  # '',  # None,  300,  3600
-
 
 program:
   step_start: 1
-  step_end: 2
+  step_end: 1

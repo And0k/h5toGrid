@@ -1,7 +1,7 @@
     
 in:
   path_cruise: d:\WorkData\BalticSea\200818_Pregolya,Lagoon-inclinometer
-  raw_subdir: wavegage.rar  #_Experiment.rar
+  raw_subdir: wavegauge.rar  #_Experiment.rar
   probes: # [2]
   probes_prefix: w
   raw_pattern: "*{prefix:}{number:0>3}*.[tT][xX][tT]"

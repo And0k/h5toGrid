@@ -7,6 +7,7 @@ from __future__ import print_function, division
   Purpose: load CTD data from hdf5 db (from Veusz data source store) and save it to csv,
             with adding nav.
   Created: 18.10.2016
+  See also newer to_vaex_hdf5/h5tocsv.py
 """
 
 from os import path as os_path
@@ -139,10 +140,12 @@ will be sabstituted with correspondng input file names.
 
                     # cols = list(df.columns.values)
                     # pd.merge(ind, Dat) #Dat.join
-                    Dat[cfg['out']['data_columns']].to_csv(os_path.join(fileOutP, f'{fileOutN}{file_names_add(i)}'),
-                                                                    date_format=date_format_ISO9115,
-                                                                    float_format='%4.4g',
-                                                                    index_label='Rec_num')  # to_string, line_terminator='\r\n'
+                    Dat[cfg['out']['data_columns']].to_csv(
+                        os_path.join(fileOutP, f'{fileOutN}{file_names_add(i)}'),
+                        date_format=date_format_ISO9115,
+                        float_format='%4.4g',
+                        index_label='Rec_num'
+                        )  # to_string, line_terminator='\r\n'
 
             rec_num_st += nav2add.shape[0]
             print('')

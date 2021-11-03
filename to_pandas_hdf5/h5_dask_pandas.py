@@ -153,8 +153,8 @@ def h5_load_range_by_coord(
     :param sorted_index: bool (optional), default True
     :param columns: passed without change to dask.read_hdf()
     """
-    if isinstance(db_path, Path):
-        db_path_esc = glob.escape(db_path)  # need for dask, not compatible with pandas if path contains "["
+
+    db_path_esc = glob.escape(db_path) if isinstance(db_path, Path) else db_path  # need for dask, not compatible with pandas if path contains "["
     if isinstance(columns, pd.Index):
         columns = columns.to_list()  # need for dask\dataframe\io\hdf.py (else ValueError: The truth value of a Index is ambiguous...)
 
@@ -182,7 +182,7 @@ def h5_load_range_by_coord(
 
         for c in [False, True]:  # try with specified columns first
             try:
-                # todo: find out why not works any more with distributed sceduler
+                # todo: find out why not works any more with distributed scheduler
                 ddpart = dd.read_hdf(db_path_esc, table,
                                      chunksize=chunksize,
                                      # lock=True,  default already
@@ -705,10 +705,10 @@ def dd_to_csv(
         return f'{d.divisions[i_partition]:%y%m%d_%H%M}'
         # too long variant: '{:%y%m%d_%H%M}-{:%H%M}'.format(*d.partitions[i_partition].index.compute()[[0,-1]])
 
-    suffix_mod = re.sub(r'[\\/*?:"<>]', '', suffix.replace('incl', 'i').replace('|', ','))
+    suffix_mod = re.sub(r'[\\/*?:"<>\.]', '', suffix.replace('incl', 'i').replace('|', ','))
     filename = combpath(
         text_path,
-        f"{name_that_replaces_asterisk(0) if b_single_file else '*'}{{}}_{suffix_mod}{ext}".format(
+        f"{name_that_replaces_asterisk(0) if b_single_file else '*'}{{}}{suffix_mod}{ext}".format(
         f'bin{aggregate_period.lower()}' if aggregate_period else '',  # lower seconds: S -> s
         ))
 
@@ -765,7 +765,7 @@ def h5_append_dummy_row(df: Union[pd.DataFrame, dd.DataFrame],
                         tim: Optional[Sequence[Any]] = None) -> Union[pd.DataFrame, dd.DataFrame]:
     """
     Add row of NaN with index value that will between one of last data and one of next data start
-    :param df: dataframe
+    :param df: pandas dataframe, dask.dataframe supported only tim is not None
     :param freq: frequency to calc index. If logically equal to False, then will be calculated using tim
     :param tim: sequence having in last elements time of 2 last rows
     :return: appended dataframe
@@ -1025,9 +1025,9 @@ def h5add_log(log: Union[pd.DataFrame, Mapping, None], cfg_out: Dict[str, Any], 
 
         else:  # set default for (1st) data table
             try:
-                table_log = f"{cfg_out['table']}'/log'"
+                table_log = f"{cfg_out['table']}/log"
             except KeyError:
-                table_log = f"{cfg_out['tables'][0]}'/log'"
+                table_log = f"{cfg_out['tables'][0]}/log"
 
     set_field_if_no(cfg_out, 'logfield_fileName_len', 255)
 
@@ -1063,9 +1063,10 @@ def h5_append(cfg_out: Dict[str, Any],
               log_dt_from_utc=pd.Timedelta(0),
               tim=None):
     """
-    Append dataframe to Store: df to cfg_out['table'] ``table`` node of opened cfg_out['db'] store and
-    append child table with 1 row metadata including 'index' and 'DateEnd' which
-    is calculated as first and last elements of df.index
+    Append dataframe to Store:
+     - df to cfg_out['table'] ``table`` node of opened cfg_out['db'] store and
+     - child table with 1 row - metadata including 'index' and 'DateEnd' (which is calculated as first and last elements
+     of df.index)
 
     :param df: pandas or dask dataframe to append. If dask then log_dt_from_utc must be None (not assign log metadata here)
     :param log: dict which will be appended to child tables, cfg_out['tables_log']
@@ -1096,7 +1097,7 @@ def h5_append(cfg_out: Dict[str, Any],
     df_len = len(df) if tim is None else len(tim)  # use computed values if possible for faster dask
     if df_len:  # dask.dataframe.empty is not implemented
         if cfg_out.get('b_insert_separator'):
-            # Add separati3on row of NaN
+            # Add separation row of NaN
             msg_func = f'{df_len}rows+1dummy'
             cfg_out.setdefault('fs')
             df = h5_append_dummy_row(df, cfg_out['fs'], tim)

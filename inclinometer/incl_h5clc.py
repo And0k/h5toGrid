@@ -828,7 +828,7 @@ def calc_pressure(a: dd.DataFrame,
                   PTemp=None,
                   PBattery=None,
                   PBattery_min=None,
-                  Battery_ok_max=None,
+                  Battery_ok_min=None,
                   **kwargs
                   ) -> dd.DataFrame:
 
@@ -878,9 +878,9 @@ def calc_pressure(a: dd.DataFrame,
             arr = a.Battery.to_dask_array(lengths=lengths)
 
             # Interpolate Battery bad region (near the end where Battery is small and not changes)
-            if Battery_ok_max is not None:
+            if Battery_ok_min is not None:
                 i_0, i_1, i_st_interp = da.searchsorted(  # 2 points before bad region start and itself
-                    -arr, da.from_array(-Battery_ok_max + [0.08, 0.02, 0])
+                    -arr, -da.from_array(Battery_ok_min - [0.08, 0.02, 0])
                     ).compute()
                 # if have bad region => the number of source and target points is sufficient:
                 if i_0 != i_1 and i_st_interp < len_data:

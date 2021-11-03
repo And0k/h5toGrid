@@ -335,7 +335,7 @@ def main_call(
             sys.argv[0],
             f'hydra.searchpath=[{config_path}]'  # not works
         ]
-    # todo: check colorlog installed before this:
+    # todo: check colorlog is installed before this:
     cmd_line_list_upd += [
         'hydra/job_logging=colorlog',
         'hydra/hydra_logging=colorlog'

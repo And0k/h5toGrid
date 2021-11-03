@@ -699,7 +699,7 @@ def main(new_arg=None):
         dir_create_if_need(os_path.dirname(cfg['program']['log']))
         flog = open(cfg['program']['log'], 'a+', encoding='cp1251')
 
-    cfg['out']['log'] = OrderedDict({'fileName': None, 'fileChangeTime': None})
+    cfg['out']['log'] = {'fileName': None, 'fileChangeTime': None}
 
     # Prepare saving to csv
     if 'file_names_add_fun' in cfg['out']:

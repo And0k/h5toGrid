@@ -105,25 +105,30 @@ def h5pandas_to_vaex_combine(tmp_search_pattern: str,
     Combine many vaex.hdf5 files to one
     :param tmp_search_pattern:
     :param path_out_str: path argument of vaex.dataframe.export_hdf5()
-    :param check_files_number: if not None must be equl to number of found files
+    :param check_files_number: if not None must be equal to number of found files
     :param del_found_tmp_files: not implemented feature
     :param export_hdf5_args, dict, optional. Note that here default of 'progress' is set to True
     :return: number of tmp files found
     """
     # Find files
-    hdf5_list = glob.glob(tmp_search_pattern)
+    if not isinstance(path_out_str, Path):
+        path_out_str = Path(path_out_str)
+    if path_out_str.is_absolute() and not PurePath(tmp_search_pattern).is_absolute():
+        hdf5_list = [str(h) for h in path_out_str.parent.glob(tmp_search_pattern)]
+    else:
+        hdf5_list = glob.glob(tmp_search_pattern)
     hdf5_list.sort()
     # hdf5_list_array = np.array(hdf5_list)
 
     # Check files existence
-    if Path(path_out_str).is_file():
+    if path_out_str.is_file():
         lf.warning('Overwriting {:s}!', path_out_str)
     if check_files_number:
-        assert len(hdf5_list) == check_files_number, "Incorrect number of files"
-        lf.info('Combining {:d} found {:s} files to {:s}', check_files_number, tmp_search_pattern, PurePath(path_out_str).name)
+        assert (n_found:=len(hdf5_list)) == check_files_number, f"Incorrect number of files: found {n_found} != {check_files_number}"
+        lf.info('Combining {:d} found {:s} files to {:s}', check_files_number, tmp_search_pattern, path_out_str.name)
     else:
         check_files_number = len(hdf5_list)
-        lf.info('Combining {:s} to {:s}', tmp_search_pattern, PurePath(path_out_str).name)
+        lf.info('Combining {:s} to {:s}', tmp_search_pattern, path_out_str.name)
     master_df = vaex.open_many(hdf5_list)
     try:
         master_df.export_hdf5(**{'path': path_out_str, 'progress': True, **export_hdf5_args})
@@ -140,7 +145,7 @@ def h5pandas_to_vaex_combine(tmp_search_pattern: str,
             for i, path_tmp in enumerate(hdf5_list):
                 Path(path_tmp).unlink()  # remove file
         except Exception:
-            lf.exception('Combined {0:d} but removed {i:d} temporary vaex.hdf5 files:', check_files_number, i=i)
+            lf.exception('Combined {0:d} but removed {i:d} temporary vaex.hdf5 files:', check_files_number, i)
         else:
             lf.info('Combined and removed {0:d} files.', check_files_number)
     else:
@@ -148,11 +153,20 @@ def h5pandas_to_vaex_combine(tmp_search_pattern: str,
     return check_files_number
 
 
-def h5pandas_to_vaex(file_in: Union[None, str, PurePath], del_found_tmp_files=False):
+def h5pandas_to_vaex(file_in: Union[None, str, PurePath],
+                     table: str = 'csv',
+                     chunk_start: int = 0,
+                     merge: bool = True,
+                     del_found_tmp_files=False
+                     ):
     """
     Pandas hdf5 to vaex.hdf5 conversion: saves tmp files, then searches and combines them.
     :param file_in: pandas hdf5 file
-    :return:
+    :param table: pandas table name in hdf5 file
+    :param chunk_start: useful to merge datasets (to continue add chunks from other dataset of same structure)
+    :param merge: useful to merge datasets (set False to add more datasets)
+    :return: number of chunks written -  useful to merge datasets (use as ``chunk_start`` argument for next
+    h5pandas_to_vaex() call)
     Uses this module functions:
         h5pandas_to_vaex_file_names()
         h5pandas_to_vaex_combine()
@@ -160,15 +174,16 @@ def h5pandas_to_vaex(file_in: Union[None, str, PurePath], del_found_tmp_files=Fa
     tmp_save_pattern, tmp_search_pattern, path_out_str = h5pandas_to_vaex_file_names(file_in)
     chunksize = 500000  # will get x00 MB files
 
-    ichunk = 0
-    for chunk in pd.read_hdf(file_in, 'csv', chunksize=chunksize):  # , where='a < someval'
+    ichunk = chunk_start
+    for chunk in pd.read_hdf(file_in, table, chunksize=chunksize):  # , where='a < someval'
         df = vaex.from_pandas(chunk)
         df.export_hdf5(tmp_save_pattern.format(ichunk))
         ichunk += 1
         print(ichunk, end=' ')
-
-    h5pandas_to_vaex_combine(tmp_search_pattern, path_out_str,
+    if merge:
+        h5pandas_to_vaex_combine(tmp_search_pattern, path_out_str,
                              check_files_number=ichunk, del_found_tmp_files=del_found_tmp_files)
+    return ichunk
 
 
 def determine_messytables_types(file_handle, types=messytables.types.TYPES):

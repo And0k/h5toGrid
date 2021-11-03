@@ -2,7 +2,7 @@
 # coding:utf-8
 """
   Author:  Andrey Korzh <ao.korzh@gmail.com>
-  Purpose: Trying using Hydra
+  Purpose: Export pandas hdf5 tables data to csv files (hole or using intervals specified in table/log table)
   Created: 15.09.2020
   Modified: 20.09.2020
 """
@@ -25,7 +25,7 @@ import to_vaex_hdf5.cfg_dataclasses
 from utils2init import LoggingStyleAdapter, dir_create_if_need, FakeContextIfOpen, set_field_if_no
 
 # from csv2h5_vaex import argparser_files, with_prog_config
-from to_pandas_hdf5.csv2h5 import h5_dispenser_and_names_gen
+
 from to_pandas_hdf5.h5toh5 import h5move_tables, h5index_sort, h5init, h5log_rows_gen, h5find_tables
 from to_pandas_hdf5.CTD_calc import get_runs_parameters
 
@@ -50,6 +50,7 @@ def dd_to_csv(
         b_single_file=True
         ):
     """
+    Depreciated! - see to_pandas_hdf5.dd_to_csv()
     Save to ascii if _text_path_ is not None
     :param d:
     :param text_path: None or directory path
@@ -125,7 +126,11 @@ def h5_tables_gen(db_path, tables, tables_log, db=None) -> Iterator[Tuple[str, p
     updates cfg_in['tables'] - sets to list of found tables in store
     """
     # will be filled by each table from cfg['in']['tables']
-    tbl_log_pattern = (tables_log[0] or '{}/logRuns') if len(tables_log) == 1 else tables_log[0]
+    try:
+        tbl_log_pattern = tables_log[0]
+    except omegaconf.errors.ConfigIndexError:
+        tbl_log_pattern = ''
+        tables_log = ['']
     with FakeContextIfOpen(lambda f: pd.HDFStore(f, mode='r'), file=db_path, opened_file_object=db) as store:
         if len(tables) == 1:
             tables = h5find_tables(store, tables[0])
@@ -143,14 +148,16 @@ def order_cols(df: pd.DataFrame,
     :param cols: mapping out col names to expressions for pd.DataFrame.eval() (using input col names) or just input col names
     :return:
     """
+    if not cols:
+        return df
+
     df = df.copy()
 
     # Add row index to can eval expressions using it
     def i_term_is_used() -> bool:
         for in_col in cols.values():
-            for term in in_col.split():
-                if 'i' in term:
-                    return True
+            if 'i' in in_col.split():
+                return True
         return False
 
     if i_term_is_used():
@@ -162,11 +169,27 @@ def order_cols(df: pd.DataFrame,
     #     df_out['rec_num'] = df['rec_num']
 
     dict_rename = {}
-    for out_col, in_col in cols.items():
-        if in_col.isidentifier() and not in_col in dict_rename:
+    for i, (out_col, in_col) in enumerate(cols.items()):
+        if in_col.isidentifier() and in_col not in dict_rename:
             if in_col not in df.columns:
-                df[in_col] = None
+                if i == 0 and in_col == 'index':
+                    # just change index name
+                    df_out.index.name = out_col
+                    continue
+                else:
+                    # add column without data
+                    df[in_col] = None
             dict_rename[in_col] = out_col
+        elif out_col == '*':  #
+            out_cols = [c for c in df.columns if c not in cols.values()]
+            df_out[out_cols] = df[out_cols]
+            try:
+                cols = omegaconf.OmegaConf.to_container(cols)
+            except ValueError:  # Input cfg is not an OmegaConf config object
+                pass
+            del cols['*']
+            cols = {**cols, **dict(zip(df_out.columns, df.columns))}
+            break
         else:
             df_out[out_col] = df.eval(in_col)
 
@@ -183,9 +206,9 @@ def order_cols(df: pd.DataFrame,
     index_name, in_1st_col = next(cols_iter)
     if 'index' not in in_1st_col:  # original index is not at 1st column so need to be replaced
         df_out.set_index(index_name, inplace=True)
-        return df_out[[k for k, v in cols_iter]]
-    #df_out['DATE'] = df_out['DATE'].dt.tz_convert(None)
-    return df_out[cols.keys()]
+    return df_out[[k for k, v in cols_iter]]
+    # df_out['DATE'] = df_out['DATE'].dt.tz_convert(None)
+    # return df_out[cols.keys()]  # seems was not worked ever
 
 
 def interp_vals(df: pd.DataFrame, cols: Mapping[str, str] = None,
@@ -276,10 +299,12 @@ def main(config: ConfigType) -> None:
     # file name for files and log list:
     for fun in ['file_name_fun', 'file_name_fun_log']:
         cfg['out'][fun] = (
-            eval(compile(f"lambda i, t_st, t_en: {cfg['out'][fun]}", '', 'eval')) if fun in cfg['out'] else
-                ((lambda rec_num, t_st, t_en: 'log.csv') if fun.endswith('log') else
-                lambda rec_num, t_st, t_en: '.csv')  # f'_{i}.csv'
-                     )
+            eval(compile(f"lambda i, t_st, t_en, tbl: {cfg['out'][fun]}", '', 'eval')) if cfg['out'][fun] else
+                (
+                    (lambda rec_num, t_st, t_en, tbl: f'log@{tbl}.csv') if fun.endswith('log') else
+                    (lambda rec_num, t_st, t_en, tbl: f'{t_st:%y%m%d_%H%M}-{t_en:%H%M}@{tbl}.csv')
+                )  # f'_{i}.csv'
+            )
     set_field_if_no(cfg['out'], 'text_path', cfg['in']['db_path'].parent)
     dir_create_if_need(cfg['out']['text_path'])
 
@@ -304,25 +329,33 @@ def main(config: ConfigType) -> None:
             #     )
 
             df_log_csv.to_csv(
-                cfg['out']['text_path'] / cfg['out']['file_name_fun_log'](i_log_row_st, df_log.index[0], df_log.DateEnd[-1]),
+                cfg['out']['text_path'] / cfg['out']['file_name_fun_log'](
+                    i_log_row_st, df_log.index[0], df_log.DateEnd[-1], tbl
+                    ),
                 date_format=cfg['out']['text_date_format'],
                 float_format=cfg['out']['text_float_format'],
                 sep=cfg['out']['sep']
                 )
+        elif tbl:
+            lf.info('No log tables found. So exporting all data from {}: ', tbl)
+            # set interval bigger than possible to load and export all data in one short
+            df_log = pd.DataFrame({'DateEnd': [np.datetime64('now')]}, index=[np.datetime64('1970', 'ns')])
         else:
-            lf.info('{}: ', tbl)
-
+            raise(KeyError(f'Table {tbl} not found.'))
 
         for i_log_row, log_row in enumerate(df_log.itertuples(), start=i_log_row_st):  #  h5log_rows_gen(table_log=tbl_log, db=store, ):
             # Load data chunk that log_row describes
             print('.', end='')
             qstr = qstr_trange_pattern.format(log_row.Index, log_row.DateEnd)
             df_raw = store.select(tbl, qstr)
-            df_raw['i_log_row'] = i_log_row
+            if i_log_row in cfg['out']['cols']:
+                df_raw['i_log_row'] = i_log_row
             df_csv = order_cols(df_raw, cfg['out']['cols'])
             # Save data
             df_csv.to_csv(
-                cfg['out']['text_path'] / cfg['out']['file_name_fun'](i_log_row, df_raw.index[0], df_raw.index[-1]),
+                cfg['out']['text_path'] / cfg['out']['file_name_fun'](
+                    i_log_row, df_raw.index[0], df_raw.index[-1], tbl
+                    ),
                 date_format=cfg['out']['text_date_format'],
                 float_format=cfg['out']['text_float_format'],
                 sep=cfg['out']['sep']

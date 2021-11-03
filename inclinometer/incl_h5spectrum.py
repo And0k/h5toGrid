@@ -419,7 +419,7 @@ def h5_velocity_by_intervals_gen(cfg: Mapping[str, Any], cfg_out: Mapping[str, A
         for (tbl, coefs) in h5_names_gen(cfg['in'], cfg_out):
             # Get data in ranges
             for df0, start_end in gen_loaded(tbl):
-                if cfg['in']['db_path'].stem.endswith('proc_noAvg'):  # have processed data (not averaged)
+                if cfg['in']['db_path'].suffixes[-1]('proc_noAvg'):  # have processed data (not averaged)
                     df = df0
                 else:  # loading source data and calculate velocity
                     df0 = filter_local(df0, cfg['filter'])
@@ -781,7 +781,7 @@ def main(new_arg=None, **kwargs):
 
         # if cfg_out['save_proc_tables']:
         #     # ds_psd.to_netcdf('d:\\WorkData\\BlackSea\\190210\\190210incl_proc-psd_test.nc', format='NETCDF4_CLASSIC')
-        #     #f.to_hdf('d:\\WorkData\\BlackSea\\190210\\190210incl_proc-psd_test.h5', 'psd', format='fixed')
+        #     #f.to_hdf('d:\\WorkData\\BlackSea\\190210\\190210incl_test.psd.h5', 'psd', format='fixed')
         #     # tables_have_write.append(tbl)
         #     try:
         #         h5_append_to(df_psd, tbl, cfg_out, msg='save (temporary)', print_ok=None)
@@ -952,7 +952,7 @@ def psd_calc_other_methods(df, prm: Mapping[str, Any]):
             # 'max_g_minus_1' used only to replace bad with NaN
         },
         'out': {
-            'db_path': 'incl_proc.h5',
+            'db_path': 'incl.proc.h5',
             'table': 'V_incl',
 
             #'aggregate_period': '2H',  # pandas offset string (Y, D, 5D, H, ...)

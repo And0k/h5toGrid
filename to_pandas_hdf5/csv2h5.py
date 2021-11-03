@@ -953,7 +953,7 @@ def h5_dispenser_and_names_gen(
         ) -> Iterator[Tuple[int, Any]]:
     """
     Prepares HDF5 store to insert/update data and yields fun_gen(...) outputs:
-        - Opens DB (see h5temp_open() requirements)
+        - Opens DB for writing (see h5temp_open() requirements)
         - Finds data labels by fun_gen(): default are file names and their modification date
         - Removes outdated data
         - Generates file names which data is absent in DB (to upload new/updated data)

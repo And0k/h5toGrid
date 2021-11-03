@@ -1,7 +1,9 @@
 #!/usr/bin/env python
 """
 Download data from Copernicus to NetCDF file
-See also netcdf2csv.py to convert result to csv
+See also
+ - netcdf2csv.py to convert result to csv
+ - ecmwf_api_client.py
 
 python -m motuclient ^
  --motu https://nrt.cmems-du.eu/motu-web/Motu ^

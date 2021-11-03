@@ -16,8 +16,8 @@ sys.path.append(str(Path(scripts_path).parent.resolve()))
 from to_pandas_hdf5.h5toh5 import h5move_tables
 from utils2init import Ex_nothing_done
 
-store_in = Path(r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\201202incl_proc.h5')
-store_out = Path(r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\processed_h5,vsz\201202incl_proc.h5')
+store_in = Path(r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\201202raw_proc.h5')
+store_out = Path(r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\processed_h5,vsz\201202raw_proc.h5')
 tables = [f'V_incl_bin{bin}' for bin in (2, 600, 1800, 7200)]
 b_childs_to_log_rows = True
 

@@ -1,7 +1,7 @@
 # import my scripts
 from inclinometer.incl_load import main as incl_load
 
-b_wavegage = not True  # False
+b_wavegauge = not True  # False
 
 # import warnings
 # warnings.filterwarnings("error")
@@ -23,39 +23,55 @@ b_wavegage = not True  # False
 #         ])
 
 #for raw_subdir in ['get210827@i4,11,36,37,38,w6_Симагин_rar']: #'get210813@i4,11,36,37,38,w6_rar',
+raw_subdir = None \
+    # '@i09_off211019_1637.zip'
+    #'get210827.rar'
+    # '@i14,15w1,4_get210929.zip'
+
+path_cruise = \
+    r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\211008E15m@i11,36,37,38,w2'
+    # r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\210618P7.5m@i9,14,15,19w1,2,4'
+    # r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\210827@P10m,P15m-i14,15,w1,4'
+    #
 if True:
-    if b_wavegage:
+    if b_wavegauge:
         incl_load([
             'cfg/incl_load_201202_BalticSpit#w.yml',
-            '--db_path', r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\210726@i4,5,11,36,37,38,w2,5,6\_raw\210726incl.h5',
-            # '--raw_subdir', '210611_get210710[w2].rar',
+            # '--db_path', r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\210726@i4,5,11,36,37,38,w2,5,6\_raw\210726incl.h5',
+            '--path_cruise', path_cruise,
+            '--raw_subdir', raw_subdir,  # '210611_get210710[w2].rar',
             # '--min_date_dict', '0: 2021-06-10T12:15:00',
             #
             # probe with 1800s burst period:
             #   # '28, 33',  #3, 5, 9, 10, 11, 15, 19'
-            '--probes_int_list', '05',
+            '--probes_int_list', '2, 4',  # '1, 4',
                 # '--aggregate_period_s_int_list', 'None',
-            '--aggregate_period_s_int_list', 'None, 2, 300, 3600',  #', 'None2, 600, 7200',
+            # '--aggregate_period_s_int_list', 'None, 2, 300, 3600',  #', 'None2, 600, 7200',
             # 'None, 2, 600, 1800, 7200',  # '',  # None,  300,  3600
             #    '--aggregate_period_s_not_to_text_int_list', 'None, 2',
             # default=None, use 2 for speedup. 300, 7200, ,3600  # exclude too long saving op
-            '--step_start_int', '2',  # '50', #'2',
-            '--step_end_int', '2',
+            # '--step_start_int', '1',  # '50', #'2',
+            # '--step_end_int', '1',
             #
             #     # '--load_timeout_s_float', '0'
-            '--dask_scheduler', 'synchronous'  # '--dask_scheduler', 'distributed'  # 'synchronous'  #   may be not affect incl_h5clc
+            '--dask_scheduler', 'threads'  #synchronous distributed'  # may be not affect incl_h5clc
             ])
     else:
         incl_load([
         'cfg/incl_load_201202_BalticSpit.yml',
-        #'--raw_subdir', raw_subdir,
+        '--path_cruise', path_cruise,
+        #'--db_coefs', r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\210922@E15m-i19,36,37,38,w2\_raw\210922raw-.h5',  # 210921raw_zero.h5
+        '--raw_subdir', raw_subdir,
         #'cfg/210519incl_load_Pregolya,Lagoon.yml',
-        '--probes_int_list', '05',  # '04, 11, 36, 37, 38',  #,
-        '--aggregate_period_s_int_list', 'None',  # '600, 7200',  # 2,
-        '--aggregate_period_s_not_to_text_int_list', 'None, 2, 600, 7200',
-        '--min_date_dict', '0: 2021-07-26T16:00:00',
+        '--probes_int_list', '36,37,38',  #11,, 9,19, 15 '19, 36, 37, 38',  # '04, 11, 36, 37, 38',  #,
+        #'--time_start_utc_dict', '14: 2021-08-27T18:49',  # last: 14187000 row ~01.10.2021 13:04
+        # '--aggregate_period_s_int_list', 'None',  # '600, 7200',  # 2,
+        # '--aggregate_period_s_not_to_text_int_list', 'None, 2, 600, 7200',
+        '--min_date_dict', '0: 2021-10-08T14:00',
         #'--max_date_dict', '0: 2020-12-18T15:29:50',  # '16: 2020-10-21T16:10:33, 15: 2020-10-21T17:46:05',
-        '--step_start_int', '1',
+        # '--step_start_int', '1',
+        # '--step_end_int', '1',
+        '--dask_scheduler', 'threads'  #, 'synchronous'
         ])
 
 """    
@@ -76,7 +92,7 @@ if True:
     # '--dt_from_utc_days_dict', '10: -7',
    # '--aggregate_period_s_not_to_text_int_list', 'None,2,600,7200', #,3600
    
-   # wavegage:
+   # wavegauge:
     '--raw_pattern', "*{prefix:}_V{number:0>2}*.[tT][xX][tT]",
     '--aggregate_period_s_int_list', 'None, 2, 600, 3600',   
    

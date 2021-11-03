@@ -1588,11 +1588,17 @@ def open_csv_or_archive_of_them(filename: Union[PurePath, Iterable[Union[Path, s
                     arc_files = [Path(filename_str).resolve().absolute()]
                 break
             else:
-                pattern_lower = pattern.lower()
-                if arc_suffix in pattern_lower:
+                if arc_suffix in (pattern_lower := pattern.lower()):
                     pattern_arcs, pattern_lower = pattern_lower.split(arc_suffix, maxsplit=1)
                     pattern = pattern[-len(pattern_lower.lstrip('/\\')):]  # recover text case for pattern
                     arc_files = Path(filename_str).glob(f'{pattern_arcs}{arc_suffix}')
+                    arc_files = list(arc_files)
+                    if not arc_files:
+                        if (arc_found := Path(filename_str) / f'{pattern_arcs}{arc_suffix}').is_file():
+                            arc_files = [arc_found]
+                        else:
+                            print(f'"{arc_found}" ot found!')
+                            return None
                     break
 
         else:
@@ -1603,7 +1609,7 @@ def open_csv_or_archive_of_them(filename: Union[PurePath, Iterable[Union[Path, s
         elif arc_suffix == '.rar':
             import rarfile
             ArcFile = rarfile.RarFile
-            try:  # only try increase peformance
+            try:  # only try increase performance
                 # Configure RarFile Temp file size: keep ~1Gbit free, always take at least ~20Mbit:
                 # decrease the operations number as we are working with big files
                 io.DEFAULT_BUFFER_SIZE = max(io.DEFAULT_BUFFER_SIZE, 8192 * 16)
@@ -1613,11 +1619,12 @@ def open_csv_or_archive_of_them(filename: Union[PurePath, Iterable[Union[Path, s
                                               )
             except Exception as e:
                 l.warning('%s: can not update settings to increase peformance', standard_error_info(e))
-            read_mode = 'r' # RarFile need opening in mode 'r' (but it opens in binary_mode)
+            read_mode = 'r'  # RarFile need opening in mode 'r' (but it opens in binary_mode)
         if arc_suffix:
             for path_arc_file in arc_files:
                 with ArcFile(str(path_arc_file), mode='r') as arc_file:
                     for text_file in arc_file.infolist():
+                        # text_file.filename.encode('cp437').decode('CP866') can be needed for russian names
                         if pattern and not fnmatch(text_file.filename, pattern):
                             continue
 
@@ -1625,7 +1632,7 @@ def open_csv_or_archive_of_them(filename: Union[PurePath, Iterable[Union[Path, s
                             break_flag = yield (f if binary_mode else io.TextIOWrapper(
                                 f, encoding=encoding, errors='replace', line_buffering=True))  # , newline=None
                             if break_flag:
-                                print(f'exiting after openined archived file "{text_file.filename}":')
+                                print(f'exiting after opening archived file "{text_file.filename}":')
                                 print(arc_file.getinfo(text_file))
                                 break
         else:

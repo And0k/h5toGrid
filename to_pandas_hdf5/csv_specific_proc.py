@@ -668,7 +668,7 @@ def proc_loaded_inclin_Kondrashov(a: Union[pd.DataFrame, np.ndarray], cfg_in: Ma
 
 
 # same but do not use csv_specific_param (key = 'invert_magnitometr') here
-proc_loaded_wavegage_Kondrashov = proc_loaded_inclin_Kondrashov
+proc_loaded_wavegauge_Kondrashov = proc_loaded_inclin_Kondrashov
 
 
 def f_repl_by_dict(replist: Iterable[AnyStr], binary_str=True) -> Callable[[Match[AnyStr]], AnyStr]:  # , repldictvalues={None: b''}
@@ -790,9 +790,16 @@ def rep_in_file(file_in: Union[str, PurePath, BinaryIO, TextIO], file_out,
                 newline = fin.readline()
                 fout.write(newline)
 
+        # # commented replacing time part to uniformly increasing with period dt
+        # t_start = pd.Timestamp('2021-07-26T08:06:17')  # '2021-08-27T18:49:30'
+        # dt = pd.Timedelta('00:00:00.200803832')  # 200253794 203379827
         if block_size is None:
             # replacing rows
             for line in fin:
+                # for i, line in enumerate(fin):
+                #     t_cur = t_start + i*dt
+                #     line = f"{t_cur:%Y,%m,%d,%H,%M,%S},{line.split(',', maxsplit=6)[-1]}"
+
                 newline = f_replace(line)
                 if len(newline) > min_out_length:  # newline != rb'\n':
                     fout.write(newline)
@@ -812,7 +819,7 @@ def rep_in_file(file_in: Union[str, PurePath, BinaryIO, TextIO], file_out,
 
 
 def mod_incl_name(file_in: Union[str, PurePath]):
-    """ Change name of raw inclinometer/wavegage data file to name of corrected (regular table format) csv file"""
+    """ Change name of raw inclinometer/wavegauge data file to name of corrected (regular table format) csv file"""
     file_in = PurePath(file_in)
     file_in_name = file_in.name.lower().replace('inkl', 'incl')  # 'incl' substring will be used to distinguish result file
     file_in_name, b_known_names = re.subn(r'((?P<prefix>incl|w))_0*(?P<number>\d\d)',
@@ -1042,7 +1049,7 @@ def correct_kondrashov_txt(
         file_in, file_out, dir_out,
         mod_file_name=mod_incl_name,
         sub_str_list=[
-            b'^(?P<use>20\d{2}(,\d{1,2}){5}(,\-?\d{1,6}){6}(,\d{1,2}\.\d{2})(,\-?\d{1,3}\.\d{2})).*',
+            b'^(?P<use>20\d{2}(,\d{1,2}){5}(,\-?\d{1,6}){6},\d{1,2}(\.\d{1,2})?,\-?\d{1,3}(\.\d{1,2})?).*',
             b'^.+'],
         **kwargs
     )

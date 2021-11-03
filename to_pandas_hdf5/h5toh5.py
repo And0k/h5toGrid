@@ -182,6 +182,7 @@ def h5find_tables(store: pd.HDFStore, pattern_tables: str, parent_name=None) -> 
     :param pattern_tables: str, substring to search paths or regex if with '*'
     :param parent_name: str, substring to search parent paths or regex if with '*'
     :return: list of paths
+    For example: w05* finds all tables started from w0
     """
     if parent_name is None:
         if '/' in pattern_tables:
@@ -339,7 +340,10 @@ def h5sel_index_and_istart(store: pd.HDFStore,
         qstr = query_range_pattern.format(*query_range_lims)
         lf.info(f'query:\n{qstr}... ')
         df0 = store.select(tbl_name, where=qstr, columns=[])
-        i_start = store.select_as_coordinates(tbl_name, qstr)[0]
+        try:
+            i_start = store.select_as_coordinates(tbl_name, qstr)[0]
+        except IndexError:
+            i_start = 0
     return df0, i_start
 
 
@@ -385,8 +389,8 @@ def h5coords(store: pd.HDFStore, tbl_name: str,
     :param query_range_pattern:
     :return (df0.index, i_queried, i_start):
     - df0.index: index[query_range_lims]
-    - i_queried: coordinates indexes of q_time in store table
-    If both q_time and query_range_lims are None then returns (None, [0, np.iinfo(np.intp).max], 0)
+    - i_queried: coordinates indexes of q_time in store table. It is a list only if 1st el is zero.
+    If both q_time and query_range_lims are None then returns (None, [0, np.iinfo(np.intp).max])
     """
     if query_range_lims is None:
         if q_time is None:
@@ -989,20 +993,23 @@ def h5move_tables(cfg_out,
     in specified location then creates new store and tries to save there.
     :param cfg_out: dict - must have fields:
       - db_path_temp: source of not sorted tables
-      - db_path: full path name (extension ".h5" will be added if absent) of hdf store to put
+      - db_path: pathlib.Path, full path name (extension ".h5" will be added if absent) of hdf store to put
       - tables, tables_log: Sequence[str], if tbl_names not specified
       - b_del_temp_db: bool, remove source store after move tables. If False (default) then deletes nothing
     :param tbl_names: list of strings or list of lists (or tuples) of strings. List of lists is useful to keep order of
      operation: put nested tables last.
-    Note ``ptprepack`` not closes hdf5 source if it not finds data!
-
+    :param kwargs: ptprepack params
+    Note: ``ptprepack`` not closes hdf5 source if it not finds data!
+    Note: Not need specify childs (tables_log) if '--non-recursive' not in kwargs
         Strings are names of hdf5 tables to copy
     :return: Empty dict if all success else if have errors - Dict [tbl: HDF5store file name] of locations of last tried
      savings for each table
     """
     failed_storages = {}
     if tbl_names is None:  # copy all cfg_out tables
-        tbl_names = cfg_out['tables'] + cfg_out['tables_log']
+        tbl_names = cfg_out['tables']
+        if cfg_out.get('tables_log'):
+            tbl_names += cfg_out['tables_log']
         tables_top_level = (cfg_out['tables'] if len(cfg_out['tables']) else cfg_out['tables_log'])
     else:
         tables_top_level = []
@@ -1018,7 +1025,11 @@ def h5move_tables(cfg_out,
         raise Ex_nothing_done('no tables to move')
 
     ptrepack_add_args = cfg_out.get('addargs', [])
-    if '--overwrite' not in ptrepack_add_args:
+    if '--overwrite' in ptrepack_add_args:
+        if len(tables_top_level) > 1:
+            lf.error('in "--overwrite" mode with move many tables: will remove each previous result after each table \
+            and only last table wins!')
+    elif '--overwrite-nodes' not in ptrepack_add_args:
         # h5sort_pack can not remove/update dest table, and even corrupt it if exist, so we do:
         try:
             with pd.HDFStore(cfg_out['db_path']) as store:
@@ -1210,12 +1221,12 @@ def h5index_sort(cfg_out,
                 # else:
                 #     pass  # will sorting by prepack in h5move_tables #lf.warning('skipped of sorting ')
         if dup_tbl_set:
-            lf.warning(f'To drop duplicates from {dup_tbl_set} restart with [out][b_remove_duplicates] = True')
+            lf.warning('To drop duplicates from {} restart with [out][b_remove_duplicates] = True', dup_tbl_set)
             nonm_tbl_set -= dup_tbl_set
         else:
             lf.info('no duplicates...')
         if nonm_tbl_set:
-            lf.warning(f'{nonm_tbl_set} have no duplicates but nonmonotonic. Forcing update index before move and sort...')
+            lf.warning('{} have no duplicates but nonmonotonic. Forcing update index before move and sort...', nonm_tbl_set)
             if nonm_tbl_set:
                 # as this fun is intended to check h5move_tables stranges, repeat it with forcing update index
                 if not cfg_out['db_path_temp'].is_file():  # may be was deleted because of cfg_out['b_del_temp_db']
@@ -1428,7 +1439,7 @@ def h5init(cfg_in: Mapping[str, Any], cfg_out: MutableMapping[str, Any]) -> None
     """
     Init cfg_out database (hdf5 data store) information in cfg_out _if it is not exist_
     :param: cfg_in - configuration dicts, with fields:
-    - path: if no 'db_path' in cfg_out
+    - path: if no 'db_path' in cfg_out or it is not absoulute
     - cfgFile - if no cfg_out['b_insert_separator'] defined or determine the table name is failed - to extract from cfgFile name name
     - raw_dir_words: (optional), default: ['source', 'WorkData', 'workData'] - see getDirBaseOut()
     - nfiles: (optional)
@@ -1465,7 +1476,7 @@ def h5init(cfg_in: Mapping[str, Any], cfg_out: MutableMapping[str, Any]) -> None
         # else:
         #     cfg_out['b_insert_separator'] = False
 
-        # Automatic db file and tables names
+    # Automatic db file and tables names
     if not (cfg_out.get('db_path') and cfg_out['db_path'].is_absolute()):
         path_in = Path(cfg_in.get('path' if 'path' in cfg_in else 'db_path')).parent
         cfg_out['db_path'] = path_in / (f'{path_in.stem}_out' if not cfg_out.get('db_path') else cfg_out['db_path'])

@@ -231,13 +231,13 @@ if st(1):  # Can not find additional not corrected files for same probe if alrea
 
 # Calculate velocity and average
 if st(2):
-    # if aggregate_period_s is None then not average and write to *_proc_noAvg.h5 else loading from that h5 and writing to _proc.h5
+    # if aggregate_period_s is None then not average and write to *.proc_noAvg.h5 else loading from that h5 and writing to _proc.h5
     for aggregate_period_s in [None, 2, 600, 3600 if 'w' in prefix else 7200]:  # 2,, 7200  # 300, 600,  [None], [None, 2, 600, 3600 if 'w' in prefix else 7200], [3600]
         if aggregate_period_s is None:
             db_path_in = db_path
-            db_path_out = db_path.with_name(f'{db_path.stem}_proc_noAvg.h5')
+            db_path_out = db_path.with_name(f'{db_path.stem}.proc_noAvg.h5')
         else:
-            db_path_in = db_path.with_name(f'{db_path.stem}_proc_noAvg.h5')
+            db_path_in = db_path.with_name(f'{db_path.stem}.proc_noAvg.h5')
             db_path_out = f'{db_path.stem}_proc.h5'  # or separately: '_proc{aggregate_period_s}.h5'
 
         args = [Path(incl_h5clc.__file__).with_name(f'incl_h5clc_{db_path.stem}.yaml'),
@@ -295,13 +295,13 @@ if st(3):  # Can be done at any time after step 1
     args = [
         Path(incl_h5clc.__file__).with_name(f'incl_h5spectrum{db_path.stem}.yaml'),
         # if no such file all settings are here
-        '--db_path', str(db_path.with_name(f'{db_path.stem}_proc_noAvg.h5')),
+        '--db_path', str(db_path.with_name(f'{db_path.stem}.proc_noAvg.h5')),
         '--tables_list', f'{prefix}.*',  # inclinometers or wavegauges w\d\d  ## 'w02', 'incl.*',
         # '--aggregate_period', f'{aggregate_period_s}S' if aggregate_period_s else '',
 
         '--min_date', datetime64_str(min_date[0]),
         '--max_date', datetime64_str(max_date[0]),  # '2019-09-09T16:31:00',  #17:00:00
-        # '--max_dict', 'M[xyz]:4096',  # use if db_path is not ends with _proc_noAvg.h5 i.e. need calc velocity
+        # '--max_dict', 'M[xyz]:4096',  # use if db_path is not ends with .proc_noAvg.h5 i.e. need calc velocity
         '--out.db_path', f'{db_path.stem.replace("incl", prefix)}_proc_psd.h5',
         # '--table', f'psd{aggregate_period_s}' if aggregate_period_s else 'psd',
         '--fs_float', f'{fs(probes[0], prefix)}',
