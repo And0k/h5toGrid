@@ -1008,6 +1008,10 @@ def main(config: ConfigType) -> None:
     # geod = pyproj.Geod(ellps='WGS84')
     # dir_create_if_need(out['text_path'])
     out = cfg['out']
+    # if relative path for cfg['out']['db_path'] then it is from directory of running script
+    if cfg['out'].get('db_path') and not cfg['out']['db_path'].is_absolute():
+        cfg['out']['db_path'] = Path(sys.argv[0]).parent / cfg['out']['db_path']
+
     h5init(cfg['in'], out)
 
     if not out['to_gpx']:  # default to output to gpx raw data and for averaged only if averaging is less than 1 hours
