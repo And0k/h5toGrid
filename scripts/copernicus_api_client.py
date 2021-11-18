@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Download data from Copernicus to NetCDF file
+Download data from Copernicus to NetCDF file - official motuclient configured to my needs with detecting last data date
 See also
  - netcdf2csv.py to convert result to csv
  - ecmwf_api_client.py

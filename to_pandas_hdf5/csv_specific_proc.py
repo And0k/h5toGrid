@@ -314,7 +314,7 @@ def proc_loaded_sea_and_sun(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[
     """
 
     date = pd.to_datetime(a['Date'].str.decode('utf-8', errors='replace'), format='%d.%m.%Y') + \
-           pd.to_timedelta(a['Time'].str.decode('utf-8', errors='replace'), unit='ms')
+           pd.to_timedelta(a['Time'].str.decode('utf-8', errors='replace'))  #, unit='ms'
 
     # check that used
     return a.assign(Time=date).loc[:, list(

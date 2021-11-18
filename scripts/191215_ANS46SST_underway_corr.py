@@ -23,7 +23,7 @@ path_db = path_cruise / path_cruise.with_suffix('.h5').name  # same name as dir
 device = 'CTD_SST_48Mc#1253'
 device_veusz_prefix = 'ss_'
 
-# Stop before steps that need manual preparings (70) i.e. set end < 70 at first
+# Stop before steps that need a manual prepare (70) i.e. set end < 70 at first
 # Gridding (last step) needs debugging if interactive filtering is needed
 # ---------------------------------------------------------------------------------------------
 

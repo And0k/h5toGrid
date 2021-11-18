@@ -207,12 +207,15 @@ def h5find_tables(store: pd.HDFStore, pattern_tables: str, parent_name=None) -> 
 
     for parent_name in parent_names:
         node = store.get_node(parent_name)
-        for tbl in [g for g in node.__members__ if
-                     (g != 'table') and (g != '_i_table')]:  # (store.get_storer(n).pathname for n in nodes):
+        if not node:
+            continue
+        for tbl in node.__members__:  # (store.get_storer(n).pathname for n in nodes):
+            if tbl in ('table', '_i_table'):
+                continue
             if regex_tables(tbl):
                 tables.append(f'{parent_name}/{tbl}' if parent_name != '/' else tbl)
     lf.info('{:d} "{:s}/{:s}" table{:s} found in {:s}',
-            l:=len(tables),
+            l := len(tables),
             parent_name if parent_name != '/' else '',
             pattern_tables,
             's' if l != 1 else '',
@@ -249,7 +252,7 @@ def h5sort_pack(h5source_fullpath, h5out_name, table_node, arguments=None, addar
     os_chdir(h5dir)  # os.getcwd()
     try:
         if arguments == 'fast':  # bRemove= False, bFast= False,
-            arguments = ['--chunkshape=auto', f'--sortby={col_sort}', '--overwrite-nodes']
+            arguments = ['--chunkshape=auto', '--overwrite-nodes']  # f'--sortby={col_sort}',
             if addargs:
                 arguments.extend(addargs)
         else:
@@ -313,7 +316,9 @@ def h5sort_pack(h5source_fullpath, h5out_name, table_node, arguments=None, addar
             print(f'can\'t remove temporary file "{h5source_fullpath}"')
     return os_path.join(h5dir, h5out_name)
 
+
 query_range_pattern_default = "index>=Timestamp('{}') & index<=Timestamp('{}')"
+
 
 def h5sel_index_and_istart(store: pd.HDFStore,
                            tbl_name: str,
@@ -328,6 +333,7 @@ def h5sel_index_and_istart(store: pd.HDFStore,
     :param query_range_pattern:
     :param to_edge:
     :return: (empty columns dataframe with index[query_range], coordinate index of query_range[0] in table)
+    Tell me, if you know, how to do this with only one query, please
     """
     if query_range_lims is None:  # select all
         df0 = store.select(tbl_name, columns=[])
@@ -380,34 +386,36 @@ def h5coords(store: pd.HDFStore, tbl_name: str,
              query_range_pattern: str = query_range_pattern_default
              ) -> Tuple[pd.DataFrame, Union[List[int], np.ndarray]]:
     """
-    Get load table's index[query_range_lims] and find coordinates indexes of q_time in store table
+    Get table's index for q_time edges/query_range_lims and coordinates indexes of q_time in store table
 
     :param store:
     :param tbl_name:
     :param q_time:
     :param query_range_lims:
     :param query_range_pattern:
-    :return (df0.index, i_queried, i_start):
-    - df0.index: index[query_range_lims]
+    :return (df0range.index, i0range, i_queried):
+    - df0range.index: index[query_range_lims[0]:(query_range_lims[-1] + to_edge)]
+    - i0range: starting index of returned df0range.index in store table
     - i_queried: coordinates indexes of q_time in store table. It is a list only if 1st el is zero.
     If both q_time and query_range_lims are None then returns (None, [0, np.iinfo(np.intp).max])
     """
     if query_range_lims is None:
         if q_time is None:
-            return None, [0, store.get_storer(tbl_name).nrows]
+            return None, 0, [0, store.get_storer(tbl_name).nrows]
             # get nrows because trying loading bigger number of rows will raise ValueError in dask.read_hdf(stop=bigger)
         else:
             if isinstance(q_time[0], str):
                 q_time = np.array(q_time, 'M8[ns]')
             query_range_lims = q_time[::(len(q_time)-1)]  # needed interval assuming q_time edges are its min and max
-    df0, i_start = h5sel_index_and_istart(
+
+    df0range, i0range = h5sel_index_and_istart(
         store, tbl_name, query_range_lims, query_range_pattern, to_edge=pd.Timedelta(minutes=10)
         )
     if q_time is None:
-        return df0.index, [0, df0.index.size]
+        return df0range.index, 0, [0, df0range.index.size]
 
-    i_queried = inearestsorted(df0.index.values, q_time)
-    return df0.index, i_queried + i_start
+    i_queried = inearestsorted(df0range.index.values, q_time)
+    return df0range.index, i0range, i_queried + i0range
 
 
 def h5select(store: pd.HDFStore,
@@ -427,7 +435,7 @@ def h5select(store: pd.HDFStore,
     :param time_points: numpy.array(dtype='datetime64[ns]') to return rows with closest index. If None then uses time_ranges
     :param time_ranges: array of values to return rows with index between. Used if time_points is None
     :param dt_check_tolerance: pd.Timedelta, display warning if found index far from requested values
-    :param query_range_lims: initial data range limits to query data, 10 minutes margin will be added
+    :param query_range_lims: initial data range limits to query data, 10 minutes margin will be added for time_points/ranges
     Note: useful to reduce size of intermediate loading index even if time_points/time_ranges is used
     :param query_range_pattern: format pattern for query with query_range_lims
     :param interpolate: str: "method" arg of pandas.Series.interpolate. If not interpolate, then return closest points
@@ -451,14 +459,14 @@ def h5select(store: pd.HDFStore,
             columns=columns)
         return df
 
-    df0index, i_queried = h5coords(store, tbl_name, q_time, query_range_lims, query_range_pattern)
-    bbad, dt = check_time_diff(t_queried=q_time, t_found=df0index[i_queried - i_queried[0]].values,
+    df_index_range, i0range, i_queried = h5coords(store, tbl_name, q_time, query_range_lims, query_range_pattern)
+    bbad, dt = check_time_diff(t_queried=q_time, t_found=df_index_range[i_queried - i0range].values,
                                dt_warn=dt_check_tolerance, return_diffs=True)
     # if time_ranges:  # fill indexes inside intervals
     #     i_queried = np.hstack(np.arange(*se) for se in zip(i_queried[:-1], i_queried[1:] + 1))
 
     if any(bbad) and interpolate:
-        i_queried = inearestsorted_around(df0index.values, q_time) + i_queried[0]
+        i_queried = inearestsorted_around(df_index_range.values, q_time) + i0range
         df = h5sel_interpolate(i_queried, store, tbl_name, columns=columns, time_points=q_time, method=interpolate)
     else:
         df = store.select(tbl_name, where=i_queried, columns=columns)
@@ -515,7 +523,7 @@ def h5temp_open(
     """
     df_log = None
     if db:
-        lf.warning('DB is already opened: handle detected!')
+        lf.warning('DB already used{}: handle detected!', ' and opened' if db.is_open else '')
 
     if tables is None:
         return None, None, False  # skipping open, may be need if not need write
@@ -533,14 +541,14 @@ def h5temp_open(
         #     else:
         #         itbl += 1
 
-
     try:
         try:  # open temporary output file
             if db_path_temp.is_file():
-                db = pd.HDFStore(db_path_temp)
                 if not b_reuse_temporary_tables:  # Remove existed tables to write
-                    tables_in_root = [t for tbl in tables for t in h5find_tables(db, tbl)]
-                    h5remove_tables(db, tables_in_root, tables_log)
+                    with pd.HDFStore(db_path_temp) as db:
+                        tables_in_root = [t for tbl in tables for t in h5find_tables(db, tbl)]
+                        h5remove_tables(db, tables_in_root, tables_log)
+                    db = None
         except IOError as e:
             print(e)
 
@@ -550,15 +558,21 @@ def h5temp_open(
                 lf.info('Copying previous store data to temporary one:')
                 tbl = 'is absent'
                 try:
-                    with pd.HDFStore(db_path) as store_out:
-                        for tbl in (tables + tables_log):
-                            if not tbl:
+                    with pd.HDFStore(db_path, mode="r") as store_out:
+                        name_prev = ''  # used to filter already deleted children (how speed up?)
+                        for tbl in sorted(tables + tables_log):
+                            if (  # parent of this nested have moved on previous iteration
+                                (len(name_prev) < len(tbl) and tbl.startswith(name_prev) and tbl[len(name_prev)] == '/')
+                                or not tbl
+                            ):
                                 continue
                             try:  # Check output store
                                 if tbl in store_out:  # avoid harmful sortAndPack errors
-                                    h5sort_pack(db_path, db_path_temp.name, tbl)
+                                    h5sort_pack(db_path, db_path_temp.name, tbl, arguments='fast')  #, addargs=['--verbose']
                                 else:
-                                    raise HDF5ExtError(f'Table {tbl} does not exist')
+                                    lf.info(f'Table {tbl} does not exist')
+                                    continue
+                                    # raise HDF5ExtError(f'Table {tbl} does not exist')
                             except HDF5ExtError as e:
                                 if tbl in store_out.root.__members__:
                                     print('Node exist but store is not conforms Pandas')
@@ -568,6 +582,9 @@ def h5temp_open(
                                 lf.error('Failed copy from output store (RuntimeError). '
                                         'May be need first to add full index to original store? Trying: ')
                                 nodes = store_out.get_node(tbl).__members__  # sorted(, key=number_key)
+                                # reopen for modifcation
+                                store_out.close()
+                                store_out = pd.HDFStore(db_path)
                                 for n in nodes:
                                     tbl_cur = tbl if n == 'table' else f'{tbl}/{n}'
                                     lf.info(tbl_cur, end=', ')
@@ -578,6 +595,7 @@ def h5temp_open(
                                     db.close()
                                     db = None
                                 h5sort_pack(db_path, db_path_temp.name, tbl)
+                            name_prev = tbl
 
                 except HDF5ExtError as e:
                     lf.warning(e.args[0])   # print('processing all source data... - no table with previous data')
@@ -588,12 +606,13 @@ def h5temp_open(
                     b_skip_if_up_to_date = False
                 else:
                     if b_skip_if_up_to_date: lf.info('Will append data only from new files.')
+
         if (db is None) or not db.is_open:
-            # todo: create group if table that path directs to
             # Open temporary output file to return
             for attempt in range(2):
                 try:
                     db = pd.HDFStore(db_path_temp)
+                    # db.flush()
                     break
                 except IOError as e:
                     print(e)
@@ -747,7 +766,7 @@ def h5remove_table(db: pd.HDFStore, node: Optional[str] = None):
 def h5remove_tables(db: pd.HDFStore, tables: Iterable[str], tables_log: Iterable[str], db_path_temp=None):
     """
     Removes (tables + tables_log) from db in sorted order with not trying to delete deleted children.
-    Retries on error, flashes operation
+    Retries on error, flushes operation
     :param db: pandas hdf5 store
     tables names:
     :param tables: list of str
@@ -759,7 +778,7 @@ def h5remove_tables(db: pd.HDFStore, tables: Iterable[str], tables_log: Iterable
     for tbl in sorted(tables + tables_log):
         if len(name_prev) < len(tbl) and tbl.startswith(name_prev) and tbl[len(name_prev)] == '/':
             continue  # parent of this nested have deleted on previous iteration
-        for i in range(1, 4):
+        for i in range(1, 4):  # for retry, may be not need
             try:
                 h5remove_table(db, tbl)
                 name_prev = tbl
@@ -1563,7 +1582,7 @@ def h5log_rows_gen(
 
 def h5log_names_gen(cfg_in, f_row_to_name=lambda r: '{Index:%y%m%d_%H%M}-{DateEnd:%H%M}'.format_map(r)):
     """
-    Genereates outputs of f_row_to_name function which receves dicts from each h5 log row (see h5log_rows_gen)
+    Genereates outputs of f_row_to_name function which receives dicts from each h5 log row (see h5log_rows_gen)
     :param cfg_in: dict with field 'log_row' where h5log_rows_gen(cfg_in) item will be saved
     :param f_row_to_name: function(dict) where dict have fields from h5 log row.
         By default returns string suitable to name files by start-end date/time

@@ -25,7 +25,7 @@ st.end = 115   # 60 80 120
 path_cruise = Path(r'd:\WorkData\BalticSea\200630_AI55')
 path_db = path_cruise / path_cruise.with_suffix('.h5').name  # same name as dir
 
-# Stop before steps that need manual preparings (70) i.e. set end < 70 at first
+# Stop before steps that need a manual prepare (70) i.e. set end < 70 at first
 # Gridding (last step) needs debugging if interactive filtering is needed
 # ---------------------------------------------------------------------------------------------
 

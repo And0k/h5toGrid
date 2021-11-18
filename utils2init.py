@@ -163,8 +163,16 @@ def dir_create_if_need(dir_like: Union[str, PurePath, Path]) -> Path:
             print(f' ...making dir "{dir_like}"... ')
             try:
                 dir_like.mkdir(exist_ok=True)  # exist_ok=True is need because dir may be just created in other thread
-            except Exception as e:
-                raise FileNotFoundError(f'Can make only 1 level of dir. Can not make: "{dir_like}"')
+            except FileNotFoundError as e:
+                s = input(f'Not a only 1 level of dir. to create. Are you sure to make: "{dir_like}"? Y/n: ')
+                if 'n' in s or 'N' in s:
+                    print('answered No')
+                    raise FileNotFoundError(
+                        f'Can make only 1 level of dir. without interact. Can not make: "{dir_like}"'
+                        )
+                else:
+                    print('creating dir...', end='')
+                dir_like.mkdir(parents=True, exist_ok=True)
     return dir_like
 
 

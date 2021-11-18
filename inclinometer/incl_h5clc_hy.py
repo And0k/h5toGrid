@@ -805,7 +805,7 @@ def incl_calc_velocity(a: dd.DataFrame,
                                     )),
                                 Vdir  # default value
                                 )
-            else:  # Set magnetometer data to be function of accelerometer data - allows calc waves parameters
+            else:  # Set magnetometer data be function of accelerometer data - worse case: relative direction recovery
                 lf.warning(
                     'Bad magnetometer data => Assign direction inversely proportional to toolface angle (~ relative angle if no rotations around device axis)')
                 Vdir = azimuth_shift_deg - da.degrees(da.arctan2(Gxyz[0, :], Gxyz[1, :]))
@@ -1283,7 +1283,7 @@ def gen_subconfigs(
             except hydra.errors.MissingConfigException:
                 pass
 
-            # loading time_range must have all info about time filteri
+            # loading time_range must have all info about time filter
             if cfg_in_copy['time_range'] is None and (cfg_in_copy['min_date'] or cfg_in_copy['max_date']):
                 cfg_in_copy['time_range'] = [
                     cfg_in_copy['min_date'] or '2000-01-01',
@@ -1305,17 +1305,17 @@ def gen_subconfigs(
                 else:
                     # query and process several independent intervals
                     # Get index only and find indexes of data
-                    df0index, iq_edges = h5coords(store, tbl, cfg_in_copy['time_range'])
+                    index_range, i0range, iq_edges = h5coords(store, tbl, cfg_in_copy['time_range'])
                     for i_part, iq_edges_cur in enumerate(zip(iq_edges[::2], iq_edges[1::2])):
                         ddpart = h5_load_range_by_coord(**cfg_in_copy, range_coordinates=iq_edges_cur)
                         d, iburst = filt_data_dd(
                             ddpart, cfg_in_copy['dt_between_bursts'], cfg_in_copy['dt_hole_warning'],
                             cfg_in_copy
                             )
-                        if df0index is not None:
+                        if index_range is not None:
                             yield yielding(d, msg='.{}: {:%Y-%m-%d %H:%M:%S}–{:%m-%d %H:%M:%S}'.format(
                                 i_part,
-                                *df0index[iq_edges - iq_edges[0]]
+                                *index_range[iq_edges - i0range]
                                 ))
                         else:
                             yield yielding(d)
@@ -1460,24 +1460,13 @@ def main(config: ConfigType) -> None:
                            coefs['azimuth_shift_deg'], cfg['process']['azimuth_add']
                            )
 
-        if aggregate_period_timedelta:  # binned here
+        if aggregate_period_timedelta:
+            # Binning
             if '.proc_noAvg' not in cfg['in']['db_path'].suffixes[-2:-1]:
                 lf.warning(str_warning := 'Raw data averaging before processing! '\
                            'Consider calculate physical parameters to *.proc_noAvg.h5 before averaging!')
                 raise Ex_nothing_done(str_warning)  # comment to proceed
 
-
-            # Grouping in bins
-            # gr_index = d.index.dt.floor(aggregate_period_timedelta)
-            # gr_divisions = tuple(pd.Series(gr_index.divisions).dt.floor(aggregate_period_timedelta))
-            # gr_size = d.groupby(gr_index).size().repartition(gr_divisions)  # freq=split_for_memory not works
-            # gr_size_mean = gr_size.mean().repartition(gr_divisions)
-            # gr_index = gr_index.to_serises.where(gr_size < gr_size_mean/10)
-            # d = d.groupby(gr_index).mean()
-            # # exclude group with too many values
-            # # d = d.drop(gr_size > gr_size_mean/10)
-            # # d = d[gr_size > gr_size_mean/10]  - loose partitions needed for next calcs
-            # - failed to reimplement by groupby() this logic:
             counts = (~d.iloc[:, 0].isna()).resample(aggregate_period_timedelta).count()
             d = d.resample(aggregate_period_timedelta,
                            # closed='right' if 'Pres' in cfg['in']['db_path'].stem else 'left'
@@ -1517,7 +1506,6 @@ def main(config: ConfigType) -> None:
                     'fileChangeTime': datetime.fromtimestamp(cfg['in']['db_path'].stat().st_mtime),
                     'rows': len(d)
                     }
-                log['Date0'], log['DateEnd'], log['rows'] = d.divisions[0], d.divisions[-1], len(d)  #d.divisions[:-1], d.divisions[1:]
                 tables_written_not_joined |= (
                     h5_append_to(d, tbl, cfg['out'], log,
                                  msg=f'saving {tbl} separately to temporary store',

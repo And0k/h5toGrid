@@ -21,7 +21,7 @@ path_db = path_cruise / path_cruise.with_suffix('.h5').name  # same name as dir
 go = True  # False #
 start = 1  # 5 70 110
 end = 120  # 60 80 120
-# Usually need stop before steps that need manual preparings (70): so stop at 60, and last step for device.
+# Usually need stop before steps that need a manual prepare (70): so stop at 60, and last step for device.
 # Gridding (last step) needs debugging if interactive filtering is needed
 # ---------------------------------------------------------------------------------------------
 st = partial(st_full, start=start, end=end)

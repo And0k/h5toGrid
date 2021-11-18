@@ -245,15 +245,15 @@ def check_time_diff(t_queried: Union[pd.Series, np.ndarray], t_found: Union[pd.S
     except TypeError:  # not numpy 'datetime64[ns]'
         t_queried_values = t_queried.values
 
-    dT = np.array(t_found - t_queried_values, 'timedelta64[ns]')
-    bbad = abs(dT) > np.timedelta64(dt_warn)
+    dt_arr = np.array(t_found - t_queried_values, 'timedelta64[ns]')
+    bbad = abs(dt_arr) > np.timedelta64(dt_warn)
     if (mesage is not None) and np.any(bbad):
         if mesage:
             mesage = '\n'.join([mesage] + ['{}. {}:\t{}{:.1f}'.format(i, tdat, m, dt / 60) for i, tdat, m, dt in zip(
-                np.flatnonzero(bbad), t_queried[bbad], np.where(dT[bbad].astype(np.int64) < 0, '-', '+'),
-                np.abs(dT[bbad]) / np.timedelta64(1, 's'))])
+                np.flatnonzero(bbad), t_queried[bbad], np.where(dt_arr[bbad].astype(np.int64) < 0, '-', '+'),
+                np.abs(dt_arr[bbad]) / np.timedelta64(1, 's'))])
         lf.warning(mesage)
-    return (bbad, dT) if return_diffs else bbad
+    return (bbad, dt_arr) if return_diffs else bbad
 
 # str_time_short= '{:%d %H:%M}'.format(r.Index.to_datetime())
 # timeUTC= r.Index.tz_convert(None).to_datetime()

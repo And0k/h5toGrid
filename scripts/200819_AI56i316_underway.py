@@ -21,7 +21,7 @@ path_db = path_cruise / path_cruise.with_suffix('.h5').name  # same name as dir
 st.go = True   # False #
 st.start = 70  # default: 1, used: 5 30 70 80
 st.end = 110   # 60 80 120
-# Stop before steps that need manual preparings (70) i.e. set end < 70 at first
+# Stop before steps that need a manual prepare (70) i.e. set end < 70 at first
 # Gridding (last step) needs debugging if interactive filtering is needed
 # ---------------------------------------------------------------------------------------------
 

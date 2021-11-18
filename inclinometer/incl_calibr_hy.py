@@ -352,6 +352,9 @@ def fit_quadric_form(s):
         .. [1] Qingde Li; Griffiths, J.G., "Least squares ellipsoid specific
            fitting," in Geometric Modeling and Processing, 2004.
            Proceedings, vol., no., pp.335-340, 2004
+        Source
+        ------
+        https://teslabs.com/articles/magnetometer-calibration/
     '''
 
     # D (samples)
@@ -394,7 +397,15 @@ def fit_quadric_form(s):
                       [4, 5, 2]], np.int8)]
     n = v_2[:-1, np.newaxis]
     d = v_2[3]
+    
+    
+    # Robert R • 2 years ago - todo: check:
+    # I believe in your code example your M is incorrect. Based on your notation in your Quadric section you have [[a f g], [f b h], [g h c]] as your M matrix. A simple check here is that in the D matrix, your 5th element is your 2XY term. This term should go in the h positions as per [[a h g], [h b f], [g f c]], instead you have the XY term assigned in the f positions.
 
+The overall result is that your A_1 matrix will have "mirrored" column 1 and row 1.
+
+Interestingly enough, this flip doesn't seem to impact the calibration significantly.
+    
     return M, n, d
 
 
@@ -411,18 +422,18 @@ def calibrate(raw3d: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     # A_1 = np.eye(3)
 
     # Ellipsoid fit
-    meanHxyz = np.mean(raw3d, 1)  # dfcum[['Hx', 'Hy', 'Hz']].mean()
-    s = np.array(raw3d - meanHxyz[:, np.newaxis])  # dfcum[['Hx', 'Hy', 'Hz']] - meanHxyz).T
-    M, n, d = fit_quadric_form(s)  # M= A.T*A.inv, n= 2*M*b, d= b.T*n/2 - F**2
+    meanHxyz = np.mean(raw3d, 1)[:, np.newaxis]  # dfcum[['Hx', 'Hy', 'Hz']].mean()
+    s = np.array(raw3d - meanHxyz)  # dfcum[['Hx', 'Hy', 'Hz']] - meanHxyz).T
+    Q, n, d = fit_quadric_form(s)  # Q= A.T*A.inv, n= -2*Q*b, d= b.T*n/2 - F**2
 
     # Calibration parameters
 
-    M_inv = linalg.inv(M)
-    # combined bias:
-    b = -np.dot(M_inv, n) + meanHxyz[:, np.newaxis]  # np.array()
+    Q_inv = linalg.inv(Q)
+    # combined bias:           
+    b = -np.dot(Q_inv, n) + meanHxyz
     # scale factors, soft iron, and misalignments:
     # note: some implementations of sqrtm return complex type, taking real
-    a2d = np.real(F / np.sqrt(np.dot(n.T, np.dot(M_inv, n)) - d) * linalg.sqrtm(M))
+    a2d = np.real(F / np.sqrt(np.dot(n.T, np.dot(Q_inv, n)) - d) * linalg.sqrtm(Q))
 
     return a2d, b
 

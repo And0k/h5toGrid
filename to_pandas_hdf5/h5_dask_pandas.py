@@ -493,11 +493,11 @@ def filter_local(d: Union[pd.DataFrame, dd.DataFrame, Mapping[str, pd.Series], M
         for key, lim in cfg_filter[limit].items():
             if ('*' in key) or ('[' in key):  # get multiple keys by regex
                 keys = [c for c in d.columns if re.fullmatch(key, c)]
-                d.loc[keys] = d.loc[keys].where(f_compare(d.loc[keys], lim))
+                d[keys] = d.loc[:, keys].where(f_compare(d.loc[:, keys], lim))
                 key = ', '.join(keys)  # for logging only
             else:
                 try:
-                    d.loc[key] = d.loc[key].where(f_compare(d.loc[key], lim))
+                    d[key] = d.loc[:, key].where(f_compare(d.loc[:, key], lim))
                 except (KeyError, TypeError) as e:  # allow redundant parameters in config
                     # It is strange, but we have "TypeError: cannot do slice indexing on DatetimeIndex with these indexers [key] of type str" if just no "key" column
                     if not (ignore_absent and key in ignore_absent):

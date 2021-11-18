@@ -1016,7 +1016,7 @@ def inearestsorted(array, values):
     :return: found indexes of first array size of values
     """
     if not array.size:
-        return []
+        return np.int32([])
     idx = np.searchsorted(array, values)  # side defaults to "left"
     idx_prev = np.where(idx > 0, idx - 1, 0)
     idx = np.where(idx < array.size, idx, array.size - 1)

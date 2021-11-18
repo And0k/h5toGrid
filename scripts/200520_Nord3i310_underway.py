@@ -21,7 +21,7 @@ device_veusz_prefix = 'i0_'
 go = True  # False #
 start = 30  # 70
 end = 120  # 60 80 120
-# Stop before steps that need manual preparings (70) i.e. set end < 70 at first
+# Stop before steps that need a manual prepare (70) i.e. set end < 70 at first
 # Gridding (last step) needs debugging if interactive filtering is needed
 # ---------------------------------------------------------------------------------------------
 st = partial(st_full, start=start, end=end)

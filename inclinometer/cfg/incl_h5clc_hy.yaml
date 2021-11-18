@@ -1,16 +1,6 @@
 defaults:
-  - base_incl_h5clc_hy
-# - probes: wavegauges
-# if installed
-#  - override hydra/job_logging: colorlog
-#  - override hydra/hydra_logging: colorlog
-  - _self_  # just to prevent warning
+- base_incl_h5clc_hy
+- _self_
 hydra:
-  searchpath:  # add path to cfg_proc dir
-    - file://d:/workData/BalticSea/201202_BalticSpit_inclinometer/211008E15m@i11,36,37,38,w2/_raw/cfg_proc
-#    - file://d:/workData/BalticSea/201202_BalticSpit_inclinometer/210618P7.5m@i9,14,15,19w1,2,4/_raw/cfg_proc
-#    d:/workData/BalticSea/201202_BalticSpit_inclinometer/210827@P10m,P15m-i14,15,w1,4/_raw/cfg_proc
-#    - file://d:/workData/BalticSea/201202_BalticSpit_inclinometer/210618@P7.5m-i15,w2(cal)/_raw/cfg_proc
-#    - file://d:/workData/BalticSea/201202_BalticSpit_inclinometer/210922@E15m-i19,36,37,38,w2/_raw/cfg_proc/
-#    - file://c:/temp/cfg_proc
-#    - file://d:/workData/BalticSea/201202_BalticSpit_inclinometer/201202@i3,5,9,10,11,15,19,23,28,30,32,33,w1-6/_raw/cfg_proc
+  searchpath:
+  - file://d:/workData/BalticSea/_Pregolya,Lagoon/211111-inclinometer/_raw/cfg_proc

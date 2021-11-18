@@ -20,7 +20,7 @@ from collections import namedtuple
 import numpy as np
 import pandas as pd
 
-from osgeo import gdal, ogr
+from osgeo import gdal, ogr  # I have to add OSError to try-except in module's __init__ to ignore "." in sys.path
 # except ModuleNotFoundError as e:
 #     print(e.args[0], ' - may be not needed. Continue!')
 import pyproj  # import geog
@@ -583,6 +583,8 @@ def load_cur_veusz_section(cfg: Mapping[str, Any],
     return: Tuple:
         ctd: pd.DataFrame, loaded from Veusz CTD data,
         ctd_prm: dict of parameters of other length than ctd,
+        - starts: runs starts
+        - ends: runs ends
         vsze: Veusz embedded object
     """
 
@@ -956,8 +958,10 @@ def data_sort_to_nav(navp: pd.DataFrame,
 
                         # if b_far[igood]:
             except ValueError as e:
-                l.error('can not correct CTD table order. Check [gpx] configuration of symbols_in_veusz_ctd_order_list')
-                raise (e)  # ValueError
+                l.error('can not correct CTD table order. May be need change gpx configuration.'
+                        ' Current gpx.symbols_in_veusz_ctd_order_list = {}',
+                        cfg['gpx']['symbols_in_veusz_ctd_order_list'])
+                raise e  # ValueError
         b_far = check_time_diff(ctd.time.iloc[ctd_prm['starts'][navp_ictd]].values, navp_index, pd.Timedelta(minutes=1),
                                 mesage='CTD runs (after correction) far from nearest time of closest navigation point # [min]:\n')
         ctd_not_in_navp = np.setdiff1d(np.arange(ctd_prm['starts'].size), navp_ictd)
@@ -1052,7 +1056,7 @@ def data_sort_to_nav(navp: pd.DataFrame,
     # Sort CTD data in order of points.
 
     # CTD order to points order:
-    if cfg['route_time_level'] is None:  # arange runs according to b_invert
+    if cfg['route_time_level'] is None:  # arrange runs according to b_invert
         navp_ictd = np.arange(
             navp_index.size - 1, -1, -1, dtype=np.int32) if b_invert else np.arange(
             navp_index.size, dtype=np.int32)
@@ -1063,9 +1067,11 @@ def data_sort_to_nav(navp: pd.DataFrame,
     if np.any(navp_ictd != np.arange(navp_ictd.size, dtype=np.int32)):
         # arrange run starts and ends in points order
         # 1. from existed intervals (sorted by time like starts from Veusz)
-        run_next_from = np.append(ctd_prm['starts'][1:], ctd.time.size)
-        run_edges_from = np.column_stack((ctd_prm['starts'], run_next_from))  #
-        run_edges_from = run_edges_from[navp_ictd, :]  # rearrange ``from`` interals
+        run_endup_from = np.append(ctd_prm['starts'][1:], ctd.time.size)
+        run_edges_from = np.column_stack((ctd_prm['starts'], run_endup_from))  #
+        if len(run_edges_from) != navp_ictd.size:
+            l.error('Number of loaded nav. points {} != {} ctd points', navp_ictd.size, len(run_edges_from))
+        run_edges_from = run_edges_from[navp_ictd, :]  # rearrange ``from`` intervals
 
         # 2. to indexes
         run_dst = np.diff(run_edges_from).flatten()
@@ -1073,16 +1079,17 @@ def data_sort_to_nav(navp: pd.DataFrame,
         ctd_prm['starts'] = np.append(0, run_next_to[:-1])
         run_edges_to = np.column_stack((ctd_prm['starts'], run_next_to))  # ?
 
-        # 'ends' will be needed later
-        _junks_to = (run_next_from - ctd_prm['ends'])[navp_ictd]
-        ctd_prm['ends'] = run_next_to - _junks_to
-
         # sort CTD data
         ind_by_points = np.empty(ctd.time.size, dtype=np.int32)
         for se_to, se_from in zip(run_edges_to, run_edges_from):
             ind_by_points[slice(*se_from)] = np.arange(*se_to)
         ctd.index = ind_by_points
         ctd = ctd.sort_index()  # inplace=True???
+
+
+        # 'ends' will be needed later
+        _junks_to = (run_endup_from - ctd_prm['ends'])[navp_ictd]
+        ctd_prm['ends'] = run_edges_to[:, 1] - _junks_to
 
         # temp = np.empty(ctd['time'].size)
         # ctd.reindex
@@ -1635,27 +1642,31 @@ def main(new_arg=None):
                 # - need direction to next route point and projection on it?
                 df_points = h5select(
                     cfg['in']['db'], cfg['in']['table_nav'], ['Lat', 'Lon', 'DepEcho'],
-                    time_points=ctd.time.iloc[np.append(ctd_prm['starts'], ctd_prm['ends'])],
+                    time_points=ctd.time.iloc[np.append(ctd_prm['starts'], ctd_prm['ends'])].values,
                     dt_check_tolerance=cfg['process']['dt_search_nav_tolerance'],
-                    query_range_pattern=qstr
+                    query_range_lims=[navp_d['indexs'][0], navp_d['time_poss_max']],
+                    # query_range_pattern=qstr  - commented to add to_edge
                     )[0]
                 # Try get non NaN from dfL if it has needed columns (we used to write there edges' data with _st/_en suffixes)
                 # if nav have nans search in other places
-                isnan = df_points.isna()
-                if isnan.any().any():
+                df_na = df_points.isna()
+                if df_na.any().any():
+                    # ctd is an already loaded data, so try search here first
+                    cols_interp = [c for c in df_na.columns[df_na.any()] if c in ctd.columns]
+                    ctd_sort = ctd[cols_interp].set_index(ctd.time).sort_index()
                     #dfL = cfg['in']['db'][cfg['in']['table_runs']] - other variant
-                    for col in isnan.columns[isnan.any()]:
-                        if col in ctd:  # ctd is an already loaded data, so try search here first
-                            try:
-                                b_ctd_col = ctd[col].notna()
-                                col_vals = ctd.loc[b_ctd_col, col].values
-                                col_time = ctd.time[b_ctd_col, col].values
-                                vals = ctd_col_ok.values[inearestsorted(ctd_col_ok.index, df_points.index[isnan[col]])]
-                            except IndexError:
-                                continue  # not found
-                            # vals = df_nav_col[col]
-                            if vals.any():
-                                df_nav.loc[isnan[col], col] = vals
+                    for col in cols_interp:
+                        try:
+                            ctd_sort_no_na = ctd_sort[col].dropna()
+                            vals = ctd_sort_no_na.iloc[
+                                inearestsorted(ctd_sort_no_na.index.values, df_points.index[df_na[col]].values)
+                                # better inearestsorted_around with next interp
+                            ].values
+                        except IndexError:
+                            continue  # not found
+                        # vals = df_nav_col[col]
+                        if vals.any():
+                            df_points.loc[df_na[col], col] = vals
 
                     # dfL_col_suffix = 'st' if cfg['out']['select_from_tablelog_ranges'] == 0 else 'en'
                     # for col in cols_nav:
@@ -1692,7 +1703,7 @@ def main(new_arg=None):
                 l.warning(msg)
 
                 # Adjust (fine) x gridding resolution if too many profiles per distance:
-                dd = n_profiles / np.subtract(*run_dist_topbot[[-1, 0]])
+                dd = np.subtract(*run_dist_topbot[[-1, 0]]) / n_profiles
                 cfg['x_resolution_use'] = min(cfg['out']['x_resolution'], dd / 2)
                 cfg['y_resolution_use'] = cfg['out']['y_resolution']
 
@@ -1804,7 +1815,7 @@ def main(new_arg=None):
 
                 # Extend polygon edges according to grid extending (see below)
                 lim = Axes2d(*[MinMax(ctd[col].min(), ctd[col].max()) for col in ax2col[:]])
-                edge_dist[[0, -1]] = [lim.x.min - cfg['x_resolution_use'], lim.x.max + cfg['x_resolution_use']]
+                edge_dist[[0, -1]] = [lim.x.min - 0.1, lim.x.max + 0.1]  # +- cfg['x_resolution_use']
                 # old +=(np.array([-1, 1]) * (cfg['out']['x_resolution'] / 2 + 0.01))
                 polygon_edge_path = to_polygon(
                     *extract_repeat_at_bad_edges(np.vstack([edge_dist, -edge_depth]), ok_edge['soft']),
@@ -1943,7 +1954,7 @@ def main(new_arg=None):
                 # [5] высота пиксела
 
                 # Grid blanking bot. edge: use hard filter and blur by 1 run to keep more of our beautiful contours
-                d_blur = (lambda d: np.where(d[1:]>0, d[1:], np.where(d[:-1]<0,-d[:-1], cfg['y_resolution_use']))
+                d_blur = (lambda d: np.where(d[1:] > 0, d[1:], np.where(d[:-1] < 0, -d[:-1], cfg['y_resolution_use']))
                           )(np.pad(np.diff(edge_depth[ok_edge['hard']]), 1, 'edge'))     # to less del. data
                 y_edge_path = np.interp(x, edge_dist[ok_edge['hard']], edge_depth[ok_edge['hard']] + d_blur)
                 xm, ym = np.meshgrid(x, y)

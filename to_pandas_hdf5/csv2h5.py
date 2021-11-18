@@ -104,6 +104,7 @@ to Pandas HDF5 store*.h5
           help='if "warn" print a warning when a bad line is encountered and skip that line. See also "comments" argument to skip bad line without warning')
     s.add('--delimiter_chars',
           help='parameter of dask.read_csv(). Default None is useful for fixed length format')
+    s.add('--encoding', default='CP1251', help='read_csv() encoding parameter')
     s.add('--max_text_width', default='1000',
           help='maximum length of text fields (specified by "(text)" in header) for dtype in numpy.loadtxt')
     s.add('--chunksize_percent_float',
@@ -524,7 +525,8 @@ def read_csv(paths: Sequence[Union[str, Path]],
         'delimiter': 'delimiter',
         'converters': 'converters',
         'skiprows': 'skiprows',
-        'blocksize': 'blocksize'
+        'blocksize': 'blocksize',
+        'encoding': 'encoding'
         }
     read_csv_args = {arg: cfg_in[key] for arg, key in read_csv_args_to_cfg_in.items()}
     read_csv_args.update({
@@ -968,7 +970,8 @@ def h5_dispenser_and_names_gen(
         - log: dict, with info about current data, must have fields for compare:
             - 'fileName' - in format as in log table to able find duplicates
             - 'fileChangeTime', datetime - to able find outdate data
-        - b_skip_if_up_to_date: if True then not yields previously processed files. But if file was changed 1. removes stored data and 2. yields fun_gen(...) result
+        - b_skip_if_up_to_date: if True then not yields previously processed files. But if file was changed then
+            1. removes stored data and 2. yields fun_gen(...) result
         - tables_written: sequence of table names where to create index
     :param fun_gen: function with arguments (cfg_in, cfg_out, **kwargs), that
         - generates data labels, default are file's ``Path``s,
@@ -984,7 +987,7 @@ def h5_dispenser_and_names_gen(
         - cfg_out['b_remove_duplicates'] and
         - that what fun_gen() do
     """
-    # copy data to temporary HDF5 store and open it or work with source data if
+    # copy data to temporary HDF5 store and open it
     df_log_old, cfg_out['db'], cfg_out['b_skip_if_up_to_date'] = h5temp_open(**cfg_out)
     try:
         for i1, gen_out in enumerate(fun_gen(cfg_in, cfg_out, **kwargs), start=1):
