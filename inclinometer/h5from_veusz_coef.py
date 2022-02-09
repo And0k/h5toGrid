@@ -44,7 +44,7 @@ def digits_first(text):
 def main(new_arg=None, veusze=None):
     """
     For each veusz file according to in.pattern_path (see Veusz_propogate) and corresponded table name obtained using
-    regex out.re_tbl_from_vsz_name
+    regex out.re_match_tbl_from_vsz_name
     1. gets data from Veusz file:
     - Rcor
     - coef_list[] = SETTING(in.widget)['d', 'c', 'b', 'a']
@@ -83,7 +83,12 @@ def main(new_arg=None, veusze=None):
         '--out.path',
         help='path to db where write coef')
     p_groups['out'].add(
-        '--re_tbl_from_vsz_name',
+        '--re_sub_tbl_from_vsz_name', default='^[\d_]*',
+        help='regex to extract hdf5 table name from to Veusz file name by removing matched chars (not used if re_match_tbl_from_vsz_name is set)'
+        # ? why not simly specify table name?
+        )
+    p_groups['out'].add(
+        '--re_match_tbl_from_vsz_name',
         help='regex to extract hdf5 table name from to Veusz file name (last used "\D*\d*")'
         # ? why not simly specify table name?
         )
@@ -136,7 +141,7 @@ def main(new_arg=None, veusze=None):
         )
     gen_veusz_and_logs = veuszPropagate.load_to_veusz(veuszPropagate.ge_names(cfg), cfg, veusze)
 
-    names_get = ['Inclination_mean_use1', 'logVext1_m__s']  # \, 'Inclination_mean_use2', 'logVext2_m__s'
+    names_get = ['tofit_inclins', 'tofit_Vext_m__s']  # ['Inclination_mean_use1', 'logVext1_m__s']  # \, 'Inclination_mean_use2', 'logVext2_m__s'
     names_get_fits = ['fit']  # , 'fit2'
     vsz_data = {n: [] for n in names_get}
     for n in names_get_fits:
@@ -152,10 +157,10 @@ def main(new_arg=None, veusze=None):
             continue
         i_file += 1
         print(i_file)
-        if cfg['out']['re_tbl_from_vsz_name']:
-            table = cfg['out']['re_tbl_from_vsz_name'].match(log['out_name']).group()
+        if cfg['out']['re_match_tbl_from_vsz_name']:
+            table = cfg['out']['re_match_tbl_from_vsz_name'].match(log['out_name']).group()
         else:
-            table = re.sub('^[\d_]*', '', log['out_name'])  # delete all first digits (date part)
+            table = cfg['out']['re_sub_tbl_from_vsz_name'].sub('', log['out_name'])  # delete all first digits (date part)
 
         for n in names_get:
             vsz_data[n].append(veusze.GetData(n)[0])
@@ -212,7 +217,7 @@ def main(new_arg=None, veusze=None):
                         A_old = h5[f'//{table}//coef//{coef_str}//A'][...]
                     # A_old now accounts for rotated electronic
 
-                    A = np.dot(Rcor, A_old)
+                    A = Rcor @ A_old
                     h5copy_coef(None, h5, table,
                                 dict_matrices={f'//coef//{coef_str}//A': A})
 

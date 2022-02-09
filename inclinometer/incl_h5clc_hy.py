@@ -39,7 +39,7 @@ sys.path.append(str(scripts_path.parent.resolve()))
 # from utils2init import ini2dict
 # from scripts.incl_calibr import calibrate, calibrate_plot, coef2str
 # from other_filters import despike, rep2mean
-import to_vaex_hdf5.cfg_dataclasses
+import to_vaex_hdf5.cfg_dataclasses as cfg_d
 from utils2init import Ex_nothing_done, call_with_valid_kwargs, set_field_if_no, init_logging, cfg_from_args, \
      my_argparser_common_part, this_prog_basename, dir_create_if_need, LoggingStyleAdapter
 from utils_time import intervals_from_period, pd_period_to_timedelta
@@ -56,7 +56,7 @@ VERSION = '0.1.1'
 hydra.output_subdir = 'cfg'
 
 @dataclass
-class ConfigIn_InclProc(to_vaex_hdf5.cfg_dataclasses.ConfigInHdf5_Simple):
+class ConfigIn_InclProc(cfg_d.ConfigInHdf5_Simple):
     """Parameters of input files
     Constructor arguments:
     :param db_path: path to pytables hdf5 store to load data. May use patterns in Unix shell style (usually *.h5)
@@ -69,7 +69,7 @@ class ConfigIn_InclProc(to_vaex_hdf5.cfg_dataclasses.ConfigInHdf5_Simple):
     time_range: Optional[List[str]] = None
     # cruise directories to search in in.db_path to set path of out.db_path under it if out.db_path is not absolute:
     raw_dir_words_list: Optional[List[str]] = field(
-        default_factory= lambda: to_vaex_hdf5.cfg_dataclasses.ConfigInput().raw_dir_words)
+        default_factory= lambda: cfg_d.ConfigInput().raw_dir_words)
     db_paths: Optional[List[str]] = None
     # fields that are dicts of existed fields - they specifies different values for each probe:
     dates_min: Dict[str, Any] = field(default_factory=dict)  # Any is for List[str] but hydra not supported
@@ -79,7 +79,7 @@ class ConfigIn_InclProc(to_vaex_hdf5.cfg_dataclasses.ConfigInHdf5_Simple):
     bad_p_at_bursts_starts_periods: Optional[Dict[str, Any]] = None
 
 @dataclass
-class ConfigOut_InclProc(to_vaex_hdf5.cfg_dataclasses.ConfigOutSimple):
+class ConfigOut_InclProc(cfg_d.ConfigOutSimple):
     """
     "out": parameters of output files
 
@@ -101,6 +101,7 @@ class ConfigOut_InclProc(to_vaex_hdf5.cfg_dataclasses.ConfigOutSimple):
     text_path: Any = None
     text_date_format: str = '%Y-%m-%d %H:%M:%S.%f'
     text_columns: List[str] = field(default_factory=list)
+    b_split_by_time_ranges: bool = False  # split averaged data by cfg['in']['time_ranges'] only if this set
     b_all_to_one_col: bool = False
     b_del_temp_db: bool = False
     b_overwrite: bool = True  # default is not to add new data to previous
@@ -145,7 +146,7 @@ class ConfigProcess_InclProc:
 
 
 @dataclass
-class ConfigProgram_InclProc(to_vaex_hdf5.cfg_dataclasses.ConfigProgram):
+class ConfigProgram_InclProc(cfg_d.ConfigProgram):
     """
     return_ may have values: "<cfg_before_cycle>" to return config before loading data, or other any nonempty
     threads - good for numeric code that releases the GIL (like NumPy, Pandas, Scikit-Learn, Numba, …)
@@ -161,7 +162,7 @@ class ConfigProgram_InclProc(to_vaex_hdf5.cfg_dataclasses.ConfigProgram):
 
 cs_store_name = Path(__file__).stem
 
-cs, ConfigType = to_vaex_hdf5.cfg_dataclasses.hydra_cfg_store(f'base_{cs_store_name}', {
+cs, ConfigType = cfg_d.hydra_cfg_store(f'base_{cs_store_name}', {
     'input': ['in__incl_proc'],  # Load the config "in_hdf5" from the config group "input"
     'out': ['out__incl_proc'],  # Set as MISSING to require the user to specify a value on the command line.
     'filter': ['filter__incl_proc'],
@@ -1298,7 +1299,7 @@ def gen_subconfigs(
                 return d, coefs_copy, tbl, probe_number_str
 
             with pd.HDFStore(cfg_in_copy['db_path'], mode='r') as store:
-                if '.proc_noAvg' in cfg['in']['db_path'].suffixes[-2:-1]:
+                if '.proc_noAvg' in cfg['in']['db_path'].suffixes[-2:-1] and not cfg['out']['b_split_by_time_ranges']:
                     # assume not need global filtering/get intervals for such input database
                     d = h5_load_range_by_coord(**cfg_in_copy, range_coordinates=None)
                     yield yielding(d)
@@ -1335,8 +1336,8 @@ def main(config: ConfigType) -> None:
     """
     # input:
     global cfg
-    cfg = to_vaex_hdf5.cfg_dataclasses.main_init(config, cs_store_name, __file__=None)
-    cfg = to_vaex_hdf5.cfg_dataclasses.main_init_input_file(cfg, cs_store_name)
+    cfg = cfg_d.main_init(config, cs_store_name, __file__=None)
+    cfg = cfg_d.main_init_input_file(cfg, cs_store_name)
 
     lf.info('Started {:s}(aggregete_period={:s})', this_prog_basename(__file__),
             cfg['out']['aggregate_period'] or 'None'
@@ -1437,7 +1438,7 @@ def main(config: ConfigType) -> None:
         progress = None
         client = None
 
-
+    tbl_prev = probe_number_str_prev = None
     for d, coefs, tbl, probe_number_str in gen_subconfigs(
             cfg,
             fun_gen=h5_names_gen,
@@ -1463,23 +1464,29 @@ def main(config: ConfigType) -> None:
         if aggregate_period_timedelta:
             # Binning
             if '.proc_noAvg' not in cfg['in']['db_path'].suffixes[-2:-1]:
-                lf.warning(str_warning := 'Raw data averaging before processing! '\
-                           'Consider calculate physical parameters to *.proc_noAvg.h5 before averaging!')
+                lf.warning(str_warning := 'Raw data averaging before processing! Consider calculate physical parameters'
+                           f" to {cfg['in']['db_path'].stem.removesuffix('.raw')}.proc_noAvg.h5 before averaging!")
                 raise Ex_nothing_done(str_warning)  # comment to proceed
 
-            counts = (~d.iloc[:, 0].isna()).resample(aggregate_period_timedelta).count()
-            d = d.resample(aggregate_period_timedelta,
-                           # closed='right' if 'Pres' in cfg['in']['db_path'].stem else 'left'
-                           # 'right' for burst mode because the last value of interval used in wavegauges is round - not true?
-                           ).mean()
-            # detect number of existed values in each resumpled period (using 1st column)
-            d = d.where(counts > counts[counts > 0].mean()/10
-                        ).dropna(how='all')  # axis=0 is default
-            try:  # persist speedups calc_velocity greatly but may require too many memory
-                lf.info('Persisting data aggregated by {:s}', cfg['out']['aggregate_period'])
-                d.persist()  # excludes missed values?
-            except MemoryError:
-                lf.info('Persisting failed (not enough memory). Continue...')
+            if aggregate_period_timedelta > np.diff(d.divisions[0::(len(d.divisions)-1)]):  # ~ period > data time span
+                # convert to one row dask dataframe with index = mean index
+                df = d.mean().compute().to_frame().transpose()
+                df.index = [d.index.compute().mean()]
+                d = dd.from_pandas(df, npartitions=1)
+            else:
+                counts = (~d.iloc[:, 0].isna()).resample(aggregate_period_timedelta).count()
+                d = d.resample(aggregate_period_timedelta,
+                               # closed='right' if 'Pres' in cfg['in']['db_path'].stem else 'left'
+                               # 'right' for burst mode because the last value of interval used in wavegauges is round - not true?
+                               ).mean()
+                # detect number of existed values in each resampled period (using 1st column)
+                d = d.where(counts > counts[counts > 0].mean()/10
+                            ).dropna(how='all')  # axis=0 is default
+                try:  # persist speedups calc_velocity greatly but may require too many memory
+                    lf.info('Persisting data aggregated by {:s}', cfg['out']['aggregate_period'])
+                    d.persist()  # excludes missed values?
+                except MemoryError:
+                    lf.info('Persisting failed (not enough memory). Continue...')
 
             # Recalculating aggregated polar coordinates and angles that are invalid after the direct aggregating
             d = dekart2polar_df_v_en(d)
@@ -1488,11 +1495,12 @@ def main(config: ConfigType) -> None:
         else:
             # Velocity calculation
             # --------------------
-            # with repartition for split ascii (also helps to prevent MemoryError)
+            # with repartition for ascii splitting (also helps to prevent MemoryError)
             d = incl_calc_velocity(d.repartition(freq=split_for_memory), cfg_proc=cfg['process'],
                                    filt_max=cfg['filter']['max'], **coefs,
                                    cols_out_incl=cols_out_incl)
-            d = calc_pressure(d.loc[:, [c for c in cols_out_h5 if c in d.columns]] if cfg['out']['text_path'] else d,   # no redundant cols if not keeped to save to txt
+            d = calc_pressure(d.loc[:, [c for c in cols_out_h5 if c in d.columns]] if cfg['out']['text_path'] else d,
+                              # no redundant cols if not kept to save to txt
                               **{(pb := 'bad_p_at_bursts_starts_peroiod'): cfg['filter'][pb]},
                               **coefs
                               )
@@ -1512,9 +1520,11 @@ def main(config: ConfigType) -> None:
                                  )
                 )
 
+        probe_continues = (tbl == tbl_prev and probe_number_str == probe_number_str_prev)
+        tbl_prev = tbl; probe_number_str_prev = probe_number_str
         dd_to_csv(d, cfg['out']['text_path'], cfg['out']['text_date_format'], cfg['out']['text_columns'],
                   cfg['out']['aggregate_period'], suffix=f'@{tbl}', b_single_file=not cfg['out']['split_period'],
-                  progress=progress, client=client)
+                  progress=progress, client=client)  #, mode='a' if probe_continues else 'r'
 
         # Combine data columns if we aggregate (in such case all data have index of equal period)
         if aggregate_period_timedelta:
@@ -1538,18 +1548,32 @@ def main(config: ConfigType) -> None:
     #######################
 
     if aggregate_period_timedelta:
-        dfs_all = pd.concat(dfs_all_list, sort=True, axis=(0 if cfg['out']['b_all_to_one_col'] else 1))
+        # Concatenate several columns by one of method:
+        # - consequently, like 1-probe data or
+        # - parallel (add columns): dfs_all without any changes
+        dfs_all = pd.concat(
+            dfs_all_list, sort=True, axis=(0 if cfg['out']['b_all_to_one_col'] or probe_continues else 1)
+            )
         dfs_all_log = pd.DataFrame(
             [df.index[[0, -1]].to_list() for df in dfs_all_list], columns=['Date0', 'DateEnd']
             ).set_index('Date0')\
             .assign(table_name=tbls)\
             .sort_index()
-        cfg['out']['tables_written'] |= (
-            h5_append_to(dfs_all, cfg['out']['table'], cfg['out'], log=dfs_all_log,
-                         msg='Saving accumulated data'
-                         )
-            )
-
+        for after_remove_dup_index in [False, True]:
+            try:
+                cfg['out']['tables_written'] |= (
+                    h5_append_to(dfs_all, cfg['out']['table'], cfg['out'], log=dfs_all_log,
+                                 msg='Saving accumulated data'
+                                 )
+                    )
+                break
+            except ValueError as e:
+                # ValueError: cannot reindex from a duplicate axis
+                if dfs_all.index.is_unique and dfs_all_log.index.is_unique:
+                    lf.exception('Can not understand problem. Skipping saving to hdf5!')
+                    break
+                lf.error('Removing duplicates in index')
+                dfs_all = dfs_all.loc[~dfs_all.index.duplicated(keep='last')]
     h5_close(cfg['out'])  # close temporary output store
     if tables_written_not_joined:
         try:
@@ -1565,18 +1589,14 @@ def main(config: ConfigType) -> None:
         except Ex_nothing_done as e:
             lf.warning('Tables {} of combined data not moved', cfg['out']['tables_written'])
 
-        # Concatenate several columns to single ascii, one of:
-        # - consequently, like 1-probe data or
-        # - parallel (add columns): dfs_all without any changes
+        # Write concatenated dataframe to ascii (? with resample if b_all_to_one_col)
         if dfs_all is not None and len(dfs_all_list) > 1:
             call_with_valid_kwargs(
                 dd_to_csv,
                 (lambda x:
                     x.resample(rule=aggregate_period_timedelta)
                     .first() if cfg['out']['b_all_to_one_col'] else x
-                 )(  # .fillna(0): absent values filling with 0  ???
-                   dd.from_pandas(dfs_all, chunksize=500000)
-                   ),
+                 )(dd.from_pandas(dfs_all, chunksize=500000)),  # .fillna(0): absent values filling with 0  ???
                 **cfg['out'],
                 suffix=f"@{','.join(cfg['in']['tables'])}",
                 progress=progress, client=client

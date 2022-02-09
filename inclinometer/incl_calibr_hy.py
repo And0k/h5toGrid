@@ -101,7 +101,7 @@ class ConfigOut:
 
 
 @dataclass
-class ConfigInHdf5InclCalibr(ConfigInHdf5_Simple):
+class ConfigInHdf5_InclCalibr(ConfigInHdf5_Simple):
     """
     Same as ConfigInHdf5_Simple + specific (inclinometr calibration) data properties:
     channels: List: (, channel can be "magnetometer" or "M" for magnetometer and any else for accelerometer',
@@ -112,9 +112,10 @@ class ConfigInHdf5InclCalibr(ConfigInHdf5_Simple):
     time_range_nord_dict: time range to zeroing north for each inclinometer number (consisted of digits in table name)')
 
     """
+    path_cruise: Optional[str] = None  # mainly for compatibility with incl_load but allows db_path be relative to this
     db_path: Optional[str] = MISSING
     probes: List[str] = field(default_factory=list)
-    probes_prefix: str = MISSING
+    prefix: str = MISSING
     raw_pattern: str = "*{prefix:}{number:0>2}*.[tT][xX][tT]"
 
     channels: List[str] = field(default_factory=lambda: ['M', 'A'])
@@ -392,19 +393,25 @@ def fit_quadric_form(s):
     v_2 = np.dot(np.dot(-np.linalg.inv(S_22), S_21), v_1)
 
     # quadric-form parameters
-    M = v_1[np.array([[0, 3, 4],
-                      [3, 1, 5],
-                      [4, 5, 2]], np.int8)]
+    M = v_1[np.array([[0, 5, 4],
+                      [5, 1, 3],
+                      [4, 3, 2]], np.int8)]
     n = v_2[:-1, np.newaxis]
     d = v_2[3]
     
     
-    # Robert R • 2 years ago - todo: check:
-    # I believe in your code example your M is incorrect. Based on your notation in your Quadric section you have [[a f g], [f b h], [g h c]] as your M matrix. A simple check here is that in the D matrix, your 5th element is your 2XY term. This term should go in the h positions as per [[a h g], [h b f], [g f c]], instead you have the XY term assigned in the f positions.
-
-The overall result is that your A_1 matrix will have "mirrored" column 1 and row 1.
-
-Interestingly enough, this flip doesn't seem to impact the calibration significantly.
+    # modified according to Robert R - todo: check:
+    # • 2 years ago
+    # I believe in your code example your M is incorrect. Based on your notation in your Quadric section you have
+    # [[a f g],
+    #  [f b h],
+    #  [g h c]] as your M matrix. A simple check here is that in the D matrix, your 5th element
+    # is your 2XY term. This term should go in the h positions as per
+    # [[a h g],
+    #  [h b f],
+    #  [g f c]], instead you have the XY term assigned in the f positions.
+    # The overall result is that your A_1 matrix will have "mirrored" column 1 and row 1.
+    # Interestingly enough, this flip doesn't seem to impact the calibration significantly.
     
     return M, n, d
 
@@ -431,7 +438,7 @@ def calibrate(raw3d: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     Q_inv = linalg.inv(Q)
     # combined bias:           
     b = -np.dot(Q_inv, n) + meanHxyz
-    # scale factors, soft iron, and misalignments:
+    # scale factors, soft iron, and misalignment:
     # note: some implementations of sqrtm return complex type, taking real
     a2d = np.real(F / np.sqrt(np.dot(n.T, np.dot(Q_inv, n)) - d) * linalg.sqrtm(Q))
 
@@ -637,7 +644,7 @@ def dict_matrices_for_h5(coefs=None, tbl=None, channels=None):
 
 cfg = {}
 
-@hydra.main(config_name=cs_store_name)  #, config_path="cfg" adds config store cs_store_name data/structure to :param config
+@hydra.main(config_name=cs_store_name, config_path="cfg")  # adds config store cs_store_name data/structure to :param config
 def main(config: ConfigType) -> None:
     """
     ----------------------------
@@ -659,12 +666,12 @@ def main(config: ConfigType) -> None:
     global cfg
     cfg = main_init(config, cs_store_name, __file__=None)
     cfg = main_init_input_file(cfg, cs_store_name)
-    # input data tables may be defined by 'probes_prefix' and 'probes' fields of cfg['in']
+    # input data tables may be defined by 'prefix' and 'probes' fields of cfg['in']
     if cfg['in']['probes'] or not len(cfg['in']['tables']):
         if cfg['in']['probes']:
-           cfg['in']['tables'] = [f"{cfg['in']['probes_prefix']}{probe:0>2}" for probe in cfg['in']['probes']]
-        elif cfg['in']['probes_prefix']:
-            cfg['in']['tables'] = [f"{cfg['in']['probes_prefix']}.*"]
+           cfg['in']['tables'] = [f"{cfg['in']['prefix']}{probe:0>2}" for probe in cfg['in']['probes']]
+        elif cfg['in']['prefix']:
+            cfg['in']['tables'] = [f"{cfg['in']['prefix']}.*"]
         # else:  # default config
         #     cfg['in']['tables'] = ['.*']
 
@@ -678,7 +685,8 @@ def main(config: ConfigType) -> None:
         )
     fig = None
     fig_filt = None
-
+    if not cfg['in']['db_path'].is_absolute():
+        cfg['out']['db_path'] = cfg['in']['path_cruise'] / str(cfg['out']['db_path'])
     fig_save_dir_path = cfg['in']['db_path'].parent
     with pd.HDFStore(cfg['in']['db_path'], mode='r') as store:
         if len(cfg['in']['tables']) == 1:
@@ -737,7 +745,8 @@ def main(config: ConfigType) -> None:
                     store, tbl, time_range_nord, calc_vel_flat_coef(coefs[tbl]), cfg['in'])
             else:
                 lf.info('not zeroing North')
-    # Write coefs to each of output tables named same as input
+
+    # Write coefs to each of output tables
     for db_path in cfg['out']['db_paths']:
         db_path = Path(db_path)
         lf.info('Writing to {}', db_path)

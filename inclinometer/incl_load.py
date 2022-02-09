@@ -14,6 +14,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timedelta
 from functools import partial
+import itertools
 from pathlib import Path
 import glob
 from typing import Optional
@@ -24,7 +25,7 @@ from pandas.tseries.frequencies import to_offset
 
 # import my scripts
 from to_pandas_hdf5.csv2h5 import main as csv2h5
-from to_pandas_hdf5.csv_specific_proc import mod_incl_name, rep_in_file, correct_txt #correct_kondrashov_txt, correct_baranov_txt
+from to_pandas_hdf5.csv_specific_proc import mod_incl_name, rep_in_file, correct_txt
 from to_pandas_hdf5.h5_dask_pandas import h5q_interval2coord
 from inclinometer.h5inclinometer_coef import h5copy_coef
 from inclinometer.incl_calibr import dict_matrices_for_h5
@@ -33,7 +34,7 @@ import inclinometer.incl_h5clc as incl_h5clc
 import inclinometer.incl_h5spectrum as incl_h5spectrum
 import veuszPropagate
 from utils_time import intervals_from_period # pd_period_to_timedelta
-from utils2init import path_on_drive_d, init_logging, open_csv_or_archive_of_them, st, cfg_from_args, my_argparser_common_part
+from utils2init import init_logging, open_csv_or_archive_of_them, st, cfg_from_args, my_argparser_common_part
 from magneticDec import mag_dec
 
 version = '0.0.1'
@@ -59,112 +60,109 @@ saves loading log in inclinometer\scripts\log\csv2h5_inclin_Kondrashov.log
     s = p.add_argument_group('in',
                              'All about input files')
     s.add('--path_cruise', default='.',  # nargs=?,
-             help='Directory where inclinometer data will be stored, subdirs:'
-                  '"_raw": required, with raw file(s)')
+          help='Directory where inclinometer data will be stored, must have subdir '
+          '"_raw" with raw file(s) may be in archive/subdirectory (raw_subdir)')
     s.add('--raw_subdir', default='',
-          help='Optional zip/rar arhive name (data will be unpacked) or subdir in "path_cruise/_raw". For multiple '
-               'files symbols * and ? not supported but `prefix` and `number` format strings are avalable as in `raw_pattern`')
-    s.add('--raw_pattern', default="*{prefix:}{number:0>3}*.[tT][xX][tT]",
-             help='Pattern to find raw files: Python "format" command pattern to format prefix and probe number.'
-                  'where "prefix" is a --probes_prefix arg. that is in UPPER case and INCL replaced with INKL.')
+          help='Optional zip/rar archive name (data will be unpacked) or subdir in "path_cruise/_raw". For multiple '
+          'files symbols * and ? not supported but `prefix` and `number` format strings are avalable as in `raw_pattern`')
+    s.add('--raw_pattern', default='*{prefix:}{number:0>3}*.[tT][xX][tT]',
+          help='Pattern to find raw files: Python "format" command pattern to format prefix and probe number.'
+          'where "prefix" is a --prefix arg. that is in UPPER case and INCL replaced with INKL. To find files in archive'
+               'subdirs can be prepended with "/" but files will be unpacked flatten in dir with archive name')
     s.add('--probes_int_list',
-             help='Note: Not affects steps 2, 3, set empty list to load all')
-    s.add('--probes_prefix', default='incl',
-             help='''Table name prefix in DB (and in raw files with modification described in --raw_pattern help).
-                  I have used "incl" for inclinometers, "w" for wavegauges. Note (at step 1): only if probes_prefix
-                  starts with "incl" or is "voln" in  then raw data must be in Kondrashov format else Baranov's format.
+          help='Note: Not affects steps 2, 3, set empty list to load all')
+    s.add('--prefix', default='incl',
+          help='''Table name prefix in DB (and in raw files with modification described in --raw_pattern help).
+                  I have used "incl" for inclinometers, "w" for wavegauges. Note (at step 1): only if prefix
+                  starts with "incl" or "voln" is in, then raw data must be in Kondrashov format else Baranov's format.
                   For "voln" we replace "voln_v" with "w" when saving corrected raw files and use it to name tables so 
                   only "w" in outputs and we replace "voln" with "w" to search tables''')
-
     s.add('--db_coefs', default=r'd:\WorkData\~configuration~\inclinometr\190710incl.h5',
-             help='coefs will be copied from this hdf5 store to output hdf5 store')
+          help='coefs will be copied from this hdf5 store to output hdf5 store')
     s.add('--time_range_zeroing_list', help='See incl_h5clc')
     s.add('--time_range_zeroing_dict', help='See incl_h5clc. Example: incl14: [2020-07-10T21:31:00, 2020-07-10T21:39:00]')
     s.add('--dt_from_utc_seconds_dict',
-             help='add this correction to loading datetime data. Can use other suffixes instead of "seconds"')
+          help='add this correction to loading datetime data. Can use other suffixes instead of "seconds"')
     s.add('--dt_from_utc_hours_dict',
-             help='add this correction to loading datetime data. Can use other suffixes instead of "hours"')
+          help='add this correction to loading datetime data. Can use other suffixes instead of "hours"')
     s.add('--dt_from_utc_days_dict',
-             help='add this correction to loading datetime data. Can use other suffixes instead of "days"')
+          help='add this correction to loading datetime data. Can use other suffixes instead of "days"')
     s.add('--time_start_utc_dict', help='Start time of probes started without time setting: when raw date start is 2000-01-01T00:00')
     s.add('--azimuth_add_dict', help='degrees, adds this value to velocity direction (will sum with _azimuth_shift_deg_ coef)')
     s.add('--db_path', help='input hdf5 file path, to load in step 2 and after the data from other database than created on step 1.')
 
     s = p.add_argument_group('filter',
                              'Filter all data based on min/max of parameters')
-    s.add('--min_date_dict', default='0: 2020-06-28T18:00',
-             help='minimum time for each probe, use probe number 0 to set default value. For step 2 only number 0 is used')
+    s.add('--min_date_dict', default='0: 2020-01-01T00:00',
+          help='minimum time for each probe, use probe number 0 to set default value. For step 2 only number 0 is used')
     s.add('--max_date_dict', default='0: now',
-             help='maximum time for each probe, use probe number 0 to set default value')
+          help='maximum time for each probe, use probe number 0 to set default value')
 
     s = p.add_argument_group('out',
                              'All about output files')
     s.add('--db_name', help='output hdf5 file name, if not set then dir name will be used. As next steps use DB saved on previous steps do not change between steps or you will need rename source DB accordingly')
-    s.add('--aggregate_period_s_int_list', default='',
-        help='bin average data in this intervals [s]. Default [None, 300, 600, 3600] if "w" in [in][probes_prefix]'
-             ' else last in list is replaced to 7200. None means do not average. Output with result data for'
-             ' None will be placed in hdf5 store with suffix "proc_noAvg" in separate sections for each probe. For other'
-             ' values in list result will be placed in hdf5 store with suffix "proc" in tables named "bin{average_value}"'
-             ' in columns named by parameter suffixed by probe number. Also result will be saved to text files with'
-             ' names having date and suffixes for each probe and average value')
+    s.add(
+        '--aggregate_period_s_int_list', default='',
+        help='bin average data in this intervals [s]. Default [None, 300, 600, 3600] if "w" in [in][prefix]'
+        ' else last in list is replaced to 7200. None means do not average. Output with result data for'
+        ' None will be placed in hdf5 store with suffix "proc_noAvg" in separate sections for each probe. For other'
+        ' values in list result will be placed in hdf5 store with suffix "proc" in tables named "bin{average_value}"'
+        ' in columns named by parameter suffixed by probe number. Also result will be saved to text files with'
+        ' names having date and suffixes for each probe and average value')
     s.add('--aggregate_period_s_not_to_text_int_list', default='None', help='do not save text files for this aggregate periods')
     s.add('--split_period', default='1D',
-             help='pandas offset string (5D, H, ...) to proc and output in separate blocks. If saves to csv then writes in parts of this length, but if no bin averaging (aggregate_period) only')
+          help='pandas offset string (5D, H, ...) to proc and output in separate blocks. If saves to csv then writes in parts of this length, but if no bin averaging (aggregate_period) only')
 
     s = p.add_argument_group('program',
                              'Program behaviour')
     s.add('--step_start_int', default='1', choices=[str(i) for i in  [1, 2, 3, 4, 40, 50]],
-               help='step to start')
+          help='step to start')
     s.add('--step_end_int', default='2', choices=['1', '2', '3', '4', '40'],
-               help='step to end (inclusive, or if less than start then will run one start step only)')
+          help='step to end (inclusive, or if less than start then will run one start step only)')
     s.add('--dask_scheduler',
-               help='can be "synchronous" (for help debugging) or "distributed"')
+          help='can be "synchronous" (for help debugging) or "distributed"')
     s.add('--load_timeout_s_float', default='180',
-               help='For step 4: export asynchronously with this timeout, s (tried 600s?)')
-
+          help='For step 4: export asynchronously with this timeout, s (tried 600s?)')
     return p
+
+
+def constant_factory(val):
+    def default_val():
+        return val
+    return default_val
+
 
 #  @hydra.main(config_path="ini", config_name=Path(__file__).stem)
 def main(new_arg=None, **kwargs):
     """
-
+    
     :param new_arg: list of strings, command line arguments
-    :kwargs: dicts of dictcts (for each ini section): specified values overwrites ini values
+    :kwargs: dicts of dicts (for each ini section): specified values overwrites ini values
     """
 
     # global l
     cfg = cfg_from_args(my_argparser(), new_arg, **kwargs)
     if not cfg['program']:
         return  # usually error of unrecognized arguments displayed
+    l = init_logging(logging, None, None, 'INFO')
+    # l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+
     cfg['in']['db_coefs'] = Path(cfg['in']['db_coefs'])
     for path_field in ['db_coefs', 'path_cruise']:
         if not cfg['in'][path_field].is_absolute():
             cfg['in'][path_field] = (cfg['in']['cfgFile'].parent / cfg['in'][path_field]).resolve().absolute()  # cfg['in']['cfgFile'].parent /
 
-    def constant_factory(val):
-        def default_val():
-            return val
-        return default_val
 
     for lim_str, lim_default in (('min_date', np.datetime64('2000-01-01', 'ns')),
                                  ('max_date', np.datetime64('now', 'ns'))):
-        # convert keys to int because they must be comparable to probes_int_list (for command line arguments keys are allways strings, in yaml you can set string or int)
+        # convert cfg['filter'][{lim}] keys to int to be comparable with probes_int_list (for command line arguments keys are allways strings, in yaml you can set string or int)
         _ = {int(k): v for k, v in cfg['filter'][lim_str].items()}
         cfg['filter'][lim_str] = defaultdict(constant_factory(_.get(0, lim_default)), _)
-
-
-    l = init_logging(logging, None, None, 'INFO')
-    #l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
-
 
     if True:  # False. Experimental speedup but takes memory
         from dask.cache import Cache
         cache = Cache(2e9)  # Leverage two gigabytes of memory
         cache.register()    # Turn cache on globally
-
-    #if __debug__:
-        # # because there was errors on debug when default scheduler used
-        # cfg['program']['dask_scheduler'] = 'synchronous'
 
     if cfg['program']['dask_scheduler']:
         if cfg['program']['dask_scheduler'] == 'distributed':
@@ -172,7 +170,7 @@ def main(new_arg=None, **kwargs):
             # cluster = dask.distributed.LocalCluster(n_workers=2, threads_per_worker=1, memory_limit="5.5Gb")
             client = Client(processes=False)
             # navigate to http://localhost:8787/status to see the diagnostic dashboard if you have Bokeh installed
-            # processes=False: avoide inter-worker communication for computations releases the GIL (numpy, da.array)  # without is error
+            # processes=False: avoid inter-worker communication for computations releases the GIL (numpy, da.array)  # without is error
         else:
             if cfg['program']['dask_scheduler'] == 'synchronous':
                 l.warning('using "synchronous" scheduler for debugging')
@@ -184,26 +182,16 @@ def main(new_arg=None, **kwargs):
     st.end = cfg['program']['step_end']
     st.go = True
 
-    if not cfg['out']['db_name']:  # set name by 'path_cruise' name or parent if it has digits at start. priority for name  is  "*inclinometer*"
+    if not cfg['out']['db_name']:
+        # set db_name by 'path_cruise' name's digits or its parent's if it starts with digits
         for p in (lambda p: [p, p.parent])(cfg['in']['path_cruise']):
-            m = re.match('(^[\d_]*).*', p.name)
-            if m:
+            if m := re.match(r'(^[\d_]*).*', p.name):
+                cfg['out']['db_name'] = f"{m.group(1).strip('_')}.raw.h5"
                 break
-        cfg['out']['db_name'] = f"{m.group(1).strip('_')}.raw.h5"
-
+    #
     dir_incl = next((d for d in cfg['in']['path_cruise'].glob('*inclinometer*') if d.is_dir()), cfg['in']['path_cruise'])
     db_path = dir_incl / '_raw' / cfg['out']['db_name']
     # ---------------------------------------------------------------------------------------------
-    # def fs(probe, name):
-    #     if 'w' in name.lower():  # Baranov's wavegauge electronic
-    #         return 10  # 5
-    #     return 5
-        # if probe < 20 or probe in [23, 29, 30, 32, 33]:  # 30 [4, 11, 5, 12] + [1, 7, 13, 30]
-        #     return 5
-        # if probe in [21, 25, 26] + list(range(28, 35)):
-        #     return 8.2
-        # return 4.8
-
 
     def datetime64_str(time_str: Optional[str] = None) -> np.ndarray:
         """
@@ -213,48 +201,63 @@ def main(new_arg=None, **kwargs):
         """
         return np.datetime_as_string(np.datetime64(time_str, 's'))
 
-
     probes = cfg['in']['probes'] or range(1, 41)  # sets default range, specify your values before line ---
-    raw_prefix, probe_is_incl = re.subn('INCL_?', 'INKL_', cfg['in']['probes_prefix'].upper())
+    raw_prefix, probe_is_incl = re.subn('INCL_?', 'INKL_', cfg['in']['prefix'].upper())
+    if not probe_is_incl:
+        if probe_is_incl := cfg['in']['prefix'].upper().startswith(raw_prefix_check := 'I'):
+            raw_prefix = raw_prefix_check
 
-    # some parameters that depends of probe type (indicated by probes_prefix)
+    # some parameters that depend on probe type (indicated by prefix)
     p_type = defaultdict(
-        # baranov's format
         constant_factory(
-            {'correct_fun': partial(correct_txt,
-                mod_file_name= mod_incl_name,
-                sub_str_list=[b'^\r?(?P<use>20\d{2}(\t\d{1,2}){5}(\t\d{5}){8}).*', b'^.+']),
-             'fs': 10,
-             'format': 'Baranov',
-            }),
-        {(lambda x: x if x.startswith('incl') else 'incl')(cfg['in']['probes_prefix']):
-            {'correct_fun': partial(correct_txt,
-                mod_file_name= mod_incl_name,
-                sub_str_list=[
-                    b'^(?P<use>20\d{2}(,\d{1,2}){5}(,\-?\d{1,6}){6},\d{1,2}(\.\d{1,2})?,\-?\d{1,3}(\.\d{1,2})?).*',
-                                                                           # \.\d{2})(,\-?\d{1,3}\.\d{2}))
-                    b'^.+'
-                    ]),
-             'fs': 5,
-             'format': 'Kondrashov',
-            },
-         'voln':
-            {'correct_fun': partial(correct_txt,
-                mod_file_name=mod_incl_name,
-                sub_str_list=[b'^(?P<use>20\d{2}(,\d{1,2}){5}(,\-?\d{1,8})(,\-?\d{1,2}\.\d{2}){2}).*', b'^.+']),
-
-             'fs': 5,
-             #'tbl_prefix': 'w',
-             'format': 'Kondrashov',
-            }
-        }
+            {
+                'correct_fun': partial(
+                    correct_txt,
+                    mod_file_name=mod_incl_name,
+                    sub_str_list=[                                                 # \.\d{2})(,\-?\d{1,3}\.\d{2}))
+                        b'^(?P<use>20\d{2}(,\d{1,2}){5}(,\-?\d{1,6}){6},\d{1,2}(\.\d{1,2})?,\-?\d{1,3}(\.\d{1,2})?).*',
+                        b'^.+'
+                        ]),
+                'fs': 5,
+                'format': 'Kondrashov',
+             }),
+            {
+                'voln': {  # w?
+                    'correct_fun': partial(
+                        correct_txt,
+                        mod_file_name=mod_incl_name,
+                        sub_str_list=[b'^(?P<use>20\d{2}(,\d{1,2}){5}(,\-?\d{1,8})(,\-?\d{1,2}\.\d{2}){2}).*', b'^.+']),
+                    'fs': 5,
+                    # 'tbl_prefix': 'w',
+                    'format': 'Kondrashov',
+                    },
+                'INKLBA': {  # baranov's format
+                    'correct_fun': partial(
+                        correct_txt,
+                        mod_file_name=mod_incl_name,
+                        sub_str_list=[b'^\r?(?P<use>20\d{2}(\t\d{1,2}){5}(\t\d{5}){8}).*', b'^.+']),
+                    'fs': 10,
+                    'format': 'Baranov',
+                    }
+             }
         )
+
+    # def fs(probe, name):
+    #     if 'w' in name.lower():  # Baranov's wavegauge electronic
+    #         return 10  # 5
+    #     return 5
+    # if probe < 20 or probe in [23, 29, 30, 32, 33]:  # 30 [4, 11, 5, 12] + [1, 7, 13, 30]
+    #     return 5
+    # if probe in [21, 25, 26] + list(range(28, 35)):
+    #     return 8.2
+    # return 4.8
+
 
     if st(1, 'Save inclinometer or wavegauge data from ASCII to HDF5'):
         # Note: Can not find additional not corrected files for same probe if already have any corrected in search path (move them out if need)
 
-        i_proc_probe = 0  # counter of processed probes
-        i_proc_file = 0  # counter of processed files
+        probes_found = []  # collect probes for which files found
+        i_raw_found = 0  # counter of processed files
         # patten to identify only _probe_'s raw data files that need to correct '*INKL*{:0>2}*.[tT][xX][tT]':
 
         raw_parent = dir_incl / '_raw'  # raw_parent /=
@@ -267,7 +270,8 @@ def main(new_arg=None, **kwargs):
             )
 
         def dt_from_utc_2000(probe):
-            """ Correct time of probes started without time setting. Raw date must start from  2000-01-01T00:00"""
+            """ Correct time of probes started without time setting. Its start date in raw file must be 2000-01-01T00:00
+            """
             return (datetime(year=2000, month=1, day=1) - cfg['in']['time_start_utc'][probe]
                     ) if cfg['in']['time_start_utc'].get(probe) else timedelta(0)
 
@@ -279,22 +283,31 @@ def main(new_arg=None, **kwargs):
             )
         # Make cfg['in']['dt_from_utc'][0] be the default value
         cfg['in']['dt_from_utc'] = defaultdict(constant_factory(cfg['in']['dt_from_utc'].pop(0, timedelta(0))),
-                                               cfg['in']['dt_from_utc'])
+                                                                                     cfg['in']['dt_from_utc'])
+
         for probe in probes:
             raw_found = []
             raw_subdir_for_probe = cfg['in']['raw_subdir'].format(prefix=raw_prefix, number=probe)
             raw_pattern_file = str(Path(glob.escape(raw_subdir_for_probe)) /
                                    cfg['in']['raw_pattern'].format(prefix=raw_prefix, number=probe))
-            correct_fun = p_type[cfg['in']['probes_prefix']]['correct_fun']
-            is_raw_subdir = (raw_subdir := raw_parent / raw_subdir_for_probe).is_dir()
+            correct_fun = p_type[cfg['in']['prefix']]['correct_fun']
+            tbl = f"{cfg['in']['prefix']}{probe:0>2}"
+            # add str will be added only if corrected output name matches input:
+            correct_fun.keywords['mod_file_name'] = partial(
+                correct_fun.keywords['mod_file_name'], add_str=(add_str := f'@{tbl}')
+                )
+            if not (raw_subdir := (raw_parent / raw_subdir_for_probe)).is_dir():
+                raw_subdir = ''
             # if not archive:
-            if (not re.match(r'.*\.(zip|rar)$', raw_subdir_for_probe, re.IGNORECASE)) and is_raw_subdir:  # why dir_incl was used before?
-                raw_found = list(raw_parent.glob(raw_pattern_file))
+            if (not re.match(r'.*\.(zip|rar)$', raw_subdir_for_probe, re.IGNORECASE)) and raw_subdir:  # why dir_incl was used before?
+                raw_found = list(file_in for file_in in raw_parent.glob(raw_pattern_file) if not file_in.stem.endswith(add_str))
             if not raw_found:
                 # Check if already have corrected files for probe generated by correct_txt(). If so then just use them
-                raw_found = list((raw_subdir if is_raw_subdir else dir_csv_cor).glob(f"{cfg['in']['probes_prefix']}{probe:0>2}.txt"))
+                raw_found = list((raw_subdir or dir_csv_cor).glob(
+                    str(correct_fun.keywords['mod_file_name'](raw_pattern_file)))  # f"{tbl}.txt"
+                    )
                 if not raw_found:
-                    raw_found = list((raw_parent / cfg['in']['raw_subdir']).glob(f"{cfg['in']['probes_prefix']}{probe:0>2}.txt"))
+                    raw_found = list((raw_parent / cfg['in']['raw_subdir']).glob(f"{tbl}.txt"))
                 if raw_found:
                     print('corrected csv file', [r.name for r in raw_found], 'found')
 
@@ -302,60 +315,78 @@ def main(new_arg=None, **kwargs):
                         return x
                 elif not raw_subdir_for_probe:
                     continue
-
-            for file_in in (raw_found or open_csv_or_archive_of_them(raw_parent, binary_mode=False, pattern=raw_pattern_file)):
-                file_in = correct_fun(file_in, dir_out=dir_csv_cor)
-                if not file_in:
-                    continue
-                tbl = file_in.stem  # f"{cfg['in']['probes_prefix']}{probe:0>2}"
-                # tbl = re.sub('^((?P<i>inkl)|w)_0', lambda m: 'incl' if m.group('i') else 'w',  # correct name
-                #              re.sub('^[\d_]*|\*', '', file_in.stem).lower()),  # remove date-prefix if in name
-                csv2h5(
-                    [str(Path(__file__).parent / 'cfg' / f"csv_{'inclin' if probe_is_incl else 'wavegauge'}_{p_type[cfg['in']['probes_prefix']]['format']}.ini"),
-                    '--path', str(file_in),
-                    '--blocksize_int', '50_000_000',  # 50Mbt
-                    '--table', tbl,
-                    '--db_path', str(db_path),
-                    # '--log', str(scripts_path / 'log/csv2h5_inclin_Kondrashov.log'),
-                    # '--on_bad_lines', 'warn',
-                    '--b_interact', '0',
-                    '--fs_float', str(p_type[cfg['in']['probes_prefix']]['fs']),  #f'{fs(probe, file_in.stem)}',
-                    '--dt_from_utc_seconds', str(cfg['in']['dt_from_utc'][probe].total_seconds()),
-                    '--b_del_temp_db', '1',
-                    #'--b_remove_duplicates', '1',
-                    ] +
-                   (
-                   ['--csv_specific_param_dict', 'invert_magnitometr: True'
-                    ] if probe_is_incl else []
-                   ),
-                    **{
-                    'filter': {
-                         'min_date': cfg['filter']['min_date'][probe],
-                         'max_date': cfg['filter']['max_date'][probe],  # simple 'now' works in sinchronious mode
-                        }
-                    }
-                )
-
-                # Get coefs:
-                l.info(f"Adding coefficients to {db_path}/{tbl} from {cfg['in']['db_coefs']}")
-                try:
-                    h5copy_coef(cfg['in']['db_coefs'], db_path, tbl)
-                except KeyError as e:  # Unable to open object (component not found)
-                    l.warning('No coefs to copy?')  # write some dummy coefficients to can load Veusz patterns:
-                    h5copy_coef(None, db_path, tbl, dict_matrices=dict_matrices_for_h5(tbl=tbl))
-                except OSError as e:
-                    l.warning('Not found DB with coefs?')  # write some dummy coefficients to can load Veusz patterns:
-                    h5copy_coef(None, db_path, tbl, dict_matrices=dict_matrices_for_h5(tbl=tbl))
-                i_proc_file += 1
+            i_file = 0  # will be > 0 if found files
+            for file_in in (
+                raw_found or open_csv_or_archive_of_them(raw_parent, binary_mode=False, pattern=raw_pattern_file)
+                    ):
+                file_in = correct_fun(file_in, dir_out=dir_csv_cor, binary_mode=False)
+                i_raw_found += 1
+                i_file += 1
             else:
-                print('no', raw_pattern_file, end=', ')
-            i_proc_probe += 1
-        print('Ok:', i_proc_probe, 'probes,', i_proc_file, 'files processed.')
+                if i_file == 0:
+                    print('no', raw_pattern_file, end=', ')
+                    continue
+            probes_found.append(probe)
+        print('probes:', probes_found, ', (', i_raw_found, 'raw files was found)')
+        i_probe = None
+        for i_probe, probe in enumerate(probes_found, start=1):
+            tbl = f"{cfg['in']['prefix']}{probe:0>2}"  # file_in.stem
+            # Already have corrected files for probe generated by correct_txt() so just use them
+            raw_subdir_for_probe = cfg['in']['raw_subdir'].format(prefix=raw_prefix, number=probe)
+            if not (raw_subdir := (raw_parent / raw_subdir_for_probe)).is_dir():
+                raw_subdir = ''
+            raw_pattern_file = cfg['in']['raw_pattern'].format(prefix=raw_prefix, number=probe).split('/')[-1]
+            # for file_in in raw_found:
+            #     if not file_in:
+            #         continue
+            # tbl = re.sub('^((?P<i>inkl)|w)_0', lambda m: 'incl' if m.group('i') else 'w',  # correct name
+            #              re.sub('^[\d_]*|\*', '', file_in.stem).lower()),  # remove date-prefix if in name
+            csv2h5([
+                str(Path(__file__).parent / 'cfg' / f"csv_{'inclin' if probe_is_incl else 'wavegauge'}"
+                                                    f"_{p_type[cfg['in']['prefix']]['format']}.ini"),
+                '--path', str(
+                    (raw_subdir or dir_csv_cor) / str(correct_fun.keywords['mod_file_name'](raw_pattern_file))
+                    ),
+                '--blocksize_int', '50_000_000',  # 50Mbt
+                '--table', tbl,
+                '--db_path', str(db_path),
+                # '--log', str(scripts_path / 'log/csv2h5_inclin_Kondrashov.log'),
+                # '--on_bad_lines', 'warn',
+                '--b_interact', '0',
+                '--fs_float', str(p_type[cfg['in']['prefix']]['fs']),  #f'{fs(probe, file_in.stem)}',
+                '--dt_from_utc_seconds', str(cfg['in']['dt_from_utc'][probe].total_seconds()),
+                '--b_del_temp_db', '1',
+                #'--b_remove_duplicates', '1',
+                ] +
+               (
+               ['--csv_specific_param_dict', 'invert_magnitometr: True'
+                ] if probe_is_incl else []
+               ),
+                **{
+                'filter': {
+                     'min_date': cfg['filter']['min_date'][probe],
+                     'max_date': cfg['filter']['max_date'][probe],  # simple 'now' works in sinchronious mode
+                    }
+                }
+            )
+
+            # Get coefs:
+            l.info(f"Adding coefficients to {db_path}/{tbl} from {cfg['in']['db_coefs']}")
+            try:
+                h5copy_coef(cfg['in']['db_coefs'], db_path, tbl)
+            except KeyError as e:  # Unable to open object (component not found)
+                l.warning('No coefs to copy?')  # write some dummy coefficients to can load Veusz patterns:
+                h5copy_coef(None, db_path, tbl, dict_matrices=dict_matrices_for_h5(tbl=tbl))
+            except OSError as e:
+                l.warning('Not found DB with coefs?')  # write some dummy coefficients to can load Veusz patterns:
+                h5copy_coef(None, db_path, tbl, dict_matrices=dict_matrices_for_h5(tbl=tbl))
+        if i_probe is not None:
+            print('Ok:', i_probe, 'probes processed.')
 
 
 
     # 'incl.*|w\d*'  inclinometers or wavegauges w\d\d # 'incl09':
-    tables_list_regex = f"{cfg['in']['probes_prefix'].replace('voln', 'w')}.*"
+    tables_list_regex = f"{cfg['in']['prefix'].replace('voln', 'w')}.*"
     if cfg['in']['probes']:
         tables_list_regex += "(?:{})".format('|'.join('{:0>2}'.format(p) for p in cfg['in']['probes']))
 
@@ -460,9 +491,9 @@ def main(new_arg=None, **kwargs):
             '--max_date', datetime64_str(cfg['filter']['max_date'][0]),  # '2019-09-09T16:31:00',  #17:00:00
             '--min_Pressure', f'{min_Pressure}',
             # '--max_dict', 'M[xyz]:4096',  # use if db_path is not ends with .proc_noAvg.h5 i.e. need calc velocity
-            '--out.db_path', f"{db_path.stem.replace('incl', cfg['in']['probes_prefix'])}_proc_psd.h5",
+            '--out.db_path', f"{db_path.stem.replace('incl', cfg['in']['prefix'])}_proc_psd.h5",
             # '--table', f'psd{aggregate_period_s}' if aggregate_period_s else 'psd',
-            '--fs_float', str(p_type[cfg['in']['probes_prefix']]['fs']),  # f"{fs(probes[0], cfg['in']['probes_prefix'])}",
+            '--fs_float', str(p_type[cfg['in']['prefix']]['fs']),  # f"{fs(probes[0], cfg['in']['prefix'])}",
             # (lambda x: x == x[0])(np.vectorize(fs)(probes, prefix))).all() else raise_ni()
             #
             # '--time_range_zeroing_list', '2019-08-26T04:00:00, 2019-08-26T05:00:00'
@@ -534,8 +565,8 @@ def main(new_arg=None, **kwargs):
                 edges = [pd.DatetimeIndex([t]) for t in edges_dict[probe]]
 
             # substr in file to rerplace probe_name_in_pattern (see below).
-            probe_name = f"_{cfg['in']['probes_prefix'].replace('incl', 'i')}{probe:02}"
-            tbl = None  # f"/{cfg['in']['probes_prefix']}{probe:02}"  # to check probe data exist in db else will not check
+            probe_name = f"_{cfg['in']['prefix'].replace('incl', 'i')}{probe:02}"
+            tbl = None  # f"/{cfg['in']['prefix']}{probe:02}"  # to check probe data exist in db else will not check
             l.info('Draw %s in Veusz: %d intervals...', probe_name, edges[0].size)
             # for i_interval, (t_interval_start, t_interval_end) in enumerate(zip(pd.DatetimeIndex([t_interval_start]).append(t_intervals_end[:-1]), t_intervals_end), start=1):
 
@@ -643,7 +674,7 @@ def main(new_arg=None, **kwargs):
         pattern_code = cfg['in']['pattern_path'].read_bytes()  # encoding='utf-8'
         path_vsz_all = []
         for i, probe in enumerate(probes):
-            probe_name = f"{cfg['in']['probes_prefix']}{probe:02}"  # table name in db
+            probe_name = f"{cfg['in']['prefix']}{probe:02}"  # table name in db
             l.info('Draw %s in Veusz: %d intervals...', probe_name, time_starts.size)
             for i_interval, time_start in enumerate(time_starts, start=1):
                 path_vsz = cfg['in']['pattern_path'].with_name(
