@@ -10,6 +10,8 @@ sys.path.append(str(Path(scripts_path).parent.resolve()))
 # my funcs
 from utils2init import st
 import veuszPropagate
+import to_vaex_hdf5.cfg_dataclasses as cfg_d
+from to_vaex_hdf5.nmea2h5 import main as nmea2h5
 from to_pandas_hdf5.csv2h5 import main as csv2h5
 from to_pandas_hdf5.gpx2h5 import main as gpx2h5
 from to_pandas_hdf5.CTD_calc import main as CTD_calc
@@ -18,73 +20,150 @@ from h5toGpx import main as h5toGpx
 from grid2d_vsz import main as grid2d_vsz
 
 st.go = True   # False #
-st.start = 315  # 1 5 30 70 80 115
+st.start = 80  # 1 5 30 70 80 115
 st.end = 290    # 60 80 120
 
-path_cruise = Path(r'd:\WorkData\BalticSea\211029_ABP48')
-path_db = path_cruise / path_cruise.with_suffix('.h5').name  # same name as dir
+path_cruise = Path(r'd:\WorkData\BlackSea\210623')
+path_db = (path_cruise / path_cruise.name).with_suffix('.h5')  # same name as dir
 
 # Stop before steps that need a manual prepare (70) i.e. set end < 70 at first
 # Gridding (last step) needs debugging if interactive filtering is needed
 # ---------------------------------------------------------------------------------------------
-
+raw_subdirs = ['210623', '210624', '211020']
 min_coord = 'Lat:53, Lon:10'
 max_coord = 'Lat:61, Lon:30'
 if st(1, 'Save gpx navigation to DB'):
     # Save navigation to DB
-    for folder in (['']):
-        gpx2h5(['',
-                '--db_path', str(path_db),
-                '--path', str(path_cruise / 'navigation' / folder / '*.gpx'),
-                '--tables_list', ',navigation,',  # skip waypoints
-                '--table_prefix', r'',
-                #'--b_search_in_subdirs', if set True to get rid of this loop then will be problems with overlapped data files
-                # '--min_date', '2019-07-17T14:00:00',
-                '--min_dict', f'{min_coord}',  # use at least -32768 to replace it by NaN
-                '--max_dict', f'{max_coord}',
-                '--sort', 'delete_inversions',
-                # '--b_skip_if_up_to_date', '0',  # '1' coerce to delete data loaded in same table in previous steps
-                '--b_interact', '0',
-                ])
+    path_raw_pattern = str(path_cruise / r'_raw\{}\navigation\NMEA@ADCP\*000n.0*')
+    for str_path_raw in (
+            [r'd:\WorkData\BlackSea\210623\_raw\210623\navigation\NMEA\210623bat.txt'] +
+            [r'd:\WorkData\BlackSea\210623\_raw\210623\navigation\NMEA_time_stamped\210623bat1.txt'] +
+            [r'd:\WorkData\BlackSea\210623\_raw\210624\navigation\NMEA_time_stamped\210624bat.txt'] +
+            [path_raw_pattern.format(f) for f in raw_subdirs]
+        ):
+        cfg_d.main_call([
+            'input.time_interval=[2021-06-01T00:00, 2022-01-01T00:00]',
+            'input.dt_from_utc_hours=0',
+            # 'process.period_tracks=1D',
+            'input.path="{}"'.format(str_path_raw.replace('\\', '/')),
+            'out.db_path="{}"'.format(str(path_db).replace('\\', '/')),
+            'out.tables=[navigation]',
+            'out.b_remove_duplicates=True'
+            ], nmea2h5)
+        if False:
+            gpx2h5(['',
+                    '--db_path', str(path_db),
+                    '--path', str(path_cruise / 'navigation' / folder / '*.gpx'),
+                    '--tables_list', ',navigation,',  # skip waypoints
+                    '--table_prefix', r'',
+                    #'--b_search_in_subdirs', if set True to get rid of this loop then will be problems with overlapped data files
+                    # '--min_date', '2019-07-17T14:00:00',
+                    '--min_dict', f'{min_coord}',  # use at least -32768 to replace it by NaN
+                    '--max_dict', f'{max_coord}',
+                    '--sort', 'delete_inversions',
+                    # '--b_skip_if_up_to_date', '0',  # '1' coerce to delete data loaded in same table in previous steps
+                    '--b_interact', '0',
+                    ])
 
-device = 'CTD_Idronaut_OS316#494'
+device = 'CTD_Idronaut'
 device_veusz_prefix = 'i3_'
 common_ctd_params_list = [
     '--db_path', str(path_db),
     '--table', f'{device}',
-    '--min_dict', f'Cond:0.5, Sal:0.2, O2:-2, O2ppm:-2',  # deletes zeros & strange big negative values  # SigmaT:2,
-    '--max_dict', f'O2:200, O2ppm:20',  #, {max_coord} for REDAS-like data
-]
-common_ctd_params_dict = {
-    'in': {
-        #'fun_proc_loaded': proc_loaded_corr,
-        'csv_specific_param': {
-        'Temp90_fun': lambda x: np.polyval([
-            -9.888365864460424e-07, 5.728217972492692e-05, 1.0006727353823026, -0.00997065663678012], x),
-            # -1.925036627169023e-06, 6.577767835930226e-05, 1.000754132707556, -0.014076681292841897], x/1.00024),
-        'Cond_fun': lambda x: np.polyval([
-            -5.17193900715981e-6, 0.00052017169295646, 0.99678538638325, 0.089677845676474], x),
-        'Sal_fun': lambda Cond, Temp90, Pres: gsw.SP_from_C(Cond, Temp90, Pres),
-        }
-    }
-}
+    '--min_dict', f'Cond:0.5, Sal:0.2',  # O2:-2, O2ppm:-2',  # deletes zeros & strange big negative values  # SigmaT:2,
+    # '--max_dict', f'O2:200, O2ppm:20',  #, {max_coord} for REDAS-like data
+    ]
+# common_ctd_params_dict = {
+#     'in': {
+#         #'fun_proc_loaded': proc_loaded_corr,
+#         'csv_specific_param': {
+#         'Temp90_fun': lambda x: np.polyval([
+#             -9.888365864460424e-07, 5.728217972492692e-05, 1.0006727353823026, -0.00997065663678012], x),
+#             # -1.925036627169023e-06, 6.577767835930226e-05, 1.000754132707556, -0.014076681292841897], x/1.00024),
+#         'Cond_fun': lambda x: np.polyval([
+#             -5.17193900715981e-6, 0.00052017169295646, 0.99678538638325, 0.089677845676474], x),
+#         'Sal_fun': lambda Cond, Temp90, Pres: gsw.SP_from_C(Cond, Temp90, Pres),
+#         }
+#     }
+# }
 
 if st(10, f'Save {device} data to DB'):
-    csv2h5([
-        'cfg/csv_CTD_Idronaut.ini',
-        '--path', str(path_cruise / device / '_raw_txt' / 'АБП*[0-9].txt'),
-        '--table', f'{device}',
-        #'--dt_from_utc_hours', '0', #'2'
-        '--header',
-        'date(text),txtT(text),Pres(float),Temp90(float),Cond(float),Sal(float),O2(float),O2ppm(float)',  #,SigmaT(float)
-        '--delimiter_chars', '\\ \\',  # ''\s+',
-        '--b_interact', '0',
-        #'--cols_not_use_list', 'N',
-        # '--on_bad_lines', 'warn'
-        #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
-        ] + common_ctd_params_list,
-        **common_ctd_params_dict
-        )
+    for folder in raw_subdirs:
+        csv2h5([
+            'cfg/csv_CTD_Idronaut.ini',
+                       # d:\WorkData\BlackSea\210623\_raw\211020\CTD_Idronaut\
+            '--path', str(path_cruise / fr'_raw\{folder}' / device / 'CAST*[0-9].txt'),
+            '--table', f'{device}',
+            '--dt_from_utc_hours', '3',  # '2' '0'
+            '--header',
+            # Date	Time	Press	Temp	Cond	Sal	SoundV
+            # [D-M-Y]	[h:m:s]	[dbar]	[°C]	[mS/cm]	[PSU]	[m/s]
+            # 20-10-2021 12:32:53.90     2.09   15.044    0.004    0.009 1466.1282
+            'date(text),txtT(text),Pres(float),Temp90(float),Cond(float),Sal(float),SoundV',  #,SigmaT(float)
+            '--delimiter_chars', '\\ \\',  # ''\s+',
+            '--b_interact', '0',
+            '--skiprows_integer', '3',
+            #'--cols_not_use_list', 'N',
+            # '--on_bad_lines', 'warn'
+            #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
+            ] + common_ctd_params_list,
+            # **common_ctd_params_dict
+            )
+
+add_col = 'Chl-a'  # ChlA
+if st(11, f'Save {add_col} data to DB'):
+    for folder in raw_subdirs:
+        csv2h5([
+            # 'cfg/csv_CTD_Idronaut.ini',
+                       # d:\WorkData\BlackSea\210623\_raw\211020\CTD_Idronaut\
+            '--db_path', str(path_db),
+            '--path', str(path_cruise / fr'_raw\{folder}' / add_col / '*_data.txt'),
+            '--table', f'{add_col}',
+            '--dt_from_utc_hours', '1',  # '2' '0'
+            '--header', f'Time(time),{add_col}',  #,SigmaT(float)
+            # Time,Chlorophyll a
+            # 2021-06-23 07:42:52.000,-0.8412761
+            '--delimiter_chars', ',',
+            '--b_interact', '0',
+            '--skiprows_integer', '2',
+            #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
+            ] # + common_ctd_params_list,
+            # **common_ctd_params_dict
+            )
+
+if st(12, f'Add column(s) data from {add_col} table to {device} table DB interpolating by time'):
+    import pandas as pd
+    from to_pandas_hdf5.h5toh5 import h5move_tables, ReplaceTableKeepingChilds  #, h5index_sort, h5init
+
+    tbl = f'/{device}'
+    tbl_log = f'{tbl}/logFiles'  # todo?: use ReplaceTableKeepingChilds
+    with pd.HDFStore(path_db, mode='r') as store:
+        df_log = store[tbl_log]
+        df = store[tbl]
+        df_add = store[add_col]
+        # this is rough (Nearest neighbor) method useful only to get NaN values where they must be according to
+        # tolerance - todo: find more specific to this task method
+        df = pd.merge_asof(df, df_add, left_index=True, right_index=True, tolerance=pd.Timedelta(1, 's'),
+                            direction='nearest')
+        for col in df_add.columns:
+            df.loc[b_ok, col] = np.interp(df.index[(b_ok := df[col].notna())], df_add.index, df_add[col])
+
+            # write back
+    db_temp = path_db.with_name('_not_sorted.h5')
+    args_to_hdf_no_index = dict(append=True, data_columns=True, format='table', dropna=True, index=False)
+    with pd.HDFStore(db_temp) as store_tmp:
+        try:
+            del store_tmp[tbl]
+        except KeyError:
+            pass
+        df.to_hdf(store_tmp, tbl, **args_to_hdf_no_index)
+        df_log.to_hdf(store_tmp, tbl_log, **args_to_hdf_no_index)
+    h5move_tables({
+        'db_path_temp': path_db.with_name('_not_sorted.h5'),
+        'db_path': path_db,
+        'addargs': ['--checkCSI', '--verbose']
+        },
+        tbl_names=[(tbl, tbl_log)])
 
 
 if st(20, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params'):  # False: #
@@ -95,8 +174,8 @@ if st(20, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params
         '--db_path', str(path_db),
         '--tables_list', f'{device}',
         #'--table_nav', '',       # uncomment if nav data only in CTD data file
-        '--min_samples', '100',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
-        '--min_dp', '20',
+        '--min_samples', '40',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
+        '--min_dp', '15',
         # Followig Not Helped!
         '--dt_between_min_minutes', '5',  # default 1s lead to split when commnication with sonde lost
         # '--b_keep_minmax_of_bad_files', 'True',
@@ -106,6 +185,7 @@ if st(20, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params
         '--b_interact', '0'
         ])
 
+
 if st(30, f'Draw {device} data profiles'):  # False: #
     from to_pandas_hdf5.h5toh5 import h5log_names_gen
     import re
@@ -113,11 +193,11 @@ if st(30, f'Draw {device} data profiles'):  # False: #
 
     cfg_in = {
         'log_row': {},
-        'db_path': str(path_db), # name of hdf5 pandas store where is log table
+        'db_path': str(path_db),  # name of hdf5 pandas store where is log table
         #min_time, max_time: datetime, optional, allows range table_log rows
         'table_log': f'/{device}/logRuns', # str: name of log table - table with intervals:
 
-        'pattern_path': path_cruise / device / '000000_0000-0000.vsz'
+        'pattern_path': path_cruise / device / '000000_000000.vsz'
         }
     f_row2name = lambda r: '{:%y%m%d_%H%M%S}.vsz'.format(r['Index'])
     # It is possible to add exact interval to filename but time after zonde is back on surface can be determined only
@@ -131,14 +211,14 @@ if st(30, f'Draw {device} data profiles'):  # False: #
         path_vsz.write_bytes(pattern_code)  # re.sub(rb'^([^\n]+)', str_expr, pattern_code, count=1)
 
     veuszPropagate.main(['cfg/veuszPropagate.ini',
-                         '--path', str(cfg_in['pattern_path'].with_name('??????_??????.vsz')),  #_*s path_db),
+                         '--path', str(cfg_in['pattern_path'].with_name('2?????_??????.vsz')),  #_*s path_db),
                          '--pattern_path', f"{cfg_in['pattern_path']}_",  # here used to auto get export dir only. must not be not existed file path
                          #'--table_log', f'/{device}/logRuns',
                          #'--add_custom_list', f'{device_veusz_prefix}USE_time_search_runs',  # 'i3_USE_timeRange',
                          # '--add_custom_expressions',
                          # """'[["{log_row[Index]:%Y-%m-%dT%H:%M:%S}", "{log_row[DateEnd]:%Y-%m-%dT%H:%M:%S}"]]'""",
                          # '--export_pages_int_list', '7', # 0  '--b_images_only', 'True'
-                         # '--b_update_existed', 'True',  # False is default todo: allow "delete_overlapped" time named files
+                         '--b_update_existed', 'True',  # False is default todo: allow "delete_overlapped" time named files
                          '--b_interact', '0',
                          '--b_images_only', 'True',      # mandatory
                          '--b_execute_vsz', 'True'
@@ -200,46 +280,48 @@ if False:  # st(40)  # may not comment always because can not delete same time m
             else:
                 print('Not found run with time {}'.format(t))
 
-if st(50, 'Extract navigation data at time station starts to GPX waypoints'):  # False: #
+if st(50, 'Extract navigation data at time station starts to GPX waypoints'):
     h5toGpx([
         'cfg/h5toGpx_CTDs.ini',
-         '--db_path', str(path_db),
-         '--tables_list', f'{device}',
-         '--tables_log_list', 'logRuns',
-         '--gpx_names_funs_list', """i+1""",
-         '--gpx_names_fun_format', '{:02d}',  # '{:03d}'
-         '--select_from_tablelog_ranges_index', '0',
-         '--dt_search_nav_tolerance_minutes', '1'  # to trigger interpolate
-         ])
-    st.go = False  # Hey! Prepare gpx tracks from waypoints _manually_ before continue and rerun from st.start = 70!
+        '--db_path', str(path_db),
+        '--tables_list', f'{device}',
+        '--tables_log_list', 'logRuns',
+        '--gpx_names_funs_list', """i+1""",
+        '--gpx_names_fun_format', '{:02d}',  # '{:03d}'
+        '--select_from_tablelog_ranges_index', '0',
+        '--dt_search_nav_tolerance_minutes', '1'  # to trigger interpolate
+        ])
+    print('Hey! Save _manually_ prepared routes navigation\CTD-sections=routes.gpx before continue from st.start = 70!')
+    st.go = False
 
-if False: # st(60, 'Extract navigation data at runs/starts to GPX tracks.'):    # Extract     # Useful to indicate where no nav?
+if False:  # st(60, 'Extract navigation data at runs/starts to GPX tracks.'):    # Useful to indicate where no nav?
     h5toGpx([
         'cfg/h5toGpx_CTDs.ini',
-         '--db_path', str(path_db),
-         '--tables_list', f'{device}',
-         '--tables_log_list', 'logRuns',
-         '--select_from_tablelog_ranges_index', None,  # Export tracks
-         '--gpx_names_fun_format', '{1:%y%m%d}_{0:}',  # track name of format(timeLocal, tblD_safe)
-         '--gpx_names_funs_list', '"i, row.Index"',
-         '--gpx_names_funs_cobined', ''
-         ])
-    st.go = False  # Hey! Prepare gpx tracks _manually_ before continue and rerun from st.start = 70!
+        '--db_path', str(path_db),
+        '--tables_list', f'{device}',
+        '--tables_log_list', 'logRuns',
+        '--select_from_tablelog_ranges_index', None,  # Export tracks
+        '--gpx_names_fun_format', '{1:%y%m%d}_{0:}',  # track name of format(timeLocal, tblD_safe)
+        '--gpx_names_funs_list', '"i, row.Index"',
+        '--gpx_names_funs_cobined', ''
+        ])
+    print('Hey! Save _manually_ prepared routes navigation\CTD-sections=routes.gpx before continue from st.start = 70!')
+    st.go = False
 
 if st(70, 'Save waypoints/routes from _manually_ prepared gpx to hdf5'):  # False: #
     gpx2h5(['', '--path', str(path_cruise / r'navigation\CTD-sections=routes.gpx'),
             '--table_prefix', r'navigation/sectionsCTD'])  # need copy result from navigation\{path_db}_not_sorted manually, todo: auto copy
 
-if st(80, 'Gridding'):  # and False: #
+if st(80, 'Gridding Zabor data'):  # and False: #
     # Note: Prepare veusz "zabor" pattern before
     grid2d_vsz(['cfg/grid2d_vsz.ini', '--db_path', str(path_db),
                 '--table_sections', r'navigation/sectionsCTD_routes',
                 '--subdir', 'CTD-sections',
                 '--begin_from_section_int', '1', #'1',  # values <= 1 means no skip
-                '--data_columns_list', "Temp, Sal, SigmaTh, O2, O2ppm, soundV",
+                '--data_columns_list', f"Temp, Sal, SigmaTh , ChlA, soundV",  # , ChlA only for section < 5
                 # 'Eh, pH',  todo: N^2 - need calc before
-                '--max_depth', '250', #'250',
-                '--filter_depth_wavelet_level_int', '5',  # 4, 5, 5, 4, 6, 4, 4, 5
+                '--max_depth', '3000',
+                '--filter_depth_wavelet_level_int', '2',  # 4, 5, 6
                 '--convexing_ctd_bot_edge_max', '40',  # set < bottom because it is harder to recover than delete
                 # '--x_resolution', '0.2',
                 # '--y_resolution', '5',
@@ -247,9 +329,9 @@ if st(80, 'Gridding'):  # and False: #
                 '--symbols_in_veusz_ctd_order_list',
                 "'Triangle, Green', 'Diamond, Blue', 'Triangle, Red', 'Square, Green'",
                 '--b_temp_on_its90', 'True',  # modern probes
-                '--blank_level_under_bot', '-220',
+                '--blank_level_under_bot', '-500',
                 # '--interact', 'False',
-                #'--b_reexport_images', 'True'
+                '--b_reexport_images', 'True'
                 ])
 
     # todo: bug: bad top and bottom edges
