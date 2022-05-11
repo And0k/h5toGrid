@@ -818,22 +818,36 @@ def rep_in_file(file_in: Union[str, PurePath, BinaryIO, TextIO], file_out,
     return sum_deleted
 
 
-def mod_incl_name(file_in: Union[str, PurePath]):
+def mod_incl_name(file_in: Union[str, PurePath], add_str=None):
     """ Change name of raw inclinometer/wavegauge data file to name of corrected (regular table format) csv file"""
     file_in = PurePath(file_in)
-    file_in_name = file_in.name.lower().replace('inkl', 'incl')  # 'incl' substring will be used to distinguish result file
-    file_in_name, b_known_names = re.subn(r'((?P<prefix>incl|w))_0*(?P<number>\d\d)',
-           lambda m: f"{m.group('prefix')}{m.group('number')}",
-           file_in_name
-           )
-    if not (b_known_names or 'incl_b' in file_in_name):
-        file_in_name, b_known_names = re.subn(r'voln_v*(?P<number>\d\d)',
-                                              lambda m: f"w{m.group('number')}",
-                                              file_in_name
-                                              )
+    name = file_in.name.lower().replace('inkl', 'incl')  # 'incl' substring will be used to distinguish result file
+    name, b_known_names = re.subn(
+        r'((?P<prefix>incl|w))_0*(?P<number>\d\d)',
+        lambda m: f"{m.group('prefix')}{m.group('number')}",
+        name
+        )
+    if not (b_known_names or 'incl_b' in name):
+        name, b_known_names = re.subn(r'voln_v*(?P<number>\d\d)',
+                                      lambda m: f"w{m.group('number')}",
+                                      name
+                                      )
         if not b_known_names:
             print('Not known probe name:', file_in)
-    file_out = file_in.with_name(file_in_name)  # r'inkl_?0*(\d{2})', r'incl\1'
+    # Paste add_str before extension
+    if add_str:
+        def rep(matchobj):
+            """ if add_str (excluding @) in ``name`` replace it else append"""
+            if (add_str1 := add_str.replace('@', '')) in (substr := matchobj.group(0)):
+                return substr.replace(add_str1, add_str)
+            else:
+                return f'{substr}{add_str}'
+                # '{0}{2}.{1}'.format(*name.rsplit('.', 1), add_str) f'{substr}{add_str}'
+
+            add_str.replace('@', '')
+        name = re.sub(r'^\*?([^*.]*)', rep, name)
+
+    file_out = file_in.with_name(name)  # r'inkl_?0*(\d{2})', r'incl\1'
     return file_out
 
 
@@ -970,7 +984,7 @@ def correct_txt(
         Note: in opened archives it may not contain original path info (they may be temporary archives).
     :param mod_file_name: function to get out file name from input file name
     :param sub_str_list: f_repl_by_dict() argument that will be decoded here to str if need
-    :param kwargs: rep_in_file() keyword arguments except first 3 and 'binary_mode'
+    :param kwargs: rep_in_file() keyword arguments except first 3
     :return: name of file to write.
     """
 
@@ -1025,7 +1039,7 @@ def correct_txt(
     # '^Inklinometr, S/N 008, ABIORAS, Kondrashov A.A.': '',
     # '^Start datalog': '',
     # '^Year,Month,Day,Hour,Minute,Second,Ax,Ay,Az,Mx,My,Mz,Battery,Temp':
-    sum_deleted = rep_in_file(file_in, file_out, fsub, binary_mode=binary_mode, **kwargs)
+    sum_deleted = rep_in_file(file_in, file_out, fsub, **{'binary_mode': binary_mode, **kwargs})
 
     if sum_deleted:
         l.warning('{} bad lines deleted'.format(sum_deleted))

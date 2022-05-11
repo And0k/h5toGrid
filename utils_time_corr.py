@@ -28,8 +28,8 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray], cfg_in: Mapping[str,
     - path: where save images of bad time corrected
     - min_date, min_date: optional limits - to set out time beyond limits to constants slitly beyond limits
     :param sort:
-    - 'increase' or 'True' or True: increase duplicated time values, (increase time resolution)
-    - 'False', False: do not check time inversions
+    - 'True', True or 'increase': increase duplicated time values (increase time resolution),
+    - 'False', False: do not check time inversions,
     - 'delete_inversions'
     :return: (tim, b_ok) where
     - tim: pandas time series, same size as date input
@@ -47,7 +47,7 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray], cfg_in: Mapping[str,
         sort = True
     if __debug__:
         lf.debug('time_corr (time correction) started')
-    if cfg_in.get('dt_from_utc'):
+    if (dt_from_utc := cfg_in.get('dt_from_utc')):
         if isinstance(date[0], str):
             # add zone that compensate time shift
             hours_from_utc_f = cfg_in['dt_from_utc'].total_seconds() / 3600
@@ -60,11 +60,15 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray], cfg_in: Mapping[str,
         elif isinstance(date, pd.Index):
             tim = date
             tim -= cfg_in['dt_from_utc']
-            tim = tim.tz_localize('UTC')
+            try:
+                tim = tim.tz_localize('UTC')
+            except TypeError:  # "Already tz-aware, use tz_convert to convert." - not need localize
+                lf.warning('subtracted {} from input (already) UTC data!', dt_from_utc)
+                pass
+
             # if Hours_from_UTC != 0:
             # tim.tz= tzoffset(None, -Hours_from_UTC*3600)   #invert localize
             # tim= tim.tz_localize(None).tz_localize('UTC')  #correct
-
         else:
             try:
                 if isinstance(date, pd.Series):

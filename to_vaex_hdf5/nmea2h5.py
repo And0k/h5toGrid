@@ -25,7 +25,7 @@ from utils2init import init_file_names, Ex_nothing_done, this_prog_basename, sta
 # from csv2h5_vaex import argparser_files, with_prog_config
 from to_pandas_hdf5.csv2h5 import h5_dispenser_and_names_gen
 from to_pandas_hdf5.h5toh5 import h5move_tables, h5index_sort, h5init
-from to_pandas_hdf5.gpx2h5 import df_rename_cols, df_filter_and_save_to_h5
+from to_pandas_hdf5.gpx2h5 import df_rename_cols, h5_sort_filt_append
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
 
@@ -208,7 +208,7 @@ def do(cfg):
         df = load_nmea(file, in_cols)
         df_rename_cols(df, in_cols, out_cols)
         lf.info('write: ')
-        call_with_valid_kwargs(df_filter_and_save_to_h5, df, **cfg, input=cfg['in'])
+        call_with_valid_kwargs(h5_sort_filt_append, df, **cfg, input=cfg['in'])
     failed_storages = h5move_tables(cfg['out'], tbl_names=cfg['out']['tables_written'])
     print('Finishing...' if failed_storages else 'Ok.', end=' ')
     # Sort if have any processed data, else don't because ``ptprepack`` not closes hdf5 source if it not finds data

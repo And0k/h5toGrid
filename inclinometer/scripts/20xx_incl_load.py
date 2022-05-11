@@ -1,3 +1,4 @@
+
 # import my scripts
 from inclinometer.incl_load import main as incl_load
 
@@ -25,12 +26,13 @@ b_wavegauge = not True  # False
 
 
 path_cruise = \
-    r'd:\workData\BalticSea\_Pregolya,Lagoon\211111-inclinometer'
+    r'd:\WorkData\BalticSea\_Pregolya,Lagoon\220327@i36'
+    # r'd:\workData\BalticSea\_Pregolya,Lagoon\211111-inclinometer'
     # r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\211008E15m@i11,36,37,38,w2'
     # r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\210618P7.5m@i9,14,15,19w1,2,4'
     # r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\210827@P10m,P15m-i14,15,w1,4'
 #for raw_subdir in ['get210827@i4,11,36,37,38,w6_Симагин_rar']: #'get210813@i4,11,36,37,38,w6_rar',
-raw_subdir = 'INKL_010.rar'  # None
+raw_subdir = 'INKL_036.rar'  # 'INKL_010.rar'  # None
     # '@i09_off211019_1637.zip'
     #'get210827.rar'
     # '@i14,15w1,4_get210929.zip'
@@ -60,21 +62,22 @@ if True:
             ])
     else:
         incl_load([
-        'cfg/incl_load_201202_BalticSpit.yml',
-        '--path_cruise', path_cruise,
-        #'--db_coefs', r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\210922@E15m-i19,36,37,38,w2\_raw\210922raw-.h5',  # 210921raw_zero.h5
-        '--raw_subdir', raw_subdir,
-        #'cfg/210519incl_load_Pregolya,Lagoon.yml',
-        '--probes_int_list', '10', #'36,37,38',  #11,, 9,19, 15 '19, 36, 37, 38',  # '04, 11, 36, 37, 38',  #,
-        #'--time_start_utc_dict', '14: 2021-08-27T18:49',  # last: 14187000 row ~01.10.2021 13:04
-        # '--aggregate_period_s_int_list', 'None',  # '600, 7200',  # 2,
-        # '--aggregate_period_s_not_to_text_int_list', 'None, 2, 600, 7200',
-        '--min_date_dict', '0: 2021-11-11T10:00',
-        '--max_date_dict', '0: 2021-11-11T18:50',  # '16: 2020-10-21T16:10:33, 15: 2020-10-21T17:46:05',
-        # '--step_start_int', '1',
-        # '--step_end_int', '1',
-        '--dask_scheduler', 'threads'  #, 'synchronous'
-        ])
+            'cfg/20xx_incl_load.yml',
+            # 'cfg/incl_load_201202_BalticSpit.yml',
+            '--path_cruise', path_cruise,
+            #'--db_coefs', r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\210922@E15m-i19,36,37,38,w2\_raw\210922raw-.h5',  # 210921raw_zero.h5
+            '--raw_subdir', raw_subdir,
+            #'cfg/210519incl_load_Pregolya,Lagoon.yml',
+            '--probes_int_list', '36', #'36,37,38',  #11,, 9,19, 15 '19, 36, 37, 38',  # '04, 11, 36, 37, 38',  #,
+            #'--time_start_utc_dict', '14: 2021-08-27T18:49',  # last: 14187000 row ~01.10.2021 13:04
+            # '--aggregate_period_s_int_list', 'None',  # '600, 7200',  # 2,
+            # '--aggregate_period_s_not_to_text_int_list', 'None, 2, 600, 7200',
+            # '--min_date_dict', '0: 2022-03-27T10:17:00',
+            # '--max_date_dict', '0: 2022-03-27T18:16:43',  # '16: 2020-10-21T16:10:33, 15: 2020-10-21T17:46:05',
+            # '--step_start_int', '1',
+            # '--step_end_int', '1',
+            '--dask_scheduler', 'threads'  #, 'synchronous'
+            ])
 
 """    
     'cfg/200901incl_load.yml',

@@ -35,9 +35,11 @@ python -m motuclient ^
 import logging
 import sys
 from pathlib import Path
-from datetime import datetime
-import pandas as pd
+
+# from datetime import datetime
+# import pandas as pd
 from motuclient import motuclient
+
 #from motuclient import main as retrieve, ERROR_CODE_EXIT
 # LIBRARIES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'motu_utils')
 # # Manage imports of project libraries
@@ -53,7 +55,7 @@ from motuclient import motuclient
 
 #@-others
 if False:
-    from motuclient import initLogger, load_options, motu_api
+    from motuclient import initLogger, motu_api
     import motu_api
 
 dir_save = r'd:\WorkData\BalticSea\_other_data\_model\Copernicus\section_z'
@@ -87,9 +89,10 @@ if True:
     # import urllib3
     # urllib3.disable_warnings()  prevent InsecureRequestWarning... Adding certificate verification is strongly advised.
 
-    start_time = datetime.now()
+
 
     if False:
+        start_time = datetime.now()
         initLogger()
 
         try:
@@ -131,10 +134,26 @@ if True:
         '--config-file', str(path_config),
         '--out-dir', dir_save
         ]
+    options = motuclient.load_options()  # get input options for replace output name:
+    out_name = '{date_min:%y%m%d}{product_id}_' \
+        '{latitude_min:g}-{latitude_max:g},{longitude_min:g}-{longitude_max:g}.nc'.format_map(vars(options))
+    sys.argv.append(f'--out-name {out_name}')
     motuclient.main()
+
+    if False and (  # Convert to modern NetCDF format
+        (path_out := (Path(dir_save) / out_name)).is_file() and not
+        (path_out_cnv := path_out.with_suffix('.h5')).is_file()
+       ):
+        import subprocess
+        subprocess.call(['nccopy', '-k', '4', str(path_out), str(path_out_cnv)])
+
     #(Path(dir_save) / 'CMEMS_no_name_data.nc').rename('')
-    if motuclient.ERROR_CODE_EXIT !=0:
+    if motuclient.ERROR_CODE_EXIT != 0:  # not informative
         sys.exit(motuclient.ERROR_CODE_EXIT)
+
+
+
+
 
 
 print('ok')
@@ -175,6 +194,14 @@ sithick	Sea ice thickness	sea_ice_thickness	m
 python -m motuclient --motu https://my.cmems-du.eu/motu-web/Motu --service-id BALTICSEA_REANALYSIS_PHY_003_011-TDS --product-id dataset-reanalysis-nemo-dailymeans --longitude-min 18.972 --longitude-max 19.235 --latitude-min 55.841 --latitude-max 55.929 --date-min "2014-12-01 12:00:00" --date-max "2020-12-31 12:00:00" --depth-min 66.5774 --depth-max 121.7625 --variable bottomT --variable so --variable sob --variable thetao --variable uo --variable vo --out-dir <OUTPUT_DIRECTORY> --out-name <OUTPUT_FILENAME> --user <USERNAME> --pwd <PASSWORD>
 
 python -m motuclient.motuclient --motu https://my.cmems-du.eu/motu-web/Motu --service-id BALTICSEA_REANALYSIS_BIO_003_012-TDS --product-id dataset-reanalysis-scobi-dailymeans --longitude-min 18.972 --longitude-max 19.235 --latitude-min 55.841 --latitude-max 55.929 --date-min "2014-12-01 12:00:00" --date-max "2020-12-31 12:00:00" --depth-min 66.5774 --depth-max 121.7625 --variable o2 --variable o2b --out-dir <OUTPUT_DIRECTORY> --out-name <OUTPUT_FILENAME> --user <USERNAME> --pwd <PASSWORD>
+
+python -m motuclient --motu https://my.cmems-du.eu/motu-web/Motu --service-id BLKSEA_MULTIYEAR_PHY_007_004-TDS --product-id bs-cmcc-cur-rean-d --longitude-min 27.37 --longitude-max 41.9626 --latitude-min 40.86 --latitude-max 46.8044 --date-min "2020-05-31 12:00:00" --date-max "2020-05-31 12:00:00" --depth-min 2.501 --depth-max 2.5011 --variable uo --variable vo --out-dir <OUTPUT_DIRECTORY> --out-name <OUTPUT_FILENAME> --user <USERNAME> --pwd <PASSWORD>
+
+# not works:
+python -m motuclient.motuclient --motu https://nrt.cmems-du.eu/motu-web/Motu --service-id BLKSEA_MULTIYEAR_PHY_007_004-TDS --product-id bs-cmcc-cur-rean-d --longitude-min 33.972 --longitude-max 33.972 --latitude-min 44.37 --latitude-max 44.4 --depth-min 2.501 --depth-max 32.9969 --date-min 2019-10-29 --date-max 2019-11-18 --variable uo --variable vo --out-dir <OUTPUT_DIRECTORY> --out-name <OUTPUT_FILENAME> --user <USERNAME> --pwd <PASSWORD>
+# works:
+python -m motuclient.motuclient --motu https://my.cmems-du.eu/motu-web/Motu --service-id BLKSEA_MULTIYEAR_PHY_007_004-TDS --product-id bs-cmcc-cur-rean-d --longitude-min 33.972 --longitude-max 33.972 --latitude-min 44.37 --latitude-max 44.4 --date-min "2019-10-29 12:00:00" --date-max "2019-11-18 12:00:00"
+--depth-min 2.501 --depth-max 32.9969  --variable uo  --variable vo  --out-dir <OUTPUT_DIRECTORY> --out-name <OUTPUT_FILENAME> --user <USERNAME> --pwd <PASSWORD>
 """
 #@-<<data description>>
 #@@language python

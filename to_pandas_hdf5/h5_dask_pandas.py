@@ -638,10 +638,11 @@ def df_to_csv(df, cfg_out, add_subdir='', add_suffix=''):
         db_path
         table
         dir_export (optional) will save here
-        period (optional), any from (y,m,d,H,M), case insensitive - to round time pattern that constructs file name
+        period (optional), any from (y,m,d,H,M), case-insensitive - to round time pattern that constructs file name
     modifies: creates if not exist:
         cfg_out['dir_export'] if 'dir_export' is not in cfg_out
         directory 'V,P_txt'
+
     >>> df_to_csv(df, cfg['out'])
     """
     if 'dir_export' not in cfg_out:
@@ -652,7 +653,9 @@ def df_to_csv(df, cfg_out, add_subdir='', add_suffix=''):
     if 'period' in cfg_out:
         i_period_letter = '%y%m%d_%H%M'.lower().find(cfg_out['period'].lower())
         # if index have not found (-1) then keep all else include all from start to index:
-        pattern_date = '{:%' + 'y%m%d_%H%M'[:i_period_letter] + '}'
+    else:
+        i_period_letter = 100  # big enough
+    pattern_date = '{:%' + 'y%m%d_%H%M'[:i_period_letter] + '}'
 
     fileN_time_st = pattern_date.format(df.index[0])
     path_export = cfg_out['dir_export'] / (fileN_time_st + cfg_out['table'] + add_suffix + '.txt')
@@ -1007,6 +1010,7 @@ def h5add_log(log: Union[pd.DataFrame, Mapping, None], cfg_out: Dict[str, Any], 
     :param tim: used to get 'Date0' and 'DateEnd' if they are none or not cfg_out.get('b_log_ready')
     :param log_dt_from_utc:
     :return:
+    :updates: log's fields 'Date0', 'DateEnd' if not cfg_out.get('b_log_ready')
     """
     if cfg_out.get('b_log_ready') and (isinstance(log, Mapping) and not log):
         return
@@ -1035,7 +1039,8 @@ def h5add_log(log: Union[pd.DataFrame, Mapping, None], cfg_out: Dict[str, Any], 
         log['Date0'], log['DateEnd'] = timzone_view(
             (tim if tim is not None else
                 df.index.compute() if isinstance(df, dd.DataFrame) else
-                    df.index)[[0, -1]],
+                df.index
+             )[[0, -1]],
              log_dt_from_utc
             )
     # dfLog = pd.DataFrame.from_dict(log, np.dtype(np.unicode_, cfg_out['logfield_fileName_len']))

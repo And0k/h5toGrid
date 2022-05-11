@@ -91,7 +91,7 @@ if st(20, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params
               '--min_samples', '50',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
               '--min_dp', '9',
               '--b_keep_minmax_of_bad_files', 'True',
-              # '--b_skip_if_up_to_date', 'True', - not works. Delete previous table manually, and from ~not_sorted!
+              # '--b_incremental_update', 'True', - not works. Delete previous table manually, and from ~not_sorted!
 
               # '--out.tables_list', '',
               '--b_interact', '0'
@@ -222,7 +222,7 @@ if st(110, 'Export csv with some new calculated parameters'):  # False: #
         # '--b_keep_minmax_of_bad_files', 'True',
         '--path_csv', str(path_cruise / device / 'txt_processed'),
         '--data_columns_list', 'Pres, Temp90, Cond, Sal, O2, O2ppm, pH, Eh, Lat, Lon, SA, sigma0, depth, soundV',  #
-        '--b_skip_if_up_to_date', 'True',
+        '--b_incremental_update', 'True',
         # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
         '--out.tables_list', 'None',
         ])
@@ -264,7 +264,7 @@ if False:
         # '--b_keep_minmax_of_bad_files', 'True',
         '--path_csv', str(path_cruise / device / 'txt_processed'),
         '--data_columns_list', 'Pres, Temp90, Cond, Sal, O2, O2ppm, pH, Eh, Lat, Lon, SA, sigma0, depth, soundV',  #
-        '--b_skip_if_up_to_date', 'True',
+        '--b_incremental_update', 'True',
         # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
         '--out.tables_list', 'None',
         ])
@@ -332,7 +332,7 @@ if st(220, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav param
               '--min_samples', '400',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
               '--min_dp', '40',  # todo: <=25
               '--b_keep_minmax_of_bad_files', 'True',
-              # '--b_skip_if_up_to_date', 'True', - not works. Delete previous table manually, and from ~not_sorted!
+              # '--b_incremental_update', 'True', - not works. Delete previous table manually, and from ~not_sorted!
 
               # '--out.tables_list', '',
               ])
@@ -428,7 +428,7 @@ if st(260, 'Export csv with some new calculated parameters'):  # False: #
         # '--b_keep_minmax_of_bad_files', 'True',
         '--path_csv', str(path_cruise / device / 'txt_processed'),
         '--data_columns_list', 'Pres, Temp90, Cond, Sal, O2, O2ppm, Lat, Lon, SA, sigma0, depth, soundV',  #
-        '--b_skip_if_up_to_date', 'True',
+        '--b_incremental_update', 'True',
         # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
         '--out.tables_list', 'None',
         ])

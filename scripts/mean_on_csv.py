@@ -65,7 +65,7 @@ cfg = main([
     '--header', 'yyyy(text),mm(text),dd(text),HH(text),MM(text),SS(text),P,X1,X2',
     '--return', '<return_cfg_step_gen_names_and_log>',
     '--log', str(path_h5toGrid / 'scripts' / 'log' / 'csv2h5_inclin_Kondrashov.log'),
-    '--b_skip_if_up_to_date', 'False'  # becouse we not use store at all
+    '--b_incremental_update', 'False'  # becouse we not use store at all
     ])
 print(cfg)
 cfg_out = cfg['out']

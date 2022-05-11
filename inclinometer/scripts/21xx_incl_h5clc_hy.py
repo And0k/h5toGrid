@@ -11,7 +11,8 @@ from inclinometer.incl_h5clc_hy import *
 
 # raw data db - data that was converted from csv
 path_db_raw = Path(
-    r'd:\WorkData\BalticSea\210924_AI59-inclinometer\_raw\210924.raw.h5'
+    r'd:\WorkData\BalticSea\_Pregolya,Lagoon\220327@i36\_raw\220327.raw.h5'
+    # r'd:\WorkData\BalticSea\210924_AI59-inclinometer\_raw\210924.raw.h5'
     # r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\211008P7.5,15,E15m@i04,11,14,36,37,38,w2,5\_raw\211008.raw.h5'
     # r'd:\workData\BalticSea\_Pregolya,Lagoon\210908-inclinometer\_raw\210908.raw.h5'
     # r'd:\workData\BalticSea\_Pregolya,Lagoon\211111-inclinometer\_raw\211111.raw.h5'
@@ -58,8 +59,8 @@ hydra:
 
 db_out = None  # '"{}"'.format((path_db_raw.parent.parent / f'{path_db_raw.stem}_proc23,32;30.h5').replace('\\', '/'))
 
-aggregate_period_s = {  # will be joined for multirun
-    'inclinometers': [2, 20, 600],   # 0, [200]  0,  [0, 2, 600, 7200]  [0, 2, 300, 600, 1800, 7200]: [300, 1800] is for burst mode.  #[0, ]
+aggregate_period_s = {  # will be joined for multirun. Default: [0, 2, 300, 600, 1800, 7200]: [300, 1800] is for burst mode
+    'inclinometers': [2, 20, 600, 7200],   # 0, [200]  0,  [0, 2, 600, 7200]  .  #[0, ]
     'wavegauges': [2, 300, 3600],    # 0, [0, 2, 300, 3600]   #[0],
     }
 

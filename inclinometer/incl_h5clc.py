@@ -109,14 +109,14 @@ def my_argparser(varargs=None):
 
     s = p.add_argument_group('filter',
                              'Filter all data based on min/max of parameters')
-    s.add('--max_g_minus_1_float', default='1',
-          help='sets Vabs to NaN if module of acceleration is greater')
-    s.add('--max_h_minus_1_float', default='8',
-          help='sets Vdir to zero if module of magnetic field is greater')
     s.add('--min_dict',
           help='List with items in "key:value" format. Filter out (set to NaN) data of ``key`` columns if it is below ``value``')
     s.add('--max_dict',
-          help='List with items in "key:value" format. Filter out data of ``key`` columns if it is above ``value``')
+          help='List with items in "key:value" format. Filter out data of ``key`` columns if it is above ``value``'
+               'Includes parameters:'
+               '- g_minus_1: default = 1, sets Vabs to NaN if module of acceleration is greater,'
+               '- h_minus_1: default = 8, sets Vdir to zero if module of magnetic field is greater'
+          )
 
     s.add('--dates_min_dict',
           help='List with items in "key:value" format. Start of time range for each probe: (used instead common for each probe min_dict["Time"]) ')
@@ -702,7 +702,7 @@ def rep2mean_da2np(y: da.Array, bOk=None, x=None) -> np.ndarray:
 
 
 def incl_calc_velocity(a: dd.DataFrame,
-                       cfg_filter: Optional[Mapping[str, Any]] = None,
+                       filt_max: Mapping[Mapping[str, float]] = None,
                        cfg_proc: Optional[Mapping[str, Any]] = None,
                        Ag: Optional[np.ndarray] = None, Cg: Optional[np.ndarray] = None,
                        Ah: Optional[np.ndarray] = None, Ch: Optional[np.ndarray] = None,
@@ -721,11 +721,11 @@ def incl_calc_velocity(a: dd.DataFrame,
     :param Ch:
     :param kVabs: if None then will not try to calc velocity
     :param azimuth_shift_deg:
-    :param filt_max: dict. with fields:
+    :param filt_max: dict. with fields: # cfg_filter: Optional[Mapping[str, Any]] = None,
         g_minus_1: mark bad points where |Gxyz| is greater, if any then its number will be logged,
         h_minus_1: to set Vdir=0 and...
     :param cfg_proc: 'calc_version', 'max_incl_of_fit_deg'
-    :param kwargs: other coefs/arguments that not affects calculation
+    :param kwargs: any: not affects calculation
     :return: dataframe with appended columns ['Vabs', 'Vdir', 'inclination']
     """
 
@@ -785,12 +785,14 @@ def incl_calc_velocity(a: dd.DataFrame,
             # Ve = Vabs * np.sin(np.radians(Vdir))
 
             Hxyz, need_recover_mask = recover_magnetometer_x(
-                a.loc[:, ('Mx', 'My', 'Mz')].to_dask_array(lengths=lengths).T, Ah, Ch, filt_max['h_minus_1'], len_data)
+                a.loc[:, ('Mx', 'My', 'Mz')].to_dask_array(lengths=lengths).T,
+                Ah, Ch, h_minus_1 := filt_max.get('h_minus_1'), len_data
+                )
             if need_recover_mask is not None:
                 HsumMinus1 = da.linalg.norm(Hxyz, axis=0) - 1  # should be close to zero
                 Vdir = 0  # default value
                 # bad = ~da.any(da.isnan(Mcnts), axis=0)
-                Vdir = da.where(da.logical_or(need_recover_mask, HsumMinus1 < filt_max['h_minus_1']),
+                Vdir = da.where(da.logical_or(need_recover_mask, HsumMinus1 < h_minus_1),
                                 azimuth_shift_deg - da.degrees(da.arctan2(
                                     (Gxyz[0, :] * Hxyz[1, :] - Gxyz[1, :] * Hxyz[0, :]) * (GsumMinus1 + 1),
                                     Hxyz[2, :] * da.square(Gxyz[:-1, :]).sum(axis=0) - Gxyz[2, :] * (
@@ -798,7 +800,7 @@ def incl_calc_velocity(a: dd.DataFrame,
                                     )),
                                 Vdir  # default value
                                 )
-            else:  # Set magnetometer data to be function of accelerometer data - allows calc waves parameters
+            else:  # Set magnetometer data as a function of accelerometer data - allows calc waves parameters
                 l.warning(
                     'Bad magnetometer data => Assign direction inversely proportional to toolface angle (~ relative angle if no rotations around device axis)')
                 Vdir = azimuth_shift_deg - da.degrees(da.arctan2(Gxyz[0, :], Gxyz[1, :]))
@@ -1324,6 +1326,10 @@ def dd_to_csv(
 
 # ---------------------------------------------------------------------------------------------------------------------
 def main(new_arg=None, **kwargs):
+    print("""
+            incl_calibr() FUNCTION DEPRECATED!!! USE incl_calibr_hy()
+          """
+          )
     global l
     # input:
     cfg = cfg_from_args(my_argparser(), new_arg, **kwargs)
@@ -1373,6 +1379,8 @@ def main(new_arg=None, **kwargs):
                 set_field_if_no(cfg['filter'][lim], f'M{ch}', cfg['filter'][lim]['M'])
 
     cfg['filter']['sleep_s'] = 0.5  # to run slower, helps for system memory management?
+    set_field_if_no(cfg['filter']['max'], 'g_minus_1', 1)
+    set_field_if_no(cfg['filter']['max'], 'h_minus_1', 8)
 
     log = {}
     dfs_all_list = []
@@ -1467,8 +1475,9 @@ def main(new_arg=None, **kwargs):
 
         gc.collect()  # frees many memory. Helps to not crash
 
-    #
     # Combined data to hdf5
+    #######################
+
     if aggregate_period_timedelta:
         dfs_all = pd.concat(dfs_all_list, sort=True, axis=(0 if cfg['out']['b_all_to_one_col'] else 1))
         dfs_all_log = pd.DataFrame(

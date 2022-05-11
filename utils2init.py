@@ -1519,7 +1519,7 @@ class LoggingStyleAdapter(logging.LoggerAdapter):
 
 class FakeContextIfOpen:
     """
-    Context manager that do nothing if file is not str/PurePath or custom open function is None/False
+    Context manager that does nothing if file is not str/PurePath or custom open function is None/False
     useful if instead file want use already opened file object
     """
 

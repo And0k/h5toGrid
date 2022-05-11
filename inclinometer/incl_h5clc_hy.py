@@ -732,8 +732,8 @@ def incl_calc_velocity(a: dd.DataFrame,
     :param cols_prepend: new parameters that will be prepended to a columns (only columns if a have only raw
     accelerometer and magnetometer fields). If None then ('Vabs', 'Vdir', 'Vn', 'Ve', 'inclination') will be used. Use
      any from this elements in needed order.
-    :param kwargs: other coefs/arguments that not affects calculation
-    :return: dataframe with prepended columns  and removed accelerometer and
+    :param kwargs: not affects calculation
+    :return: dataframe with prepended columns ``cols_prepend`` and removed accelerometer and
     magnetometer raw data
     """
 
@@ -806,7 +806,7 @@ def incl_calc_velocity(a: dd.DataFrame,
                                     )),
                                 Vdir  # default value
                                 )
-            else:  # Set magnetometer data be function of accelerometer data - worse case: relative direction recovery
+            else:  # Set magnetometer data as a function of accelerometer data - worst case: relative direction recovery
                 lf.warning(
                     'Bad magnetometer data => Assign direction inversely proportional to toolface angle (~ relative angle if no rotations around device axis)')
                 Vdir = azimuth_shift_deg - da.degrees(da.arctan2(Gxyz[0, :], Gxyz[1, :]))

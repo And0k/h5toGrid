@@ -48,7 +48,7 @@ if st(5):  # False: #
               '--tables_list', 'CTD_SST_48Mc',
               '--min_samples', '100',  # '100' is for 20m if Speed=1m/s
               '--min_dp', '20',
-              '--b_skip_if_up_to_date', 'True',
+              '--b_incremental_update', 'True',
               # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
               # '--out.tables_list', '',
               ])

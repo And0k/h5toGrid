@@ -32,7 +32,7 @@ if st(1, 'Save gpx navigation to DB'):
             '--tables_list', ',navigation,',  # skip waypoints
             '--table_prefix', r'',
             # '--min_date', '2019-07-17T14:00:00',
-            '--b_skip_if_up_to_date', '0',
+            '--b_incremental_update', '0',
             '--b_interact', '0',
             ])
 
@@ -43,7 +43,7 @@ if st(5, "Save Supervisor's navigation to DB"):
             '--table', 'navigation',  # skip waypoints
             '--b_remove_duplicates', 'True',
             #'--csv_specific_param_dict', 'DepEcho_add:4.5',
-            '--b_skip_if_up_to_date', '0',
+            '--b_incremental_update', '0',
             '--min_dict', 'DepEcho:6',
             '--b_interact', '0',
             ])
@@ -54,7 +54,7 @@ if st(6, "Save bathymetry to DB from HYPACK's export of SES2000 echosounder data
     arg = [
         'cfg/csv_nav_HYPACK_SES2000.ini',
         '--db_path', str(path_db),
-        '--b_skip_if_up_to_date', '0',          # needed to keep overlapped data from other data sources
+        '--b_incremental_update', '0',          # needed to keep overlapped data from other data sources
         '--b_interact', '0',
         # '--fs_float', '4'
         '--b_remove_duplicates', 'True'
@@ -108,7 +108,7 @@ if st(20, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params
               '--min_samples', '400',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
               '--min_dp', '40',  # todo: <=25
               '--b_keep_minmax_of_bad_files', 'True',
-              # '--b_skip_if_up_to_date', 'True', - not works. Delete previous table manually, and from ~not_sorted!
+              # '--b_incremental_update', 'True', - not works. Delete previous table manually, and from ~not_sorted!
 
               # '--out.tables_list', '',
               ])
@@ -262,7 +262,7 @@ if st(110, 'Export csv with some new calculated parameters'):  # False: #
         # '--b_keep_minmax_of_bad_files', 'True',
         '--path_csv', str(path_cruise / device / 'txt_processed'),
         '--data_columns_list', 'Pres, Temp90, Cond, Sal, O2, O2ppm, SA, sigma0, depth, soundV',  #Lat, Lon,
-        '--b_skip_if_up_to_date', 'True',
+        '--b_incremental_update', 'True',
         # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
         '--out.tables_list', 'None',
         ])

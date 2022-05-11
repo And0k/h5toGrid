@@ -27,7 +27,7 @@ if st(5):  # False: #
         # '--b_keep_minmax_of_bad_files', 'True',
         '--path_csv', str(path_cruise / device / 'txt_processed'),
         '--data_columns_list', 'Pres, Temp90, Cond, Sal, O2, O2ppm, pH, Eh, SA, sigma0',
-        '--b_skip_if_up_to_date', 'True',
+        '--b_incremental_update', 'True',
         # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
         '--out.tables_list', 'None',
         ])

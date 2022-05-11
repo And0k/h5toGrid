@@ -76,7 +76,7 @@ to Pandas HDF5 store*.h5
           help='exclude dirs which ends with this srings. This and next option especially useful when search recursively in many dirs')
     s.add('--exclude_files_endswith_list', default='coef.txt, -.txt, test.txt',
           help='exclude files which ends with this srings')
-    s.add('--b_skip_if_up_to_date', default='True',
+    s.add('--b_incremental_update', default='True',
           help='exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it before procesing of next files: 1. Program copyes all data to temporary storage and 2. deletes old data there if found. 3. New data appended. 4. Data tables copyed back with deleting original data')
     s.add('--dt_from_utc_seconds', default='0',
           help='source datetime data shift. This constant will be substructed just after the loading to convert to UTC. Can use other suffixes instead of "seconds"')
@@ -131,7 +131,7 @@ to Pandas HDF5 store*.h5
            help='insert NaNs row in table after each file data end')
     s.add('--b_reuse_temporary_tables', default='False',
            help='Warning! Set True only if temporary storage already have good data!'
-                   'if True and b_skip_if_up_to_date= True then program will not replace temporary storage with current storage before adding data to the temporary storage')
+                   'if True and b_incremental_update= True then program will not replace temporary storage with current storage before adding data to the temporary storage')
     s.add('--b_remove_duplicates', default='False', help='Set True if you see warnings about')
     s.add('--b_del_temp_db', default='False', help='temporary h5 file will be deleted after operation')
 
@@ -970,7 +970,7 @@ def h5_dispenser_and_names_gen(
         - log: dict, with info about current data, must have fields for compare:
             - 'fileName' - in format as in log table to able find duplicates
             - 'fileChangeTime', datetime - to able find outdate data
-        - b_skip_if_up_to_date: if True then not yields previously processed files. But if file was changed then
+        - b_incremental_update: if True then not yields previously processed files. But if file was changed then
             1. removes stored data and 2. yields fun_gen(...) result
         - tables_written: sequence of table names where to create index
     :param fun_gen: function with arguments (cfg_in, cfg_out, **kwargs), that
@@ -988,11 +988,11 @@ def h5_dispenser_and_names_gen(
         - that what fun_gen() do
     """
     # copy data to temporary HDF5 store and open it
-    df_log_old, cfg_out['db'], cfg_out['b_skip_if_up_to_date'] = h5temp_open(**cfg_out)
+    df_log_old, cfg_out['db'], cfg_out['b_incremental_update'] = h5temp_open(**cfg_out)
     try:
         for i1, gen_out in enumerate(fun_gen(cfg_in, cfg_out, **kwargs), start=1):
             # if current file it is newer than its stored data then remove data and yield its info to process again
-            if cfg_out['b_skip_if_up_to_date']:
+            if cfg_out['b_incremental_update']:
                 b_stored_newer, b_stored_dups = h5del_obsolete(
                     cfg_out, cfg_out['log'], df_log_old, cfg_out.get('field_to_del_older_records')
                     )

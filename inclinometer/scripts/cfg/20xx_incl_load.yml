@@ -1,4 +1,4 @@
-    
+# Use as general cfg and overwrite this only specific values here: ``path_cruise`` and ``probes``.
 in:
   path_cruise: 'd:\WorkData\BalticSea\_Pregolya,Lagoon\210519-inclin+RDCP'
   # 200919-inclinometer

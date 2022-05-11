@@ -76,7 +76,7 @@ process it and save HDF5/CSV
              help='table name in hdf5 store to add data from it to log table when in "find runs" mode. Use empty strng to not add')
     s.add('--dt_from_utc_hours', default='0',
              help='add this correction to loading datetime data. Can use other suffixes instead of "hours"')
-    s.add('--b_skip_if_up_to_date', default='True',
+    s.add('--b_incremental_update', default='True',
              help='exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files')
     s.add('--b_temp_on_its90', default='True',
              help='When calc CTD parameters treat Temp have red on ITS-90 scale. (i.e. same as "temp90")')
@@ -732,7 +732,7 @@ def main(new_arg=None):
 
         # Settings to not affect main data table and switch off not compatible options:
         cfg['out']['tables'] = []
-        cfg['out']['b_skip_if_up_to_date'] = False  # todo: If False check it: need delete all previous result of CTD_calc() or set min_time > its last log time. True not implemented?
+        cfg['out']['b_incremental_update'] = False  # todo: If False check it: need delete all previous result of CTD_calc() or set min_time > its last log time. True not implemented?
         cfg['program']['b_log_display'] = False  # can not display multiple rows log
         if 'b_save_images' in cfg['extract_runs']:
             cfg['extract_runs']['path_images'] = cfg['out']['db_path'].with_name('_subproduct')
@@ -763,7 +763,7 @@ def main(new_arg=None):
     qstr_trange_pattern = "index>=Timestamp('{}') & index<=Timestamp('{}')"
     iSt = 1
 
-    df_log_old, cfg['out']['db'], cfg['out']['b_skip_if_up_to_date'] = h5temp_open(**cfg['out'])
+    df_log_old, cfg['out']['db'], cfg['out']['b_incremental_update'] = h5temp_open(**cfg['out'])
     b_out_db_is_different = cfg['out']['db'] is not None and cfg['out']['db_path_temp'] != cfg['in']['db_path']
     # Cycle for each table, for each row in log:
     # for path_csv in gen_names_and_log(cfg['out'], df_log_old):
@@ -797,7 +797,7 @@ def main(new_arg=None):
                     cfg['in']['file_stem'] = cfg['out']['log']['fileName']  # for exmple to can extract date in subprogram
                     cfg['in']['fileChangeTime'] = cfg['out']['log']['fileChangeTime']
 
-                    if cfg['in']['b_skip_if_up_to_date']:
+                    if cfg['in']['b_incremental_update']:
                         b_stored_newer, b_stored_dups = h5del_obsolete(cfg['out'], cfg['out']['log'], df_log_old)
                         if b_stored_newer:
                             continue

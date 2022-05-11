@@ -75,7 +75,7 @@ if st(20):  # False: #
               '--min_samples', '99',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
               '--min_dp', '9',
               '--b_keep_minmax_of_bad_files', 'True',
-              '--b_skip_if_up_to_date', 'True',
+              '--b_incremental_update', 'True',
               # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
               # '--out.tables_list', '',
               ])
@@ -219,7 +219,7 @@ if st(110):  # False: #
         # '--b_keep_minmax_of_bad_files', 'True',
         '--path_csv', str(path_cruise / device / 'txt_processed'),
         '--data_columns_list', 'Pres, Temp90, Cond, Sal, O2, O2ppm, pH, Eh, SA, sigma0, depth, soundV',
-        '--b_skip_if_up_to_date', 'True',
+        '--b_incremental_update', 'True',
         # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
         '--out.tables_list', 'None',
         ])
@@ -255,7 +255,7 @@ if st(220):  # False: #
               '--min_samples', '99',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
               '--min_dp', '9',
               '--b_keep_minmax_of_bad_files', 'True',
-              '--b_skip_if_up_to_date', 'True',
+              '--b_incremental_update', 'True',
               # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
               # '--out.tables_list', '',
               ])

@@ -318,8 +318,8 @@ except ValueError:  # some default value if no holes
 
 h5init(cfg['in'], cfg['out'])  # cfg['in'] = {}
 try:
-    cfg['out']['b_skip_if_up_to_date'] = False  # not copy prev data: True not implemented
-    df_log_old, store, cfg['out']['b_skip_if_up_to_date'] = h5temp_open(**cfg['out'])
+    cfg['out']['b_incremental_update'] = False  # not copy prev data: True not implemented
+    df_log_old, store, cfg['out']['b_incremental_update'] = h5temp_open(**cfg['out'])
     # with pd.HDFStore(fileOut, mode='w') as store:
     # Append to Store
     if df.empty:  # log['rows']==0

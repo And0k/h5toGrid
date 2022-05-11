@@ -199,7 +199,7 @@ def main(new_arg=None, veusze=None):
                     (col_str, coef_str) = channel_cols(channel)
                     # h5savecoef(cfg['out']['path'], path=f'//{table}//coef//Vabs{i}', coef=coef_list), dict_matrices={'//coef//' + coef_str + '//A': coefs[tbl][channel]['A'], '//coef//' + coef_str + '//C': coefs[tbl][channel]['b']})
 
-                    # Currently used inclinometers have electronics rotated on 180deg. Before we inserted additional
+                    # Currently, used inclinometers have electronics rotated on 180deg. Before we inserted additional
                     # rotation operation in Veusz by inverting A_old. Now we want iclude this information in database coef only.
                     try:  # Checking that A_old_inv exist
                         A_old_inv = veusze.GetData('Ag_old_inv')
@@ -223,9 +223,10 @@ def main(new_arg=None, veusze=None):
 
         # veusze.Root['fitV(inclination)']['grid1']['graph2'][name_out].function.val
         print(vsz_data)
-        veuszPropagate.export_images(veusze, cfg['out'], f"_{log['out_name']}",
-         b_skip_if_exists=not cfg['out']['b_update_existed'])
-
+        veuszPropagate.export_images(
+            veusze, cfg['out'], f"_{log['out_name']}",
+            b_skip_if_exists=not cfg['out']['b_update_existed']
+            )
         # vsz_data = veusz_data(veusze, cfg['in']['data_yield_prefix'])
         # # caller do some processing of data and gives new cfg:
         # cfgin_update = yield(vsz_data, log)  # to test run veusze.Save('-.vsz')

@@ -23,7 +23,7 @@ def test_main():
         '--min_samples', '50',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
         '--min_dp', '9',
         # '--b_keep_minmax_of_bad_files', 'True',
-        # '--b_skip_if_up_to_date', 'True',
+        # '--b_incremental_update', 'True',
         '--b_interact', 'False',  # to can check with True value in pytest need to run with -s command line option
         # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
         # '--out.tables_list', '',

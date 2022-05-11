@@ -57,7 +57,7 @@ def test_h5init():
         'b_insert_separator': False,
         'logfield_fileName_len': 255,
         'chunksize': None,
-        'b_skip_if_up_to_date': False,
+        'b_incremental_update': False,
         'b_remove_duplicates': False,
         'b_reuse_temporary_tables': True,
         'nfiles': 1,

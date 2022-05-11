@@ -48,7 +48,7 @@ def my_argparser():
              help='used if only dir in path - extension of gpx files')
     s.add('--dt_from_utc_hours', default='0',
              help='add this correction to loading datetime data. May to use other suffixes instead of "hours"')
-    s.add('--b_skip_if_up_to_date', default='True',
+    s.add('--b_incremental_update', default='True',
              help='exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files')
     s.add('--sort', default='False',  # 'correct', 'sort_rows'
              help='if time not sorted then coorect it trying affecting minimum number of values. Used here for tracks/segments only. This is different from sorting rows which is performed at last step after the checking table in database')
@@ -84,7 +84,7 @@ def my_argparser():
               help='insert NaNs row in table after each file data end')
     s.add('--b_reuse_temporary_tables', default='False',
               help='Warning! Set True only if temporary storage already have good data!'
-                   'if True and b_skip_if_up_to_date= True then not replace temporary storage with current storage before adding data to the temporary storage')
+                   'if True and b_incremental_update= True then not replace temporary storage with current storage before adding data to the temporary storage')
 
     # candidates to move out to common part
     s.add('--exclude_dirs_endswith_list', default='-, bad, test, TEST, toDel-',
@@ -120,8 +120,9 @@ def gpxConvert(cfg: Mapping[str, Any],
     """
     Fill dataframes 'tracks', 'segments' and 'waypoints' with corresponding gpx objects data
     :param cfg: dict with keys
-    ['in']['*_cols'], where * is name of mentioned above gpx object with needed gpxpy properties to store
-    ['out']['*_cols'] columns names of dataframes to rename gpxpy properties
+    - ['in']['*_cols'], where * is name of mentioned above gpx object with needed gpxpy properties to store.
+    If absent then this object data will be ignored
+    - ['out']['*_cols'] columns names of dataframes to rename gpxpy properties
     :param fileInF: gpx file path or gpxpy gpx class instance
     :return: dict of dataframes with keys 'tracks', 'segments' and 'waypoints'
     """
@@ -139,53 +140,65 @@ def gpxConvert(cfg: Mapping[str, Any],
     sys_stdout.flush()
     for dfname in df_names:
         c = dfname + '_cols'
-        dfs[dfname] = pd.DataFrame(columns=cfg['in'][c][Ncols_t:])
+        if c in cfg['in']:
+            dfs[dfname] = pd.DataFrame(columns=cfg['in'][c][Ncols_t:])
 
     # check gpx is compatible to cfg segments
     try:
         set_atr_tr_seg = set(dir(gpx.tracks[0].segments[0].points[0]))
     except IndexError:
         set_atr_tr_seg = []
-    if set_atr_tr_seg and not set_atr_tr_seg.issuperset(cfg['in']['segments_cols']):  # (not set_atr_tr_seg or
-        cols_list = []
-        for a in cfg['in']['segments_cols']:
-            if a not in set_atr_tr_seg:
-                print('no such segment data col: "{}"'.format(a))
-            else:
-                cols_list.append(a)
-    else:
-        cols_list = cfg['in']['segments_cols']
 
-    # too tired to check compability to cfg tracks:
-    tr_cols = cfg['in']['tracks_cols']
-    for track in gpx.tracks:
-        for segment in track.segments:
-            dfs['segments'] = pd.concat([dfs['segments'],
-                                         pd.DataFrame.from_records([[getattr(segment.points[0], c) for c in cols_list]],
-                                                                   columns=cols_list,
-                                                                   index=cols_list[0])])
-            dfs['tracks'] = pd.concat([dfs['tracks'], pd.DataFrame.from_records(
-                [[getattr(point, c) for c in tr_cols] for point in segment.points],
-                columns=tr_cols,
-                index=tr_cols[0])])  # .__dict__ -> dir()
+    tr_cols = cfg['in'].get('tracks_cols')
+    if (sg_cols := cfg['in'].get('segments_cols')) is not None:
+        if set_atr_tr_seg and not set_atr_tr_seg.issuperset(cfg['in']['segments_cols']):  # (not set_atr_tr_seg or
+            cols_list = []
+            for a in sg_cols:
+                if a not in set_atr_tr_seg:
+                    print('no such segment data col: "{}"'.format(a))
+                else:
+                    cols_list.append(a)
+        else:
+            cols_list = sg_cols
+    else:
+        cols_list = tr_cols
+
+    if cols_list is not None:
+        for track in gpx.tracks:
+            for segment in track.segments:
+                if sg_cols is not None:
+                    dfs['segments'] = pd.concat([
+                        dfs['segments'],
+                        pd.DataFrame.from_records(
+                            [[getattr(segment.points[0], c) for c in cols_list]],
+                            columns=cols_list,
+                            index=cols_list[0])
+                        ])
+                if tr_cols is not None:    # too tired to check compability to cfg tracks:
+                    dfs['tracks'] = pd.concat([dfs['tracks'], pd.DataFrame.from_records(
+                        [[getattr(point, c) for c in tr_cols] for point in segment.points],
+                        columns=tr_cols,
+                        index=tr_cols[0])])  # .__dict__ -> dir()
 
     # dfs['waypoints']= pd.DataFrame(columns= cfg['in']['waypoints_cols'][Ncols_t:])
     # pd.concat([dfs['waypoints'],
-    dfs['waypoints'] = pd.DataFrame.from_records(
-        [[getattr(waypoint, attr) for attr in cfg['in']['waypoints_cols']] for waypoint in gpx.waypoints],
-        columns=cfg['in']['waypoints_cols'],
-        index=cfg['in']['waypoints_cols'][0])  # Waypoint changed time not affected by editing?
-    dfs['waypoints'].index = pd.DatetimeIndex(dfs['waypoints'].index)
-    # for waypoint in gpx.waypoints:
-    # print('waypoint {0} -&gt; ({1},{2})'.format(waypoint.name, waypoint.latitude, waypoint.longitude))
-    # for route in gpx.routes:
-    # print 'Route:'
-    # for point in route.points:
-    # print 'Point at ({0},{1}) -&gt; {2}'.format(point.latitude, point.longitude, point.elevation)
-    # df= pd.DataFrame(a[:,Ncols_t:].view(dtype=np.uint16),
-    # columns= cfg['Header'][Ncols_t:],
-    # dtype= np.uint16,
-    # index= gpx.time + cfg['TimeAdd'])
+    if (wp_cols := cfg['in'].get('waypoints_cols')) is not None:
+        dfs['waypoints'] = pd.DataFrame.from_records(
+            [[getattr(waypoint, attr) for attr in wp_cols] for waypoint in gpx.waypoints],
+            columns=wp_cols,
+            index=wp_cols[0]
+            )  # Waypoint changed time not affected by editing?
+        dfs['waypoints'].index = pd.DatetimeIndex(dfs['waypoints'].index)
+        # for waypoint in gpx.waypoints:
+        # print('waypoint {0} -&gt; ({1},{2})'.format(waypoint.name, waypoint.latitude, waypoint.longitude))
+        # for route in gpx.routes:
+        # print 'Route:'
+        # for point in route.points:
+        # print 'Point at ({0},{1}) -&gt; {2}'.format(point.latitude, point.longitude, point.elevation)
+        # df= pd.DataFrame(a[:,Ncols_t:].view(dtype=np.uint16),
+        # columns= cfg['Header'][Ncols_t:],
+        # dtype= np.uint16,
+        # index= gpx.time + cfg['TimeAdd'])
 
     if gpx.routes:
         dfs['routes'] = pd.concat([pd.DataFrame.from_records([[
@@ -196,24 +209,33 @@ def gpxConvert(cfg: Mapping[str, Any],
             keys=[r.name for r in gpx.routes])
 
 
-    for dfname in df_names:
+    for dfname, df in dfs.items():  # df_names
         c = dfname + '_cols'
-        df_rename_cols(dfs[dfname], cfg['in'][c], cfg['out'][c])
+        df_rename_cols(df, cfg['in'][c], cfg['out'][c])
 
     return dfs
 
 
-def df_filter_and_save_to_h5(df, input, out, filter=None, sort_time=None) -> Union[str, int]:
+def h5_sort_filt_append(df, input, out, filter=None,
+                        sort_time: Union[str, bool, None] = None
+                        ) -> Union[str, int]:
     """
-    Filters and appends df to out['table'] in opened out['db'], and corresponded row to out['table_log'] table
+    If specified then sorts index of df and filters by filterGlobal_minmax(),
+    then appends to hdf5 store:
+    - df to out['table'] in opened out['db'], and
+    - corresponded row to out['table_log'] table
+    :param df:
+    :param input: cfg dict with fields... dt_from_utc: timedelta (optional), to correct out['log'] time
     :param out: out cfg, must have fields:
       - log
-    :param in: cfg dict with fields... dt_from_utc: to correct out['log'] time  #???
+      - db
     :param filter (optional)
-    :param df:
-    :param key:
-    :return: 'continue' if no data else 0
-    Modifies out: adds field 'tables_written': Set[Tuple[str, str]]
+    :param sort_time: how to deal with not sorted / duplicated index: see time_corr().
+    :return: 'continue' if no data else df
+    :updates:
+      - log: fields 'Date0', 'DateEnd' if not cfg_out.get('b_log_ready')
+      - out: adds field 'tables_written': Set[Tuple[str, str]]
+    See also: filterGlobal_minmax
     """
     df_t_index, itm = multiindex_timeindex(df.index)
     # sorting will break multiindex?
@@ -231,12 +253,12 @@ def df_filter_and_save_to_h5(df, input, out, filter=None, sort_time=None) -> Uni
         out['log']['rows'] = len(df)
     if df.empty:
         print('No data => skip file')
-        return 'continue'
+        return df
 
     # # Log statistic
     # out['log']['Date0'  ]= timzone_view(df_t_index[ 0], input['dt_from_utc'])
     # out['log']['DateEnd']= timzone_view(df_t_index[-1], input['dt_from_utc'])
-    # # Add separatiion row of NaN and save to store
+    # # Add separation row of NaN and save to store
     # if out['b_insert_separator'] and itm is None:
     #     # 0 (can not use np.nan in int) [tim[-1].to_datetime() + timedelta(seconds = 0.5/cfg['fs'])]
     #     df_dummy.index= (df.index[-1] + (df.index[-1] - df.index[-2])/2,)
@@ -248,8 +270,9 @@ def df_filter_and_save_to_h5(df, input, out, filter=None, sort_time=None) -> Uni
     # #dfLog= pd.DataFrame.from_dict(out['log']) #, index= 'Date0'
     # store.append(tables_log[key], dfLog, data_columns= True, expectedrows= input['nfiles'], index=False) #append
 
-    h5_append(out, df, out['log'], log_dt_from_utc=input['dt_from_utc'], tim=df_t_index)
-    return 0
+    log_dt_from_utc = {'log_dt_from_utc': dt_from_utc} if (dt_from_utc := input.get('dt_from_utc')) else {}
+    h5_append(out, df, out['log'], tim=df_t_index, **log_dt_from_utc)
+    return df
 
 
 # ##############################################################################
@@ -336,11 +359,11 @@ def main(new_arg=None):
                         # redefine saving parameters
                         cfg['out']['table'] = tables_pattern.format(trackers_numbers[sn])
                         cfg['out']['table_log'] = tables_log_pattern.format(trackers_numbers[sn])
-                        call_with_valid_kwargs(df_filter_and_save_to_h5, df **cfg, input=cfg['in'], sort_time=sort_time)
+                        call_with_valid_kwargs(h5_sort_filt_append, df ** cfg, input=cfg['in'], sort_time=sort_time)
                 else:
                     cfg['out']['table'] = tables[key]
                     cfg['out']['table_log'] = tables_log[key]
-                    call_with_valid_kwargs(df_filter_and_save_to_h5, df, **cfg, input=cfg['in'], sort_time=sort_time)
+                    call_with_valid_kwargs(h5_sort_filt_append, df, **cfg, input=cfg['in'], sort_time=sort_time)
 
     # try:
     # if cfg['out']['b_remove_duplicates']:

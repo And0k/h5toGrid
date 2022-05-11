@@ -65,7 +65,7 @@ to Pandas HDF5 store*.h5
               help='insert NaNs row in table after each file data end')
     s.add('--b_reuse_temporary_tables', default='False',
               help='Warning! Set True only if temporary storage already have good data!'
-                   'if True and b_skip_if_up_to_date= True then not replace temporary storage with current storage before adding data to the temporary storage')
+                   'if True and b_incremental_update= True then not replace temporary storage with current storage before adding data to the temporary storage')
     s.add('--b_remove_duplicates', default='False', help='Set True if you see warnings about')
     # 'logfield_filename_len': 255,
 
@@ -335,7 +335,7 @@ def main(new_arg=None, **kwargs):
     # type_log_files = namedtuple('type_log_files', ['label','iStart'])
     # log.sort(axis=0, order='log_item['Date0']')#sort files by time
 
-    df_log_old, cfg['out']['db'], cfg['out']['b_skip_if_up_to_date'] = h5temp_open(**cfg['out'])
+    df_log_old, cfg['out']['db'], cfg['out']['b_incremental_update'] = h5temp_open(**cfg['out'])
     if 'log' in cfg['program'].keys():
         f = open(PurePath(sys_argv[0]).parent / cfg['program']['log'], 'a', encoding='cp1251')
         f.writelines(datetime.now().strftime('\n\n%d.%m.%Y %H:%M:%S> processed '

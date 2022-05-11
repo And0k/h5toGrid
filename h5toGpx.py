@@ -122,7 +122,9 @@ def save_to_gpx(nav_df: pd.DataFrame, fileOutPN, gpx_obj_namef=None, waypoint_sy
     Save navigation from dataframe to *.gpx file. track or waypoints.
     Generate waypoints names and selects symbols from cfg['out']['gpx_symbols'] based on current row in nav_df
     :param nav_df: DataFrame with fields:
-        if waypoint_symbf: itbl, ...
+        - Lat, Lon: if not empty
+        - DepEcho: to add its data as elevation
+        - itbl: if ``waypoint_symbf``
     :param fileOutPN:       *.gpx file full name without extension. Set None to not write (useful if need only gpx)
     :param gpx_obj_namef:   str or fun(waypoint number). If None then we set it to fileOutPN.stem
     :param waypoint_symbf:  str or fun(nav_df record = row). If None saves track
@@ -142,7 +144,7 @@ def save_to_gpx(nav_df: pd.DataFrame, fileOutPN, gpx_obj_namef=None, waypoint_sy
         gpx_obj_namef = Path(fileOutPN).stem
     if cfg_proc is None:
         cfg_proc = {'dt_per_file': None}
-    elif not 'dt_per_file' in cfg_proc:
+    elif 'dt_per_file' not in cfg_proc:
         cfg_proc['dt_per_file'] = None
     if gpx is None:
         gpx = GPX()

@@ -43,7 +43,7 @@ if st(1, 'Save gpx navigation to DB'):
                 '--min_dict', f'{min_coord}',  # use at least -32768 to replace it by NaN
                 '--max_dict', f'{max_coord}',
                 '--sort', 'delete_inversions',
-                # '--b_skip_if_up_to_date', '0',  # '1' coerce to delete data loaded in same table in previous steps
+                # '--b_incremental_update', '0',  # '1' coerce to delete data loaded in same table in previous steps
                 '--b_interact', '0',
                 ])
 
@@ -54,7 +54,7 @@ if st(6, "Save bathymetry to DB from *.xyz export of EA600 echosounder data"):
         '--db_path', str(path_db),
         '--path', str(path_cruise / r'navigation/EA600' / 'L*.xyz'),
         '--dt_from_utc_hours', '2',
-        '--b_skip_if_up_to_date', '0',          # needed to keep overlapped data from other data sources
+        '--b_incremental_update', '0',          # needed to keep overlapped data from other data sources
         '--b_interact', '0',
         # '--fs_float', '4'
         # '--b_remove_duplicates', 'True'
@@ -154,7 +154,7 @@ if st(20, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params
               # Followig Not Helped!
               '--dt_between_min_minutes', '5',  # default 1s lead to split when commnication with sonde lost
               # '--b_keep_minmax_of_bad_files', 'True',
-              # '--b_skip_if_up_to_date', 'True', - not works. Delete previous table manually, and from ~not_sorted!
+              # '--b_incremental_update', 'True', - not works. Delete previous table manually, and from ~not_sorted!
 
               # '--out.tables_list', '',
               '--b_interact', '0'
@@ -316,7 +316,7 @@ if st(110, 'Export csv with some new calculated parameters'):  # False: #
         # '--b_keep_minmax_of_bad_files', 'True',
         '--path_csv', str(path_cruise / device / 'txt_processed'),
         '--data_columns_list', 'Pres, Temp90, Cond, Sal, O2, O2ppm, SA, sigma0, depth, soundV',  #, pH, Eh  , Lat, Lon
-        '--b_skip_if_up_to_date', 'True',
+        '--b_incremental_update', 'True',
         # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
         '--out.tables_list', 'None',
         ])
@@ -410,7 +410,7 @@ if st(220, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav param
               '--min_samples', '400',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
               '--min_dp', '40',  # todo: <=25
               '--b_keep_minmax_of_bad_files', 'True',
-              # '--b_skip_if_up_to_date', 'True', - not works. Delete previous table manually, and from ~not_sorted!
+              # '--b_incremental_update', 'True', - not works. Delete previous table manually, and from ~not_sorted!
 
               # '--out.tables_list', '',
               ])
@@ -505,7 +505,7 @@ if st(260, 'Export csv with some new calculated parameters'):  # False: #
         # '--b_keep_minmax_of_bad_files', 'True',
         '--path_csv', str(path_cruise / device / 'txt_processed'),
         '--data_columns_list', 'Pres, Temp90, Cond, Sal, O2, O2ppm, Lat, Lon, SA, sigma0, depth, soundV',  #
-        '--b_skip_if_up_to_date', 'True',
+        '--b_incremental_update', 'True',
         # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
         '--out.tables_list', 'None',
         ])

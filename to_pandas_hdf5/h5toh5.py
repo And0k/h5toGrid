@@ -495,7 +495,7 @@ def h5temp_open(
         tables: Optional[List[str]]=None,
         tables_log: Optional[List[str]]=None,
         db=None,
-        b_skip_if_up_to_date: bool = False,
+        b_incremental_update: bool = False,
         b_reuse_temporary_tables: bool = False,
         b_overwrite: bool = False,
         **kwargs
@@ -511,14 +511,14 @@ def h5temp_open(
     :param: db_path,
     :param: db_path_temp
     :param: tables, tables_log - if tables is None then returns (does nothing), else opens HDF5 store and tries to work with ``tables_log``
-    :param: b_skip_if_up_to_date:
+    :param: b_incremental_update:
     :param: b_reuse_temporary_tables, bool, default False - not copy tables from dest to temp
     :param: b_overwrite: remove all existed data in tables where going to write
     :param: kwargs: not used, for use convenience
-    :return: (df_log, db, b_skip_if_up_to_date)
-        - df_log: dataframe of log from store if cfg_in['b_skip_if_up_to_date']==True else None.
+    :return: (df_log, db, b_incremental_update)
+        - df_log: dataframe of log from store if cfg_in['b_incremental_update']==True else None.
         - db: pandas HDF5 store - opened db_path_temp
-        - b_skip_if_up_to_date: flag remains same as it was inputted or changed to False if can not skip or b_overwrite is True
+        - b_incremental_update: flag remains same as it was inputted or changed to False if can not skip or b_overwrite is True
     Modifies (creates): db - handle of opened pandas HDF5 store
     """
     df_log = None
@@ -599,13 +599,13 @@ def h5temp_open(
 
                 except HDF5ExtError as e:
                     lf.warning(e.args[0])   # print('processing all source data... - no table with previous data')
-                    b_skip_if_up_to_date = False
+                    b_incremental_update = False
                 except Exception as e:
                     print('processing all source data... - no previous data (output table {}): {}'.format(
                         tbl, '\n==> '.join([s for s in e.args if isinstance(s, str)])))
-                    b_skip_if_up_to_date = False
+                    b_incremental_update = False
                 else:
-                    if b_skip_if_up_to_date: lf.info('Will append data only from new files.')
+                    if b_incremental_update: lf.info('Will append data only from new files.')
 
         if (db is None) or not db.is_open:
             # Open temporary output file to return
@@ -621,12 +621,31 @@ def h5temp_open(
                     os_remove(db_path_temp)
                     # raise(e)
 
+        if not b_overwrite:
+            for tbl_log in tables_log:
+                if tbl_log and (tbl_log in db):
+                    try:
+                        df_log = db[tbl_log]
+                        break  # only one log table is supported (using 1st found in tables_log)
+                    except AttributeError:  # pytables.py: 'NoneType' object has no attribute 'startswith'
+                        # - no/bad table log
+                        b_overwrite = True
+                        lf.exception('Bad log: {}, removing... {}', tbl_log,
+                                     'Switching off incremental update' if b_incremental_update else ''
+                                     )
+                        h5remove_table(db, tbl_log)
+                    except UnicodeDecodeError:
+                        lf.exception('Bad log: {}. Suggestion: remove non ASCII symbols from log table manually!', tbl_log)
+                        raise
+            else:
+                df_log = None
+
+
         if b_overwrite:
             df_log = None
-            b_skip_if_up_to_date = False      # new start, fill table(s) again
-        else:  # if get UnicodeDecodeError remove non ASCII symbols from log table manually!
-            df_log = [db[tbl_log] for tbl_log in tables_log if tbl_log and (tbl_log in db)]
-            df_log = df_log[0] if len(df_log) >= 1 else None
+            b_incremental_update = False      # new start, fill table(s) again
+
+
 
     except HDF5ExtError as e:
         if db:
@@ -652,10 +671,10 @@ def h5temp_open(
             except HDF5ExtError:
                 print(end='.')
                 sleep(1)
-        b_skip_if_up_to_date = False
+        b_incremental_update = False
     except Exception as e:
         lf.exception('Can not open temporary hdf5 store')
-    return df_log, db, b_skip_if_up_to_date
+    return df_log, db, b_incremental_update
 
 
 def df_data_append_fun(df, tbl_name, cfg_out, **kwargs):
@@ -1430,7 +1449,7 @@ def h5del_obsolete(cfg_out: MutableMapping[str, Any],
                 print('Multiple entries in log for same file ("{}") detected. Will be check for dups'.format(log['fileName']))
                 cfg_out['b_remove_duplicates'] = True
                 if cfg_out['b_reuse_temporary_tables']:
-                    print('Consider set [out].b_reuse_temporary_tables=0,[in].b_skip_if_up_to_date=0')
+                    print('Consider set [out].b_reuse_temporary_tables=0,[in].b_incremental_update=0')
                 print('Continuing...')
                 imax = df_log_cur['fileChangeTime'].argmax()  # np.argmax([r.to_pydatetime() for r in ])
                 df_log_cur = df_log_cur.iloc[[imax]]  # [np.arange(len(df_log_cur)) != imax]
@@ -1462,7 +1481,7 @@ def h5init(cfg_in: Mapping[str, Any], cfg_out: MutableMapping[str, Any]) -> None
     - cfgFile - if no cfg_out['b_insert_separator'] defined or determine the table name is failed - to extract from cfgFile name name
     - raw_dir_words: (optional), default: ['source', 'WorkData', 'workData'] - see getDirBaseOut()
     - nfiles: (optional)
-    - b_skip_if_up_to_date: (optional)
+    - b_incremental_update: (optional)
     :param: cfg_out - configuration dict, where all fields are optional. Do nothing if cfg_out['tables'] is None
 
     Sets or updates fields of cfg_out:
@@ -1472,7 +1491,7 @@ def h5init(cfg_in: Mapping[str, Any], cfg_out: MutableMapping[str, Any]) -> None
     - db_path_temp: temporary h5 file name
     % other %
     - nfiles: default 1, copied from cfg_in - I use it somewhere to set store.append() 'expectedrows' argument
-    - b_skip_if_up_to_date: default False, copied from cfg_in
+    - b_incremental_update: default False, copied from cfg_in
     - chunksize: default None
     - logfield_fileName_len: default 255
     - b_remove_duplicates: default False
@@ -1484,8 +1503,8 @@ def h5init(cfg_in: Mapping[str, Any], cfg_out: MutableMapping[str, Any]) -> None
         return
     set_field_if_no(cfg_out, 'logfield_fileName_len', 255)
     set_field_if_no(cfg_out, 'chunksize')
-    set_field_if_no(cfg_out, 'b_skip_if_up_to_date', cfg_in['b_skip_if_up_to_date' \
-        ] if 'b_skip_if_up_to_date' in cfg_in else False)
+    set_field_if_no(cfg_out, 'b_incremental_update', cfg_in['b_incremental_update' \
+        ] if 'b_incremental_update' in cfg_in else False)
     set_field_if_no(cfg_out, 'b_remove_duplicates', False)
     set_field_if_no(cfg_out, 'b_reuse_temporary_tables', False)
     if cfg_out.get('b_insert_separator') is None:

@@ -92,7 +92,7 @@ def cfg():
         '--b_interact', 'False',
         '--return', '<gen_names_and_log>',
         '--log', os.path.join(scripts_path, 'log/csv2h5_inclin_Kondrashov.log'),
-        '--b_skip_if_up_to_date', 'False',  # to not use store
+        '--b_incremental_update', 'False',  # to not use store
         '--min_date', '30.04.2018 23:59:51',  # ; UTC, not output data < min_date
         '--max_date', '01.05.2018 00:00:05',  # ; UTC, not output data > max_date
         ])

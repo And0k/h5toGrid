@@ -69,6 +69,58 @@ def test_file_raw_local(file_raw_local):
     assert df.shape[0] == 3
 
 
+# Loading two trackers data in one DB, calc distance between
+def test_call_example_sp2to3():
+
+    path_db = Path(
+        r'd:\WorkData\_experiment\tracker\220318_1633@sp2&3.h5'.replace('\\', '/')
+        )
+    file_raw_local = str(path_db.parent / 'raw' / 'ActivityReport.xlsx').replace('\\', '/')
+    device = ['sp3', 'sp2']
+    sys_argv_save = sys.argv
+    sys.argv = [__file__]
+    main_call([
+        f'input.path_raw_local="{file_raw_local}"',
+        'input.time_interval=[2022-05-05T12:45, now]',
+        'input.dt_from_utc_hours=2',
+        'out.db_path="{}"'.format(str(path_db).replace('\\', '/')),
+        'out.tables=[{}]'.format(','.join([f'"{d}"' for d in device])),
+
+        # 'process.b_reprocess=True',
+        'process.anchor_coord=[sp3]',
+        # 'process.max_dr=50',
+        'process.anchor_depth=40',
+        'process.period_tracks=1D'
+        ])
+    sys.argv = sys_argv_save
+
+
+# Loading two trackers data in one DB, calc distance between, recalc all
+def test_call_example_sp2to3():
+
+    path_db = Path(
+        r'd:\WorkData\BalticSea\220505_D6\tracker\220505@sp2ref3_test'.replace('\\', '/')
+        )
+    file_raw_local = str(path_db.parent / 'raw' / 'ActivityReport.xlsx').replace('\\', '/')
+    device = ['sp3', 'sp2']
+    sys_argv_save = sys.argv
+    sys.argv = [__file__]
+    main_call([
+        f'input.path_raw_local="{file_raw_local}"',
+        'input.time_interval=[2022-05-05T12:45, now]',
+        'input.dt_from_utc_hours=2',
+        'out.db_path="{}"'.format(str(path_db).replace('\\', '/')),
+        'out.tables=[{}]'.format(','.join([f'"{d}"' for d in device])),
+
+        'process.b_reprocess=True',
+        'process.anchor_coord=[sp3]',
+        # 'process.max_dr=50',
+        'process.anchor_depth=40',
+        'process.period_tracks=1D'
+        ])
+    sys.argv = sys_argv_save
+
+
 path_db = Path(
     r'data/tracker/out/tracker.h5'
     # r'd:/workData/BalticSea/210515_tracker/current@sp2/210611_1300sp2.h5' #.replace('@', '\@')

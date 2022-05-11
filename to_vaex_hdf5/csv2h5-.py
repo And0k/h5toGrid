@@ -67,7 +67,7 @@ def config_in(
         b_search_in_subdirs=False,
         exclude_dirs_endswith_list='toDel, -, bad, test, TEST',
         exclude_files_endswith_list='coef.txt, -.txt, test.txt',
-        b_skip_if_up_to_date=True,
+        b_incremental_update=True,
         dt_from_utc_seconds=0,
         dt_from_utc_hours=0,
         skiprows_integer=1,
@@ -84,7 +84,7 @@ def config_in(
     :param b_search_in_subdirs: search in subdirectories, used if mask or only dir in path (not full path)
     :param exclude_dirs_endswith_list: exclude dirs which ends with this srings. This and next option especially useful when search recursively in many dirs
     :param exclude_files_endswith_list: exclude files which ends with this srings
-    :param b_skip_if_up_to_date: exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files
+    :param b_incremental_update: exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files
     :param dt_from_utc_seconds: add this correction to loading datetime data. Can use other suffixes instead of "seconds"
     :param dt_from_utc_hours: add this correction to loading datetime data. Can use other suffixes instead of "hours"
     :param fs_float: sampling frequency, uses this value to calculate intermediate time values between time changed values (if same time is assined to consecutive data)
@@ -125,7 +125,7 @@ def config_out(
     :param db_path: hdf5 store file path
     :param table: table name in hdf5 store to write data. If not specified then will be generated on base of path of input files. Note: "*" is used to write blocks in autonumbered locations (see dask to_hdf())
     :param b_insert_separator: insert NaNs row in table after each file data end
-    :param b_reuse_temporary_tables: Warning! Set True only if temporary storage already have good data! If True and b_skip_if_up_to_date= True then not replace temporary storage with current storage before adding data to the temporary storage
+    :param b_reuse_temporary_tables: Warning! Set True only if temporary storage already have good data! If True and b_incremental_update= True then not replace temporary storage with current storage before adding data to the temporary storage
     :param b_remove_duplicates: Set True if you see warnings about
     """
     kw_args = locals()
