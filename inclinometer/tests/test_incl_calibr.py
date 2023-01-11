@@ -9,8 +9,8 @@ path_db = ''
 @pytest.fixture()
 def sys_argv_like_no_test():
     # compensate for pytest args
-    sys_argv_save = sys.argv
-    sys.argv = [path_incl_calibr_hy] # sys_argv_save[-1:]
+    sys_argv_save = sys.argv.copy()
+    sys.argv = [path_incl_calibr_hy]  # sys_argv_save[-1:]
     print('Running path:', sys.argv[0])
     yield None
     sys.argv = sys_argv_save
