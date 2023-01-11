@@ -52,7 +52,7 @@ ImportFileHDF5(u'../181005_ABP44.h5', [u'/181017inclinometers/incl03/coef', u'/1
 
     # Custom loading from db
     cfg['in']['db_parent_path'] = f'{str_date}inclinometers'
-    if not 'out' in cfg:
+    if 'out' not in cfg:
         cfg['out'] = {}
     cfg['out']['f_file_name'] = lambda tbl: f'{str_date}{tbl}'
 

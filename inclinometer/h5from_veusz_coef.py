@@ -83,14 +83,18 @@ def main(new_arg=None, veusze=None):
         '--out.path',
         help='path to db where write coef')
     p_groups['out'].add(
+        '--re_match_tbl_from_vsz_name',
+        help='regex to extract hdf5 table name from to Veusz file name (last used "\D*\d*")'
+        # ? why not simply specify table name?
+        )
+    p_groups['out'].add(
         '--re_sub_tbl_from_vsz_name', default='^[\d_]*',
-        help='regex to extract hdf5 table name from to Veusz file name by removing matched chars (not used if re_match_tbl_from_vsz_name is set)'
+        help='regex to extract hdf5 table name from to Veusz file name by replacing matched chars (input is result of re_match_tbl_from_vsz_name if it is set) by to_sub_tbl_from_vsz_name (see below)'
         # ? why not simly specify table name?
         )
     p_groups['out'].add(
-        '--re_match_tbl_from_vsz_name',
-        help='regex to extract hdf5 table name from to Veusz file name (last used "\D*\d*")'
-        # ? why not simly specify table name?
+        '--to_sub_tbl_from_vsz_name', default='',
+        help='string to replace result of re_sub_tbl_from_vsz_name'
         )
     # todo:  "b_update_existed" arg will be used here for exported images. Check whether False works or prevent open vsz
 
@@ -157,10 +161,11 @@ def main(new_arg=None, veusze=None):
             continue
         i_file += 1
         print(i_file)
+        table = log['out_name']
         if cfg['out']['re_match_tbl_from_vsz_name']:
-            table = cfg['out']['re_match_tbl_from_vsz_name'].match(log['out_name']).group()
-        else:
-            table = cfg['out']['re_sub_tbl_from_vsz_name'].sub('', log['out_name'])  # delete all first digits (date part)
+            table = cfg['out']['re_match_tbl_from_vsz_name'].match(table).group()
+        if cfg['out']['re_sub_tbl_from_vsz_name']:
+            table = cfg['out']['re_sub_tbl_from_vsz_name'].sub(cfg['out']['to_sub_tbl_from_vsz_name'], table)
 
         for n in names_get:
             vsz_data[n].append(veusze.GetData(n)[0])
@@ -190,10 +195,14 @@ def main(new_arg=None, veusze=None):
         Rcor = veusze.GetData('Rcor')[0]  # zeroing angles tuned by "USEcalibr0V_..." in Veusz Custom definitions
 
         if len(cfg['in']['channels']):
-            l.info('Applying zero calibration matrix of peach = {} and roll = {} degrees'.format(
-                np.rad2deg(veusze.GetData('old0pitch')[0][0]),
-                np.rad2deg(veusze.GetData('old0roll')[0][0])
-                ))
+            try:
+                pr = [veusze.GetData('old0pitch_deg')[0][0], veusze.GetData('old0roll_deg')[0][0]]
+            except KeyError:
+                try:
+                    pr = np.rad2deg([veusze.GetData('old0pitch')[0][0], veusze.GetData('old0roll')[0][0]])
+                except KeyError:
+                    pr = ['~old0pitch_not_found~', '~old0roll_not_found~']
+            l.info('Applying zero calibration matrix of peach = {} and roll = {} degrees'.format(*pr))
             with h5py.File(cfg['out']['path'], 'a') as h5:
                 for channel in cfg['in']['channels']:
                     (col_str, coef_str) = channel_cols(channel)

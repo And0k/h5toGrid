@@ -43,8 +43,9 @@ sys.path.append(str(Path(scripts_path).parent.resolve()))
 from inclinometer.h5inclinometer_coef import h5copy_coef, l
 from inclinometer.incl_h5clc import incl_calc_velocity_nodask
 from utils2init import cfg_from_args, this_prog_basename, init_logging, standard_error_info
-from to_pandas_hdf5.h5toh5 import h5select, h5find_tables
-from other_filters import is_works, despike
+from to_pandas_hdf5.h5toh5 import h5load_ranges, h5find_tables
+from filters import is_works
+from filters_scipy import despike
 from graphics import make_figure
 
 if __name__ != '__main__':
@@ -89,29 +90,6 @@ def my_argparser():
                choices=['<cfg_from_args>', '<gen_names_and_log>', '<end>'],
                help='<cfg_from_args>: returns cfg based on input args only and exit, <gen_names_and_log>: execute init_input_cols() and returns... - see main()')
     return (p)
-
-
-def load_hdf5_data(store, table=None, t_intervals=None,
-                   query_range_pattern="index>=Timestamp('{}') & index<=Timestamp('{}')"):
-    """
-    Load data
-    :param t_intervals: even sequence of datetimes or strings convertible to index type values. Each pair defines edges
-    of data that will be concatenated. 1st and last must be min and max values in sequence.
-    :param table:
-    :return:
-    """
-
-    n = len(t_intervals) if t_intervals is not None else 0
-    if n > 2:
-        query_range_pattern = '|'.join(f'({query_range_pattern.format(*query_range_lims)})' for query_range_lims in (
-            (lambda x=iter(t_intervals): zip(x, x))())
-                                   )
-    elif n < 2:
-        query_range_pattern = None
-        t_intervals = []
-    df = h5select(store, table, query_range_lims=t_intervals[0::(n - 1)],
-                  interpolate=None, query_range_pattern=query_range_pattern)
-    return df
 
 
 def fG(Axyz, Ag, Cg):
@@ -451,7 +429,7 @@ def calibrate_plot(raw3d: np.ndarray, a2d: np.ndarray, b, fig=None, window_title
 
 def zeroing_azimuth(store, tbl, time_range_nord, coefs=None, cfg_in=None):
     """
-    azimuth_shift_deg by calculating velocity (Ve, Vn) in cfg_in['time_range_nord'] interval of tbl data:
+    azimuth_shift_deg by calculating velocity (u, v) in cfg_in['time_range_nord'] interval of tbl data:
      taking median, calculating direction, multipling by -1
     :param time_range_nord:
     :param store:
@@ -471,7 +449,7 @@ def zeroing_azimuth(store, tbl, time_range_nord, coefs=None, cfg_in=None):
     dfv = incl_calc_velocity_nodask(df, **coefs, cfg_filter=cfg_in, cfg_proc=
     {'calc_version': 'trigonometric(incl)', 'max_incl_of_fit_deg': 70})
     dfv.query('10 < inclination & inclination < 170', inplace=True)
-    dfv_mean = dfv.loc[:, ['Ve', 'Vn']].median()
+    dfv_mean = dfv.loc[:, ['u', 'v']].median()
     # or df.apply(lambda x: [np.mean(x)], result_type='expand', raw=True)
     # df = incl_calc_velocity_nodask(dfv_mean, **calc_vel_flat_coef(coefs), cfg_in=cfg_in)
 

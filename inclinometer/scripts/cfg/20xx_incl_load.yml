@@ -4,7 +4,7 @@ in:
   # 200919-inclinometer
   # raw_subdir: 'Преголя, ноябрь-декабрь 2020.rar'
   #Balt_spit.zip
-  probes:     [10]
+  probes: []  # [10]
   probes_prefix: incl
   raw_pattern: "*{prefix:}{number:0>3}*.[tT][xX][tT]"
 
