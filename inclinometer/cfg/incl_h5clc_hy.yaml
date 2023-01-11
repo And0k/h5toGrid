@@ -3,4 +3,4 @@ defaults:
 - _self_
 hydra:
   searchpath:
-  - file://d:/WorkData/BalticSea/_Pregolya,Lagoon/220327@i36/_raw/cfg_proc
+  - file://d:/WorkData/BalticSea/_Pregolya%2CLagoon/221103%40ib26%2C28%2C29%2C30/_raw/cfg_proc
