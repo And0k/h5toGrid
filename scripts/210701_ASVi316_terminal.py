@@ -42,7 +42,7 @@ if st(1, 'Save gpx navigation to DB'):
                 # '--min_date', '2019-07-17T14:00:00',
                 '--min_dict', f'{min_coord}',  # use at least -32768 to replace it by NaN
                 '--max_dict', f'{max_coord}',
-                '--sort', 'delete_inversions',
+                '--corr_time_mode', 'delete_inversions',
                 # '--b_incremental_update', '0',  # '1' coerce to delete data loaded in same table in previous steps
                 '--b_interact', '0',
                 ])
@@ -103,7 +103,7 @@ if st(10, f'Save {device} data (uploaded from its memory) to DB'):
             'date(text),txtT(text),Pres(float),Temp90(float),Cond(float),Sal(float),O2(float),O2ppm(float)',
             '--delimiter_chars', '\\ \\',  # ''\s+',
             '--b_interact', '0',
-            #'--cols_not_use_list', 'N',
+            #'--cols_not_save_list', 'N',
             # '--on_bad_lines', 'warn'
             ] + common_ctd_params_list,
             **common_ctd_params_dict
@@ -132,7 +132,7 @@ if False:  # st(12, f'Save {device} data to DB recorded in terminal mode'):
         'Pres(float),Temp90(float),Cond(float),Sal(float),O2(float),O2ppm(float),txtT(text)',
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--b_interact', '0',
-        #'--cols_not_use_list', 'N',
+        #'--cols_not_save_list', 'N',
         # '--on_bad_lines', 'warn'
         #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
         ] + common_ctd_params_list,
@@ -354,7 +354,7 @@ if st(120, 'Meteo'):
         str(path_cruise / r"meteo\ship's_meteo_st_source\*.mxt"), '--header',
         'date(text),Time(text),t_air,Vabs_m__s,Vdir,dew_point,Patm,humidity,t_w,precipitation',
         '--coldate_integer', '0', '--coltime_integer', '1',
-        '--cols_not_use_list', 't_w,precipitation',  # bad constant data
+        '--cols_not_save_list', 't_w,precipitation',  # bad constant data
         '--delimiter_chars', ',', '--max_text_width', '12',
         '--on_bad_lines', 'warn', '--b_insert_separator', 'False',
         '--chunksize_percent_float', '500',
@@ -388,7 +388,7 @@ if st(210, f'Save {device} data to DB'):  # False: #
         'date(text),txtT(text),Pres(float),Temp90(float),Cond(float),Sal(float),O2(float),O2ppm(float),SigmaT(float)',
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--b_interact', '0',
-        #'--cols_not_use_list', 'N',
+        #'--cols_not_save_list', 'N',
         # '--on_bad_lines', 'warn'
         #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
         ],
@@ -437,7 +437,7 @@ if st(230, f'Draw {device} data profiles'):  # False: #
     pattern_code = cfg_in['pattern_path'].read_bytes()  #encoding='utf-8'
 
     # path_prev = os_getcwd()
-    # argv_prev = sys.argv
+    # argv_prev = sys.argv.copy()
 
     os_chdir(cfg_in['pattern_path'].parent)
     path_vsz_all = []
@@ -453,10 +453,10 @@ if st(230, f'Draw {device} data profiles'):  # False: #
         #
         # try:
         #     remote = Popen(
-        #         [rf'"Program Files (x86)/Veusz/veusz.exe" {path_vsz.name} --export=export_0.jpg --export-option=page=[0] --export-option=dpi=300'])
+        #         [rf'"Program Files/Veusz/veusz.exe" {path_vsz.name} --export=export_0.jpg --export-option=page=[0] --export-option=dpi=300'])
         # except Exception as e:
         #     print(e)
-        # r'"Program Files (x86)/Veusz/veusz.exe" {path_vsz} --export=export_%n.jpg --export-option=page=[5] --export-option=dpi=200'
+        # r'"Program Files/Veusz/veusz.exe" {path_vsz} --export=export_%n.jpg --export-option=page=[5] --export-option=dpi=200'
 
         # [veusze.remote.args[0], str(vsz), '--unsafe-mode', '--embed-remote'],
         # shell=False, bufsize=0,

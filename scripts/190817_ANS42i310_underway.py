@@ -199,7 +199,7 @@ if st(100):  # True: #
         str(path_cruise / r"meteo\ship's_meteo_st_source\*.mxt"), '--header',
         'date(text),Time(text),t_air,Vabs_m__s,Vdir,dew_point,Patm,humidity,t_w,precipitation',
         '--coldate_integer', '0', '--coltime_integer', '1',
-        '--cols_not_use_list', 't_w,precipitation',  # bad constant data
+        '--cols_not_save_list', 't_w,precipitation',  # bad constant data
         '--delimiter_chars', ',', '--max_text_width', '12',
         '--on_bad_lines', 'warn', '--b_insert_separator', 'False',
         '--chunksize_percent_float', '500',
@@ -238,7 +238,7 @@ if st(200):  # False: #
         '--dt_from_utc_hours', '0',
         '--header',
         'date(text),txtT(text),Pres(float),Temp(float),Cond(float),Sal(float),O2(float),O2ppm(float),SigmaT(float)',
-        '--cols_not_use_list', 'SigmaT',
+        '--cols_not_save_list', 'SigmaT',
         '--delimiter_chars', '\\ \\',  # ''\s+',
         # todo  '--f_set_nan_list', 'Turb, x < 0',
         '--b_interact', '0',

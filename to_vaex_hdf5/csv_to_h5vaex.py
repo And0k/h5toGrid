@@ -516,7 +516,7 @@ def csv_to_h5(
         read_csv_args.update({
             'filepath_or_buffer': read_csv_buf,
             'memory_map': True,
-            'dtype': 'string'  # switch off read_csv dtypes convertion (because if it fails it is hard to correct:
+            'dtype': 'string'  # switch off read_csv dtypes conversion (because if it fails it is hard to correct:
             })  # to read same csv place by pandas)
         to_hdf_args.update({
             'path_or_buf': to_hdf_buf,
@@ -549,7 +549,7 @@ def csv_to_h5(
 
             # 1. dates str to DateTime
             for col, f in dates_formats.items():
-                # the convertion of 'bytes' to 'strings' is needed for pd.to_datetime()
+                # the conversion of 'bytes' to 'strings' is needed for pd.to_datetime()
                 try:
                     chunk[col] = pd.to_datetime(chunk[col], format=f)
                 except ValueError as e:
@@ -738,7 +738,7 @@ def csv_to_h5_vaex(read_csv_args, to_hdf_args, dates_formats: Mapping[str, str],
         read_csv_args.update({
             'filepath_or_buffer': read_csv_buf,
             'memory_map': True,
-            'dtype': 'string'  # switch off read_csv dtypes convertion (because if it fails it is hard to correct:
+            'dtype': 'string'  # switch off read_csv dtypes conversion (because if it fails it is hard to correct:
             })  # to read same csv place by pandas)
         to_hdf_args.update({
             'path_or_buf': to_hdf_buf,

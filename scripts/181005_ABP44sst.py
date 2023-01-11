@@ -38,11 +38,11 @@ if st(1):  # False: #
 if st(2):  # False: #
     # Save CTD_SST_48Mc to DB
     csv2h5([
-        'cfg/csv_CTD_Sea&Sun.ini',
+        'cfg/csv_CTD_SST.ini',
         '--path', path_in_SST_48Mc,
         '--dt_from_utc_hours', '2',
         '--header', 'Number,Date(text),Time(text),Pres,Temp,Sal,O2,O2ppm,SIGMA,Cond,Vbatt,SVel',
-        '--cols_not_use_list', 'Number,SIGMA,Vbatt,SVel',
+        '--cols_not_save_list', 'Number,SIGMA,Vbatt,SVel',
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--table', 'CTD_SST_48Mc',
         '--b_interact', '0',
@@ -56,7 +56,7 @@ if st(4):  # False: #
             '--path', os_path.join(path_cruise, r'navigation\source_OpenCPN\tracks\*.gpx'),
             '--tables_list', ',navigation,',  # skip waypoints
             '--table_prefix', r'',
-            # '--sort', 'False',
+            # '--corr_time_mode', 'False',
             ])
 
 if st(5):  # False: #
@@ -66,7 +66,7 @@ if st(5):  # False: #
             '--path',
             os_path.join(path_cruise, r'd:\workData\BalticSea\181005_ABP44\navigation\bathymetry_HYPACK\*.txt'),
             '--table', 'navigation',
-            '--sort', 'False'  # '--fs_float', '4'
+            '--corr_time_mode', 'False'  # '--fs_float', '4'
             ])
 
 # go = False
@@ -96,7 +96,7 @@ if st(8):  # False: #
 ########################################################################################
 
 if st(10):  # False: #
-    # Save gpx from treckers to DB
+    # Save gpx from trackers to DB
     gpx2h5(['',
             '--db_path', path_db,  # str(Path().with_name('trackers_temp')),
             '--path', os_path.join(path_cruise, r'navigation\*spot*.gpx'),
@@ -106,7 +106,7 @@ if st(10):  # False: #
             '--tables_list', ',,tracker{}', ])
 # go = True
 if st(11):  # False: #
-    # Export treckers tracks to GPX tracks
+    # Export trackers tracks to GPX tracks
     h5toGpx(['cfg/h5toGpx_nav_all.ini',
              '--db_path', path_db,
              '--tables_list', 'tracker{}',

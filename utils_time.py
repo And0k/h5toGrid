@@ -14,7 +14,7 @@ import pandas as pd
 from numba import jit
 from pandas.tseries.frequencies import to_offset
 
-from other_filters import l
+from filters import l
 from utils2init import LoggingStyleAdapter
 
 if __debug__:

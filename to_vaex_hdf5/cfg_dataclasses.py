@@ -19,7 +19,7 @@ from utils2init import this_prog_basename, ini2dict, Ex_nothing_done, init_file_
 lf = LoggingStyleAdapter(__name__)
 
 @dataclass
-class ConfigInput:
+class ConfigInCsv:
     """
     "in": all about input files
     Constructor arguments:
@@ -30,14 +30,14 @@ class ConfigInput:
     :param b_incremental_update: exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files
     :param dt_from_utc_seconds: add this correction to loading datetime data. Can use other suffixes instead of "seconds"
     :param dt_from_utc_hours: add this correction to loading datetime data. Can use other suffixes instead of "hours"
-    :param fs_float: sampling frequency, uses this value to calculate intermediate time values between time changed values (if same time is assined to consecutive data)
+    :param fs_float: sampling frequency, uses this value to calculate intermediate time values between time changed values (if same time is assigned to consecutive data)
     :param fs_old_method_float: sampling frequency, same as ``fs_float``, but courses the program to use other method. If smaller than mean data frequency then part of data can be deleted!(?)
     :param header: comma separated list matched to input data columns to name variables. Can contain type suffix i.e.
      (float) - which is default, (text) - also to convert by specific converter, or (time) - for ISO format only
     :param cols_load_list: comma separated list of names from header to be saved in hdf5 store. Do not use "/" char, or type suffixes like in ``header`` for them. Defaut - all columns
-    :param cols_not_use_list: comma separated list of names from header to not be saved in hdf5 store
+    :param cols_not_save_list: comma separated list of names from header to not be saved in hdf5 store
     :param skiprows_integer: skip rows from top. Use 1 to skip one line of header
-    :param on_bad_lines: {{'error', 'warn', 'skip'}}, default 'error'. May be better to set "comments" argument to tune format?
+    :param on_bad_lines: {{'error', 'warn', 'skip'}}, default 'error'. May be better to set "comment" argument to tune format?
     :param delimiter_chars: parameter of pandas.read_csv()
     :param max_text_width: maximum length of text fields (specified by "(text)" in header) for dtype in numpy loadtxt
     :param chunksize_percent_float: percent of 1st file length to set up hdf5 store tabe chunk size
@@ -52,7 +52,8 @@ class ConfigInput:
     exclude_dirs_endswith: Tuple[str] = ('toDel', '-', 'bad', 'test', 'TEST')
     exclude_files_endswith: Tuple[str] = ('coef.txt', '-.txt', 'test.txt')
     b_incremental_update: bool = True
-    dt_from_utc = 0
+    dt_from_utc_hours = 0
+
     skiprows = 1
     on_bad_lines = 'error'
     max_text_width = 1000
@@ -61,6 +62,7 @@ class ConfigInput:
     dir: Optional[str] = MISSING
     ext: Optional[str] = MISSING
     filemask: Optional[str] = MISSING
+
     paths: Optional[List[Any]] = field(default_factory=list)
     nfiles: Optional[int] = 0  # field(default=MISSING, init=False)
     raw_dir_words: Optional[List[str]] = field(default_factory= lambda: ['raw', 'source', 'WorkData', 'workData'])
@@ -155,13 +157,16 @@ class ConfigOutCsv:
     file_name_fun_log: str = ''
     sep: str = '\t'
 
-ParamsCTDandNav = make_dataclass('ParamsCTDandNav', [  # 'Pres, Temp90, Cond, Sal, O2, O2ppm, Lat, Lon, SA, sigma0, depth, soundV'
+ParamsCTD = make_dataclass('ParamsCTD', [  # 'Pres, Temp90, Cond, Sal, O2, O2ppm, Lat, Lon, SA, sigma0, depth, soundV'
     (p, Optional[float], MISSING) for p in 'Pres Temp Cond Sal SigmaTh O2sat O2ppm soundV'.split()
     ])
 
+ParamsNav = make_dataclass('ParamsNav', [
+    (p, Optional[float], MISSING) for p in 'Lat Lon DepEcho'.split()
+    ] + [('date', Optional[Any], MISSING)])
 
 @dataclass
-class ConfigFilter:
+class ConfigFilterCTD:
     """
     "filter": filter all data based on min/max of parameters:
 
@@ -170,10 +175,25 @@ class ConfigFilter:
     :param b_bad_cols_in_file_name: find string "<Separator>no_<col1>[,<col2>]..." in file name. Here <Separator> is one of -_()[, and set all values of col1[, col2] to NaN
     """
     #Optional[Dict[str, float]] = field(default_factory= dict) leads to .ConfigAttributeError/ConfigKeyError: Key 'Sal' is not in struct
-    min: Optional[ParamsCTDandNav] = ParamsCTDandNav()
-    max: Optional[ParamsCTDandNav] = ParamsCTDandNav()
+    min: Optional[ParamsCTD] = ParamsCTD()
+    max: Optional[ParamsCTD] = ParamsCTD()
     b_bad_cols_in_file_name: bool = False
+    corr_time_mode: Any = 'delete_inversions'  # , 'False',  'correct', 'sort_rows'
 
+@dataclass
+class ConfigFilterNav:
+    """
+    "filter": filter all data based on min/max of parameters:
+
+    :param min_dict: List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is below ``value``'). To filter time use ``date`` key
+    :param max_dict: List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is above ``value``'). To filter time use ``date`` key
+    :param b_bad_cols_in_file_name: find string "<Separator>no_<col1>[,<col2>]..." in file name. Here <Separator> is one of -_()[, and set all values of col1[, col2] to NaN
+    """
+    #Optional[Dict[str, float]] = field(default_factory= dict) leads to .ConfigAttributeError/ConfigKeyError: Key 'Sal' is not in struct
+    min: Optional[ParamsNav] = ParamsNav()
+    max: Optional[ParamsNav] = ParamsNav()
+    b_bad_cols_in_file_name: bool = False
+    corr_time_mode: Any = 'delete_inversions'
 
 @dataclass
 class ConfigProgram:
@@ -227,7 +247,7 @@ def hydra_cfg_store(
     # Registering groups schemas
     for group, names in cs_store_group_options.items():
         for name in names:
-            class_name = ''.join(['Config'] + [s.title() or '_' for s in name.split('_')])
+            class_name = ''.join(['Config'] + [(s.title() if s.islower() else s) or '_' for s in name.split('_')])
             try:
                 cl = getattr(module, class_name)
                 cs.store(name=name, node=cl, group=group)
@@ -243,10 +263,12 @@ def main_init_input_file(cfg_t, cs_store_name, in_file_field='db_path'):
     """
     - finds input files paths
     - renames cfg['input'] to cfg['in'] and fills its field 'cfgFile' to cs_store_name
+
     :param cfg_t:
     :param cs_store_name:
     :param in_file_field:
     :return:
+    Note: intended to use after main_init()
     """
     cfg_in = cfg_t.pop('input')
     cfg_in['cfgFile'] = cs_store_name
@@ -268,13 +290,13 @@ def main_init_input_file(cfg_t, cs_store_name, in_file_field='db_path'):
     return cfg_t
 
 
-def main_init(cfg, cs_store_name, __file__=None, ):
+def main_init(cfg: Mapping, cs_store_name, __file__=None, ) -> Dict:
     """
     - prints parameters
     - prints message that program (__file__ or cs_store_name) started
-    - converts cfg parameters to types according to its prefixes/suffixes names (see ini2dict())
+    - converts cfg parameters to types according to its prefixes/suffixes names: see utils2init.ini2dict()
 
-    :param cfg:
+    :param cfg: usually DictConfig[str, DictConfig[str, Any]]
     :param cs_store_name:
     :param __file__:
     :return:
@@ -386,7 +408,7 @@ def main_call(
 # cs = ConfigStore.instance()
 # cs.store(group='in', name='nmea_files', node=ConfigIn)
 # cs.store(group='out', name='hdf5_vaex_files', node=ConfigOut)
-# cs.store(group='filter', name='filter', node=ConfigFilter)
+# cs.store(group='filter', name='filter', node=ConfigFilterCTD)
 # cs.store(group='program', name='program', node=ConfigProgram)
 # # Registering the Config class with the name 'config'.
 # cs.store(name='cfg', node=Config)

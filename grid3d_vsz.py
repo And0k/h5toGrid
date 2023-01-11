@@ -22,7 +22,7 @@ from scipy import interpolate
 
 if __debug__:
     from matplotlib import pyplot as plt
-from other_filters import inearestsorted
+from filters import inearestsorted
 from to_pandas_hdf5.h5_dask_pandas import filter_local, filter_local_arr
 from veuszPropagate import load_vsz_closure
 from grid2d_vsz import ge_sections, write_grd_fun
@@ -33,16 +33,21 @@ from utils2init import standard_error_info
 
 # ##############################################################################
 startSectionN = 1  # 1 Debug: skipped sections!!!!
-db_path = r'd:\WorkData\BlackSea\200909_Ashamba\200909_Ashamba.h5'
-params = [u'Temp', u'Sal', u'SigmaTh', u'O2', u'pH', u'Eh']  # u'ChlA', , u'Turb'
+db_path = r'd:\WorkData\BlackSea\220920\220920.h5'
+
+# r'd:\WorkData\BlackSea\220620\220620.h5'
+# r'd:\WorkData\BlackSea\200909_Ashamba\200909_Ashamba.h5'
+params = [u'Temp', u'Sal', u'SigmaTh']  # , u'O2', u'pH', u'Eh', u'ChlA', u'Turb'
 pst = 5
 pen = 80
 pstep = 5
 pwidth = 5  # m
 
 ranges = [  # of centers. First must be depth (to select it in interp in cycle)
-    np.arange(pst, pen, pstep),
-    pd.date_range(start='2020-09-10T12:00', periods=3)
+    np.arange(pst, pen, pstep),                                                 # depth centers
+    pd.DatetimeIndex(['2022-09-20T00:00', '2022-09-20T21:00'])
+    # ['2022-06-20T12:00', '2022-06-27T12:00'])
+    # pd.date_range(start='2022-06-20T12:00', periods=3)  # '2020-09-10T12:00'    # time centers
     ]
 margins = [pwidth, pd.Timedelta(0.5, 'D')]
 patterns = [
@@ -87,21 +92,24 @@ cfg = {'gpx': {}, 'vsz_files': {}, 'db_path': Path(db_path),
 cfg['vsz_files'] = {'path': Path(cfg['db_path'].parent / 'CTD-sections' / '??????_????Z*.vsz')}
 cfg['program'] = {'log': cfg['vsz_files']['path'].with_name('CTDprofilesEnds.txt')}
 # cfg['program']['logs']= 'CTDprofilesEnds.txt'
-cfg['program']['veusz_path'] = u'C:\\Program Files (x86)\\Veusz'  # directory of Veusz
+cfg['program']['veusz_path'] = 'C:\\Program Files\\Veusz'  # directory of Veusz
 load_vsz = load_vsz_closure(Path(cfg['program']['veusz_path']))
 search_nav_tolerance = timedelta(minutes=1)
-t_our_zone = timedelta(hours=2)
+t_our_zone = timedelta(hours=0)  # 2
 
-cfg['gpx']['symbol_break_keeping_point'] = 'Circle, Red'  # will not keeping to if big dist:
+cfg['gpx']['symbol_break_keeping_point'] = 'Circle, Red'  # will not keep to if big dist:
 cfg['gpx']['symbol_break_notkeeping_dist'] = 20  # km
 cfg['gpx']['symbol_excude_point'] = 'Circle with X'
 b_filter_time = False
 # dt_point2run_max= timedelta(minutes=15)
 
 path_dir_temp = cfg['db_path'].with_name('_subproduct')
+path_dir_temp_srf = path_dir_temp / 'surfer'
+if not path_dir_temp_srf.is_dir():
+    path_dir_temp_srf.mkdir()
 # ----------------------------------------------------------------------
-# dir_walker
-vszFs = list(Path.glob(cfg['vsz_files']['path']))
+# skipping files marked bad
+vszFs = [p for p in Path(cfg['vsz_files']['path'].parent).glob(cfg['vsz_files']['path'].name) if not p.stem.endswith('-')]
 print('Process {} sections'.format(len(vszFs)))
 # Load data #################################################################
 bFirst = True
@@ -115,10 +123,12 @@ try:
         with pd.HDFStore(cfg['db_path'], mode='r') as storeIn:
             cols_nav = ['Lat', 'Lon']  #, 'Dist'
             # colCTD = [u'Pres', u'Temp', u'Sal', u'SigmaTh', u'O2', u'ChlA', u'Turb', u'pH', u'Eh']  # u'ChlA', , u'Turb'
+
             for isec, vszF in enumerate(vszFs, start=1):
-                # Load filtered down runs data
                 if isec < startSectionN:
-                    continue
+                    continue  # skip before specified start
+
+                # Load filtered down runs data
                 print('\n{}. {}'.format(isec, vszF))
                 vsze, ctd = load_vsz(vszF, veusze=vsze, prefix='CTD')
                 if 'ends' not in ctd:
@@ -179,33 +189,36 @@ try:
         print('Gridding on horisonts:', end=' ')
         y_resolution /= (1.852 * 60)  # %km2deg(1)
         for centers, qstr in gen_queries(ranges, patterns, margins, print_patern=print_patern):
-            file_stem = file_patern.format(**centers)
-            file_stem_no_time = file_patern_no_time.format(**centers)
+            file_stem = file_patern.format_map({
+                k: (lambda f, i: f'{int(i):02d}' + '{:.2f}'.format(f).strip('0').rstrip('.')
+                    )(np.modf(c)) if isinstance(c, float) else c for k, c in centers.items()
+                })
+            file_stem_no_time = file_patern_no_time.format_map(centers)
             # p, p_st, p_en in np.arange(pst, pen, pstep)[:, np.newaxis] + np.array(
             # [[0, -pwidth, pwidth]]) / 2:  # [:, np.]
             # print('\n{:g}m.'.format(p), end=' ')
             # qstr = qstr_pattern.format(p_st, p_en)
-            FCTD = pd.read_hdf(db_path_temp, 'CTD', where=qstr)
-            if FCTD.empty:
+            ctd_in = pd.read_hdf(db_path_temp, 'CTD', where=qstr)
+            if ctd_in.empty:
                 print('- empty', end='')
                 continue
-            time_st_local, time_en_local = [timzone_view(x, t_our_zone) for x in FCTD.index[[0, -1]]]
+            time_st_local, time_en_local = [timzone_view(x, t_our_zone) for x in ctd_in.index[[0, -1]]]
             fileN_time =\
                 f'{time_st_local:%y%m%d_%H%M}-'\
                 f'{{:{"%d_" if time_st_local.day!=time_en_local.day else ""}%H%M}}'.format(time_en_local)
 
             # Get data for each run
-            # It is possible to get it by aggeregation (df_points = FCTD.groupby(['Lat', 'Lon']))
-            # but here we use runs info which is icapsulated in _shift_. Runs were found in Veusz
-            iruns = np.flatnonzero(np.diff(FCTD['shift']) != 0)
+            # It is possible to get it by aggregation (df_points = ctd_in.groupby(['Lat', 'Lon']))
+            # but here we use exact runs positions (runs where found in Veusz and saved to ctd_in['shift']).
+            iruns = np.flatnonzero(np.diff(ctd_in['shift']) != 0)
             ctd = np.empty((iruns.size + 1,), {'names': params + ['Lat', 'Lon'],
                                                'formats': ['f8'] * (len(params) + 2)})
             ctd.fill(np.NaN)
             for param in ctd.dtype.names:
                 if param not in maxDiff: maxDiff[param] = np.NaN
                 for irun, isten in enumerate(np.column_stack((np.append(1, iruns),
-                                                              np.append(iruns, len(FCTD))))):
-                    data_check = FCTD.iloc[slice(*isten), FCTD.columns.get_indexer(('Pres', param))]
+                                                              np.append(iruns, len(ctd_in))))):
+                    data_check = ctd_in.iloc[slice(*isten), ctd_in.columns.get_indexer(('Pres', param))]
                     data_check.dropna(axis=0, inplace=True)
 
                     # Outlines:
@@ -232,10 +245,10 @@ try:
                        np.vstack((ctd['Lat'], ctd['Lon'])).T,
                        fmt='%g,%g', header='Lon,Lat', delimiter=',', comments='')
 
-            x_min = np.nanmin(ctd['Lon'])
-            x_max = np.nanmax(ctd['Lon'])
-            y_min = np.nanmin(ctd['Lat'])
-            y_max = np.nanmax(ctd['Lat'])
+            x_min = np.nanmin(ctd['Lon']).item()
+            x_max = np.nanmax(ctd['Lon']).item()
+            y_min = np.nanmin(ctd['Lat']).item()
+            y_max = np.nanmax(ctd['Lat']).item()
             Lat_mean = (y_min + y_max) / 2
             x_resolution = y_resolution * np.cos(np.deg2rad(Lat_mean))
             gdal_geotransform = (x_min, x_resolution, 0, y_max, 0, -y_resolution)
@@ -249,16 +262,29 @@ try:
             # ym_blank = ym > bot_edge_add - y_edge_path
             print('{}x{} - '.format(*xm.shape), end='')
 
+
+            # KrigVariogram
+
+
+            AnisotropyAngle = 45
+            AnisotropyRatio = 25
+            SearchRad1 = 0.1   # degree - smaller radius
+            SearchRad2 = 0.9   # SearchRad1*AnisotropyRatio
             griddata_by_surfer(
-                ctd, path_stem_pattern=(path_dir_temp / 'surfer' / f'{file_stem}{{}}'), margins=True,
+                ctd, path_stem_pattern=(path_dir_temp_srf / f'{file_stem}{{}}'), margins=True,
+                AnisotropyRatio=0.5, AnisotropyAngle=AnisotropyAngle,
+                SearchEnable=True, SearchAngle=AnisotropyAngle, SearchNumSectors=4,
+                SearchRad1=SearchRad1, SearchRad2=SearchRad2,
                 xCol='Lon', yCol='Lat', xMin=x_min, xMax=x_max, yMin=y_min, yMax=y_max,
-                SearchAngle=45, AnisotropyAngle = 45, AnisotropyRatio=0.8, SearchNumSectors=8
+                KrigDriftType=1,        # =srfDriftLinear
+                KrigVariogram=[[3]]     # constants.srfVarLogarithmic, Vscale, Vlength  [[3, 10], [5, 0.01]] - not works
+                # Type=srfVarLinear=3, Param1 - slope, Param2 -length # srfVarNugget=5, Param1 - variance for the nugget effect
                 )
 
 
             bFirst = True
             for iparam, param in enumerate(params):  # param= u'Temp'
-                label_param = param  # .lstrip('_').split("_")[0] #remove techcnical comments in names
+                label_param = param  # .lstrip('_').split("_")[0] #remove technical comments in names
                 if bFirst:
                     print(label_param, end='')
                 else:

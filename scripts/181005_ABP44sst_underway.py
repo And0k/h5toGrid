@@ -22,11 +22,11 @@ start = 13
 if st(1):  # False: #
     # Save CTD_SST_48Mc Underway to DB
     csv2h5([
-        'cfg/csv_CTD_Sea&Sun.ini',
+        'cfg/csv_CTD_SST.ini',
         '--path', os_path.join(path_cruise, 'CTD_SST_48Mc#1253\Time_in_TOB=UTC\18*[0-9].TOB'),
         '--dt_from_utc_hours', '0',
         '--header', 'Number,Date(text),Time(text),Pres,Temp,Sal,O2,O2ppm,SIGMA,Cond,Vbatt,SVel',
-        '--cols_not_use_list', 'Number,SIGMA,Vbatt,SVel',
+        '--cols_not_save_list', 'Number,SIGMA,Vbatt,SVel',
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--table', 'CTD_SST_48Mc',
         '--b_interact', '0',

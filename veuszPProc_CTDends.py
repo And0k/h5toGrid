@@ -19,7 +19,7 @@ import pyproj
 
 from veuszPropagate import load_vsz_closure
 from grid2d_vsz import runs_ilast_good, sec_edges, track_b_invert
-from other_filters import inearestsorted
+from filters import inearestsorted
 
 # idata_from_tpoints
 
@@ -45,7 +45,7 @@ cfg['out']['path'] = os_path.join(os_path.dirname(cfg['input_h5store']['path']),
 cfg['out']['dt_from_utc'] = timedelta(hours=2)
 cfg['program'] = {'log': os_path.join(cfg['out']['path'], 'S&S_CTDprofilesEnds.txt')}  # common data out
 cfg['program']['logs'] = 'CTDprofilesEnds.txt'  # separate file for each section suffix
-cfg['program']['veusz_path'] = u'C:\\Program Files (x86)\\Veusz'  # directory of Veusz
+cfg['program']['veusz_path'] = u'C:\\Program Files\\Veusz'  # directory of Veusz
 load_vsz = load_vsz_closure(Path(cfg['program']['veusz_path']))
 
 b_filter_time = False

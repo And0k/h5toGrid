@@ -207,27 +207,27 @@ T_bin = fbinningClip(Tfilt, bin2_iStEn, bin1_nAverage)
 Vabs = fVabs_old(np.where(np.abs(GsumMinus1) > maxGsumMinus1, np.NaN, Gxyz), kVabs)
 Vdir = np.degrees(np.arctan2(np.tan(sRoll), np.tan(sPitch)) + fHeading(Hxyz, sPitch, sRoll))
 
-# DatasetPlugin('PolarToCartesian', {'x_out': Vn, 'units': np.degrees, 'r_in': Vabs, 'y_out': Ve, 'theta_in': Vdir})
-Vn = Vabs * np.cos(radians(Vdir))
-Ve = Vabs * np.sin(radians(Vdir))
+# DatasetPlugin('PolarToCartesian', {'x_out': v, 'units': np.degrees, 'r_in': Vabs, 'y_out': u, 'theta_in': Vdir})
+v = Vabs * np.cos(radians(Vdir))
+u = Vabs * np.sin(radians(Vdir))
 # np.degrees(np.arctan2(x1, x2[, out]))
 
-VeBin = fbinning(Ve, bin1_nAverage)
-VnBin = fbinning(Vn, bin1_nAverage)
-VabsBin = absolute(VeBin + 1j * VnBin)
+u_Bin = fbinning(u, bin1_nAverage)
+v_Bin = fbinning(v, bin1_nAverage)
+VabsBin = absolute(u_Bin + 1j * v_Bin)
 VabsD_Bin = fbinning(Vabs, bin1_nAverage)
-VdirBin = np.arctan2(VeBin, VnBin) * (180 / pi)
-VeBinCum = cumsum(VeBin * bin3_dtime)
-VnBinCum = cumsum(VnBin * bin3_dtime)
+VdirBin = np.arctan2(u_Bin, v_Bin) * (180 / pi)
+u_BinCum = cumsum(u_Bin * bin3_dtime)
+v_BinCum = cumsum(v_Bin * bin3_dtime)
 
 # 'statistics'
 max_VabsBin = np.round(np.nanmax(VabsBin), 3)
 min_VabsBin = np.round(np.nanmin(VabsBin), 3)
 mean_T = np.nanmean(T)
-mean_VeBin = np.nanmean(VeBin)
-mean_VnBin = np.nanmean(VnBin)
-mean_VdirBin = (np.degrees(np.arctan2(mean_VeBin, mean_VnBin))) % 360
-mean_VabsBin = np.abs(mean_VnBin + 1j * mean_VeBin)
+mean_u_Bin = np.nanmean(u_Bin)
+mean_v_Bin = np.nanmean(v_Bin)
+mean_VdirBin = (np.degrees(np.arctan2(mean_u_Bin, mean_v_Bin))) % 360
+mean_VabsBin = np.abs(mean_v_Bin + 1j * mean_u_Bin)
 mid_VabsBin = np.round((min_VabsBin + max_VabsBin) / 2, 1 + np.int64(-log10((max_VabsBin - min_VabsBin) / 2)))
 
 # 'display'
@@ -271,12 +271,12 @@ print('calibration coefficients calculated:', '\nA:\n', '[{}]'.format(
       '[{}]'.format(','.join(str(bi) for bi in b.flat)))
 
 """
-TagDatasets(u'binning', [u'T_bin', u'VabsBin', u'VabsD_Bin', u'VdirBin', u'VeBin', u'VeBinCum', u'VnBin', u'VnBinCum', u'bin0_nAveragePreferCoef', u'bin1_nAverage', u'bin1_nAveragePrefer_testErr', u'bin2_iStEn', u'bin3_dtime', u'bin3_sliceMid', u'bin3_timeMid', u'bin3_timeSt', u'i_burst1St'])
+TagDatasets(u'binning', [u'T_bin', u'VabsBin', u'VabsD_Bin', u'VdirBin', u'u_Bin', u'u_BinCum', u'v_Bin', u'v_BinCum', u'bin0_nAveragePreferCoef', u'bin1_nAverage', u'bin1_nAveragePrefer_testErr', u'bin2_iStEn', u'bin3_dtime', u'bin3_sliceMid', u'bin3_timeMid', u'bin3_timeSt', u'i_burst1St'])
 TagDatasets(u'coeficient', [u'Ag', u'Ag_old', u'Ah', u'Cg', u'kVabs'])
 TagDatasets(u'display', [u'LegMinMax', u'LegV', u'LegY', u'iDisp_TimeZoom', u'iDisp_TimeZoom_bin_iStEn', u'iDisp_TimeZoom_burst1St', u'iDisp_TimeZoom_bursts', u'iDisp_TimeZoom_inbinStEn', u'ones_lenNBursts', u'time_BurstStarts', u'time_streched', u'txtEnd', u'txtStartTitle', u'txt_mean_T'])
 TagDatasets(u'filter', [u'GsumMinus1', u'HsumMinus1', u'Tfilt', u'bP', u'iStEn_auto', u'iUseC', u'iUseTime'])
-TagDatasets(u'mainparam', [u'Gxyz', u'Hxyz', u'T', u'Vabs', u'Vdir', u'Ve', u'Vn', u'dstime', u'sPitch', u'sRoll', u'tEnd', u'tStart', u'time'])
-TagDatasets(u'statistics', [u'max_VabsBin', u'mean_T', u'mean_VabsBin', u'mean_VabsVdirBin', u'mean_VdirBin', u'mean_VeBin', u'mean_VnBin', u'mid_VabsBin', u'min_VabsBin', u'sTmin', u'txt_mean_Vabs', u'txt_mean_Vdir'])
-TagDatasets(u'unlink4(Vel,diagram)only', [u'LegV', u'Vabs', u'VabsBin', u'VabsD_Bin', u'Vdir', u'VdirBin', u'VeBinCum', u'VnBinCum', u'bin3_timeMid', u'time', u'txtEnd', u'txtStartTitle', u'txt_mean_Vabs', u'txt_mean_Vdir'])
+TagDatasets(u'mainparam', [u'Gxyz', u'Hxyz', u'T', u'Vabs', u'Vdir', u'u', u'v', u'dstime', u'sPitch', u'sRoll', u'tEnd', u'tStart', u'time'])
+TagDatasets(u'statistics', [u'max_VabsBin', u'mean_T', u'mean_VabsBin', u'mean_VabsVdirBin', u'mean_VdirBin', u'mean_u_Bin', u'mean_v_Bin', u'mid_VabsBin', u'min_VabsBin', u'sTmin', u'txt_mean_Vabs', u'txt_mean_Vdir'])
+TagDatasets(u'unlink4(Vel,diagram)only', [u'LegV', u'Vabs', u'VabsBin', u'VabsD_Bin', u'Vdir', u'VdirBin', u'u_BinCum', u'v_BinCum', u'bin3_timeMid', u'time', u'txtEnd', u'txtStartTitle', u'txt_mean_Vabs', u'txt_mean_Vdir'])
 TagDatasets(u'zeroing', [u'Gxyz0', u'Gxyz0mean', u'Gxyz0old', u'd_HGsumMinus1', u'old1pitch', u'old1roll'])
 """

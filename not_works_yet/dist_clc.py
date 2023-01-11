@@ -162,7 +162,7 @@ else:  # line distance
     track['Points']['Lat'] = lats
     track['Points']['Lon'] = lons
 
-    trackDist = nm2km(trackDist)  # convert & cat if was longer in cicle before
+    trackDist = nm2km(trackDist)  # convert & cat if was longer in cycle before
 # DistLine
 if not track['bMeanOnIntervals']:
     track['Points']['Dist'] = trackDist[b_use]

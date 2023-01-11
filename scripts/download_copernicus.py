@@ -1,13 +1,13 @@
 #@+leo-ver=5-thin
-#@+node:3947220829000151.20211215072208.1: * @file copernicus_api_client.py
+#@+node:3947220829000151.20211215072208.1: * @file download_copernicus.py
 #!/usr/bin/env python
 #@+others
-#@+node:3947220829000151.20211215192713.1: ** Declarations (copernicus_api_client.py)
+#@+node:3947220829000151.20211215192713.1: ** Declarations (download_copernicus.py)
 """
 Download data from Copernicus to NetCDF file - official motuclient configured to my needs with detecting last data date
 See also
  - netcdf2csv.py to convert result to csv
- - ecmwf_api_client.py
+ - download_ecmwf.py
 
 python -m motuclient ^
  --motu https://nrt.cmems-du.eu/motu-web/Motu ^
@@ -65,14 +65,14 @@ dir_save = r'd:\WorkData\BalticSea\_other_data\_model\Copernicus\section_z'
 l = logging.getLogger(__name__)
 l.info(f'Downloading to {dir_save}...')
 
-# use_date_range_str = ['2020-09-01', '2021-03-31']  # ['2020-12-01', '2021-01-31']  # ['2018-12-01', '2018-12-31']
-# use_date_range = [datetime.strptime(t, '%Y-%m-%d') for t in use_date_range_str]  # T%H:%M:%S
-# file_date_prefix = '{:%y%m%d}-{:%m%d}'.format(*use_date_range)
+# use_date_range = ['2020-09-01', '2021-03-31']  # ['2020-12-01', '2021-01-31']  # ['2018-12-01', '2018-12-31']
+# date_range = [datetime.strptime(t, '%Y-%m-%d') for t in use_date_range]  # T%H:%M:%S
+# file_date_prefix = '{:%y%m%d}-{:%m%d}'.format(*date_range)
 
 # common = {
 #     'class': 'ei',
 #     'dataset': 'interim',
-#     'date': '{}/to/{}'.format(*use_date_range_str),
+#     'date': '{}/to/{}'.format(*use_date_range),
 #     'expver': '1',
 #     'grid': '0.75/0.75',
 #     'area': '{}/{}/{}/{}'.format(lat_st, lon_st, lat_en, lon_en),  # SWSE

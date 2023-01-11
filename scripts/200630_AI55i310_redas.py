@@ -67,7 +67,7 @@ if st(10, f'Save {device} data to DB'):  # False: #
         'SoundVel,Lat,Lon',
         '--delimiter_chars', r'\t',  # ''\s+',
         '--b_interact', '0',
-        '--cols_not_use_list', 'N',
+        '--cols_not_save_list', 'N',
         # '--on_bad_lines', 'warn'
         '--min_dict', 'O2:-2, O2ppm:-2',  # del strange big negative values
         ],
@@ -102,7 +102,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
     import re
     from os import getcwd as os_getcwd, chdir as os_chdir
     path_prev = os_getcwd()
-    argv_prev = sys.argv
+    argv_prev = sys.argv.copy()
 
 
     cfg_in = {
@@ -276,7 +276,7 @@ if st(120, 'Meteo'):
         str(path_cruise / r"meteo\ship's_meteo_st_source\*.mxt"), '--header',
         'date(text),Time(text),t_air,Vabs_m__s,Vdir,dew_point,Patm,humidity,t_w,precipitation',
         '--coldate_integer', '0', '--coltime_integer', '1',
-        '--cols_not_use_list', 't_w,precipitation',  # bad constant data
+        '--cols_not_save_list', 't_w,precipitation',  # bad constant data
         '--delimiter_chars', ',', '--max_text_width', '12',
         '--on_bad_lines', 'warn', '--b_insert_separator', 'False',
         '--chunksize_percent_float', '500',
@@ -310,7 +310,7 @@ if st(210, f'Save {device} data to DB'):  # False: #
         'date(text),txtT(text),Pres(float),Temp90(float),Cond(float),Sal(float),O2(float),O2ppm(float),SigmaT(float)',
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--b_interact', '0',
-        #'--cols_not_use_list', 'N',
+        #'--cols_not_save_list', 'N',
         # '--on_bad_lines', 'warn'
         #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
         ],
@@ -360,7 +360,7 @@ if st(230, f'Draw {device} data profiles'):  # False: #
 
     from os import getcwd as os_getcwd, chdir as os_chdir
     path_prev = os_getcwd()
-    argv_prev = sys.argv
+    argv_prev = sys.argv.copy()
 
     os_chdir(cfg_in['pattern_path'].parent)
     path_vsz_all = []
@@ -370,16 +370,16 @@ if st(230, f'Draw {device} data profiles'):  # False: #
         path_vsz.write_bytes(re.sub(rb'^([^\n]+)', str_expr, pattern_code, count=1))  # replaces 1st row
         path_vsz_all.append(path_vsz)
         # try:
-        #     with Popen(rf'"C:\Program Files (x86)\Veusz\veusz.exe" {filename} --unsafe-mode',
+        #     with Popen(rf'"C:\Program Files\Veusz\veusz.exe" {filename} --unsafe-mode',
         #                stdout=PIPE, stderr=STDOUT) as proc:
         #         pass
         #
         # try:
         #     remote = Popen(
-        #         [rf'"Program Files (x86)/Veusz/veusz.exe" {path_vsz.name} --export=export_0.jpg --export-option=page=[0] --export-option=dpi=300'])
+        #         [rf'"Program Files/Veusz/veusz.exe" {path_vsz.name} --export=export_0.jpg --export-option=page=[0] --export-option=dpi=300'])
         # except Exception as e:
         #     print(e)
-        # r'"Program Files (x86)/Veusz/veusz.exe" {path_vsz} --export=export_%n.jpg --export-option=page=[5] --export-option=dpi=200'
+        # r'"Program Files/Veusz/veusz.exe" {path_vsz} --export=export_%n.jpg --export-option=page=[5] --export-option=dpi=200'
 
         # [veusze.remote.args[0], str(vsz), '--unsafe-mode', '--embed-remote'],
         # shell=False, bufsize=0,

@@ -105,7 +105,7 @@ if st(2):
                 }, 'out': {
                 'b_all_to_one_col': True,
                 'text_date_format': lambda t: (t - m_TimeStart_csv) / np.timedelta64(1, 'h'),
-                'text_columns': ['Date', 'Ve', 'Vn']
+                'text_columns': ['Date', 'u', 'v']
                 }}
         # csv splitted by 1day (default for no avg) and monolit csv if aggregate_period_s==600
         if aggregate_period_s is not None:

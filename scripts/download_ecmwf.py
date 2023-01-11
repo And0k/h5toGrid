@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 """
-Download ERA5 data from Climate Data Store to NetCDF file
+Download ECMWF ERA5 data from Climate Data Store to NetCDF file
 See also
  https://confluence.ecmwf.int/display/CKB/ERA5%3A+data+documentation
  - netcdf2csv.py to convert result to csv
- - copernicus_api_client.py
+ - download_copernicus.py
 """
 from io import IOBase
 from os import SEEK_END, SEEK_SET
@@ -16,15 +16,26 @@ import pandas as pd
 
 from scripts.netcdf2csv import main as netcdf2csv
 
-#masha: 54.625    19.875
-#need: N54.61106 E19.84847
-# lat_st, lon_st = 54.9689, 20.2446  # Pionersky
-lat_st, lon_st = 54.615, 19.841  # Baltic_spit
+# Set:
+# dir_save
+# lat_st, lon_st
+# use_date_range - Set [] to load from last loaded data to now
+dir_save, lat_st, lon_st, use_date_range = r'd:\WorkData\KaraSea\220906_AMK89-1\meteo', 72.33385, 63.53786, ['2022-09-01', '2022-09-15']
+
+
+# r'e:\WorkData\BalticSea\181005_ABP44\meteo', 55.88333, 19.13139, ['2018-10-01', '2019-01-01']
+# r'd:\WorkData\BalticSea\220601_ABP49\meteo'
+# r'd:\workData\BalticSea\201202_BalticSpit_inclinometer', 54.615, 19.841  ## Pionersky: 54.9689, 20.2446
+# 55.32659, 20.57875  # 55.874845000, 19.116386667  # masha: 54.625, 19.875 #need: N54.61106 E19.84847
+# ['2022-05-01', '2022-05-20']
+# ['2022-06-01', '2022-06-23']  # ['2020-12-01', '2021-01-31']  # ['2018-12-01', '2018-12-31'], ['2020-09-01', '2021-09-16']
 
 dGrid = 0  # 0.25
 lat_en = lat_st + dGrid
 lon_en = lon_st + dGrid
-dir_save = r'd:\workData\BalticSea\201202_BalticSpit_inclinometer'
+
+
+
 file_nc_name = f'wind@ECMWF-ERA5_area({lat_st},{lon_st},{lat_en},{lon_en}).nc'
 
 l = logging.getLogger(__name__)
@@ -98,25 +109,23 @@ class ReverseFile(IOBase):
             yield file.read(delta)
 
 
-if True:
+if not use_date_range:
     with ReverseFile(r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\wind\200901wind@ECMWF-ERA5(N54.615,E19.841).tsv',
               encoding='ascii') as f_prev:
         last_line = next(f_prev)
     print('last ECMWF data found:', last_line)
+    use_date_range = [last_line.split()[0], f'{datetime.utcnow():%Y-%m-%d}']
+elif len(use_date_range) <= 1 or not use_date_range[1]:
+    use_date_range = [use_date_range[1] or '2020-09-01', f'{datetime.utcnow():%Y-%m-%d}']
 
-    use_date_range_str = [last_line.split()[0], f'{datetime.utcnow():%Y-%m-%d}']
-else:
-    use_date_range_str = ['2020-09-01', f'{datetime.utcnow():%Y-%m-%d}']
+date_range = [datetime.strptime(t, '%Y-%m-%d') for t in use_date_range]  # T%H:%M:%S
+file_date_prefix = '{:%y%m%d}-{:%m%d}'.format(*date_range)
 
-# ['2020-12-01', '2021-01-31']  # ['2018-12-01', '2018-12-31'], ['2020-09-01', '2021-09-16']
-use_date_range = [datetime.strptime(t, '%Y-%m-%d') for t in use_date_range_str]  # T%H:%M:%S
-file_date_prefix = '{:%y%m%d}-{:%m%d}'.format(*use_date_range)
-
-l.info('Downloading interval {} - {}...', *use_date_range)
+l.info('Downloading interval {} - {}...', *date_range)
 # common = {
 #     'class': 'ei',
 #     'dataset': 'interim',
-#     'date': '{}/to/{}'.format(*use_date_range_str),
+#     'date': '{}/to/{}'.format(*use_date_range),
 #     'expver': '1',
 #     'grid': '0.75/0.75',
 #     'area': '{}/{}/{}/{}'.format(lat_st, lon_st, lat_en, lon_en),  # SWSE
@@ -126,7 +135,7 @@ l.info('Downloading interval {} - {}...', *use_date_range)
 #     'format': 'netcdf'
 #     }
 
-if True:
+try:
     # European Centre for Medium-Range Weather Forecasts (ECMWF)
     # retrieve of ERA5 data from Climate Data Store
     # https://github.com/ecmwf/cdsapi
@@ -135,39 +144,53 @@ if True:
 
     import cdsapi
     import urllib3
+    import requests
 
-    c = cdsapi.Client()
-    urllib3.disable_warnings()  # prevent InsecureRequestWarning... Adding certificate verification is strongly advised.
-    c.retrieve(
-        'reanalysis-era5-single-levels',
-        {
-            'product_type': 'reanalysis',
-            'format': 'netcdf',
-            'time': [f'{i:02d}:00' for i in range(24)],
-            'date': [f'{d}' for d in pd.period_range(*use_date_range_str, freq='D')],
-            'variable': [
-                '10m_u_component_of_wind',
-                '10m_v_component_of_wind',
-                '10m_wind_gust_since_previous_post_processing',
-                'instantaneous_10m_wind_gust',
-                'mean_wave_direction',
-                'mean_wave_period',
-                'peak_wave_period',
-                'significant_height_of_combined_wind_waves_and_swell',
-                'surface_pressure'
-                ],
-            'area': [lat_st, lon_st, lat_en, lon_en],
-            # 'year': '2021',
-            # 'month': ['01', '02'],
-            # 'day' : [f'{i:02d}' for i in range(1, 32)],
-        },
-        (path_nc := (Path(dir_save) / file_nc_name))
-    )
+    # manager = PoolManager(num_pools=2)
+
+    proxies = {
+        'http': 'http://127.0.0.1:28080',
+        'https': 'http://127.0.0.1:28080',
+        'ftp': 'http://127.0.0.1:28080'
+        }
+
+    # InsecureRequestWarning: Unverified HTTPS request is being made to host 'cds.climate.copernicus.eu'
+    with requests.Session() as session:
+        # session.proxies.update(proxies)  # not works
+
+        c = cdsapi.Client(session=session)  # warning_callback=
+        urllib3.disable_warnings()  # prevent InsecureRequestWarning... Adding certificate verification is strongly advised.  # better use warning_callback=?
+        c.retrieve(
+            'reanalysis-era5-single-levels',
+            {
+                'product_type': 'reanalysis',
+                'format': 'netcdf',
+                'time': [f'{i:02d}:00' for i in range(24)],
+                'date': [f'{d}' for d in pd.period_range(*use_date_range, freq='D')],
+                'variable': [
+                    '10m_u_component_of_wind',
+                    '10m_v_component_of_wind',
+                    '10m_wind_gust_since_previous_post_processing',
+                    'instantaneous_10m_wind_gust',
+                    'mean_wave_direction',
+                    'mean_wave_period',
+                    'peak_wave_period',
+                    'significant_height_of_combined_wind_waves_and_swell',
+                    'surface_pressure'
+                    ],
+                'area': [lat_st, lon_st, lat_en, lon_en],
+                # 'year': '2021',
+                # 'month': ['01', '02'],
+                # 'day' : [f'{i:02d}' for i in range(1, 32)],
+            },
+            (path_nc := (Path(dir_save) / file_nc_name))
+        )
 
     netcdf2csv(path_nc)
+except Exception as e:
+    raise(e)
 
-
-if False: # old
+if False:  # old
     from ecmwfapi import ECMWFDataServer
     server = ECMWFDataServer()
     l.info('part 1')

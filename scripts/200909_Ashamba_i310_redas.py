@@ -50,7 +50,7 @@ if st(1, 'Save gpx navigation to DB'):
 
 
 if st(2, 'Save NMEA navigation to DB'):
-    argv_safe = sys.argv
+    argv_safe = sys.argv.copy()
     path_input = path_cruise / r'ADCP_600kHz\_raw\*000n.000'
     sys.argv = [__file__,
         f'input.path={path_input}',
@@ -74,7 +74,7 @@ if st(3, 'Save Depth and navigation from ADCP data, exported by WinRiver II with
             '--db_path', str(path_db),
             '--path', str(path_cruise / r'ADCP_600kHz\_raw\ASCII\*_at_ASC.TXT'),
             '--dt_from_utc_hours', '3',
-            '--header', 'N, Time(text), Lat, Lon, Top, Heading, Pitch, stdPitch, Roll, stdRoll, Temper, Ve_none , Vn_none , Vup , ErrVhor , Int1, Int2, Int3, Int4, Cor1, Cor2, Cor3, Cor4, GOOD_bad, SpeedE_GGA, SpeedN_GGA, SpeedE_BT, SpeedN_BT, SpeedUp, ErrSpeed, DepEcho, CellSize, Cell1range, absorption, IntScale, ExtDepth, ExtHeading',
+            '--header', 'N, Time(text), Lat, Lon, Top, Heading, Pitch, stdPitch, Roll, stdRoll, Temper, u_none , v_none , Vup , ErrVhor , Int1, Int2, Int3, Int4, Cor1, Cor2, Cor3, Cor4, GOOD_bad, SpeedE_GGA, SpeedN_GGA, SpeedE_BT, SpeedN_BT, SpeedUp, ErrSpeed, DepEcho, CellSize, Cell1range, absorption, IntScale, ExtDepth, ExtHeading',
             '--cols_load_list', 'Time, Lat, Lon, DepEcho',
             '--delimiter_chars', r'\t',
             '--skiprows_integer', '0',
@@ -121,7 +121,7 @@ if st(10, f'Save {device} data to DB recorded by REDAS software'):
         'Eh(float),SoundVel,Lat,Lon',
         '--delimiter_chars', r'\t',  # ''\s+',
         '--b_interact', '0',
-        '--cols_not_use_list', 'N',
+        '--cols_not_save_list', 'N',
         # '--on_bad_lines', 'warn'
         ] + common_ctd_params_list,
         **common_ctd_params_dict
@@ -137,7 +137,7 @@ if st(11, f'Save {device} data to DB recorded in autonomous mode'):
         'date(text),txtT(text),Pres(float),Temp90(float),Cond(float),Sal(float),O2(float),O2ppm(float),pH(float),Eh(float)',
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--b_interact', '0',
-        #'--cols_not_use_list', 'N',
+        #'--cols_not_save_list', 'N',
         # '--on_bad_lines', 'warn'
         #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
         ] + common_ctd_params_list,
@@ -166,7 +166,7 @@ if st(12, f'Save {device} data to DB recorded in terminal mode'):
         'date(text),txtT(text),Pres(float),Temp90(float),Cond(float),Sal(float),O2(float),O2ppm(float),pH(float),Eh(float)',
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--b_interact', '0',
-        #'--cols_not_use_list', 'N',
+        #'--cols_not_save_list', 'N',
         # '--on_bad_lines', 'warn'
         #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
         ] + common_ctd_params_list,
@@ -214,7 +214,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
 
     from os import getcwd as os_getcwd, chdir as os_chdir
     path_prev = os_getcwd()
-    argv_prev = sys.argv
+    argv_prev = sys.argv.copy()
 
     os_chdir(cfg_in['pattern_path'].parent)
     for filename, str_expr in h5log_names_gen(cfg_in, f_row):
@@ -391,7 +391,7 @@ if st(120, 'Meteo'):
         str(path_cruise / r"meteo\ship's_meteo_st_source\*.mxt"), '--header',
         'date(text),Time(text),t_air,Vabs_m__s,Vdir,dew_point,Patm,humidity,t_w,precipitation',
         '--coldate_integer', '0', '--coltime_integer', '1',
-        '--cols_not_use_list', 't_w,precipitation',  # bad constant data
+        '--cols_not_save_list', 't_w,precipitation',  # bad constant data
         '--delimiter_chars', ',', '--max_text_width', '12',
         '--on_bad_lines', 'warn', '--b_insert_separator', 'False',
         '--chunksize_percent_float', '500',
@@ -425,7 +425,7 @@ if st(210, f'Save {device} data to DB'):  # False: #
         'date(text),txtT(text),Pres(float),Temp90(float),Cond(float),Sal(float),O2(float),O2ppm(float),SigmaT(float)',
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--b_interact', '0',
-        #'--cols_not_use_list', 'N',
+        #'--cols_not_save_list', 'N',
         # '--on_bad_lines', 'warn'
         #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
         ],
@@ -474,7 +474,7 @@ if st(230, f'Draw {device} data profiles'):  # False: #
 
     from os import getcwd as os_getcwd, chdir as os_chdir
     path_prev = os_getcwd()
-    argv_prev = sys.argv
+    argv_prev = sys.argv.copy()
 
     os_chdir(cfg_in['pattern_path'].parent)
     path_vsz_all = []
@@ -490,10 +490,10 @@ if st(230, f'Draw {device} data profiles'):  # False: #
         #
         # try:
         #     remote = Popen(
-        #         [rf'"Program Files (x86)/Veusz/veusz.exe" {path_vsz.name} --export=export_0.jpg --export-option=page=[0] --export-option=dpi=300'])
+        #         [rf'"Program Files/Veusz/veusz.exe" {path_vsz.name} --export=export_0.jpg --export-option=page=[0] --export-option=dpi=300'])
         # except Exception as e:
         #     print(e)
-        # r'"Program Files (x86)/Veusz/veusz.exe" {path_vsz} --export=export_%n.jpg --export-option=page=[5] --export-option=dpi=200'
+        # r'"Program Files/Veusz/veusz.exe" {path_vsz} --export=export_%n.jpg --export-option=page=[5] --export-option=dpi=200'
 
         # [veusze.remote.args[0], str(vsz), '--unsafe-mode', '--embed-remote'],
         # shell=False, bufsize=0,

@@ -11,7 +11,7 @@
   
   Created: 02.09.2016
 """
-import ast
+# import ast
 import logging
 import re
 from datetime import datetime
@@ -19,12 +19,11 @@ from os import chdir as os_chdir, getcwd as os_getcwd, environ as os_environ
 from pathlib import Path, PurePath
 from sys import platform as sys_platform, stdout as sys_stdout
 from time import sleep
-from typing import Any, Callable, Dict, Iterator, Optional, Tuple, Union
-
+from typing import Any, Callable, Dict, Iterator, Optional, Tuple, Sequence, Union
+from itertools import dropwhile
 import pandas as pd
 from dateutil.tz import tzlocal, tzoffset
 
-from to_pandas_hdf5.h5toh5 import h5log_names_gen, h5find_tables
 # my
 from utils2init import my_argparser_common_part, cfg_from_args, this_prog_basename, init_file_names, dir_from_cfg, \
     init_logging, Ex_nothing_done, import_file, standard_error_info
@@ -39,7 +38,7 @@ if __name__ != '__main__':
 else:
     l = None  # will set in main()
 
-default_veusz_path = 'C:\\Program Files (x86)\\Veusz' if sys_platform == 'win32' else '/home/korzh/.local/lib/python3.6/site-packages/veusz'  # try os_environ['PATH']?
+default_veusz_path = 'C:\\Program Files\\Veusz' if sys_platform == 'win32' else '/home/korzh/.local/lib/python3.9/site-packages/veusz'  # try os_environ['PATH']?
 
 def my_argparser():
     """
@@ -65,7 +64,7 @@ file based on vsz pattern
     s.add('--import_method',
              help='Veusz method to imort data in ".vsz" pattern')  # todo: read it from pattern
     s.add('--start_file_index', default="0",
-             help='indexes begins from 0')
+             help='indexes begins from 0, optional, allows process only range of found files')
     s.add('--add_custom_list',
              help='custom definitions names for evaluation of expressions defined in add_custom_expressions_list')
     s.add('--add_custom_expressions_list',
@@ -119,7 +118,7 @@ file based on vsz pattern
     s.add('--hidden', default='False',
               help='set to True to not show embedded window')
     s.add('--veusz_path', default=default_veusz_path,
-               help='directory of Veusz like /usr/lib64/python3.6/site-packages/veusz-2.1.1-py3.6-linux-x86_64.egg/veusz')
+               help='directory of Veusz like /usr/lib64/python3.9/site-packages/veusz-2.1.1-py3.6-linux-x86_64.egg/veusz')
     s.add('--before_next_list', default=',',
                help=''' "Close()" - each time reopens pattern,
     "restore_config" - saves and restores initial configuration (may be changed in data_yield mode: see data_yield_prefix argument)''')
@@ -178,33 +177,37 @@ class SingletonTimeOut:
             return asyncio.get_event_loop()
 
 
-
 # ----------------------------------------------------------------------
 
-def veusz_data(veusze, prefix: str, suffix_prior: str = '') -> Dict[str, Any]:
+def veusz_data(veusze, prefix: Union[str, Tuple[str]], suffix_prior: str = '') -> Dict[str, Any]:
     """
     Get data, loaded into the Veusz document filtered by prefix and suffix_prior
     :param veusze: Veusz embedded object
-    :param prefix: string, include in output only datasets which name starts with this
-    :param suffix_prior: string, if several datasets filtered by prefix diff only with this suffix, out only thouse which name ends with this, but rename keys to exclude (to be without) this suffix
+    :param prefix: include in output only datasets which name starts with this string(s). If tuple, and one of elements started with another, then put another later
+    :param suffix_prior: string, if several datasets filtered by prefix diff only with this suffix, out only those which name ends with this, but rename keys to exclude (to be without) this suffix
     Returns: dict with found dataset which keys are its names excluding prefix and suffix
+    Converts 'time'
+    If return field name ends with 'starts' or 'ends' convert to int, and rename it just to corresp. 'starts' or 'ends' i.e. remove prefix if were no same named field yet
     """
+
     names = veusze.GetDatasets()
-    prefixlen = len(prefix)
 
     names_filt = dict()
     names_to_check_on_step2 = dict()
 
-    # remove versions and keep which ends with suffix_prior
+    # Keep version that ends with suffix_prior, and remove version suffixes (to which delimiter is '_')
     # step1: separate max priority fields (names_filt) and others (names_to_check_on_step2)
     for name in names:
         if name.startswith(prefix):
-            name_out = name if (len(name) == prefixlen) else name[prefixlen:].lstrip('_').split("_")[0]
+            name_out = name if name in prefix else name[len(
+                next(dropwhile(lambda pr: not name.startswith(pr), prefix))
+                    if isinstance(prefix, tuple) else prefix):
+                ].lstrip('_').split('_')[0]
             if name.endswith(suffix_prior):
                 names_filt[name_out] = name
             else:
                 names_to_check_on_step2[name_out] = name
-    # step2: append other fields to names_filt if not exist
+    # step2: append other fields to names_filt that are not in already
     msg_names_skip = []
     if len(names_to_check_on_step2.keys()):
         for name_out, name in names_to_check_on_step2.items():
@@ -213,7 +216,7 @@ def veusz_data(veusze, prefix: str, suffix_prior: str = '') -> Dict[str, Any]:
             else:
                 msg_names_skip.append(name)
     if msg_names_skip:
-        msg_names_skip = 'skip {} fields: '.format(prefix) + ','.join(msg_names_skip)
+        msg_names_skip = 'skip {} fields: '.format('|'.join(prefix)) + ','.join(msg_names_skip)
     else:
         msg_names_skip = ''
     l.debug('\n'.join([msg_names_skip, ' load fields: {}'.format(names_filt)]))
@@ -221,26 +224,35 @@ def veusz_data(veusze, prefix: str, suffix_prior: str = '') -> Dict[str, Any]:
     vsz_data = dict([(name_out, veusze.GetData(name)[0]) for name_out, name in names_filt.items()])
     if ('time' in vsz_data) and len(vsz_data['time']):
         vsz_data['time'] = pd.DatetimeIndex((vsz_data['time'] + 1230768000) * 1E+9, tz='UTC')
-        vsz_data['starts'] = vsz_data['starts'].astype('int32')
-        vsz_data['ends'] = vsz_data['ends'].astype('int32')
+
+    for name in list(vsz_data.keys()):  # list() makes a copy (to a simpler type) to not change iterable
+        if name.endswith(('starts', 'ends')):
+            int_suffix = 'starts' if name.endswith('starts') else 'ends'
+            tmp = vsz_data[name].astype('int32')
+            if int_suffix in vsz_data.keys():
+                vsz_data[name] = tmp
+                continue
+            vsz_data[int_suffix] = tmp
+            del vsz_data[name]
     return vsz_data
 
 
 def load_vsz_closure(veusz_path: PurePath=default_veusz_path,
                      load_timeout_s: Optional = 120,
                      b_execute_vsz: bool = False,
-                     hidden=False
+                     hidden=False,
+                     vsz_path_env=r'D:\Work\_Python3\And0K\Veusz_plugins\func_vsz.py'
                      ) -> Callable[
     [Union[str, PurePath], Optional[str], Optional[str], Optional[str]], Tuple[Any, Optional[Dict[str, Any]]]]:
     """
     See load_vsz inside
     :param veusz_path: pathlib Path to directory of embed.py
-    :param load_timeout_s: rases asyncio.TimeoutError if loads longer
+    :param load_timeout_s: raises asyncio.TimeoutError if loads longer
     :param b_execute_vsz: can not use "Load" because of python expression in vsz is needed
     :param hidden: set to True to not show embedded window
     """
 
-    # def import_veusz(veusz_path=u'C:\\Program Files (x86)\\Veusz'):
+    # def import_veusz(veusz_path=u'C:\\Program Files\\Veusz'):
     #     if not os_path.isdir(veusz_path):
     #         return  # 'veusz' variable must be coorected later
     #     veusz_parent_dir, veusz_dir_name = os_path.split(veusz_path)
@@ -256,19 +268,21 @@ def load_vsz_closure(veusz_path: PurePath=default_veusz_path,
     # not works:
     # sys_path.append(cfg['program']['veusz_path'])
     # sys_path.append(os_path.dirname(cfg['program']['veusz_path']))
+    os_environ['VSZ_PATH'] = vsz_path_env  # variable that can be accessed in vsz by ENVIRON()
+    if veusz_path:
+        sep = ';' if sys_platform == 'win32' else ':'
+        # to find Veusz executable (Windows only):
+        os_environ['PATH'] += f'{sep}{veusz_path}'
 
-    sep = ';' if sys_platform == 'win32' else ':'
-    # to find Veusz executable (Windows only):
-    os_environ['PATH'] += f'{sep}{veusz_path}'
-
-    # for Linux set in ./bash_profile if not in Python path yet:
-    # PYTHONPATH=$PYTHONPATH:$HOME/Python/other_sources/veusz
-    # export PYTHONPATH
-    # if you compile Veusz also may be you add there
-    # VEUSZ_RESOURCE_DIR=/usr/share/veusz
-    # export VEUSZ_RESOURCE_DIR
-
-    veusz = import_file(veusz_path, 'embed')
+        # for Linux set in ./bash_profile if not in Python path yet:
+        # PYTHONPATH=$PYTHONPATH:$HOME/Python/other_sources/veusz
+        # export PYTHONPATH
+        # if you compile Veusz also may be you add there
+        # VEUSZ_RESOURCE_DIR=/usr/share/veusz
+        # export VEUSZ_RESOURCE_DIR
+        veusz = import_file(veusz_path, 'embed')
+    else:
+        import veusz.embed as veusz
 
     # sys_path.append(os_path.dirname(cfg['program']['veusz_path']))
 
@@ -310,12 +324,18 @@ def load_vsz_closure(veusz_path: PurePath=default_veusz_path,
             if __name__ != '__main__':       # if this haven't done in main()
                 path_prev = os_getcwd()      # to recover
                 os_chdir(vsz.parent)   # allows veusze.Load(path) to work if _path_ is relative or relative paths is used in vsz
-            veusze = veusz.Embedded(title, hidden=hidden)   # , hidden=True
+            try:
+                veusze = veusz.Embedded(title, hidden=hidden)   # , hidden=True
+            except ConnectionResetError:
+                print('Last such problem I fased - my bad plagin: try to disconnect it or fix')
             # veusze.EnableToolbar()
             # veusze.Zoom('page')
 
             if __name__ != '__main__':
                 os_chdir(path_prev)          # recover
+            was_in_use = False
+        else:
+            was_in_use = True
 
         if file_exists:
             if not b_execute_vsz:
@@ -327,56 +347,90 @@ def load_vsz_closure(veusz_path: PurePath=default_veusz_path,
                     veusze.Load(vsz.name)
             else:
 
-                def load_by_exec(vsz, veusze):
+                def load_by_exec(_vsz, _veusze):
                     """
-                    Unsafe replasement for veusze.Load(vsz) to add variable argv
+                    Unsafe replacement for veusze.Load(vsz) to add variable argv
                     Runs any python commands before 1st Title command of
-                    Replaces `argv` only if it is loaded by "from sys import argv" command
-                    :param vsz:
+                    Updates ``argv``, not normally available in embedded mode, but only if it is loaded by "from sys import argv" command
+                    :param _vsz:
                     :return:
                     """
-                    with vsz.open(encoding='utf-8') as v:
-                        # comine pure python lines
-                        lines = []
-                        have_no_commands = False
-                        for line in v:
-                            if line[:2].istitle():
+                    # Variables of vsz-file will be loaded to context of this function. But in this function we have to
+                    # use other variables. To minimize impact of them on executing vsz we remove them as soon as we can,
+                    # to minimize chance of collision with vsz' variables we prefixed local variables with "_".
+                    #os.environ['vsz_path'] = str(_vsz)  # not works!
+                    with _vsz.open(encoding='utf-8') as _v:
+                        # 1. Evaluate pure python lines at begin of file
+                        _lines = []
+                        _have_no_commands = False
+                        for _line in _v:
+                            if _line[:2].istitle():
                                 break
-                            lines.append(line.replace('from sys import argv', ''))
+                            _lines.append(_line.replace('from sys import argv', ''))
                         else:
-                            have_no_commands = True
-                        # dangerous for unknown vsz but we allow 1 time at beginning of file: to use for known vsz
+                            _have_no_commands = True
+                        # Dangerous for unknown vsz! We allow 1 time at beginning of file to use for known vsz.
                         loc_exclude = locals().copy()
-                        del loc_exclude['veusze']
-                        loc = {**veusze.__dict__,
-                               'argv': ['veusz.exe', str(vsz)],
-                               'BASENAME': (lambda: vsz.stem)
+                        del loc_exclude['_veusze']
+                        loc = {**_veusze.__dict__,
+                               'argv': ['veusz.exe', str(_vsz)],
+                               'BASENAME': (lambda: _vsz.stem),
+
                                }
-                        exec('\n'.join(lines), loc, loc)
-                        if have_no_commands:
+                        exec('\n'.join(_lines), loc, loc)
+                        if _have_no_commands:
                             return
 
-                        # eval Veusz commands
+                        # 2. Evaluate Veusz commands (we restrict our format so that standard one-liner Veusz commands only left)
+
+                        _basename_result = '"{}"'.format(loc['BASENAME']())
+
+                        # Preparing to execute "AddCustom*" lines at first
+
+                        def _not_custom_else_exec(line):
+                            """
+                            Indicate and execute "Custom definition" lines, which must start with "AddCustom".
+                            Also correct "BASENAME()" in them by inserting needed result instead
+                            :param line:
+                            :return: True if line was not "AddCustom*" (i.e. not executed) else None
+                            """
+                            if line.startswith('AddCustom'):
+                                if 'BASENAME()' in line:
+                                    line = line.replace(
+                                        'BASENAME()', _basename_result if (
+                                                (i_qw := line.rfind('"')) == -1 or i_qw < _line.rfind("'")
+                                        ) else _basename_result.replace('"', "'")
+                                        )  # only removing BASENAME() helps in Custom Definitions expressions
+                                eval(f"""_veusze.{line}""", {}, loc)
+                            else:
+                                return True
+
                         loc.update(locals().copy())
                         for k in loc_exclude.keys():
                             del loc[k]
 
-                        basename_result = "'{}'".format(loc['BASENAME']())
-                        eval(f"""veusze.{line}""")
-                        for line in v:
-                            # if line[:2].istitle(): # if not re.match(' *#', line):  #this checks are not needed if standard Veusz commands only left
-                            if 'BASENAME()' in line:
-                                line = line.replace('BASENAME()', basename_result)  # only this helps in Custom Definitions expressions
+                        #_veusze.SetVerbose()
 
-                            # cmd, params = line.split('(', maxsplit=1)
-                            eval(f"""veusze.{line}""", {}, loc)  # , {"__builtins__": {}}
+                        # eval line with previously found Veusz command
+                        eval(f"""_veusze.{_line}""")
+                        # eval AddCustom then other lines in their order
+                        for _line in [_line for _line in _v if _not_custom_else_exec(_line)]:
+                            try:
+                                eval(f"""_veusze.{_line}""", {}, loc)
+                                # if r := eval(f"""_veusze.{_line}""", {}, loc):
+                                #     print(r)
+                            except Exception as e:
+                                l.exception(f'Error eval({_line})')
                             # from ast import literal_eval
                             # params_dict = literal_eval(params.rsplit(')', maxsplit=1)[0])
                             # getattr(veusze, cmd)(**params_dict)
+                    print('')  # loaded
                     return
 
+                if was_in_use:
+                    veusze.Wipe()  # todo: delete/update only vsz changes
                 load_by_exec(vsz, veusze)
-
+                # SingletonTimeOut.run(partial(load_by_exec, vsz, veusze)), load_timeout_s)
 
 
         if prefix is None:
@@ -384,6 +438,13 @@ def load_vsz_closure(veusz_path: PurePath=default_veusz_path,
         return veusze, veusz_data(veusze, prefix, suffix_prior)
 
     return load_vsz
+
+
+# if _line[:2].istitle(): # if not re.match(' *#', _line):  #this checks are not needed if standard Veusz commands only left
+
+# elif "ENVIRON.get('VSZ_PATH', FILENAME())" in _line:
+#     print('found')
+# cmd, params = _line.split('(', maxsplit=1)
 
 
 def export_images(veusze, cfg_out, suffix, b_skip_if_exists=False):
@@ -565,7 +626,7 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
         sys_stdout.flush()
         log = {'out_name': out_name, 'out_vsz_full': out_vsz_full}
 
-        if veusze:
+        if veusze:  # else  to do: try Wipe()
             try:
                 b_closed = veusze.IsClosed()
             except AttributeError:  # 'NoneType' object has no attribute 'cmds'
@@ -640,20 +701,13 @@ def ge_names(cfg, f_mod_name=lambda x: x):
     :yields: f_mod_name(cfg['in']['paths'] elements)
     """
     for name in cfg['in']['paths']:
+
+        try:  # Exclude names with only '0', '-'  '_' symbols
+            next(re.finditer('[^0_-]', name.stem))
+        except StopIteration:
+            continue
         yield f_mod_name(name)
 
-
-def ge_names_from_hdf5_paths(cfg, f_file_name=lambda x: x):
-    """
-    Replasing for veuszPropagate.ge_names() to use tables instead files
-    :param cfg: dict with field ['in']['tables'], - list of tables or list with regular expression path to find tables
-    :return:
-    """
-    with pd.HDFStore(cfg['in']['path'], mode='r') as store:
-        if len(cfg['in']['tables']) == 1:
-            cfg['in']['tables'] = h5find_tables(store, cfg['in']['tables'][0])
-    for tbl in cfg['in']['tables']:
-        yield f_file_name(tbl)
 
 
 def co_savings(cfg: Dict[str, Any]) -> Iterator[None]:
@@ -678,10 +732,10 @@ def co_savings(cfg: Dict[str, Any]) -> Iterator[None]:
                     veusze.Save(str(log['out_vsz_full']))
                     # Save vsz modification date
                     log['fileChangeTime'] = datetime.fromtimestamp(Path(
-                        log['out_vsz_full']).stat().st_mtime),
-                    dfLog = pd.DataFrame.from_records(log, exclude=['out_name', 'out_vsz_full'],
-                                                      index=[log['out_name']])
-                    storeLog.append(Path(cfg['out']['path']).name, dfLog, data_columns=True,
+                        log['out_vsz_full']).stat().st_mtime)
+                    df_log = pd.DataFrame.from_records(log, exclude=['out_name', 'out_vsz_full'],
+                                                       index=[log['out_name']])
+                    storeLog.append(Path(cfg['out']['path']).name, df_log, data_columns=True,
                                     expectedrows=cfg['in']['nfiles'], index=False, min_itemsize={'index': 30})
 
                 export_suffix = cfg['out']['export_suffix'].format_map(log)
@@ -763,6 +817,7 @@ def main(new_arg=None, veusze=None, **kwargs):
     :param veusze: used to reuse veusz embedded object (thus to not leak memory)
     :return:
     """
+
     global l, load_vsz
     cfg = cfg_from_args(my_argparser(), new_arg, **kwargs)
     if not cfg or not cfg['program'].get('return'):
@@ -841,10 +896,25 @@ def main(new_arg=None, veusze=None, **kwargs):
     cfg['co'] = {}
     if cfg['in']['table_log'] and cfg['in']['path'].suffix == '.h5' and not (
             cfg['out']['b_images_only'] and len(cfg['in']['paths']) > 1):
+        from to_pandas_hdf5.h5toh5 import h5log_names_gen
         # load data by ranges from table log rows
         cfg['in']['db_path'] = cfg['in']['path']
         in_fulls = h5log_names_gen(cfg['in'])
     elif cfg['in']['tables']:
+        from to_pandas_hdf5.h5toh5 import h5find_tables
+
+        def ge_names_from_hdf5_paths(cfg, f_file_name=lambda x: x):
+            """
+            Replacing for veuszPropagate.ge_names() to use tables instead files
+            :param cfg: dict with field ['in']['tables'], - list of tables or list with regular expression path to find tables
+            :return:
+            """
+            with pd.HDFStore(cfg['in']['path'], mode='r') as store:
+                if len(cfg['in']['tables']) == 1:
+                    cfg['in']['tables'] = h5find_tables(store, cfg['in']['tables'][0])
+            for tbl in cfg['in']['tables']:
+                yield f_file_name(tbl)
+
         # tables instead files
         in_fulls = ge_names_from_hdf5_paths(cfg)
     else:  # switch to use found vsz as source if need only export images (even with database source)

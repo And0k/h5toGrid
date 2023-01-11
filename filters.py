@@ -2,14 +2,10 @@ import logging
 from typing import Any, List, Optional, Tuple
 
 import numpy as np
-import pywt
-
-from scipy.ndimage.filters import gaussian_filter1d
 from numba import njit, objmode, typed
 
 if __debug__:
-    import matplotlib
-    from matplotlib import pyplot as plt
+    pass
 
 # l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
 l = logging.getLogger(__name__)
@@ -88,32 +84,37 @@ def b1spike_up(a, max_spike):
     return b_single_spike_1(diff_x < -max_spike, diff_x > max_spike)
 
 #@njit: "searchsorted with argument(s) ... ValueError: Invalid value given for 'side': unicode_type"
-def i_move2good(GoodIndIn, bad, side='left'):
+def i_move2good(ind, bad, side='left'):
     """
     moves indices to keep its number and relative position when removed masked data
-    :param GoodIndIn: indexes of some data in array X
-    :param bad:      mask to delete elements from X
-    :return:          indexes of some data after deletion takes place
+    :param ind: indexes of some data in array X. ind[-1] should be equal max(ind)
+    :param bad: mask to delete elements from X
+    :return: indexes of some data after deletion takes place
                                     0 1 2 3 4 5 6
-    move2GoodI([0, 1, 5], np.array([0,0,0,0,0,1,0]))
+    i_move2good([0, 1, 5], np.array([0,0,0,0,0,1,0]))
     >>> [0,1,5]
-    move2GoodI([0, 1, 5], np.array([0,0,0,0,0,0,1]), 'right')
+    i_move2good([0, 1, 5], np.array([0,0,0,0,0,0,1]), 'right')
     >>> [0,1,5]
 
-    move2GoodI([0, 1, 5], np.array([0,0,0,0,1,0,0]))
+    i_move2good([0, 1, 5], np.array([0,0,0,0,1,0,0]))
     >>> [0,1,4]
-    move2GoodI([0, 1, 5], np.array([0,0,0,0,0,1,0]), 'right')
+    i_move2good([0, 1, 5], np.array([0,0,0,0,0,1,0]), 'right')
     >>> [0,1,4]
 
-
-    move2GoodI([0, 1, 5], np.array([0,0,0,0,0,0,1]), 'right')
+    i_move2good([0, 1, 5], np.array([0,0,0,0,0,1,1]))
     >>> [0,1,5]
+    i_move2good([0, 1, 5], np.array([0,0,0,0,0,1,1]), 'right')
+    >>> [0,1,4]
     """
-    ind = np.arange(bad.size)[np.logical_not(bad)]  # logical_not will convert ints to bool array
-    ind_out = np.searchsorted(ind, GoodIndIn, side=side)
+    if ind[-1] <= bad.size:
+        ind_possible = np.arange(bad.size)[np.logical_not(bad)]  # logical_not will convert ints to bool array
+    else:
+        ind_possible = np.delete(np.arange(ind[-1]+1), np.flatnonzero(bad))
+
+    ind_out = np.searchsorted(ind_possible, ind, side=side)
     if side == 'right':
         ind_out -= 1
-    # np.clip(ind_out, 0, ind.size - 1, out=ind_out)
+    # np.clip(ind_out, 0, ind_possible.size - 1, out=ind_out)
     return ind_out
     # Same porpose code which mostly works the same but can return negative indexes:
     # s= np.int32(np.cumsum(bBad))
@@ -432,32 +433,46 @@ def repeated2increased(t: np.ndarray, freq: float, b_increased: Optional[np.ndar
     step = dt64_1s / freq
     t_add = np.arange(0, stop=len(t) * step - 1, step=step, dtype=np.int64)
     # indexes of changes + edges
-    if b_increased is None:
-        # b_inc = np.ediff1d(t, to_begin=1, to_end=1).astype(np.bool_)
-        i_inc_e = np.flatnonzero(np.ediff1d(t, to_begin=1, to_end=1))
+    b_increased_provided = b_increased is not None
+    if b_increased_provided:
+        b_increased_copy = b_increased.copy()
+        b_increased_copy[0] = True
+        i_inc_e = np.flatnonzero(b_increased_copy)
+        # can not trust next elements so can not do this: i_inc_e = np.flatnonzero(np.append(True, b_increased))
+        # so if b_increased is elements before increased then
+        # correct 1st:
+
+        if not b_increased[0]:  # need check 1st el. before use
+            if t[0] == t[i_inc_e[1]]:  # trust but provided indexes are before increased (that diff returns)
+                # increase all
+                t[i_inc_e[1:]] = t[i_inc_e[1:]] + t_add[i_inc_e[1]]
+            elif t[0] > t[i_inc_e[1]]:  # not trust, correct
+                t[0] = t[i_inc_e[1]] - t_add[i_inc_e[1]]
     else:
-        # np.append(True, b_increased
-        i_inc_e = np.append(0, np.flatnonzero(b_increased) + 1)
+        i_inc_e = np.flatnonzero(np.ediff1d(t, to_begin=1, to_end=1))
 
     n_inc_all = len(i_inc_e) - 2
     if n_inc_all > 0:
-        i_inc = i_inc_e[:-1]      # indexes of changed elements considering the 1st is changing too
+        i_inc = i_inc_e[:-1]      # indexes of changed elements + the 1st
         if __debug__:
             # with objmode():
             #     l.debug(%gHz)
-            print('Increasing time resolution of only repeated elements (', len(t) - n_inc_all,
-                  ') using constant frequency f =', freq, 'Hz')  # l.debug(%gHz)
-
+            print('Increasing', round(100*(len(t) - n_inc_all)/len(t), 2),
+                  '% repeated elements for better time resolution using frequency f =', freq, 'Hz'
+                  )
         # decrease trend for bad intervals
         n_rep = np.diff(i_inc_e)  # number of repeated elements + 1 (i.e. lengths of intervals with repeated values)
         steps_calc = np.diff(t[i_inc]) / n_rep[:-1]
+        if b_increased_provided:
+            assert (steps_calc > 0).all()
+
         if n_rep[-1] > freq:  # the check of lower bound for the last interval is possible only
             step_calc_last = n_rep[-1]/freq  # increase to lower bound
             steps_calc = np.append(steps_calc, step_calc_last)
         else:
             n_rep = n_rep[:-1]
 
-        i_bad_freqs = np.flatnonzero((n_rep > 1) & (step > steps_calc))
+        i_bad_freqs = np.flatnonzero((steps_calc < step) & (n_rep > 1))
         # or n_rep > freq if all changes are minimal
         n_bad_freqs = len(i_bad_freqs)
         if n_bad_freqs:
@@ -750,166 +765,10 @@ def too_frequent_values__old_bad(s, max_portion_allowed=0.5):
             round(bad_portion, 1), '% to number of different elements, or ', round(100 * sum(btest) / s.size, 1), '% to full size)')
     return bfilt
 
-
-# -----------------------------------------------------------------
-# Wavelet filtering
-@njit
-def doppler(x):
-    """
-    Parameters
-    ----------
-    x : array-like
-        Domain of x is in (0,1]
-
-    """
-    if not np.all((x >= 0) & (x <= 1)):
-        with objmode():
-            raise ValueError("Domain of doppler is x in (0,1]")
-    return np.sqrt(x * (1 - x)) * np.sin((2.1 * np.pi) / (x + .05))
-
-@njit
-def blocks(x):
-    """
-    Piecewise constant function with jumps at t.
-
-    Constant scaler is not present in Donoho and Johnstone.
-    """
-    K = lambda x: (1 + np.sign(x)) / 2.
-    t = np.array([[.1, .13, .15, .23, .25, .4, .44, .65, .76, .78, .81]]).T
-    h = np.array([[4, -5, 3, -4, 5, -4.2, 2.1, 4.3, -3.1, 2.1, -4.2]]).T
-    return 3.655606 * np.sum(h * K(x - t), axis=0)
-
-@njit
-def bumps(x):
-    """
-    A sum of bumps with locations t at the same places as jumps in blocks.
-    The heights h and widths s vary and the individual bumps are of the
-    form K(t) = 1/(1+|x|)**4
-    """
-    K = lambda x: (1. + np.abs(x)) ** -4.
-    t = np.array([[.1, .13, .15, .23, .25, .4, .44, .65, .76, .78, .81]]).T
-    h = np.array([[4, 5, 3, 4, 5, 4.2, 2.1, 4.3, 3.1, 2.1, 4.2]]).T
-    w = np.array([[.005, .005, .006, .01, .01, .03, .01, .01, .005, .008, .005]]).T
-    return np.sum(h * K((x - t) / w), axis=0)
-
-@njit
-def heavisine(x):
-    """
-    Sinusoid of period 1 with two jumps at t = .3 and .72
-    """
-    return 4 * np.sin(4 * np.pi * x) - np.sign(x - .3) - np.sign(.72 - x)
-
-
-# -------------------------------------------------------------
-def coef_pyramid_plot(coefs, first=0, scale='uniform', ax=None):
-    """
-    Shows common diagnostic plot of the wavelet coefficients
-
-    Parameters
-    ----------
-    coefs : array-like
-        Wavelet Coefficients. Expects an iterable in order Cdn, Cdn-1, ...,
-        Cd1, Cd0.
-    first : int, optional
-        The first level to plot.
-    scale : str {'uniform', 'level'}, optional
-        Scale the coefficients using the same scale or independently by
-        level.
-    ax : Axes, optional
-        Matplotlib Axes instance
-
-    Returns
-    -------
-    Figure : Matplotlib figure instance
-        Either the parent figure of `ax` or a new pyplot.Figure instance if
-        `ax` is None.
-    """
-
-    if ax is None:
-        import matplotlib.pyplot as plt
-        fig = plt.figure()
-        ax = fig.add_subplot(111)  #, axisbg='lightgrey'
-    else:
-        fig = ax.figure
-
-    n_levels = len(coefs)
-    n = 2 ** (n_levels - 1)  # assumes periodic
-
-    if scale == 'uniform':
-        biggest = [np.max(np.abs(np.hstack(coefs)))] * n_levels
-    else:
-        # multiply by 2 so the highest bars only take up .5
-        biggest = [np.max(np.abs(i)) * 2 for i in coefs]
-
-    for i in range(first, n_levels):
-        x = np.linspace(2 ** (n_levels - 2 - i), n - 2 ** (n_levels - 2 - i), 2 ** i)
-        ymin = n_levels - i - 1 + first
-        yheight = coefs[i] / biggest[i]
-        ymax = yheight + ymin
-        ax.vlines(x, ymin, ymax, linewidth=1.1)
-
-    ax.set_xlim(0, n)
-    ax.set_ylim(first - 1, n_levels)
-    ax.yaxis.set_ticks(np.arange(n_levels - 1, first - 1, -1))
-    ax.yaxis.set_ticklabels(np.arange(first, n_levels))
-    ax.tick_params(top=False, right=False, direction='out', pad=6)
-    ax.set_ylabel("Levels", fontsize=14)
-    ax.grid(True, alpha=.85, color='white', axis='y', linestyle='-')
-    ax.set_title('Wavelet Detail Coefficients', fontsize=16,
-                 position=(.5, 1.05))
-    fig.subplots_adjust(top=.89)
-
-    return fig
-
-
-# -------------------------------------------------------------
-#
-def waveletSmooth(y, wavelet="db4", level=1, ax=None, label=None, x=None, color='k'):
-    """
-    Wavelet smoothing
-    :param y:
-    :param wavelet: #'db8'
-    :param level: 11
-    :param ax:
-    :param label:
-    :param x: where to plot y
-    :return: y, ax
-
-    waveletSmooth(NDepth.values.flat, wavelet='db8', level=11, ax=ax, label='Depth')
-    """
-    if level <= 0:
-        return y, ax
-
-    # calculate the wavelet coefficients
-    mode = "antireflect"
-    coeff = pywt.wavedec(y, wavelet, mode=mode)  # , mode="per", level=10
-    # calculate a threshold: changing this threshold also changes the behavior
-    sigma = mad(coeff[-level])
-    # mad = median(Wj-1, k-median(Wj-1, k)) /0.6475  # Universal freshold
-    uthresh = sigma * np.sqrt(2 * np.log(len(y)))
-    coeff[1:] = (pywt.threshold(i, value=uthresh, mode="garotte") for i in coeff[1:])  # soft
-
-    # reconstruct the signal using the thresholded coefficients
-    out = pywt.waverec(coeff, wavelet, mode=mode)
-    if out.size > y.size:  # ?
-        out = out[:y.size]
-
-    if __debug__ and label:
-        if x is None:
-            x = np.arange(len(y))
-        if ax is None:
-            plt.style.use('bmh')
-            f, ax = plt.subplots()
-            ax.plot(x, y, color='r', alpha=0.5, label=label + ' sourse')
-        ax.plot(x, out, color=color, label='{}^{}({})'.format(wavelet, level, label))
-        ax.set_xlim((0, len(y)))
-    else:
-        ax = None
-    return out, ax
-
-
 # -------------------------------------------------------------------------
 # Despiking
+
+
 #@njit  TypeError: as_strided() got an unexpected keyword argument 'writeable'
 def rolling_window(x, block):
     """
@@ -921,77 +780,6 @@ def rolling_window(x, block):
     strides = x.strides + (x.strides[-1],)
     return np.lib.stride_tricks.as_strided(x, shape=shape, strides=strides, writeable=False)
 
-#@njit: gaussian_filter1d() not supported
-def despike(x: np.ndarray,
-            offsets: Tuple[int, ...] = (2, 20),
-            blocks: int = 10,
-            ax=None, label='', std_smooth_sigma=None, x_plot=None
-            ) -> Tuple[np.ndarray, Optional[matplotlib.axes.Axes]]:
-    r"""
-    Compute the statistics of the x ($\mu$ and $\sigma$) and marks (but do not exclude yet) x
-    that deviates more than $n1 \times \sigma$ from the mean, Based on [https://ocefpaf.github.io/python4oceanographers/blog/2013/05/20/spikes/]
-    :param x: flat numpy array (that need to filter)
-    :param offsets: offsets to std. First offsets should be bigger to delete big spikes first and then filter be sensetive to more subtle errors
-    :param block: filter window width
-    :param ax: if not None then plots source and x averaged(blocks) on provided ax
-    :param label: if not None then allow plots. If bool(label) result will be plotted with label legend
-    :param std_smooth_sigma: gaussian smooth parameter, if not None std will be smoothed before multiply to offset and compare to |data - <data>|.
-    :param x_plot: x data to plot y
-    :return y: x with spikes replaced by NaNs
-    """
-    if not len(offsets):
-        return x, ax
-    offsets_blocks = np.broadcast(offsets, blocks)
-    # instead of using NaNs because of numpy warnings on compare below
-    y = np.ma.fix_invalid(x, copy=True)  # suppose the default fill value is big enough to be filtered by masked_where() below.  x.copy()
-    len_x = len(x)
-    std = np.empty((len_x,), np.float64)
-    mean = np.empty((len_x,), np.float64)
-
-    if __debug__:
-        n_filtered = []
-        if ax is not None:
-            colors = ['m', 'b', 'k']
-            if x_plot is None:
-                x_plot = np.arange(len_x)
-
-    for i, (offset, block) in enumerate(offsets_blocks):
-        start = block // 2
-        end = len_x - block + start + 1
-        sl = slice(start, end)
-        # recompute the mean and std without the flagged values from previous pass
-        # now removing the flagged y.
-        roll = np.ma.array(rolling_window(y.data, block)) if y.mask.size == 1 else (
-            np.ma.array(rolling_window(y.data, block), mask=rolling_window(y.mask, block)))
-        # 2nd row need because use of subok=True in .as_strided() not useful: not preserves mask (numpy surprise)
-        # 1st need because y.mask == False if no masked values but rolling_window needs array
-
-        # roll = np.ma.masked_invalid(roll, copy=False)
-        roll.std(axis=1, out=std[sl])
-        roll.mean(axis=1, out=mean[sl])
-        std[:start] = std[start]
-        mean[:start] = mean[start]
-        std[end:] = std[end - 1]
-        mean[end:] = mean[end - 1]
-        assert std[sl].shape[0] == roll.shape[0]
-        if std_smooth_sigma:
-            std = gaussian_filter1d(std, std_smooth_sigma)
-
-        y = np.ma.masked_where(np.abs(y - mean) > offset * std, y, copy=False)
-
-        if __debug__:
-            n_filtered.append(y.mask.sum())
-            if ax is not None:
-                ax.plot(x_plot, mean, color=colors[i % 3], alpha=0.3,
-                        label='{}_mean({})'.format(label if label is not None else '', block))
-    y = np.ma.filled(y, fill_value=np.NaN)
-    if __debug__:
-        print('despike(offsets=', offsets, ', blocks=', blocks, ') deletes', n_filtered, ' points')
-        if ax is not None:
-            ax.plot(x_plot, y, color='g', label=f'despike{blocks}{offsets}({label})')
-            ax.set_xlim((0, len(y)))
-
-    return y, ax
 
 #@njit: Use of unsupported NumPy function 'numpy.einsum' or unsupported use of the function
 def closest_node(node, nodes):
@@ -1005,10 +793,10 @@ def closest_node(node, nodes):
     # nodes = np.asarray(nodes)
     deltas = nodes - node
     dist_2 = np.einsum('ij,ij->j', deltas, deltas)
-    return np.argmin(dist_2)
+    return np.nanargmin(dist_2)
 
 #@njit "Invalid use of function searchsorted with argument(s) of type(s): (array(datetime64[ns], 1d, C), array(datetime64[ns], 1d, C))"
-def inearestsorted(array, values):
+def inearestsorted(array: np.ndarray, values):
     """
     Find nearest values in sorted numpy array
     :param array:  numpy array where to search, sorted
@@ -1041,7 +829,7 @@ def inearestsorted(array, values):
 #     return idx_nearest
 
 #@njit: Invalid use of Function(<function searchsorted at 0x0000021673822E58>) with argument(s) of type(s): (array(datetime64[ns], 1d, C), array(datetime64[ns], 1d, C))
-def inearestsorted_around(array, values):
+def inearestsorted_around(array: np.ndarray, values) -> np.ndarray:
     """
     Find nearest values before and after of each values in sorted numpy array
     Returned values useful as indexes for linear interpolation of data associated with values
@@ -1078,67 +866,9 @@ def search_sorted_closest(sorted_array, value):
 
 
 # ##############################################################################
-if __name__ == '__main__':
-    from scipy import stats
+# -------------------------------------------------------------
+#
 
-    """
-    Generate the y and get the coefficients using the multilevel discrete wavelet transform.
-    """
-    #
-    # db8 = pywt.Wavelet('db8')
-    # scaling, wavelet, x = db8.wavefun()
-
-    np.random.seed(12345)
-    blck = blocks(np.linspace(0, 1, 2 ** 11))
-    nblck = blck + stats.norm().rvs(2 ** 11)
-
-    true_coefs = pywt.wavedec(blck, 'db8', level=11, mode='per')
-    noisy_coefs = pywt.wavedec(nblck, 'db8', level=11, mode='per')
-
-    # Plot the true coefficients and the noisy ones.
-    fig, axes = plt.subplots(2, 1, figsize=(9, 14), sharex=True)
-
-    _ = coef_pyramid_plot(true_coefs[1:], ax=axes[0])  # omit smoothing coefs
-    axes[0].set_title("True Wavelet Detail Coefficients")
-
-    _ = coef_pyramid_plot(noisy_coefs[1:], ax=axes[1])
-    axes[1].set_title("Noisy Wavelet Detail Coefficients")
-
-    fig.tight_layout()
-
-    """
-    Apply soft thresholding using the universal threshold
-    """
-    # robust estimator of the standard deviation of the finest level detail coefficients:
-    sigma = mad(noisy_coefs[-1])
-    uthresh = sigma * np.sqrt(2 * np.log(len(nblck)))
-
-    denoised = noisy_coefs[:]
-
-    denoised[1:] = (pywt.thresholding.soft(i, value=uthresh) for i in denoised[1:])
-
-    """
-    Recover the signal by applying the inverse discrete wavelet transform to the thresholded coefficients
-    """
-    signal = pywt.waverec(denoised, 'db8', mode='per')
-
-    fig, axes = plt.subplots(1, 2, sharey=True, sharex=True,
-                             figsize=(10, 8))
-    ax1, ax2 = axes
-
-    ax1.plot(signal)
-    ax1.set_xlim(0, 2 ** 10)
-    ax1.set_title("Recovered Signal")
-    ax1.margins(.1)
-
-    ax2.plot(nblck)
-    ax2.set_title("Noisy Signal")
-
-    for ax in fig.axes:
-        ax.tick_params(labelbottom=False, top=False, bottom=False, left=False,
-                       right=False)
-
-    fig.tight_layout()
 
 @njit()
 def find_sampling_frequency(tim: np.ndarray,

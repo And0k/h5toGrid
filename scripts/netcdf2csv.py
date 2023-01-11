@@ -1,6 +1,6 @@
 #!/usr/bin/python3.7+
 """
-Convert NetCDF file of ERA5 data that was downloaded by ecmwf_api_client.py to csv
+Convert NetCDF file of ERA5 data that was downloaded by download_ecmwf.py to csv
 u10   10 metre U wind component
 v10   10 metre V wind component
 fg10  10 metre wind gust since previous post-processing

@@ -212,7 +212,7 @@ if start == 1:
                 '--b_interact', '0',
                 '--fs_float', f'{fs(probe)}',
                 '--dt_from_utc_seconds', f'{dt_from_utc_2000(probe)}',
-                '--csv_specific_param_dict', 'invert_magnitometr: True'
+                '--csv_specific_param_dict', 'invert_magnetometer: True'
                 ])
 
         for db_coefs in [

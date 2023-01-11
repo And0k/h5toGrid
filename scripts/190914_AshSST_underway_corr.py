@@ -43,22 +43,22 @@ if st(1):  # nav with depth is in next section
 
 if st(10):  # False: #
     # Save CTD_SST_48Mc Underway to DB
-    from to_pandas_hdf5.csv_specific_proc import proc_loaded_sea_and_sun
+    from to_pandas_hdf5.csv_specific_proc import proc_loaded_sst
 
     csv2h5([
-        'cfg/csv_CTD_Sea&Sun.ini',
+        'cfg/csv_CTD_SST.ini',
         '--path', str(path_cruise / device / '_raw' / '19*[0-9].TOB'),
         '--db_path', str(path_db),
         '--dt_from_utc_hours', '0',
         '--header', 'Number,Date(text),Time(text),Pres,Temp,Sal,O2,O2ppm,SIGMA,Cond,Vbatt,SVel',
-        '--cols_not_use_list', 'Number,SIGMA,Vbatt,SVel',
+        '--cols_not_save_list', 'Number,SIGMA,Vbatt,SVel',
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--table', f'{device}',
         '--b_interact', '0'
         # '--on_bad_lines', 'warn',
         ],
         **{'in': {
-            'fun_proc_loaded': proc_loaded_sea_and_sun,
+            'fun_proc_loaded': proc_loaded_sst,
             'csv_specific_param': {'Temp_fun': lambda x: (x + 0.254) / 1.00024,
                                    # 'Temp_add': 0.254, And convert to ITS90
                                    'Sal_fun': lambda x: (1 + 0.032204423446495364) * x + 0.045516504802752523,
@@ -264,7 +264,7 @@ if st(270):  # False: #
 device = 'tracker'
 path_db_device = path_db.with_name(f'~{device}s.h5')
 if st(300):  # False: #
-    # Save gpx from treckers to DB
+    # Save gpx from trackers to DB
     gpx2h5(['',
             '--db_path', str(path_db_device),
             '--path', str(path_cruise / rf'navigation/{device}s/*spot*messages.gpx'),
@@ -274,7 +274,7 @@ if st(300):  # False: #
             '--tables_list', ',,tracker{}', ])
 # go = True
 if st(310):  # False: #
-    # Export treckers tracks to GPX tracks
+    # Export trackers tracks to GPX tracks
     h5toGpx(['cfg/h5toGpx_nav_all.ini',
              '--db_path', str(path_db_device.with_name(
             path_db_device.stem + '_not_sorted.h5')),

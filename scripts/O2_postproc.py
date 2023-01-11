@@ -181,7 +181,6 @@ def save_fig(fig: Figure, r: np.recarray, taus: Sequence[float], t_delay: float)
     print(f'figure {figname} saved')
 
 
-
 def h5replace_cols(db_path: Union[Path, str], tbl: str, df_new: Union[pd.DataFrame, pd.Series]):
     with pd.HDFStore(db_path) as store:
         df = store.select(tbl)

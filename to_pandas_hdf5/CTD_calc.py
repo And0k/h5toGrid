@@ -28,10 +28,10 @@ import gsw
 from utils2init import my_argparser_common_part, cfg_from_args, this_prog_basename, init_file_names, init_logging, \
     Ex_nothing_done, set_field_if_no, dir_create_if_need, FakeContextIfOpen
 from utils_time import timzone_view
-from other_filters import rep2mean, inearestsorted
+from filters import rep2mean, inearestsorted
 from to_pandas_hdf5.csv2h5 import set_filterGlobal_minmax
 from to_pandas_hdf5.h5toh5 import h5temp_open, h5move_tables, h5init, h5del_obsolete, h5index_sort, query_time_range, \
-    h5remove_duplicates, h5select
+    h5remove_duplicates, h5load_points
 from to_pandas_hdf5.h5_dask_pandas import h5_append
 
 date_format_ISO9115 = '%Y-%m-%dT%H:%M:%S'  # for Obninsk
@@ -511,12 +511,8 @@ def get_runs_parameters(df_raw, times_min, times_max, cols_good_data: Union[str,
     if table_nav:
         time_points = log_update['_st'].index.append(log_update['_en'].index)
         with FakeContextIfOpen(lambda f: pd.HDFStore(f, mode='r'), db_path, db) as store:
-            df_nav, dt = h5select(  # all starts then all ends in row
-                store, table_nav,
-                columns=table_nav_cols,
-                time_points=time_points,
-                dt_check_tolerance=dt_search_nav_tolerance
-                )
+            df_nav, dt = h5load_points(store, table_nav, columns=table_nav_cols, time_points=time_points,
+                                       dt_check_tolerance=dt_search_nav_tolerance)
 
         # {:0.0f}s'.format(cfg['out']['dt_search_nav_tolerance'].total_seconds())
         # todo: allow filter for individual columns. solution: use multiple calls for columns that need filtering with appropriate query_range_pattern argument of h5select()
@@ -759,7 +755,7 @@ def main(new_arg=None):
     if cfg['out'].get('path_csv'):
         dir_create_if_need(cfg['out']['path_csv'])
     # Load data Main circle #########################################
-    # Open input store and cicle through input table log records
+    # Open input store and cycle through input table log records
     qstr_trange_pattern = "index>=Timestamp('{}') & index<=Timestamp('{}')"
     iSt = 1
 

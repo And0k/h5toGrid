@@ -15,7 +15,7 @@ import pandas as pd
 from gpxpy.geo import simplify_polyline as gpxpy_simplify_polyline
 
 from to_pandas_hdf5.h5_dask_pandas import filterGlobal_minmax
-from to_pandas_hdf5.h5toh5 import h5select, h5find_tables
+from to_pandas_hdf5.h5toh5 import h5load_points, h5find_tables
 # my
 from utils2init import cfg_from_args, my_argparser_common_part, this_prog_basename, init_logging, Ex_nothing_done
 from utils_time import timzone_view, pd_period_to_timedelta
@@ -70,14 +70,19 @@ def my_argparser():
 
 
 def write_file(fileOutPN, xml, mode='w'):
-    f = open(Path(fileOutPN).with_suffix('.gpx'), mode)
+    p = Path(fileOutPN).with_suffix('.gpx')
     try:
-        f.write(xml)
+        h_file = p.open(mode)
+    except FileNotFoundError as e:
+        p.parent.mkdir(parents=False)
+        h_file = p.open(mode)
+    try:
+        h_file.write(xml)
     except Exception as e:
         # l.error((e.msg if hasattr(e,'msg') else '') + msg_option)
         print(e.msg if hasattr(e, 'msg') else e)
     finally:
-        f.close()
+        h_file.close()
 
 
 def gpx_track_create(gpx, gpx_obj_namef):
@@ -96,7 +101,7 @@ def gpx_track_create(gpx, gpx_obj_namef):
     return gpx_track
 
 
-def gpx_proc_and_save(gpx, gpx_obj_namef, cfg_proc, fileOutPN):
+def gpx_proc_and_save(gpx, gpx_obj_namef, cfg_proc, path_stem):
     if cfg_proc['b_missed_coord_to_zeros']:
         for p in gpx.walk(only_points=True):
             if p.latitude is None or p.longitude is None:
@@ -110,8 +115,8 @@ def gpx_proc_and_save(gpx, gpx_obj_namef, cfg_proc, fileOutPN):
     if isinstance(gpx_obj_namef, str):
         gpx.description = gpx_obj_namef
     gpx.author_email = 'andrey.korzh@atlantic.ocean.ru'
-    write_file(fileOutPN, gpx.to_xml())
-    print(Path(fileOutPN).stem + '.gpx saved')
+    write_file(path_stem, gpx.to_xml())
+    print(Path(path_stem).stem + '.gpx saved')
 
 
 gpx_names_funs = None  # need when eval gpx_obj_namef()?
@@ -125,7 +130,7 @@ def save_to_gpx(nav_df: pd.DataFrame, fileOutPN, gpx_obj_namef=None, waypoint_sy
         - Lat, Lon: if not empty
         - DepEcho: to add its data as elevation
         - itbl: if ``waypoint_symbf``
-    :param fileOutPN:       *.gpx file full name without extension. Set None to not write (useful if need only gpx)
+    :param fileOutPN:       *.gpx file full name without extension. Set None to not write (useful if gpx only needed)
     :param gpx_obj_namef:   str or fun(waypoint number). If None then we set it to fileOutPN.stem
     :param waypoint_symbf:  str or fun(nav_df record = row). If None saves track
     :param cfg_proc:
@@ -239,7 +244,7 @@ def save_to_gpx(nav_df: pd.DataFrame, fileOutPN, gpx_obj_namef=None, waypoint_sy
                 continue
             gpx_segment = GPXTrackSegment()
             if cfg_proc.get('period_tracks'):
-                fmt = '%y-%m-%d' if t_interval_start.second==0 and t_interval_start.hour==0 else '%y-%m-%d %H:%M'
+                fmt = '%y-%m-%d' if t_interval_start.second == 0 and t_interval_start.hour == 0 else '%y-%m-%d %H:%M'
                 track_name = f'{gpx_obj_namef} {t_interval_start:{fmt}}'
                 gpx_track = gpx_track_create(gpx, track_name)
                 gpx_track[track_name].segments.append(gpx_segment)
@@ -411,6 +416,7 @@ def main(new_arg=None):
             for itbl in range(len(gpx_names_funs), len(cfg['in']['tables'])):
                 gpx_names_funs.append('i+1')
         dfs_rnav = []
+        nav2add_cur = None
         tbl_names_all_shortened = []
         for itbl, tblD in enumerate(cfg['in']['tables']):
             print(itbl, '. ', tblD, end=': ', sep='')
@@ -497,10 +503,9 @@ def main(new_arg=None):
                 if time_points is None:
                     raise (ValueError("cfg['out']['select_from_tablelog_ranges'] must be 0 or -1"))
                 cols_nav = ['Lat', 'Lon', 'DepEcho']
-                nav2add = h5select(store, cfg['in']['table_nav'], cols_nav, time_points=time_points,
-                                   dt_check_tolerance=cfg['process']['dt_search_nav_tolerance'],
-                                   query_range_lims=(time_points[0], dfL['DateEnd'][-1])
-                                   )[0]
+                nav2add = h5load_points(store, cfg['in']['table_nav'], cols_nav, time_points=time_points,
+                                        dt_check_tolerance=cfg['process']['dt_search_nav_tolerance'],
+                                        query_range_lims=(time_points[0], dfL['DateEnd'][-1]))[0]
                 cols_nav = nav2add.columns  # not all columns may be loaded
                 # Try get non NaN from dfL if it has needed columns (we used to write there edges' data with _st/_en suffixes)
                 isna = nav2add.isna()

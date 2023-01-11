@@ -207,7 +207,7 @@ if st(1):  # Can not find additional not corrected files for same probe if alrea
                 #     ))/np.timedelta64(1,'s')))
                 ] +
                (
-               ['--csv_specific_param_dict', 'invert_magnitometr: True'
+               ['--csv_specific_param_dict', 'invert_magnetometer: True'
                 ] if prefix == 'incl' else
                ['--cols_load_list', "yyyy,mm,dd,HH,MM,SS,P,U"
                 ]

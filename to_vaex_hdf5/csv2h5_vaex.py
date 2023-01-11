@@ -73,15 +73,15 @@ def argparser_files(
     :param b_incremental_update: exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files
     :param dt_from_utc_seconds: add this correction to loading datetime data. Can use other suffixes instead of "seconds"
     :param dt_from_utc_hours: add this correction to loading datetime data. Can use other suffixes instead of "hours"
-    :param fs_float: sampling frequency, uses this value to calculate intermediate time values between time changed values (if same time is assined to consecutive data)
+    :param fs_float: sampling frequency, uses this value to calculate intermediate time values between time changed values (if same time is assigned to consecutive data)
     :param fs_old_method_float: sampling frequency, same as ``fs_float``, but courses the program to use other method. If smaller than mean data frequency then part of data can be deleted!(?)
     :param header: comma separated list matched to input data columns to name variables. Can contain type suffix i.e.
      (float) - which is default, (text) - also to convert by specific converter, or (time) - for ISO format only
     :param cols_load_list: comma separated list of names from header to be saved in hdf5 store. Do not use "/" char, or type suffixes like in ``header`` for them. Defaut - all columns
-    :param cols_not_use_list: comma separated list of names from header to not be saved in hdf5 store
+    :param cols_not_save_list: comma separated list of names from header to not be saved in hdf5 store
     :param skiprows_integer: skip rows from top. Use 1 to skip one line of header
     :param on_bad_lines: choices=['error', 'warn', 'skip'],
-        "warn" print a warning when a bad line is encountered and skip that line. See also "comments" argument to skip bad line without warning
+        "warn" print a warning when a bad line is encountered and skip that line. See also "comment" argument to skip bad line without warning
     :param delimiter_chars: parameter of pandas.read_csv()
     :param max_text_width: maximum length of text fields (specified by "(text)" in header) for dtype in numpy loadtxt
     :param chunksize_percent_float: percent of 1st file length to set up hdf5 store tabe chunk size
@@ -115,7 +115,7 @@ def argparser_files(
     return
 
 
-def init_input_cols(*, header=None, dtype, converters=None, cols_load, max_text_width=2000, dt_from_utc=0, comments='"',
+def init_input_cols(*, header=None, dtype, converters=None, cols_load, max_text_width=2000, dt_from_utc=0, comment='"',
                     cols_loaded_save_b=None):
     """ Append/modify dictionary cfg_in for parameters of dask/pandas load_csv() function and of save to hdf5.
     :param header (required if no 'cols'): comma/space separated string, column names in source file data header. Used to find cfg_in['cols']
@@ -141,7 +141,7 @@ def init_input_cols(*, header=None, dtype, converters=None, cols_load, max_text_
 
     Example
     -------
-    header= u'`Ensemble #`,txtYY_M_D_h_m_s_f(text),,,Top,`Average Heading (degrees)`,`Average Pitch (degrees)`,stdPitch,`Average Roll (degrees)`,stdRoll,`Average Temp (degrees C)`,txtVe_none(text) txtVn_none(text) txtVup(text) txtErrVhor(text) txtInt1(text) txtInt2(text) txtInt3(text) txtInt4(text) txtCor1(text) txtCor2(text) txtCor3(text) txtCor4(text),,,SpeedE_BT SpeedN_BT SpeedUp ErrSpeed DepthReading `Bin Size (m)` `Bin 1 Distance(m;>0=up;<0=down)` absorption IntScale'.strip()
+    header= u'`Ensemble #`,txtYY_M_D_h_m_s_f(text),,,Top,`Average Heading (degrees)`,`Average Pitch (degrees)`,stdPitch,`Average Roll (degrees)`,stdRoll,`Average Temp (degrees C)`,txtu_none(text) txtv_none(text) txtVup(text) txtErrVhor(text) txtInt1(text) txtInt2(text) txtInt3(text) txtInt4(text) txtCor1(text) txtCor2(text) txtCor3(text) txtCor4(text),,,SpeedE_BT SpeedN_BT SpeedUp ErrSpeed DepthReading `Bin Size (m)` `Bin 1 Distance(m;>0=up;<0=down)` absorption IntScale'.strip()
     """
     cfg_in = locals()   # must be 1st row in function to be dict of input args
     dtype_text_max = '|S{:.0f}'.format(max_text_width)  # np.str
@@ -225,8 +225,8 @@ def init_input_cols(*, header=None, dtype, converters=None, cols_load, max_text_
     else:
         cfg_in['cols_load'] = np.array(cfg_in['cols'])[cols_load_b]
     # apply settings that more narrows used cols
-    if 'cols_not_use' in cfg_in:
-        cols_load_in_used_b = np.isin(cfg_in['cols_load'], cfg_in['cols_not_use'], invert=True)
+    if 'cols_not_save' in cfg_in:
+        cols_load_in_used_b = np.isin(cfg_in['cols_load'], cfg_in['cols_not_save'], invert=True)
         if not np.all(cols_load_in_used_b):
             cfg_in['cols_load'] = cfg_in['cols_load'][cols_load_in_used_b]
             cols_load_b = np.isin(cfg_in['cols'], cfg_in['cols_load'])
@@ -234,7 +234,7 @@ def init_input_cols(*, header=None, dtype, converters=None, cols_load, max_text_
     col_names_out = cfg_in['cols_load'].copy()
     # Convert ``cols_load`` to index (to be compatible with numpy loadtxt()), names will be in cfg_in['dtype'].names
     cfg_in['cols_load'] = np.int32([cfg_in['cols'].index(c) for c in cfg_in['cols_load'] if c in cfg_in['cols']])
-    # not_cols_load = np.array([n in cfg_in['cols_not_use'] for n in cfg_in['cols']], np.bool)
+    # not_cols_load = np.array([n in cfg_in['cols_not_save'] for n in cfg_in['cols']], np.bool)
     # cfg_in['cols_load']= np.logical_and(~not_cols_load, cfg_in['cols_load'])
     # cfg_in['cols']= np.array(cfg_in['cols'])[cfg_in['cols_load']]
     # cfg_in['dtype']=  cfg_in['dtype'][cfg_in['cols_load']]
@@ -273,7 +273,7 @@ def init_input_cols(*, header=None, dtype, converters=None, cols_load, max_text_
             cfg_in['col_index_name'])] = False  # (must index be used separately?)
 
     # Output columns dtype
-    col_names_out = np.array(col_names_out)[cfg_in['cols_loaded_save_b']].tolist() + cfg_in['cols_use']
+    col_names_out = np.array(col_names_out)[cfg_in['cols_loaded_save_b']].tolist() + cfg_in['cols_save']
     cfg_in['dtype_out'] = np.dtype({
         'formats': [cfg_in['dtype'].fields[n][0] if n in cfg_in['dtype'].names else
                     np.dtype(np.float64) for n in col_names_out],
@@ -295,7 +295,7 @@ def read_csv(paths: Sequence[Union[str, Path]], cfg_in: Mapping[str, Any]) -> Un
         names=cfg_in['cols'][cfg_in['cols_load']]
         usecols=cfg_in['cols_load']
         on_bad_lines=cfg_in['on_bad_lines']
-        comment=cfg_in['comments']
+        comment=cfg_in['comment']
 
         Other arguments corresponds to fields with same name:
         dtype=cfg_in['dtype']
@@ -337,7 +337,7 @@ def read_csv(paths: Sequence[Union[str, Path]], cfg_in: Mapping[str, Any]) -> Un
                 converters=cfg_in['converters'],
                 skiprows=cfg_in['skiprows'],
                 on_bad_lines=cfg_in['on_bad_lines'],
-                comment=cfg_in['comments'],
+                comment=cfg_in['comment'],
                 header=None,
                 blocksize=cfg_in['blocksize'])  # not infer
 
@@ -362,7 +362,7 @@ def read_csv(paths: Sequence[Union[str, Path]], cfg_in: Mapping[str, Any]) -> Un
                     # cfg_in['cols_load'],
                     delimiter=cfg_in['delimiter'], skipinitialspace=True, index_col=False,
                     converters=cfg_in['converters'], skiprows=cfg_in['skiprows'],
-                    on_bad_lines=cfg_in['on_bad_lines'], comment=cfg_in['comments'],
+                    on_bad_lines=cfg_in['on_bad_lines'], comment=cfg_in['comment'],
                     header=None)
                 if i > 0:
                     raise NotImplementedError('list of files => need concatenate data')

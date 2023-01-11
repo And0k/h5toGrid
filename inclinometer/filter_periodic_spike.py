@@ -12,13 +12,12 @@ from hydra.core.config_store import ConfigStore
 import numpy as np
 import pandas as pd
 
-from other_filters import b1spike_up
+from filters import b1spike_up
 from to_pandas_hdf5.h5_dask_pandas import i_bursts_starts, h5_append
-from to_pandas_hdf5.h5toh5 import h5move_tables
+from to_pandas_hdf5.h5toh5 import h5move_tables, h5_dispenser_and_names_gen
 
 # to save through temporary store (with log for each saving data part - here it is burst):
-from to_pandas_hdf5.h5toh5 import h5init, h5remove_table, h5index_sort
-from to_pandas_hdf5.csv2h5 import h5_dispenser_and_names_gen
+from to_pandas_hdf5.h5toh5 import h5init, h5remove, h5index_sort
 from utils2init import this_prog_basename, standard_error_info, LoggingStyleAdapter
 
 @dataclass
@@ -404,7 +403,7 @@ def main(config: ConfigType) -> None:  #
     #with pd.HDFStore(out_path) as store:  #, mode='w'
     for _, _ in h5_dispenser_and_names_gen(cfg_in, cfg_out, h5_names_gen):  # handles temporary db for h5_append()
         try:
-            if h5remove_table(cfg_out['db'], cfg_in['table']):
+            if h5remove(cfg_out['db'], cfg_in['table']):
                 lf.info('previous table removed')
         except Exception as e:  # no such table?
             pass

@@ -14,8 +14,11 @@ from datetime import datetime, timedelta
 import re
 from tempfile import TemporaryDirectory
 import numpy as np
+import pandas as pd
 
-from win32com.client import constants, Dispatch, CastTo, pywintypes, gencache
+from win32com.client import constants, Dispatch, CastTo, pywintypes, gencache, GetObject, VARIANT
+import pythoncom
+
 # python "c:\Programs\_coding\WinPython3\python-3.5.2.amd64\Lib\site-packages\win32com\client\makepy.py" -i "c:\Program Files\Golden Software\S
 # urfer 13\Surfer.exe"
 # Use these commands in Python code to auto generate .py support
@@ -31,16 +34,16 @@ temp_dir_path = r'C:\Windows\Temp'
 # try:  # try get griddata_by_surfer() function reqwirements
 
 def griddata_by_surfer(
-        ctd,
+        ctd: Union[np.ndarray, pd.DataFrame],
         path_stem_pattern: Union[str, Path] = r'%TEMP%\xyz{}',
         margins: Union[bool, Tuple[float, float], None] = True,
         xCol: str='Lon', yCol: str='Lat', zCols: Sequence[str]= None,
         SearchEnable=True, BlankOutsideHull=1,
         DupMethod=15, ShowReport=False,  # DupMethod=15=constants.srfDupAvg
-        **kwargs):
+        **kwargs) -> Union[bool, None]:
     """
     Grid by Surfer
-    :param ctd: pd.DataFrame
+    :param ctd: pd.DataFrame or np.ndarray with >= 3 columns
     :param path_stem_pattern:
     :param margins: extend grid size on all directions:
       - True - use 10% if limits (xMin...) passed else use InflateHull value
@@ -49,7 +52,7 @@ def griddata_by_surfer(
     :param xCol: x column index in ctd
     :param yCol: y column index in ctd
     :param kwargs: other Surfer.GridData4() arguments
-    :return:
+    :return: None if error (no success)
     """
     global Surfer
     if not Surfer:
@@ -62,21 +65,31 @@ def griddata_by_surfer(
                 Surfer = Dispatch("Surfer.Application")
             except pywintypes.com_error as e:
                 print("Open Surfer! ", standard_error_info(e))
-                raise
-    try:
-        tmpF = f"{path_stem_pattern.format('~temp')}.csv"
-    except AttributeError:
-        path_stem_pattern = str(path_stem_pattern)
-        tmpF = f"{path_stem_pattern.format('~temp')}.csv"
-    kwargs['xCol'] = ctd.dtype.names.index(xCol) + 1
-    kwargs['yCol'] = ctd.dtype.names.index(yCol) + 1
-    if zCols is None:
-        zCols = list(ctd.dtype.names)
-        zCols.remove(xCol)
-        zCols.remove(yCol)
+                return None
 
-    izCols = [ctd.dtype.names.index(zCol) + 1 for zCol in zCols]  # ctd.columns.get_indexer(zCols) + 1
-    np.savetxt(tmpF, ctd, header=','.join(ctd.dtype.names), delimiter=',', comments='')
+    # Save dataframe to temporary file that surfer can read
+    if not hasattr(path_stem_pattern, 'format'):
+        path_stem_pattern = str(path_stem_pattern)
+
+    # this function will be used only once below
+    def path_tmp(z_cols):
+        return f"{path_stem_pattern.format(','.join(z_cols))}~griddata.csv"
+
+    if isinstance(ctd, pd.DataFrame):
+        izCols = list(ctd.columns.get_indexer(zCols) + 1)
+        ctd.to_csv(path_tmp:=path_tmp(zCols), ctd, columns=[xCol, yCol] + zCols)
+    elif ctd.dtype.names is not None:
+        kwargs['xCol'] = ctd.dtype.names.index(xCol) + 1
+        kwargs['yCol'] = ctd.dtype.names.index(yCol) + 1
+        if zCols is None:
+            zCols = list(ctd.dtype.names)
+            zCols.remove(xCol)
+            zCols.remove(yCol)
+        izCols = [ctd.dtype.names.index(zCol) + 1 for zCol in zCols]  # ctd.columns.get_indexer(zCols) + 1
+        np.savetxt(path_tmp:=path_tmp(zCols), ctd, header=','.join(ctd.dtype.names), delimiter=',', comments='')
+    else:
+        izCols = list(range(3, len(zCols) + 3))
+        np.savetxt(path_tmp:=path_tmp(zCols), ctd, header=','.join([xCol, yCol] + zCols), delimiter=',', comments='')
 
     if margins:
         if isinstance(margins, bool):
@@ -101,18 +114,33 @@ def griddata_by_surfer(
 
         # const={'srfDupAvg': 15, 'srfGridFmtS7': 3}
     # gdal_geotransform = (x_min, cfg['out']['x_resolution'], 0, -y_min, 0, -cfg['y_resolution_use'])
+
+    if 'KrigVariogram' in kwargs:
+        v_components = []
+        for component_args in kwargs['KrigVariogram']:
+            v_components.append(
+                Surfer.NewVarioComponent(
+                    *component_args, **{
+                            f: kwargs[f] for f in ['AnisotropyRatio', 'AnisotropyAngle'] if f in kwargs
+                        } if component_args[0] != 5 else {}
+                    )
+                )
+        kwargs['KrigVariogram'] = v_components[0] if len(v_components) == 1 else tuple(v_components)  # not works if > 1, also tried without success:
+    # a = tuple(CastTo(c, 'IVarioComponent') for c in v_components)
+    # kwargs['KrigVariogram'] = VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_VARIANT | pythoncom.VT_BYREF, a)  #
+
     for i, kwargs['zCol'] in enumerate(izCols):
         outGrd = path_stem_pattern.format(zCols[i]) + '.grd'
         try:
-            Surfer.GridData4(
-                Algorithm=constants.srfKriging, DataFile=tmpF, OutGrid=outGrd,
+            Surfer.GridData6(  # 4
+                Algorithm=constants.srfKriging, DataFile=path_tmp, OutGrid=outGrd,
                 SearchEnable=(SearchEnable and ctd.size > 3), BlankOutsideHull=BlankOutsideHull, DupMethod=DupMethod,
                 ShowReport=ShowReport, **kwargs)
         except pywintypes.com_error as e:
             print(standard_error_info(e))
             if i >= 0:  # True but in debug mode you can change to not raise and continue without side effects by set i=-1
-                raise
-    return margins
+                return None
+    return (margins is None or isinstance(margins, bool)) or margins
 # except Exception as e:
 #
 #     print('\nCan not initialiase Surfer.Application! {:s}'.format(standard_error_info(e)))
@@ -127,8 +155,18 @@ def griddata_by_surfer(
 #             **kwargs):
 #         pass
 
+def set_item_of_item(d, v1, v2, v3):
+    if v1 in d:
+        # if v2 in d[v1] and isinstance(v3, dict) d[v1][v2].update(v3)
+        if isinstance(d[v1], list):  # Text shapes has no child objects
+            d[v1].append({v2: v3})
+        else:
+            d[v1][v2] = v3
+    else:
+        d[v1] = {v2: v3}
 
-def get_objpaths(re_ovr, re_shp=None, f_path=lambda p: p.name, f_text=None) -> Dict[Tuple[int, str], Any]:
+
+def get_objpaths(re_ovr, re_shp=None, f_path=lambda p: p.name, f_text=None, sub_shp=None, sub_ovr=None) -> Dict[Tuple[int, str], Any]:
     """
     In currently open document finds paths to matched objects/properties. Returns dict with keys shape (type, name) and
     values that is dict of overlays {(type, number): properties that points to data or can be changed if data changed}.
@@ -136,7 +174,9 @@ def get_objpaths(re_ovr, re_shp=None, f_path=lambda p: p.name, f_text=None) -> D
     :param re_ovr: saves only matched overlays' properties
     :param re_shp: if specified, save also properties of shapes' which name is matched to
     :param f_path: function(data_path: Path) which replaces data path in output obj_path, default: extract name
-    :param f_text: function(text_obj_name: str) which replaces Text in matched name text_obj_name
+    :param f_text: function(str, old_text: str) which replaces Text property of matched obj with name that matches 1st argument
+    :param sub_shp:
+    :param sub_ovr:
     :return: obj_path of exported grids: {(shp.Type, shp.Name): {(ovrl.Type, ovr_i): data}}
     """
     doc = Surfer.ActiveDocument
@@ -144,22 +184,32 @@ def get_objpaths(re_ovr, re_shp=None, f_path=lambda p: p.name, f_text=None) -> D
     obj_path = {}
     if shapes.Count > 0:
         for i_shp, shp in enumerate(shapes):
-            if re_shp and not re.match(re_shp, shp.Name):
-                continue
+            shp_name = shp.Name
+            if re_shp:
+                if sub_shp and (shp_name_new := re.sub(re_shp, sub_shp, shp_name)):
+                    if shp_name_new != shp_name:
+                        set_item_of_item(obj_path, (shp.Type, shp_name), 'Name', shp_name_new)
+                elif re.match(re_shp, shp_name):
+                    pass
+                else:
+                    continue
             if shp.Type == constants.srfShapeMapFrame:
                 overlays = shp.Overlays
-                if shp.Name.upper() != "ICON":  # Do not touch Icons
+                if shp_name.upper() != "ICON":  # Do not touch Icons
                     for ovr_i, ovrl in enumerate(overlays):
-                        if not re.match(re_ovr, ovrl.Name):
+                        ovr_name = ovrl.Name
+                        if re.match(re_ovr, ovr_name):
+                            pass
+                        else:
                             continue
                         if ovrl.Type in (constants.srfShapeContourMap, constants.srfShapeImageMap):
                             ovrl = CastTo(ovrl, obj_interface[ovrl.Type])
-                            data = {'GridFile': f_path(Path(ovrl.GridFile))}
+                            data = {'GridFile': (data_path:=f_path(Path(ovrl.GridFile)))}
                         elif ovrl.Type == constants.srfShapeVector2Grid:  # srfShapeVectorMap
                             ovrl = CastTo(ovrl, obj_interface[ovrl.Type])
                             data = {
                                 'SetInputGrids': {
-                                    'GridFileName1': f_path(Path(ovrl.AspectGridFile)),    # East component
+                                    'GridFileName1': (data_path:=f_path(Path(ovrl.AspectGridFile))),    # East component
                                     'GridFileName2': f_path(Path(ovrl.GradientGridFile)),  # North component
                                     'AngleSys': ovrl.AngleSystem,
                                     'CoordSys': ovrl.VecCoordSys
@@ -170,27 +220,33 @@ def get_objpaths(re_ovr, re_shp=None, f_path=lambda p: p.name, f_text=None) -> D
                                     'Maximum': ovrl.MaxMagnitude
                                     }  # also saves command to recover vector limits that is needed after grid replacing
                                     }
-                        # elif:
+                        elif ovrl.Type in (constants.srfShapePostmap, constants.srfShapeClassedPost):
+                            ovrl = CastTo(ovrl, obj_interface[ovrl.Type])
+                            data = {'DataFile': (data_path:=f_path(Path(ovrl.DataFile)))}
                         else:
                             data = None
-                        if data:
-                            if ':' in shp.Name:  # Cansel modified Name effect of selected shape
-                                shp.Deselect()
-                            if (shp.Type, shp.Name) in obj_path:
-                                obj_path[(shp.Type, shp.Name)][(ovrl.Type, ovr_i)] = data
-                            else:
-                                obj_path[(shp.Type, shp.Name)] = {(ovrl.Type, ovr_i): data}
 
+                        if data:
+                            if sub_ovr:
+                                sub_ovrl = sub_ovr(data_path=data_path) if callable(sub_ovr) else sub_ovr
+                                ovr_name = re.sub(re_ovr, sub_ovrl, ovr_name)
+                                set_item_of_item(obj_path, (shp.Type, shp_name), (ovrl.Type, ovr_i), {'Name': ovr_name})
+
+
+
+                            if ':' in shp_name:  # Cansel modified Name effect of selected shape
+                                shp.Deselect()
+                            set_item_of_item(obj_path, (shp.Type, shp_name), (ovrl.Type, ovr_i), data)
                             if ovrl.Type in (constants.srfShapeContourMap, constants.srfShapeImageMap):
                                 # also save color limits that need to recover after grid replacing
                                 try:
-                                    obj_path[(shp.Type, shp.Name)][(ovrl.Type, ovr_i)].update(
+                                    obj_path[(shp.Type, shp_name)][(ovrl.Type, ovr_i)].update(
                                         {'ColorMap.SetDataLimits': {
                                             'DataMin': ovrl.ColorMap.DataMin,
                                             'DataMax': ovrl.ColorMap.DataMax}
                                          })
                                 except AttributeError:
-                                    obj_path[(shp.Type, shp.Name)][(ovrl.Type, ovr_i)].update(
+                                    obj_path[(shp.Type, shp_name)][(ovrl.Type, ovr_i)].update(
                                         {'FillForegroundColorMap.SetDataLimits': {
                                             'DataMin': ovrl.FillForegroundColorMap.DataMin,
                                             'DataMax': ovrl.FillForegroundColorMap.DataMax}
@@ -207,25 +263,25 @@ def get_objpaths(re_ovr, re_shp=None, f_path=lambda p: p.name, f_text=None) -> D
 
                         # if b_setNames:
                         #     ovrl.Name= File + ovrl.Name Else ovrl.Name= Left(ovrl.Name,17)
-                    if (shp.Type, shp.Name) in obj_path:  # data to replace was found
+                    if (shp.Type, shp_name) in obj_path:  # data to replace was found
                         # also save shp limits that need to recover after grid replacing
-                        obj_path[(shp.Type, shp.Name)].update({'SetLimits': {key: getattr(shp, key) for key in (
+                        obj_path[(shp.Type, shp_name)].update({'SetLimits': {key: getattr(shp, key) for key in (
                             'xMin', 'xMax', 'yMin', 'yMax')},
                             'xMapPerPU': shp.xMapPerPU,
                             'yMapPerPU': shp.yMapPerPU})
 
             elif shp.Type == constants.srfShapeText:
                 #cast = 'IText'
-                text = f_text(shp.Name) if f_text else None
+                text = f_text(shp_name, old_text=shp.Text) if f_text else None
                 data = {'Text': text or shp.Text}
 
-                if (shp.Type, shp.Name) in obj_path:
-                    if isinstance(obj_path[(shp.Type, shp.Name)], list):
-                        obj_path[(shp.Type, shp.Name)].append(data)
+                if (shp.Type, shp_name) in obj_path:
+                    if isinstance(obj_path[(shp.Type, shp_name)], list):  # Text shapes has no child objects
+                        obj_path[(shp.Type, shp_name)].append(data)
                     else:
-                        obj_path[(shp.Type, shp.Name)] = [obj_path[(shp.Type, shp.Name)], data]
+                        obj_path[(shp.Type, shp_name)] = [obj_path[(shp.Type, shp_name)], data]
                 else:
-                    obj_path[(shp.Type, shp.Name)] = data
+                    obj_path[(shp.Type, shp_name)] = data
     return obj_path
 
 
@@ -303,7 +359,7 @@ def load_my_var_grid_from_netcdf_closure_grid():
         # Guess variable name
         if ovr.Type == constants.srfShapeVector2Grid:
             var = ('Vdir' if prop == 'GridFileName1' else 'Vabs')
-            # todo determine decart coordinates: if grid_file endswith('r') else ('Ve' if prop == 'GridFileName1' else 'Vn')
+            # todo determine decart coordinates: if grid_file endswith('r') else ('u' if prop == 'GridFileName1' else 'v')
 
         else:
             reg = re.match(r'(?:map)?([^.\d]+)', ovr.Name)
@@ -372,7 +428,9 @@ def objpath_data_paste(obj_path,
 def srf_update_grids(re_ovr='*', re_shp=None, f_fname: Optional[Callable[[...], str]] = None,
                      f_text: Optional[Callable[[...], str]] = None, dir_in: Union[Path, str, None] = None,
                      srf_out: Union[Path, str, None] = None, srf_in: Union[Path, str, None] = None,
-                     dry_run: bool = False, export_suffix: str = None, options: str = None, **kwargs):
+                     dry_run: bool = False,
+                     sub_ovr=None, sub_shp=None,
+                     export_suffix: str = None, options: str = None, **kwargs):
     """
     Replaces all grids in opened pattern with same named grid files in path_dir_in and saves to srf and exports image
     srf file name increases to not overwrite existed files: todo rename existed files
@@ -380,11 +438,13 @@ def srf_update_grids(re_ovr='*', re_shp=None, f_fname: Optional[Callable[[...], 
     :param re_shp: regular expression for names of shapes having data needed to be replaced
     :param f_fname: function(path_grd_old) that returns modified data name that will be used to replace data (grid).
     If returns absolute path then used as is the f_path in gen_objpaths
-    :param f_text: function, same as in gen_objpaths
+    :param f_text: function, same as in gen_objpaths()
     :param dir_in: where search grids
     :param srf_out: where to save srfs made by replacing data in opened srf
     :param srf_in: path to srf to modify. If None srf must be opened before run this function
     :param dry_run: not modify srf if True
+    :param sub_shp:
+    :param sub_ovr:
     :param export_suffix: exporting name suffix. If None then not export
     :param options: exporting Options
     :param kwargs: other exporting kwargs such as Quality for jpg
@@ -402,11 +462,11 @@ def srf_update_grids(re_ovr='*', re_shp=None, f_fname: Optional[Callable[[...], 
             :return:
             """
             name_grd = f_fname(p)
-            return str((path_dir_in / name_grd) if not Path(name_grd).is_absolute() else name_grd)
+            return str(name_grd if Path(name_grd).is_absolute() else (path_dir_in / name_grd))
     else:
         ff_name_mod = lambda p: str(path_dir_in / p.name)
 
-    obj_path = get_objpaths(re_ovr, re_shp, f_path=ff_name_mod, f_text=f_text)
+    obj_path = get_objpaths(re_ovr, re_shp, f_path=ff_name_mod, f_text=f_text, sub_ovr=sub_ovr, sub_shp=sub_shp)
 
     if False:  # if need more complex changing of properties then just replace grids
         for (obj, ovr_i), data_dict in gen_objects(obj_path, srf_in):
@@ -714,11 +774,11 @@ def save_2d_to_grd(z2d, x_min, y_max, x_resolution, y_resolution, file_grd):
 
     gdal_geotransform = (x_min, x_resolution, 0, y_max, 0, -y_resolution)
     # [0] координата x верхнего левого угла
-    # [1] ширина пиксела
+    # [1] ширина пикселя
     # [2] поворот, 0, если изображение ориентировано на север
     # [3] координата y верхнего левого угла
     # [4] поворот, 0, если изображение ориентировано на север
-    # [5] высота пиксела
+    # [5] высота пикселя
     write_grd_this_geotransform = write_grd_fun(gdal_geotransform)
 
     if not isinstance(file_grd, Path):
@@ -777,7 +837,7 @@ def invert_bln(file_bln_in, file_bln_out=None, delimiter=','):
     np.savetxt(file_bln_out, bln, fmt='%g', delimiter=delimiter, header=header.strip().decode('latin'), comments='', encoding='ascii')
 
 
-def range_till_stop(start, stop, step):
+def range_including_stop(start, stop, step):
     """
     Generates values from start to including stop and works for any type with defined '<=' and '+' operations
     :param start:
@@ -793,60 +853,111 @@ def range_till_stop(start, stop, step):
 ########################################################################################################################
 # Run examples subfunctions ############################################################################################
 
-def current_file_name_replace(fname, old_str, new_str):
-    return fname.name.replace(old_str, new_str)
-    # .replace('_thetao', '_so')
-    # .replace('_Vabs', '_o2')
+# def current_file_name_replace(fname, old_str, new_str):
+#     return fname.name.replace(old_str, new_str)
+#     # .replace('_thetao', '_so')
+#     # .replace('_Vabs', '_o2')
+#
+#     # def rep(match_obj):
+#     #     return {
+#     #         '004m': '020.0m',
+#     #         '007m': '041.0m',
+#     #         '010m': '061.0m',
+#     #         '014m': '080.0m',
+#     #         }.get(gr0 := match_obj.group(0), gr0)
+#     # return re.sub('\d\d\dm', rep, fname.name.replace(old_str, new_str).replace('_V_', '_'))
+#
+#     #
+#     # .replace('_Vdir.grd', '_Vdir.nc').replace('_Vabs.grd', '_Vabs.nc')
+#
+# def current_text(shp_name, date):
+#     if shp_name == 'PositionText':
+#         return f'CMEMS NEMO\n{date:%d.%m.%y} 12:00UTC'
+#     # lambda shp_name: f'{date:%Y-%m-%d}' if shp_name == 'PositionText' else None,
 
-    # def rep(match_obj):
-    #     return {
-    #         '004m': '020.0m',
-    #         '007m': '041.0m',
-    #         '010m': '061.0m',
-    #         '014m': '080.0m',
-    #         }.get(gr0 := match_obj.group(0), gr0)
-    # return re.sub('\d\d\dm', rep, fname.name.replace(old_str, new_str).replace('_V_', '_'))
 
-    #
-    # .replace('_Vdir.grd', '_Vdir.nc').replace('_Vabs.grd', '_Vabs.nc')
+def change_file_name(fname, old_re, new_re):
+    return re.sub(old_re, new_re, fname.name)
 
-def current_text(shp_name, date):
+
+def change_text(shp_name, old_text=None, date=None, z=None):
     if shp_name == 'PositionText':
-        return f'CMEMS NEMO\n{date:%d.%m.%y} 12:00UTC'
-    # lambda shp_name: f'{date:%Y-%m-%d}' if shp_name == 'PositionText' else None,
+        return f'{date:%d.%m.%Y}'
+    elif shp_name == 'zText':
+        return re.sub(r'([ =])(\d+)', fr'\g<1>{z}', old_text)  # Note: may be special symbols: "\\fs\d+" that is why space used
 
 # Run examples #########################################################################################################
 
-def do():
+def do_gen_ragnes():
     """
     Update grids
     """
     dir_in = Path(
-        r'd:\workData\BalticSea\_other_data\_model\Copernicus\section_z\211030ABP48@CMEMS\211030ABP48V,so,thetao,sob,o2,o2b@CMEMS\V,so,thetao,sob,o2,o2b(lon,lat)_54.3583-56.0082,18.0138-21.0417'
+        r'd:\WorkData\BlackSea\220620\_subproduct\surfer'
+        # r'd:\Downloads\_mail\Baranov\_subproduct\grids'
+        # r'd:\workData\BalticSea\ADCP_Nortek_Signature#D-0452'
+        # r'd:\workData\BalticSea\_other_data\_model\Copernicus\section_z\211030ABP48@CMEMS\211030ABP48V,so,thetao,sob,o2,o2b@CMEMS\V,so,thetao,sob,o2,o2b(lon,lat)_54.3583-56.0082,18.0138-21.0417'
         # r'd:\workData\BalticSea\_other_data\_model\Copernicus\section_z\211030ABP48@CMEMS\211030ABP48V,so,thetao,sob,o2,o2b@CMEMS\V,thetao,so,o2(dist,depth)'
         # r'd:\workData\BalticSea\_other_data\_model\Copernicus\section_z\211125BalticSpit@CMEMS\V(dist,depth)'
         # r'd:\workData\BalticSea\_other_data\_model\Copernicus\section_z\211125BalticSpit@CMEMS\V(lon,lat)_54.3583-56.0082,18.0138-21.0417'
         )
-    old_str = '211102'
-    out_prefix = dir_in.name.partition('_')[0]
+    #old_str = '211206_V'  # '211102'
+    old_re = '([_\d-]+)(below|above)(\d+)(\D+)'
+    #out_prefix = dir_in.name.partition('_')[0]
 
-    for date in range_till_stop(datetime.fromisoformat('2021-10-30'), datetime.fromisoformat('2021-11-02'),
-                                timedelta(days=1)):
-        new_str = f'{date:%y%m%d}'  # '211202'211125
-        # if old_str == new_str:
-        #     continue
+    for date in [datetime.fromisoformat('2022-06-20'), datetime.fromisoformat('2022-06-27')]:
+        for z in [15, 25]:
+            # range_including_stop(datetime.fromisoformat('2021-10-30'), datetime.fromisoformat('2021-11-02'),
+            #                          timedelta(days=1)):
+            #new_str = 'S100452A014_TestA0_avgd'  # f'{date:%y%m%d}'  # '211202'211125
+            new_str_range = '220620_1147-1446' if date.day == 20 else '220627_1055-1621'
+            new_re = fr'{new_str_range}\g<2>{z}\4'
 
+            # if old_str == new_str:
+            #     continue
+
+            # Update grids
+            srf_update_grids(
+                re_shp=r'^((?:\|V\||vectors|theta|S|DO|map|\D+Text).*)$',
+                re_ovr=r'((?!^(bathymetry|-).*)^.*\.(grd|nc))$',
+                f_fname=functools.partial(change_file_name, old_re=old_re, new_re=new_re),
+                f_text=functools.partial(change_text, date=date, z=z),  #functools.partial(current_text, date=date),
+                dir_in=dir_in,
+                srf_out=dir_in.parent / fr'{new_str_range}Ro, split={z}m.srf',  # f'{out_prefix}{new_str}.srf',
+                export_suffix='.jpg'
+                )
+            # old_str = new_str
+
+
+def do_gen_from_files():
+    """
+    Update grids
+    """
+    dir_in = Path(
+        r'd:\WorkData\BlackSea\220920\_subproduct\surfer'
+        # r'd:\WorkData\BlackSea\220620\_subproduct\surfer'
+        )
+    name_glob_in = '(*)Temp.grd'  # (220627,75m)Temp.grd
+    old_re = r'(\([\d_,-]+m\))'
+
+    for path_in in Path(dir_in).glob(name_glob_in):
+        new_str_range = path_in.stem.replace('Temp', '')
+        z = re.match(r'[^,]+,(\d+)', path_in.stem).group(1)
+        f_fname = functools.partial(change_file_name, old_re=old_re, new_re=new_str_range)
         # Update grids
+
         srf_update_grids(
-            re_shp=r'^((?:\|V\||vectors|theta|S|DO|map|PositionText).*)$',
-            re_ovr=r'((?!^bathymetry.*)^.*\.(grd|nc))$',
-            f_fname=lambda fname: current_file_name_replace(fname, old_str, new_str),
-            f_text=functools.partial(current_text, date=date),
+            re_shp=r'^(\D+Text|DO|map|\|V\||vectors|theta|S|sigma|t)(\d.*)$',
+            re_ovr=r'^((?!(bathymetry|-))[^\.]*)\.(grd|nc|csv)$',
+            f_fname=f_fname,
+            f_text=functools.partial(change_text, date=None, z=z),  #functools.partial(current_text, date=date),
             dir_in=dir_in,
-            srf_out=dir_in.parent / f'{out_prefix}{new_str}.srf',
-            export_suffix='.jpg'
+            srf_out=dir_in.parent / fr'{new_str_range}.srf',  # f'{out_prefix}{new_str}.srf',
+            export_suffix='.jpg',
+            sub_shp=rf'\g<1>{z}',
+            sub_ovr=(lambda data_path: Path(data_path).stem),
             )
-        old_str = new_str
+        # old_str = new_str
 
 
 def do1():
@@ -860,6 +971,8 @@ def do1():
         path_dir_out=r'd:\WorkData\BalticSea\_other_data\_model\POM_GMasha\190801_80,85,90m\_srf_bold_isobaths',
         )
 
+
+# ######################################################################################################################
 
 def do_in_surfer(f_do):
     """
@@ -877,6 +990,7 @@ def do_in_surfer(f_do):
              constants.srfShapeImageMap: 'IColorReliefLayer2',  # IImageLayer2
              constants.srfShapeVector2Grid: 'IVectorLayer',
              constants.srfShapeMapFrame: 'IMapFrame2',
+             constants.srfShapePostmap: 'IPostLayer2',
              }
             )
     with TemporaryDirectory(prefix='~GS') as temp_dir:
@@ -892,7 +1006,10 @@ def do_in_surfer(f_do):
 
 
 def main():
-    do_in_surfer(do)
+    do_in_surfer(
+        do_gen_from_files
+        # do_gen_ragnes
+        )
 
 
 def main1():

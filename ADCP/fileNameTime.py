@@ -64,7 +64,7 @@ if __name__ == '__main__':
             cfg['in']['delimiter'] = '\t'
             cfg['in']['header'] = (
                 '`Ensemble #`,txtYY_M_D_h_m_s_f(text),Lat,Lon,Top,`Average Heading (degrees)`,`Average Pitch (degrees)`,'
-                'stdPitch,`Average Roll (degrees)`,stdRoll,`Average Temp (degrees C)`,txtVe_none(text),txtVn_none(text),'
+                'stdPitch,`Average Roll (degrees)`,stdRoll,`Average Temp (degrees C)`,txtu_none(text),txtv_none(text),'
                 'txtVup(text),txtErrVhor(text),txtInt1(text),txtInt2(text),txtInt3(text),txtInt4(text),txtCor1(text),'
                 'txtCor2(text),txtCor3(text),txtCor4(text),GOOD,SpeedE_GGA,SpeedN_GGA,SpeedE_BT,SpeedN_BT,SpeedUp,ErrSpeed_BT,'
                 'DepthReading,`Bin Size (m)`,`Bin 1 Distance(m;>0=up;<0=down)`,absorption,IntScale')  # .split(',')
@@ -167,7 +167,7 @@ if __name__ == '__main__':
             continue
         # add time shift specified in configuration .ini
         date = np.atleast_1d(date)
-        tim, b_ok = time_corr(date, cfg['in'], sort=True)
+        tim, b_ok = time_corr(date, cfg['in'], process=True)
         # Save last time to can filter next file
         cfg['in']['time_last'] = date[-1]
         log_item['rows'] = 1

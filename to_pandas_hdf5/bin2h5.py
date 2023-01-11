@@ -19,9 +19,9 @@ from typing import Any, Mapping
 import numpy as np
 import pandas as pd
 
-from to_pandas_hdf5.csv2h5 import init_input_cols, set_filterGlobal_minmax, h5_dispenser_and_names_gen
+from to_pandas_hdf5.csv2h5 import init_input_cols, set_filterGlobal_minmax
 from to_pandas_hdf5.h5_dask_pandas import h5_append
-from to_pandas_hdf5.h5toh5 import h5temp_open, h5move_tables, h5init, h5index_sort
+from to_pandas_hdf5.h5toh5 import h5temp_open, h5move_tables, h5init, h5index_sort, h5_dispenser_and_names_gen
 from utils2init import my_argparser_common_part, cfg_from_args, init_logging, init_file_names, Ex_nothing_done, \
     set_field_if_no, this_prog_basename
 
@@ -309,7 +309,7 @@ def main(new_arg=None, **kwargs):
         2 ** (3 + np.searchsorted(2 ** np.array([3, 4, 5, 6, 7]) >
                                   np.array(8 * (cfg['in']['data_word_len'] - 1)), 1))))
 
-    # Prepare cpecific format loading and writing
+    # Prepare specific format loading and writing
     set_field_if_no(cfg['in'], 'coltime', [])
     cfg['in'] = init_input_cols(cfg['in'])
     cfg['out']['names'] = np.array(cfg['in']['dtype'].names)[ \

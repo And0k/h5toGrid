@@ -32,7 +32,7 @@ if st(1):  # False: #
         '--dt_from_utc_hours', '0',
         '--header',
         'date(text),txtT(text),Pres(float),Temp(float),Cond(float),Sal(float),O2(float),O2ppm(float),pH(float),Eh(float),ChlA(float),Turb(float)',
-        '--cols_not_use_list', 'pH,Eh,ChlA',
+        '--cols_not_save_list', 'pH,Eh,ChlA',
         '--delimiter_chars', '\\ \\',  # ''\s+',
         # todo  '--f_set_nan_list', 'Turb, x < 0',
         '--b_interact', '0',
@@ -49,7 +49,7 @@ if st(3):  # False: #
         '--header', 'N, Time(text), Lat, Lon, , DepEcho',
         '--coltime_integer', '1',
         '--fun_date_from_filename', "pd.to_datetime(file_stem[:6], format='%y%m%d')",
-        '--sort', 'False',
+        '--corr_time_mode', 'False',
         '--b_interact', '0',
         # '--fs_float', '4'
         ])

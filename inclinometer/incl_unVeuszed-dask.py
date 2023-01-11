@@ -222,7 +222,7 @@ def zeroing(a_zeroing, Ag_old, Cg, Ah_old):
 
 # @+node:korzh.20180608095643.1: *4* waves_proc
 def waves_proc(df, i_burst, len_avg=600, i_burst_good_exactly=1):
-    if not 'Pressure' in a.columns:
+    if 'Pressure' not in a.columns:
         return
 
     import wafo.objects as wo
@@ -598,9 +598,9 @@ for t_interval_start in t_intervals_start:
         if False:
             # Velocity
             Vabs = fVabs_old(np.where(bad_g, np.NaN, Gxyz), kVabs)
-            # DatasetPlugin('PolarToCartesian', {'x_out': Vn, 'units': np.degrees, 'r_in': Vabs, 'y_out': Ve, 'theta_in': Vdir})
-            Vn = Vabs * np.cos(np.radians(Vdir))
-            Ve = Vabs * np.sin(np.radians(Vdir))
+            # DatasetPlugin('PolarToCartesian', {'x_out': v, 'units': np.degrees, 'r_in': Vabs, 'y_out': u, 'theta_in': Vdir})
+            v = Vabs * np.cos(np.radians(Vdir))
+            u = Vabs * np.sin(np.radians(Vdir))
             # np.degrees(np.arctan2(x1, x2[, out]))
 
         sPitch = fPitch(Gxyz)

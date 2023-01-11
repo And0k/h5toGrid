@@ -42,7 +42,7 @@ if st(1, 'Save gpx navigation to DB'):
                 # '--min_date', '2019-07-17T14:00:00',
                 '--min_dict', f'{min_coord}',  # use at least -32768 to replace it by NaN
                 '--max_dict', f'{max_coord}',
-                '--sort', 'delete_inversions',
+                '--corr_time_mode', 'delete_inversions',
                 # '--b_incremental_update', '0',  # '1' coerce to delete data loaded in same table in previous steps
                 '--b_interact', '0',
                 ])
@@ -79,7 +79,7 @@ if st(10, f'Save {device} data to DB'):
         'date(text),txtT(text),Pres(float),Temp90(float),Cond(float),Sal(float),O2(float),O2ppm(float)',  #,SigmaT(float)
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--b_interact', '0',
-        #'--cols_not_use_list', 'N',
+        #'--cols_not_save_list', 'N',
         # '--on_bad_lines', 'warn'
         #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
         ] + common_ctd_params_list,
@@ -302,7 +302,7 @@ if st(120, 'Meteo'):
         str(path_cruise / r"meteo\ship's_meteo_st_source\*.mxt"), '--header',
         'date(text),Time(text),t_air,Vabs_m__s,Vdir,dew_point,Patm,humidity,t_w,precipitation',
         '--coldate_integer', '0', '--coltime_integer', '1',
-        '--cols_not_use_list', 't_w,precipitation',  # bad constant data
+        '--cols_not_save_list', 't_w,precipitation',  # bad constant data
         '--delimiter_chars', ',', '--max_text_width', '12',
         '--on_bad_lines', 'warn', '--b_insert_separator', 'False',
         '--chunksize_percent_float', '500',
@@ -332,22 +332,22 @@ common_ctd_params_list = [
 
 if st(210, f'Save {device} data to DB'):
     # IntD        IntT      Press     Temp    SALIN    SIGMA     Turb    SOUND
-    from to_pandas_hdf5.csv_specific_proc import proc_loaded_sea_and_sun
+    from to_pandas_hdf5.csv_specific_proc import proc_loaded_sst
 
     csv2h5([
-        'cfg/csv_CTD_Sea&Sun.ini',
+        'cfg/csv_CTD_SST.ini',
         # '--skiprows_integer', '34', # default
         '--path', str(path_cruise / device / '_raw_csv' / 'АБП*[0-9].CSV'),
         # '--dt_from_utc_hours', '0',
         '--header', 'Date(text),Time(text),Pres,Temp90,Sal,SIGMA,Turb,SVel',
-        '--cols_not_use_list', 'SIGMA,SVel',
+        '--cols_not_save_list', 'SIGMA,SVel',
         '--delimiter_chars', ',',  # ''\s+',
         '--table', f'{device}',
         '--b_interact', '0'
         # '--on_bad_lines', 'warn',
         ] + common_ctd_params_list,
         **{'in': {
-            'fun_proc_loaded': proc_loaded_sea_and_sun,
+            'fun_proc_loaded': proc_loaded_sst,
             # 'csv_specific_param': {'Temp_fun': lambda x: (x + 0.254) / 1.00024,
             #                        # 'Temp_add': 0.254, And convert to ITS90
             #                        'Sal_fun': lambda x: (1 + 0.032204423446495364) * x + 0.045516504802752523,

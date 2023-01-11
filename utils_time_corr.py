@@ -5,8 +5,9 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 from win32com.client import Dispatch
+from time import sleep
 
-from other_filters import find_sampling_frequency, longest_increasing_subsequence_i, rep2mean, repeated2increased, \
+from filters import find_sampling_frequency, longest_increasing_subsequence_i, rep2mean, repeated2increased, \
     make_linear, rep2mean_with_const_freq_ends
 from utils2init import dir_create_if_need
 from utils_time import lf, datetime_fun, check_time_diff
@@ -16,21 +17,27 @@ from utils_time import lf, datetime_fun, check_time_diff
 
 tim_min_save: pd.Timestamp     # can only decrease in time_corr(), set to pd.Timestamp('now', tz='UTC') before call
 tim_max_save: pd.Timestamp     # can only increase in time_corr(), set to pd.Timestamp(0, tz='UTC') before call
-def time_corr(date: Union[pd.Series, pd.Index, np.ndarray], cfg_in: Mapping[str, Any],
-              sort: Union[str, bool, None] = None, path_save_image='time_corr'):
+def time_corr(
+        date: Union[pd.Series, pd.Index, np.ndarray],
+        cfg_in: Mapping[str, Any],
+        process: Union[str, bool, None] = None,
+        path_save_image='corr_time_mode') -> Tuple[pd.Series, np.bool_]:
     """
+    Correct time values:
+    increases resolution (i.e. adds trend to repeated values) and
+    deletes values leading to inversions (considered as outlines). But not changes its positions (i.e. no sorting) here.
     :param date: numpy np.ndarray elements may be datetime64 or text in ISO 8601 format
     :param cfg_in: dict with fields:
     - dt_from_utc: correct time by adding this constant
     - fs: sampling frequency
-    - sort: same as :param sort:, used only if :param sort: is None
-    - keep_input_nans: NaNs in date remains unchanged
+    - corr_time_mode: same as :param process, used only if :param process is None. Default: None.
+    - b_keep_not_a_time: NaNs in :param date will be unchanged
     - path: where save images of bad time corrected
     - min_date, min_date: optional limits - to set out time beyond limits to constants slitly beyond limits
-    :param sort:
-    - 'True', True or 'increase': increase duplicated time values (increase time resolution),
-    - 'False', False: do not check time inversions,
-    - 'delete_inversions'
+    :param process:
+    - True ,'True' or 'increase': increase duplicated time values (increase time resolution by custom interpolation),
+    - False ,'False', None: do not check time inversions (default),
+    - 'delete_inversions': mask inversions (i.e. set them in returning b_ok) and not interpolate them
     :return: (tim, b_ok) where
     - tim: pandas time series, same size as date input
     - b_ok: mask of not decreasing elements
@@ -39,18 +46,18 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray], cfg_in: Mapping[str,
     """
     if not date.size:
         return pd.DatetimeIndex([], tz='UTC'), np.bool_([])
-    if sort is None:
-        sort = cfg_in.get('sort')
-    if sort == 'False':
-        sort = False
-    elif sort == 'True' or sort == 'increase':
-        sort = True
+    if process is None:
+        process = cfg_in.get('corr_time_mode')
+    if process == 'False':
+        process = False
+    elif process in ('True', 'increase'):
+        process = True
     if __debug__:
         lf.debug('time_corr (time correction) started')
-    if (dt_from_utc := cfg_in.get('dt_from_utc')):
+    if dt_from_utc := cfg_in.get('dt_from_utc'):
         if isinstance(date[0], str):
             # add zone that compensate time shift
-            hours_from_utc_f = cfg_in['dt_from_utc'].total_seconds() / 3600
+            hours_from_utc_f = dt_from_utc.total_seconds() / 3600
             Hours_from_UTC = int(hours_from_utc_f)
             hours_from_utc_f -= Hours_from_UTC
             if abs(hours_from_utc_f) > 0.0001:
@@ -59,7 +66,7 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray], cfg_in: Mapping[str,
                                  utc=True)
         elif isinstance(date, pd.Index):
             tim = date
-            tim -= cfg_in['dt_from_utc']
+            tim -= dt_from_utc
             try:
                 tim = tim.tz_localize('UTC')
             except TypeError:  # "Already tz-aware, use tz_convert to convert." - not need localize
@@ -72,26 +79,25 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray], cfg_in: Mapping[str,
         else:
             try:
                 if isinstance(date, pd.Series):
-                    tim = pd.to_datetime(date - np.timedelta64(cfg_in['dt_from_utc']), utc=True)
+                    tim = pd.to_datetime(date - np.timedelta64(dt_from_utc), utc=True)
 
                 else:
                     tim = pd.to_datetime(date.astype('datetime64[ns]') - np.timedelta64(
-                        pd.Timedelta(cfg_in['dt_from_utc'])), utc=True)  # hours=Hours_from_UTC
+                        pd.Timedelta(dt_from_utc)), utc=True)  # hours=Hours_from_UTC
             except OverflowError:  # still need??
                 tim = pd.to_datetime(datetime_fun(
-                    np.subtract, tim.values, np.timedelta64(cfg_in['dt_from_utc']), type_of_operation='<M8[ms]'
+                    np.subtract, tim.values, np.timedelta64(dt_from_utc), type_of_operation='<M8[ms]'
                     ), utc=True)
             # tim += np.timedelta64(pd.Timedelta(hours=hours_from_utc_f)) #?
-        lf.info('Time constant: {} {:s}', abs(cfg_in['dt_from_utc']),
-                'subtracted' if cfg_in['dt_from_utc'] > timedelta(0) else 'added')
+        lf.info('Time constant: {} {:s}', abs(dt_from_utc),
+                'subtracted' if dt_from_utc > timedelta(0) else 'added')
     else:
         if not isinstance(date[0], pd.Timestamp):  # isinstance(date, (pd.Series, np.datetime64))
             date = date.astype('datetime64[ns]')
         tim = pd.to_datetime(date, utc=True)  # .tz_localize('UTC')tz_convert(None)
 
-    cfg_min_date = cfg_in.get('min_date')
-    if cfg_min_date:
-        cfg_min_date = pd.Timestamp(cfg_in['min_date'], tz='UTC')
+    if cfg_min_date := cfg_in.get('min_date'):
+        cfg_min_date = pd.Timestamp(cfg_min_date, tz=None if cfg_min_date.tzinfo else 'UTC')
 
         # Skip processing if data is out of filtering range
         global tim_min_save, tim_max_save
@@ -105,26 +111,34 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray], cfg_in: Mapping[str,
         if tim_max < cfg_min_date:
             tim[:] = cfg_min_date - np.timedelta64(1, 'ns')  # pd.NaT                      # ns-resolution maximum year
             return tim, np.ones_like(tim, dtype=bool)
-        else:
-            cfg_max_date = cfg_in.get('max_date')
-            if cfg_max_date:
-                cfg_max_date = pd.Timestamp(cfg_in['max_date'], tz='UTC')
-                if tim_min > cfg_max_date:
-                    tim[:] = pd.Timestamp(cfg_in['max_date'], tz='UTC') + np.timedelta64(1, 'ns')  # pd.Timestamp('2262-01-01')  # ns-resolution maximum year
-                    return tim, np.ones_like(tim, dtype=bool)
 
-            b_ok_in = tim >= cfg_min_date
-            if cfg_max_date:
-                b_ok_in &= (tim <= cfg_max_date)
+        is_time_filt = False
+        if cfg_max_date := cfg_in.get('max_date'):
+            cfg_max_date = pd.Timestamp(cfg_max_date, tz=None if cfg_max_date.tzinfo else 'UTC')
+            if tim_min > cfg_max_date:
+                tim[:] = cfg_max_date + np.timedelta64(1, 'ns')  # pd.Timestamp('2262-01-01')  # ns-resolution maximum year
+                return tim, np.ones_like(tim, dtype=bool)
+            if tim_max > cfg_max_date:
+                b_ok_in = (tim.values <= cfg_max_date.to_numpy())
+                is_time_filt = True
+        if tim_min < cfg_min_date:
+            if is_time_filt:
+                b_ok_in &= (tim.values >= cfg_min_date.to_numpy())
+            else:
+                b_ok_in = (tim.values >= cfg_min_date.to_numpy())
+                is_time_filt = True
 
+        if is_time_filt:
             it_se = np.flatnonzero(b_ok_in)[[0,-1]]
             it_se[1] += 1
             tim = tim[slice(*it_se)]
+    else:
+        is_time_filt = False
 
     b_ok_in = tim.notna()
     n_bad_in = b_ok_in.size - b_ok_in.sum()
     if n_bad_in:
-        if cfg_in.get('keep_input_nans'):
+        if cfg_in.get('b_keep_not_a_time'):
             tim = tim[b_ok_in]
     try:
         b_ok_in = b_ok_in.to_numpy()
@@ -133,9 +147,9 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray], cfg_in: Mapping[str,
 
 
     t = tim.to_numpy(np.int64)
-    if sort and tim.size > 1:
+    if process and tim.size > 1:
         # Check time resolution and increase if needed to avoid duplicates
-        if n_bad_in and not cfg_in.get('keep_input_nans'):
+        if n_bad_in and not cfg_in.get('b_keep_not_a_time'):
             t = np.int64(rep2mean(t, bOk=b_ok_in))
             b_ok_in[:] = True
         freq, n_same, n_decrease, i_different = find_sampling_frequency(t, precision=6, b_show=False)
@@ -210,11 +224,11 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray], cfg_in: Mapping[str,
                 b_ok = np.zeros_like(t, dtype=np.bool_)
                 b_ok[i_inc] = True
 
-                if sort == 'delete_inversions':
+                if process == 'delete_inversions':
                     # selecting one of the two bad time values that lead to the bad diff element and mask these elements
                     for s, e in i_dec + np.int32([0, 1]):
                         b_ok[t == (t_ok[e if b_ok[s] else s])] = False
-                    if cfg_in.get('keep_input_nans'):
+                    if cfg_in.get('b_keep_not_a_time'):
                         (b_ok_in[b_ok_in])[~b_ok] = False
                     else:
                         b_ok_in[~b_ok] = False
@@ -222,15 +236,15 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray], cfg_in: Mapping[str,
                 i_dec = np.delete(i_different, np.searchsorted(i_different, i_inc))
                 assert np.alltrue(i_dec == i_different[~np.in1d(i_different, i_inc)])  # same results
                 # assert np.alltrue(i_dec == np.setdiff1d(i_different, i_inc[:-1]))  # same results
-                if sort == 'delete_inversions':
-                    b_ok_in[np.flatnonzero(b_ok_in)[i_dec] if cfg_in.get('keep_input_nans') else i_dec] = False
+                if process == 'delete_inversions':
+                    b_ok_in[np.flatnonzero(b_ok_in)[i_dec] if cfg_in.get('b_keep_not_a_time') else i_dec] = False
 
             b_ok[b_ok] = np.ediff1d(t[b_ok], to_end=True) > 0  # adaption for next step
 
             idel = np.flatnonzero(~b_ok)
             n_del = len(idel)
             msg = f"Filtered time: {n_del}/{t.size} values " \
-                  f"{'masked' if sort == 'delete_inversions' else 'interpolated'} (1st and last: " \
+                  f"{'masked' if process == 'delete_inversions' else 'will be interpolated'} (1st and last: " \
                   f"{pd.to_datetime(t[idel[[0, -1]]], utc=True)})"
             if n_decrease:
                 lf.warning('decreased time ({}) was detected! {}', n_decrease, msg)
@@ -239,16 +253,15 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray], cfg_in: Mapping[str,
 
 
         if n_same > 0 and cfg_in.get('fs') and not cfg_in.get('fs_old_method'):
-            # This is most simple operation that should be done usually for CTD
+            # This is the most simple operation that should be done usually for CTD
             t = repeated2increased(t, cfg_in['fs'], b_ok if n_decrease else None)  # if n_decrease then b_ok is calculated before
             tim = pd.to_datetime(t, utc=True)
         elif n_same > 0 or n_decrease > 0:
             # message with original t
 
-
             # Replace t by linear increasing values using constant frequency excluding big holes
             if cfg_in.get('fs_old_method'):
-                lf.warning('Linearize time interval using povided freq = {:f}Hz (determined: {:f})',
+                lf.warning('Linearize time interval using provided freq = {:f}Hz (determined: {:f})',
                           cfg_in.get('fs_old_method'), freq)
                 freq = cfg_in.get('fs_old_method')
             else:  # constant freq = filtered mean
@@ -298,7 +311,7 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray], cfg_in: Mapping[str,
         b_same_prev = np.ediff1d(t, to_begin=1) == 0  # with set of first element as changing
         n_same = b_same_prev.sum()
 
-        if cfg_in.get('keep_input_nans'):
+        if cfg_in.get('b_keep_not_a_time'):
             if n_same > 0:
                 lf.warning('nonincreased time ({:d} times) is detected! - interp ', n_same)
         else:
@@ -317,23 +330,22 @@ def time_corr(date: Union[pd.Series, pd.Index, np.ndarray], cfg_in: Mapping[str,
             b_bad = b_same_prev if n_decrease == 0 else (b_same_prev | b_decrease)
             t = rep2mean_with_const_freq_ends(t, ~b_bad, freq)
 
-    else:
-        lf.debug('time not need to be sorted')
+    else:  # not need to check / correct time
         b_ok = np.ones(tim.size, np.bool8)
     # make initial shape: paste NaNs back
-    if n_bad_in and cfg_in.get('keep_input_nans'):
+    if n_bad_in and cfg_in.get('b_keep_not_a_time'):
         # place initially bad elements back
         t, t_in = (np.NaN + np.empty_like(b_ok_in)), t
         t[b_ok_in] = t_in
         b_ok_in[b_ok_in] = b_ok
         b_ok = b_ok_in
-    elif sort == 'delete_inversions':
+    elif process == 'delete_inversions':
         b_ok &= b_ok_in
     # make initial shape: pad with constants of config. limits where data was removed because input is beyond this limits
-    if cfg_in.get('min_date') and np.any(it_se != np.int64([0, date.size])):
+    if is_time_filt:   # cfg_min_date and np.any(it_se != np.int64([0, date.size])):
         pad_width = (it_se[0], date.size - it_se[1])
         t = np.pad(t, pad_width, constant_values=np.array((cfg_in['min_date'], cfg_in['max_date']), 'M8[ns]'))
-        b_ok = np.pad(b_ok, pad_width, constant_values=True)
+        b_ok = np.pad(b_ok, pad_width, constant_values=False)
     assert t.size == b_ok.size
 
     return pd.to_datetime(t, utc=True), b_ok
@@ -376,7 +388,8 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
     # output figure name
     fig_name = '{:%y%m%d_%H%M}-{:%H%M}'.format(*(
         tim_range if (tim_range is not None and tim_range[0]) else
-        tim[[0, -1]] if isinstance(tim, (pd.DatetimeIndex, pd.Series)) else
+        tim[[0, -1]] if isinstance(tim, pd.DatetimeIndex) else
+        tim.iloc[[0, -1]] if isinstance(tim, pd.Series) else
         (x for x in tim[[0, -1]].astype('M8[m]').astype(datetime))))
     if 'path' in cfg_in and path_save_image:
         path_save_image = Path(path_save_image)
@@ -391,7 +404,7 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
     if isinstance(fig_name, Path):
         lf.info('saving figure to {!s}', fig_name)
         if save_format_suffix != '.html':
-            from selenium.common.exceptions import SessionNotCreatedException
+            from selenium.common.exceptions import SessionNotCreatedException, WebDriverException
             try:
                 # To png/svg
                 chrome_options = Options()
@@ -399,14 +412,37 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
 
                 chrome_options.binary_location = r'C:\Program Files (x86)\Slimjet\Slimjet.exe'
                 # version = [get_version_via_com(p) for p in paths if p is not None][0]
-                chrome_version = '88'  # get_version_via_com(chrome_options.binary_location)
-                chrome_driver_path = rf'c:\Programs\_net\Selenium\chromedriver{chrome_version[:2]}.exe'
+                chrome_version = '104'  # get_version_via_com(chrome_options.binary_location)  - not Chrome version
 
+                # (downdloaded from https://chromedriver.chromium.org/downloads)
                 # os.environ["webdriver.chrome.driver"] = chrome_driver_path  # seems not works
-                web_driver = webdriver.Chrome(executable_path=chrome_driver_path, options=chrome_options)
+                n_tries = range(2)
+                e = None
+                for k in n_tries:
+                    chrome_driver_path = rf'c:\Programs\_net\Selenium\chromedriver{chrome_version}.exe'
+                    try:
+                        web_driver = webdriver.Chrome(executable_path=chrome_driver_path, options=chrome_options)
+                    except WebDriverException as e:  # "chrome not reachable" - may be hung or a while
+                        try:
+                            # retrieve right current browser version from error message
+                            chrome_version = e.msg.split('Current browser version is ')[1].split('.')[0]
+
+                            continue
+                        except Exception as e:
+                            pass
+
+                        msg_trace = '\n==> '.join((s for s in e.args if isinstance(s, str)))
+                        sleep(1)
+                        lf.error(f'{k}/{len(range(n_tries))}. {e.__class__}: {msg_trace}')
+                        web_driver = None
             except SessionNotCreatedException:
                 lf.exception('Can not save png so will save html instead')
                 save_format_suffix = '.html'
+                # todo: parse message to get Current browser version (or better method):
+                # selenium.common.exceptions.SessionNotCreatedException: Message: session not created: This version of ChromeDriver only supports Chrome version 94
+                # Current browser version is 104.0.5112.39 with binary path ...
+
+
         if save_format_suffix == '.html':
             # To static HTML file: big size but with interactive zoom, datashader?
             output_file(fig_name.with_suffix('.html'), title=msg)
@@ -437,7 +473,7 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
 
     # export figure
     if isinstance(fig_name, Path) and save_format_suffix != '.html':
-       (export_png if save_format_suffix == '.png' else export_svgs)(
+        (export_png if save_format_suffix == '.png' else export_svgs)(
             p, filename=fig_name.with_suffix(save_format_suffix), webdriver=web_driver)
 
 

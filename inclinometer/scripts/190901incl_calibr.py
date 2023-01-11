@@ -118,7 +118,7 @@ for i, probe in enumerate(probes):  # incl_calibr not supports multiple time_ran
         for itbl, tbl in enumerate(tables_list, start=1):
             for channel in channels_list:
                 (col_str, coef_str) = channel_cols(channel)
-                h5copy_coef(db_path_calibr_scalling, db_imput_to_vsz_path, tbl,
+                h5copy_coef(db_path_copy, db_imput_to_vsz_path, tbl,
                             dict_matrices={'//coef//' + coef_str + '//A': coefs[tbl][channel]['A'],
                                            '//coef//' + coef_str + '//C': coefs[tbl][channel]['b']})
         """

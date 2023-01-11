@@ -30,7 +30,8 @@ sys.path.append(str(Path(__file__).parent.parent.resolve()))  # os.getcwd()
 from to_pandas_hdf5.csv2h5 import h5init, h5temp_open
 from to_pandas_hdf5.h5toh5 import h5move_tables, h5index_sort
 from to_pandas_hdf5.h5_dask_pandas import h5_append
-from other_filters import despike, rep2mean
+from filters import rep2mean
+from filters_scipy import despike
 
 cfg = {  # output configuration after loading csv:
     'out': {

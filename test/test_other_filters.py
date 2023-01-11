@@ -1,7 +1,7 @@
 import unittest
 import pytest
 
-from other_filters import *
+from filters import *
 
 
 # ##############################################################################

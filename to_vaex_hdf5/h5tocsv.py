@@ -138,14 +138,18 @@ def h5_tables_gen(db_path, tables, tables_log, db=None) -> Iterator[Tuple[str, p
             yield tbl, tbl_log.format(tbl), store
 
 
-def order_cols(df: pd.DataFrame,
-               cols: Mapping[str,str]=None) -> pd.DataFrame:
-
+def order_cols(
+        df: pd.DataFrame,
+        cols: Mapping[str, str] = None,
+        i_log: Optional[int] = None
+        ) -> pd.DataFrame:
     """
 
-    At first adds special column 'i': row index, if it is used in cols.values
     :param df:
-    :param cols: mapping out col names to expressions for pd.DataFrame.eval() (using input col names) or just input col names
+    :param cols: one of:
+    - mapping out column names to expressions (which includes input col. names) for pd.DataFrame.eval()
+    - just input column names
+    :param i_log: log row index to can eval expressions referring it as '@i_log'
     :return:
     """
     if not cols:
@@ -153,26 +157,28 @@ def order_cols(df: pd.DataFrame,
 
     df = df.copy()
 
-    # Add row index to can eval expressions using it
-    def i_term_is_used() -> bool:
-        for in_col in cols.values():
-            if 'i' in in_col.split():
-                return True
-        return False
 
-    if i_term_is_used():
-        df['i'] = np.arange(df.shape[0])  # pd.RangeIndex( , name='rec_num') same effect
+    # def i_term_is_used() -> bool:
+    #     for in_col in cols.values():
+    #         if 'i' in in_col.split():
+    #             return True
+    #     return False
+    #
+    # if i_term_is_used():
+
+    # Add row index to local  can eval expressions referring it as '@i'
+    i = np.arange(df.shape[0])  # pd.RangeIndex( , name='rec_num') same effect
 
     df_out = pd.DataFrame(index=df.index)
-    #cols_use = omegaconf.OmegaConf.to_container(cols)  # make editable copy
-    # if cols_use.pop('rec_num', None):  # 'rec_num' in df_out
+    #cols_save = omegaconf.OmegaConf.to_container(cols)  # make editable copy
+    # if cols_save.pop('rec_num', None):  # 'rec_num' in df_out
     #     df_out['rec_num'] = df['rec_num']
 
     dict_rename = {}
-    for i, (out_col, in_col) in enumerate(cols.items()):
+    for icol, (out_col, in_col) in enumerate(cols.items()):
         if in_col.isidentifier() and in_col not in dict_rename:
             if in_col not in df.columns:
-                if i == 0 and in_col == 'index':
+                if icol == 0 and in_col == 'index':
                     # just change index name
                     df_out.index.name = out_col
                     continue
@@ -211,39 +217,39 @@ def order_cols(df: pd.DataFrame,
     # return df_out[cols.keys()]  # seems was not worked ever
 
 
-def interp_vals(df: pd.DataFrame, cols: Mapping[str, str] = None,
-               i_log_row_st=0,
-               times_min=None,
-               times_max=None,
-               df_search=None,
-               cols_good_data=('P', 'Depth'),
-               db=None,
-               db_path=None,
-               table_nav='navigation',
-               dt_search_nav_tolerance=timedelta(minutes=2)):
-    """
+if False:
+    def interp_vals(df: pd.DataFrame, cols: Mapping[str, str] = None,
+                   i_log_row_st=0,
+                   times_min=None,
+                   times_max=None,
+                   df_search=None,
+                   cols_good_data=('P', 'Depth'),
+                   db=None,
+                   db_path=None,
+                   table_nav='navigation',
+                   dt_search_nav_tolerance=timedelta(minutes=2)):
+        """
 
-    :param df:
-    :param cols: mapping out col names to expressions for pd.DataFrame.eval() (using input col names) or just input col names
-    :param times_min:
-    :param times_max:
-    :param i_log_row_st:
-    :param cols_good_data:
-    :param db:
-    :param db_path:
-    :param table_nav:
-    :param dt_search_nav_tolerance:
-    :return:
-    """
-    # replace NaNs where it can be found in other tables
-    df_out = get_runs_parameters(
-        df_search,
-        times_min=df.index,
-        times_max=df.index,
-        cols_good_data=cols_good_data,
-        dt_search_nav_tolerance=dt_search_nav_tolerance,
-        dt_from_utc=None, db=db, db_path=db_path, table_nav=table_nav)
-
+        :param df:
+        :param cols: mapping out col names to expressions for pd.DataFrame.eval() (using input col names) or just input col names
+        # :param times_min:
+        # :param times_max:
+        # :param i_log_row_st:
+        :param cols_good_data:
+        :param db:
+        :param db_path:
+        :param table_nav:
+        :param dt_search_nav_tolerance:
+        :return:
+        """
+        # replace NaNs where it can be found in other tables
+        df_out = get_runs_parameters(
+            df_search,
+            times_min=df.index,
+            times_max=df.index,  # ?
+            cols_good_data=cols_good_data,
+            dt_search_nav_tolerance=dt_search_nav_tolerance,
+            dt_from_utc=None, db=db, db_path=db_path, table_nav=table_nav)
 
 
 # @dataclass hydra_conf(hydra.conf.HydraConf):
@@ -257,7 +263,7 @@ cs_store_name = Path(__file__).stem
 cs, ConfigType = to_vaex_hdf5.cfg_dataclasses.hydra_cfg_store(f'base_{cs_store_name}', {
     'input': ['in_hdf5'],  # Load the config "in_hdf5" from the config group "input"
     'out': ['out_csv'],  # Set as MISSING to require the user to specify a value on the command line.
-    'filter': ['filter'],
+    'filter': ['filter_CTD'],
     'program': ['program'],
     # 'search_path': 'empty.yml' not works
     })
@@ -272,17 +278,21 @@ def main(config: ConfigType) -> None:
     Save data tp CSV-like files
     from Pandas HDF5 store*.h5
     ----------------------------
-
+    Can output data csv and headers csv. Corresponded columns are determined by ``cols`` and ``cols_log`` fields of ``config[out]``.
     :param config: with fields:
     - in - mapping with fields:
-      - tables_log: - log table name or pattern str for it: in pattern '{}' will be replaced by data table name
+      - tables_log: - log table name. Can have placeholder '{}' that will be replaced by data table name
       - cols_good_data: -
       ['dt_from_utc', 'db', 'db_path', 'table_nav']
     - out - mapping with fields:
-      - cols: can use i - data row number and i_log_row - log row number that is used to load data range
-      - cols_log: can use i - log row number
+      - cols: mapping of output data csv column names to input data table column names. Values can be data table
+      column names and functions with them to eval. Also, these predefined variables can be used:
+        - "@i": data row number,
+        - "@i_log": log row number that was used to load data range.
+      - cols_log: Same as cols, but maps output header csv column names to input log table column names.
+        Note: predefined variable of log row number here is "@i".
       - text_date_format
-      - file_name_fun, file_name_fun_log - {fun} part of "lambda rec_num, t_st, t_en: {fun}" string to compile function
+      - file_name_fun, file_name_fun_log - {fun} part of "lambda i_log, t_st, t_en: {fun}" string to compile function
       for name of data and log text files
       - sep
 
@@ -301,8 +311,8 @@ def main(config: ConfigType) -> None:
         cfg['out'][fun] = (
             eval(compile(f"lambda i, t_st, t_en, tbl: {cfg['out'][fun]}", '', 'eval')) if cfg['out'][fun] else
                 (
-                    (lambda rec_num, t_st, t_en, tbl: f'log@{tbl}.csv') if fun.endswith('log') else
-                    (lambda rec_num, t_st, t_en, tbl: f'{t_st:%y%m%d_%H%M}-{t_en:%H%M}@{tbl}.csv')
+                    (lambda i_log, t_st, t_en, tbl: f'log@{tbl}.csv') if fun.endswith('log') else
+                    (lambda i_log, t_st, t_en, tbl: f'{t_st:%y%m%d_%H%M}-{t_en:%H%M}@{tbl}.csv')
                 )  # f'_{i}.csv'
             )
     set_field_if_no(cfg['out'], 'text_path', cfg['in']['db_path'].parent)
@@ -348,9 +358,7 @@ def main(config: ConfigType) -> None:
             print('.', end='')
             qstr = qstr_trange_pattern.format(log_row.Index, log_row.DateEnd)
             df_raw = store.select(tbl, qstr)
-            if i_log_row in cfg['out']['cols']:
-                df_raw['i_log_row'] = i_log_row
-            df_csv = order_cols(df_raw, cfg['out']['cols'])
+            df_csv = order_cols(df_raw, cfg['out']['cols'], i_log=i_log_row)
             # Save data
             df_csv.to_csv(
                 cfg['out']['text_path'] / cfg['out']['file_name_fun'](
@@ -377,7 +385,7 @@ def main_call(
     :return: global cfg
     """
 
-    sys_argv_save = sys.argv
+    sys_argv_save = sys.argv.copy()
     if cmd_line_list is not None:
         sys.argv += cmd_line_list
 

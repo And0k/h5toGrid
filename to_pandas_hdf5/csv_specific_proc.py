@@ -42,9 +42,13 @@ def convertNumpyArrayOfStrings(date: Union[np.ndarray, pd.Series],
 
 
     try:
-        if isinstance(date.iat[0] if isinstance(date, pd.Series) else date[0], bytes):
+        is_series = isinstance(date, pd.Series)
+        if isinstance(date.iat[0] if is_series else date[0], bytes):
             # convert 'bytes' to 'strings' needed for pd.to_datetime()
-            date = date.str.decode('utf-8', errors='replace')
+            date = (
+                date.str.decode if is_series else (
+                    lambda **kwargs: np.char.decode(date, **kwargs)
+                    ))(encoding='utf-8', errors='replace')
     except Exception as e:
         pass
     while True:
@@ -110,19 +114,26 @@ def meta_out(attribute: Any) -> Callable[[Callable[..., RT]], Callable[..., RT]]
     :param attribute: any data, will be assigned to ``meta_out`` attribute of decorated function
     :return:
     """
-
     def meta_out_dec(fun: Callable[..., RT]) -> Callable[..., RT]:
-        fun.meta_out = attribute
-        return fun
+
+        def fun_with_meta_out(*args, **kwargs):
+            if 'dtype_out' in kwargs:
+                return fun(*args, **kwargs, cols_out=list(attribute(kwargs['dtype_out']).keys()))
+            else:
+                return fun(*args, **kwargs)
+            
+        fun_with_meta_out.meta_out = attribute
+        return fun_with_meta_out
 
     return meta_out_dec
 
 
-def out_fields(dtyp: np.dtype, keys_del: Optional[Iterable[str]] = (),
-                add_before: Optional[Mapping[str, np.dtype]] = None,
-                add_after: Optional[Mapping[str, np.dtype]] = None) -> Dict[str, np.dtype]:
+def out_fields(
+        dtyp: np.dtype, keys_del: Optional[Iterable[str]] = (),
+        add_before: Optional[Mapping[str, np.dtype]] = None,
+        add_after: Optional[Mapping[str, np.dtype]] = None) -> Dict[str, np.dtype]:
     """
-    Removes fields with keys that in ``keys_del`` and adding fields ``add*``
+    Removes fields with keys that in ``keys_del`` and adds fields ``add*``
     :param dtyp:
     :param keys_del:
     :param add_before:
@@ -139,7 +150,7 @@ def out_fields(dtyp: np.dtype, keys_del: Optional[Iterable[str]] = (),
 # ----------------------------------------------------------------------
 def log_csv_specific_param_operation(
         key_logged: str,
-        csv_specific_param: Optional[Mapping[str, Any]],
+        functions_str: Sequence[str],
         cfg_in) -> None:
     """
     Shows info message of csv_specific_param operations.
@@ -153,15 +164,15 @@ def log_csv_specific_param_operation(
     key_logged_full = f'csv_specific_param_logged{"-" if key_logged else ""}{key_logged}'
     if not cfg_in.get(key_logged_full):  # log 1 time i.e. in only one 1 dask partition
         cfg_in[key_logged_full] = True
-        l.info(f'csv_specific_param {csv_specific_param.keys()} modifications applied')
+        l.info(f'csv_specific_param {list(functions_str)} modifications applied')  # todo: add time or block
 
 
 def param_funs_closure(
         csv_specific_param: Mapping[str, Union[Callable[[str], Any], float]],
         cfg_in: Mapping[str, Any]) -> Mapping[str, Callable[[str], Any]]:
     """
-    Used by proc_loaded_corr(). Converts dict `csv_specific_param` to new dict by removing key suffixes and replace each
-    value with function of one Mapping like variable
+    Used by proc_loaded_corr(). Converts dict `csv_specific_param` to new dict by removing key suffixes and
+    replace each value with function of one Mapping like variable
     :param csv_specific_param:
     :param cfg_in: used to keep temporary variables between multiple calls in log_csv_specific_param_operation
     :return: dict of functions, having arguments of one Mapping like variable
@@ -218,15 +229,17 @@ def param_funs_closure(
             continue
         params_funs[param] = fun(param, fun_or_const)  # f"{param} = {fun_or_const}({param})
 
-    log_csv_specific_param_operation('', csv_specific_param, cfg_in)
+    log_csv_specific_param_operation('', csv_specific_param.keys(), cfg_in)
     return params_funs
 
 
 @meta_out(out_fields)
-def proc_loaded_corr(a: Union[pd.DataFrame, np.ndarray],
-                     cfg_in: Mapping[str, Any],
-                     csv_specific_param: Optional[Mapping[str, Any]] = None
-                     ) -> pd.DataFrame:
+def proc_loaded_corr(
+        a: Union[pd.DataFrame, np.ndarray],
+        cfg_in: Mapping[str, Any],
+        csv_specific_param: Optional[Mapping[str, Any]] = None,
+        cols_out: Union[slice, Sequence[Any]] = slice(None)  # for compatibility with functions used in csv2h5 that returns DataFrame
+        ) -> pd.DataFrame:
     """
     Specified prep&proc of data:
 
@@ -235,6 +248,7 @@ def proc_loaded_corr(a: Union[pd.DataFrame, np.ndarray],
     :param csv_specific_param: {param_suffix: fun_expr} where ``suffix`` in param_suffix string that can be 'fun' or 'add':
     - 'fun': fun_expr specifies function assign to ``param``
     - 'add': fun_expr specifies value to add to ``param`` to modify it
+
     :return: pandas.DataFrame
     """
     if csv_specific_param is not None:
@@ -264,8 +278,11 @@ def proc_loaded_Idronaut(a: Union[pd.DataFrame, np.ndarray],
 
 
 @meta_out(partial(out_fields, keys_del={'Date', 'Time'}, add_before={'Time': 'M8[ns]'}))
-def proc_loaded_Idronaut_terminal(a: Union[pd.DataFrame, np.ndarray],
-                         cfg_in: Optional[Mapping[str, Any]] = None) -> pd.DatetimeIndex:
+def proc_loaded_Idronaut_terminal(
+        a: Union[pd.DataFrame, np.ndarray],
+        cfg_in: Optional[Mapping[str, Any]] = None,
+        cols_out: Union[slice, Sequence[Any]] = slice(None)
+        ) -> pd.DatetimeIndex:
     """
     Not implemented
     :param a:
@@ -294,12 +311,40 @@ def proc_loaded_Idronaut_terminal(a: Union[pd.DataFrame, np.ndarray],
     # t = pd.to_datetime(str_date) + \
     #     pd.to_timedelta(a['Time'].str.decode('utf-8', errors='replace'))
     # # t = day_jumps_correction(cfg_in, t.values)
-    return a.loc[:, list(proc_loaded_Idronaut_terminal.meta_out(cfg_in['dtype_out']).keys())]
+    return a.loc[:, cols_out]
 
 
 @meta_out(partial(out_fields, keys_del={'Date', 'Time'}, add_before={'Time': 'M8[ns]'}))
-def proc_loaded_sea_and_sun(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
-                            csv_specific_param: Optional[Mapping[str, Any]] = None) -> pd.DataFrame:
+def proc_loaded_sst(
+    a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
+    csv_specific_param: Optional[Mapping[str, Any]] = None,
+    cols_out: Union[slice, Sequence[Any]] = slice(None)
+    ) -> pd.DataFrame:
+    """
+    Specified prep&proc of data :
+    - Time calc: gets string for time in current zone
+
+    :param a: numpy record array. Will be modified inplace.
+    :param cfg_in: dict
+    :param csv_specific_param: {param_suffix: fun_expr} where ``suffix`` in param_suffix string can be 'fun' or 'add':
+    - 'fun': fun_expr specifies function assign to ``param``
+    - 'add': fun_expr specifies value to add to ``param`` to modify it
+    :return: pandas.DataFrame
+    """
+
+    date = (
+        pd.to_datetime(a['Date'].str.decode('utf-8', errors='replace'), format='%d.%m.%Y') +
+        pd.to_timedelta(a['Time'].str.decode('utf-8', errors='replace'))  #, unit='ms'
+    )
+    # check that used
+    return a.assign(Time=date).loc[:, cols_out]
+
+
+@meta_out(partial(out_fields, keys_del={'Time'}, add_before={'Time': 'M8[ns]'}))
+def proc_loaded_sst_mws(
+        a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
+        csv_specific_param: Optional[Mapping[str, Any]] = None,
+        cols_out: Union[slice, Sequence[Any]] = slice(None)) -> pd.DataFrame:
     """
     Specified prep&proc of data :
     - Time calc: gets string for time in current zone
@@ -313,18 +358,39 @@ def proc_loaded_sea_and_sun(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[
     :return: pandas.DataFrame
     """
 
-    date = pd.to_datetime(a['Date'].str.decode('utf-8', errors='replace'), format='%d.%m.%Y') + \
-           pd.to_timedelta(a['Time'].str.decode('utf-8', errors='replace'))  #, unit='ms'
+    # extract date from file name
+    if not cfg_in.get('fun_date_from_filename'):
+        with cfg_in['file_cur'].open() as f:
+            line = f.readline()
+        str_date = line[len('Data Start: '):len('Data Start: 2022-11-06')]
+    else:
+        str_date = cfg_in['fun_date_from_filename'](cfg_in['file_cur'], century.decode())
 
-    # check that used
-    return a.assign(Time=date).loc[:, list(
-        proc_loaded_sea_and_sun.meta_out(cfg_in['dtype_out']).keys())]
+    try:
+        date = pd.to_datetime(str_date, format='%Y-%m-%d')
+    except ValueError as e:
+        l.warning('Not found correct "%Y-%m-%d" date in line: %s', line)
+        date = pd.to_datetime(input('correct date in "%Y-%m-%d" format'))
+
+    if not isinstance(a['Time'][0], bytes):
+        l.warning('Second pass?')
+        return a.loc[:, cols_out]
+    else:
+        tim = pd.to_datetime(a['Time'].str.decode('utf-8', errors='replace'), format='%H:%M:%S') - pd.Timestamp('1900-01-01')  # default date '1900-01-01' found experimentally!
+
+    date += tim
+    a['Time'] = pd.NaT  # also changes column's type
+    a.loc[:, 'Time'] = day_jumps_correction(cfg_in, date.to_numpy())
+    return a.loc[:, cols_out]
+
+    # # check that used
+    # return a.assign(Time=date).loc[:, list(
+    #     attribute(cfg_in['dtype_out']).keys())]
 
 
-def proc_loaded_sea_and_sun_old(a: pd.DataFrame,
-                            cfg_in: Optional[Mapping[str, Any]] = None) -> pd.Series:
+def proc_loaded_sst_old(a: pd.DataFrame, cfg_in: Optional[Mapping[str, Any]] = None) -> pd.Series:
     """
-    Sea&sun specified proc
+    SST specified proc
     :param a:
     :param cfg_in:
     :return: Time
@@ -392,7 +458,10 @@ def view_fields(a: Union[pd.DataFrame, np.ndarray], fields) -> Union[pd.DataFram
 
 
 @meta_out(partial(out_fields, keys_del={'Time'}, add_before={'Time': 'M8[ns]'}, add_after={'N^2': 'f8'}))
-def proc_loaded_Baklan(a: Union[pd.DataFrame, np.ndarray], cfg_in: Optional[Mapping[str, Any]] = None) -> pd.DataFrame:
+def proc_loaded_Baklan(
+        a: Union[pd.DataFrame, np.ndarray], cfg_in: Optional[Mapping[str, Any]] = None,
+        cols_out: Union[slice, Sequence[Any]] = slice(None)
+        ) -> pd.DataFrame:
     # Baklan Matlab processed data specified proc
     # Time calc: gets string for time in current zone
     # "7/25/2015"	"2:14:36" -> YYYY-MM-DDThh:mm:ss
@@ -452,7 +521,7 @@ def proc_loaded_Baklan(a: Union[pd.DataFrame, np.ndarray], cfg_in: Optional[Mapp
     N2 = np.append(Nsquared(SA, conservative_temperature, out['Pres'], cfg_in['lat'])[0], np.NaN)
 
     # np.append(Nsquared(SA, conservative_temperature, out['Pres'], cfg_in['lat'])[1], np.NaN) - out['Pres'] is small
-    return out.assign(**{'Time': date, 'N^2': N2}).loc[:, list(proc_loaded_Baklan.meta_out(cfg_in['dtype_out']).keys())]
+    return out.assign(**{'Time': date, 'N^2': N2}).loc[:, cols_out]
 
     # works before change shape of a in caller only:
     # a.resize(out.shape, refcheck=False)
@@ -626,15 +695,18 @@ def concat_to_iso8601(a: pd.DataFrame) -> pd.Series:
 
 
 @meta_out(partial(out_fields, keys_del={'yyyy', 'mm', 'dd', 'HH', 'MM', 'SS'}, add_before={'Time': 'M8[ns]'}))
-def proc_loaded_inclin_Kondrashov(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any] = None,
-                                  csv_specific_param: Optional[Mapping[str, Any]] = None) -> pd.DataFrame:
+def proc_loaded_inclin_Kondrashov(
+        a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any] = None,
+        csv_specific_param: Optional[Mapping[str, Any]] = None,
+        cols_out: Union[slice, Sequence[Any]] = slice(None)
+        ) -> pd.DataFrame:
     """
     Specified prep&proc of navigation data from Kondrashov inclinometres:
     - Time calc: gets time in current zone
 
     :param a: numpy record array. Will be modified inplace.
     :param cfg_in: dict
-    :param : {invert_magnitometr: True}
+    :param : {invert_magnetometer: True}
     :return: numpy 'datetime64[ns]' array
 
     Example input:
@@ -651,11 +723,11 @@ def proc_loaded_inclin_Kondrashov(a: Union[pd.DataFrame, np.ndarray], cfg_in: Ma
     tim_index = convertNumpyArrayOfStrings(date, 'datetime64[ns]')  # a['Time']
 
     if csv_specific_param is not None:
-        key = 'invert_magnitometr'
+        key = 'invert_magnetometer'
         if csv_specific_param.get(key):
             magnetometer_channels = ['Mx', 'My', 'Mz']
             a.loc[:, magnetometer_channels] = -a.loc[:, magnetometer_channels]
-            # log_csv_specific_param_operation('proc_loaded_inclin_Kondrashov', csv_specific_param, cfg_in) mod:
+            # log_csv_specific_param_operation('proc_loaded_inclin_Kondrashov', csv_specific_param.keys(), cfg_in) mod:
             key_logged = 'csv_specific_param_logged-proc_loaded_inclin_Kondrashov'
             if not cfg_in.get(key_logged):  # log 1 time i.e. in only one 1 dask partition
                 cfg_in[key_logged] = True
@@ -663,20 +735,19 @@ def proc_loaded_inclin_Kondrashov(a: Union[pd.DataFrame, np.ndarray], cfg_in: Ma
         elif csv_specific_param:
             l.info(f'unknown key(s) in csv_specific_param')
 
-    return a.assign(Time=tim_index).loc[:, list(proc_loaded_inclin_Kondrashov.meta_out(cfg_in['dtype_out']).keys())]
+    return a.assign(Time=tim_index).loc[:, cols_out]
 
 
-
-# same but do not use csv_specific_param (key = 'invert_magnitometr') here
+# same but do not use csv_specific_param (key = 'invert_magnetometer') here because no input magnetometer data
 proc_loaded_wavegauge_Kondrashov = proc_loaded_inclin_Kondrashov
 
 
 def f_repl_by_dict(replist: Iterable[AnyStr], binary_str=True) -> Callable[[Match[AnyStr]], AnyStr]:  # , repldictvalues={None: b''}
     """
-    Returns fuction ``fsub()`` that returns replacement using ``regex.sub()``. ``fsub(line)`` uses multiple altenative
+    Returns function ``fsub()`` that returns replacement using ``regex.sub()``. ``fsub(line)`` uses multiple alternative
     search groups, specified by ``replist``, it uses last found or returns source ``line`` if no match.
     :param replist: what to search: list of regexes for all possible bad matches
-    :return: fuction bytes = fsub(bytes), to replace
+    :return: function bytes = fsub(bytes), to replace
     """
     # ?, last group can have name (default name is None) which must be in repldictvalues.keys to use it for rep last group
     #:param repldictvalues: dict: key name of group, value: by what to replace. Default {None: b''} that is delete group from source
@@ -818,33 +889,35 @@ def rep_in_file(file_in: Union[str, PurePath, BinaryIO, TextIO], file_out,
     return sum_deleted
 
 
-def mod_incl_name(file_in: Union[str, PurePath], add_str=None):
-    """ Change name of raw inclinometer/wavegauge data file to name of corrected (regular table format) csv file"""
+def mod_incl_name(file_in: Union[str, PurePath], add_prefix=None):
+    """
+    Change name of raw inclinometer/wavegauge data file to name of corrected (regular table format) csv file
+    """
     file_in = PurePath(file_in)
-    name = file_in.name.lower().replace('inkl', 'incl')  # 'incl' substring will be used to distinguish result file
+    name = file_in.name.lower().replace('inkl', 'incl')  # correct to English
     name, b_known_names = re.subn(
-        r'((?P<prefix>incl|w))_0*(?P<number>\d\d)',
+        r'\*?(?P<prefix>incl|i|w)\*?_0*(?P<number>\d\d)',
         lambda m: f"{m.group('prefix')}{m.group('number')}",
         name
         )
-    if not (b_known_names or 'incl_b' in name):
+    if not (b_known_names or re.match(r'.*i[ncl*]{0,4}_b\d{1,4}', name)):  # 'incl_b'
         name, b_known_names = re.subn(r'voln_v*(?P<number>\d\d)',
                                       lambda m: f"w{m.group('number')}",
                                       name
                                       )
         if not b_known_names:
             print('Not known probe name:', file_in)
-    # Paste add_str before extension
-    if add_str:
+    # Paste add_prefix before extension
+    if add_prefix:
         def rep(matchobj):
-            """ if add_str (excluding @) in ``name`` replace it else append"""
-            if (add_str1 := add_str.replace('@', '')) in (substr := matchobj.group(0)):
-                return substr.replace(add_str1, add_str)
-            else:
-                return f'{substr}{add_str}'
-                # '{0}{2}.{1}'.format(*name.rsplit('.', 1), add_str) f'{substr}{add_str}'
+            """ if add_prefix (excluding @) in ``name`` replace it else append"""
+            substr = matchobj.group(0)
+            # if (add_str1 := add_prefix.replace('@', '')) in substr:
+            #     return substr.replace(add_str1, add_prefix)
+            # else:
+            return f'{add_prefix}{substr}'
+            # '{0}{2}.{1}'.format(*name.rsplit('.', 1), add_prefix) f'{substr}{add_prefix}'
 
-            add_str.replace('@', '')
         name = re.sub(r'^\*?([^*.]*)', rep, name)
 
     file_out = file_in.with_name(name)  # r'inkl_?0*(\d{2})', r'incl\1'
@@ -877,7 +950,7 @@ def correct_kondrashov_txt_w(file_in: Union[str, Path, BinaryIO, TextIO], file_o
         msg_file_in = (Path(file_in) if isinstance(file_in, str) else file_in).name
         name_maybe_with_sub_dir = mod_incl_name(msg_file_in)
         file_out = dir_out / Path(name_maybe_with_sub_dir).name  # flattens archive subdirs
-    else: # autofind out path
+    else:  # autofind out path
         # handle opened files too
 
         # Set out file dir based on file_in dir
@@ -971,19 +1044,19 @@ def correct_txt(
         file_in: Union[str, Path, BinaryIO, TextIO],
         file_out: Optional[Path] = None,
         dir_out: Optional[PurePath] = None,
-        mod_file_name: Callable[[str], str] = lambda n: n.replace('.', '_clean.'),
+        mod_file_name: Callable[[PurePath], PurePath] = lambda n: n.parent.with_name(n.name.replace('.', '_clean.')),
         sub_str_list: Sequence[bytes] = None,
         **kwargs
         ) -> Path:
     """
     Modified correct_kondrashov_txt() to be universal replacer
     Replaces bad strings in csv file and writes corrected file
-    :param file_in: file name or file-like object of csv file or csv file opened in arhive that RarFile.open() returns
-    :param file_out: full output file name. If None _dir_out_ is trying to use, name of output file is generated by mod_file_name(file_in.name)
-    :param dir_out: output dir, if None try the out dir is dir of file_in, but
+    :param file_in: file name or file-like object of csv file or csv file opened in archive that RarFile.open() returns
+    :param file_out: full output file name. If None combine dir_out and name of output file which is generated by mod_file_name(file_in.name)
+    :param dir_out: output dir, if None then dir of file_in, but
         Note: in opened archives it may not contain original path info (they may be temporary archives).
-    :param mod_file_name: function to get out file name from input file name
-    :param sub_str_list: f_repl_by_dict() argument that will be decoded here to str if need
+    :param mod_file_name: function to get out file from input file (usually relative)
+    :param sub_str_list: f_repl_by_dict() argument that will be decoded here to str if needed
     :param kwargs: rep_in_file() keyword arguments except first 3
     :return: name of file to write.
     """
@@ -1020,17 +1093,23 @@ def correct_txt(
                 # else:
                 file_in_path = Path(file_in.name)
                 file_out = mod_file_name(file_in_path)
+            msg_file_in = file_in_path.name
+        elif not file_out:
+            file_out = (file_in_path := Path(file_in)).with_name(str(mod_file_name(Path(file_in_path.name))))
 
-        msg_file_in = file_in_path.name
+    out_dir = file_out.parent
+    out_dir = out_dir.with_name(out_dir.name.replace('.', '-'))  # Windows can not create dir named same as sibling file
+    dir_create_if_need(out_dir)
+    file_out = out_dir / file_out.name
 
-    if file_out.is_file():
+    if file_out.is_file() and file_out.stat().st_size > 100:  # If file size is small may be it is damaged. Try to
+        # reprocess (not hard to reprocess small files)
         if is_opened:
             msg_file_in = correct_old_zip_name_ru(msg_file_in)
         l.warning(f'skipping of pre-correcting csv file {msg_file_in} to {file_out.name}: destination exist')
         return file_out
 
-    dir_create_if_need(file_out.parent)
-    binary_mode = False if isinstance(file_in, io.TextIOBase) else True
+    binary_mode = isinstance(file_in, io.RawIOBase)
 
     fsub = f_repl_by_dict([x if binary_mode else bytes.decode(x) for x in sub_str_list], binary_str=binary_mode)
 
@@ -1045,6 +1124,7 @@ def correct_txt(
         l.warning('{} bad lines deleted'.format(sum_deleted))
 
     return file_out
+
 
 def correct_kondrashov_txt(
         file_in: Union[str, Path, BinaryIO, TextIO],
@@ -1127,7 +1207,8 @@ def deg_min_float_as_text2deg(degmin):
 # 'yyyy', 'mm', 'dd', 'HH', 'MM', 'SS'
 @meta_out(partial(out_fields, keys_del={'date', 'Lat_NS', 'Lon_WE'}, add_before={'Time': 'M8[ns]'}))
 def proc_loaded_nav_supervisor(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
-                               csv_specific_param: Optional[Mapping[str, Any]] = None) -> pd.DataFrame:
+        csv_specific_param: Optional[Mapping[str, Any]] = None,
+        cols_out: Union[slice, Sequence[Any]] = slice(None)) -> pd.DataFrame:
     """
     Specified prep&proc of navigation data from program "Supervisor":
     - Time calc: gets string for time in current zone
@@ -1193,9 +1274,9 @@ def proc_loaded_nav_supervisor(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mappi
         if 'DepEcho_add' in csv_specific_param:
             a.eval(f"DepEcho = DepEcho + {csv_specific_param['DepEcho_add']}",
                    inplace=True)  # @corrections['DepEcho_add'] if float
-            log_csv_specific_param_operation('proc_loaded_nav_supervisor', csv_specific_param, cfg_in)
+            log_csv_specific_param_operation('proc_loaded_nav_supervisor', csv_specific_param.keys(), cfg_in)
 
-    return a.assign(**{'Time': date}).loc[:, list(proc_loaded_nav_supervisor.meta_out(cfg_in['dtype_out']).keys())]
+    return a.assign(**{'Time': date}).loc[:, cols_out]
 
 
 def proc_loaded_nav_HYPACK(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any]) -> pd.DatetimeIndex:
@@ -1225,8 +1306,12 @@ def proc_loaded_nav_HYPACK(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[s
     return t
 
 
-@meta_out(partial(out_fields, keys_del={'Time', 'LatNS', 'LonEW', 'DatePC', 'TimePC'}, add_before={'Time': 'M8[ns]', 'Lat': 'f8', 'Lon': 'f8'}))
-def proc_loaded_nav_HYPACK_SES2000(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any]) -> pd.DatetimeIndex:
+@meta_out(
+    partial(out_fields, keys_del={'Time', 'LatNS', 'LonEW', 'DatePC', 'TimePC'},
+            add_before={'Time': 'M8[ns]', 'Lat': 'f8', 'Lon': 'f8'}))
+def proc_loaded_nav_HYPACK_SES2000(
+        a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
+        cols_out: Union[slice, Sequence[Any]] = slice(None)) -> pd.DatetimeIndex:
     """
     Specified prep&proc of SES2000 data from program "HYPACK":
     - Time calc: gets string for time in current zone
@@ -1260,11 +1345,13 @@ def proc_loaded_nav_HYPACK_SES2000(a: Union[pd.DataFrame, np.ndarray], cfg_in: M
             pd.to_numeric(a.loc[uniq, in_f].str.decode('utf-8', errors='replace').str.split(',').str.get(0))
             )
     a.loc[uniq, 'DepEcho'] = -a.loc[uniq, 'DepEcho']  # make positive below sea top
-    return a.loc[:, list(proc_loaded_nav_HYPACK_SES2000.meta_out(cfg_in['dtype_out']).keys())]
+    return a.loc[:, cols_out]
     # may use a.loc[:, list(cfg_in['fun_proc_loaded']... instead?
 
 @meta_out(partial(out_fields, keys_del={'Date', 'Time'}, add_before={'Time': 'M8[ns]'}))
-def proc_loaded_nav_HYPACK_EA600(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any]) -> pd.DatetimeIndex:
+def proc_loaded_nav_HYPACK_EA600(
+        a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
+        cols_out: Union[slice, Sequence[Any]] = slice(None)) -> pd.DatetimeIndex:
     """
     Specified prep&proc of EA600 data (from program "HYPACK"?):
     - Time calc: gets string for time in current zone
@@ -1292,7 +1379,7 @@ def proc_loaded_nav_HYPACK_EA600(a: Union[pd.DataFrame, np.ndarray], cfg_in: Map
     a['Time'] = pd.NaT  # also changes column's type
     a.loc[uniq, 'Time'] = day_jumps_correction(cfg_in, date.to_numpy())
 
-    return a.loc[:, list(proc_loaded_nav_HYPACK_EA600.meta_out(cfg_in['dtype_out']).keys())]
+    return a.loc[:, cols_out]
 
 
 #@meta_out(partial(out_fields, keys_del={'Time'}, add_before={'Time': 'M8[ns]'}))
@@ -1308,3 +1395,34 @@ def proc_loaded_nav_ADCP_WinRiver2_at(a: Union[pd.DataFrame, np.ndarray], cfg_in
 
     tim = pd.to_datetime(a['Time'].str.decode('utf-8', errors='replace'), format='%y,%m,%d,%H,%M,%S,%f')
     return tim
+
+
+@meta_out(partial(out_fields, keys_del={'Time', 'X', 'Y'}, add_before={'Time': 'M8[ns]', 'Lat': 'f8', 'Lon': 'f8'}))
+def proc_loaded_nav_Dudkov_HydroProfiles(
+        a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
+        cols_out: Union[slice, Sequence[Any]] = slice(None)) -> pd.DatetimeIndex:
+    """
+    Specified prep&proc of Dudkov\tr_ABP049_000-078_1sec_processed_HydroProfiles:
+    - Time calc: time is already UTC in ISO format
+    - X, Y WGS84_UTM34N to Lat, Lon degrees conversion
+
+    :param a: numpy record array. Will be modified inplace.
+    :param cfg_in: dict
+    :return: numpy 'datetime64[ns]' array
+
+
+    Example input:
+    a = {
+    'date': "02:13:12.30", #'Time'
+    'Lat': 55.94522129,
+    'Lon': 18.70426069,
+    'Depth': 43.01}
+    """
+    from pyproj import Proj
+    p = Proj(proj='utm', zone=34, ellps='WGS84', preserve_units=False)
+    a['Lon'], a['Lat'] = p(*a[['X', 'Y']].values.T, inverse=True)  # inverse transform
+    a['Time'] = np.array(a['Time'].values, 'M8[ns]')
+    # date = pd.to_datetime(a.loc[uniq, 'Time'].str.decode('utf-8', errors='replace'), format='%d.%m.%YT%H:%M:%S.%F')
+    # 'DepEcho'
+    return a.loc[:, cols_out]
+    # may use a.loc[:, list(cfg_in['fun_proc_loaded']... instead?

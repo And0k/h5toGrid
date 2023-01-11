@@ -82,7 +82,7 @@ def test_call_example_sp4(return_):
     device = 'incl10'
     aggregate_period_s = (0, 600)
 
-    sys_argv_save = sys.argv
+    sys_argv_save = sys.argv.copy()
     sys.argv = [__file__]  # config dir will be relative to this dir
 
     df = to_vaex_hdf5.cfg_dataclasses.main_call([

@@ -29,6 +29,7 @@ from numba.extending import overload
 from dask.diagnostics import ProgressBar
 
 # my:
+
 # allows to run on both my Linux and Windows systems:
 scripts_path = Path(f"{'D:' if sys.platform == 'win32' else '/mnt/D'}/Work/_Python3/And0K/h5toGrid/scripts")
 sys.path.append(str(scripts_path.parent.resolve()))
@@ -39,11 +40,11 @@ sys.path.append(str(scripts_path.parent.resolve()))
 from utils2init import Ex_nothing_done, call_with_valid_kwargs, set_field_if_no, init_logging, cfg_from_args, \
      my_argparser_common_part, this_prog_basename, dir_create_if_need
 from utils_time import intervals_from_period, pd_period_to_timedelta
-from to_pandas_hdf5.h5toh5 import h5init, h5find_tables, h5remove_table, h5move_tables
+from to_pandas_hdf5.h5toh5 import h5init, h5find_tables, h5remove, h5move_tables, h5_close, \
+    h5_dispenser_and_names_gen
 from to_pandas_hdf5.h5_dask_pandas import h5_append, h5q_intervals_indexes_gen, h5_load_range_by_coord, i_bursts_starts, \
     filt_blocks_da, filter_global_minmax, filter_local, cull_empty_partitions
-from to_pandas_hdf5.csv2h5 import h5_dispenser_and_names_gen, h5_close
-from other_filters import rep2mean
+from filters import rep2mean
 from inclinometer.h5inclinometer_coef import rot_matrix_x, rotate_y
 
 if __name__ == '__main__':  # True:
@@ -419,7 +420,7 @@ def polar2dekart(Vabs, Vdir) -> List[Union[da.Array, np.ndarray]]:
 
     :param Vabs:
     :param Vdir:
-    :return: list [Vn, Ve] - list (not tuple) is used because it is need to concatenate with other data
+    :return: list [v, u] - list (not tuple) is used because it is need to concatenate with other data
     """
     return [Vabs * np.cos(np.radians(Vdir)), Vabs * np.sin(np.radians(Vdir))]
 
@@ -428,8 +429,8 @@ def polar2dekart(Vabs, Vdir) -> List[Union[da.Array, np.ndarray]]:
 # def dekart2polar(v_en):
 #     """
 #     Not Tested
-#     :param Ve:
-#     :param Vn:
+#     :param u:
+#     :param v:
 #     :return: [Vabs, Vdir]
 #     """
 #     return np.linalg.norm(v_en, axis=0), np.degrees(np.arctan2(*v_en))
@@ -437,21 +438,21 @@ def polar2dekart(Vabs, Vdir) -> List[Union[da.Array, np.ndarray]]:
 def dekart2polar_df_v_en(df, **kwargs):
     """
 
-    :param d: if no columns Ve and Vn remains unchanged
+    :param d: if no columns u and v remains unchanged
     :**kwargs :'inplace' not supported in dask. dumn it!
     :return: [Vabs, Vdir] series
     """
 
-    # why da.linalg.norm(df.loc[:, ['Ve','Vn']].values, axis=1) gives numpy (not dask) array?
-    # da.degrees(df.eval('arctan2(Ve, Vn)')))
+    # why da.linalg.norm(df.loc[:, ['u','v']].values, axis=1) gives numpy (not dask) array?
+    # da.degrees(df.eval('arctan2(u, v)')))
 
-    if 'Ve' in df.columns:
+    if 'u' in df.columns:
 
         kdegrees = 180 / np.pi
 
         return df.eval(f"""
-        Vabs = sqrt(Ve**2 + Vn**2)
-        Vdir = arctan2(Ve, Vn)*{kdegrees:.20}
+        Vabs = sqrt(u**2 + v**2)
+        Vdir = arctan2(u, v)*{kdegrees:.20}
         """, **kwargs)
     else:
         return df
@@ -510,7 +511,7 @@ def incl_calc_velocity_nodask(
             ))
 
         col = 'Pressure' if ('Pressure' in a.columns) else 'Temp' if ('Temp' in a.columns) else []
-        columns = ['Vabs', 'Vdir', 'Vn', 'Ve', 'inclination']
+        columns = ['Vabs', 'Vdir', 'v', 'u', 'inclination']
         arrays_list = [Vabs, Vdir] + polar2dekart(Vabs, Vdir) + [da.degrees(incl_rad)]
         a = a.assign(**{c: ar for c, ar in zip(columns, arrays_list)})  # a[c] = ar
 
@@ -665,7 +666,7 @@ def rep2mean_da2np(y: da.Array, bOk=None, x=None) -> np.ndarray:
 
     y_last = None
     y_out_list = []
-    for y_bl, b_ok in zip(y.blocks, (da.isfinite(y) & bOk).blocks):
+    for y_bl, b_ok in zip(y.blocks, bOk.blocks):
         y_bl, ok_bl = da.compute(y_bl, b_ok)
         y_bl = rep2mean(y_bl, ok_bl)
         ok_in_replaced = np.isfinite(y_bl[~ok_bl])
@@ -702,7 +703,7 @@ def rep2mean_da2np(y: da.Array, bOk=None, x=None) -> np.ndarray:
 
 
 def incl_calc_velocity(a: dd.DataFrame,
-                       filt_max: Mapping[Mapping[str, float]] = None,
+                       filt_max: Mapping[str, float],
                        cfg_proc: Optional[Mapping[str, Any]] = None,
                        Ag: Optional[np.ndarray] = None, Cg: Optional[np.ndarray] = None,
                        Ah: Optional[np.ndarray] = None, Ch: Optional[np.ndarray] = None,
@@ -781,8 +782,8 @@ def incl_calc_velocity(a: dd.DataFrame,
                                        max_incl_of_fit_deg=cfg_proc['max_incl_of_fit_deg'],
                                        dtype=np.float64, meta=np.float64([]))
             # Vabs = np.polyval(kVabs, np.where(bad, np.NaN, Gxyz))
-            # Vn = Vabs * np.cos(np.radians(Vdir))
-            # Ve = Vabs * np.sin(np.radians(Vdir))
+            # v = Vabs * np.cos(np.radians(Vdir))
+            # u = Vabs * np.sin(np.radians(Vdir))
 
             Hxyz, need_recover_mask = recover_magnetometer_x(
                 a.loc[:, ('Mx', 'My', 'Mz')].to_dask_array(lengths=lengths).T,
@@ -808,7 +809,7 @@ def incl_calc_velocity(a: dd.DataFrame,
 
             arrays_list = [Vabs, Vdir] + polar2dekart(Vabs, Vdir) + [da.degrees(incl_rad)]
             a = a.drop(['Ax', 'Ay', 'Az', 'Mx','My','Mz'], axis='columns')
-            cols_prepend = ['Vabs', 'Vdir', 'Vn', 'Ve', 'inclination']
+            cols_prepend = ['Vabs', 'Vdir', 'v', 'u', 'inclination']
             cols_remains = a.columns.to_list()
             a = a.assign(
                 **{c: (
@@ -1103,7 +1104,7 @@ def h5_names_gen(cfg_in: Mapping[str, Any], cfg_out: None = None
                             coefs_dict[name] = node_coef_l2[node_name_l2].read()
                     else:  # node_coef_l2 is value
                         coefs_dict[node_name if node_name != 'Vabs0' else 'kVabs'] = node_coef_l2.read()
-                yield (tbl, coefs_dict)
+                yield tbl, coefs_dict
     return
 
 
@@ -1118,7 +1119,7 @@ def h5_append_to(dfs: Union[pd.DataFrame, dd.DataFrame],
         if msg: l.info(msg)
         tables_dict = {'table': tbl, 'table_log': f'{tbl}/logFiles'}
         try:
-            if h5remove_table(cfg_out['db'], tbl):
+            if h5remove(cfg_out['db'], tbl):
                 l.info('previous table removed')
         except Exception as e:  # no such table?
             pass
@@ -1364,7 +1365,7 @@ def main(new_arg=None, **kwargs):
 
     h5init(cfg['in'], cfg['out'])
     cfg_out_table = cfg['out']['table']  # need? save beacause will need to change for h5_append()
-    cols_out_allow = ['Vn', 'Ve', 'Pressure', 'Temp']  # absent cols will be ignored
+    cols_out_allow = ['v', 'u', 'Pressure', 'Temp']  # absent cols will be ignored
     # cfg_out['data_columns'] = []  # can not index hdf5 complex column (see pandas to_hdf "data_columns" argument)
     # if len(cfg['in']['tables']) == 1 and '*' in cfg['in']['tables'][0]:  # pattern specified
     set_field_if_no(cfg['out'], 'not_joined_db_path', not aggregate_period_timedelta)
@@ -1546,7 +1547,7 @@ if ('Pressure' in a.columns) or ('Temp' in a.columns):
     df.assign = df.join(a[[col]])
 
 # Adding column of other (complex) type separatly
-# why not works?: V = df['Vabs'] * da.cos(da.radians(df['Vdir'])) + 1j*da.sin(da.radians(df['Vdir']))  ().to_frame() # Vn + j*Ve # below is same in more steps
+# why not works?: V = df['Vabs'] * da.cos(da.radians(df['Vdir'])) + 1j*da.sin(da.radians(df['Vdir']))  ().to_frame() # v + j*u # below is same in more steps
 V = polar2dekart_complex(Vabs, Vdir)
 V_dd = dd.from_dask_array(V, columns=['V'], index=a.index)
 df = df.join(V_dd)

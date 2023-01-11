@@ -43,7 +43,7 @@ if st(2):  # False: #
         '--path', os_path.join(path_cruise, r'CTD_Idronaut#493\18*[0-9].txt'),
         '--dt_from_utc_hours', '2',
         '--header', 'Number,Date(text),Time(text),Pres,Temp,Sal,O2,O2ppm,SIGMA,Cond,Vbatt',
-        '--cols_not_use_list', 'Number,SIGMA,Vbatt',
+        '--cols_not_save_list', 'Number,SIGMA,Vbatt',
         '--delimiter_chars', '\\ \\',  # ''\s+',
         '--table', 'CTD_Idronaut#493',
         '--b_interact', '0',
@@ -82,7 +82,7 @@ if st(6):  # False: #
 ########################################################################################
 
 if st(10):  # False: #
-    # Save gpx from treckers to DB
+    # Save gpx from trackers to DB
     gpx2h5(['',
             '--db_path', path_db,  # str(Path().with_name('trackers_temp')),
             '--path', os_path.join(path_cruise, r'navigation\*spot*.gpx'),
@@ -92,7 +92,7 @@ if st(10):  # False: #
             '--tables_list', ',,tracker{}', ])
 # go = True
 if st(11):  # False: #
-    # Export treckers tracks to GPX tracks
+    # Export trackers tracks to GPX tracks
     h5toGpx(['cfg/h5toGpx_nav_all.ini',
              '--db_path', path_db,
              '--tables_list', 'tracker{}',

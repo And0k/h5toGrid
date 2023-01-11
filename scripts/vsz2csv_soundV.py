@@ -39,7 +39,7 @@ cfg['out']['header'] = 'Pres,SoundV'
 cfg['out']['precision'] = [3, 2]
 cfg['out']['name_add'] = '_SoundV.txt'
 
-cfg['program']['veusz_path'] = u'C:\\Program Files (x86)\\Veusz'  # directory of Veusz
+cfg['program']['veusz_path'] = u'C:\\Program Files\\Veusz'  # directory of Veusz
 load_vsz = load_vsz_closure(cfg['program']['veusz_path'])
 
 # ----------------------------------------------------------------------

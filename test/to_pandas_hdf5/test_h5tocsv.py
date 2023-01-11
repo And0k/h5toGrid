@@ -35,7 +35,7 @@ def test_main_init() -> None:
     :return:
     """
 
-    sys_argv_save = sys.argv
+    sys_argv_save = sys.argv.copy()
     sys.argv = sys.argv[1:] + [f'input.db_path="{path_db}"',
                 # f'--config-dir={Path(__file__).parent}/cfg',  # contents not read
                 #f'--config-path=cfg',
@@ -64,7 +64,7 @@ def test_main() -> None:
     text_file_name_add = f'E090005O2_AI_{i_cruise}_H10_'
 
     # compensate for pytest args
-    sys_argv_save = sys.argv
+    sys_argv_save = sys.argv.copy()
     sys.argv = sys.argv[1:]
 
     main_call([

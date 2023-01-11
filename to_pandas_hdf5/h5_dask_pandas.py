@@ -5,11 +5,12 @@
   Purpose: load from/save to hdf5 using dask library
   Created: 10.10.2018
 """
+from datetime import datetime
 import glob
 import logging
 from pathlib import Path
 import re
-from typing import Any, Dict, Iterable, Iterator, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Iterable, Iterator, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
 from dateutil.tz import tzutc
 import dask
 import dask.array as da
@@ -20,8 +21,7 @@ from dask.diagnostics import ProgressBar  # or distributed.progress when using t
 from tables.exceptions import HDF5ExtError, ClosedFileError
 
 # my
-from other_filters import despike
-from to_pandas_hdf5.h5toh5 import h5remove_table, ReplaceTableKeepingChilds, df_data_append_fun, df_log_append_fun
+from to_pandas_hdf5.h5toh5 import h5remove, ReplaceTableKeepingChilds, df_data_append_fun, df_log_append_fun
 from utils2init import Ex_nothing_done, set_field_if_no, standard_error_info, dir_create_if_need, LoggingStyleAdapter
 from utils_time import timzone_view, multiindex_timeindex, multiindex_replace, minInterval
 
@@ -46,9 +46,9 @@ def h5q_interval2coord(
     :param: time_range: same as t_interval (but must be flat numpy array)
     :return: ``qstr_range_pattern`` edge coordinates
     Note: can use instead:
-    >>> from to_pandas_hdf5.h5toh5 import h5select
+    >>> from to_pandas_hdf5.h5toh5 import h5load_points
     ... with pd.HDFStore(db_path, mode='r') as store:
-    ...     df, bbad = h5select(store, table, columns=None, query_range_lims=time_range)
+    ...     df, bbad = h5load_points(store,table,columns=None,query_range_lims=time_range)
 
     """
 
@@ -343,7 +343,7 @@ def add_tz_if_need(v, tim: Union[pd.Index, dd.Index]) -> pd.Timestamp:
     return v
 
 
-def filterGlobal_minmax(a, tim=None, cfg_filter=None, b_ok=True) -> pd.Series:
+def filterGlobal_minmax(a, tim=None, cfg_filter=None, b_ok=True, not_warn_if_no_col=[]) -> pd.Series:
     """
     Filter min/max limits
     :param a:           numpy record array or Dataframe
@@ -359,33 +359,38 @@ def filterGlobal_minmax(a, tim=None, cfg_filter=None, b_ok=True) -> pd.Series:
         Emplicitly logical adds new check to b_ok
         :param array: numpy array or pandas series to filter
         :param lim:
+        :param v:
         :return: array of good rows or None
         """
         nonlocal b_ok  # :param b_ok: logical array
-        if v is None:
-            return
         if isinstance(array, da.Array):
             if lim == 'min':
                 b_ok &= (array > v).compute()  # da.logical_and(b_ok, )
             elif lim == 'max':
                 b_ok &= (array < v).compute()  # da.logical_and(b_ok, )
+            elif lim == 'fun':
+                b_ok &= getattr(da, v)(array).compute()
         else:
             if lim == 'min':           # matplotlib error when stop in PyCharm debugger!
-                b_ok &= (array > v)  # da.logical_and(b_ok, )
+                b_ok &= (array > v)  # np.logical_and(b_ok, )
             elif lim == 'max':
-                b_ok &= (array < v)  # da.logical_and(b_ok, )
+                b_ok &= (array < v)  # np.logical_and(b_ok, )
+            elif lim == 'fun':
+                b_ok &= getattr(np, v)(array)
 
     if tim is None:
         tim = a.index
 
     for key, v in cfg_filter.items():  # between(left, right, inclusive=True)
+        if v is None:
+            continue
         try:
             key, lim = key.rsplit('_', 1)
         except ValueError:  # not enough values to unpack
             continue  # not filter field
 
         # swap if need (depreciate?):
-        if key in ('min', 'max'):
+        if key in ('min', 'max', 'fun'):
             key, lim = lim, key
         # else:
         #     continue        # not filter field
@@ -404,9 +409,9 @@ def filterGlobal_minmax(a, tim=None, cfg_filter=None, b_ok=True) -> pd.Series:
 
         elif key == 'date':  # 'index':
             # v= pd.to_datetime(v, utc=True)
-            if v:
-                filt_max_or_min(tim, lim, add_tz_if_need(v, tim))
-        elif key in ('dict', 'b_bad_cols_in_file'):
+            filt_max_or_min(tim, lim, add_tz_if_need(v, tim))
+        elif key in ('dict', 'b_bad_cols_in_file', 'corr_time') or key in not_warn_if_no_col:
+            # config fields not used here
             pass
         else:
             lf.warning('filter warning: no field "{}"!'.format(key))
@@ -421,7 +426,7 @@ def filter_global_minmax(a: Union[pd.DataFrame, dd.DataFrame],
     Query that filters rows where some values outside min/max limits
     :param a:           dask or pandas Dataframe. If need filter datetime columns their name must start with 'date'
     :param cfg_filter: dict with
-       keys: max_`col`, min_`col`, where `col` must be in _a_ (case insensitive) to filter lower/upper values of `col`
+       keys: max_`col`, min_`col`, where `col` must be in _a_ (case-insensitive) to filter lower/upper values of `col`
              or 'date' for filter by index
        values: are float or ifs str repr - to compare with col/index values
     :return: dask bool array of good rows (or array if tim is not dask and only tim is filtered)
@@ -440,8 +445,8 @@ def filter_global_minmax(a: Union[pd.DataFrame, dd.DataFrame],
         except ValueError:  # not enough values to unpack
             continue  # not filter field
 
-        if lim not in ('min', 'max') or v is None:  # last saves from AttributeError: 'NaTType' object has no attribute 'tz'
-            continue
+        if lim not in ('min', 'max') or v is None or isinstance(v, dict):
+            continue  # if v is None then filtering would get AttributeError: 'NaTType' object has no attribute 'tz'
 
         if key == 'date':  # 'index':
             # v= pd.to_datetime(v, utc=True)
@@ -503,6 +508,11 @@ def filter_local(d: Union[pd.DataFrame, dd.DataFrame, Mapping[str, pd.Series], M
                     if not (ignore_absent and key in ignore_absent):
                         lf.warning('Can not filter this parameter {:s}', standard_error_info(e))
                     continue
+                except AssertionError:  # handle one strange dask error if d is empty
+                    if not d.count().compute().any():
+                        return d.persist()  # very cheap dask dataframe
+                    else:
+                        raise  # not have guessed - other error
             lf.debug('filtering {:s}({:s}) = {:g}', limit, key, lim)
     return d
 
@@ -550,12 +560,13 @@ def filt_blocks_array(x, i_starts, func=None):
     Filter each block of numpy array separate using provided function.
     :param x: numpy array, to filter
     :param i_starts: numpy array, indexes of starts of bocks
-    :param func: despike() used if None
+    :param func: filters_scipy.despike() used if None
     returns: numpy array of same size as x with bad values replased with NaNs
 
     """
     if func is None:
-        # require other_filters.despike to be imported
+        from filters_scipy import despike
+
         func = lambda x: despike(x, offsets=(20, 5), blocks=len(x), ax=None, label=None)[0]
 
     y = da.from_array(x, chunks=(tuple(np.diff(np.append(i_starts, len(x))).tolist()),), name='filt')
@@ -708,7 +719,7 @@ def dd_to_csv(
         return f'{d.divisions[i_partition]:%y%m%d_%H%M}'
         # too long variant: '{:%y%m%d_%H%M}-{:%H%M}'.format(*d.partitions[i_partition].index.compute()[[0,-1]])
 
-    suffix_mod = re.sub(r'[\\/*?:"<>\.]', '', suffix.replace('incl', 'i').replace('|', ','))
+    suffix_mod = re.sub(r'[\\/*?:"<>\.]', '', suffix.replace('|', ','))
     filename = combpath(
         text_path,
         f"{name_that_replaces_asterisk(0) if b_single_file else '*'}{{}}{suffix_mod}{ext}".format(
@@ -916,10 +927,12 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
         d = df_cor[col]
         # if isinstance(d[0], pd.datetime):
         if dtype != df[col].dtype:
-            if b_correct_time:
-                if isinstance(d[0], pd.datetime):
+            if b_correct_time :
+                try:  # if isinstance(d[0], pd.datetime):
                     df_cor[col] = d.dt.tz_convert(tz=df[col].dt.tz)
                     b_df_cor_changed = True
+                except {AttributeError, ValueError}:  # AttributeError: Can only use .dt accessor with datetimelike values
+                    pass
             elif b_correct_str:
                 # todo:
                 pass
@@ -993,7 +1006,7 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
 """
 
 
-def h5add_log(log: Union[pd.DataFrame, Mapping, None], cfg_out: Dict[str, Any], tim, df, log_dt_from_utc):
+def h5add_log(log: Union[pd.DataFrame, MutableMapping, None], cfg_out: Dict[str, Any], tim, df, log_dt_from_utc):
     """
     Updates (or creates if need) metadata/log table in store
     :param cfg_out: dict with fields:
@@ -1015,18 +1028,13 @@ def h5add_log(log: Union[pd.DataFrame, Mapping, None], cfg_out: Dict[str, Any], 
     if cfg_out.get('b_log_ready') and (isinstance(log, Mapping) and not log):
         return
 
-    # synchro "tables_log" and more user friendly but not so universal to code "table_log"
-
+    # synchro ``tables_log`` and ``table_log`` (last is more user-friendly but not so universal)
     if cfg_out.get('table_log'):
         table_log = cfg_out['table_log']
     else:
         table_log = cfg_out.get('tables_log')
         if table_log:
-            if '{}' in table_log[0]:
-                table_log = table_log[0].format(cfg_out['table'])
-            else:
-                table_log = table_log[0]
-
+           table_log = t0.format(cfg_out['table']) if '{}' in (t0 := table_log[0]) else t0
         else:  # set default for (1st) data table
             try:
                 table_log = f"{cfg_out['table']}/log"
@@ -1061,12 +1069,11 @@ def h5add_log(log: Union[pd.DataFrame, Mapping, None], cfg_out: Dict[str, Any], 
         lf.warning('Check code: On reopen store update store variable')
 
 
-
-def h5_append(cfg_out: Dict[str, Any],
+def h5_append(cfg_out: Mapping[str, Any],
               df: Union[pd.DataFrame, dd.DataFrame],
-              log,
+              log: MutableMapping[str, Any],
               log_dt_from_utc=pd.Timedelta(0),
-              tim=None):
+              tim: Optional[pd.DatetimeIndex] = None):
     """
     Append dataframe to Store:
      - df to cfg_out['table'] ``table`` node of opened cfg_out['db'] store and
@@ -1074,7 +1081,7 @@ def h5_append(cfg_out: Dict[str, Any],
      of df.index)
 
     :param df: pandas or dask dataframe to append. If dask then log_dt_from_utc must be None (not assign log metadata here)
-    :param log: dict which will be appended to child tables, cfg_out['tables_log']
+    :param log: dict which will be appended to child tables (having name of cfg_out['tables_log'] value)
     :param cfg_out: dict with fields:
         db: opened hdf5 store in write mode
         table: name of table to update (or tables: list, then used only 1st element). if not none tables[0] is ignored
@@ -1131,6 +1138,7 @@ def h5_append(cfg_out: Dict[str, Any],
 
                 if df_len <= 10000 and isinstance(df, dd.DataFrame):
                     df = df.compute()  # dask not writes "all NaN" rows
+        # Append data
         try:
             table = df_data_append_fun(df, cfg_out['table'], cfg_out)
         except ValueError as e:
@@ -1149,11 +1157,11 @@ def h5_append(cfg_out: Dict[str, Any],
                     lf.exception(msg_func)
             else:
                 lf.error('{:s}: Can not write to store. {:s}', msg_func, standard_error_info(e))
-                raise (e)
+                raise e
         except Exception as e:
             lf.error('{:s}: Can not write to store. {:s}', msg_func, standard_error_info(e))
-            raise (e)
-
+            raise e
+    # Append log rows
     # run even if df is empty because may be writing the log is needed only
     table_log = h5add_log(log, cfg_out, tim, df, log_dt_from_utc)
 

@@ -1,7 +1,8 @@
 #!/usr/bin/python3.7+
 """
-Convert NetCDF file of dataset-bal-analysis-forecast-phy-monthlymeans data (uo,vo,mlotst,so,sob) that was downloaded by
-copernicus_api_client.py to csv
+Convert NetCDF data that was downloaded by download_copernicus.py to csv or grd
+Input file can be, for example, loaded from dataset-bal-analysis-forecast-phy-monthlymeans dataset and have variables:
+uo,vo,mlotst,so,sob
 
 NAME    STANDARD NAME       UNITS
 bottomT sea water potential temperature at sea floor, degrees C

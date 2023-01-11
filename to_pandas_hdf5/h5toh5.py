@@ -12,6 +12,7 @@ import re
 import sys  # from sys import argv
 import warnings
 from os import path as os_path, getcwd as os_getcwd, chdir as os_chdir, remove as os_remove
+from datetime import timedelta, datetime
 from time import sleep
 from typing import Any, Dict, Iterable, Iterator, Mapping, MutableMapping, Optional, Sequence, Tuple, Union, List, Set, Callable
 
@@ -27,9 +28,9 @@ warnings.catch_warnings()
 warnings.simplefilter("ignore", category=NaturalNameWarning)
 # warnings.filterwarnings('ignore', category=tables.NaturalNameWarning)
 # my
-from other_filters import inearestsorted, inearestsorted_around
+from filters import inearestsorted, inearestsorted_around
 from utils2init import set_field_if_no, dir_create_if_need, getDirBaseOut, FakeContextIfOpen, \
-    Ex_nothing_done, standard_error_info, LoggingStyleAdapter
+    Ex_nothing_done, standard_error_info, LoggingStyleAdapter, ExitStatus
 from utils_time import multiindex_timeindex, check_time_diff
 
 pd.set_option('io.hdf.default_format', 'table')
@@ -38,7 +39,7 @@ lf = LoggingStyleAdapter(logging.getLogger(__name__))
 def main():
     """
     Purpose: execute query from command line and returns data to stdout
-    (or wrtes to new hdf5 - to do) from PyTables hdf5 file
+    (or writes to new hdf5 - to do) from PyTables hdf5 file
     Created: 30.07.2013
 
     """
@@ -49,7 +50,7 @@ def main():
     parser.add_argument('-columns', nargs='*', type=str)
     parser.add_argument('-where', nargs='*', type=str)
     parser.add_argument('-chunkDays', type=float)
-    # to do:
+    # to do:logging
     parser.add_argument('-saveTo', type=str,
                         help='Save result (default: not save, index of first )')
 
@@ -225,7 +226,9 @@ def h5find_tables(store: pd.HDFStore, pattern_tables: str, parent_name=None) -> 
     return tables
 
 
-def h5sort_pack(h5source_fullpath, h5out_name, table_node, arguments=None, addargs=None,
+def h5sort_pack(h5source_fullpath: str, h5out_name: str, table_node: str,
+                arguments: Optional[Sequence[str]] = None,
+                addargs: Optional[Sequence[str]] = None,
                 b_remove: Optional[bool]=False,
                 col_sort: Optional[str]='index'):
     """
@@ -235,7 +238,7 @@ def h5sort_pack(h5source_fullpath, h5out_name, table_node, arguments=None, addar
     :param h5out_name: base file name + ext of cumulative hdf5 store only
                          (other than that in h5_source_fullpath)
     :param table_node: node name in h5_source_fullpath file
-    :param arguments: list, 'fast' or None. None is equal to ['--chunkshape=auto', '--propindexes',
+    :param arguments: list, 'fast' or None. None is equal to ['--chunkshape=auto',
         '--complevel=9', '--complib=zlib',f'--sortby={col_sort}', '--overwrite-nodes']
     :param addargs: list, extend arguments with more parameters
     :param b_remove: file h5_source_fullpath will be deleted after operation!
@@ -244,29 +247,43 @@ def h5sort_pack(h5source_fullpath, h5out_name, table_node, arguments=None, addar
     """
 
     h5dir, h5source = os_path.split(h5source_fullpath)
+    h5out_path = os_path.join(h5dir, h5out_name)
     if not table_node:
-        return os_path.join(h5dir, h5out_name)
+        return h5out_path
     print(f"sort&pack({table_node}) to {h5out_name}")
     path_prev = os_getcwd()
-    argv_prev = sys.argv
+    argv_prev = sys.argv.copy()
     os_chdir(h5dir)  # os.getcwd()
-    try:
+    try:  # Extend selected default set of arguments
         if arguments == 'fast':  # bRemove= False, bFast= False,
-            arguments = ['--chunkshape=auto', '--overwrite-nodes']  # f'--sortby={col_sort}',
+            arguments = ['--chunkshape=auto', '--overwrite-nodes', '--dont-regenerate-old-indexes']
             if addargs:
                 arguments.extend(addargs)
         else:
             if arguments is None:
-                arguments = ['--chunkshape=auto', '--propindexes',
+                arguments = ['--checkCSI', '--chunkshape=auto', '--propindexes',
                              '--complevel=9', '--complib=zlib', f'--sortby={col_sort}', '--overwrite-nodes']
             if addargs:
                 arguments.extend(addargs)
         # arguments + [sourcefile:sourcegroup, destfile:destgroup]
-        sys.argv[1:] = arguments + [f'{h5source}:/{table_node}', f'{h5out_name}:/{table_node}']
+        sys.argv[1:] = arguments + [f'{h5}:/{table_node}' for h5 in (h5source, h5out_name)]
         # --complib=blosc --checkCSI=True
 
         ptrepack()
-
+        # then copy children  # '--non-recursive' requires sys.argv[1:] = arguments + [f'{h5source}:/{table_node}/table', f'{h5out_name}:/{table_node}/table'] i.e. can not copy indexes
+        # with pd.HDFStore(h5out_path, 'a') as store_out, pd.HDFStore(h5source_fullpath, 'r') as store_in:
+        #     parent_group_in = store_in.get_storer(f'/{table_node}').group
+        #     parent_group_out = store_out.get_storer(f'/{table_node}').group
+        #     parent_group_in._f_copy_children(parent_group_out, overwrite=True)
+            # nodes = parent_group.__members__
+            # childs = [f'/{table_node}/{g}' for g in nodes if (g != 'table') and (g != '_i_table')]
+            # if childs:
+            #     lf.info('found {} children of {}. Copying...', len(childs), table_node)
+            #     for i, tbl in enumerate(childs):
+            #         store_in._handle.move_node(tbl,
+            #                                              newparent=f'/{self.temp_group}',
+            #                                              createparents=True,
+            #                                              overwrite=True)
 
     except Exception as e:
         tbl_cur = 'ptrepack failed!'
@@ -277,7 +294,7 @@ def h5sort_pack(h5source_fullpath, h5out_name, table_node, arguments=None, addar
                     print('Trying again:\n\t1. Creating index for all childs not having one...')
                     nodes = store.get_node(table_node).__members__
                     for n in nodes:
-                        tbl_cur = table_node if n == 'table' else  f'{table_node}/{n}'
+                        tbl_cur = table_node if n == 'table' else f'{table_node}/{n}'
                         try:
                             store_tbl = store.get_storer(tbl_cur)
                         except AttributeError:
@@ -286,6 +303,7 @@ def h5sort_pack(h5source_fullpath, h5out_name, table_node, arguments=None, addar
                             print(tbl_cur, end=' - was no indexes, ')
                             try:
                                 store.create_table_index(tbl_cur, columns=['index'], kind='full')
+                                print('\n')
                             except Exception as ee:  # store.get_storer(tbl_cur).group AttributeError: 'UnImplemented' object has no attribute 'description'
                                 print('Error:', standard_error_info(ee),
                                       f'- creating index on table "{tbl_cur}" is not success.')
@@ -314,7 +332,7 @@ def h5sort_pack(h5source_fullpath, h5out_name, table_node, arguments=None, addar
             os_remove(h5source_fullpath)
         except:
             print(f'can\'t remove temporary file "{h5source_fullpath}"')
-    return os_path.join(h5dir, h5out_name)
+    return h5out_path
 
 
 query_range_pattern_default = "index>=Timestamp('{}') & index<=Timestamp('{}')"
@@ -324,14 +342,15 @@ def h5sel_index_and_istart(store: pd.HDFStore,
                            tbl_name: str,
                            query_range_lims: Optional[Iterable[Any]] = None,
                            query_range_pattern: str = query_range_pattern_default,
-                           to_edge: Optional[Any] = None) -> Tuple[pd.Index, int]:
+                           to_edge: Optional[timedelta] = None) -> Tuple[pd.Index, int]:
     """
-    Get data index by executing query and find queried start index in stored table
+    Get index and index[0] counter from start of stored table (called index coordinate in pandas)
+    satisfying ``query_range_lims``
     :param store:
     :param tbl_name:
     :param query_range_lims: values to print in query_range_pattern
     :param query_range_pattern:
-    :param to_edge:
+    :param to_edge: timedelta
     :return: (empty columns dataframe with index[query_range], coordinate index of query_range[0] in table)
     Tell me, if you know, how to do this with only one query, please
     """
@@ -353,7 +372,10 @@ def h5sel_index_and_istart(store: pd.HDFStore,
     return df0, i_start
 
 
-def h5sel_interpolate(i_queried, store, tbl_name, columns=None, time_points=None, method='linear'):
+def h5sel_interpolate(
+        i_queried: str, store: pd.HDFStore, tbl_name: str,
+        columns=None, time_points=None, method='linear'
+        ):
     """
 
     :param i_queried:
@@ -361,7 +383,7 @@ def h5sel_interpolate(i_queried, store, tbl_name, columns=None, time_points=None
     :param tbl_name:
     :param columns:
     :param time_points:
-    :param method: see pandas interpolate but most likely only 'linear' is relevant for 2 closest points
+    :param method: see pandas interpolate. Most likely only 'linear' is relevant for 2 closest points
     :return: pandas Dataframe with out_cols columns
     """
     lf.info('time interpolating...')
@@ -414,26 +436,21 @@ def h5coords(store: pd.HDFStore, tbl_name: str,
     if q_time is None:
         return df0range.index, 0, [0, df0range.index.size]
 
-    i_queried = inearestsorted(df0range.index.values, q_time)
+    i_queried = inearestsorted(df0range.index.values, np.array(q_time, df0range.index.dtype.str))
     return df0range.index, i0range, i_queried + i0range
 
 
-def h5select(store: pd.HDFStore,
-             tbl_name: str,
-             columns: Optional[Sequence[Union[str, int]]] = None,
-             time_points: Optional[Union[np.ndarray, pd.Series, Sequence[int]]] = None,
-             dt_check_tolerance=pd.Timedelta(seconds=1),
-             query_range_lims: Optional[Union[np.ndarray, pd.Series, Sequence[int]]] = None,
-             query_range_pattern: str = query_range_pattern_default,
-             time_ranges=None,
-             interpolate='time') -> Union[pd.DataFrame, Tuple[pd.DataFrame, np.ndarray]]:
+def h5load_points(store: pd.HDFStore, tbl_name: str, columns: Optional[Sequence[Union[str, int]]] = None,
+                  time_points: Optional[Union[np.ndarray, pd.Series, Sequence[int]]] = None,
+                  dt_check_tolerance=pd.Timedelta(seconds=1),
+                  query_range_lims: Optional[Union[np.ndarray, pd.Series, Sequence[int]]] = None,
+                  query_range_pattern: str = query_range_pattern_default, interpolate='time') -> Union[pd.DataFrame, Tuple[pd.DataFrame, np.ndarray]]:
     """
     Get hdf5 data with index near the time points or between time ranges, or/and in specified query range
     :param store: pandas hdf5 store
     :param tbl_name: table having sorted index   # tbl_name in store.root.members__
     :param columns: a list of columns that if not None, will limit the return columns
     :param time_points: numpy.array(dtype='datetime64[ns]') to return rows with closest index. If None then uses time_ranges
-    :param time_ranges: array of values to return rows with index between. Used if time_points is None
     :param dt_check_tolerance: pd.Timedelta, display warning if found index far from requested values
     :param query_range_lims: initial data range limits to query data, 10 minutes margin will be added for time_points/ranges
     Note: useful to reduce size of intermediate loading index even if time_points/time_ranges is used
@@ -443,61 +460,110 @@ def h5select(store: pd.HDFStore,
               df - dataframe of query_range_lims if no time_ranges nor time_points
 
     Note: query_range_pattern will be used only if query_range_lims specified
+    My use:
+    h5select(store, cfg['in']['table_nav'], ['Lat', 'Lon', 'DepEcho'], dfL.index, query_range_lims=(dfL.index[0],
+             dfL['DateEnd'][-1]), query_range_pattern=cfg['process']['dt_search_nav_tolerance'])
     """
-    # h5select(store, cfg['in']['table_nav'], ['Lat', 'Lon', 'DepEcho'], dfL.index, query_range_lims=(dfL.index[0], dfL['DateEnd'][-1]), query_range_pattern=cfg['process']['dt_search_nav_tolerance'])
-    q_time = time_ranges if time_points is None else time_points
-    if (q_time is not None) and len(q_time) and any(q_time):
+    if (time_points is not None) and len(time_points) and any(time_points):
         try:
-            if not np.issubdtype(q_time.dtype, np.datetime64):  # '<M8[ns]'
-                q_time = q_time.values
+            if isinstance(time_points, list):
+                if isinstance(time_points[0], datetime):
+                    time_points = np.array([int(t.timestamp()) for t in time_points], 'M8[s]')
+                else:
+                    time_points = np.array(time_points)  # more check/conversion needed!
+            elif not np.issubdtype(time_points.dtype, np.datetime64):  # '<M8[ns]'
+                time_points = time_points.values
         except TypeError:  # not numpy 'datetime64[ns]'
-            q_time = q_time.values
-    else:
-        df = store.select(
-            tbl_name,
-            where=query_range_pattern.format(*query_range_lims) if query_range_pattern else None,
-            columns=columns)
-        return df
+            time_points = time_points.values
 
-    df_index_range, i0range, i_queried = h5coords(store, tbl_name, q_time, query_range_lims, query_range_pattern)
-    bbad, dt = check_time_diff(t_queried=q_time, t_found=df_index_range[i_queried - i0range].values,
-                               dt_warn=dt_check_tolerance, return_diffs=True)
+    df_index_range, i0range, i_queried = h5coords(store, tbl_name, time_points, query_range_lims, query_range_pattern)
     # if time_ranges:  # fill indexes inside intervals
     #     i_queried = np.hstack(np.arange(*se) for se in zip(i_queried[:-1], i_queried[1:] + 1))
-
-    if any(bbad) and interpolate:
-        i_queried = inearestsorted_around(df_index_range.values, q_time) + i0range
-        df = h5sel_interpolate(i_queried, store, tbl_name, columns=columns, time_points=q_time, method=interpolate)
+    if not any(i_queried):
+        # raise IndexError()
+        input_data = input(f'No data for specified interval in {tbl_name}.\nInput {columns} for {time_points}?')  # todo recover from file name
+        try:
+            df = pd.DataFrame.from_records(
+                [[float(word) for word in row.replace(',', ' ').split()] for row in input_data.split(';')],
+                columns=columns, index=time_points)
+            lf.info(f'Ok input: {df}')
+            dt = np.zeros_like(time_points, dtype='timedelta64[ns]')
+        except ValueError as e:
+            raise IndexError('Error with input data')
     else:
-        df = store.select(tbl_name, where=i_queried, columns=columns)
+        bbad, dt = check_time_diff(t_queried=time_points, t_found=df_index_range[i_queried - i0range].values,
+                                   dt_warn=dt_check_tolerance, return_diffs=True)
+        if any(bbad) and interpolate:
+            i_queried = inearestsorted_around(df_index_range.values, time_points) + i0range
+            df = h5sel_interpolate(i_queried, store, tbl_name, columns=columns, time_points=time_points, method=interpolate)
+        else:
+            df = store.select(tbl_name, where=i_queried, columns=columns)
 
     return df, dt
-    # df_list = []
-    # for t_interval in (lambda x=iter(t_intervals): zip(x, x))():
-    #     df_list.append(h5select(
-    #         store, table, query_range_lims=t_interval,
-    #         interpolate=None, query_range_pattern=query_range_pattern
-    #         )[0])
-    # df = pd.concat(df_list, copy=False)
 
-    # with pd.HDFStore(cfg['in']['db_path'], mode='r') as storeIn:
-    #     try:  # Sections
-    #         df = storeIn[cfg['in']['table_sections']]  # .sort()
-    #     except KeyError as e:
-    #         lf.error('Sections not found in {}!'.format(cfg['in']['db_path']))
-    #         raise e
+
+def h5load_range(store: pd.HDFStore,
+                 tbl_name: str,
+                 columns: Optional[Sequence[Union[str, int]]] = None,
+                 query_range_lims: Optional[Union[pd.Series, Sequence[Any]]] = None,
+                 query_range_pattern: str = query_range_pattern_default) -> pd.DataFrame:
+    """
+    Get hdf5 data with index near the time points or between time ranges, or/and in specified query range
+    :param store: pandas hdf5 store
+    :param tbl_name: table having sorted index   # tbl_name in store.root.members__
+    :param columns: a list of columns that if not None, will limit the return columns
+    :param query_range_lims: data range limits to query data
+    :param query_range_pattern: format pattern for query with query_range_lims, will be used only if query_range_lims
+    specified
+    :return: df - table of found range
+    """
+
+    df = store.select(
+        tbl_name,
+        where=query_range_pattern.format(*query_range_lims) if query_range_pattern else None,
+        columns=columns
+        )
+    return df
+
+
+def h5load_ranges(store: pd.HDFStore, table: str, t_intervals=None,
+                  query_range_pattern=query_range_pattern_default):
+    """
+    Load data
+    :param t_intervals: even sequence of datetimes or strings convertible to index type values. Each pair defines edges
+    of data that will be concatenated. 1st and last must be min and max values in sequence.
+    :param table:
+    :return:
+    """
+
+    n = len(t_intervals) if t_intervals is not None else 0
+    if n > 2:
+        query_range_pattern = '|'.join(f'({query_range_pattern.format(*query_range_lims)})' for query_range_lims in (
+            (lambda x=iter(t_intervals): zip(x, x))())
+                                   )
+    elif n < 2:
+        query_range_pattern = None
+        t_intervals = []
+    df = h5load_range(store, table, query_range_lims=t_intervals[0::(n - 1)],
+                  interpolate=None, query_range_pattern=query_range_pattern)
+    return df
+
+
+
+
 
 
 
 def h5temp_open(
         db_path: Path,
-        db_path_temp: Optional[Path]=None,
-        tables: Optional[List[str]]=None,
-        tables_log: Optional[List[str]]=None,
-        db=None,
+        db_path_temp: Optional[Path] = None,
+        tables: Optional[Sequence[str]] = None,
+        tables_log: Optional[Sequence[str]] = (),
+        db: Optional[pd.HDFStore] = None,
         b_incremental_update: bool = False,
         b_reuse_temporary_tables: bool = False,
         b_overwrite: bool = False,
+        db_in = None,
         **kwargs
         ) -> Tuple[Optional[pd.DataFrame], Optional[pd.HDFStore], bool]:
     """
@@ -514,6 +580,7 @@ def h5temp_open(
     :param: b_incremental_update:
     :param: b_reuse_temporary_tables, bool, default False - not copy tables from dest to temp
     :param: b_overwrite: remove all existed data in tables where going to write
+    :param: db_in: handle of opened db_path (if opened) else None
     :param: kwargs: not used, for use convenience
     :return: (df_log, db, b_incremental_update)
         - df_log: dataframe of log from store if cfg_in['b_incremental_update']==True else None.
@@ -524,29 +591,29 @@ def h5temp_open(
     df_log = None
     if db:
         lf.warning('DB already used{}: handle detected!', ' and opened' if db.is_open else '')
-
+        raise FileExistsError(f'{db.filename} must be closed')  # may be useful close temporary?
     if tables is None:
         return None, None, False  # skipping open, may be need if not need write
-    else:
-        print('saving to', db_path_temp / ','.join(tables).strip('/'), end=':\n')
+    #else:
+    print('saving to', db_path_temp / ','.join(tables).strip('/'), end=':\n')
 
-        if tables:  # if table name in tables_log has placeholder then fill it
-            tables_log = [t.format(tables[i]) for i, t in enumerate(tables_log)]
+    if tables:  # if table name in tables_log has placeholder then fill it
+        tables_log = [t.format(tables[i if i<len(tables) else 0]) for i, t in enumerate(tables_log)]
 
-        # Side effect code removed:
-        #  itbl = 0
-        # for i, t in enumerate(tables_log):
-        #     if '{}' in t:
-        #         tables_log[i] = t.format(tables[itbl])
-        #     else:
-        #         itbl += 1
+    # Side effect code removed:
+    #  itbl = 0
+    # for i, t in enumerate(tables_log):
+    #     if '{}' in t:
+    #         tables_log[i] = t.format(tables[itbl])
+    #     else:
+    #         itbl += 1
 
     try:
         try:  # open temporary output file
             if db_path_temp.is_file():
                 if not b_reuse_temporary_tables:  # Remove existed tables to write
                     with pd.HDFStore(db_path_temp) as db:
-                        tables_in_root = [t for tbl in tables for t in h5find_tables(db, tbl)]
+                        tables_in_root = [t for tbl in tables for t in h5find_tables(db, tbl) if tbl]
                         h5remove_tables(db, tables_in_root, tables_log)
                     db = None
         except IOError as e:
@@ -558,44 +625,47 @@ def h5temp_open(
                 lf.info('Copying previous store data to temporary one:')
                 tbl = 'is absent'
                 try:
-                    with pd.HDFStore(db_path, mode="r") as store_out:
-                        name_prev = ''  # used to filter already deleted children (how speed up?)
+                    # Open output store (as input for this function)
+                    with FakeContextIfOpen(lambda path: pd.HDFStore(path, mode='r'), db_in or db_path) as db_in:
+                        tbl_prev = '?'  # Warning side effect: ignores 1st table if its name starts with '?'
                         for tbl in sorted(tables + tables_log):
                             if (  # parent of this nested have moved on previous iteration
-                                (len(name_prev) < len(tbl) and tbl.startswith(name_prev) and tbl[len(name_prev)] == '/')
+                                (len(tbl_prev) < len(tbl) and tbl.startswith(tbl_prev) and tbl[len(tbl_prev)] == '/')
                                 or not tbl
                             ):
                                 continue
                             try:  # Check output store
-                                if tbl in store_out:  # avoid harmful sortAndPack errors
-                                    h5sort_pack(db_path, db_path_temp.name, tbl, arguments='fast')  #, addargs=['--verbose']
+                                if tbl in db_in:  # avoid harmful sortAndPack errors
+                                    h5sort_pack(db_path, db_path_temp.name, tbl, arguments='fast')
+                                    #, addargs=['--verbose']  may be copynode?
                                 else:
                                     lf.info(f'Table {tbl} does not exist')
                                     continue
                                     # raise HDF5ExtError(f'Table {tbl} does not exist')
                             except HDF5ExtError as e:
-                                if tbl in store_out.root.__members__:
+                                if tbl in db_in.root.__members__:
                                     print('Node exist but store is not conforms Pandas')
-                                    getstore_and_print_table(store_out, tbl)
+                                    getstore_and_print_table(db_in, tbl)
                                 raise e  # exclude next processing
                             except RuntimeError as e:
                                 lf.error('Failed copy from output store (RuntimeError). '
                                         'May be need first to add full index to original store? Trying: ')
-                                nodes = store_out.get_node(tbl).__members__  # sorted(, key=number_key)
+                                nodes = db_in.get_node(tbl).__members__  # sorted(, key=number_key)
                                 # reopen for modifcation
-                                store_out.close()
-                                store_out = pd.HDFStore(db_path)
+                                db_in.close(); db_in.open('r')  #= pd.HDFStore(db_in.filename)
                                 for n in nodes:
                                     tbl_cur = tbl if n == 'table' else f'{tbl}/{n}'
                                     lf.info(tbl_cur, end=', ')
-                                    store_out.create_table_index(tbl_cur, columns=['index'], kind='full')
-                                # store_out.flush()
+                                    db_in.create_table_index(tbl_cur, columns=['index'], kind='full')
+                                # db_in.flush()
                                 lf.error('Trying again')
-                                if (db is not None) and db.is_open:
-                                    db.close()
-                                    db = None
+                                if (b_we_close := ((db_in is not None) and db_in.is_open)):
+                                    db_in.close()
                                 h5sort_pack(db_path, db_path_temp.name, tbl)
-                            name_prev = tbl
+                                if b_we_close:
+                                    db_in.open('r')
+
+                            tbl_prev = tbl
 
                 except HDF5ExtError as e:
                     lf.warning(e.args[0])   # print('processing all source data... - no table with previous data')
@@ -605,7 +675,8 @@ def h5temp_open(
                         tbl, '\n==> '.join([s for s in e.args if isinstance(s, str)])))
                     b_incremental_update = False
                 else:
-                    if b_incremental_update: lf.info('Will append data only from new files.')
+                    if b_incremental_update:
+                        lf.info('Will append data only from new files.')
 
         if (db is None) or not db.is_open:
             # Open temporary output file to return
@@ -633,7 +704,7 @@ def h5temp_open(
                         lf.exception('Bad log: {}, removing... {}', tbl_log,
                                      'Switching off incremental update' if b_incremental_update else ''
                                      )
-                        h5remove_table(db, tbl_log)
+                        h5remove(db, tbl_log)
                     except UnicodeDecodeError:
                         lf.exception('Bad log: {}. Suggestion: remove non ASCII symbols from log table manually!', tbl_log)
                         raise
@@ -677,14 +748,17 @@ def h5temp_open(
     return df_log, db, b_incremental_update
 
 
-def df_data_append_fun(df, tbl_name, cfg_out, **kwargs):
-    df.to_hdf(cfg_out['db'], tbl_name, append=True, data_columns=cfg_out.get('data_columns', True),
-              format='table', dropna=not cfg_out.get('b_insert_separator'), index=False, **kwargs
-              )
+def df_data_append_fun(df: pd.DataFrame, tbl_name: str, cfg_out: Mapping[str, Any], **kwargs):
+    df.to_hdf(
+        cfg_out['db'], tbl_name, append=True, data_columns=cfg_out.get('data_columns', True),
+        format='table', index=False,
+        dropna= cfg_out.get('dropna', not cfg_out.get('b_insert_separator')),
+        **kwargs
+        )
     return tbl_name
 
 
-def df_log_append_fun(df, tbl_name, cfg_out):
+def df_log_append_fun(df: pd.DataFrame, tbl_name: str, cfg_out: Mapping[str, Any]):
     """
     Append pandas HDF5 store with cfg_out settings for log table
     :param df:
@@ -753,32 +827,35 @@ def replace_bad_db(db_path_temp: Path, db_path: Optional[Path] = None):
     return db_path_temp_copy
 
 
-def h5remove_table(db: pd.HDFStore, node: Optional[str] = None):
+def h5remove(db: pd.HDFStore, node: Optional[str] = None, query: Optional[str] = None):
     """
-    Removes table, skips if not(node) or no such node in currently open db.
+    Removes table or rows from table if query is not None, skips if not(node) or no such node in currently open db.
     :param db: pandas hdf5 store
     :param node: str, table name
+    :param query:  str, ``where`` argument of ``db.remove`` method
     :modifies db: if reopening here (dew to pandas bug?)
     Note: Raises HDF5ExtError on KeyError if no such node in db.filename and it is have not opened
     """
+
     try:
         was = node and (node in db)
         if was:
-            db.remove(node)
+            mdg_query = f' {query} from' if query is not None else ''
+            db.remove(node, where=query)
             lf.info('table {} removed', node)
-    except KeyError:
-        lf.info('Trouble when removing {}. Solve pandas bug by reopen store.', node)
+    except (KeyError, HDF5ExtError) as e:
+        lf.info('Trouble when removing{} {}. Solve pandas bug by reopen store.', mdg_query, node)
         sleep(1)
         db.close()
         #db_filename = db.filename
         #db = None
         sleep(1)
-        db.open(mode='r+')  # =pd.HDFStore(db_filename, )  # db_path_temp
+        db.open(mode='r+')  # reading and writing, file must exist
         try:
-            db.remove(node)
+            db.remove(node, where=query)
             return True
         except KeyError:
-            raise HDF5ExtError('Can not remove table "{}"'.format(node))
+            raise HDF5ExtError('Can not remove{} table "{}"'.format(mdg_query, node))
     return was
 
 
@@ -793,14 +870,14 @@ def h5remove_tables(db: pd.HDFStore, tables: Iterable[str], tables_log: Iterable
     :param db_path_temp: path of db. Used to reopen db if removing from `db` is not succeed
     :return: db
     """
-    name_prev = ''  # used to filter already deleted children (how speed up?)
+    tbl_prev = '?'  # Warning side effect: ignores 1st table if its name starts with '?'
     for tbl in sorted(tables + tables_log):
-        if len(name_prev) < len(tbl) and tbl.startswith(name_prev) and tbl[len(name_prev)] == '/':
+        if len(tbl_prev) < len(tbl) and tbl.startswith(tbl_prev) and tbl[len(tbl_prev)] == '/':
             continue  # parent of this nested have deleted on previous iteration
         for i in range(1, 4):  # for retry, may be not need
             try:
-                h5remove_table(db, tbl)
-                name_prev = tbl
+                h5remove(db, tbl)
+                tbl_prev = tbl
                 break
             except ClosedFileError as e:  # file is not open
                 lf.error('waiting {:d} (/3) because of error: {:s}', i, str(e))
@@ -813,7 +890,7 @@ def h5remove_tables(db: pd.HDFStore, tables: Iterable[str], tables_log: Iterable
                 db = pd.HDFStore(db_path_temp)
             else:
                 db.open(mode='r+')
-            h5remove_table(db, tbl)
+            h5remove(db, tbl)
     db.flush()
     return db
 
@@ -832,10 +909,10 @@ class ReplaceTableKeepingChilds:
     def __init__(self,
                  dfs: Union[pd.DataFrame, List[pd.DataFrame]],
                  tbl_parent: str,
-                 cfg_out: Dict[str, Any],
+                 cfg_out: Mapping[str, Any],
                  write_fun: Optional[Callable[[pd.DataFrame, str, Dict[str, Any]], None]] = None):
         self.cfg_out = cfg_out
-        self.tbl_parent = tbl_parent
+        self.tbl_parent = tbl_parent[1:] if tbl_parent.startswith('/') else tbl_parent
         self.dfs = [dfs] if isinstance(dfs, pd.DataFrame) else dfs
         self.write_fun = write_fun
         self.temp_group = 'to_copy_back'
@@ -873,25 +950,27 @@ class ReplaceTableKeepingChilds:
 
         # remove parent table that must be written back in "with" block
         try:
-            h5remove_table(self.cfg_out['db'], self.tbl_parent)
+            h5remove(self.cfg_out['db'], self.tbl_parent)
         except KeyError:
             print('was removed?')
 
         return self.childs
 
     def __exit__(self, exc_type, ex_value, ex_traceback):
-
-        if self.write_fun is None:
-            def write_fun(df, tbl, cfg):
-                return df.to_hdf(
-                    cfg['db'], tbl, format='table', data_columns=True, append=False, index=False)
-
-            self.write_fun = write_fun
-
         # write parent table
-        for df in self.dfs:
-            self.write_fun(df, self.tbl_parent, self.cfg_out)
-        self.cfg_out['db'].create_table_index(self.tbl_parent, columns=['index'], kind='full')
+
+        if len(self.dfs):
+            if self.write_fun is None:
+
+                def write_fun(df, tbl, cfg):
+                    return df.to_hdf(
+                        cfg['db'], tbl, format='table', data_columns=True, append=False, index=False)
+
+                self.write_fun = write_fun
+
+            for df in self.dfs:
+                self.write_fun(df, self.tbl_parent, self.cfg_out)
+            self.cfg_out['db'].create_table_index(self.tbl_parent, columns=['index'], kind='full')
 
         # write childs back
         self.cfg_out['db'].flush()
@@ -940,7 +1019,7 @@ def h5remove_duplicates(cfg, cfg_table_keys: Iterable[Union[Iterable[str], str]]
 
 def h5remove_duplicates_by_loading(cfg, cfg_table_keys: Iterable[Union[Iterable[str], str]]) -> Set[str]:
     """
-    Remove duplicates by coping tables to memory
+    Remove duplicates by coping tables to memory, keep last. todo: merge fields
     :param cfg: dict with keys:
         keys specified by cfg_table_keys
         chunksize - for data table
@@ -948,10 +1027,12 @@ def h5remove_duplicates_by_loading(cfg, cfg_table_keys: Iterable[Union[Iterable[
     :param cfg_table_keys: list, in which 'tables_log' means that cfg['tables_log'] is a log table. Alternatively group tables in subsequences such that log tables names is after data table in each subsequence (cfg[cfg_table_keys[group]])
     :return dup_tbl_set: tables that still have duplicates
     """
+    cfg['db'].flush()  # not works (loading will give only part of data), but this works:
+    cfg['db'].close(); cfg['db'].open('r+')
 
     # load data frames from store to memory removing duplicates
     dfs = {}
-    dup_tbl_set = set()  # will remove tables if will found duplicates
+    dup_tbl_set = set()  # remove tables if we will find duplicates
     for cfgListName in cfg_table_keys:
         for tbl in unzip_if_need(cfg[cfgListName]):
             if tbl in cfg['db']:
@@ -966,7 +1047,7 @@ def h5remove_duplicates_by_loading(cfg, cfg_table_keys: Iterable[Union[Iterable[
 
     # update data frames in store
     if len(dup_tbl_set):
-        lf.info('Remove duplicates. ')
+        lf.info('Removed duplicates. ')
         for cfgListName in cfg_table_keys:
             for i_in_group, tbl in unzip_if_need_enumerated(cfg[cfgListName]):
                 if tbl in dup_tbl_set:
@@ -1013,7 +1094,7 @@ def create_indexes(cfg_out, cfg_table_keys):
                 else:
                     level2_index = None
                 columns = ['index'] if level2_index is None else ['index', cfg_out['index_level2_cols']]
-                cfg_out['db'].create_table_index(tbl, columns=columns, kind='full')
+                cfg_out['db'].create_table_index(tbl, columns=columns, kind='full')  # ,optlevel=9
             # except KeyError:
             #     pass  # 'No object named ... in the file'
             except Exception as e:
@@ -1034,24 +1115,25 @@ def h5move_tables(cfg_out,
       - db_path: pathlib.Path, full path name (extension ".h5" will be added if absent) of hdf store to put
       - tables, tables_log: Sequence[str], if tbl_names not specified
       - b_del_temp_db: bool, remove source store after move tables. If False (default) then deletes nothing
+      - addargs: ptprepack params, they will be added to the defaults specified in h5sort_pack()
     :param tbl_names: list of strings or list of lists (or tuples) of strings. List of lists is useful to keep order of
      operation: put nested tables last.
     :param kwargs: ptprepack params
     Note: ``ptprepack`` not closes hdf5 source if it not finds data!
     Note: Not need specify childs (tables_log) if '--non-recursive' not in kwargs
         Strings are names of hdf5 tables to copy
-    :return: Empty dict if all success else if have errors - Dict [tbl: HDF5store file name] of locations of last tried
+    :return: Empty dict if all success else if we have errors - Dict [tbl: HDF5store file name] of locations of last tried
      savings for each table
     """
     failed_storages = {}
     if tbl_names is None:  # copy all cfg_out tables
-        tbl_names = cfg_out['tables']
+        tbl_names = cfg_out['tables'].copy()
         if cfg_out.get('tables_log'):
             tbl_names += cfg_out['tables_log']
         tables_top_level = (cfg_out['tables'] if len(cfg_out['tables']) else cfg_out['tables_log'])
     else:
         tables_top_level = []
-        tbl_prev = ''
+        tbl_prev = '?'  # Warning side effect: ignores 1st table if its name starts with '?'
         for i, tbl in unzip_if_need_enumerated(tbl_names):
             if i == 0 and not tbl.startswith(f'{tbl_prev}/'):
                 tables_top_level.append(tbl)
@@ -1067,20 +1149,20 @@ def h5move_tables(cfg_out,
         if len(tables_top_level) > 1:
             lf.error('in "--overwrite" mode with move many tables: will remove each previous result after each table \
             and only last table wins!')
-    elif '--overwrite-nodes' not in ptrepack_add_args:
-        # h5sort_pack can not remove/update dest table, and even corrupt it if exist, so we do:
+    elif '--overwrite-nodes' not in ptrepack_add_args:  # default: False
+        # h5sort_pack can not remove/update dest table, and even corrupt it if existed, so we do:
         try:
             with pd.HDFStore(cfg_out['db_path']) as store:
-                # h5remove_table(store, tbl)
+                # h5remove(store, tbl)
                 for tbl in tables_top_level:
-                    h5remove_table(store, tbl)
+                    h5remove(store, tbl)
 
         except HDF5ExtError:
             file_bad = Path(cfg_out['db_path'])
             file_bad_keeping = file_bad.with_suffix('.bad.h5')
-            lf.exception('Bad output file - can not use!!! Renaming to "{:s}". Delete it if not useful', file_bad_keeping)
+            lf.exception('Bad output file - can not use!!! Renaming to "{:s}". Delete it if not useful', str(file_bad_keeping))
             file_bad.replace(file_bad_keeping)
-            lf.warning('Renamed: old data (if any) will not be in {:s}!!! Writing current data...', file_bad)
+            lf.warning('Renamed: old data (if any) will not be in {:s}!!! Writing current data...', str(file_bad))
 
     with pd.HDFStore(cfg_out['db_path_temp']) as store_in:  #pd.HDFStore(cfg_out['db_path']) as store,
         for tbl in tables:
@@ -1101,9 +1183,9 @@ def h5move_tables(cfg_out,
                     else:
                         cfg_out['recreate_index_tables_set'] = {tbl}
             if cfg_out.get('recreate_index_tables_set') and tbl in cfg_out['recreate_index_tables_set']:
-                print(tbl, end=' - was indexes, but recreating by loading, saving with no index then add index')
+                print(tbl, end=' - was indexes, but recreating by loading, saving with no index then add index: ')
 
-                df = store_in[tbl]  #.sort_index()
+                df = store_in[tbl].sort_index()  # ptrepack not always sorts all data!
                 cfg = {'db': store_in}
                 with ReplaceTableKeepingChilds([df], tbl, cfg):
                     pass
@@ -1116,27 +1198,30 @@ def h5move_tables(cfg_out,
                     #         {'chunksize': cfg['chunksize']})
                     #     )
     tables_all_or_top = tables if '--non-recursive' in ptrepack_add_args else tables_top_level
-    # remove source store only after last table has copied
-    b_when_remove_store = [False] * len(tables_all_or_top)
-    b_when_remove_store[-1] = cfg_out.get('b_del_temp_db')
-    i = 0
-    for tbl, b_remove in zip(tables_all_or_top, b_when_remove_store):
-        # if i == 2:  # no more deletions - to not delete parent table before writing child
-        #     try:
-        #         ptrepack_add_args.remove('--overwrite')
-        #     except ValueError:
-        #         pass
-        try:
-            h5sort_pack(cfg_out['db_path_temp'],
-                        cfg_out['db_path'].with_suffix('.h5').name,
-                        tbl,
-                        addargs=ptrepack_add_args,
-                        b_remove=b_remove,
-                        **kwargs)
-            sleep(2)
-        except Exception as e:
-            lf.error('Error: "{}"\nwhen write table "{}" from {} to {}',
-                e, tbl, cfg_out['db_path_temp'], cfg_out['db_path'])
+    if any(tables_all_or_top):
+        # remove source store only after last table has copied
+        b_when_remove_store = [False] * len(tables_all_or_top)
+        b_when_remove_store[-1] = cfg_out.get('b_del_temp_db')
+        i = 0
+        for tbl, b_remove in zip(tables_all_or_top, b_when_remove_store):
+            # if i == 2:  # no more deletions - to not delete parent table before writing child
+            #     try:
+            #         ptrepack_add_args.remove('--overwrite')
+            #     except ValueError:
+            #         pass
+            try:
+                h5sort_pack(cfg_out['db_path_temp'],
+                            cfg_out['db_path'].with_suffix('.h5').name,
+                            tbl,
+                            addargs=ptrepack_add_args,
+                            b_remove=b_remove,
+                            **kwargs)
+                sleep(2)
+            except Exception as e:
+                lf.error('Error: "{}"\nwhen write table "{}" from {} to {}',
+                    e, tbl, cfg_out['db_path_temp'], cfg_out['db_path'])
+    else:
+        raise Ex_nothing_done(f'Not valid table names: {tbl_names}!')
     return failed_storages
     # storage_basenames = {}
     #         if False:  # not helps?
@@ -1192,7 +1277,7 @@ def h5index_sort(cfg_out,
         in_storages = cfg_out['db_path'].with_name(in_storages[0])
 
     if tables is None:
-        tables = cfg_out['tables'] + cfg_out['tables_log']
+        tables = cfg_out.get('tables', []) + cfg_out.get('tables_log', [])
     with pd.HDFStore(in_storages) as store:
         # store= pd.HDFStore(cfg_out['db_path'])
         # b_need_save = False
@@ -1234,14 +1319,13 @@ def h5index_sort(cfg_out,
                 continue
             else:                       # only printing messages about what the problem with sorting by trying it
                 nonm_tbl_set.add(tbl)   # b_need_save = True
-
                 lf.warning(f'{tbl} - not sorted!')
                 print(repr(store.get_storer(tbl).group.table))
 
                 df_index, itm = multiindex_timeindex(df.index)
                 if __debug__:
                     plt.figure(f'Not sorted index that we are sorting {"on" if itm is None else "before"} saving...')
-                    plt.plot(df_index)      # np.diff(df.index)
+                    plt.plot(np.arange(df_index.size), df_index.values)      # np.diff(df.index)
                     plt.show()
 
                 if itm is not None:
@@ -1256,8 +1340,18 @@ def h5index_sort(cfg_out,
                         continue
                     else:
                         print('Failure!')
-                # else:
-                #     pass  # will sorting by prepack in h5move_tables #lf.warning('skipped of sorting ')
+                else:
+                    try:
+                        df = df.sort_index()
+                        with ReplaceTableKeepingChilds(
+                                [df], tbl, {**cfg_out, 'db': store}, df_log_append_fun
+                                if ('log' in tbl) else df_data_append_fun
+                                ):
+                            nonm_tbl_set.discard(tbl)
+                        lf.warning('Saved sorted in memory - ok.')
+                    except Exception as e:
+                        lf.exception('Error sorting Table {:s} in memory. Will try sort by ptrepack in h5move_tables() to db_path_temp and back', tbl)
+                        # #lf.warning('skipped of sorting ')
         if dup_tbl_set:
             lf.warning('To drop duplicates from {} restart with [out][b_remove_duplicates] = True', dup_tbl_set)
             nonm_tbl_set -= dup_tbl_set
@@ -1477,11 +1571,11 @@ def h5init(cfg_in: Mapping[str, Any], cfg_out: MutableMapping[str, Any]) -> None
     """
     Init cfg_out database (hdf5 data store) information in cfg_out _if it is not exist_
     :param: cfg_in - configuration dicts, with fields:
-    - path: if no 'db_path' in cfg_out or it is not absoulute
-    - cfgFile - if no cfg_out['b_insert_separator'] defined or determine the table name is failed - to extract from cfgFile name name
+    - path: if no 'db_path' in cfg_out, or it is not absolute
+    - cfgFile - if no cfg_out['b_insert_separator'] defined or determine the table name is failed - to extract from cfgFile name
     - raw_dir_words: (optional), default: ['source', 'WorkData', 'workData'] - see getDirBaseOut()
     - nfiles: (optional)
-    - b_incremental_update: (optional)
+    - b_incremental_update: (optional) to copy it to cfg_out
     :param: cfg_out - configuration dict, where all fields are optional. Do nothing if cfg_out['tables'] is None
 
     Sets or updates fields of cfg_out:
@@ -1570,16 +1664,16 @@ def query_time_range(min_time=None, max_time=None, **kwargs) -> str:
 
 
 def h5log_rows_gen(
-        db_path: Union[str, Path],
-        table_log: str,
+        db_path: Union[str, Path, None] = None,
+        table_log: str = 'log',
         min_time=None, max_time=None,
         query_range=None,
         db: Optional[pd.HDFStore]=None, **kwargs) -> Iterator[Dict[str, Any]]:
     """
     Dicts from each h5 log row
-    :param db_path, str: name of hdf5 pandas store where is log table, used only for message if it is set and db is set
+    :param db_path: name of hdf5 pandas store where is log table, used only for message if it is set and db is set
     :param db: handle of already open pandas hdf5 store
-    :param table_log, str: name of log table - table with columns for intervals:
+    :param table_log: name of log table - table with columns for intervals:
       - index - starts, pd.DatetimeIndex
       - DateEnd - ends, pd.Datetime
     :param min_time, max_time: datetime, optional, allows limit the range of table_log rows, not used if query_range is set
@@ -1596,18 +1690,20 @@ def h5log_rows_gen(
             print(f'loading from "{db_path}": ', end='')
         for n, rp in enumerate(store.select(table_log, where=query_range).itertuples()):
             r = dict(zip(rp._fields, rp))
-            yield (r)  # r.Index, r.DateEnd
+            yield r  # r.Index, r.DateEnd
 
 
-def h5log_names_gen(cfg_in, f_row_to_name=lambda r: '{Index:%y%m%d_%H%M}-{DateEnd:%H%M}'.format_map(r)):
+def h5log_names_gen(
+        cfg_in: Mapping, f_row_to_name=lambda r: '{Index:%y%m%d_%H%M}-{DateEnd:%H%M}'.format_map(r)
+        ) -> Iterator[Any]:
     """
-    Genereates outputs of f_row_to_name function which receives dicts from each h5 log row (see h5log_rows_gen)
-    :param cfg_in: dict with field 'log_row' where h5log_rows_gen(cfg_in) item will be saved
-    :param f_row_to_name: function(dict) where dict have fields from h5 log row.
-        By default returns string suitable to name files by start-end date/time
-    :return:
-    :modifies cfg: adds/replaces field 'log_row': dict from h5 log row. This allows use this dict also
-    Replasing for veuszPropagate.ge_names() to use tables instead files
+    Generates outputs of f_row_to_name function which receives dicts from each h5 log row (see h5log_rows_gen)
+    :param cfg_in: keyword arguments for h5log_rows_gen()
+    :param f_row_to_name: function(dict) where dict have fields from h5 log row
+    :return: iterator, by default - of strings, suitable to name files by start-end date/time
+
+    :Modifies cfg_in: adds/replaces field cfg_in['log_row'] = h5log_rows_gen(cfg_in) result before each yielding
+    Replacing for veuszPropagate.ge_names() to use tables instead files
     """
     for row in h5log_rows_gen(**cfg_in):
         cfg_in['log_row'] = row
@@ -1636,3 +1732,149 @@ def merge_two_runs(df_log: pd.DataFrame, irow_to: int, irow_from: Optional[int] 
     df_log.loc[ind_to, cols_sum] += df_log.loc[ind_from, cols_sum]
     df_log.drop(ind_from, inplace=True)
     print('ok, 10 nearest rows became:', df_log.iloc[(irow_from-5):(irow_to+5), :])
+
+
+def h5_close(cfg_out: Mapping[str, Any]) -> None:
+    """
+    Closes cfg_out['db'] store, removes duplicates (if need) and creates indexes
+    :param cfg_out: dict, with optional fields:
+    - b_remove_duplicates: True - to remove duplicates
+    - tables_written: cfg_out fields where stored table names (to create indexes), default ('tables', 'tables_log'). These fields must be in cfg_out.
+    :return: None
+    """
+    try:
+        print('')
+        cfg_table_keys = ['tables_written'] if ('tables_written' in cfg_out) else ('tables', 'tables_log')
+        if cfg_out['b_remove_duplicates']:
+            tbl_dups = h5remove_duplicates_by_loading(cfg_out, cfg_table_keys=cfg_table_keys)
+            # or h5remove_duplicates() but it can take very long time
+        create_indexes(cfg_out, cfg_table_keys)
+    except Exception as e:
+        lf.exception('\nError of adding data to temporary store: ')
+
+        import traceback
+        import code
+        from sys import exc_info as sys_exc_info
+        tb = sys_exc_info()[2]  # type, value,
+        traceback.print_exc()
+        last_frame = lambda tb=tb: last_frame(tb.tb_next) if tb.tb_next else tb
+        frame = last_frame().tb_frame
+        ns = dict(frame.f_globals)
+        ns.update(frame.f_locals)
+        code.interact(local=ns)
+    finally:
+        try:
+            cfg_out['db'].close()
+        except HDF5ExtError:
+            lf.exception(f"Error closing: {cfg_out['db']}")
+        if cfg_out['db'].is_open:
+            print('Wait store closing...')
+            sleep(2)
+            if cfg_out['db'].is_open:
+                cfg_out['db_is_bad'] = True  # failed closing
+
+        cfg_out['db'] = None
+        return
+
+
+def h5_names_gen(cfg_in, cfg_out: Mapping[str, Any], check_have_new_data=True, **kwargs) -> Iterator[Path]:
+    """
+    Yields Paths from cfg_in['paths'] items
+    :updates: cfg_out['log'] fields 'fileName' and 'fileChangeTime'
+
+    :param cfg_in: dict, must have fields:
+        - paths: iterator - returns full file names
+    :param cfg_out: dict, with fields needed for h5_dispenser_and_names_gen() and print info:
+        - log: current file info with fields that should be updated before each yield:
+            - Date0, DateEnd, rows: if no Date0, then prints "file not processed"
+    :param check_have_new_data: bool, if False then do not check Date0 presence and print "file not processed"
+
+    """
+    set_field_if_no(cfg_out, 'log', {})
+    for name_full in cfg_in['paths']:
+        pname = Path(name_full)
+
+        cfg_out['log']['fileName'] = f'{pname.parent.name}/{pname.stem}'[-cfg_out['logfield_fileName_len']:]
+        cfg_out['log']['fileChangeTime'] = datetime.fromtimestamp(pname.stat().st_mtime)
+
+        try:
+            yield pname     # Traceback error line pointing here is wrong
+        except GeneratorExit:
+            print('Something wrong?')
+            return
+
+        # Log to logfile
+        if cfg_out['log'].get('Date0'):
+            strLog = '{fileName}:\t{Date0:%d.%m.%Y %H:%M:%S}-{DateEnd:%d.%m %H:%M:%S%z}\t{rows}rows'.format(
+                **cfg_out['log'])  # \t{Lat}\t{Lon}\t{strOldVal}->\t{mag}
+            lf.info(strLog)
+        elif check_have_new_data:
+            strLog = "file not processed"
+            lf.info(strLog)
+
+
+def h5_dispenser_and_names_gen(
+        cfg_in: Mapping[str, Any],
+        cfg_out: Optional[MutableMapping[str, Any]] = None,
+        fun_gen: Callable[[Mapping[str, Any], Mapping[str, Any], Any], Iterator[Any]] = h5_names_gen,
+        b_close_at_end: Optional[bool] = True,
+        **kwargs
+        ) -> Iterator[Tuple[int, Any]]:
+    """
+    Prepares HDF5 store to insert/update data and yields fun_gen(...) outputs:
+        - Opens DB for writing (see h5temp_open() requirements)
+        - Finds data labels by fun_gen(): default are file names and their modification date
+        - Removes outdated data
+        - Generates fun_gen() output (if b_incremental_update, only data labels which is absent in DB (to upload new/updated data))
+        - Tide up DB: creates index, closes DB.
+    This function supports storing data in HDF5 used in h5toGrid: dataframe's child 'table' node always contain adjacent
+    "log" node. "log" dataframe labels parent dataframe's data segments and allows to check it for existence and
+    relevance.
+
+    :param cfg_in: dict, must have fields:
+        - fields used in your fun_gen(cfg_in, cfg_out)
+    :param cfg_out: dict, must have fields:
+        - log: dict, with info about current data, must have fields for compare:
+            - 'fileName' - in format as in log table to be able to find duplicates
+            - 'fileChangeTime', datetime - to be able to find outdated data
+        - b_incremental_update: if True then not yields previously processed files. But if file was changed then
+            1. removes stored data and 2. yields fun_gen(...) result
+        - tables_written: sequence of table names where to create index
+    :param fun_gen: function with arguments (cfg_in, cfg_out, **kwargs) (kwargs are of h5_dispenser_and_names_gen), that
+        - generates data labels, default are file's ``Path``s,
+        - updates cfg_out['log'] fields 'fileName' (by current label) and 'fileChangeTime' needed to store and find
+        data. They named historically, in principle, you can use any unique identifier composed of this two fields.
+    :param b_close_at_end: if True (default) then closes store after generator exhausted
+
+    :return: Iterator that returns (i1, pname):
+        - i1: index (starting with 1) of fun_gen generated data label (maybe file)
+        - pname: fun_gen output (may be path name)
+        Skips (i1, pname) for existed labels that also has same stored data label (file) modification date
+    :updates:
+        - cfg_out['db'],
+        - cfg_out['b_remove_duplicates'] and
+        - that what fun_gen() do
+    """
+    # copy data to temporary HDF5 store and open it
+    df_log_old, cfg_out['db'], cfg_out['b_incremental_update'] = h5temp_open(
+        **cfg_out, db_in=cfg_in.get('db'))
+    try:
+        for i1, gen_out in enumerate(fun_gen(cfg_in, cfg_out, **kwargs), start=1):
+            # if current file it is newer than its stored data then remove data and yield its info to process again
+            if cfg_out['b_incremental_update']:
+                b_stored_newer, b_stored_dups = h5del_obsolete(
+                    cfg_out, cfg_out['log'], df_log_old, cfg_out.get('field_to_del_older_records')
+                    )
+                if b_stored_newer:
+                    continue  # not need process: current file already loaded
+                if b_stored_dups:
+                    cfg_out['b_remove_duplicates'] = True  # normally no duplicates but we set if detect
+
+            yield i1, gen_out
+
+    except Exception as e:
+        lf.exception('\nError preparing data:')
+        sys.exit(ExitStatus.failure)
+    finally:
+        if b_close_at_end:
+            h5_close(cfg_out)

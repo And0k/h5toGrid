@@ -41,7 +41,7 @@ sys.path.append(str(scripts_path.parent.resolve()))
 
 from utils2init import Ex_nothing_done, init_logging, cfg_from_args, init_file_names, my_argparser_common_part, call_with_valid_kwargs
 from utils_time import intervals_from_period, pd_period_to_timedelta
-from to_pandas_hdf5.h5toh5 import h5init, h5select
+from to_pandas_hdf5.h5toh5 import h5init
 from to_pandas_hdf5.h5_dask_pandas import h5_load_range_by_coord, filter_local
 # h5q_intervals_indexes_gen
 from inclinometer.incl_h5clc import incl_calc_velocity_nodask, my_argparser, h5_names_gen, filt_data_dd
@@ -284,7 +284,7 @@ def h5q_starts2coord(
         ) -> pd.Index:
     """
     Edge coordinates of index range query
-    As it is nealy part of h5toh5.h5select() may be depreshiated? See Note
+    As it is nealy part of h5toh5.h5load_ranges() may be depreshiated? See Note
     :param starts_time: array or list with strings convertable to pandas.Timestamp
     :param dt_interval: pd.TimeDelta
     :param db_path, str
@@ -292,9 +292,9 @@ def h5q_starts2coord(
     :return: ``qstr_range_pattern`` edge coordinates
     See also: h5_dask_pandas.h5q_interval2coord
     Note: can use instead:
-    >>> from to_pandas_hdf5.h5toh5 import h5select
+    >>> from to_pandas_hdf5.h5toh5 import h5load_ranges
     ... with pd.HDFStore(db_path, mode='r') as store:
-    ...     df, bbad = h5select(store, table, columns=None, query_range_lims=time_range)
+    ...     df, bbad = h5load_ranges(store, table, columns=None, query_range_lims=time_range)
 
     """
     # qstr_range_pattern = f"index>=st[{i}] & index<=en[{i}]"
@@ -550,23 +550,23 @@ def psd_mt(x, dpss, weights, dt, n_fft, freq_mask, adaptive_if_can=None, eigvals
 
 def psd_calc(df, fs, freqs, adaptive=None, b_plot=False, **kwargs):
     """
-    Compute Power Spectral Densities (PSDs) of df.Ve/Vn using multitaper method
-    :param df: dataframe with Ve and Vn
+    Compute Power Spectral Densities (PSDs) of df.u/v using multitaper method
+    :param df: dataframe with u and v
     :param b_plot:
     :param kwargs: psd_mt kwargs
     :return:
     """
 
-    psdm_Ve = psd_mt(df.Ve.to_numpy(), **kwargs)[0, :]
-    psdm_Vn = psd_mt(df.Vn.to_numpy(), **kwargs)[0, :]
+    psdm_Ve = psd_mt(df.u.to_numpy(), **kwargs)[0, :]
+    psdm_Vn = psd_mt(df.v.to_numpy(), **kwargs)[0, :]
 
     if False:
         ## high level mne functions recalcs windows each time
         from third_party.mne.time_frequency import psd_array_multitaper
         multitaper.warn = l.warning
-        psdm_Ve, freq = psd_array_multitaper(df.Ve, sfreq=fs, adaptive=adaptive,
+        psdm_Ve, freq = psd_array_multitaper(df.u, sfreq=fs, adaptive=adaptive,
                                              normalization='length')  # fmin=0, fmax=0.5,
-        psdm_Vn, freq = psd_array_multitaper(df.Vn, sfreq=fs, adaptive=adaptive, normalization='length')  #
+        psdm_Vn, freq = psd_array_multitaper(df.v, sfreq=fs, adaptive=adaptive, normalization='length')  #
 
     if b_plot:
         # plot all
@@ -657,7 +657,7 @@ def main(new_arg=None, **kwargs):
         return ()
     print('\n' + prog, end=' started. ')
 
-    cfg['in']['columns'] = ['Ve', 'Vn', 'Pressure']
+    cfg['in']['columns'] = ['u', 'v', 'Pressure']
     # minimum time between blocks, required in filt_data_dd() for data quality control messages:
     cfg['in']['dt_between_bursts'] = None  # If None report any interval bigger then min(1st, 2nd)
     cfg['in']['dt_hole_warning'] = np.timedelta64(2, 's')
@@ -755,10 +755,10 @@ def main(new_arg=None, **kwargs):
             if 'Pressure' in df.columns:
                 cols.add('Pressure')
                 nc_tbl.createVariable('Pressure', 'f4', ('time', 'freq',), zlib=True)
-            if 'Ve' in df.columns:
-                cols.update(['Ve', 'Vn'])
-                nc_tbl.createVariable('Ve', 'f4', ('time', 'freq',), zlib=True)
-                nc_tbl.createVariable('Vn', 'f4', ('time', 'freq',), zlib=True)
+            if 'u' in df.columns:
+                cols.update(['u', 'v'])
+                nc_tbl.createVariable('u', 'f4', ('time', 'freq',), zlib=True)
+                nc_tbl.createVariable('v', 'f4', ('time', 'freq',), zlib=True)
             nc_tbl.createVariable('time_start', 'f8', ('time',), zlib=True)
             nc_tbl.createVariable('time_end', 'f8', ('time',), zlib=True)
             out_row = 0
@@ -825,8 +825,8 @@ def psd_calc_other_methods(df, prm: Mapping[str, Any]):
 
     ## Welch
     nperseg = 1024 * 8
-    freqs, psd_Ve = signal.welch(df.Ve, prm['fs'], nperseg=nperseg)
-    freqs, psd_Vn = signal.welch(df.Vn, prm['fs'], nperseg=nperseg)
+    freqs, psd_Ve = signal.welch(df.u, prm['fs'], nperseg=nperseg)
+    freqs, psd_Vn = signal.welch(df.v, prm['fs'], nperseg=nperseg)
 
     ## use Spectrum module
     from spectrum import dpss
@@ -925,12 +925,12 @@ def psd_calc_other_methods(df, prm: Mapping[str, Any]):
         return Sk_complex, Sk, weights
 
     prm['dpss_sp'], prm['eigvals_sp'] = dpss(prm['n_fft'], 3.5)
-    sk_complex_Ve, sk_Ve_, weights_Ve = pmtm(df.Ve.values, prm['eigvals_sp'], prm['dpss_sp'])  # n_fft=prm['n_fft']
-    sk_complex_Vn, sk_Vn_, weights_Vn = pmtm(df.Vn.values, prm['eigvals_sp'], prm['dpss_sp'])
+    sk_complex_Ve, sk_u_, weights_Ve = pmtm(df.u.values, prm['eigvals_sp'], prm['dpss_sp'])  # n_fft=prm['n_fft']
+    sk_complex_Vn, sk_v_, weights_Vn = pmtm(df.v.values, prm['eigvals_sp'], prm['dpss_sp'])
     # Convert Power Spectrum to Power Spectral Density
     record_time_length = prm['length'] * prm['dt']
-    sk_Ve = sk_Ve_ / record_time_length
-    sk_Vn = sk_Vn_ / record_time_length
+    sk_Ve = sk_u_ / record_time_length
+    sk_Vn = sk_v_ / record_time_length
 
 
 """old cfg

@@ -5,7 +5,7 @@
   Purpose: Save synchronised averaged data to hdf5 tables
   Created: 01.09.2021
 
-Load data from hdf5 table (or group of tables)
+Load raw data and coefficients from hdf5 table (or group of tables)
 Calculate new data (averaging by specified interval)
 Combine this data to one new table
 """
@@ -32,6 +32,7 @@ from omegaconf import MISSING, open_dict
 import hydra
 
 # my:
+
 # allows to run on both my Linux and Windows systems:
 scripts_path = Path(f"{'D:' if sys.platform == 'win32' else '/mnt/D'}/Work/_Python3/And0K/h5toGrid/scripts")
 sys.path.append(str(scripts_path.parent.resolve()))
@@ -43,11 +44,11 @@ import to_vaex_hdf5.cfg_dataclasses as cfg_d
 from utils2init import Ex_nothing_done, call_with_valid_kwargs, set_field_if_no, init_logging, cfg_from_args, \
      my_argparser_common_part, this_prog_basename, dir_create_if_need, LoggingStyleAdapter
 from utils_time import intervals_from_period, pd_period_to_timedelta
-from to_pandas_hdf5.h5toh5 import h5init, h5find_tables, h5remove_table, h5move_tables, h5coords
+from to_pandas_hdf5.h5toh5 import h5init, h5find_tables, h5remove, h5move_tables, h5coords, h5_close, \
+    h5_dispenser_and_names_gen
 from to_pandas_hdf5.h5_dask_pandas import h5_append, h5q_intervals_indexes_gen, h5_load_range_by_coord, i_bursts_starts, \
     filt_blocks_da, filter_global_minmax, filter_local, cull_empty_partitions, dd_to_csv
-from to_pandas_hdf5.csv2h5 import h5_dispenser_and_names_gen, h5_close
-from other_filters import rep2mean
+from filters import rep2mean
 from inclinometer.h5inclinometer_coef import rot_matrix_x, rotate_y
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
@@ -69,7 +70,7 @@ class ConfigIn_InclProc(cfg_d.ConfigInHdf5_Simple):
     time_range: Optional[List[str]] = None
     # cruise directories to search in in.db_path to set path of out.db_path under it if out.db_path is not absolute:
     raw_dir_words_list: Optional[List[str]] = field(
-        default_factory= lambda: cfg_d.ConfigInput().raw_dir_words)
+        default_factory= lambda: cfg_d.ConfigInCsv().raw_dir_words)
     db_paths: Optional[List[str]] = None
     # fields that are dicts of existed fields - they specifies different values for each probe:
     dates_min: Dict[str, Any] = field(default_factory=dict)  # Any is for List[str] but hydra not supported
@@ -422,7 +423,7 @@ def polar2dekart(Vabs, Vdir) -> List[Union[da.Array, np.ndarray]]:
 
     :param Vabs:
     :param Vdir:
-    :return: list [Vn, Ve] - list (not tuple) is used because it is need to concatenate with other data
+    :return: list [v, u] of (north, east) components. List (not tuple) is used because it is more convenient to concatenate it with other data
     """
     return [Vabs * np.cos(np.radians(Vdir)), Vabs * np.sin(np.radians(Vdir))]
 
@@ -431,30 +432,30 @@ def polar2dekart(Vabs, Vdir) -> List[Union[da.Array, np.ndarray]]:
 # def dekart2polar(v_en):
 #     """
 #     Not Tested
-#     :param Ve:
-#     :param Vn:
+#     :param u:
+#     :param v:
 #     :return: [Vabs, Vdir]
 #     """
 #     return np.linalg.norm(v_en, axis=0), np.degrees(np.arctan2(*v_en))
 
-def dekart2polar_df_v_en(df, **kwargs):
+def dekart2polar_df_uv(df, **kwargs):
     """
 
-    :param d: if no columns Ve and Vn remains unchanged
+    :param d: if no columns u and v remains unchanged
     :**kwargs :'inplace' not supported in dask. dumn it!
     :return: [Vabs, Vdir] series
     """
 
-    # why da.linalg.norm(df.loc[:, ['Ve','Vn']].values, axis=1) gives numpy (not dask) array?
-    # da.degrees(df.eval('arctan2(Ve, Vn)')))
+    # why da.linalg.norm(df.loc[:, ['u','v']].values, axis=1) gives numpy (not dask) array?
+    # da.degrees(df.eval('arctan2(u, v)')))
 
-    if 'Ve' in df.columns:
+    if 'u' in df.columns:
 
         kdegrees = 180 / np.pi
 
         return df.eval(f"""
-        Vabs = sqrt(Ve**2 + Vn**2)
-        Vdir = arctan2(Ve, Vn)*{kdegrees:.20}
+        Vabs = sqrt(u**2 + v**2)
+        Vdir = arctan2(u, v)*{kdegrees:.20}
         """, **kwargs)
     else:
         return df
@@ -513,7 +514,7 @@ def incl_calc_velocity_nodask(
             ))
 
         col = 'Pressure' if ('Pressure' in a.columns) else 'Temp' if ('Temp' in a.columns) else []
-        columns = ['Vabs', 'Vdir', 'Vn', 'Ve', 'inclination']
+        columns = ['Vabs', 'Vdir', 'v', 'u', 'inclination']
         arrays_list = [Vabs, Vdir] + polar2dekart(Vabs, Vdir) + [da.degrees(incl_rad)]
         a = a.assign(**{c: ar for c, ar in zip(columns, arrays_list)})  # a[c] = ar
 
@@ -606,7 +607,7 @@ def recover_magnetometer_x(Mcnts, Ah, Ch, max_h_minus_1, len_data):
             Mcnts_list[0] = Mcnts[0, :]
 
         lf.debug('interpolating magnetometer data using neighbor points separately for each channel...')
-        need_recover_mask = da.ones_like(HsumMinus1)  # here save where Vdir can not recover
+        need_recover_mask = da.ones_like(HsumMinus1, dtype=np.bool8)  # here save where Vdir can not recover
         for ch, i in [('x', 0), ('y', 1), ('z', 2)]:  # in ([('y', 1), ('z', 2)] if need_recover else
             print(ch, end=' ')
             if (ch != 'x') or not need_recover:
@@ -644,10 +645,10 @@ def rep2mean_da(y: da.Array, bOk=None, x=None, ovrerlap_depth=None) -> da.Array:
     :param x:
     :return: dask array of np.float64 values
 
-    g = da.overlap.overlap(x, depth={0: 2, 1: 2},
-... boundary={0: 'periodic', 1: 'periodic'})
->>> g2 = g.map_blocks(myfunc)
->>> result = da.overlap.trim_internal(g2, {0: 2, 1: 2})     # todo it
+    g = da.overlap.overlap(x, depth={0: 2, 1: 2}, boundary={0: 'periodic', 1: 'periodic'})
+    todo:
+    g2 = g.map_blocks(myfunc)
+    result = da.overlap.trim_internal(g2, {0: 2, 1: 2})
     """
     if x is None:  # dask requires "All variadic arguments must be arrays"
         return da.map_overlap(rep2mean, y, bOk, depth=ovrerlap_depth, dtype=np.float64, meta=np.float64([]))
@@ -668,7 +669,7 @@ def rep2mean_da2np(y: da.Array, bOk=None, x=None) -> np.ndarray:
 
     y_last = None
     y_out_list = []
-    for y_bl, b_ok in zip(y.blocks, (da.isfinite(y) & bOk).blocks):
+    for y_bl, b_ok in zip(y.blocks, bOk.blocks):
         y_bl, ok_bl = da.compute(y_bl, b_ok)
         y_bl = rep2mean(y_bl, ok_bl)
         ok_in_replaced = np.isfinite(y_bl[~ok_bl])
@@ -709,7 +710,7 @@ def incl_calc_velocity(a: dd.DataFrame,
                        cfg_proc: Optional[Mapping[str, Any]] = None,
                        Ag: Optional[np.ndarray] = None, Cg: Optional[np.ndarray] = None,
                        Ah: Optional[np.ndarray] = None, Ch: Optional[np.ndarray] = None,
-                       kVabs: Optional[np.ndarray] = None, azimuth_shift_deg: Optional[float] = None,
+                       kVabs: Optional[np.ndarray] = None, azimuth_shift_deg: Optional[float] = 0,
                        cols_prepend = None,
                        **kwargs
                        ) -> dd.DataFrame:
@@ -730,7 +731,7 @@ def incl_calc_velocity(a: dd.DataFrame,
         h_minus_1: to set Vdir=0 and...
     :param cfg_proc: 'calc_version', 'max_incl_of_fit_deg'
     :param cols_prepend: new parameters that will be prepended to a columns (only columns if a have only raw
-    accelerometer and magnetometer fields). If None then ('Vabs', 'Vdir', 'Vn', 'Ve', 'inclination') will be used. Use
+    accelerometer and magnetometer fields). If None then ('Vabs', 'Vdir', 'v', 'u', 'inclination') will be used. Use
      any from this elements in needed order.
     :param kwargs: not affects calculation
     :return: dataframe with prepended columns ``cols_prepend`` and removed accelerometer and
@@ -789,8 +790,8 @@ def incl_calc_velocity(a: dd.DataFrame,
                                        max_incl_of_fit_deg=cfg_proc['max_incl_of_fit_deg'],
                                        dtype=np.float64, meta=np.float64([]))
             # Vabs = np.polyval(kVabs, np.where(bad, np.NaN, Gxyz))
-            # Vn = Vabs * np.cos(np.radians(Vdir))
-            # Ve = Vabs * np.sin(np.radians(Vdir))
+            # v = Vabs * np.cos(np.radians(Vdir))
+            # u = Vabs * np.sin(np.radians(Vdir))
 
             Hxyz, need_recover_mask = recover_magnetometer_x(
                 a.loc[:, ('Mx', 'My', 'Mz')].to_dask_array(lengths=lengths).T, Ah, Ch, filt_max['h_minus_1'], len_data)
@@ -812,7 +813,7 @@ def incl_calc_velocity(a: dd.DataFrame,
                 Vdir = azimuth_shift_deg - da.degrees(da.arctan2(Gxyz[0, :], Gxyz[1, :]))
             Vdir = Vdir.flatten()
 
-            cols_new = ['Vabs', 'Vdir', 'Vn', 'Ve', 'inclination']
+            cols_new = ['Vabs', 'Vdir', 'v', 'u', 'inclination']
             arrays_new = [Vabs, Vdir] + polar2dekart(Vabs, Vdir) + [da.degrees(incl_rad)]
             if cols_prepend is None:
                 cols_prepend = cols_new
@@ -1052,12 +1053,14 @@ def filt_data_dd(a, dt_between_bursts=None, dt_hole_warning: Optional[np.timedel
 def h5_names_gen(cfg_in: Mapping[str, Any], cfg_out: None = None
                  ) -> Iterator[Tuple[str, Tuple[Any, ...]]]:
     """
-    Generate table names with associated coefficients. Coefs are loaded from '{tbl}/coef' node of hdf5 file.
+    Generate table names with associated coefficients which are loaded from '{tbl}/coef' node of hdf5 file.
     :param cfg_in: dict with fields:
-      - tables: tables names search pattern or sequence of table names
-      - db_path: hdf5 file with tables which have coef group nodes.
+    - tables: tables names search pattern or sequence of table names
+    - db_path: hdf5 file with tables which have coef group nodes.
     :param cfg_out: not used but kept for the requirement of h5_dispenser_and_names_gen() argument
-    :return: iterator that returns (table name, coefficients). Coefficients are None if db_path ends with 'proc_noAvg'.
+    :return: iterator that returns (table_name, coefficients).
+    - table_name is same as input tables names except that "incl" replaced with "i"
+    - coefficients are None if db_path ends with 'proc_noAvg'.
      "Vabs0" coef. name are replaced with "kVabs"
     Updates cfg_in['tables'] - sets to list of found tables in store
     """
@@ -1065,13 +1068,12 @@ def h5_names_gen(cfg_in: Mapping[str, Any], cfg_out: None = None
     with pd.HDFStore(cfg_in['db_path'], mode='r') as store:
         if len(cfg_in['tables']) == 1:
             cfg_in['tables'] = h5find_tables(store, cfg_in['tables'][0])
-
-        if '.proc_noAvg' in cfg_in['db_path'].suffixes[-2:-1]:
-            # Loading already processed data
-            for tbl in cfg_in['tables']:
-                yield (tbl, None)
-        else:
-            for tbl in cfg_in['tables']:
+        for tbl in cfg_in['tables']:
+            if '.proc_noAvg' in cfg_in['db_path'].suffixes[-2:-1]:
+                # Loading already processed data
+                tbl = tbl.replace('incl', 'i')  # can be useful only if need loading from processed tbl
+                coefs_dict = None
+            else:
                 # if int(tbl[-2:]) in {5,9,10,11,14,20}:
                 coefs_dict = {}
                 # Finds up to 2 levels of coefficients, naming rule gives coefs this names (but accepts any paths):
@@ -1090,7 +1092,7 @@ def h5_names_gen(cfg_in: Mapping[str, Any], cfg_out: None = None
                             coefs_dict[name] = node_coef_l2[node_name_l2].read()
                     else:  # node_coef_l2 is value
                         coefs_dict[node_name if node_name != 'Vabs0' else 'kVabs'] = node_coef_l2.read()
-                yield tbl, coefs_dict
+            yield tbl, coefs_dict
     return
 
 
@@ -1106,7 +1108,7 @@ def h5_append_to(dfs: Union[pd.DataFrame, dd.DataFrame],
         if msg:
             lf.info(msg)
         # try:  # tbl was removed by h5temp_open() if b_overwrite is True:
-        #     if h5remove_table(cfg_out['db'], tbl):
+        #     if h5remove(cfg_out['db'], tbl):
         #         lf.info('Writing to new table {}/{}', Path(cfg_out['db'].filename).name, tbl)
         # except Exception as e:  # no such table?
         #     pass
@@ -1252,8 +1254,8 @@ def gen_subconfigs(
                                                        ),
                     aggr
                     )
-
-            probe_number_str = re.findall('[\d_]+', tbl)[0]  # combined data are named by numbers joined by "_"
+            # Model and number excluding type (w - wave gauges / i or incl - inclinometers)
+            probe_number_str = re.search('(?:(?:w|incl|i)_?(?P<n>[A-z]*\d+)_?)+', tbl).group('n')  # combined data are named by numbers joined by "_"
             if probe_number_str in probes_dict:
                 cfg_cur = probes_dict[probe_number_str].copy()
                 # copy() is need because this destructive for cfg_cur cycle can be run for other table of same probe
@@ -1284,19 +1286,25 @@ def gen_subconfigs(
             except hydra.errors.MissingConfigException:
                 pass
 
-            # loading time_range must have all info about time filter
+            # ``time_range`` must be specified before loading so filling with dumb values where no info.
             if cfg_in_copy['time_range'] is None and (cfg_in_copy['min_date'] or cfg_in_copy['max_date']):
                 cfg_in_copy['time_range'] = [
                     cfg_in_copy['min_date'] or '2000-01-01',
                     cfg_in_copy['max_date'] or pd.Timestamp.now()]
 
             def yielding(d, msg=':'):
+                """
+                :param d:
+                :param msg:
+                :return:
+                changes the name of the output table from incl to i to reflect the fact that the data is processed there
+                """
                 lf.warning('{:s}.{:d}-{:s}{:s}', group_in, itbl, tbl, msg)  # itbl
                 # cfg_in_copy['tables'] = cfg_in_copy['table']  # recover (seems not need now but may be for future use)
 
                 # copy to not cumulate the coefs corrections in several cycles of generator consumer for same probe:
                 coefs_copy = coefs.copy() if coefs else None
-                return d, coefs_copy, tbl, probe_number_str
+                return d, coefs_copy, tbl.replace('incl', 'i'), probe_number_str
 
             with pd.HDFStore(cfg_in_copy['db_path'], mode='r') as store:
                 if '.proc_noAvg' in cfg['in']['db_path'].suffixes[-2:-1] and not cfg['out']['b_split_by_time_ranges']:
@@ -1306,8 +1314,16 @@ def gen_subconfigs(
                 else:
                     # query and process several independent intervals
                     # Get index only and find indexes of data
-                    index_range, i0range, iq_edges = h5coords(store, tbl, cfg_in_copy['time_range'])
+                    try:
+                        index_range, i0range, iq_edges = h5coords(store, tbl, cfg_in_copy['time_range'])
+                    except TypeError:  # skip empty nodes
+                        # TypeError: cannot create a storer if the object is not existing nor a value are passed
+                        lf.warning('Skipping {} without data table found', tbl)
+                        continue
                     for i_part, iq_edges_cur in enumerate(zip(iq_edges[::2], iq_edges[1::2])):
+                        n_rows_to_load = -np.subtract(*iq_edges_cur)
+                        if n_rows_to_load==0:  # empty interval - will get errors in main circle
+                            continue  # It is normal when used config with many intervals for different source databases
                         ddpart = h5_load_range_by_coord(**cfg_in_copy, range_coordinates=iq_edges_cur)
                         d, iburst = filt_data_dd(
                             ddpart, cfg_in_copy['dt_between_bursts'], cfg_in_copy['dt_hole_warning'],
@@ -1376,12 +1392,15 @@ def main(config: ConfigType) -> None:
 
         if '.proc_noAvg' not in cfg['in']['db_path'].suffixes[-2:-1]:
             if db_path_proc_noAvg.is_file():
-                lf.info('Using found {}/{} db as source for averaging', *db_path_proc_noAvg.parts[-2:])
+                # Changing input db and tables
+                cfg['in']['tables'] = [tbl.replace('incl', 'i') for tbl in cfg['in']['tables']]  # can be useful only if need loading from processed tbl
+                lf.info('Using found {}/{} db and its {} tables as source for averaging', *db_path_proc_noAvg.parts[-2:],
+                        cfg['in']['tables'])
                 cfg['in']['db_path'] = db_path_proc_noAvg
 
         if cfg['out']['text_path'] is None:
             cfg['out']['text_path'] = Path('text_output')
-        cols_out_h5 = ['Vn', 'Ve', 'Pressure', 'Temp']                                # absent here cols will be ignored
+        cols_out_h5 = ['v', 'u', 'Pressure', 'Temp']                                # absent here cols will be ignored
     else:
         # Restricting number of counts in dask partition by time period
         split_for_memory = cfg['out']['split_period'] or pd.Timedelta(1, 'D')
@@ -1389,7 +1408,7 @@ def main(config: ConfigType) -> None:
 
         if not cfg['out']['not_joined_db_path']:
             cfg['out']['not_joined_db_path'] = db_path_proc_noAvg
-        cols_out_h5 = ['Vn', 'Ve', 'Pressure', 'Temp', 'inclination']                 # absent here cols will be ignored
+        cols_out_h5 = ['v', 'u', 'Pressure', 'Temp', 'inclination']                 # absent here cols will be ignored
 
     if cfg['out']['text_path'] is not None and not cfg['out']['text_path'].is_absolute():
         cfg['out']['text_path'] = cfg['out']['db_path'].parent / cfg['out']['text_path']
@@ -1397,7 +1416,7 @@ def main(config: ConfigType) -> None:
     # get all or some from calc_velocity(): if not need Vabs/dir for saving to txt then not get:
     if cfg['out']['text_path']:
         cols_out_incl = None
-    else:  # ('Vn', 'Ve', 'inclination')
+    else:  # ('v', 'u', 'inclination')
         cols_out_incl = cols_out_h5.copy()
         cols_out_incl.remove('Pressure')
         cols_out_incl.remove('Temp')
@@ -1489,10 +1508,10 @@ def main(config: ConfigType) -> None:
                     lf.info('Persisting failed (not enough memory). Continue...')
 
             # Recalculating aggregated polar coordinates and angles that are invalid after the direct aggregating
-            d = dekart2polar_df_v_en(d)
+            d = dekart2polar_df_uv(d)
             if cfg['out']['split_period']:  # for csv splitting only
                 d = d.repartition(freq=cfg['out']['split_period'])
-        else:
+        else:                       # no averaging
             # Velocity calculation
             # --------------------
             # with repartition for ascii splitting (also helps to prevent MemoryError)
@@ -1516,7 +1535,7 @@ def main(config: ConfigType) -> None:
                     }
                 tables_written_not_joined |= (
                     h5_append_to(d, tbl, cfg['out'], log,
-                                 msg=f'saving {tbl} separately to temporary store',
+                                 msg=f'saving {tbl} to temporary store',
                                  )
                 )
 
@@ -1556,9 +1575,8 @@ def main(config: ConfigType) -> None:
             )
         dfs_all_log = pd.DataFrame(
             [df.index[[0, -1]].to_list() for df in dfs_all_list], columns=['Date0', 'DateEnd']
-            ).set_index('Date0')\
-            .assign(table_name=tbls)\
-            .sort_index()
+            ).assign(table_name=tbls) #.set_index('table_name')\
+            #.sort_index() #\
         for after_remove_dup_index in [False, True]:
             try:
                 cfg['out']['tables_written'] |= (
@@ -1637,7 +1655,7 @@ if ('Pressure' in a.columns) or ('Temp' in a.columns):
     df.assign = df.join(a[[col]])
 
 # Adding column of other (complex) type separatly
-# why not works?: V = df['Vabs'] * da.cos(da.radians(df['Vdir'])) + 1j*da.sin(da.radians(df['Vdir']))  ().to_frame() # Vn + j*Ve # below is same in more steps
+# why not works?: V = df['Vabs'] * da.cos(da.radians(df['Vdir'])) + 1j*da.sin(da.radians(df['Vdir']))  ().to_frame() # v + j*u # below is same in more steps
 V = polar2dekart_complex(Vabs, Vdir)
 V_dd = dd.from_dask_array(V, columns=['V'], index=a.index)
 df = df.join(V_dd)

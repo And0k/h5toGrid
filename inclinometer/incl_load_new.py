@@ -47,7 +47,7 @@ import inclinometer.incl_h5spectrum as incl_h5spectrum
 import veuszPropagate
 from utils_time import intervals_from_period # pd_period_to_timedelta
 from utils2init import path_on_drive_d, init_logging, open_csv_or_archive_of_them, st, cfg_from_args, my_argparser_common_part
-from utils2init import this_prog_basename, standard_error_info, LoggingStyleAdapter
+from utils2init import this_prog_basename, standard_error_info, LoggingStyleAdapter, constant_factory
 from magneticDec import mag_dec
 
 
@@ -315,7 +315,7 @@ def main(config: ConfigType) -> None:
                     '--b_del_temp_db', '1',
                     ] +
                    (
-                   ['--csv_specific_param_dict', 'invert_magnitometr: True'
+                   ['--csv_specific_param_dict', 'invert_magnetometer: True'
                     ] if probe_is_incl else []
                    ),
                     **{

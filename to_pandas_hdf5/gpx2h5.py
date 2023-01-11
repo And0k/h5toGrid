@@ -11,7 +11,7 @@ import logging
 from codecs import open
 from pathlib import PurePath
 from sys import stdout as sys_stdout
-from typing import Any, Dict, Mapping, Union
+from typing import Any, Dict, Mapping, MutableMapping, Union
 
 import gpxpy
 import numpy as np
@@ -20,10 +20,9 @@ from gpxpy.gpx import GPX
 # my
 from utils2init import cfg_from_args, my_argparser_common_part, init_file_names, Ex_nothing_done, set_field_if_no, \
     this_prog_basename, init_logging, standard_error_info, call_with_valid_kwargs
-from to_pandas_hdf5.csv2h5 import h5_dispenser_and_names_gen
 from to_pandas_hdf5.h5_dask_pandas import multiindex_timeindex, multiindex_replace, h5_append, \
     filterGlobal_minmax  # filter_global_minmax
-from to_pandas_hdf5.h5toh5 import h5move_tables, h5index_sort, h5init
+from to_pandas_hdf5.h5toh5 import h5move_tables, h5index_sort, h5init, h5_dispenser_and_names_gen
 from utils_time_corr import time_corr
 
 dt64_1s = np.int64(1e9)
@@ -50,7 +49,7 @@ def my_argparser():
              help='add this correction to loading datetime data. May to use other suffixes instead of "hours"')
     s.add('--b_incremental_update', default='True',
              help='exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files')
-    s.add('--sort', default='False',  # 'correct', 'sort_rows'
+    s.add('--corr_time_mode', default='False',  # 'correct', 'sort_rows'
              help='if time not sorted then coorect it trying affecting minimum number of values. Used here for tracks/segments only. This is different from sorting rows which is performed at last step after the checking table in database')
 
     # Parameters specific to gpx
@@ -79,7 +78,8 @@ def my_argparser():
               help='same as waypoints_cols_list but for tracks')
     s.add('--out.segments_cols_list', default='time, Lat, Lon',
               help='same as waypoints_cols_list but for segments')
-
+    s.add('--b_sort', default=True,
+              help='may not needed for manually constructed sections. But it is difficult to use not sorted data')
     s.add('--b_insert_separator', default='False',
               help='insert NaNs row in table after each file data end')
     s.add('--b_reuse_temporary_tables', default='False',
@@ -96,9 +96,12 @@ def my_argparser():
                              'filter all data based on min/max of parameters')
     s.add('--min_date', help='minimum time')
     s.add('--max_date', help='maximum time')
-    s.add('--min_dict', help='List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is below ``value``')
-    s.add('--max_dict', help='List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is above ``value``')
-
+    s.add('--min_DepEcho', help='minimum DepEcho (if it in out.{}_cols_list). Data rows will be deleted where it is below')
+    s.add('--max_DepEcho', help='maximum DepEcho (if it in out.{}_cols_list). Data rows will be deleted where it is above')
+    s.add('--fun_DepEcho', help='Numpy function name (fun) to delete rows where numpy.fun(DepEcho) is False')
+    s.add('--min_dict', help='List with items in "key:value" format. Global filtering as for min_{param}. Todo: set to NaN data of ``key`` columns if it is below ``value``')
+    s.add('--max_dict', help='List with items in "key:value" format. Global filtering as for min_{param}. Todo: set  to NaN data of ``key`` columns if it is above ``value``')
+    s.add('--fun_dict', help='List with items in "key:fun" format. Global filtering as for min_{param}. Todo: set  to NaN data of ``key`` columns where numpy.fun(data) is False')
     s = p.add_argument_group('program', 'program behaviour')
     s.add('--return', default='<end>',  # nargs=1,
                choices=['<cfg_from_args>', '<gen_names_and_log>', '<end>'],
@@ -216,9 +219,11 @@ def gpxConvert(cfg: Mapping[str, Any],
     return dfs
 
 
-def h5_sort_filt_append(df, input, out, filter=None,
-                        sort_time: Union[str, bool, None] = None
-                        ) -> Union[str, int]:
+def h5_sort_filt_append(
+        df, input, out: MutableMapping,
+        filter=None,
+        process: Union[str, bool, None] = None
+        ) -> Union[str, int]:
     """
     If specified then sorts index of df and filters by filterGlobal_minmax(),
     then appends to hdf5 store:
@@ -230,22 +235,23 @@ def h5_sort_filt_append(df, input, out, filter=None,
       - log
       - db
     :param filter (optional)
-    :param sort_time: how to deal with not sorted / duplicated index: see time_corr().
+    :param process: how to deal with not sorted / duplicated index: see time_corr().
     :return: 'continue' if no data else df
-    :updates:
-      - log: fields 'Date0', 'DateEnd' if not cfg_out.get('b_log_ready')
-      - out: adds field 'tables_written': Set[Tuple[str, str]]
+    :updates out:
+      - adds field 'tables_written': Set[Tuple[str, str]]
+      - out['log']: fields 'Date0', 'DateEnd' if not cfg_out.get('b_log_ready')
+
     See also: filterGlobal_minmax
     """
     df_t_index, itm = multiindex_timeindex(df.index)
     # sorting will break multiindex?
-    df_t_index, b_ok = time_corr(df_t_index, input, sort_time)  # need sort in tracks/segments only
+    df_t_index, b_ok = time_corr(df_t_index, input, process)  # need sort in tracks/segments only
     df.index = multiindex_replace(df.index, df_t_index, itm)
 
     if filter:
         rows_in = len(df)
         bGood = filterGlobal_minmax(df, df.index, filter)
-        df = df[bGood & b_ok]
+        df = df[bGood & b_ok & df.notna().any(axis=1)]
         out['log']['rows'] = len(df)
         print('filtered out {} from {}.'.format(rows_in - out['log']['rows'], rows_in))
     else:
@@ -334,7 +340,7 @@ def main(new_arg=None):
 
                 sort_time = False if key in {'waypoints', 'routes'} else None
 
-                # monkey patching
+                # patching
                 if 'tracker' in tables[key]:
                     # Also {} must be in tables[key]. todo: better key+'_fun_tracker' in cfg['out']?
                     # Trackers processing
@@ -359,11 +365,11 @@ def main(new_arg=None):
                         # redefine saving parameters
                         cfg['out']['table'] = tables_pattern.format(trackers_numbers[sn])
                         cfg['out']['table_log'] = tables_log_pattern.format(trackers_numbers[sn])
-                        call_with_valid_kwargs(h5_sort_filt_append, df ** cfg, input=cfg['in'], sort_time=sort_time)
+                        call_with_valid_kwargs(h5_sort_filt_append, df ** cfg, input=cfg['in'], procss=sort_time)
                 else:
                     cfg['out']['table'] = tables[key]
                     cfg['out']['table_log'] = tables_log[key]
-                    call_with_valid_kwargs(h5_sort_filt_append, df, **cfg, input=cfg['in'], sort_time=sort_time)
+                    call_with_valid_kwargs(h5_sort_filt_append, df, **cfg, input=cfg['in'], procss=sort_time)
 
     # try:
     # if cfg['out']['b_remove_duplicates']:
@@ -409,9 +415,10 @@ def main(new_arg=None):
     try:
         failed_storages = h5move_tables(cfg['out'], tbl_names=cfg['out'].get('tables_written', set()))
         print('Finishing...' if failed_storages else 'Ok.', end=' ')
-        # Sort if have any processed data that needs it (not the case for the routes and waypoints), else don't because ``ptprepack`` not closes hdf5 source if it not finds data
-        if cfg['in'].get('time_last'):
+        # Sort if you have any processed data that needs it (not the case for the routes and waypoints), else don't because ``ptprepack`` not closes hdf5 source if it not finds data
+        if cfg['in'].get('time_last') and cfg['out']['b_sort']:
             cfg['out']['b_remove_duplicates'] = True
+            # do not tauch sections points order
             h5index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5", in_storages=failed_storages,
                          tables=cfg['out'].get('tables_written', set()))
     except Ex_nothing_done:

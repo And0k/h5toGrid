@@ -71,10 +71,10 @@ if False:  # True: #
     # CTD_SST_M48
     if False:  # True: #
         csv2h5([
-            'csv_CTD_Sea&Sun.ini',
+            'csv_CTD_SST.ini',
             '--path', path_in_SST_M48,
             '--header', 'Date(text),Time(text),Pres,Temp,Sal,SIGMA,Cond,SOUND,Vbatt',
-            '--cols_not_use_list', 'SIGMA,SOUND,Vbatt',
+            '--cols_not_save_list', 'SIGMA,SOUND,Vbatt',
             '--delimiter_chars', ',',
             '--table', 'CTD_SST_M48'])
     # navigation
@@ -88,7 +88,7 @@ if False:  # True: #
             os_path.join(path_cruise, r"meteo\ship's_meteo_st_source\*.mxt"), '--header',
             'date(text),Time(text),t_air,Vabs_m__s,Vdir,dew_point,Patm,humidity,t_w,precipitation',
             '--coldate_integer', '0', '--coltime_integer', '1',
-            '--cols_not_use_list', 't_w,precipitation',  # bad constant data
+            '--cols_not_save_list', 't_w,precipitation',  # bad constant data
             '--delimiter_chars', ',', '--max_text_width', '12',
             '--on_bad_lines', 'warn', '--b_insert_separator', 'False',
             '--chunksize_percent_float', '500'

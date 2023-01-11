@@ -12,7 +12,7 @@ def h5del_rows(db_path, tbl, tbl_log=None, keep_where: str = ''):
         if len_after >= len_before:
             print('Nothing to do')
             return
-        # df_log = store_in.select(tbl_log, where=keep_where)
+        # df_log = store.select(tbl_log, where=keep_where)
         with ReplaceTableKeepingChilds(df, tbl, {'db': store_in}):
             pass
 

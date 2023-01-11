@@ -37,7 +37,7 @@ from utils2init import init_file_names, Ex_nothing_done, set_field_if_no, cfg_fr
 import utils_time_corr
 
 #from csv2h5_vaex import argparser_files , with_prog_config
-from to_pandas_hdf5.csv2h5 import h5_dispenser_and_names_gen
+from to_pandas_hdf5.h5toh5 import h5_dispenser_and_names_gen
 
 if __name__ == '__main__':
     lf = None  # see main(): lf = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
@@ -87,14 +87,14 @@ def config_in(
     :param b_incremental_update: exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files
     :param dt_from_utc_seconds: add this correction to loading datetime data. Can use other suffixes instead of "seconds"
     :param dt_from_utc_hours: add this correction to loading datetime data. Can use other suffixes instead of "hours"
-    :param fs_float: sampling frequency, uses this value to calculate intermediate time values between time changed values (if same time is assined to consecutive data)
+    :param fs_float: sampling frequency, uses this value to calculate intermediate time values between time changed values (if same time is assigned to consecutive data)
     :param fs_old_method_float: sampling frequency, same as ``fs_float``, but courses the program to use other method. If smaller than mean data frequency then part of data can be deleted!(?)
     :param header: comma separated list matched to input data columns to name variables. Can contain type suffix i.e.
      (float) - which is default, (text) - also to convert by specific converter, or (time) - for ISO format only
     :param cols_load_list: comma separated list of names from header to be saved in hdf5 store. Do not use "/" char, or type suffixes like in ``header`` for them. Defaut - all columns
-    :param cols_not_use_list: comma separated list of names from header to not be saved in hdf5 store
+    :param cols_not_save_list: comma separated list of names from header to not be saved in hdf5 store
     :param skiprows_integer: skip rows from top. Use 1 to skip one line of header
-    :param b_raise_on_err: if False then not rise error on rows which can not be loaded (only shows warning). Try set "comments" argument to skip them without warning
+    :param b_raise_on_err: if False then not rise error on rows which can not be loaded (only shows warning). Try set "comment" argument to skip them without warning
     :param delimiter_chars: parameter of pandas.read_csv()
     :param max_text_width: maximum length of text fields (specified by "(text)" in header) for dtype in numpy loadtxt
     :param chunksize_percent_float: percent of 1st file length to set up hdf5 store tabe chunk size
