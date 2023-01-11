@@ -32,11 +32,13 @@ from scipy.signal import medfilt
 from scipy.ndimage.filters import gaussian_filter1d
 from shapely.geometry import MultiPolygon, asPolygon, Polygon
 
-from graphics import make_figure, interactive_deleter
-from other_filters import rep2mean, is_works, too_frequent_values, waveletSmooth, despike, i_move2good, \
-    inearestsorted, closest_node
+import graphics as gr
+
+from filters import rep2mean, is_works, too_frequent_values, i_move2good, inearestsorted, closest_node
+from filters_scipy import despike
+from filt_wavelet import waveletSmooth
 from to_pandas_hdf5.CTD_calc import add_ctd_params
-from to_pandas_hdf5.h5toh5 import h5select
+from to_pandas_hdf5.h5toh5 import h5load_points
 # my
 from utils2init import init_logging, Ex_nothing_done, standard_error_info
 from utils_time import datetime_fun, timzone_view, multiindex_timeindex, check_time_diff
@@ -76,8 +78,8 @@ def my_argparser():
     from utils2init import my_argparser_common_part
 
     p = my_argparser_common_part({'description':
-                                      'Grid data from Pandas HDF5, VSZ files '
-                                      'and Pandas HDF5 store*.h5'})
+        'Grid data from Pandas HDF5 store *.h5 and Veusz files data'
+        })
 
     s = p.add_argument_group('in', 'data from hdf5 store')
     s.add('--db_path', help='hdf5 store file path')  # '*.h5'
@@ -118,7 +120,7 @@ def my_argparser():
     s.add('--data_columns_list',
               help='Comma separated string with data column names (of hdf5 table) to use. Not existed will skipped')
     s.add('--b_reexport_images',
-              help='Export images of loaded .vsz files (if .vsz creared then export ever)')
+              help='Export images of loaded .vsz files (if .vsz created then export ever)')
 
     s = p.add_argument_group('process', 'process')
     s.add('--begin_from_section_int', default='0', help='0 - no skip. > 0 - skipped sections')
@@ -140,7 +142,7 @@ def my_argparser():
 
     s = p.add_argument_group('program', 'program behaviour')
     s.add('--veusz_path',
-               default=u'C:\\Program Files (x86)\\Veusz' if platform == 'win32' else u'/home/korzh/.virtualenvs/veusz_experiments/lib/python3.6/site-packages/veusz-2.2.2-py3.6-linux-x86_64.egg/veusz',
+               default=u'C:\\Program Files\\Veusz' if platform == 'win32' else u'/home/korzh/.virtualenvs/veusz_experiments/lib/python3.6/site-packages/veusz-2.2.2-py3.6-linux-x86_64.egg/veusz',
                help='directory of Veusz')
 
     return p
@@ -285,7 +287,7 @@ def to_polygon(x: Sequence, y: Sequence, y_add_at_edges: Union[int, Sequence]) -
     temp_DistDep = np.hstack((temp_DistDep, [temp_DistDep[0, [-1, 0]], y_add_at_edges]))
     # np.pad(, ((0, 0), (0, 1)), 'wrap')
     #
-    p = asPolygon(temp_DistDep.T)
+    p = Polygon(temp_DistDep.T)
     if not p.is_valid:
         p = p.buffer(0)
     if False:
@@ -538,11 +540,16 @@ def ge_sections(navp_all: pd.DataFrame,
         navp_index = navp.index
         navp_d['isort'] = navp_index.argsort()
         navp_d['indexs'] = navp_index[navp_d['isort']]
+        run_max_time = pd.Timedelta(hours=1)
+        navp_d['time_poss_max'] = navp_d['indexs'][-1] + run_max_time
         try:
-            navp_d['time_poss_max'] = navp_all_indexs[navp_all_indexs.searchsorted(
-                navp_d['indexs'][-1] + pd.Timedelta(seconds=1))]
-        except IndexError:  # handle last array lament
-            navp_d['time_poss_max'] = navp_all_indexs[-1] + pd.Timedelta(hours=1)
+            # we need correct navp_d['time_poss_max'] if next run begins earlier
+            navp_d['time_poss_max'] = np.fmin(navp_d['time_poss_max'],
+                navp_all_indexs[navp_all_indexs.searchsorted(
+                    navp_d['indexs'][-1] + pd.Timedelta(seconds=1))]
+                )
+        except IndexError:  # no next run
+            pass
 
         # Autoinvert flag (if use route guess order from time of edges)
         # course = geog.course(*navp.loc[navp_d['indexs'][[0, -1]], ['Lon', 'Lat']].values, bearing=True)
@@ -571,16 +578,23 @@ def ge_sections(navp_all: pd.DataFrame,
         yield navp, navp_d
 
 
-def load_cur_veusz_section(cfg: Mapping[str, Any],
-                           navp_d: Mapping[str, Any],
-                           vsze=None) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, Any]], Any]:
+def load_cur_veusz_section(
+        cfg: Mapping[str, Any],
+        navp_d: Mapping[str, Any],
+        vsze=None,
+        max_nav_time_st_shift=pd.Timedelta(minutes=2)
+        ) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, Any]], Any]:
     """
     Loads processed CTD data using Veusz:
     - searches existed Veusz file named by start datetime of current section and must contain "Inv" only if
     navp_d['b_invert']
     - creates and saves its copy with modified setting ``USE_timeRange`` in Custom dafinitions for new sections
     - opens and gets data from it
-    return: Tuple:
+    :param cfg:
+    :param navp_d:
+    :param vsze:
+    :param max_nav_time_st_shift: сorrect section start/end limits according to available CTD data
+    :return: Tuple:
         ctd: pd.DataFrame, loaded from Veusz CTD data,
         ctd_prm: dict of parameters of other length than ctd,
         - starts: runs starts
@@ -594,10 +608,11 @@ def load_cur_veusz_section(cfg: Mapping[str, Any],
     def good_name(pathname):
         return pathname.startswith(navp_d['stem_time_st']) and navp_d['b_invert'] ^ ('Inv' not in pathname)
     vsz_names = [Path(v).name for v in cfg['vsz_files']['paths'] if good_name(Path(v).name)]
+    vsz_vars_prefixes = ('CTDbot_dt', 'CTDstarts', 'CTDends', 'CTD_')
     if vsz_names:  # Load data from Veusz vsz
         l.warning('%s\nOpening matched %s as source...', navp_d['msg'], vsz_names[0])
         vsz_path = cfg['vsz_files']['path'].with_name(vsz_names[0])
-        vsze, ctd_dict = load_vsz(vsz_path, vsze, prefix='CTD')
+        vsze, ctd_dict = load_vsz(vsz_path, vsze, prefix=vsz_vars_prefixes)
         # vsz_path = vsz_path.with_suffix('')  # for comparbility with result of 'else' part below
         b_new_vsz = False
     else:  # Modify Veusz pattern and Load data from it, save it
@@ -606,20 +621,27 @@ def load_cur_veusz_section(cfg: Mapping[str, Any],
             print('Use currently opened pattern...', end=' ')
         else:
             print('Opening last file {} as pattern...'.format(cfg['vsz_files']['paths'][-1]), end=' ')
-            vsze, ctd_dict = load_vsz(cfg['vsz_files']['paths'][-1], prefix='CTD')
+            vsze, ctd_dict = load_vsz(cfg['vsz_files']['paths'][-1], prefix=vsz_vars_prefixes)
             if 'time' not in ctd_dict:
                 l.error('vsz data not processed!')
                 return None, None, None
         print('Load our section...', end='')
-        vsze.AddCustom('constant', u'USE_runRange', u'[[0, -1]]', mode='replace')  # u
-        vsze.AddCustom('constant', u'USE_timeRange', '[[{0}, {0}]]'.format(
-            "'{:%Y-%m-%dT%H:%M:%S}'").format(navp_d['time_msg_min'], timzone_view(  # iso
-            navp_d['time_poss_max'], cfg['out']['dt_from_utc'])), mode='replace')
+        vsze.AddCustom(
+            'constant', u'USE_runRange', u'[[0, -1]]', mode='replace'
+            )
+        vsze.AddCustom(
+            'constant', u'USE_timeRange', '[[{0}, {0}]]'.format("'{:%Y-%m-%dT%H:%M:%S}'").format(
+                navp_d['time_msg_min'] - max_nav_time_st_shift,
+                timzone_view(navp_d['time_poss_max'], cfg['out']['dt_from_utc'])
+                ),
+            mode='replace'
+            )
         vsze.AddCustom('constant', u'Shifting_multiplier', u'-1' if navp_d['b_invert'] else u'1', mode='replace')
 
         # If pattern has suffix (excluding 'Inv') then add it to our name (why? - adds 'Z')
-        stem_no_inv = Path(cfg['vsz_files']['paths'][0]).stem
-        if stem_no_inv.endswith('Inv'): stem_no_inv = stem_no_inv[:-3]
+        stem_no_inv = Path(cfg['vsz_files']['paths'][0]).stem.split('@')[0]
+        if stem_no_inv.endswith('Inv'):
+            stem_no_inv = stem_no_inv[:-3]
         len_stem_time_st = len(navp_d['stem_time_st'])
         vsz_path = cfg['vsz_files']['path'].with_name(''.join([
             navp_d['stem_time_st'],
@@ -627,7 +649,7 @@ def load_cur_veusz_section(cfg: Mapping[str, Any],
             'Inv' if navp_d['b_invert'] else '']))
         vsze.Save(str(vsz_path.with_suffix('.vsz')))
         b_new_vsz = True
-        vsze, ctd_dict = load_vsz(veusze=vsze, prefix='CTD')
+        vsze, ctd_dict = load_vsz(veusze=vsze, prefix=vsz_vars_prefixes)
 
     if 'time' not in ctd_dict:
         l.error('vsz data is bad!')
@@ -640,7 +662,7 @@ def load_cur_veusz_section(cfg: Mapping[str, Any],
     ctd_prm['stem'] = vsz_path.stem
     ctd = pd.DataFrame.from_dict(ctd_dict)
 
-    if b_new_vsz or cfg['out']['b_reexport_images'] != False:
+    if b_new_vsz or cfg['out']['b_reexport_images'] is not False:
         export_images(vsze, cfg['vsz_files'], vsz_path.stem,
                       b_skip_if_exists=cfg['out']['b_reexport_images'] is None)
 
@@ -655,7 +677,7 @@ def idata_from_tpoints(tst_approx, tdata, idata_st, dt_point2run_max=None):
     :param tdata: numpy.datetime64 array of data's time values
     :param idata_st: data indexes of runs starts, must be sorted, may be list or numpy array
     :param dt_point2run_max: pd.Timedelta, interval to select. If None then select to the next point
-    Now don't undestand why search only after tst_approx if dt_point2run_max is defined. If error in tst_approx is positive we will take next point instead best closest. So:
+    Now don't understand why search only after tst_approx if dt_point2run_max is defined. If error in tst_approx is positive we will take next point instead best closest. So:
     todo: delete dt_point2run_max parameter and logic
 
     :return: sel_run - list of selected run indices (0 means run started at tdata[idata_st[0]])
@@ -833,7 +855,7 @@ def data_sort_to_nav(navp: pd.DataFrame,
     :param cfg: fields:
         route_time_level: not none if points aranged right
     :return: tuple:
-        - ctd - sorted in order of nav having: index - integer range, column 'time' - original index
+        - ctd - sorted in order of its nav.: index - integer range, column 'time' - original index
         - ctd_prm - dict with replaced fields: 'starts', 'ends'
         - navp_ictd - order in accordance to nav
 
@@ -851,13 +873,13 @@ def data_sort_to_nav(navp: pd.DataFrame,
 
     navp_index = navp.index.values
     ctd_isort = ctd.time.iloc[ctd_prm['starts']].values.argsort()
-    ctd_sts = ctd.time.iloc[ctd_prm['starts'][ctd_isort]].values
+    ctd_sts = ctd.time.iloc[ctd_prm['starts'][ctd_isort]].values  # sorted start time
     # closest CTD indexes to each nav point:
     navp_ictd = datetime_fun(inearestsorted, ctd_sts, navp_index, type_of_operation='<M8[ms]', type_of_result='i8')
 
     # Check/correct one to one correspondence
     navp_ictd_isort = navp_ictd.argsort()
-    navp_ictd_isort_diff = np.diff(navp_ictd[navp_ictd_isort])
+    navp_ictd_isort_diff = np.diff(navp_ictd[navp_ictd_isort])  # skipped/repeated CTD where not 1
     inav_jumped = None
     to_del_navs = []
     for inav, ictd in zip(
@@ -911,7 +933,7 @@ def data_sort_to_nav(navp: pd.DataFrame,
             continue
 
     # ctd to points order indexer:
-    navp_ictd = ctd_isort[navp_ictd]  # convert index of ctd sorted to ctd
+    navp_ictd = ctd_isort[navp_ictd]  # convert index of CTD sorted to CTD
 
     b_far = check_time_diff(
         ctd.time.iloc[ctd_prm['starts'][navp_ictd]], navp_index,
@@ -965,7 +987,7 @@ def data_sort_to_nav(navp: pd.DataFrame,
         b_far = check_time_diff(ctd.time.iloc[ctd_prm['starts'][navp_ictd]].values, navp_index, pd.Timedelta(minutes=1),
                                 mesage='CTD runs (after correction) far from nearest time of closest navigation point # [min]:\n')
         ctd_not_in_navp = np.setdiff1d(np.arange(ctd_prm['starts'].size), navp_ictd)
-        if ctd_not_in_navp:
+        if ctd_not_in_navp.size:
             msg = 'Excluding runs # (based on sym index)... '
             ctd_far_time = ctd.time.values[ctd_prm['starts']][ctd_not_in_navp]
             l.info(msg + '\n'.join(['{}:{} "{}"'.format(i, t, s) for i, t, s in
@@ -1015,11 +1037,11 @@ def data_sort_to_nav(navp: pd.DataFrame,
                                 'Excluding {} runs not found in section points (far CTD runs or from other table)'.format(
                                     sum(b_ctd_exclude)))
                         else:
-                            print("dbstop here: set manualy what to exclude")
+                            print("dbstop here: set manually what to exclude")
                             # b_ctd_exclude[0]= False  # don't want to delete run index 0
                     ctd_far_time = ctd.time.values[ctd_prm['starts']][b_ctd_exclude]
     else:
-        ctd_not_in_navp = []
+        ctd_not_in_navp = np.setdiff1d(np.arange(ctd_prm['starts'].size), navp_ictd)  # []
 
     # CTD runs and data which excluded in navigation points by symbol_excude_point
     # ctd_exclude_time = np.append(navp_exclude.index.values.astype('datetime64[ns]'), ctd_far_time)
@@ -1029,7 +1051,7 @@ def data_sort_to_nav(navp: pd.DataFrame,
         dt_point2run_max=cfg['process']['dt_point2run_max'])
 
     # CTD runs and data which was not found in points:
-    if ctd_not_in_navp:
+    if ctd_not_in_navp.size:
         ctd_st_ext = np.append(ctd_prm['starts'], ctd.time.size)
         for i in ctd_not_in_navp:
             bDel[slice(*ctd_st_ext[[i, i + 1]])] = True
@@ -1039,8 +1061,12 @@ def data_sort_to_nav(navp: pd.DataFrame,
     # remove runs
     if len(ctd_idel):
         l.info('deleting %d runs # which not in section: %s', len(ctd_idel), ctd_idel)
-        ctd_prm['starts'] = np.delete(ctd_prm['starts'], ctd_idel)
-        ctd_prm['ends'] = np.delete(ctd_prm['ends'], ctd_idel)
+        # remove elements from CTD params that have ones for each run
+        try:
+            for param in ['starts', 'ends', 'CTDbot_dt']:
+                ctd_prm[param] = np.delete(ctd_prm[param], ctd_idel)
+        except KeyError:
+            pass  # may be such param (except 'starts' & 'ends') is not needed
         ctd_bdel = np.zeros_like(ctd_prm['starts'], bool)
         ctd_bdel[np.int32(ctd_idel)] = True
         navp_ictd = i_move2good(navp_ictd, ctd_bdel)
@@ -1070,7 +1096,7 @@ def data_sort_to_nav(navp: pd.DataFrame,
         run_endup_from = np.append(ctd_prm['starts'][1:], ctd.time.size)
         run_edges_from = np.column_stack((ctd_prm['starts'], run_endup_from))  #
         if len(run_edges_from) != navp_ictd.size:
-            l.error('Number of loaded nav. points {} != {} ctd points', navp_ictd.size, len(run_edges_from))
+            l.error('Number of loaded nav. points %d != %d ctd points', navp_ictd.size, len(run_edges_from))
         run_edges_from = run_edges_from[navp_ictd, :]  # rearrange ``from`` intervals
 
         # 2. to indexes
@@ -1169,7 +1195,7 @@ def filt_depth(s_ndepth: pd.Series, **cfg_proc: Mapping[str, Any]) -> Tuple[np.n
     ax.plot(np.flatnonzero(ok), bed[ok], color='b', alpha=0.7, label='Works')
     """
     if __debug__:
-        ax, lines = make_figure(y_kwrgs=({'data': bed, 'label': 'bed sourse0', 'color': 'r', 'alpha': 0.1},),
+        ax, lines = gr.make_figure(y_kwrgs=({'data': bed, 'label': 'bed sourse0', 'color': 'r', 'alpha': 0.1},),
                                 mask_kwrgs={'data': ok, 'label': 'Works', 'color': 'r', 'alpha': 0.7},
                                 ax_title='Bottom profile filtering', ax_invert=True)
     else:
@@ -1195,7 +1221,7 @@ def filt_depth(s_ndepth: pd.Series, **cfg_proc: Mapping[str, Any]) -> Tuple[np.n
 
         # Smooth small high frequency noise (do not use if big spikes exist!)
         sGood = ok.sum()  # ok[:] = False  # to use max of data as bed
-        # to make depth follow lowest data execute: depth_filt[:] = 0
+        # to make depth follow the lowest data execute: depth_filt[:] = 0
         n_smooth = 5  # 30
         if sGood > 100 and (np.abs(np.diff(depth_filt)) < 30).all():
             depth_filt_smooth = gaussian_filter1d(depth_filt, n_smooth)
@@ -1204,18 +1230,30 @@ def filt_depth(s_ndepth: pd.Series, **cfg_proc: Mapping[str, Any]) -> Tuple[np.n
             depth_out = depth_filt_smooth[ok]
             depth_filt.fill(np.NaN)
             depth_filt[ok] = depth_out
+    elif wdesp == 0:
+        return np.array([np.NaN]), False, None
     else:
         sGood = True
 
     if sGood and __debug__:
-        interactive_deleter(y_kwrgs=({'data': bed, 'label': 'Depth', 'color': 'k', 'alpha': 0.6},),
+        if False:
+            # More filter source data basing on current output to repeat
+            depth_filt_smooth = gaussian_filter1d(rep2mean(depth_filt, x=s_ndepth.index.view(np.int64)), 111)
+            bed[bed > depth_filt_smooth] = np.NaN  # need data mostly at high edge of noise area
+            bed[bed < depth_filt_smooth - 7] = np.NaN
+            ok = ~np.isnan(bed)
+            depth_out = depth_filt[ok]
+            coef_std_offsets = (2, 1.5); wdesp = 600
+            # Not execute interactive_deleter() in command line: program hangs!
+
+        gr.interactive_deleter(y_kwrgs=({'data': bed, 'label': 'Depth', 'color': 'k', 'alpha': 0.6},),
                             mask_kwrgs={'data': ok, 'label': 'initial'},
                             ax=ax, ax_title='Nav. bottom profile smoothing(index)', ax_invert=True,
                             lines=lines, stop=cfg_proc['interact'])
 
         # while True:  # draw
         #     if ax is None or f is None or not plt.fignum_exists(f.number):  # or get_fignums().
-        #         ax, lines = make_figure(bed, ok, position=(10, 0))  # only if closed
+        #         ax, lines = gr.make_figure(bed, ok, position=(10, 0))  # only if closed
         #         plot_prepare_input(ax)
         #     else:    # update
         #         pass
@@ -1235,7 +1273,7 @@ def filt_depth(s_ndepth: pd.Series, **cfg_proc: Mapping[str, Any]) -> Tuple[np.n
     ok &= np.isfinite(depth_filt)
     depth_out = depth_filt[ok]
     if (sGood and __debug__) and not plt.fignum_exists(ax.figure.number):  # and np.diff(plt_selected_x_range_arr) > 0:
-        ax, lines = make_figure(y_kwrgs=({'data': depth_filt, 'label': 'smoothed', 'color': 'r', 'alpha': 0.1},),
+        ax, lines = gr.make_figure(y_kwrgs=({'data': depth_filt, 'label': 'smoothed', 'color': 'r', 'alpha': 0.1},),
                                 mask_kwrgs={'data': ok, 'label': 'masked manually', 'color': 'b', 'alpha': 0.7},
                                 ax_title='Bottom profile filtering (continue)', ax_invert=True)
 
@@ -1372,8 +1410,6 @@ def add_data_at_edges(
             np.diff(edge_dist),
             *[s for se in (ctd_prm['starts'][ok_ends][b_run_to_edge], ctd_ends_f) for s in (se[:-1], se[1:])]
             )):
-        print(f'{i0}: ', end='')
-
         # names numeric suffixes: 0 - current, 1 - next profile
         #                         s - shorter (shallow), l - longer (deeper) profile
         """
@@ -1455,18 +1491,18 @@ def add_data_at_edges(
         def dy_check(st_z_l_best):
             """
             Prints y[st_z_l_prior] - y_s
-            :param st_z_l_best: absolute index of best dz
+            :param st_z_l_best: absolute index of the best dz
             :return: (depth at best dz, accept)
             """
             y_l_best = ctd_depth[st_z_l_best]
             y_l2s = y_l_best - y_s
-
-            print(f'{y_l2s:.1f}', end='')
+            if y_l2s >= 0.5:  # not print result if shift less 0.5m
+                print(f'{i0}: {y_l2s:.1f}', end='')
 
             dy_to_feat = -5  # upper margin accounts for profile variability and lower separation between features, m
             if y_l2s < dy_to_feat:  # check if too high
                 # check that found point is not associated to the local field feature of that depth i.e.
-                # discard if have same value on shorter profile above. Better will be to find profiles similarity end
+                # discard if we have same value on shorter profile above. Better will be to find profiles similarity end
                 st_s_at_y_l_best, st_s_feat = st_s + ctd_depth[st_s:en_s].searchsorted([y_l_best + dy_to_feat, y_s + dy_to_feat])
                 b_fail = min(abs(ctd_z[st_s_at_y_l_best:st_s_feat] - z_s)) < abs(dz2en[i_y_l_prior])
                 # or abs(ctd_z[st_s_at_y_l_best] - ctd_z[st_z_l_best]) < abs(dz2en[i_y_l_prior])
@@ -1559,6 +1595,7 @@ def main(new_arg=None):
     if not Path(cfg['vsz_files']['export_dir']).is_absolute():
         cfg['vsz_files']['export_dir'] = cfg['vsz_files']['path'] / cfg['vsz_files']['export_dir']
     dir_create_if_need(cfg['vsz_files']['export_dir'])
+    gr.backup_user_input_dir = cfg['out']['path']
 
     cfg['process'].setdefault('dt_point2run_max')
     # Logging
@@ -1567,7 +1604,7 @@ def main(new_arg=None):
     if cfg['process']['interact'].lower() == 'false':
         cfg['process']['interact'] = False
     ax = None
-    load_vsz = load_vsz_closure(cfg['program']['veusz_path'])
+    # load_vsz = load_vsz_closure(cfg['program']['veusz_path'], b_execute_vsz=True)
     try:
         # dir_walker
         cfg['vsz_files']['paths'], cfg['vsz_files']['nfiles'], cfg['vsz_files']['path'] = init_file_names(
@@ -1599,12 +1636,14 @@ def main(new_arg=None):
                     # navp, navp_d = next(ge_sections(pd.concat({navp_d['sec_name']: navp})[::-1], cfg))
                 print(end='\n...')
                 stem_time = navp_d['stem_time_st'] + '{:-%d_%H%M}'.format(navp_d['time_msg_max'])  # name section files
-
+                gr.backup_user_input_prefix = stem_time
                 # Load processed CTD data from Veusz vsz
                 ctd, ctd_prm, vsze = load_cur_veusz_section(cfg, navp_d, vsze)
-
-                ctd, ctd_prm, navp_d['ictd'] = data_sort_to_nav(navp, navp_d['exclude'], navp_d['b_invert'], ctd,
-                                                                ctd_prm, cfg)
+                b_go_next_section = False  # b_go_next_section = True
+                if b_go_next_section:
+                    continue
+                ctd, ctd_prm, navp_d['ictd'] = data_sort_to_nav(
+                    navp, navp_d['exclude'], navp_d['b_invert'], ctd, ctd_prm, cfg)
                 # Calculate CTD depth and other output fields
 
                 try:
@@ -1620,7 +1659,7 @@ def main(new_arg=None):
                         cfg['out']['data_columns'] + ['depth'])
                         }})
                 except Exception as e:
-                    l.exception('\nCTD depth calculation error - assigning it to "Pres" insted! %s')
+                    l.exception('\nCTD depth calculation error - assigning it to "Pres" instead! %s')
                     ctd['depth'] = ctd.Pres.abs()
 
                 # Add full resolution bottom profile to section from navigation['DepEcho']
@@ -1630,9 +1669,13 @@ def main(new_arg=None):
                 have_bt = 'DepEcho' in nav.columns and any(nav['DepEcho'])
                 if have_bt:
                     bt, bbed, ax = filt_depth(nav['DepEcho'], **cfg['process'])
-                    bt = pd.DataFrame({'DepEcho': bt, 'time': nav.index[bbed]})  # .view(np.int64)
-                    have_bt = 'DepEcho' in nav.columns and not bt.empty
-                    nav.drop(columns='DepEcho')
+                    have_bt = (~np.isnan(bt)).any()
+                    if have_bt:
+                        bt = pd.DataFrame({'DepEcho': bt, 'time': nav.index[bbed]})  # .view(np.int64)
+                        have_bt = 'DepEcho' in nav.columns and not bt.empty
+                        nav.drop(columns='DepEcho')
+                    else:
+                        l.warning('No good depth found in navigation!')
                 else:
                     l.warning('No depth (DepEcho column data) in navigation!')
 
@@ -1640,14 +1683,12 @@ def main(new_arg=None):
                 # 1. load navigation at CTD run starts and ends
                 # todo: dist_clc(nav, ctd_time, cfg): calc full dist
                 # - need direction to next route point and projection on it?
-                df_points = h5select(
-                    cfg['in']['db'], cfg['in']['table_nav'], ['Lat', 'Lon', 'DepEcho'],
-                    time_points=ctd.time.iloc[np.append(ctd_prm['starts'], ctd_prm['ends'])].values,
-                    dt_check_tolerance=cfg['process']['dt_search_nav_tolerance'],
-                    query_range_lims=[navp_d['indexs'][0], navp_d['time_poss_max']],
-                    # query_range_pattern=qstr  - commented to add to_edge
-                    )[0]
-                # Try get non NaN from dfL if it has needed columns (we used to write there edges' data with _st/_en suffixes)
+                df_points = h5load_points(cfg['in']['db'], cfg['in']['table_nav'], ['Lat', 'Lon', 'DepEcho'],
+                                          time_points=ctd.time.iloc[
+                                              np.append(ctd_prm['starts'], ctd_prm['ends'])].values,
+                                          dt_check_tolerance=cfg['process']['dt_search_nav_tolerance'],
+                                          query_range_lims=[navp_d['indexs'][0], navp_d['time_poss_max']])[0]
+                # Try to get non NaN from dfL if it has needed columns (we used to write there edges' data with _st/_en suffixes)
                 # if nav have nans search in other places
                 df_na = df_points.isna()
                 if df_na.any().any():
@@ -1661,7 +1702,7 @@ def main(new_arg=None):
                             vals = ctd_sort_no_na.iloc[
                                 inearestsorted(ctd_sort_no_na.index.values, df_points.index[df_na[col]].values)
                                 # better inearestsorted_around with next interp
-                            ].values
+                                ].values
                         except IndexError:
                             continue  # not found
                         # vals = df_nav_col[col]
@@ -1714,9 +1755,9 @@ def main(new_arg=None):
                 edge_depth = ctd.depth.iloc[ctd_prm['ends']].values
                 edge_dist = ctd.dist.iloc[ctd_prm['ends']].values
 
+                ctd_isort = ctd.time.iloc[ctd_prm['starts']].values.argsort()
                 if have_bt:
                     # - get dist for depth profile by extrapolate CTD run_dist
-                    ctd_isort = ctd.time.iloc[ctd_prm['starts']].values.argsort()
                     # nav_dist_isort = nav_dist.argsort()
 
                     # if not enough points then use max of it and CTD
@@ -1766,26 +1807,36 @@ def main(new_arg=None):
                 # Go along bottom and collect nearest CTD bottom edge path points
                 ok_edge = np.zeros_like(edge_dist, [('hard', np.bool8), ('soft', np.bool8)])
                 ok_edge['soft'][:] = abs(edge_depth) > cfg['process']['convexing_ctd_bot_edge_max']
+                if 'CTDbot_dt' in ctd_prm:
+                    ok_edge['soft'][:] |= (
+                        (ok_dt := ctd_prm['CTDbot_dt'][ctd_isort] > 3) |   # s
+                        (np.interp(run_dist, run_dist[ok_dt], edge_depth[ok_dt]) < edge_depth)  # take only that make result deeper
+                    )
                 k = 2  # vert to hor. scale for filter, m/km
-                edge_path_scaled = np.vstack((edge_dist * k, edge_depth))
-                for bed_point in np.vstack((edge_path_scaled[0, :], edge_bed)).T:
-                    i = closest_node(bed_point[:, np.newaxis], edge_path_scaled)
-                    ok_edge['soft'][i] = True
-                ok_edge['soft'][[0, -1]] = True  # not filter edges anyway
+                edge_path_scaled = np.where(ok_edge['soft'], np.vstack((edge_dist * k, edge_depth)), np.NaN)
+                inds_closest = [
+                    closest_node(bed_point[:, np.newaxis], edge_path_scaled) for bed_point in
+                    np.vstack((edge_path_scaled[0, :], edge_bed))[:, ok_edge['soft']].T
+                    ]
+
+
+                ok_edge['soft'][:] = False
+                np.put(ok_edge['soft'], [inds_closest + [0, -1]], True)  # not filter edges anyway
 
                 # Filter bottom edge of CTD path manually
                 if __debug__:
-                    interactive_deleter(x=edge_dist,
-                                        y_kwrgs=(
-                                            {'data': edge_bed, 'label': 'depth'},
-                                            {'data': edge_depth, 'label': 'source'}
-                                            ),
-                                        mask_kwrgs={'data': ok_edge['soft'], 'label': 'closest to bottom',
-                                                    'marker': "o", 'fillstyle': 'none'},
-                                        ax=ax,
-                                        ax_title='Bottom edge of CTD path filtering',
-                                        ax_invert=True, clear=True,
-                                        stop=cfg['process']['interact'])
+                    gr.interactive_deleter(
+                        x=edge_dist,
+                        y_kwrgs=(
+                            {'data': edge_bed, 'label': 'depth'},
+                            {'data': edge_depth, 'label': 'source'}
+                            ),
+                        mask_kwrgs={
+                            'data': ok_edge['soft'], 'label': 'closest to bottom', 'marker': "o", 'fillstyle': 'none'},
+                        ax=ax,
+                        ax_title='Bottom edge of CTD path filtering',
+                        ax_invert=True, clear=True, stop=cfg['process']['interact']
+                        )
                 ok_edge['hard'] = ok_edge['soft']
 
                 """
@@ -1866,12 +1917,12 @@ def main(new_arg=None):
                     else:
                         ax.clear()
                     ax.plot(edge_dist, edge_bed, alpha=0.3, color='c', label='source under CTD')
-                    interactive_deleter(x=nav_dist,
-                                        y_kwrgs=({'data': depth_lowess, 'label': 'lowess'},
-                                                 {'data': nav_dep, 'label': 'source'}),
-                                        mask_kwrgs={'data': b_good},  # , 'label': 'closest to bottom'
-                                        ax=ax, ax_title='Bottom depth smoothing',
-                                        ax_invert=True, position=(15, -4), stop=cfg['process']['interact'])
+                    gr.interactive_deleter(x=nav_dist,
+                        y_kwrgs=({'data': depth_lowess, 'label': 'lowess'},
+                                 {'data': nav_dep, 'label': 'source'}),
+                        mask_kwrgs={'data': b_good},  # , 'label': 'closest to bottom'
+                        ax=ax, ax_title='Bottom depth smoothing',
+                        ax_invert=True, position=(15, -4), stop=cfg['process']['interact'])
                     # Deletion with keeping left & right edge values:
                     nav_dist, nav_dep, depth_lowess = extract_repeat_at_bad_edges(np.vstack(
                         [nav_dist, nav_dep, depth_lowess]), b_good)
@@ -1961,6 +2012,11 @@ def main(new_arg=None):
                 # to prevent stepping edge of blanking that reach useful data at high slope regions:
                 ym_blank = ym > y_edge_path + cfg['y_resolution_use']
 
+                grid_by_surfer = True
+                if grid_by_surfer:
+                    from gs_surfer import griddata_by_surfer
+                    dir_create_if_need(dir_interp_method := cfg['out']['path'] / 'surfer')
+
                 l.info('Gridding to {}x{} points'.format(*xm.shape))
                 b_1st = True
                 for iparam, col_z in enumerate(cfg['out']['data_columns']):  # col_z= u'Temp'
@@ -1987,17 +2043,37 @@ def main(new_arg=None):
                         *ctd[['dist', 'depth', col_z]].values.T, ctd_prm, edge_depth, edge_dist,
                         ok_ctd.values, ok_edge['soft'], cfg, lim.x[:]
                         )
-                    """
-                    griddata_by_surfer(ctd, path_stem_pattern=os_path.join(
-                                cfg['out']['path'], 'surfer', f'{stem_time}{{}}'),  ),
-                                       xCol='Dist', yCol='Pres',
-                                       zCols=col_z, NumCols=y.size, NumRows=x.size,
-                                       xMin=lim.x.min, xMax=lim.x.max, yMin=lim.y.min, yMax=lim.y.max)
-                    """
+
+                    if grid_by_surfer:
+                        ctd_with_adds[:, 1] *= -1  # set depth negative for griddata_by_surfer() (repeated below to cansel)
+                        # griddata_by_surfer(ctd, path_stem_pattern=os_path.join(
+                        #     cfg['out']['path'], 'surfer', f'{stem_time}{{}}'),  ),
+                        #     xCol='Dist', yCol='Pres',
+                        #     zCols=col_z, NumCols=y.size, NumRows=x.size,
+                        #     xMin=lim.x.min, xMax=lim.x.max, yMin=lim.y.min, yMax=lim.y.max)
+                        # Bad Kriging of thermocline
+                        AnisotropyAngle = 0
+                        AnisotropyRatio = 15
+                        SearchRad1 = max(dd, 50)  # km, dist (can use SearchRad1*AnisotropyRati for max)
+                        SearchRad2 = 100          # m, depth (we can use smaller radius, but it is worse)
+                        ok = griddata_by_surfer(
+                            ctd_with_adds, path_stem_pattern=(cfg['out']['path'] / 'surfer' / f'{stem_time}{{}}'), margins=False,
+                            AnisotropyRatio=AnisotropyRatio, AnisotropyAngle=AnisotropyAngle,
+                            SearchEnable=True, SearchAngle=AnisotropyAngle, SearchNumSectors=4,
+                            SearchRad1=SearchRad1, SearchRad2=SearchRad2,
+                            xCol='Dist', yCol='Pres', zCols =[col_z], NumCols=y.size, NumRows=x.size,
+                            xMin=lim.x.min, xMax=lim.x.max, yMin=-lim.y.max, yMax=-lim.y.min,
+                            KrigDriftType=1,  # =srfDriftLinear
+                            KrigVariogram=[[3]]
+                            # constants.srfVarLogarithmic, Vscale, Vlength  [[3, 10], [5, 0.01]] - not works
+                            # Type=srfVarLinear=3, Param1 - slope, Param2 -length # srfVarNugget=5, Param1 - variance for the nugget effect
+                            )
+                        if ok is None:
+                            l.error('Try remove GridData search parameter?')
+                        ctd_with_adds[:, 1] *= -1
                     write_grd_this_geotransform = write_grd_fun(gdal_geotransform)
                     for interp_method, interp_method_subdir in [['linear', ''], ['cubic', 'cubic\\']]:
-                        dir_interp_method = cfg['out']['path'] / interp_method_subdir
-                        dir_create_if_need(dir_interp_method)
+                        dir_create_if_need(dir_interp_method := cfg['out']['path'] / interp_method_subdir)
                         # may be very long! : try extent=>map_extent?
                         z = interpolate.griddata(points=ctd_with_adds[:, :-1],
                                                  values=ctd_with_adds[:, -1],
@@ -2042,6 +2118,7 @@ def main(new_arg=None):
                         write_grd_this_geotransform(file_grd, z)
                         if b_1st:
                             b_1st = False
+
 
         print('\nOk.')
         if __debug__:

@@ -11,8 +11,12 @@ from time import sleep
 from typing import Any, List, Callable, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
-
+import msgpack
+from pathlib import PurePath
 # from graphics import plot_prepare_input, move_figure, make_figure, interactive_deleter
+
+backup_user_input_dir: PurePath = None
+backup_user_input_prefix: str = ''
 
 # graphics/interactivity
 if True:  # __debug__:
@@ -340,6 +344,22 @@ def interactive_deleter(x: Optional[Sequence] = None,
     else:
         ax.legend(prop={'size': 10}, loc='upper right')  # refresh legend
 
+    # load previous user mask:
+    # Read msgpack file
+    if backup_user_input_dir and (ax_title := kwargs.get('ax_title')):
+        file_backup = (backup_user_input_dir / f"{backup_user_input_prefix}{ax_title.replace('. ', '_')}").with_suffix('.packb')
+        try:
+            with open(file_backup, "rb") as h_backup:
+                data_loaded = msgpack.unpackb(h_backup.read())
+            print(f'Assigning previous user edited mask: set {sum(data_loaded)}/{len(data_loaded)}...')
+            mask_kwrgs['data'][:] = np.array(data_loaded)
+        except FileNotFoundError:
+            pass
+        except Exception:
+            l.exception('Error load backed up user input')
+    else:
+        file_backup = None
+
     plot_prepare_input(ax, callback='fill mask',
                        mask=mask_kwrgs['data'],
                        lines=lines,
@@ -347,7 +367,7 @@ def interactive_deleter(x: Optional[Sequence] = None,
                        ys=[y['data'] for y in y_kwrgs])
     if stop:  # dbstop to make stop if noninteruct
         f_number = ax.figure.number
-        plt.show(block=False)  # ? (block=True - hangs) allows select bad regions (pycharm: not stops if dbsops before)
+        plt.show(block=False)  # ? (block=True - hangs) allows select bad regions (pycharm: not stops if dbstops before)
         while (not plt_select.finish) and plt.fignum_exists(f_number):  # or get_fignums().
             # input()
             sleep(1)
@@ -369,6 +389,15 @@ def interactive_deleter(x: Optional[Sequence] = None,
             #     break
         print('interactive_deleter "%s" end: %d mask points to NaN data' % (
             kwargs.get('ax_title', ''), mask_kwrgs['data'].sum()))
+
+        if file_backup:
+            # save user mask:
+            # Write msgpack file
+            with open(file_backup, "wb") as outfile:
+                packed = msgpack.packb(mask_kwrgs['data'].tolist())
+                outfile.write(packed)
+
+
     return mask_kwrgs['data']
 
 #
