@@ -1,17 +1,19 @@
-from datetime import timedelta
 from pathlib import Path
-import logging
-import json
-import pandas as pd
-import numpy as np
-import to_vaex_hdf5.cfg_dataclasses as cfg_d
+import sys
 from yaml import safe_dump as yaml_safe_dump
 
-from inclinometer.incl_h5clc_hy import *
+import to_vaex_hdf5.cfg_dataclasses as cfg_d
+import inclinometer.incl_h5clc_hy as incl_h5clc_hy
 
 # raw data db - data that was converted from csv
 path_db_raw = Path(
-    r'd:\WorkData\BalticSea\_Pregolya,Lagoon\220327@i36\_raw\220327.raw.h5'
+    r'd:\WorkData\BalticSea\_Pregolya,Lagoon\221103@ib26,28,29,30\_raw\221103.raw.h5'
+    # r'd:\WorkData\KaraSea\220906_AMK89-1\inclinometer\_raw\220910.raw.h5'
+    # r'e:\WorkData\BalticSea\181005_ABP44\inclinometer\_raw\181022.raw.h5'
+    # r'e:\WorkData\BalticSea\181005_ABP44\inclinometer\_raw\181017.raw.h5'
+    # r'd:\WorkData\BalticSea\220601_ABP49\inclinometer\_raw\220603.raw.h5'
+    # r'd:\WorkData\BalticSea\220505_D6\inclinometers\_raw\220505.raw.h5'
+    # r'd:\WorkData\BalticSea\_Pregolya,Lagoon\220327@i36\_raw\220327.raw.h5'
     # r'd:\WorkData\BalticSea\210924_AI59-inclinometer\_raw\210924.raw.h5'
     # r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\211008P7.5,15,E15m@i04,11,14,36,37,38,w2,5\_raw\211008.raw.h5'
     # r'd:\workData\BalticSea\_Pregolya,Lagoon\210908-inclinometer\_raw\210908.raw.h5'
@@ -30,13 +32,16 @@ path_db_raw = Path(
     ).absolute()
 
 
-# Setting of hydra.searchpath to cruise specific config dir: "{path_db_raw.parent}/cfg_proc"
+# Setting of hydra.searchpath to cruise specific config dir: "{path_db_raw.parent}/cfg_proc" (probes config directory)
 # within inclinometer/cfg/incl_h5clc_hy.yaml - Else it will be not used and hydra will only warn
-with open(r'D:\Work\_Python3\And0K\h5toGrid\inclinometer\cfg\incl_h5clc_hy.yaml', 'w') as f:
+path_cfg_default = (lambda p: p.parent / 'cfg' / p.name)(Path(incl_h5clc_hy.__file__)).with_suffix('.yaml')
+with path_cfg_default.open('w') as f:
     yaml_safe_dump({
         'defaults': ['base_incl_h5clc_hy', '_self_'],
-        'hydra': {'searchpath': [f'file://{path_db_raw.parent}/cfg_proc'.replace('\\', '/')]}
+        'hydra': {'searchpath': [path_db_raw.with_name("cfg_proc").as_uri().replace('///', '//')]}  # .as_posix()
         }, f)
+    f.flush()
+
 """
 defaults:
   - base_incl_h5clc_hy
@@ -60,18 +65,19 @@ hydra:
 db_out = None  # '"{}"'.format((path_db_raw.parent.parent / f'{path_db_raw.stem}_proc23,32;30.h5').replace('\\', '/'))
 
 aggregate_period_s = {  # will be joined for multirun. Default: [0, 2, 300, 600, 1800, 7200]: [300, 1800] is for burst mode
-    'inclinometers': [2, 20, 600, 7200],   # 0, [200]  0,  [0, 2, 600, 7200]  .  #[0, ]
-    'wavegauges': [2, 300, 3600],    # 0, [0, 2, 300, 3600]   #[0],
+    'inclinometers': [0, 2, 600, 3600, 7200],   # 0, [200]  0,  [0, 2, 600, 7200]  .  #[0, ]
+    'wavegauges': [0, 2, 300, 3600],    # 0, [0, 2, 300, 3600]   #[0],
     }
 
-# Change current dir. to raw data dir.: config dir will be relative to this dir. and hydra output dir. will be here
-sys_argv_save = sys.argv
-#sys.argv = ["c:/temp/cfg_proc"]  #[str(path_db_raw.parent / 'cfg_proc')]  # path of yaml config for hydra (main_call() uses sys.argv[0] to add it)
+# todo: Change config dir and hydra output dir. will be relative to this dir. to raw data dir.
+sys_argv_save = sys.argv.copy()
+# sys.argv = ["c:/temp/cfg_proc"]  #[str(path_db_raw.parent / 'cfg_proc')]  # path of yaml config for hydra (main_call() uses sys.argv[0] to add it)
 db_in = str(path_db_raw).replace('\\', '/')
-split_avg_out_by_time_ranges = True  # Run only after common .proc_noAvg.h5 saved (i.e. with aggregate_period_s=0)
-# 'inclinometers wavegauges'
-for probes in 'inclinometers'.split():  # inclinometers, 'inclinometers_tau600T1800'
-    if not False:  # save by time_ranges
+# db_in = str(r'e:\WorkData\BalticSea\181005_ABP44\inclinometer\181017-27.proc_noAvg.h5').replace('\\', '/')
+split_avg_out_by_time_ranges = False   # True  # Run only after common .proc_noAvg.h5 saved (i.e. with aggregate_period_s=0)
+# 'inclinometers wave gauges'
+for probes in 'inclinometers'.split():  # 'inclinometers wavegauges', 'inclinometers_tau600T1800'
+    if False:  # not False - save by time_ranges
         if split_avg_out_by_time_ranges:
             db_out = str(path_db_raw.parent.with_name(
                 '_'.join([
@@ -88,7 +94,7 @@ for probes in 'inclinometers'.split():  # inclinometers, 'inclinometers_tau600T1
             'out.b_del_temp_db=True',
             'program.verbose=INFO',
             'program.dask_scheduler=threads',
-            f'+probes={probes}',  # see config probes directory
+            f'+probes={probes}',  # see probes config directory
             f"out.aggregate_period={','.join(f'{a}s' for a in aggregate_period_s[probes])}",
             ] + ([
                 #  f"out.aggregate_period={','.join(f'{a}s' for a in aggregate_period_s[probes] if a !=0)}",
@@ -98,27 +104,29 @@ for probes in 'inclinometers'.split():  # inclinometers, 'inclinometers_tau600T1
             (
                 ["in.tables=['i.*']"] if probes == 'inclinometers' else  # ['incl(23|30|32).*']  # ['i.*']
                 ["in.tables=['w.*']"]                                    # ['w0[2-6].*']         # ['w.*']
-            ) + ['--multirun'], fun=main)
+            ) + ['--multirun'], fun=incl_h5clc_hy.main)
     else:
         df = cfg_d.main_call([
             f'in.db_path="{db_in}"',
             # '++filter.time_bad_intervals=[2021-06-02T13:49, now]', # todo
-            # 'input.tables=["incl.*"]', # was set in config probes directory
+            # 'input.tables=["incl.*"]', # was set in probes config directory
             f'out.db_path={db_out}',
             # f'out.table=V_incl_bin{aggregate_period_s}s',
             'out.b_del_temp_db=True',
             # f'out.text_path=text_output',
             'program.verbose=INFO',
             'program.dask_scheduler=threads',
-            f'+probes={probes}',  # see config probes directory
+            f'+probes={probes}',  # see probes config directory
             f"out.aggregate_period={','.join(f'{a}s' for a in aggregate_period_s[probes])}",
             # '--config-path=cfg_proc',  # Primary config module 'inclinometer.cfg_proc' not found.
             # '--config-dir=cfg_proc'  # additional cfg dir
-            ] + (   # Note: "*" is mandatory for regex:
-                ["in.tables=['i.*']"] if probes == 'inclinometers' else  # ['incl(23|30|32).*']  # ['i.*']
-                ["in.tables=['w.*']"]                                    # ['w0[2-6].*']         # ['w.*']
-                ) +
-            ['--multirun'],
-            fun=main)
+            # 'in.min_date=2018-10-17T16:30',
+            # 'in.max_date=2018-10-18T07:15',
+            # Note: "*" is mandatory for regex, "incl" only used in raw files, but you can average data in processed db.
+            "in.tables=['i.*']" if probes == 'inclinometers' else  # ['incl(23|30|32).*']  # ['i.*']
+            "in.tables=['w.*']",                                    # ['w0[2-6].*']         # ['w.*']
+
+            '--multirun'],
+            fun=incl_h5clc_hy.main)
 
 sys.argv = sys_argv_save
