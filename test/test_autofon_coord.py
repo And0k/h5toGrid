@@ -69,42 +69,72 @@ def test_file_raw_local(file_raw_local):
     assert df.shape[0] == 3
 
 
-# Loading two trackers data in one DB, calc distance between
-def test_call_example_sp2to3():
-
+def test_multiple_with_anchor_as_mean():
+    """Loading 5 trackers data in one DB, calc mean positions and displacements relative to them"""
+    # todo: check why tr2 anchor so North shifted (maybe data filtered after anchor pos. determined?)
     path_db = Path(
-        r'd:\WorkData\_experiment\tracker\220318_1633@sp2&3.h5'.replace('\\', '/')
+        r'd:\Work\_Python3\And0K\h5toGrid\test\data\tracker\220810@sp2,4,5,tr1,2.h5'.replace('\\', '/')
         )
-    file_raw_local = str(path_db.parent / 'raw' / 'ActivityReport.xlsx').replace('\\', '/')
-    device = ['sp3', 'sp2']
-    sys_argv_save = sys.argv
+    file_raw_local = str(path_db.with_suffix('.raw.h5')).replace('\\', '/')
+    device = ['sp2', 'sp4', 'sp5', 'tr1', 'tr2']
+    sys_argv_save = sys.argv.copy()
     sys.argv = [__file__]
     main_call([
-        f'input.path_raw_local="{file_raw_local}"',
-        'input.time_interval=[2022-05-05T12:45, now]',
+        'input.path_raw_local="{}"'.format(file_raw_local),  # not load from internet
+        # f'+input.path_raw_local_dict={{sp:"{file_raw_local}"}}',
+        'input.time_interval=[2022-08-10T09:16, 2022-08-10T13:22]',
         'input.dt_from_utc_hours=2',
         'out.db_path="{}"'.format(str(path_db).replace('\\', '/')),
         'out.tables=[{}]'.format(','.join([f'"{d}"' for d in device])),
-
+        'process.anchor_coord="mean"',
         # 'process.b_reprocess=True',
-        'process.anchor_coord=[sp3]',
-        # 'process.max_dr=50',
-        'process.anchor_depth=40',
-        'process.period_tracks=1D'
+        'process.max_dr=200',
+        'process.anchor_depth=0',
+        # 'process.period_tracks=1D'
         ])
     sys.argv = sys_argv_save
 
 
-# Loading two trackers data in one DB, calc distance between, recalc all
-def test_call_example_sp2to3():
 
+def test_multiple_with_anchor_as_mean():
+    """Loading 5 trackers data in one DB, calc mean positions and displacements relative to them"""
+    # Same as previous for other data
+    path_db_in = Path(
+        r'd:\Work\_Python3\And0K\h5toGrid\test\data\tracker\220831@sp2,4,5,6,tr1,2.raw.h5'.replace('\\', '/')
+        )
+    path_db_out = path_db_in.parent / '220831_1340@sp2,4,5,6,tr1,2.h5'
+
+    device = ['sp2', 'sp4', 'sp5', 'sp5', 'tr1', 'tr2']
+    sys_argv_save = sys.argv.copy()
+    sys.argv = [__file__]
+    main_call([
+        'input.path_raw_local="{}"'.format(path_db_in),  # not load from internet
+        # f'+input.path_raw_local_dict={{sp:"{file_raw_local}"}}',
+        'input.time_interval=[2022-08-31T13:40, 2022-08-31T17:33]',
+        'input.dt_from_utc_hours=2',
+        'out.db_path="{}"'.format(str(path_db_out).replace('\\', '/')),
+        'out.tables=[{}]'.format(','.join([f'"{d}"' for d in device])),
+        'process.anchor_coord="mean"',
+        # 'process.b_reprocess=True',
+        'process.max_dr=300',
+        'process.dt_max_hole="20min"',
+        'process.anchor_depth=0',
+        # 'process.period_tracks=1D'
+        ])
+    sys.argv = sys_argv_save
+
+
+
+def test_call_example_sp2to3():
+    """Loading two trackers data in one DB, calc distance between, recalc all"""
     path_db = Path(
         r'd:\WorkData\BalticSea\220505_D6\tracker\220505@sp2ref3_test'.replace('\\', '/')
-        )
+        )  # r'd:\WorkData\_experiment\tracker\220318_1633@sp2&3.h5'.replace('\\', '/')
     file_raw_local = str(path_db.parent / 'raw' / 'ActivityReport.xlsx').replace('\\', '/')
     device = ['sp3', 'sp2']
-    sys_argv_save = sys.argv
-    sys.argv = [__file__]
+    sys_argv_save = sys.argv.copy()
+    if __name__ != '__main__':
+        sys.argv = [__file__]
     main_call([
         f'input.path_raw_local="{file_raw_local}"',
         'input.time_interval=[2022-05-05T12:45, now]',
@@ -115,6 +145,60 @@ def test_call_example_sp2to3():
         'process.b_reprocess=True',
         'process.anchor_coord=[sp3]',
         # 'process.max_dr=50',
+        'process.anchor_depth=40',
+        'process.period_tracks=1D'
+        ])
+    sys.argv = sys_argv_save
+
+
+# Loading 3 trackers data in one DB, calc distance between. Different data sources
+def test_call_example_tr2_sp5to2():
+
+    path_db = Path(
+        r'd:\WorkData\_experiment\tracker\220715\220715.h5'.replace('\\', '/')
+        )
+    file_raw_local = str(path_db.with_suffix('.raw.h5')).replace('\\', '/')
+    device = ['sp2', 'sp5', 'tr2']
+    sys_argv_save = sys.argv.copy()
+    sys.argv = [__file__]
+    main_call([
+        'input.path_raw_local="{}"'.format(file_raw_local),  # not load from internet
+        # f'+input.path_raw_local_dict={{sp:"{file_raw_local}"}}',
+        'input.time_interval=[2022-07-15T10:50, 2022-07-15T18:50]',
+        'input.dt_from_utc_hours=2',
+        'out.db_path="{}"'.format(str(path_db).replace('\\', '/')),
+        'out.tables=[{}]'.format(','.join([f'"{d}"' for d in device])),
+
+        # 'process.b_reprocess=True',
+        'process.anchor_tracker=[sp2]',
+        # 'process.max_dr=50',
+        'process.anchor_depth=5',
+        'process.period_tracks=1D'
+        ])
+    sys.argv = sys_argv_save
+
+
+def test_call_example_sp6ref5():
+    """Loading two trackers data in one DB, calc distance between, recalc all"""
+    path_db = Path(
+        r'd:\WorkData\BalticSea\220505_D6\tracker\220505@sp6ref5_test'.replace('\\', '/')
+        )
+    file_raw_local = str(path_db.parent / 'raw' / 'ActivityReport_test.xlsx').replace('\\', '/')
+    device = ['sp5', 'sp6']
+    sys_argv_save = sys.argv.copy()
+    if __name__ != '__main__':
+        sys.argv = [__file__]
+    main_call([
+        f'input.path_raw_local="{file_raw_local}"',
+        'input.time_interval=[2022-05-05T12:45, now]',
+        'input.dt_from_utc_hours=2',
+        'out.db_path="{}"'.format(str(path_db).replace('\\', '/')),
+        'out.tables=[{}]'.format(','.join([f'"{d}"' for d in device])),
+
+        'process.b_reprocess=True',
+        'process.anchor_coord=[55.32659, 20.57875]',
+        'process.anchor_tracker=[sp5]',
+        '+process.max_dr_dict={sp6:200, sp6_ref_sp5: 100}',
         'process.anchor_depth=40',
         'process.period_tracks=1D'
         ])
@@ -138,14 +222,14 @@ path_db = Path(
     ])
 def test_call_example_sp4(file_raw_local):
     device = ['sp4']  # 221912
-    sys_argv_save = sys.argv
+    sys_argv_save = sys.argv.copy()
     sys.argv = [__file__]
     main_call([
         f'input.path_raw_local="{file_raw_local}"',
         'input.time_interval=[2021-06-02T13:49, now]',
         'input.dt_from_utc_hours=2',
         'process.anchor_coord=[54.616175, 19.84136]', #tr0: 54.616175, 19.84134166
-        "++process.anchor_coord_dict={"
+        "++process.anchor_coord_time_dict={"
         r"2021-06-02T13\:50:[54.62355, 19.82249],"
         r"2021-06-02T14\:00:[54.62039, 19.83019],"
         r"2021-06-02T14\:10:[54.61916, 19.83516]"
@@ -161,7 +245,7 @@ def test_call_example_sp4(file_raw_local):
 
 def test_call_example_sp2(file_raw_local=None):
     device = ['sp2']
-    sys_argv_save = sys.argv
+    sys_argv_save = sys.argv.copy()
     sys.argv = [__file__]
     main_call([
         f'input.path_raw_local="{file_raw_local}"',
@@ -179,7 +263,7 @@ def test_call_example_sp2(file_raw_local=None):
 
 def test_call_example_tr2(db_path=r'd:\Work\_Python3\And0K\h5toGrid\test\data\tracker\210726_1000tr2.h5'):
     device = ['tr2']
-    sys_argv_save = sys.argv
+    sys_argv_save = sys.argv.copy()
     sys.argv = [__file__]
     main_call([
         'input.time_interval=[2021-07-26T10:00, now]',
@@ -195,7 +279,7 @@ def test_call_example_tr2(db_path=r'd:\Work\_Python3\And0K\h5toGrid\test\data\tr
 
 def test_call_example_tr2(db_path=r'd:\workData\BalticSea\210515_tracker\map-setup\test_accuracy\211024tr2.h5'):
     device = ['tr2']
-    sys_argv_save = sys.argv
+    sys_argv_save = sys.argv.copy()
     sys.argv = [__file__]
     main_call([
         'input.time_interval=[2021-10-24T14:00, 2021-10-24T23:00]',
@@ -207,3 +291,12 @@ def test_call_example_tr2(db_path=r'd:\workData\BalticSea\210515_tracker\map-set
         'out.tables=[{}]'.format(','.join([f'"{d}"' for d in device]))
         ])
     sys.argv = sys_argv_save
+
+
+# if __name__=='__main__':  # not works
+#     sys.path.extend([
+#         r'd:\Work\_Python3\And0K\h5toGrid',
+#         r'd:\Work\_Python3\And0K\h5toGrid\to_pandas_hdf5',
+#         r'd:\Work\_Python3\And0K\h5toGrid\to_pandas_hdf5\h5_dask_pandas'
+#         ])
+#     test_call_example_sp2to3()
