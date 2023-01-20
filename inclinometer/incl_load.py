@@ -142,11 +142,21 @@ def main(new_arg=None, **kwargs):
     l = init_logging(logging, None, None, 'INFO')
     # l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
 
+    # Converting this input paths to absolute (if need):
+    in_cfg_path_fields = ['db_coefs', 'path_cruise']
+    # - we will use this path parent if no any other parent info:
     cfg['in']['db_coefs'] = Path(cfg['in']['db_coefs'])
+    # - save parent
+    in_path_parent = None
+    for path_field in in_cfg_path_fields + ['cfgFile'] if isinstance(cfg['in']['cfgFile'], Path) else in_cfg_path_fields:
+        if cfg['in'][path_field].is_absolute():
+            in_path_parent = cfg['in'][path_field].parent
+            break
+    # - assign absolute paths
     for path_field in ['db_coefs', 'path_cruise']:
         if not cfg['in'][path_field].is_absolute():
-            cfg['in'][path_field] = (cfg['in']['cfgFile'].parent / cfg['in'][path_field]).resolve().absolute()  # cfg['in']['cfgFile'].parent /
-
+            cfg['in'][path_field] = (in_path_parent / cfg['in'][path_field]).resolve().absolute()  # cfg['in']['cfgFile'].parent /
+            print('Assigned absolute path for in.{path_field}:', cfg['in'][path_field])
 
     for lim_str, lim_default in (('min_date', np.datetime64('2000-01-01', 'ns')),
                                  ('max_date', np.datetime64('now', 'ns'))):
