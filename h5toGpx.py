@@ -564,7 +564,7 @@ def main(new_arg=None):
             df_rnav_combined.sort_index(inplace=True)
             # Save to gpx waypoints
             if 'gpx_names_funs' in cfg['out']['gpx_names_funs_cobined']:
-                gpx_names_funs = [  # row not used, it is here only for compability with tracks
+                gpx_names_funs = [  # row not used, it is here only for compatibility with tracks
                     eval(compile("lambda i: " + f, '', 'eval')) for f in gpx_names_funs]
             gpx_names_fun = eval(compile(
                 "lambda i,row,t: '{gpx_names_fun_format}'.format({gpx_names_funs_cobined})".format_map(

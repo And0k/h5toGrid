@@ -53,7 +53,7 @@ def my_argparser():
     - add here common options for different inputs
     - add help strings for them
     :return p: configargparse object of parameters
-    All p argumets are of type str (default for add_argument...), because of
+    All p arguments are of type str (default for add_argument...), because of
     custom postprocessing based of args names in ini2dict
     """
 

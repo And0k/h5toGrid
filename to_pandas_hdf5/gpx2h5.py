@@ -177,7 +177,7 @@ def gpxConvert(cfg: Mapping[str, Any],
                             columns=cols_list,
                             index=cols_list[0])
                         ])
-                if tr_cols is not None:    # too tired to check compability to cfg tracks:
+                if tr_cols is not None:    # too tired to check compatibility to cfg tracks:
                     dfs['tracks'] = pd.concat([dfs['tracks'], pd.DataFrame.from_records(
                         [[getattr(point, c) for c in tr_cols] for point in segment.points],
                         columns=tr_cols,

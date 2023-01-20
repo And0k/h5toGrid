@@ -703,8 +703,8 @@ def xyz2d(xyz, b_show=False):
     :return: (z2d, x_min, y_min, x_resolution, y_resolution) suits to input to save_2d_to_grd()
     """
 
-    x_uniq = np.unique(xyz[:,0])
-    y_uniq = np.unique(xyz[:,1])
+    x_uniq = np.unique(xyz[:, 0])
+    y_uniq = np.unique(xyz[:, 1])
 
     idx = np.lexsort(xyz[:, :-1].T, axis=0)
     if np.array_equal(idx, np.arange(xyz.shape[0])):

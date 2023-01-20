@@ -318,7 +318,7 @@ def dist_ctd(time_ctd,
              ):
     """
     Calculate ctd distance along its path
-    :param time_ctd: time where distance calculation needed, may be not sorted
+    :param time_ctd: time when distance calculation is needed, may be not sorted
     :param time_points_st: int64, time array corresponded to lonlat_points_st
     :param time_points_en: int64, time array corresponded to lonlat_points_en
     :param lonlat_points_st: 2xNpoints array, coordinates (lon, lat) of CTD runs starting points

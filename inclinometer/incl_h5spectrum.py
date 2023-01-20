@@ -689,7 +689,7 @@ def main(new_arg=None, **kwargs):
     prm['low_bias'] = True
 
     nc_root = netCDF4.Dataset(Path(cfg_out['db_path']).with_suffix('.nc'), 'w',
-                              format='NETCDF4')  # (for some types may need 'NETCDF4_CLASSIC' to use CLASSIC format for Views compability)
+                              format='NETCDF4')  # (for some types may need 'NETCDF4_CLASSIC' to use CLASSIC format for Views compatibility)
     nc_psd = nc_root.createGroup(cfg_out['table'])
     nc_psd.createDimension('time', None)
     nc_psd.createDimension('value', 1)
