@@ -8,13 +8,13 @@ Created:  03.11.2016
 
 from datetime import datetime, timedelta
 from io import BytesIO
-from os import path as os_path
+import os
 from shutil import move
 
 import numpy as np
 
 from to_pandas_hdf5.csv2h5 import init_input_cols
-from utils2init import ini2dict, init_file_names, Ex_nothing_done, standard_error_info
+from utils2init import ini2dict, init_file_names, Ex_nothing_done, standard_error_info, my_argparser_common_part, cfg_from_args
 from utils_time import timzone_view
 from utils_time_corr import time_corr
 
@@ -27,35 +27,50 @@ def proc_loaded_ADCP_WH(a, cfg_in):
 
 # ##############################################################################
 # ___________________________________________________________________________
-if __name__ == '__main__':
-    #    unittest.main()
-    import argparse
 
-    parser = argparse.ArgumentParser(description='Rename CSV-like files '
-                                                 'according to date it contains',
-                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-                                     epilog='If use special characters then insert arguments in quotes',
-                                     )
-    parser.add_argument('--version', action='version', version='%(prog)s '
-                                                               'version 0.0.1 - (c) 2016 Andrey Korzh <ao.korzh@gmail.com>')  # sourceConvert
+version = '0.1.0'
 
-    parser.add_argument('cfgFile', nargs='?', type=str, default='fileNameTime.ini',
-                        help='Path to confiuration *.ini file with all parameters. '
-                             'Next parameters here overwrites them')
-    info_default_path = '[in] path from *.ini if specified'
-    parser.add_argument('-path', nargs='?', type=str, default=info_default_path,
-                        help='Path to source file(s) to parse')
-    parser.add_argument('-verbose', nargs=1, type=str, default=['INFO'],
-                        choices=['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET'],
-                        help='Verbosity of messages in log file')
 
-    args = parser.parse_args()
-    args.verbose = args.verbose[0]
+def my_argparser():
+    """
+    Configuration parser
+    - add here common options for different inputs
+    - add help strings for them
+    :return p: configargparse object of parameters
+    All p arguments are of type str (default for add_argument...), because of
+    custom postprocessing based of args names in ini2dict
+    """
+
+    p = my_argparser_common_part({'description': 'csv2h5 version {}'.format(version) + """
+----------------------------
+Rename CSV-like files 
+according to date it contains
+----------------------------"""}, version)
+    # Configuration sections
+    s = p.add_argument_group('in', 'all about input files')
+    s.add('--path', default='.',  # nargs=?,
+          help='path to source file(s) to parse. Use patterns in Unix shell style')
+
+    s = p.add_argument_group('out',
+                             'all about output files')
+
+    s = p.add_argument_group('program',
+                             'program behaviour')
+    s.add('--return', default='<end>',  # nargs=1,
+               choices=['<cfg_from_args>', '<gen_names_and_log>', '<end>'],
+            help='<cfg_from_args>: returns cfg based on input args only and exit, <gen_names_and_log>: execute init_input_cols() and also returns fun_proc_loaded function... - see main()')
+
+    return p
+
+
+def main(new_arg=None, **kwargs):
+
+
     # args.cfgFile= 'csv2h5_nav_supervisor.ini'
     # args.cfgFile= 'csv2h5_IdrRedas.ini'
     # args.cfgFile= 'csv2h5_Idronaut.ini'
     try:
-        cfg = ini2dict(args.cfgFile)
+        cfg = cfg_from_args(my_argparser(), new_arg, **kwargs)
     except FileNotFoundError:
         print('no config found')
         cfg = {'in': {'path': args.path}, 'out': {}, 'program': {'log': 'fileNameTime.log'}}
@@ -77,9 +92,16 @@ if __name__ == '__main__':
             # cfg['in']['comments'],
             cfg['in']['coltime'] = 1
             cfg['in']['on_bad_lines'] = 'error'
+            cfg['in']['comments'] = None
     except IOError as e:
         print('\n==> '.join([s for s in e.args if isinstance(s, str)]))  # e.message
-        raise (e)
+        raise(e)
+
+    if not cfg or not cfg['program'].get('return'):
+        print('Can not initialise')
+        return cfg
+    elif cfg['program']['return'] == '<cfg_from_args>':  # to help testing
+        return cfg
 
     try:
         cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
@@ -122,20 +144,38 @@ if __name__ == '__main__':
     log_item = {}
     if 'log' in cfg['program'].keys():
         f = open(cfg['program']['log'], 'a+', encoding='cp1251')
-        f.writelines(datetime.now().strftime('\n\n%d.%m.%Y %H:%M:%S> processed '
-                                             + str(nFiles) + ' file' + 's:' if nFiles > 1 else ':'))
+        f.writelines(datetime.now().strftime('\n\n%d.%m.%Y %H:%M:%S> processed ' + f"{cfg['in']['nfiles']} file" +
+                                             's:' if cfg['in']['nfiles'] > 1 else ':'))
 
     # ## Main circle ############################################################
+    dt_sum = 0
     for ifile, nameFull in enumerate(cfg['in']['paths'], start=1):
-        nameFE = os_path.basename(nameFull)
+        nameFE = os.path.basename(nameFull)
         log_item['fileName'] = nameFE[-cfg['out']['logfield_filename_len']:-4]
-        log_item['fileChangeTime'] = datetime.fromtimestamp(os_path.getmtime(nameFull))
+        log_item['fileChangeTime'] = datetime.fromtimestamp(os.path.getmtime(nameFull))
         print('{}. {}'.format(ifile, nameFE), end=': ')
         # Loading data
-        with open(nameFull, 'r') as fdata:
-            str = fdata.readline()
-        fdata = BytesIO(str.encode())
+        with nameFull.open('rb') as fdata:  # nameFull.open('rb')
+            lines = fdata.readline()
+            found_content = False
+            try:  # catch OSError in case of a one line file
+                fdata.seek(-2, os.SEEK_END)
+                while True:
+                    c = fdata.read(1)
+                    if not c.isspace():
+                        found_content = True
+                    if found_content and c == b'\n':
+                        if found_content:
+                            break
+                    fdata.seek(-2, os.SEEK_CUR)
+                lines += fdata.readline()
+            except OSError:
+                if not found_content:
+                    print('one line!')
 
+
+        fdata = BytesIO(lines)
+        #lines = lines.decode()
         if 'on_bad_lines' in cfg['in'] and cfg['in']['on_bad_lines'] != 'error':
             try:
                 a = np.genfromtxt(fdata, dtype=cfg['in']['dtype'],
@@ -165,8 +205,13 @@ if __name__ == '__main__':
         except IndexError:
             print('no data!')
             continue
+
         # add time shift specified in configuration .ini
         date = np.atleast_1d(date)
+
+        dt = np.subtract(*date[[-1,0]])
+        dt_sum += dt
+
         tim, b_ok = time_corr(date, cfg['in'], process=True)
         # Save last time to can filter next file
         cfg['in']['time_last'] = date[-1]
@@ -182,7 +227,7 @@ if __name__ == '__main__':
             f.writelines('\n' + strLog)
     else:
         if len(log):
-            s = input('\n{} txt files. Rename _ASC.TXT, .TXT, r.000, r.000.nc? Y/n: '.format(nFiles))
+            s = input('\n{} txt files. Rename _ASC.TXT, .TXT, r.000, r.000.nc? Y/n: '.format(cfg['in']['nfiles']))
             if 'n' in s or 'N' in s:
                 print('nothing done')
                 nFiles = 0
@@ -191,25 +236,25 @@ if __name__ == '__main__':
                 for ifile, log_item in enumerate(log, start=1):
                     for str_en in ('.TXT', '_ASC.TXT', 'r.000', 'r.000.nc'):
                         if str_en != '.TXT':
-                            f_in_PNE = os_path.join(cfg['in']['path'], '_RDI' + log_item['fileName'][1:] + str_en)
+                            f_in_PNE = os.path.join(cfg['in']['path'], '_RDI' + log_item['fileName'][1:] + str_en)
                         else:
-                            f_in_PNE = os_path.join(cfg['in']['path'], log_item['fileName'] + str_en)
-                        f_out_PNE = os_path.join(cfg['in']['path'], log_item['fileNameNew'] + str_en)
-                        if os_path.isfile(f_in_PNE):
-                            if os_path.isfile(f_out_PNE):
+                            f_in_PNE = os.path.join(cfg['in']['path'], log_item['fileName'] + str_en)
+                        f_out_PNE = os.path.join(cfg['in']['path'], log_item['fileNameNew'] + str_en)
+                        if os.path.isfile(f_in_PNE):
+                            if os.path.isfile(f_out_PNE):
                                 print('!', end='')
                             else:
                                 move(f_in_PNE, f_out_PNE)
                                 print('+', end='')
                         else:
-                            if os_path.isfile(f_out_PNE):
+                            if os.path.isfile(f_out_PNE):
                                 print('_', end='')  # already renamed
                             else:
                                 print('-', end='')  # no sach file
 
         else:
             print('"done nothing"')
-    print('OK>')
+    print(f'sum(dt)={dt_sum} OK>')
     try:
         pass
     except Exception as e:
@@ -229,3 +274,7 @@ if __name__ == '__main__':
         if 'log' in cfg['program'].keys():
             f.close()
         print('Ok')
+
+
+if __name__ == '__main__':
+    main()
