@@ -70,12 +70,12 @@ aggregate_period_s = {  # will be joined for multirun. Default: [0, 2, 300, 600,
     }
 
 # todo: Change config dir and hydra output dir. will be relative to this dir. to raw data dir.
-sys_argv_save = sys.argv.copy()
 # sys.argv = ["c:/temp/cfg_proc"]  #[str(path_db_raw.parent / 'cfg_proc')]  # path of yaml config for hydra (main_call() uses sys.argv[0] to add it)
 db_in = str(path_db_raw).replace('\\', '/')
 # db_in = str(r'e:\WorkData\BalticSea\181005_ABP44\inclinometer\181017-27.proc_noAvg.h5').replace('\\', '/')
 split_avg_out_by_time_ranges = False   # True  # Run only after common .proc_noAvg.h5 saved (i.e. with aggregate_period_s=0)
-# 'inclinometers wave gauges'
+
+sys_argv_save = sys.argv.copy()
 for probes in 'inclinometers'.split():  # 'inclinometers wavegauges', 'inclinometers_tau600T1800'
     if False:  # not False - save by time_ranges
         if split_avg_out_by_time_ranges:
@@ -94,8 +94,8 @@ for probes in 'inclinometers'.split():  # 'inclinometers wavegauges', 'inclinome
             'out.b_del_temp_db=True',
             'program.verbose=INFO',
             'program.dask_scheduler=threads',
-            f'+probes={probes}',  # see probes config directory
-            f"out.aggregate_period={','.join(f'{a}s' for a in aggregate_period_s[probes])}",
+            f'+probes={probes}',  # see ``probes`` config directory
+            f"out.aggregate_period={','.join(f'{a}s' for a in aggregate_period_s[probes])}",  # for multirun
             ] + ([
                 #  f"out.aggregate_period={','.join(f'{a}s' for a in aggregate_period_s[probes] if a !=0)}",
                 'out.b_split_by_time_ranges=True',  # flag to split by time_ranges (defined in cfg_proc\probes\inclinometers.yaml)
@@ -117,7 +117,7 @@ for probes in 'inclinometers'.split():  # 'inclinometers wavegauges', 'inclinome
             'program.verbose=INFO',
             'program.dask_scheduler=threads',
             f'+probes={probes}',  # see probes config directory
-            f"out.aggregate_period={','.join(f'{a}s' for a in aggregate_period_s[probes])}",
+            f"out.aggregate_period={','.join(f'{a}s' for a in aggregate_period_s[probes])}",  # for multirun
             # '--config-path=cfg_proc',  # Primary config module 'inclinometer.cfg_proc' not found.
             # '--config-dir=cfg_proc'  # additional cfg dir
             # 'in.min_date=2018-10-17T16:30',

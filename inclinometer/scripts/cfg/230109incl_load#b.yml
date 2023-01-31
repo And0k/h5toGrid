@@ -1,10 +1,10 @@
     
 in:
-  path_cruise: d:\WorkData\_experiment\inclinometer\230109
+  path_cruise: d:\WorkData\_experiment\inclinometer\_type_b\230117_stand@ib26,28-30
   # d:\WorkData\KaraSea\220906_AMK89-1\inclinometer
 
-  raw_subdir: Инклинометры 2023.01.09.rar  #INKL_B29.ZIP
-  probes: [26,28,29,30]  #26,29,30, 21,22
+  raw_subdir: I_B26.rar  #Инклинометры 2023.01.09.rar  #INKL_B29.ZIP
+  probes: [26]  #,28,29,30
   probes_prefix: incl_b
   raw_pattern: "*{prefix:}{number:0>2}*.[tT][xX][tT]"
 

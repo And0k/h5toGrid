@@ -18,12 +18,14 @@ sys.path.append(str(Path(scripts_path).parent.resolve()))  # os.getcwd()
 import to_vaex_hdf5.cfg_dataclasses as cfg_d
 import inclinometer.incl_calibr_hy as incl_calibr_hy
 
-step = 2  # 1: lab  # 2: tank
+step = 1  # 1: lab  # 2: tank
 
 
 if step == 1:
     path_db_raw = Path(
-        r'd:\WorkData\_experiment\_2018\inclinometer\181003_compas\181004.raw.h5'
+        r'd:\WorkData\_experiment\inclinometer\_type_b\230117_stand_ib26_28_30\_raw\230117.raw.h5'
+        #r'd:\WorkData\_experiment\inclinometer\_type_b\230117_stand@ib26,28-30\_raw\230117.raw.h5'
+        # r'd:\WorkData\_experiment\_2018\inclinometer\181003_compas\181004.raw.h5'
         # r'd:\WorkData\_experiment\_2018\inclinometer\181003_compas\181003compas.h5'
         # r'd:\WorkData\_experiment\inclinometer\_Schukas\210603_lab\_raw\220128.raw.h5'
         )
@@ -36,27 +38,32 @@ if step == 1:
         yaml_safe_dump({
             'defaults': ['base_incl_calibr_hy', '_self_'],
             'hydra': {'searchpath': [path_db_raw.with_name("cfg_proc").as_uri().replace('///', '//')]}  # .as_posix()
-            }, f)
+            # file://d:/WorkData/_experiment/inclinometer/_type_b/230117_stand%40ib26%2C28-30/_raw/cfg_proc
+            # file://d:/WorkData/_experiment/inclinometer/_type_b/230117_stand_ib26_28_30/_raw/cfg_proc
+            # 'hydra': {'searchpath': [f'file://{path_db_raw.with_name("cfg_proc").as_posix()}']}  #.as_uri().replace('///', '//')
+            }, f)  # .as_uri() also replaces "," and "@" but this is not we need
         f.flush()
 
-
+    sys_argv_save = sys.argv.copy()
     cfg = cfg_d.main_call([
         # r'--config-path=scripts\cfg',
         # fr'--config-path={path_db_raw.parent}/cfg_proc'.replace('\\', '/'),  # not works
         f'in.db_path="{db_in}"',
-        'in.prefix=incl',   # incl_b
-        'in.probes=[19]',   # 6,7,8,9,10,11,12,16,
-        'in.channels=[A]',  # [M]
+        'in.prefix=incl_b',   # incl
+        #'in.probes=[26,28,29,30]',   # 19, 6,7,8,9,10,11,12,16,
+        'in.channels=[A, M]',  # [M]
         f'out.db_paths=["{db_in}"]',
-        f'+probes=inclinometers',  # see config probes directory
+        #'+input=input_mod'
+        #f'+probes=inclinometers',  # see config probes directory
         # f'filter.offsets=[10,5]',  # less filter little data
         # can not miss "yml" as opposed to "yaml":
         # r'--config-name=220128incl_load#b-caliblab.yml'
         # r'# 220111incl_load#d-caliblab.yml'
+        # '--cfg job'  # hydra debug - not works
         ],
         fun=incl_calibr_hy.main
-    )
-
+        )
+    sys.argv = sys_argv_save
     #incl_calibr(['cfg/201219incl_load-caliblab.yml'])
     """
     200813incl_calibr-lab-b.yml'])

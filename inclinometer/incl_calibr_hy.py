@@ -46,7 +46,8 @@ except Exception as e:  # if __file__ is wrong
 sys.path.append(str(Path(scripts_path).parent.resolve()))
 # from inclinometer.incl_calibr import calibrate, calibrate_plot, coef2str
 from inclinometer.h5inclinometer_coef import h5copy_coef
-from inclinometer.incl_h5clc import incl_calc_velocity_nodask
+from inclinometer.incl_h5clc_hy import incl_calc_velocity_nodask, gen_subconfigs, h5_names_gen
+from to_pandas_hdf5.h5_dask_pandas import filter_local
 from utils2init import this_prog_basename, standard_error_info, LoggingStyleAdapter, set_field_if_no
 # init_file_names, Ex_nothing_done, this_prog_basename, standard_error_info, dir_create_if_need, ini2dict, FakeContextIfOpen, set_field_if_no
 from to_pandas_hdf5.h5toh5 import h5load_ranges, h5find_tables
@@ -642,7 +643,8 @@ def dict_matrices_for_h5(coefs=None, tbl=None, channels=None):
 
 cfg = {}
 
-@hydra.main(config_name=cs_store_name, config_path="cfg")  # adds config store cs_store_name data/structure to :param config
+
+@hydra.main(config_name=cs_store_name, config_path='cfg', version_base='1.3')  # adds config store cs_store_name data/structure to :param config
 def main(config: ConfigType) -> None:
     """
     ----------------------------
@@ -689,28 +691,40 @@ def main(config: ConfigType) -> None:
     fig_filt = None
     fig = None
     if not cfg['in']['db_path'].is_absolute():
-        cfg['out']['db_path'] = cfg['in']['path_cruise'] / str(cfg['out']['db_path'])
+        cfg['in']['db_path'] = cfg['in']['path_cruise'] / str(cfg['out']['db_path'])
+
     fig_save_dir_path = cfg['in']['db_path'].parent
     (fig_save_dir_path / 'images-channels_calibration').mkdir(exist_ok=True)
-    with pd.HDFStore(cfg['in']['db_path'], mode='r') as store:
-        if len(cfg['in']['tables']) == 1:
-            cfg['in']['tables'] = h5find_tables(store, cfg['in']['tables'][0])
-        coefs = {}
-        for itbl, tbl in enumerate(cfg['in']['tables'], start=1):
-            probe_number = int(re.findall('\d+', tbl)[0])
-            lf.info(f'{itbl}. {tbl}: ')
-            if isinstance(cfg['in']['time_ranges'], Mapping):
-                probe_number_str = re.findall('[\d_]+', tbl)[0]  # combined data are named by numbers joined by "_"
-                try:
-                    time_range = cfg['in']['time_ranges'][probe_number_str]
-                except (omegaconf.KeyValidationError, KeyError):
-                    try:
-                        time_range = cfg['in']['time_ranges'][probe_number]
-                    except (omegaconf.KeyValidationError, KeyError):
-                        time_range = cfg['in']['time_range']
-            else:
-                time_range = cfg['in']['time_range']  # same interval for each table
-            a = h5load_ranges(store, table=tbl, t_intervals=time_range)
+    # with pd.HDFStore(cfg['in']['db_path'], mode='r') as store:
+    #     if len(cfg['in']['tables']) == 1:
+    #         cfg['in']['tables'] = h5find_tables(store, cfg['in']['tables'][0])
+    #     coefs = {}
+    if True:
+        for d, coefs, tbl, probe_number_str in gen_subconfigs(
+                cfg,
+                fun_gen=h5_names_gen,
+                **cfg['in']
+                ):
+            d = filter_local(d, cfg['filter'], ignore_absent={'h_minus_1', 'g_minus_1'})
+
+            # for itbl, tbl in enumerate(cfg['in']['tables'], start=1):
+            # probe_number_str = re.search('(?:(?:w|incl|i)_?(?P<n>[A-z]*\d+)_?)+', tbl).group(
+            #     'n')  # combined data are named by numbers joined by "_"
+            # probe_number = int(re.findall('\d+', probe_number_str)[0])
+            # lf.info(f'{itbl}. {tbl}: ')
+            # if isinstance(cfg['in']['time_ranges'], Mapping):
+            #     probe_number_str = re.findall('(?:_)?(.?[\d_]+)', tbl)[0]  # combined data are named by numbers joined by "_"
+            #     try:
+            #         time_range = cfg['in']['time_ranges'][probe_number_str]
+            #     except (omegaconf.KeyValidationError, KeyError):
+            #         try:
+            #             time_range = cfg['in']['time_ranges'][probe_number]
+            #         except (omegaconf.KeyValidationError, KeyError):
+            #             time_range = cfg['in']['time_range']
+            # else:
+            #     time_range = cfg['in']['time_range']  # same interval for each table
+            # a = h5load_ranges(store, table=tbl, t_intervals=time_range)
+            a = d.compute()
             if a.empty:
                 lf.error('No data for {}!!! Skipping it...', tbl)
                 continue
