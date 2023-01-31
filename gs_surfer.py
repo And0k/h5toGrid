@@ -783,8 +783,8 @@ def save_2d_to_grd(z2d, x_min, y_max, x_resolution, y_resolution, file_grd):
 
     if not isinstance(file_grd, Path):
         file_grd = Path(file_grd)
-        if file_grd.suffix != '.grd':
-            file_grd = file_grd.with_suffix('.grd')
+    if file_grd.suffix != '.grd':
+        file_grd = file_grd.with_suffix('.grd')
 
     write_grd_this_geotransform(file_grd, z2d)
 

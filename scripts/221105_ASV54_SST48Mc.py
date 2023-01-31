@@ -165,7 +165,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
         # 'max_time': '2020-06-30T22:37:00',
         }
     f_row2name = lambda r: '{:%y%m%d_%H%M%S}.vsz'.format(r['Index'])
-    # It is possible to add exact interval to filename but time after zonde is back on surface can be determined only
+    # It is possible to add exact interval to filename but time after probe is back on surface can be determined only
     # from next row so we rely on ~pattern_loader.vsz to do it. Even freq=16Hz to determine last time not helps:
     # '_{}s.vsz'.format(round(max(r['rows']/16, (r['DateEnd'] - r['Index'] + pd.Timedelta(300, "s")).total_seconds()))
     pattern_code = cfg_in['pattern_path'].read_bytes()  # encoding='utf-8'
@@ -431,7 +431,7 @@ if st(230, f'Draw {device} data profiles'):  # False: #
         # 'max_time': '2020-06-30T22:37:00',
         }
     f_row2name = lambda r: '{:%y%m%d_%H%M%S}.vsz'.format(r['Index'])
-    # It is possible to add exact interval to filename but time after zonde is back on surface can be determined only
+    # It is possible to add exact interval to filename but time after probe is back on surface can be determined only
     # from next row, so we rely on ~pattern_loader.vsz to do it. Even freq=16Hz to determine last time not helps:
     # '_{}s.vsz'.format(round(max(r['rows']/16, (r['DateEnd'] - r['Index'] + pd.Timedelta(300, "s")).total_seconds()))
     pattern_code = cfg_in['pattern_path'].read_bytes()  # encoding='utf-8'

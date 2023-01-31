@@ -538,24 +538,19 @@ def h5load_ranges(store: pd.HDFStore, table: str, t_intervals=None,
 
     n = len(t_intervals) if t_intervals is not None else 0
     if n > 2:
-        query_range_pattern = '|'.join(f'({query_range_pattern.format(*query_range_lims)})' for query_range_lims in (
-            (lambda x=iter(t_intervals): zip(x, x))())
+        query_range_pattern = '|'.join(
+            f'({query_range_pattern.format(*query_range_lims)})' for query_range_lims in (
+                (lambda x=iter(t_intervals): zip(x, x))())
                                    )
     elif n < 2:
         query_range_pattern = None
         t_intervals = []
-    df = h5load_range(store, table, query_range_lims=t_intervals[0::(n - 1)],
-                  interpolate=None, query_range_pattern=query_range_pattern)
+    df = h5load_range(store, table, query_range_lims=t_intervals[0::(n - 1)], query_range_pattern=query_range_pattern)
     return df
 
 
-
-
-
-
-
 def h5temp_open(
-        db_path: Path,
+        db_path: Optional[Path] = None,
         db_path_temp: Optional[Path] = None,
         tables: Optional[Sequence[str]] = None,
         tables_log: Optional[Sequence[str]] = (),
@@ -592,7 +587,7 @@ def h5temp_open(
     if db:
         lf.warning('DB already used{}: handle detected!', ' and opened' if db.is_open else '')
         raise FileExistsError(f'{db.filename} must be closed')  # may be useful close temporary?
-    if tables is None:
+    if tables is None or (db_in or db_path) is None:
         return None, None, False  # skipping open, may be need if not need write
     #else:
     print('saving to', db_path_temp / ','.join(tables).strip('/'), end=':\n')

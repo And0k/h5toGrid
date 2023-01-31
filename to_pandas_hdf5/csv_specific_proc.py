@@ -701,7 +701,7 @@ def proc_loaded_inclin_Kondrashov(
         cols_out: Union[slice, Sequence[Any]] = slice(None)
         ) -> pd.DataFrame:
     """
-    Specified prep&proc of navigation data from Kondrashov inclinometres:
+    Specified prep&proc of navigation data from Kondrashov inclinometers:
     - Time calc: gets time in current zone
 
     :param a: numpy record array. Will be modified inplace.

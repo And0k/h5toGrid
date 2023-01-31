@@ -309,7 +309,6 @@ def main_init(cfg: Mapping, cs_store_name, __file__=None, ) -> Dict:
     #     cfg = OmegaConf.merge(cfg, override_conf)
 
     print("Working directory : {}".format(os.getcwd()))
-
     # print not empty / not False values # todo: print only if config changed instead
     print(OmegaConf.to_yaml({
         k0: ({k1: v1 for k1, v1 in v0.items() if v1} if hasattr(v0, 'items') else v0) for k0, v0 in cfg.items()

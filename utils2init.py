@@ -246,15 +246,19 @@ def first_of_paths_text(paths):
 
 def set_field_if_no(dictlike, dictfield, value=None):
     """
-    Modifies dict: sets field to value only if it not exist
+    Modifies dict: sets field to value only if it not exists
     :param dictlike: dict
     :param dictfield: field
     :param value: value
     :return: None
     """
-    if not dictfield in dictlike or dictlike[dictfield] is None:
-        dictlike[dictfield] = value
-    # if MissingMandatoryValue or omegaconf.errors.ValidationError or on set None set it Optional
+    try:
+        if dictlike[dictfield] is not None:
+            return
+    except KeyError:  # may be need check also MissingMandatoryValue or omegaconf.errors.ValidationError or set Optional if None
+        pass
+    dictlike[dictfield] = value
+
 
 def getDirBaseOut(mask_in_path, raw_dir_words: Optional[Sequence[str]]=None, replaceDir:str=None):
     """
@@ -334,9 +338,9 @@ def cfgfile2dict(arg_source: Union[Mapping[str, Any], str, PurePath, None] = Non
     """
 
     def set_config():
-        config = configparser.RawConfigParser(inline_comment_prefixes=(';',))  # , allow_no_value = True
-        config.optionxform = lambda option: option  # do not lowercase options
-        return config
+        cfg = configparser.RawConfigParser(inline_comment_prefixes=(';',))  # , allow_no_value = True
+        cfg.optionxform = lambda option: option  # do not lowercase options
+        return cfg
 
     if not arg_source:
         return set_config(), '<None>', ''
@@ -1798,11 +1802,8 @@ class ExitStatus(enum.IntEnum):
     """Portable definitions for the standard POSIX exit codes.
     https://github.com/johnthagen/exitstatus/blob/master/exitstatus.py
     """
-    success = 0
-    """Indicates successful program completion."""
-
-    failure = 1
-    """Indicates unsuccessful program completion in a general sense."""
+    success = 0  # Indicates successful program completion
+    failure = 1  # Indicates unsuccessful program completion in a general sense
 
 
 if sys.platform == "win32":

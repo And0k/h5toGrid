@@ -97,12 +97,12 @@ def combine_1d_files_to_grd(path, x_min, x_resolution, cols, delimiter, file_dim
         'x_min': (x_min.astype('M8[s]')).astype(float) / (24 * 3600) + 1 - np.datetime64('1900-01-01').astype(float),
         'y_max': y.max().item(),
         'x_resolution': x_resolution,
-        'y_resolution': np.ediff1d(y[:2]).item()
+        'y_resolution': np.ediff1d(y).mean()  # np.ediff1d(y[:2]).item()
         }
     if transpose:
         xy_params = {
-            'x_min': xy_params['y_max'] - xy_params['y_resolution']*len(y),
-            'y_max': xy_params['x_min'] + xy_params['x_resolution']*n_files,
+            'x_min': xy_params['y_max'] - xy_params['y_resolution'] * (len(y) - 1),
+            'y_max': xy_params['x_min'] + xy_params['x_resolution'] * (n_files - 1),
             'x_resolution': xy_params['y_resolution'],
             'y_resolution': xy_params['x_resolution']
             }
@@ -115,9 +115,10 @@ def combine_1d_files_to_grd(path, x_min, x_resolution, cols, delimiter, file_dim
         xyz = {
             file_dim_name: np.arange(xy_params['y_max'] - xy_params['y_resolution'] * z.shape[0],
                                      xy_params['y_max'] - xy_params['y_resolution'] * 0.5, xy_params['y_resolution']),
-            # "Reverse axis" in GUI (Surfer) is only option to reverse y
-            y_name: np.arange(xy_params['x_min'], xy_params['x_min'] + xy_params['x_resolution'] * (z.shape[1] - 0.5),
-                              xy_params['x_resolution']),
+            # "Reverse axis" in GUI (Surfer) is only option to reverse `y`
+            y_name: y,  # exact. If need strictly equal spaced, use:
+                # np.arange(xy_params['x_min'], xy_params['x_min'] + xy_params['x_resolution'] * (z.shape[1] - 0.5),
+                #           xy_params['x_resolution']),
             out_name: z
             }
         if transpose:
@@ -146,7 +147,7 @@ if __name__ == '__main__':
     transpose = True  # or False
 
     params = [
-        {'path': r'd:\WorkData\BalticSea\_other_data\_model\Copernicus\GoF\GoF_sm+Wind\Aver&fluct\*.txt',
+        {'path': r'd:\WorkData\BalticSea\_other_data\_model\Copernicus\GoF\Aver&fluct\*.txt',
             'cols': {'lon': 1, 's_diff': 4}
          },
         {
