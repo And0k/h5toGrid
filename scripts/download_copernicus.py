@@ -123,7 +123,7 @@ if True:
                 log.debug(' . %s', stack.replace('\n', ''))
             log.debug('-' * 60)
 
-    path_config = Path('scripts/cfg/coperinicus_api_client.ini').absolute()  # /scripts
+    path_config = Path('scripts/cfg/download_copernicus.ini').absolute()  # /scripts
     if not path_config.is_file():
         l.error('Error %s - config not found!', path_config)
         sys.exit(1)
