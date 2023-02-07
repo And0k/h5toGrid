@@ -77,5 +77,6 @@ dependencies:
   - vaex
   - xarray
   - pip:
+      - hydra-colorlog
       - wmm2020
 prefix: C:\Users\and0k\conda\envs\py3.10x64h5togrid

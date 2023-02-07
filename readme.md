@@ -1,8 +1,10 @@
 This repository contains as good files as bunch of garbage. Mainly the code here is used to convert format of <a href="https://en.wikipedia.org/wiki/CTD_(instrument)">CTD</a> data and <a href="https://jor.ocean.ru/index.php/jor/article/download/369/153">inclinometer</a> data.
 
 ## Requirements
-After having many problems with pip/pipenv on windows I use conda for now. There is my [Conda environment file](https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#id16) py3.7x64h5togrid_no_pip0.yml that I've used to install what I need.
-
+After having many problems with pip/pipenv on windows I use conda for now. [There](py3.10x64h5togrid.yml) is my [Conda environment file](https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#id16) `py3.10x64h5togrid.yml`. To install environment with Python 10 with latest versions of all needed packages use:
+```cmd
+conda env create --force --file py3.10x64h5togrid.yml
+```
 
 ## Workflow to calculate grids from CTD data 
 *Examples of workflow can be found in ``scripts`` directory*. They usually includs steps:
