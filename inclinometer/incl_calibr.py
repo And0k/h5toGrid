@@ -1,4 +1,6 @@
 """
+Old version partly updated so not functioning. Use incl_calibr_hy!
+
 autocalibration of all found probes. export coefficients to hdf5.
 Does not align (rotate) coefficient matrix to North / Gravity.
 Need check if rotation exist?:
@@ -23,7 +25,7 @@ if __debug__:
     matplotlib.rcParams['figure.figsize'] = (16, 7)
     try:
         matplotlib.use(
-            'Qt5Agg')  # must be before importing plt (rases error after although documentation sed no effect)
+            'Qt5Agg')  # must be before importing plt (raises error after although documentation sed no effect)
     except ImportError:
         pass
     from matplotlib import pyplot as plt
@@ -35,12 +37,11 @@ if __debug__:
 try:
     scripts_path = str(Path(__file__).parent)
 except Exception as e:  # if __file__ is wrong
-    drive_d = Path(
-        'D:/' if sys.platform == 'win32' else '/mnt/D')  # allows to run on both my Linux and Windows systems:
+    drive_d = Path('D:/' if sys.platform == 'win32' else '/mnt/D')  # allows to run on both my Linux and Windows systems
     scripts_path = drive_d.joinpath('Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))
-# from inclinometer.incl_calibr import calibrate, calibrate_plot, coef2str
-from inclinometer.h5inclinometer_coef import h5copy_coef, l
+
+from inclinometer.h5inclinometer_coef import h5copy_coef, channel_cols, dict_matrices_for_h5  # , lf
 from inclinometer.incl_h5clc import incl_calc_velocity_nodask
 from utils2init import cfg_from_args, this_prog_basename, init_logging, standard_error_info
 from to_pandas_hdf5.h5toh5 import h5load_ranges, h5find_tables
@@ -96,32 +97,30 @@ def fG(Axyz, Ag, Cg):
     return Ag @ (Axyz - Cg)
 
 
-# fG = lambda countsAx, countsAy, countsAz, Ag, Cg: np.dot(
-#     Ag, np.float64((countsAx, countsAy, countsAz)) - Cg)
-#
-# fGi = lambda countsAx, countsAy, countsAz, Ag, Cg, i: np.dot(
-#     Ag, np.float64((countsAx, countsAy, countsAz))[slice(*i)] - Cg)
-
-# fGi = lambda Ax, Ay, Az, Ag, Cg, i: np.dot(
-#     (np.column_stack((Ax, Ay, Az))[slice(*i)] - Cg[0, :]), Ag).T
-
-
-def filter_channes(a3d: np.ndarray, a_time=None, fig=None, fig_save_prefix=None,
-                   blocks=(21, 7), offsets=(1.5, 2), std_smooth_sigma=4
-                   ) -> Tuple[np.ndarray, np.ndarray, matplotlib.figure.Figure]:
+def filter_channes(
+        a3d: np.ndarray, a_time=None, fig=None, fig_save_prefix=None, window_title=None,
+        blocks=(21, 7), offsets=(1.5, 2), std_smooth_sigma=4,
+        x: Mapping[str, Any] = None, y: Mapping[str, Any] = None, z: Mapping[str, Any] = None,
+        **kwargs) -> Tuple[np.ndarray, np.ndarray, matplotlib.figure.Figure]:
     """
     Filter back and forward each column of a3d by despike()
-    despike a3d - 3 channels of data and plot data and overlayed results
+    despike a3d - 3 channels of data and plot data and overlapped results
+
     :param a3d: shape = (3,len)
-    :param a_time:
+    :param a_time: x data to plot. If None then use range(len)
     :param fig:
     :param fig_save_prefix: save figure to this path + 'despike({ch}).png' suffix
     :param blocks: filter window width - see despike()
-    :param offsets: offsets to std - see despike(). Note: filters too many if set some < 3
+    :param offsets: offsets to std - see despike(). If empty then only filters NaNs.
+    Note: filters too many if set some item < 3.
     :param std_smooth_sigma - see despike()
+    :param x: blocks, offsets, std_smooth_sigma dict for channel x
+    :param y: blocks, offsets, std_smooth_sigma dict for channel y
+    :param z: blocks, offsets, std_smooth_sigma dict for channel z
+    :param window_title: str
     :return: a3d[ :,b_ok], b_ok
     """
-
+    args = locals()
     dim_length = 1   # dim_channel = 0
     blocks = np.minimum(blocks, a3d.shape[dim_length])
     b_ok = np.ones((a3d.shape[dim_length],), np.bool8)
@@ -130,12 +129,15 @@ def filter_channes(a3d: np.ndarray, a_time=None, fig=None, fig_save_prefix=None,
         ax = fig.axes[0]
     else:
         ax = None
+
+    if a_time is None:
+        a_time = np.arange(a3d.shape[1])
+
     for i, (ch, a) in enumerate(zip(('x', 'y', 'z'), a3d)):
         ax_title = f'despike({ch})'
-        ax, lines = make_figure(y_kwrgs=((
+        ax, lines = make_figure(x=a_time, y_kwrgs=((
             {'data': a, 'label': 'source', 'color': 'r', 'alpha': 1},
-            )), ax_title=ax_title, ax=ax, lines='clear')
-        # , mask_kwrgs={'data': b_ok, 'label': 'filtered', 'color': 'g', 'alpha': 0.7}
+            )), ax_title=ax_title, ax=ax, lines='clear', window_title=window_title)
         b_nan = np.isnan(a)
         n_nans_before = b_nan.sum()
         b_ok &= ~b_nan
@@ -143,9 +145,14 @@ def filter_channes(a3d: np.ndarray, a_time=None, fig=None, fig_save_prefix=None,
         if len(offsets):
             # back and forward:
             a_f = np.float64(a[b_ok][::-1])
-            a_f, _ = despike(a_f, offsets, blocks, std_smooth_sigma=std_smooth_sigma)
-            a_f, _ = despike(a_f[::-1], offsets, blocks, ax, label=ch,
-                             std_smooth_sigma=std_smooth_sigma, x_plot=np.flatnonzero(b_ok))
+
+            cfg_filter_component = {
+                p: (args[p] if (ach := args[ch][p]) is None else ach) for p in ['offsets', 'blocks', 'std_smooth_sigma']
+                }
+
+            a_f, _ = despike(a_f, **cfg_filter_component, x_plot=a_time)
+            a_f, _ = despike(a_f[::-1], **cfg_filter_component, x_plot=a_time[b_ok], ax=ax, label=ch)
+
             b_nan[b_ok] = np.isnan(a_f)
             n_nans_after = b_nan.sum()
             b_ok &= ~b_nan
@@ -156,14 +163,14 @@ def filter_channes(a3d: np.ndarray, a_time=None, fig=None, fig_save_prefix=None,
             #     ax_title=f'despike({ch})', lines='clear')
 
             ax.legend(prop={'size': 10}, loc='upper right')
-            l.info('despike(%s, offsets=%s, blocks=%s) deleted %s',
-                   ch, offsets, blocks, n_nans_after - n_nans_before)
+            lf.info('despike({ch:s}, offsets={offsets}, blocks={blocks}): deleted={dl:d}'.format(
+                    ch=ch, dl=n_nans_after - n_nans_before, **cfg_filter_component))
         plt.show()
         if fig_save_prefix:  # dbstop
             try:
                 ax.figure.savefig(fig_save_prefix + (ax_title + '.png'), dpi=300, bbox_inches="tight")
             except Exception as e:
-                l.warning(f'Can not save fig: {standard_error_info(e)}')
+                lf.warning(f'Can not save fig: {standard_error_info(e)}')
         # Dep_filt = rep2mean(a_f, b_ok, a_time)  # need to execute waveletSmooth on full length
 
     # ax.plot(np.flatnonzero(b_ok), Depth[b_ok], color='g', alpha=0.9, label=ch)
@@ -171,12 +178,12 @@ def filter_channes(a3d: np.ndarray, a_time=None, fig=None, fig_save_prefix=None,
 
 
 def calc_vel_flat_coef(coef_nested: Mapping[str, Mapping[str, np.ndarray]]) -> Dict[str, np.ndarray]:
-    """ Convert coef_nested in format of incl_calc_velocity() args"""
+    """ Convert coef_nested to format of incl_calc_velocity() args"""
     arg = {}
     for ch, coefs in coef_nested.items():
         sfx = channel_cols(ch)[1].lower()
         for key, val in coefs.items():
-            arg[('C' if key == 'b' else 'A') + sfx] = val
+            arg[f"{'C' if key == 'b' else 'A'}{sfx}"] = val
     return arg
 
 
@@ -278,6 +285,9 @@ def fit_quadric_form(s):
         .. [1] Qingde Li; Griffiths, J.G., "Least squares ellipsoid specific
            fitting," in Geometric Modeling and Processing, 2004.
            Proceedings, vol., no., pp.335-340, 2004
+        Source
+        ------
+        https://teslabs.com/articles/magnetometer-calibration/
     '''
 
     # D (samples)
@@ -320,7 +330,21 @@ def fit_quadric_form(s):
                       [4, 5, 2]], np.int8)]
     n = v_2[:-1, np.newaxis]
     d = v_2[3]
-
+    
+    
+    # modified according to Robert R - todo: check and implement:
+    # • 2 years ago
+    # I believe in your code example your M is incorrect. Based on your notation in your Quadric section you have
+    # [[a f g],
+    #  [f b h],
+    #  [g h c]] as your M matrix. A simple check here is that in the D matrix, your 5th element
+    # is your 2XY term. This term should go in the h positions as per
+    # [[a h g],
+    #  [h b f],
+    #  [g f c]], instead you have the XY term assigned in the f positions.
+    # The overall result is that your A_1 matrix will have "mirrored" column 1 and row 1.
+    # Interestingly enough, this flip doesn't seem to impact the calibration significantly.
+    
     return M, n, d
 
 
@@ -368,7 +392,8 @@ def coef2str(a2d: np.ndarray, b: np.ndarray) -> Tuple[str, str]:
     return A_str, b_str
 
 
-def calibrate_plot(raw3d: np.ndarray, a2d: np.ndarray, b, fig=None, window_title=None, clear=True):
+def calibrate_plot(raw3d: np.ndarray, a2d: np.ndarray, b, fig=None, window_title=None, clear=True,
+                   raw3d_other=None, raw3d_other_color='r'):
     """
 
     :param raw3d:
@@ -377,6 +402,7 @@ def calibrate_plot(raw3d: np.ndarray, a2d: np.ndarray, b, fig=None, window_title
     :param fig:
     :param window_title:
     :param clear:
+    :param raw3d_other
     :return:
     """
     make_fig = fig is None
@@ -393,16 +419,22 @@ def calibrate_plot(raw3d: np.ndarray, a2d: np.ndarray, b, fig=None, window_title
     # output data:
     s = np.dot(a2d, raw3d - b)  # s[:,:]
 
-    # Calibrated magnetic ﬁeld measurements plotted on the
+    # Calibrated magnetic field measurements plotted on the
     # sphere manifold whose radius equals 1
-    # the norm of the local Earth’s magnetic ﬁeld
+    # the norm of the local Earth’s magnetic field
 
     # ax = axes3d(fig)
     # ax1 = fig.add_subplot(121, projection='3d')
     marker_size = 5  # 0.2
     ax1.set_title('source')
-    ax1.scatter(raw3d[0, :], raw3d[1, :], raw3d[2, :], color='k', marker='.', s=marker_size)
-    # , alpha=0.1) # dfcum['Hx'], dfcum['Hy'], dfcum['Hz']
+
+    raw3d_norm = np.linalg.norm(raw3d, axis=0)
+    ax1.scatter(*raw3d, c=abs(np.mean(raw3d_norm) - raw3d_norm), marker='.', s=marker_size)  # сolor='k'
+    if raw3d_other is not None:
+        ax1.scatter(
+            xs=raw3d_other[0, :], ys=raw3d_other[1, :], zs=raw3d_other[2, :], c=raw3d_other_color, s=4, marker='.'
+            )
+        # , alpha=0.1) # dfcum['Hx'], dfcum['Hy'], dfcum['Hz']
     # plot sphere
     # find the rotation matrix and radii of the axes
     U, c, rotation = linalg.svd(linalg.inv(a2d))
@@ -412,7 +444,9 @@ def calibrate_plot(raw3d: np.ndarray, a2d: np.ndarray, b, fig=None, window_title
     # ax2 = fig.add_subplot(122, projection='3d')
     ax2.set_title('calibrated')
     # plot points
-    ax2.scatter(s[0, :], s[1, :], s[2, :], color='g', marker='.', s=marker_size)  # , alpha=0.2  # s is markersize,
+    s_norm = np.linalg.norm(s, axis=0)
+    ax2.scatter(*s, c=abs(1 - s_norm), marker='.', s=marker_size)  # , alpha=0.2  # s is markersize,
+
     axes_connect_on_move(ax1, ax2)
     # plot unit sphere
     center = np.zeros(3, float)
@@ -427,139 +461,67 @@ def calibrate_plot(raw3d: np.ndarray, a2d: np.ndarray, b, fig=None, window_title
     return fig
 
 
-def zeroing_azimuth(store, tbl, time_range_nord, coefs=None, cfg_in=None):
+def zeroing_azimuth(store: pd.HDFStore, tbl, time_range_nord, coefs=None, cfg_in=None,
+                    filter_query='10 < inclination & inclination < 170') -> float:
     """
-    azimuth_shift_deg by calculating velocity (u, v) in cfg_in['time_range_nord'] interval of tbl data:
-     taking median, calculating direction, multipling by -1
+    Get correction of azimuth by:
+    1. calculating velocity (u, v) in ``time_range_nord`` interval of tbl data using coefficients to be adjusted,
+    2. filtering with ``filter_query`` and taking median,
+    3. calculating direction,
+    4. multiplying result by -1.
     :param time_range_nord:
-    :param store:
-    :param tbl:
+    :param store: opened pandas HDFStore: interface to its objects in PyTables hdf5 store
+    :param tbl: table name in store
     :param coefs: dict with fields having values of array type with sizes:
     'Ag': (3, 3), 'Cg': (3, 1), 'Ah': (3, 3), 'Ch': array(3, 1), 'azimuth_shift_deg': (1,), 'kVabs': (n,)
     :param cfg_in: dict with fields:
         - time_range_nord
-        - other, needed in load_hdf5_data() and optionally in incl_calc_velocity_nodask()
-    :return: azimuth_shift_deg
+        - other, needed in h5load_ranges() and optionally in incl_calc_velocity_nodask()
+    :param filter_query: upply this filter query to incl_calc_velocity*() output before mean azimuth calculation
+    :return: azimuth_shift_deg: degrees
     """
-    l.debug('Zeroing Nord direction')
-    df = load_hdf5_data(store, table=tbl, t_intervals=time_range_nord)
+    lf.debug('Zeroing Nord direction')
+    df = h5load_ranges(store, table=tbl, t_intervals=time_range_nord)
     if df.empty:
-        l.info('Zero calibration range out of data scope')
+        lf.info('Zero calibration range out of data scope')
         return
-    dfv = incl_calc_velocity_nodask(df, **coefs, cfg_filter=cfg_in, cfg_proc=
-    {'calc_version': 'trigonometric(incl)', 'max_incl_of_fit_deg': 70})
-    dfv.query('10 < inclination & inclination < 170', inplace=True)
+    dfv = incl_calc_velocity_nodask(
+        df, **coefs, cfg_filter=cfg_in, cfg_proc={
+            'calc_version': 'trigonometric(incl)', 'max_incl_of_fit_deg': 70
+            })
+    dfv.query(filter_query, inplace=True)
     dfv_mean = dfv.loc[:, ['u', 'v']].median()
     # or df.apply(lambda x: [np.mean(x)], result_type='expand', raw=True)
     # df = incl_calc_velocity_nodask(dfv_mean, **calc_vel_flat_coef(coefs), cfg_in=cfg_in)
 
     # coefs['M']['A'] = rotate_z(coefs['M']['A'], dfv_mean.Vdir[0])
     azimuth_shift_deg = -np.degrees(np.arctan2(*dfv_mean.to_numpy()))
-    l.info('Nord azimuth shifting coef. found: %s degrees', azimuth_shift_deg)
+    lf.info('Nord azimuth shifting coef. found: {:f} degrees', azimuth_shift_deg)
     return azimuth_shift_deg
 
 
-def channel_cols(channel: str) -> Tuple[str, str]:
+def to_nested_keys(coefs):
     """
-    Data columns names (col_str M/A) and coef letters (coef_str H/G) from parameter name (or its abbreviation)
-    :param channel:
-    :return: (col_str, coef_str)
+    convert coefs fields to be nested under channels (needed?)
+    :param coefs:
+    :return:
     """
-    if (channel == 'magnetometer' or channel == 'M'):
-        col_str = 'M'
-        coef_str = 'H'
-    else:
-        col_str = 'A'
-        coef_str = 'G'
-    return (col_str, coef_str)
-
-
-def dict_matrices_for_h5(coefs=None, tbl=None, channels=None, to_nested_keys=False):
-    """
-
-    :param coefs: some fields from: {'M': {'A', 'b', 'azimuth_shift_deg'} 'A': {'A', 'b', 'azimuth_shift_deg'}, 'Vabs0'}
-    :param tbl: should include probe number in name. Example: "incl_b01"
-    :param channels: some from default ['M', 'A']: magnetometer, accelerometer
-    :param to_nested_keys: 
-    :return: dict_matrices
-    """
-
-
-    if channels is None:
-        channels = ['M', 'A']
-
-    # Fill coefs where not specified
-    dummies = []
-    b_have_coefs = coefs is not None
-
-    if b_have_coefs:
-        if to_nested_keys is None:
-            coefs = coefs.copy()  # todo: deep copy better!
-        else:
-            # convert coefs fields to be nested under channels
-
-            if to_nested_keys is True:
-                to_nested_keys = {'Ch': ('M', 'b'), 'Ah': ('M', 'A'), 'azimuth_shift_deg': ('M', 'azimuth_shift_deg'),
-                                  'Cg': ('A', 'b'), 'Ag': ('A', 'A')}
-            channels = set(c for c,k in to_nested_keys.values())
-            c = {k:{} for k in channels}
-            for channel, (ch_name, coef_name) in to_nested_keys.items():
-                c[ch_name][coef_name] = coefs.get(channel)
-            c.update({k: v for k, v in coefs.items() if k not in to_nested_keys})
-            # old convention
-            if c.get('Vabs0') is None and 'kVabs' in c:
-                c['Vabs0'] = c.pop('kVabs')
-            coefs = c
-    else:
-        coefs = {}  # dict(zip(channels,[None]*len(channels)))
-
-    for channel in channels:
-        if not coefs.get(channel):
-            coefs[channel] = (
-                {'A': np.identity(3) * 0.00173, 'b': np.zeros((3, 1))} if channel == 'M' else
-                {'A': np.identity(3) * 6.103E-5, 'b': np.zeros((3, 1))}
-                )
-            if b_have_coefs:
-                dummies.append(channel)
-        if channel == 'M':
-            if not coefs['M'].get('azimuth_shift_deg'):
-                coefs['M']['azimuth_shift_deg'] = 180
-                if b_have_coefs and not 'M' in dummies:
-                    dummies.append('azimuth_shift_deg')  # only 'azimuth_shift_deg' for M channel is dummy
-
-    if coefs.get('Vabs0') is None:
-        coefs['Vabs0'] = np.float64([10, -10, -10, -3, 3, 70])
-        if b_have_coefs:
-            dummies.append('Vabs0')
-
-    if dummies or not b_have_coefs:
-        l.warning('Coping coefs, %s - dummy!', ','.join(dummies) if b_have_coefs else 'all')
-    else:
-        l.info('Coping coefs')
-
-    # Fill dict_matrices with coefs values
-    dict_matrices = {}
-    if tbl:
-        # Coping probe number to coefficient to can manually check when copy manually
-        i_search = re.search('\d*$', tbl)
-        if i_search:
-            try:
-                dict_matrices['//coef//i'] = int(i_search.group(0))
-            except Exception as e:
-                pass
-        dict_matrices['//coef//Vabs0'] = coefs['Vabs0']
-
-
-    for channel in channels:
-        (col_str, coef_str) = channel_cols(channel)
-        dict_matrices.update(
-            {f'//coef//{coef_str}//A': coefs[channel]['A'],
-             f'//coef//{coef_str}//C': coefs[channel]['b'],
-             })
-        if channel == 'M':
-            dict_matrices[f'//coef//{coef_str}//azimuth_shift_deg'] = coefs['M']['azimuth_shift_deg']
-
-    return dict_matrices
+    not_nested_keys = {
+        'Ch': ('M', 'b'),
+        'Ah': ('M', 'A'),
+        'Cg': ('A', 'b'),
+        'Ag': ('A', 'A'),
+        'azimuth_shift_deg': ('M', 'azimuth_shift_deg')
+    }
+    channels = set(c for c, k in not_nested_keys.values())
+    c = {k: {} for k in channels}
+    for channel, (ch_name, coef_name) in not_nested_keys.items():
+        c[ch_name][coef_name] = coefs.get(channel)
+    c.update({k: v for k, v in coefs.items() if k not in not_nested_keys})
+    # old convention
+    if c.get('Vabs0') is None and 'kVabs' in c:
+        c['Vabs0'] = c.pop('kVabs')
+    return c
 
 
 # ###################################################################################
@@ -567,10 +529,10 @@ def main(new_arg=None):
     """
     1. Obtains command line arguments (for description see my_argparser()) that can be passed from new_arg and ini.file
     also.
-    2. Loads device data of calibration in laboratory from cfg['in']['db_path']
+    2. Loads device data of calibration in laboratory from hdf5 database (cfg['in']['db_path'])
     2. Calibrates configured by cfg['in']['channels'] channels ('accelerometer' and/or 'magnetometer'): soft iron
     3. Wrong implementation - not use cfg['in']['time_range_nord']! todo: Rotate compass using cfg['in']['time_range_nord']
-    :param new_arg: returns cfg if new_arg=='<cfg_from_args>' but it will be None if argument
+    :param config: returns cfg if new_arg=='<cfg_from_args>' but it will be None if argument
      argv[1:] == '-h' or '-v' passed to this code
     argv[1] is cfgFile. It was used with cfg files:
 
@@ -585,11 +547,15 @@ def main(new_arg=None):
     if cfg['program']['return'] == '<cfg_from_args>':  # to help testing
         return cfg
 
-    l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
-    l.info("%s(%s) channels: %s started. ",
-           this_prog_basename(__file__), cfg['in']['tables'], cfg['in']['channels'])
-    fig = None
+    l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
+    lf.info(
+        "{:s}({:s}) for channels: {} started. ",
+        this_prog_basename(__file__), ', '.join(cfg['in']['tables']), cfg['in']['channels']
+    )
     fig_filt = None
+    fig = None
+    if not cfg['in']['db_path'].is_absolute():
+        cfg['in']['db_path'] = cfg['in']['path_cruise'] / str(cfg['out']['db_path'])
     channel = 'accelerometer'  # 'magnetometer'
     fig_save_dir_path = cfg['in']['db_path'].parent
     with pd.HDFStore(cfg['in']['db_path'], mode='r') as store:
@@ -696,7 +662,7 @@ if __name__ == '__main__':
         main(['', '--db_path',
               r'd:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe\190710incl.h5',
               # r'd:\WorkData\_experiment\_2019\inclinometer\190320\190320incl.h5',
-              # r'd:\WorkData\_experiment\_2018\inclinometr\181003_compas\181003compas.h5',
+              # r'd:\WorkData\_experiment\_2018\inclinometer\181003_compas\181003compas.h5',
               '--channels_list', 'M,A',  # 'M,', Note: empty element cause calc of accelerometer coef.
               '--tables_list', ', '.join(f'incl{i:0>2}' for i in probes),
               #    'incl02', 'incl03','incl04','incl05','incl06','incl07','incl08','incl09','incl10','incl11','incl12','incl13','incl14','incl15','incl17','incl19','incl20','incl16','incl18',
@@ -731,7 +697,7 @@ if __name__ == '__main__':
     # # Old variant not using argparser
     #
     # cfg = {'in': {
-    #     'db_path': r'd:\workData\BalticSea\171003_ANS36\inclinometr\171015_intercal_on_board\#*.TXT',
+    #     'db_path': r'd:\workData\BalticSea\171003_ANS36\inclinometer\171015_intercal_on_board\#*.TXT',
     #     'use_time_range_list': ['2017-10-15T15:37:00', '2017-10-15T19:53:00'],
     #     'delimiter': ',',
     #     'skiprows': 13}}
@@ -744,7 +710,7 @@ if __name__ == '__main__':
     # tblL = tbl + '/log'
     # dt_add= np.timedelta64(60, 's')
     # dt_interval = np.timedelta64(60, 's')
-    # fileInF= r'd:\WorkData\_experiment\_2017\inclinometr\1704calibration.h5'
+    # fileInF= r'd:\WorkData\_experiment\_2017\inclinometer\1704calibration.h5'
     # with pd.HDFStore(fileInF, mode='r') as storeIn:
     #     # Query table tbl by intervals from table tblL. Join them
     #     dfL = storeIn[tblL]
@@ -776,7 +742,7 @@ if __name__ == '__main__':
     # raw3d = np.array(dfcum[['Hx', 'Hy', 'Hz']]).T
     # a2d, b = calibrate(raw3d)
     # calibrate_plot(raw3d, a2d, b)
-    # h5copy_coef(r'd:\WorkData\_experiment\_2017\inclinometr\inclinometr.h5', fileInF, tbl, dict_matrices={'//coef//H//A': a2d, '//coef//H//C': b.T})
+    # h5copy_coef(r'd:\WorkData\_experiment\_2017\inclinometer\inclinometer.h5', fileInF, tbl, dict_matrices={'//coef//H//A': a2d, '//coef//H//C': b.T})
     # h5_rotate_coef(h5file_source, h5file_dest, tbl)  # rotate G/A
     # pass
 

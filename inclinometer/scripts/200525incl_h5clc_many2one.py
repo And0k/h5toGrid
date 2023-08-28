@@ -18,7 +18,7 @@ import veuszPropagate
 from utils2init import path_on_drive_d, init_logging, open_csv_or_archive_of_them, st
 
 # l = logging.getLogger(__name__)
-l = init_logging(logging, None, None, 'INFO')
+l = init_logging('', None, 'INFO')
 
 import dask
 dask.config.set(scheduler='synchronous')
@@ -95,7 +95,7 @@ if st(2):
                  # '--time_range_zeroing_dict', "incl19: '2019-11-10T13:00:00', '2019-11-10T14:00:00'\n,"  # not works - use kwarg
                  # '--time_range_zeroing_list', '2019-08-26T04:00:00, 2019-08-26T05:00:00'
                 ] if prefix == 'incl' else
-                ['--bad_p_at_bursts_starts_peroiod', '1H',
+                ['--bad_p_at_bursts_starts_period', '1H',
                 ])
             kwarg = {}  # 'in': {'time_range_zeroing': {'incl19': ['2019-11-14T06:30:00', '2019-11-14T06:50:00']}}
         else:

@@ -13,7 +13,7 @@ import veuszPropagate
 from to_pandas_hdf5.csv2h5 import main as csv2h5
 from to_pandas_hdf5.gpx2h5 import main as gpx2h5
 from to_pandas_hdf5.CTD_calc import main as CTD_calc
-from to_pandas_hdf5.csv_specific_proc import proc_loaded_corr
+from to_pandas_hdf5.csv_specific_proc import loaded_corr
 from h5toGpx import main as h5toGpx
 from grid2d_vsz import main as grid2d_vsz
 from to_vaex_hdf5.nmea2h5 import main as nmea2h5
@@ -90,7 +90,7 @@ if st(3, 'Save Depth and navigation from ADCP data, exported by WinRiver II with
            **   {'filter': {'min_DepEcho': 4}}  # removes rows
 
            # {'in': {
-           #     'fun_proc_loaded': proc_loaded_corr}}
+           #     'fun_proc_loaded': loaded_corr}}
            )
 
 
@@ -102,8 +102,8 @@ common_ctd_params_list = [
     '--min_dict', f'Cond:10, Sal:5, SigmaT:3, O2:-2, O2ppm:-2, pH:7.77, {min_coord}, SoundVel:1465',  # del zeros & strange big negative values
     '--max_dict', 'O2:170, O2ppm:14.5',
     ]
-common_ctd_params_dict = {'in': {
-    'fun_proc_loaded': proc_loaded_corr,
+device_params_dict = {'in': {
+    'fun_proc_loaded': loaded_corr,
     'csv_specific_param': {'O2_add': -0.357,
                           'O2ppm_add': -0.0332,
                           # 'Temp_add': 0.254, And convert to ITS90
@@ -124,10 +124,10 @@ if st(10, f'Save {device} data to DB recorded by REDAS software'):
         '--cols_not_save_list', 'N',
         # '--on_bad_lines', 'warn'
         ] + common_ctd_params_list,
-        **common_ctd_params_dict
+        **device_params_dict
         )
 
-del common_ctd_params_dict['in']['fun_proc_loaded']
+del device_params_dict['in']['fun_proc_loaded']
 if st(11, f'Save {device} data to DB recorded in autonomous mode'):
     csv2h5([
         'cfg/csv_CTD_Idronaut.ini',
@@ -141,7 +141,7 @@ if st(11, f'Save {device} data to DB recorded in autonomous mode'):
         # '--on_bad_lines', 'warn'
         #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
         ] + common_ctd_params_list,
-        **common_ctd_params_dict
+        **device_params_dict
         )
 
 if st(12, f'Save {device} data to DB recorded in terminal mode'):
@@ -170,7 +170,7 @@ if st(12, f'Save {device} data to DB recorded in terminal mode'):
         # '--on_bad_lines', 'warn'
         #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
         ] + common_ctd_params_list,
-        **common_ctd_params_dict
+        **device_params_dict
         )
 
 
@@ -180,7 +180,7 @@ if st(20, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params
     # Extract CTD runs (if files are not splitted on runs).
     # Note: Saves extended log needed by pattern used in next step with veuszPropagate
     # todo: be able provide log with (Lat,Lon) separately
-    st.go = () != CTD_calc(['cfg/CTD_calc-find_runs.ini',
+    st.go = () != CTD_calc(['cfg/ctd_calc-find_runs.ini',
               '--db_path', str(path_db),
               '--tables_list', f'{device}',
               #'--table_nav', '',       # uncomment if nav data only in CTD data file
@@ -265,7 +265,7 @@ def merge_two_runs(df_log, irow_to, irow_from=None):
 if False:
     # Merge each needed runs
     import pandas as pd
-    from to_pandas_hdf5.h5toh5 import h5move_tables  #, h5index_sort, h5init
+    from to_pandas_hdf5.h5toh5 import h5move_tables  #, h5index_sort, h5out_init
 
     tbl = f'/{device}'
     tbl_log = tbl + '/logRuns'
@@ -306,11 +306,11 @@ if False: #st(40)  # may not comment always because can not delete same time mor
     print('Deletng bad runs from DB: tables: {}, {} run with time {}'.format(tbl, tbl_log, time_in_bad_run_any))
     with pd.HDFStore(path_db) as store:
         for t in time_in_bad_run_any:
-            query_log = "index<=Timestamp('{}') and DateEnd>=Timestamp('{}')".format(t, t)
+            query_log = "index<='{}' & DateEnd>='{}'".format(t, t)
             df_log_bad_range = store.select(tbl_log, where=query_log)
             if len(df_log_bad_range) == 1:
                 store.remove(tbl_log, where=query_log)
-                store.remove(tbl, "index>=Timestamp('{}') and index<=Timestamp('{}')".format(
+                store.remove(tbl, "index>='{}' & index<='{}'".format(
                     *[t for t in df_log_bad_range.DateEnd.items()][0]))
             else:
                 print('Not found run with time {}'.format(t))
@@ -371,7 +371,7 @@ if st(80, 'Gridding'):  # and False: #
 
 if st(110, 'Export csv with some new calculated parameters'):  # False: #
     # Extract CTD runs (if files are not splitted on runs):
-    CTD_calc([  # 'CTD_calc-find_runs.ini',
+    CTD_calc([  # 'ctd_calc-find_runs.ini',
         '--db_path', str(path_db),
         '--tables_list', f'{device}',
         '--tables_log', '{}/logRuns',
@@ -381,7 +381,7 @@ if st(110, 'Export csv with some new calculated parameters'):  # False: #
         '--path_csv', str(path_cruise / device / 'txt_processed'),
         '--data_columns_list', 'Pres, Temp90, Cond, Sal, O2, O2ppm, pH, Eh, Lat, Lon, SA, sigma0, depth, soundV',  #
         '--b_incremental_update', 'True',
-        # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
+        # todo: check it. If False need delete all previous result of ctd_calc() or set min_time > its last log time
         '--out.tables_list', 'None',
         ])
 
@@ -430,7 +430,7 @@ if st(210, f'Save {device} data to DB'):  # False: #
         #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
         ],
         **{'in': {
-           #'fun_proc_loaded': proc_loaded_corr,
+           #'fun_proc_loaded': loaded_corr,
            'csv_specific_param': {
             'Temp90_fun': lambda x: np.polyval([-1.925036627169023e-06, 6.577767835930226e-05, 1.000754132707556, -0.014076681292841897], x/1.00024),
             'Sal_add': -0.01,
@@ -441,7 +441,7 @@ if st(210, f'Save {device} data to DB'):  # False: #
 if st(220, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params'):  # False: # (if files are not splitted on runs).
     # Note: extended logRuns fields needed in Veusz in next step
     # todo: be able provide log with (Lat,Lon) separately, improve start message if calc runs, check interpolation
-    st.go = () != CTD_calc(['cfg/CTD_calc-find_runs.ini',
+    st.go = () != CTD_calc(['cfg/ctd_calc-find_runs.ini',
               '--db_path', str(path_db),
               '--tables_list', f'{device}',
               '--min_samples', '400',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m

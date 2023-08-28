@@ -14,7 +14,7 @@ import veuszPropagate
 from to_pandas_hdf5.csv2h5 import main as csv2h5
 from to_pandas_hdf5.gpx2h5 import main as gpx2h5
 from to_pandas_hdf5.CTD_calc import main as CTD_calc
-from to_pandas_hdf5.csv_specific_proc import proc_loaded_corr
+from to_pandas_hdf5.csv_specific_proc import loaded_corr
 from h5toGpx import main as h5toGpx
 from grid2d_vsz import main as grid2d_vsz
 

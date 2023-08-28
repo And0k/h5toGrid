@@ -100,7 +100,7 @@ def calc_iso_surface(v3d, v_isosurface, zi, interp_order=1, weight_power=1, dv_m
         z_weight[..., sl_collect] = 1 / dv_sorted ** weight_power
         arg_nearest[..., sl_collect] = arg
 
-    # check if closest points on each side is not adjasent points (also deletes where some side have no points?)
+    # check if closest points on each side is not adjacent points (also deletes where some side have no points?)
     b_ambiguous = abs(np.diff(arg_nearest[..., (interp_order - 1):(interp_order + 1)], axis=-1))[..., 0] != 1
     # # set output to NaN if from some side have no points:
     # b_outside = ~arg_nearest[..., (interp_order - 1):(interp_order + 1)].all(axis=-1)

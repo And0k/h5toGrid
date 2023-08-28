@@ -14,7 +14,7 @@ from to_pandas_hdf5.h5toh5 import h5find_tables
 # user's constants ############################################################
 path_db = Path(drive_d).joinpath(
     r'workData\BalticSea\181005_ABP44\181005_ABP44.h5'
-    # 'WorkData/_experiment/_2018/inclinometr/181004_KTI/181004_KTI.h5'
+    # 'WorkData/_experiment/_2018/inclinometer/181004_KTI/181004_KTI.h5'
     )
 str_date = '181022'
 

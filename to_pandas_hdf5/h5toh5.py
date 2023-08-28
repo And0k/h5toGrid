@@ -4,7 +4,6 @@
   Author:  Andrey Korzh --<ao.korzh@gmail.com>
 
 """
-from __future__ import print_function, division
 
 import logging
 from pathlib import Path, PurePath
@@ -335,14 +334,14 @@ def h5sort_pack(h5source_fullpath: str, h5out_name: str, table_node: str,
     return h5out_path
 
 
-query_range_pattern_default = "index>=Timestamp('{}') & index<=Timestamp('{}')"
+query_range_pattern_default = "index>='{}' & index<='{}'"
 
 
 def h5sel_index_and_istart(store: pd.HDFStore,
                            tbl_name: str,
                            query_range_lims: Optional[Iterable[Any]] = None,
                            query_range_pattern: str = query_range_pattern_default,
-                           to_edge: Optional[timedelta] = None) -> Tuple[pd.Index, int]:
+                           to_edge: Optional[timedelta] = None) -> Tuple[pd.DataFrame, int]:
     """
     Get index and index[0] counter from start of stored table (called index coordinate in pandas)
     satisfying ``query_range_lims``
@@ -351,7 +350,10 @@ def h5sel_index_and_istart(store: pd.HDFStore,
     :param query_range_lims: values to print in query_range_pattern
     :param query_range_pattern:
     :param to_edge: timedelta
-    :return: (empty columns dataframe with index[query_range], coordinate index of query_range[0] in table)
+    :return: (
+        empty columns dataframe with index[query_range],
+        coordinate index of query_range[0] in table
+        )
     Tell me, if you know, how to do this with only one query, please
     """
     if query_range_lims is None:  # select all
@@ -392,13 +394,15 @@ def h5sel_interpolate(
         t = pd.DatetimeIndex(time_points, tz=df.index.tz)  # to_datetime(t).tz_localize(tzinfo)
     else:
         t = time_points.tz_localize(df.index.tzinfo)
-    # try:
-    new_index = df.index.union(t)  # pd.Index(timzone_view(time_points, dt_from_utc=df.index.tzinfo._utcoffset))
+    # if not drop duplicates loc[t] will return many (all) rows having same index t, so we do it:
+    new_index = df.index.union(t).drop_duplicates()
+
+    # pd.Index(timzone_view(time_points, dt_from_utc=df.index.tzinfo._utcoffset))
     # except TypeError as e:  # if Cannot join tz-naive with tz-aware DatetimeIndex
     #     new_index = timzone_view(df.index, dt_from_utc=0) | pd.Index(timzone_view(time_points, dt_from_utc=0))
 
     df_interp_s = df.reindex(new_index).interpolate(method=method, )  # why not works fill_value=new_index[[0,-1]]?
-    df_interp = df_interp_s.loc[t]
+    df_interp = df_interp_s.loc[t, :]
     return df_interp
 
 
@@ -406,38 +410,41 @@ def h5coords(store: pd.HDFStore, tbl_name: str,
              q_time: Optional[Sequence[Any]] = None,
              query_range_lims: Optional[Sequence[Any]] = None,
              query_range_pattern: str = query_range_pattern_default
-             ) -> Tuple[pd.DataFrame, Union[List[int], np.ndarray]]:
+             ) -> Tuple[Optional[pd.DataFrame], int, Union[List[int], np.ndarray]]:
     """
-    Get table's index for q_time edges/query_range_lims and coordinates indexes of q_time in store table
+    Get table's index for ``q_time`` edges/``query_range_lims`` and coordinates indexes of ``q_time`` in ``store`` table
 
     :param store:
-    :param tbl_name:
-    :param q_time:
-    :param query_range_lims:
+    :param tbl_name: table name in ``store``
+    :param q_time: optional, points. If strings - converts them to 'M8[ns]'.
+    :param query_range_lims: optional, needed interval. If None and if query_range_pattern is not None, then use 1st and
+     last of q_time.
     :param query_range_pattern:
-    :return (df0range.index, i0range, i_queried):
-    - df0range.index: index[query_range_lims[0]:(query_range_lims[-1] + to_edge)]
-    - i0range: starting index of returned df0range.index in store table
+    :return (df0range.index, i0, i_queried):
+    - df0range.index: index[query_range_lims[0]:(query_range_lims[-1] + to_edge)],
+    - i0: starting index of returned df0range.index in store table,
     - i_queried: coordinates indexes of q_time in store table. It is a list only if 1st el is zero.
-    If both q_time and query_range_lims are None then returns (None, [0, np.iinfo(np.intp).max])
+    If both q_time and query_range_lims are None then returns df0range=None, i_queried=[0, ``number of rows in table``]).
+    We not return i_queried = [0, np.iinfo(np.intp).max] because trying loading bigger number of rows will raise
+    ValueError in dask.read_hdf(stop=bigger).
     """
-    if query_range_lims is None:
+    if query_range_lims is None and query_range_pattern is not None:
         if q_time is None:
             return None, 0, [0, store.get_storer(tbl_name).nrows]
-            # get nrows because trying loading bigger number of rows will raise ValueError in dask.read_hdf(stop=bigger)
         else:
             if isinstance(q_time[0], str):
                 q_time = np.array(q_time, 'M8[ns]')
-            query_range_lims = q_time[::(len(q_time)-1)]  # needed interval assuming q_time edges are its min and max
+            # q_time edges as needed interval: should be min and max of q_time
+            query_range_lims = q_time[::(q_time_len - 1)] if (q_time_len := len(q_time)) > 1 else [q_time[0], q_time[0]]
 
-    df0range, i0range = h5sel_index_and_istart(
+    df0range, i0 = h5sel_index_and_istart(
         store, tbl_name, query_range_lims, query_range_pattern, to_edge=pd.Timedelta(minutes=10)
         )
     if q_time is None:
         return df0range.index, 0, [0, df0range.index.size]
 
     i_queried = inearestsorted(df0range.index.values, np.array(q_time, df0range.index.dtype.str))
-    return df0range.index, i0range, i_queried + i0range
+    return df0range.index, i0, i_queried + i0
 
 
 def h5load_points(store: pd.HDFStore, tbl_name: str, columns: Optional[Sequence[Union[str, int]]] = None,
@@ -476,7 +483,7 @@ def h5load_points(store: pd.HDFStore, tbl_name: str, columns: Optional[Sequence[
         except TypeError:  # not numpy 'datetime64[ns]'
             time_points = time_points.values
 
-    df_index_range, i0range, i_queried = h5coords(store, tbl_name, time_points, query_range_lims, query_range_pattern)
+    df_index_range, i0, i_queried = h5coords(store, tbl_name, time_points, query_range_lims, query_range_pattern)
     # if time_ranges:  # fill indexes inside intervals
     #     i_queried = np.hstack(np.arange(*se) for se in zip(i_queried[:-1], i_queried[1:] + 1))
     if not any(i_queried):
@@ -491,10 +498,10 @@ def h5load_points(store: pd.HDFStore, tbl_name: str, columns: Optional[Sequence[
         except ValueError as e:
             raise IndexError('Error with input data')
     else:
-        bbad, dt = check_time_diff(t_queried=time_points, t_found=df_index_range[i_queried - i0range].values,
+        bbad, dt = check_time_diff(t_queried=time_points, t_found=df_index_range[i_queried - i0].values,
                                    dt_warn=dt_check_tolerance, return_diffs=True)
         if any(bbad) and interpolate:
-            i_queried = inearestsorted_around(df_index_range.values, time_points) + i0range
+            i_queried = inearestsorted_around(df_index_range.values, time_points) + i0
             df = h5sel_interpolate(i_queried, store, tbl_name, columns=columns, time_points=time_points, method=interpolate)
         else:
             df = store.select(tbl_name, where=i_queried, columns=columns)
@@ -568,7 +575,7 @@ def h5temp_open(
     Temporary HDF5 store needed because of using ptprepack to create index and sort all data at last step
     is faster than support indexing during data appending.
 
-    Parameters are fields that is set when called h5init(cfg_in, cfg_out):
+    Parameters are fields that is set when called h5out_init(cfg_in, cfg_out):
     :param: db_path,
     :param: db_path_temp
     :param: tables, tables_log - if tables is None then returns (does nothing), else opens HDF5 store and tries to work with ``tables_log``
@@ -747,7 +754,7 @@ def df_data_append_fun(df: pd.DataFrame, tbl_name: str, cfg_out: Mapping[str, An
     df.to_hdf(
         cfg_out['db'], tbl_name, append=True, data_columns=cfg_out.get('data_columns', True),
         format='table', index=False,
-        dropna= cfg_out.get('dropna', not cfg_out.get('b_insert_separator')),
+        dropna=cfg_out.get('dropna', not cfg_out.get('b_insert_separator')),
         **kwargs
         )
     return tbl_name
@@ -1291,7 +1298,7 @@ def h5index_sort(cfg_out,
                 lf.exception('Can not access table {:s}', tbl)
                 continue
             # store.close()
-            if df.index.is_monotonic:
+            if df.index.is_monotonic_increasing:
                 if df.index.is_unique:
                     lf.info(f'{tbl} - sorted')
                 else:
@@ -1326,7 +1333,7 @@ def h5index_sort(cfg_out,
                 if itm is not None:
                     lf.warning('sorting multiindex...')
                     df = df.sort_index()    # inplace=True
-                    if df.index.is_monotonic:
+                    if df.index.is_monotonic_increasing:
                         if df.index.is_unique:
                             lf.warning('Ok')
                         else:
@@ -1447,8 +1454,8 @@ def h5_rem_last_rows(db, tbl_names, df_logs: List[pd.DataFrame], t_start=None):
     if t_start is None:
         return
     h5_rem_rows(db, tbl_names,
-                qstr="index>=Timestamp('{}')".format(t_start),
-                qstr_log="DateEnd>=Timestamp('{}')".format(t_start))
+                qstr="index>='{}'".format(t_start),
+                qstr_log="DateEnd>='{}'".format(t_start))
     # place back removed 1st log row updated for remaining data index
     i_group = -1
     for i_in_group, tbl in unzip_if_need_enumerated(tbl_names):
@@ -1555,14 +1562,14 @@ def h5del_obsolete(cfg_out: MutableMapping[str, Any],
                 # delete all next records of current file
                 if n_log_rows and not h5_rem_rows(
                         cfg_out['db'], zip(cfg_out['tables'], cfg_out['tables_log']),
-                        qstr="index>=Timestamp('{}')".format(i0:=df_log_cur.index[0]),
+                        qstr="index>='{}'".format(i0:=df_log_cur.index[0]),
                         qstr_log="fileName=='{}'".format(df_log_cur.loc[i0, 'fileName'])):
                     b_stored_newer = False  # deleted
                     b_stored_dups = False   # deleted
     return b_stored_newer, b_stored_dups
 
 
-def h5init(cfg_in: Mapping[str, Any], cfg_out: MutableMapping[str, Any]) -> None:
+def h5out_init(cfg_in: Mapping[str, Any], cfg_out: MutableMapping[str, Any]) -> None:
     """
     Init cfg_out database (hdf5 data store) information in cfg_out _if it is not exist_
     :param: cfg_in - configuration dicts, with fields:
@@ -1649,10 +1656,10 @@ def query_time_range(min_time=None, max_time=None, **kwargs) -> str:
     :return:
     """
     if min_time:
-        query_range = (f"index>=Timestamp('{min_time}') & index<=Timestamp('{max_time}')" if max_time else
-                       f"index>=Timestamp('{min_time}')")
+        query_range = (f"index>='{min_time}' & index<='{max_time}'" if max_time else
+                       f"index>='{min_time}'")
     elif max_time:
-        query_range = f"index<=Timestamp('{max_time}')"
+        query_range = f"index<='{max_time}'"
     else:
         query_range = None
     return query_range
@@ -1707,10 +1714,12 @@ def h5log_names_gen(
 
 def merge_two_runs(df_log: pd.DataFrame, irow_to: int, irow_from: Optional[int] = None):
     """
-    Merge 2 runs: copy metadata about profile end (columns with that ends with 'en') to row `irow_to` from `irow_from` and then delete it
+    Merge 2 runs: copy metadata about profile end (columns with that ends with 'en') to row `irow_to` from `irow_from`
+    and then delete it.
     :param df_log: DataFrame to be modified (metadata table)
-    :param irow_to: row index where to replace metadata columns that ends with 'en' and increase 'rows' and 'rows_filtered' columns by data from row `irow_from`
-    :param irow_from: index of row that will be deleted after copying its data
+    :param irow_to: 0-based row index where to replace metadata columns that ends with 'en' and increase 'rows' and
+    'rows_filtered' columns by data from row `irow_from`
+    :param irow_from: index of row that will be deleted after copying its data. Default: irow_to + 1 (deletes next run)
     :return: None
     """
     if irow_from is None:

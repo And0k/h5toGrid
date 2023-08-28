@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # coding:utf-8
-# from __future__ import print_function, division
+# , division
 """
   Author:  Andrey Korzh <ao.korzh@gmail.com>
   Purpose: update Veusz pattern by means of Veusz commands iterating over
@@ -26,7 +26,7 @@ from dateutil.tz import tzlocal, tzoffset
 
 # my
 from utils2init import my_argparser_common_part, cfg_from_args, this_prog_basename, init_file_names, dir_from_cfg, \
-    init_logging, Ex_nothing_done, import_file, standard_error_info
+    init_logging, Ex_nothing_done, import_file, standard_error_info, LoggingStyleAdapter
 
 # Globals
 to_mytz_offset = tzoffset(None, -tzlocal()._dst_offset.total_seconds())
@@ -34,9 +34,9 @@ to_mytz_offset = tzoffset(None, -tzlocal()._dst_offset.total_seconds())
 load_vsz = None  # must be corrected later
 
 if __name__ != '__main__':
-    l = logging.getLogger(__name__)
+    lf = LoggingStyleAdapter(logging.getLogger(__name__))
 else:
-    l = None  # will set in main()
+    lf = None  # will set in main()
 
 default_veusz_path = 'C:\\Program Files\\Veusz' if sys_platform == 'win32' else '/home/korzh/.local/lib/python3.9/site-packages/veusz'  # try os_environ['PATH']?
 
@@ -58,75 +58,75 @@ file based on vsz pattern
     s = p.add_argument_group('in',
                              'all about input files')
     s.add('--path',
-             help='path to source file(s) to generate list of their names (usually *.csv or *.txt) or pytables hdf5 store')
+          help='path to source file(s) to generate list of their names (usually *.csv or *.txt) or pytables hdf5 store')
     s.add('--pattern_path',
-             help='path to ".vsz" file to use as pattern')  # '*.h5'
+          help='path to ".vsz" file to use as pattern')  # '*.h5'
     s.add('--import_method',
-             help='Veusz method to imort data in ".vsz" pattern')  # todo: read it from pattern
+          help='Veusz method to imort data in ".vsz" pattern')  # todo: read it from pattern
     s.add('--start_file_index', default="0",
-             help='indexes begins from 0, optional, allows process only range of found files')
+          help='indexes begins from 0, optional, allows process only range of found files')
     s.add('--add_custom_list',
-             help='custom definitions names for evaluation of expressions defined in add_custom_expressions_list')
+          help='custom definitions names for evaluation of expressions defined in add_custom_expressions_list')
     s.add('--add_custom_expressions_list',
-             help='custom_expressions_list to add by Veusz AddCustom() function')
+          help='custom_expressions_list to add by Veusz AddCustom() function')
     s.add('--eval_list',
-             help='string represented Veusz.Embed function call to eval')
+          help='string represented Veusz.Embed function call to eval')
     s.add('--data_yield_prefix',
-             help='used to get data from Vieusz which names started from this')
+          help='used to get from Veusz data having names started from this')
     s.add('--tables_list',
-             help='path to tables in db to find instead files')
+          help='path to tables in db to find instead files')
     s.add('--table_log',
-             help='name of log table - path to hdf5 table having intervals ("index" of type pd.DatetimeIndex and "DateEnd" of type pd.Datetime)')
+          help='name of log table - path to hdf5 table having intervals ("index" of type pd.DatetimeIndex and "DateEnd" of type pd.Datetime)')
     s.add('--min_time', help='%%Y-%%m-%%dT%%H:%%M:%%S, optional, allows range table_log rows')
     s.add('--max_time', help='%%Y-%%m-%%dT%%H:%%M:%%S, optional, allows range table_log rows')
 
     s = p.add_argument_group('out',
                              'all about output files')
     s.add('--export_pages_int_list', default='0',
-              help='pages numbers to export, comma separated (1 is first), 0 = all')
+          help='pages numbers to export, comma separated (1 is first), 0 = all, empty = none')
     s.add('--b_images_only', default='False',
-              help='export only. If true then all output vsz must exist, they will be loaded and vsz not be updated')
+          help='export only. If true then all output vsz must exist, they will be loaded and vsz not be updated')
     s.add('--b_update_existed', default='False',
-              help='replace all existed vsz files else skip existed files. In b_images_only mode - skip exporting vsz files for wich any files in "export_dir/*{vsz file stem}*. {export_format}" exist')
+          help='replace all existed vsz files else skip existed files. In b_images_only mode - skip exporting vsz files for which any files in "export_dir/*{vsz file stem}*. {export_format}" exist')
     s.add('--export_dir', default='images(vsz)',
-              help='subdir relative to input path or absolute path to export images')
+          help='subdir relative to input path or absolute path to export images')
     s.add('--export_format', default='jpg',
-              help='extention of images to export which defines format')
+          help='extention of images to export which defines format')
     s.add('--export_suffix', default='#{out_name}',
-              help='will be added to each exported image before extension. {out_name} will be replaced with output vsz file name')
+          help='will be added to each exported image before extension. {out_name} will be replaced with output vsz file name')
     s.add('--export_dpi_int_list', default='300',
-              help='resolution (dpi) of images to export for all pages, defined in `export_pages_int_list`')
+          help='resolution (dpi) of images to export for all pages, defined in `export_pages_int_list`')
     s.add('--filename_fun', default='lambda tbl: tbl',
-              help='function to modify output file name. Argument is input table name in hdf5')
+          help='function to modify output file name. Argument is input table name in hdf5')
     s.add('--add_to_filename', default='',
-              help='string will be appended to output filenames. If input is from hdf5 table then filename is name of table, this will be added to it')
+          help='string will be appended to output filenames. If input is from hdf5 table then filename is name of table, this will be added to it')
 
     # candidates to move out to common part
     s.add('--exclude_dirs_endswith_list', default='-, bad, test, TEST, toDel-',
-             help='exclude dirs which ends with this srings. This and next option especially useful when search recursively in many dirs')
+          help='exclude dirs which ends with this srings. This and next option especially useful when search recursively in many dirs')
     s.add('--exclude_files_endswith_list', default='coef.txt, -.txt, test.txt',
-             help='exclude files which ends with this srings')
+          help='exclude files which ends with this srings')
 
     s = p.add_argument_group('program',
                              'program behaviour')
     s.add('--export_timeout_s_float', default='0',
-               help='export asyncroniously with this timeout, s (tried 600s?)')
+          help='export asyncroniously with this timeout, s (tried 600s?)')
     s.add('--load_timeout_s_float', default='180',
-               help='export asyncroniously with this timeout, s (tried 600s?)')
+          help='export asyncroniously with this timeout, s (tried 600s?)')
     s.add('--b_execute_vsz', default='False',
-              help='instead of Load() read vsz and execute its content line by line')
+          help='instead of Load() read vsz and execute its content line by line')
     s.add('--hidden', default='False',
-              help='set to True to not show embedded window')
+          help='set to True to not show embedded window')
     s.add('--veusz_path', default=default_veusz_path,
-               help='directory of Veusz like /usr/lib64/python3.9/site-packages/veusz-2.1.1-py3.6-linux-x86_64.egg/veusz')
+          help='directory of Veusz like /usr/lib64/python3.9/site-packages/veusz-2.1.1-py3.6-linux-x86_64.egg/veusz')
     s.add('--before_next_list', default=',',
-               help=''' "Close()" - each time reopens pattern,
+          help=''' "Close()" - each time reopens pattern,
     "restore_config" - saves and restores initial configuration (may be changed in data_yield mode: see data_yield_prefix argument)''')
     s.add('--f_custom_in_cycle',
-               help='''function evaluated in cycle: not implemented over command line''')
+          help='''function evaluated in cycle: not implemented over command line''')
     s.add('--return', default='<end>',  # nargs=1,
-               choices=['<cfg_from_args>', '<gen_names_and_log>', '<embedded_object>', '<end>'],
-               help='<cfg_from_args>: returns cfg based on input args only and exit, <gen_names_and_log>: execute init_input_cols() and also returns fun_proc_loaded function... - see main()')
+          choices=['<cfg_from_args>', '<gen_names_and_log>', '<embedded_object>', '<end>'],
+          help='<cfg_from_args>: returns cfg based on input args only and exit, <gen_names_and_log>: execute init_input_cols() and also returns fun_proc_loaded function... - see main()')
 
     return p
 
@@ -219,7 +219,7 @@ def veusz_data(veusze, prefix: Union[str, Tuple[str]], suffix_prior: str = '') -
         msg_names_skip = 'skip {} fields: '.format('|'.join(prefix)) + ','.join(msg_names_skip)
     else:
         msg_names_skip = ''
-    l.debug('\n'.join([msg_names_skip, ' load fields: {}'.format(names_filt)]))
+    lf.debug('\n'.join([msg_names_skip, ' load fields: {}'.format(names_filt)]))
 
     vsz_data = dict([(name_out, veusze.GetData(name)[0]) for name_out, name in names_filt.items()])
     if ('time' in vsz_data) and len(vsz_data['time']):
@@ -304,17 +304,17 @@ def load_vsz_closure(veusz_path: PurePath=default_veusz_path,
             file_exists = False
             if veusze is None:
                 title = 'empty'
-                l.debug('new embedded window')
+                lf.debug('new embedded window')
             else:
-                l.debug('keep same embedded window')
+                lf.debug('keep same embedded window')
         else:  # isinstance(vsz, (str, PurePath)):
             vsz = Path(vsz)
             file_exists = vsz.is_file()
             if file_exists:
-                l.debug(f'loading found vsz: {vsz}')
+                lf.debug(f'loading found vsz: {vsz}')
                 title = f'{vsz} - was found'
             else:
-                l.debug(f'creatig vsz: {vsz}')
+                lf.debug(f'creatig vsz: {vsz}')
                 title = f'{vsz} - was created'
 
         if veusze is None:
@@ -339,6 +339,7 @@ def load_vsz_closure(veusz_path: PurePath=default_veusz_path,
 
         if file_exists:
             if not b_execute_vsz:
+                veusze.AddCustom('definition', 'BASENAME()', f"'{vsz.name}'", mode='replace')  # add absent in embedded
                 if load_timeout_s:
                     # veusze.Load(str(vsz.name)) with timeout:  # not tried veusze.serv_socket.settimeout(60)
                     SingletonTimeOut.run(partial(veusze.Load, str(vsz.name)), load_timeout_s)
@@ -374,7 +375,7 @@ def load_vsz_closure(veusz_path: PurePath=default_veusz_path,
                         del loc_exclude['_veusze']
                         loc = {**_veusze.__dict__,
                                'argv': ['veusz.exe', str(_vsz)],
-                               'BASENAME': (lambda: _vsz.stem),
+                               'BASENAME': (lambda: _vsz.name),
 
                                }
                         exec('\n'.join(_lines), loc, loc)
@@ -420,7 +421,7 @@ def load_vsz_closure(veusz_path: PurePath=default_veusz_path,
                                 # if r := eval(f"""_veusze.{_line}""", {}, loc):
                                 #     print(r)
                             except Exception as e:
-                                l.exception(f'Error eval({_line})')
+                                lf.exception(f'Error eval({_line})')
                             # from ast import literal_eval
                             # params_dict = literal_eval(params.rsplit(')', maxsplit=1)[0])
                             # getattr(veusze, cmd)(**params_dict)
@@ -460,7 +461,7 @@ def export_images(veusze, cfg_out, suffix, b_skip_if_exists=False):
     # Export images
     if not cfg_out['export_pages']:
         return
-    l.debug('exporting %s %s images:', len(cfg_out['export_pages']), cfg_out['export_format'])
+    lf.debug('exporting {:s} {:s} images:', len(cfg_out['export_pages']), cfg_out['export_format'])
     dpi_list = cfg_out.get('export_dpi', [300])
     for i, key in enumerate(veusze.GetChildren(where='/'), start=1):
         if cfg_out['export_pages'][0] == 0 or (  # = b_export_all_pages
@@ -476,8 +477,8 @@ def export_images(veusze, cfg_out, suffix, b_skip_if_exists=False):
             try:
                 veusze.Export(str(file_name), page=i - 1, dpi=dpi)
             except Exception as e:
-                l.error('Exporting error', exc_info=True)
-            l.debug('%s,', i)
+                lf.error('Exporting error', exc_info=True)
+            lf.debug('{},', i)
 
 
 # try:
@@ -520,7 +521,7 @@ def export_images(veusze, cfg_out, suffix, b_skip_if_exists=False):
 #         async with async_timeout.timeout(cfg['async']['export_timeout_s']) as cm:
 #             export_images_a(veusze, cfg['out'], suffix, b_skip_if_exists)
 #         if cm.expired:
-#             l.warning('timeout on exporting. going to next file')
+#             lf.warning('timeout on exporting. going to next file')
 #         return cm.expired
 #
 # except Exception as e:
@@ -561,11 +562,11 @@ def veusze_commands(veusze, cfg_in, file_name_r):
         for ev in cfg_in['eval']:
             eval_str = ev.format_map(cfg_in).strip()
             if __debug__:
-                l.debug('eval: ' + eval_str)
+                lf.debug('eval: {}', eval_str)
             try:
-                eval("veusze." + eval_str)  # compile(, '', 'eval') or [], 'eval')
+                eval(f"veusze.{eval_str}")  # compile(, '', 'eval') or [], 'eval')
             except Exception as e:
-                l.error('error to eval "%s" - %s', exc_info=True)
+                lf.error('error to eval "{:s}"', eval_str, exc_info=True)
     # veusze.AddCustom('constant', u'fileDataSource', f"u'{file_name_r}'", mode='replace')
 
 
@@ -620,9 +621,9 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
             # yield (None, None)
 
         if in_full.stem != out_vsz_full.stem:
-            l.info('%d. %s -> %s, ', ifile, in_full.name, out_vsz_full.name)
+            lf.info('{:d}. {:s} -> {:s}, ', ifile, in_full.name, out_vsz_full.name)
         else:
-            l.info('%d. %s, ', ifile, in_full.name)
+            lf.info('{:d}. {:s}, ', ifile, in_full.name)
         sys_stdout.flush()
         log = {'out_name': out_name, 'out_vsz_full': out_vsz_full}
 
@@ -632,7 +633,7 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
             except AttributeError:  # 'NoneType' object has no attribute 'cmds'
                 b_closed = True
             except Exception as e:
-                l.error('IsClosed() error', exc_info=True)
+                lf.error('IsClosed() error', exc_info=True)
                 b_closed = True
             if b_closed:
                 veusze = None
@@ -659,7 +660,7 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
                 try:
                     file_name_r = in_full.relative_to(cfg['out']['path'].parent)
                 except ValueError as e:
-                    # l.exception('path not related to pattern')
+                    # lf.exception('path not related to pattern')
                     file_name_r = in_full
                 veusze_commands(veusze, cfg['in'], file_name_r)
             return veusze
@@ -667,7 +668,7 @@ def load_to_veusz(in_fulls, cfg, veusze=None):
         try:
             veusze = do_load_vsz(in_full, veusze, load_vsz)
         except asyncio.TimeoutError as e:
-            l.warning('Recreating window because of %s', standard_error_info(e))
+            lf.warning('Recreating window because of {:s}', standard_error_info(e))
             veusze.remote.terminate()
             veusze.remote = None
 
@@ -745,7 +746,7 @@ def co_savings(cfg: Dict[str, Any]) -> Iterator[None]:
                         b = cfg['async']['loop'].run_until_complete(
                             export_images_timed(veusze, cfg, export_suffix))
                     except asyncio.TimeoutError:
-                        l.warning('can not export in time')
+                        lf.warning('can not export in time')
                 else:
                     export_images(veusze, cfg['out'], export_suffix)
         except GeneratorExit:
@@ -755,7 +756,7 @@ def co_savings(cfg: Dict[str, Any]) -> Iterator[None]:
                 os_chdir(path_prev)
             if veusze and cfg['program']['return'] != '<embedded_object>':
                 veusze.Close()
-                l.info('closing Veusz embedded object')
+                lf.info('closing Veusz embedded object')
             # veusze.WaitForClose()
 
 
@@ -811,14 +812,14 @@ def main(new_arg=None, veusze=None, **kwargs):
         'async'
     globals:
         load_vsz
-        l
+        lf
 
     :param new_arg:
     :param veusze: used to reuse veusz embedded object (thus to not leak memory)
     :return:
     """
 
-    global l, load_vsz
+    global lf, load_vsz
     cfg = cfg_from_args(my_argparser(), new_arg, **kwargs)
     if not cfg or not cfg['program'].get('return'):
         print('Can not initialise')
@@ -826,8 +827,8 @@ def main(new_arg=None, veusze=None, **kwargs):
     elif cfg['program']['return'] == '<cfg_from_args>':  # to help testing
         return cfg
 
-    l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
-    cfg['program']['log'] = l.root.handlers[0].baseFilename  # synchronize obtained absolute file name
+    lf = LoggingStyleAdapter(init_logging('', cfg['program']['log'], cfg['program']['verbose']))
+    cfg['program']['log'] = lf.logger.root.handlers[0].baseFilename  # synchronize obtained absolute file name
 
     print('\n' + this_prog_basename(__file__), 'started', end=' ')
     __name__ = '__main__'  # indicate to other functions that they are called from main
@@ -854,7 +855,7 @@ def main(new_arg=None, veusze=None, **kwargs):
                 **cfg['out'], b_interact=False)
         except Ex_nothing_done as e:
             if not cfg['out']['b_images_only']:
-                l.warning(f'{e.message} - no pattern. Specify it or use "b_images_only" mode!')
+                lf.warning(f'{e.message} - no pattern. Specify it or use "b_images_only" mode!')
                 return  # or raise FileNotFoundError?
 
     if cfg['out']['b_images_only'] and cfg['out'].get('paths'):
@@ -958,7 +959,7 @@ def main(new_arg=None, veusze=None, **kwargs):
 
         pass
     except Exception as e:
-        l.exception('Not good')
+        lf.exception('Not good')
         return  # or raise FileNotFoundError?
     finally:
         if cfg['async']['loop']:

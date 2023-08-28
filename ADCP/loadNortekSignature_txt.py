@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Optional
 import numpy as np
 import dask.array as da  # import h5py
-import pandas as pd
+# import pandas as pd
 import vaex
 import xarray as xr
 
@@ -65,7 +65,9 @@ def load_adp_adcp_nortek_signature(path_base, cfg=None):
          'Temperature',
         ]
     out.update({f'/{p}': df[p].to_dask_array() for p in cols_1d})
-
+    # Save only 1D source data
+    da.to_hdf5(path_base.with_suffix('.1D.hdf5'), out)
+    
     # convert to dask arrays with dimensions (z, time) for GS Surfer
     for p, p_col_start in [
         ('/u', 'East#'), ('/v', 'North#'), ('/up1', 'Up1#'), ('/up2', 'Up2#'),
@@ -94,7 +96,10 @@ def load_adp_adcp_nortek_signature(path_base, cfg=None):
         np.arange(*((-np.shape(out['/u'])[0], 0) if b_up else (1, np.shape(out['/u'])[0] + 1)))  # reversed as cols if b_up
         )
 
-    print('Export 2D datasets as NetCdf grids')
+    print(
+        f'Export 2D datasets to {path_base.parent.name}/{path_base.stem}_{{param}}.nc '
+        'files as NetCdf grids for param = ', end=''
+    )
     out['/Vabs'] = da.sqrt(out['/u']**2 + out['/v']**2)
     out['/Vdir'] = da.degrees(da.arctan2(out['/u'], out['/v']))
     del out['/u']
@@ -117,6 +122,10 @@ def load_adp_adcp_nortek_signature(path_base, cfg=None):
         
         
 def main():
-    load_adp_adcp_nortek_signature(
-        Path(r'd:\workData\BalticSea\ADCP_Nortek1MHz\S100452A014_TestA0_avgd.csv'
-        )
+    load_adp_adcp_nortek_signature(Path(
+        r'd:\WorkData\BalticSea\181005_ABP44\ADCP_Nortek1MHz\_raw\S100452A014_TestA0_avgd.csv'
+    ))
+
+
+if __name__ == '__main__':
+    main()

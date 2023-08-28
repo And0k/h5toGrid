@@ -6,6 +6,7 @@
 """
 Download data from Copernicus to NetCDF file - official motuclient configured to my needs with detecting last data date
 See also
+ - cfg/download_copernicus.ini settings for this script
  - netcdf2csv.py to convert result to csv
  - download_ecmwf.py
 
@@ -152,10 +153,6 @@ if True:
         sys.exit(motuclient.ERROR_CODE_EXIT)
 
 
-
-
-
-
 print('ok')
 
 #@+<<data description>>
@@ -190,7 +187,7 @@ sla	Sea level elevation	sea_surface_height_above_sea_level	m
 siconc	Sea ice cover	sea_ice_area_fraction	1
 sithick	Sea ice thickness	sea_ice_thickness	m
 
-## BALTICSEA_REANALYSIS_PHY_003_011-TDS
+#%% BALTICSEA_REANALYSIS_PHY_003_011-TDS
 python -m motuclient --motu https://my.cmems-du.eu/motu-web/Motu --service-id BALTICSEA_REANALYSIS_PHY_003_011-TDS --product-id dataset-reanalysis-nemo-dailymeans --longitude-min 18.972 --longitude-max 19.235 --latitude-min 55.841 --latitude-max 55.929 --date-min "2014-12-01 12:00:00" --date-max "2020-12-31 12:00:00" --depth-min 66.5774 --depth-max 121.7625 --variable bottomT --variable so --variable sob --variable thetao --variable uo --variable vo --out-dir <OUTPUT_DIRECTORY> --out-name <OUTPUT_FILENAME> --user <USERNAME> --pwd <PASSWORD>
 
 python -m motuclient.motuclient --motu https://my.cmems-du.eu/motu-web/Motu --service-id BALTICSEA_REANALYSIS_BIO_003_012-TDS --product-id dataset-reanalysis-scobi-dailymeans --longitude-min 18.972 --longitude-max 19.235 --latitude-min 55.841 --latitude-max 55.929 --date-min "2014-12-01 12:00:00" --date-max "2020-12-31 12:00:00" --depth-min 66.5774 --depth-max 121.7625 --variable o2 --variable o2b --out-dir <OUTPUT_DIRECTORY> --out-name <OUTPUT_FILENAME> --user <USERNAME> --pwd <PASSWORD>

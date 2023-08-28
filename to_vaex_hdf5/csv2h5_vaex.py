@@ -27,7 +27,7 @@ from utils2init import init_file_names, Ex_nothing_done, set_field_if_no, cfg_fr
 import utils_time_corr
 
 if __name__ == '__main__':
-    l = None  # see main(): l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+    l = None  # see main(): l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
 else:
     l = logging.getLogger(__name__)
 
@@ -516,7 +516,7 @@ def read_csv(paths: Sequence[Union[str, Path]], cfg_in: Mapping[str, Any]) -> Un
     return ddf_out
 
 
-def get_fun_proc_loaded_converters(
+def get_fun_loaded_converters(
         fun_proc_loaded: Optional[Callable[[Any], Any]],
         converters: Optional[Mapping[str, Callable[[Any], Any]]],
         cfgFile: Union[str, PurePath],
@@ -553,7 +553,7 @@ def get_fun_proc_loaded_converters(
 
         return None
     else:
-        fun_proc_loaded = getattr(to_pandas_hdf5.csv_specific_proc, f'proc_loaded_{matched_fun_suffix.group(0)}')
+        fun_proc_loaded = getattr(to_pandas_hdf5.csv_specific_proc, f'loaded_{matched_fun_suffix.group(0)}')
         return fun_proc_loaded
 
 
@@ -593,7 +593,7 @@ try:
             elif cfg['program']['return'] == '<cfg_from_args>':  # to help testing
                 return cfg
 
-            l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+            l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
             print('\n' + this_prog_basename(__file__), end=' started. ')
             try:
                 cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
@@ -622,7 +622,7 @@ try:
 
         def wrap(**kwargs):
             # Prepare loading and writing specific to format
-            kwargs['in']['fun_proc_loaded'] = get_fun_proc_loaded_converters(**kwargs['in'])
+            kwargs['in']['fun_proc_loaded'] = get_fun_loaded_converters(**kwargs['in'])
             kwargs['in'] = init_input_cols(**kwargs['in'])
 
             return wrapped(**kwargs)

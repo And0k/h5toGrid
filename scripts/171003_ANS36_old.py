@@ -107,7 +107,7 @@ if False:  # True: #
     os_chdir(path0)
 
 # extract CTD runs (if files not splitted on runs):
-# to_pandas_hdf5/CTD_calc.py
+# to_pandas_hdf5/ctd_calc.py
 
 # extract navigation data at time station starts to GPX waypoints
 if False:  # True: #

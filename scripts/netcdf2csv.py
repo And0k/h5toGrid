@@ -110,8 +110,10 @@ def main(file_path: Union[Path, str],
                             vv_no_bad_mask = vv[:, :, ilat, ilon]
                             vv_no_bad_mask[mask, :] = np.ma.masked_array([np.ma.masked]*(vv.shape[1] -1) + [np.NaN])
                             var_dict[n] = vv_no_bad_mask.compressed()
+                        else:
+                            var_dict[n] = f.variables[v][:, 0, ilat, ilon]
                     else:
-                        var_dict[n] = f.variables[v][:, ilat, ilon]
+                        var_dict[n] = f.variables[v][:, ilat, ilon]  # old worked: f.variables[v][:, ilat, ilon]
                 if not nvars_ok_cum.all():
                     var_dict = {k: v[nvars_ok_cum] for k, v in var_dict.items()}
                     df = pd.DataFrame({'Time': times[nvars_ok_cum], **var_dict})
@@ -131,7 +133,8 @@ def main(file_path: Union[Path, str],
 
 if __name__ == '__main__':
     #
-    main(file_path=r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\wind@ECMWF-ERA5_area(54.615,19.841,54.615,19.841).nc'
+    main(file_path=r'd:\WorkData\BalticSea\230507_ABP53\meteo\wind@ECMWF-ERA5_area(55.922656,19.018713,55.922656,19.018713).nc'
+    # r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\wind@ECMWF-ERA5_area(54.615,19.841,54.615,19.841).nc'
          )         # d:\workData\BalticSea\201202_BalticSpit_inclinometer\wind@ECMWF-ERA5_area(54.615,19.841,54.615,19.841).nc
 #
 # r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\processed_h5,vsz\wind@ECMWF-ERA5_area(54.615,19.841,54.615,19.841).nc'

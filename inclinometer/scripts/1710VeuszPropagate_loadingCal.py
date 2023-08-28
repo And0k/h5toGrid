@@ -22,8 +22,8 @@ def main():
 
     cfg = veuszPropagate([
         os_path.join(os_path.dirname(file_veuszPropagate), 'veuszPropagate_incl.ini'),
-        # '--path', r'd:\workData\BalticSea\171003_ANS36\inclinometr\171017\171017#??.TXT',  # windows
-        '--path', r'/mnt/D/workData/BalticSea/171003Strahov/inclinometr/171017/171017#??.TXT',
+        # '--path', r'd:\workData\BalticSea\171003_ANS36\inclinometer\171017\171017#??.TXT',  # windows
+        '--path', r'/mnt/D/workData/BalticSea/171003Strahov/inclinometer/171017/171017#??.TXT',
         # in Linux match the case is important
         '--pattern_path', '171017#01.vsz',
         '--log', os_path.join(os_path.dirname(file_veuszPropagate), 'logs/viewsPropagate.log'),

@@ -1,11 +1,5 @@
 import pytest
-from datetime import timedelta
-from pathlib import Path
-import logging
-import json
-import pandas as pd
-import numpy as np
-import to_vaex_hdf5.cfg_dataclasses
+import cfg_dataclasses
 
 from inclinometer.incl_h5clc_hy import *
 
@@ -85,7 +79,7 @@ def test_call_example_sp4(return_):
     sys_argv_save = sys.argv.copy()
     sys.argv = [__file__]  # config dir will be relative to this dir
 
-    df = to_vaex_hdf5.cfg_dataclasses.main_call([
+    df = cfg_dataclasses.main_call([
         f'input.db_path="{db_path_in}"',
         # '++filter.time_bad_intervals=[2021-06-02T13:49, now]', # todo
         'input.tables=["incl.*"]',  # (','.join([f'"{d}"' for d in device]))

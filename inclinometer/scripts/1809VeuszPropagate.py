@@ -11,7 +11,7 @@ import veuszPropagate
 from utils2init import Ex_nothing_done, this_prog_basename
 
 # ###################################################################################
-path_cruise = Path(drive_d + '/workData/_experiment/_2018/inclinometr/180905_clockCheck/raw')
+path_cruise = Path(drive_d + '/workData/_experiment/_2018/inclinometer/180905_clockCheck/raw')
 
 
 def main():

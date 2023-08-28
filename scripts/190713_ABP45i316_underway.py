@@ -66,14 +66,14 @@ if st(4):  # nav with depth is in next section
 
 if st(5):  # False: #
     # Extract CTD runs (if files are not splitted on runs):
-    CTD_calc(['CTD_calc-find_runs.ini',
+    CTD_calc(['ctd_calc-find_runs.ini',
               '--db_path', str(path_db),
               '--tables_list', f'{device}',
               '--min_samples', '99',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
               '--min_dp', '9',
               '--b_keep_minmax_of_bad_files', 'True',
               '--b_incremental_update', 'True',
-              # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
+              # todo: check it. If False need delete all previous result of ctd_calc() or set min_time > its last log time
               # '--out.tables_list', '',
               ])
 
@@ -102,11 +102,11 @@ if False:  #: # may not comment always because can not delete same time more tha
     print('Deletng bad runs from DB: tables: {}, {} run with time {}'.format(tbl, tbl_log, time_in_bad_run_any))
     with pd.HDFStore(path_db) as store:
         for t in time_in_bad_run_any:
-            query_log = "index<=Timestamp('{}') and DateEnd>=Timestamp('{}')".format(t, t)
+            query_log = "index<='{}' & DateEnd>='{}'".format(t, t)
             df_log_bad_range = store.select(tbl_log, where=query_log)
             if len(df_log_bad_range) == 1:
                 store.remove(tbl_log, where=query_log)
-                store.remove(tbl, "index>=Timestamp('{}') and index<=Timestamp('{}')".format(
+                store.remove(tbl, "index>='{}' & index<='{}'".format(
                     *[t for t in df_log_bad_range.DateEnd.items()][0]))
             else:
                 print('Not found run with time {}'.format(t))

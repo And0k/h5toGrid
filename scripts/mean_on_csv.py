@@ -55,8 +55,8 @@ def plot2vert(x, y=None, y_new=None, title='', b_show_diff=True, ylabel='P, dBar
 
 
 # @+node:korzh.20180606095915.1: ** mean_on_csv
-path_data = '/mnt/D/workData/_experiment/_2018/inclinometr/180605Pcalibr/inclPres11/*.txt'
-# '/mnt/D/workData/_experiment/_2018/inclinometr/180605Pcalibr/inclPres14/*.txt'
+path_data = '/mnt/D/workData/_experiment/_2018/inclinometer/180605Pcalibr/inclPres11/*.txt'
+# '/mnt/D/workData/_experiment/_2018/inclinometer/180605Pcalibr/inclPres14/*.txt'
 
 cfg = main([
     str(path_h5toGrid / 'scripts' / 'cfg' / 'csv_chain_Baranov.ini'),

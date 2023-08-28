@@ -1,9 +1,7 @@
-import os, sys
-import pytest
 from to_vaex_hdf5.h5tocsv import *
-import to_vaex_hdf5.cfg_dataclasses
+import cfg_dataclasses
 
-from omegaconf import OmegaConf, DictConfig, MISSING
+from omegaconf import DictConfig
 from hydra.experimental import initialize, compose
 
 path_db = Path(__file__).parent.parent / 'data/200520_Nord3-nav&ctd_loaded.h5'
@@ -45,13 +43,13 @@ def test_main_init() -> None:
     cfg = {}
     cfg_by_hydra_ = None
 
-    @hydra.main(config_name=cs_store_name)  # adds config store cs_store_name data/structure to :param config
+    @hydra.main(config_name=cs_store_name, version_base='1.3')  # adds config store cs_store_name data/structure to :param config cs_store_name data/structure to :param config
     def test_cs(cfg_by_hydra: ConfigType) -> None:
         nonlocal cfg
         nonlocal cfg_by_hydra_
         cfg_by_hydra_ = cfg_by_hydra
-        cfg = to_vaex_hdf5.cfg_dataclasses.main_init(cfg_by_hydra, cs_store_name)
-        cfg = to_vaex_hdf5.cfg_dataclasses.main_init_input_file(cfg, cs_store_name)
+        cfg = cfg_dataclasses.main_init(cfg_by_hydra, cs_store_name)
+        cfg = cfg_dataclasses.main_init_input_file(cfg, cs_store_name)
     test_cs()
 
     assert cfg_by_hydra_['input']['db_path'] == str(path_db)

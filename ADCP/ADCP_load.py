@@ -5,7 +5,7 @@
   Purpose: load binary ADCP files to...
   Created: 25.03.2015
 """
-from __future__ import print_function
+
 
 import os.path
 from sys import path as sys_path

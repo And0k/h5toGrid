@@ -19,7 +19,7 @@ start = 6
 
 if st(5):  # False: #
     # Extract CTD runs (if files are not splitted on runs):
-    CTD_calc([  # 'CTD_calc-find_runs.ini',
+    CTD_calc([  # 'ctd_calc-find_runs.ini',
         '--db_path', str(path_db),
         '--tables_list', f'{device}',
         # '--min_samples', '99',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
@@ -28,7 +28,7 @@ if st(5):  # False: #
         '--path_csv', str(path_cruise / device / 'txt_processed'),
         '--data_columns_list', 'Pres, Temp90, Cond, Sal, O2, O2ppm, pH, Eh, SA, sigma0',
         '--b_incremental_update', 'True',
-        # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
+        # todo: check it. If False need delete all previous result of ctd_calc() or set min_time > its last log time
         '--out.tables_list', 'None',
         ])
 

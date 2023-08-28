@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 # coding:utf-8
-from __future__ import print_function, division
-
 """
   Author:  Andrey Korzh <ao.korzh@gmail.com>
   Purpose: load CTD data from Veusz sections (there they are filtered),
@@ -52,7 +50,7 @@ ranges = [  # of centers. First must be depth (to select it in interp in cycle)
 margins = [pwidth, pd.Timedelta(0.5, 'D')]
 patterns = [
     "Pres >= {} & Pres < {}",  # and Lon >= 16.15 and Lon < 17.00
-    "index>=Timestamp('{}') & index<=Timestamp('{}')"
+    "index>='{}' & index<='{}'"
     ]
 
 print_patern='{Pres:g}m. {index:%Y-%m-%d}'
@@ -135,7 +133,7 @@ try:
                     print('data error!')
 
                 # Add full resolution nav to section from navigation['Lat', 'Lon']
-                qstr_trange_pattern = "index>=Timestamp('{}') & index<=Timestamp('{}')"
+                qstr_trange_pattern = "index>='{}' & index<='{}'"
                 qstr = qstr_trange_pattern.format(*ctd['time'][[0, -1]])
 
                 df_nav = storeIn.select(tblN, qstr, columns=cols_nav)  # DepEcho

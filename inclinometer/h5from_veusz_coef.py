@@ -21,16 +21,11 @@ import pandas as pd
 # my
 sys.path.append(str(Path(__file__).parent.parent.resolve()))
 from utils2init import cfg_from_args, this_prog_basename, init_file_names, init_logging, Ex_nothing_done, dir_from_cfg,\
-    set_field_if_no, \
-    path_on_drive_d
+    set_field_if_no, path_on_drive_d, my_logging, LoggingStyleAdapter
 import veuszPropagate
-from inclinometer.h5inclinometer_coef import h5copy_coef
-from inclinometer.incl_calibr import channel_cols
+from inclinometer.h5inclinometer_coef import h5copy_coef, channel_cols
 
-if __name__ != '__main__':
-    l = logging.getLogger(__name__)
-else:
-    l = None  # will set in main()
+lf = my_logging(__name__)
 
 
 def atoi(text):
@@ -62,7 +57,7 @@ def main(new_arg=None, veusze=None):
     :param new_arg:
     :return:
     """
-    global l
+    global lf
     p = veuszPropagate.my_argparser()
     p_groups = {g.title: g for g in p._action_groups if
                 g.title.split(' ')[-1] != 'arguments'}  # skips special argparse groups
@@ -74,6 +69,8 @@ def main(new_arg=None, veusze=None):
         '--widget',
         help='path to Veusz widget property which contains coefficients. For example "/fitV(force)/grid1/graph/fit1/values"'
         )
+    p_groups['in'].set_defaults(data_yield_prefix='fit')
+
     p_groups['in'].add(
         '--data_for_coef', default='max_incl_of_fit_t',
         help='Veusz data to use as coef. If used with widget then this data is appended to data from widget'
@@ -83,18 +80,18 @@ def main(new_arg=None, veusze=None):
         '--out.path',
         help='path to db where write coef')
     p_groups['out'].add(
-        '--re_match_tbl_from_vsz_name',
-        help='regex to extract hdf5 table name from to Veusz file name (last used "\D*\d*")'
+        '--re_match_tbl_from_vsz_name', default=r'[^_@\d]+_?\d+',
+        help='regex to extract hdf5 table name from to Veusz file name'
         # ? why not simply specify table name?
         )
     p_groups['out'].add(
-        '--re_sub_tbl_from_vsz_name', default='^[\d_]*',
-        help='regex to extract hdf5 table name from to Veusz file name by replacing matched chars (input is result of re_match_tbl_from_vsz_name if it is set) by to_sub_tbl_from_vsz_name (see below)'
-        # ? why not simly specify table name?
+        '--re_sub_tbl_from_vsz_name', default=r'^[\d_]*',
+        help='regex to what need to be replaced in name matched by re_match_tbl* by to_sub_tbl_from_vsz_name (see below)'
+        # ? why not simply specify table name?
         )
     p_groups['out'].add(
         '--to_sub_tbl_from_vsz_name', default='',
-        help='string to replace result of re_sub_tbl_from_vsz_name'
+        help='string to replace result of re_sub_tbl_from_vsz_name.'
         )
     # todo:  "b_update_existed" arg will be used here for exported images. Check whether False works or prevent open vsz
 
@@ -102,14 +99,13 @@ def main(new_arg=None, veusze=None):
 
     if not Path(cfg['program']['log']).is_absolute():
         cfg['program']['log'] = str(
-            Path(__file__).parent.joinpath(cfg['program']['log']))  # l.root.handlers[0].baseFilename
+            Path(__file__).parent.joinpath(cfg['program']['log']))  # lf.root.handlers[0].baseFilename
     if not cfg:
         return
     if new_arg == '<return_cfg>':  # to help testing
         return cfg
-
-    l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
-    veuszPropagate.l = l
+    lf = my_logging(__name__, logger=init_logging('', cfg['program']['log'], cfg['program']['verbose']))
+    veuszPropagate.lf = lf
     print('\n' + this_prog_basename(__file__), 'started', end=' ')
     if cfg['out']['b_images_only']:
         print('in images only mode.')
@@ -120,14 +116,13 @@ def main(new_arg=None, veusze=None):
             cfg['in']['pattern_path'] = str(cfg['in']['path'].parent.joinpath(cfg['in']['pattern_path']))
         set_field_if_no(cfg['out'], 'path', cfg['in']['pattern_path'])
         cfg['out']['paths'], cfg['out']['nfiles'], cfg['out']['path'] = init_file_names(
-            **cfg['out'], b_interact=cfg['program']['b_interact'])
+            **cfg['out'], b_interact=cfg['program']['b_interact'], msg_action='We will update')
     except Ex_nothing_done as e:
         print(e.message, ' - no pattern')
         return  # or raise FileNotFoundError?
     try:
-        print(end='Data ')
         cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
-            **cfg['in'], b_interact=False)  # do not bother user 2nd time
+            **cfg['in'], b_interact=False, msg_action='Loading data from')
     except Ex_nothing_done as e:
         print(e.message)
         return  # or raise FileNotFoundError?
@@ -147,89 +142,106 @@ def main(new_arg=None, veusze=None):
 
     names_get = ['tofit_inclins', 'tofit_Vext_m__s']  # ['Inclination_mean_use1', 'logVext1_m__s']  # \, 'Inclination_mean_use2', 'logVext2_m__s'
     names_get_fits = ['fit']  # , 'fit2'
-    vsz_data = {n: [] for n in names_get}
-    for n in names_get_fits:
-        vsz_data[n] = []
+    vsz_data = {n: [] for n in (names_get + names_get_fits + ['Rcor'])}
 
     # prepare collecting all coef in text also
     names_get_txt_results = ['fit1result']  # , 'fit2result'
     txt_results = {n: {} for n in names_get_txt_results}
 
-    i_file = 0
-    for veusze, log in gen_veusz_and_logs:
+    for i_file, (veusze, log) in enumerate(gen_veusz_and_logs):
         if not veusze:
             continue
-        i_file += 1
-        print(i_file)
         table = log['out_name']
+        print(f'{i_file}. Table "{table}"', end='')
         if cfg['out']['re_match_tbl_from_vsz_name']:
-            table = cfg['out']['re_match_tbl_from_vsz_name'].match(table).group()
+            table = cfg['out']['re_match_tbl_from_vsz_name'].findall(table)[0]
+            print(f' -> "{table}"', end='')
         if cfg['out']['re_sub_tbl_from_vsz_name']:
-            table = cfg['out']['re_sub_tbl_from_vsz_name'].sub(cfg['out']['to_sub_tbl_from_vsz_name'], table)
-
-        for n in names_get:
-            vsz_data[n].append(veusze.GetData(n)[0])
-        for n in [cfg['in']['data_for_coef']]:
-            vsz_data[n] = list(veusze.GetData(n)[0])
-
-        # Save velocity coefficients into //{table}//coef//Vabs{i} where i - fit number enumeretad from 0
-        for i, name_out in enumerate(names_get_fits):  # ['fit1', 'fit2']
-            coef = veusze.Get(
-                cfg['in']['widget'])  # veusze.Root['fitV(inclination)']['grid1']['graph'][name_out].values.val
-            if 'a' in coef:
-                coef_list = [coef[k] for k in ['d', 'c', 'b', 'a'] if k in coef]
-            else:
-                coef_list = [coef[k] for k in sorted(coef.keys(), key=digits_first)]
-            if cfg['in']['data_for_coef']:
-                coef_list += vsz_data[cfg['in']['data_for_coef']]
-
-            vsz_data[name_out].append(coef_list)
-            h5copy_coef(None, cfg['out']['path'], table,
-                        dict_matrices={f'//coef//Vabs{i}': coef_list,
-                                       f'//coef//date': np.float64(
-                                           [np.NaN, np.datetime64(datetime.now()).astype(np.int64)])})
-            # h5savecoef(cfg['out']['path'], path=f'//{table}//coef//Vabs{i}', coef=coef_list)
-            txt_results[names_get_txt_results[i]][table] = str(coef)
-
-        # Zeroing matrix - calculated in Veusz by rotation on old0pitch old0roll
-        Rcor = veusze.GetData('Rcor')[0]  # zeroing angles tuned by "USEcalibr0V_..." in Veusz Custom definitions
-
-        if len(cfg['in']['channels']):
+            table = cfg['out']['re_sub_tbl_from_vsz_name'].sub(
+               cfg['out']['to_sub_tbl_from_vsz_name'], table)
+            print(f' -> "{table}"', end='')
+        print()
+        for n in names_get + ['Rcor']:
             try:
-                pr = [veusze.GetData('old0pitch_deg')[0][0], veusze.GetData('old0roll_deg')[0][0]]
+                vsz_data[n].append(veusze.GetData(n)[0])
             except KeyError:
-                try:
-                    pr = np.rad2deg([veusze.GetData('old0pitch')[0][0], veusze.GetData('old0roll')[0][0]])
-                except KeyError:
-                    pr = ['~old0pitch_not_found~', '~old0roll_not_found~']
-            l.info('Applying zero calibration matrix of peach = {} and roll = {} degrees'.format(*pr))
+                lf.warning('not found data in vsz: {}!', n)
+        for n in [cfg['in']['data_for_coef']]:
+            try:
+                vsz_data[n] = list(veusze.GetData(n)[0])
+            except KeyError:
+                lf.warning('not found data in vsz: {}!', n)
+
+        if (b_have_fits := any(any(v[0] if len(v) == 1 else v) for k, v in vsz_data.items() if k != 'Rcor')):
+            # Save velocity coefficients into //{table}//coef//Vabs{i} where i - fit number enumerated from 0
+            for i, name_out in enumerate(names_get_fits):  # ['fit1', 'fit2']
+                coef = veusze.Get(
+                    cfg['in']['widget'])  # veusze.Root['fitV(inclination)']['grid1']['graph'][name_out].values.val
+                if 'a' in coef:
+                    coef_list = [coef[k] for k in ['d', 'c', 'b', 'a'] if k in coef]
+                else:
+                    coef_list = [coef[k] for k in sorted(coef.keys(), key=digits_first)]
+                if cfg['in']['data_for_coef']:
+                    coef_list += vsz_data[cfg['in']['data_for_coef']]
+
+                vsz_data[name_out].append(coef_list)
+                h5copy_coef(None, cfg['out']['path'], table,
+                            dict_matrices={f'//coef//Vabs{i}': coef_list,
+                                           f'//coef//date': np.float64(
+                                               [np.NaN, np.datetime64(datetime.now()).astype(np.int64)])})
+                # h5savecoef(cfg['out']['path'], path=f'//{table}//coef//Vabs{i}', coef=coef_list)
+                txt_results[names_get_txt_results[i]][table] = str(coef)
+
+        # Zeroing matrix - calculated in Veusz by rotation on old0pitch and old0roll
+        # Note: zeroing calc. in Veusz should be activated by specifying "USEcalibr0V_..." in Veusz Custom definitions
+
+        try:
+            pr = [veusze.GetData('old0pitch_deg')[0][0], veusze.GetData('old0roll_deg')[0][0]]
+        except KeyError:
+            try:
+                pr = np.rad2deg([veusze.GetData('old0pitch')[0][0], veusze.GetData('old0roll')[0][0]])
+            except KeyError:
+                pr = ['~old0pitch_not_found~', '~old0roll_not_found~']
+        if np.any(Rcor := vsz_data['Rcor'][i_file]):
+            
             with h5py.File(cfg['out']['path'], 'a') as h5:
-                for channel in cfg['in']['channels']:
-                    (col_str, coef_str) = channel_cols(channel)
-                    # h5savecoef(cfg['out']['path'], path=f'//{table}//coef//Vabs{i}', coef=coef_list), dict_matrices={'//coef//' + coef_str + '//A': coefs[tbl][channel]['A'], '//coef//' + coef_str + '//C': coefs[tbl][channel]['b']})
-
-                    # Currently, used inclinometers have electronics rotated on 180deg. Before we inserted additional
-                    # rotation operation in Veusz by inverting A_old. Now we want iclude this information in database coef only.
-                    try:  # Checking that A_old_inv exist
-                        A_old_inv = veusze.GetData('Ag_old_inv')
-                        is_old_used = True  # Rcor is not accounted for electronic is rotated.
-                    except KeyError:
-                        is_old_used = False  # Rcor is accounted for rotated electronic.
-
-                    if is_old_used:  # The rotation is done in vsz (A_old in vsz is inverted) so need rotate it back to
-                        # use in vsz without such invertion
-
-                        # Rotate on 180 deg (note: this is not inversion)
-                        A_old_inv = h5[f'//{table}//coef//{coef_str}//A'][...]
-                        A_old = np.dot(A_old_inv, [[1, 0, 0], [0, -1, 0], [0, 0, -1]])  # adds 180 deg to roll
-                    else:
-                        A_old = h5[f'//{table}//coef//{coef_str}//A'][...]
-                    # A_old now accounts for rotated electronic
-
-                    A = Rcor @ A_old
+                if False:  # old
+                    lf.info(
+                        'Modifying coef. applying loaded zero calibration matrix of peach = {} and roll = {} degrees'.format(
+                            *pr))
+                    for channel in cfg['in']['channels']:  # if need rotate coefs
+                        
+                        (col_str, coef_str) = channel_cols(channel)
+    
+                        # h5savecoef(cfg['out']['path'], path=f'//{table}//coef//Vabs{i}', coef=coef_list), dict_matrices={'//coef//' + coef_str + '//A': coefs[tbl][channel]['A'], '//coef//' + coef_str + '//C': coefs[tbl][channel]['b']})
+    
+                        # Currently, used inclinometers have electronics rotated on 180deg. Before we inserted additional
+                        # rotation operation in Veusz by inverting A_old. Now we want include this information in database coef only.
+                        try:  # Checking that A_old_inv exist
+                            A_old_inv = veusze.GetData('Ag_old_inv')
+                            is_old_used = True  # Rcor is not accounted for electronic is rotated.
+                        except KeyError:
+                            is_old_used = False  # Rcor is accounted for rotated electronic.
+    
+                        if is_old_used:  # The rotation is done in vsz (A_old in vsz is inverted) so need rotate it back to
+                            # use in vsz without such invertion
+    
+                            # Rotate on 180 deg (note: this is not inversion)
+                            A_old_inv = h5[f'//{table}//coef//{coef_str}//A'][...]
+                            A_old = np.dot(A_old_inv, [[1, 0, 0], [0, -1, 0], [0, 0, -1]])  # adds 180 deg to roll
+                        else:
+                            A_old = h5[f'//{table}//coef//{coef_str}//A'][...]
+                        # A_old now accounts for rotated electronic
+    
+                        A = Rcor @ A_old
+                        h5copy_coef(None, h5, table,
+                                    dict_matrices={f'//coef//{coef_str}//A': A})
+                else:  # new
+                    lf.info('Saving loaded zeroing matrix (previous peach = {} and roll = {} degrees)'.format(*pr))
                     h5copy_coef(None, h5, table,
-                                dict_matrices={f'//coef//{coef_str}//A': A})
-
+                                dict_matrices={f'//coef//Rz': Rcor},
+                                dates = {'Rz': True}
+                                )
         # veusze.Root['fitV(inclination)']['grid1']['graph2'][name_out].function.val
         print(vsz_data)
         veuszPropagate.export_images(
@@ -251,14 +263,15 @@ def main(new_arg=None, veusze=None):
 
     # veusze.Save(str(path_vsz_save), mode='hdf5')  # veusze.Save(str(path_vsz_save)) saves time with bad resolution
     print(f'Ok')
-    print(txt_results)
-    for n in names_get:
-        pd.DataFrame.from_dict(
-            dict(zip(list(txt_results['fit1result'].keys()), vsz_data[n]))
-            ).to_csv(
-                Path(cfg['out']['path']).with_name(f'average_for_fitting-{n}.txt'), sep='\t',
-                header=txt_results['fit1result'].keys, mode='a'
-            )
+    if b_have_fits:
+        print(txt_results)
+        for n in names_get:
+            pd.DataFrame.from_dict(
+                dict(zip(list(txt_results['fit1result'].keys()), vsz_data[n]))
+                ).to_csv(
+                    Path(cfg['out']['path']).with_name(f'average_for_fitting-{n}.txt'), sep='\t',
+                    header=txt_results['fit1result'].keys, mode='a'
+                )
     return {**vsz_data, 'veusze': veusze}
 
 
@@ -277,14 +290,14 @@ if __name__ == '__main__':
         'path': cfg_out_db_path.with_name('190711incl12.vsz'),  # '190704incl[0-9][0-9].vsz'
         # r'd:\WorkData\_experiment\_2019\inclinometer\190704\190704incl[0-9][0-9].vsz',
         # r'd:\WorkData\_experiment\_2019\inclinometer\190711_tank\190711incl[0-9][0-9].vsz',
-        # r'd:\WorkData\_experiment\_2018\inclinometr\181004_KTI\incl09.vsz'
+        # r'd:\WorkData\_experiment\_2018\inclinometer\181004_KTI\incl09.vsz'
         'widget': '/fitV(force)/grid1/graph/fit1/values'
         }
     # , 'out': {    'db_path': }
 
     # if not cfg_out_db_path.is_absolute():
     #     cfg_out_db_path = Path(cfg_in['path']).parent / cfg_out_db_path
-    # d:\workData\_experiment\_2018\inclinometr\180731_KTI\*.vsz
+    # d:\workData\_experiment\_2018\inclinometer\180731_KTI\*.vsz
 
     main([str(Path(veuszPropagate.__file__).with_name('veuszPropagate.ini')),
           '--data_yield_prefix', 'Inclination',

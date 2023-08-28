@@ -21,7 +21,7 @@ c.k.simulateCommand('clear-log')
 <t tx="And0K.20160516172920.1">@language python
 #!/usr/bin/env python
 #coding:utf-8
-from __future__ import print_function
+
 """
   Author:  Andrey Korzh --&lt;korzh@nextmail.ru&gt;
   Purpose: Convert XML files wich contains backuped SMS messages from GPS tracker to GPX tracks
@@ -94,7 +94,7 @@ len(n.attrib['date_sent'])&lt;=1 else n.attrib['date_sent'])/1000.0) #'date2'
         for neighbor in root.findall("./sms/[@contact_name='"+ contact_name_d +"'][@type='1']"): #received SMS
             #Parse messages:
             m= re_msg.search(neighbor.attrib['body']) #get ('54.738238', '20.503257', '0.00', '0', '24/02/16 20:40')
-            if (not m is None) and (not m.group(1) is None): # valid =&gt; create points:
+            if (m is not None) and (m.group(1) is not None): # valid =&gt; create points:
                 Comment= m.group('Comment') if bWriteComments else None
                 time_b= getTime(neighbor, m.group('Time'))
                 if not time_b:
@@ -113,7 +113,7 @@ len(n.attrib['date_sent'])&lt;=1 else n.attrib['date_sent'])/1000.0) #'date2'
                 gpx_point.course= m.group('Dir') # where to write dir?
             elif bWriteWithoutCoord:                        # invalid =&gt; messages
                 m= re_msgBad.search(neighbor.attrib['body'])
-                if (not m is None) and (not m.group(1) is None): # valid time=&gt; create comment
+                if (m is not None) and (m.group(1) is not None): # valid time=&gt; create comment
                     Comment= m.group('Comment') if bWriteComments else None
                     time_b= getTime(neighbor, m.group('Time'))
                     if not time_b:

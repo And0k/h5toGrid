@@ -27,7 +27,7 @@ from typing import Any, Sequence
 # my:
 __file__ = '/mnt/D/Work/_Python3/And0K/h5toGrid/scripts/incl_proc180418.py'
 sys.path.append(str(Path(__file__).parent.parent.resolve()))  # os.getcwd()
-from to_pandas_hdf5.csv2h5 import h5init, h5temp_open
+from to_pandas_hdf5.csv2h5 import h5out_init, h5temp_open
 from to_pandas_hdf5.h5toh5 import h5move_tables, h5index_sort
 from to_pandas_hdf5.h5_dask_pandas import h5_append
 from filters import rep2mean
@@ -65,7 +65,7 @@ def load_data_intervals(df_intervals, cfg_out):
                                  index=[np.min([t_edges[0], t_edges_Calibr[0]])])    
     ... a = load_data_intervals(df_intervals, cfg['out'])
     """
-    qstr_range_pattern = "index>=Timestamp('{}') & index<=Timestamp('{}')"
+    qstr_range_pattern = "index>='{}' & index<='{}'"
     with pd.HDFStore(cfg_out['db_path'], mode='r') as storeIn:
         print("loading from {db_path}: ".format_map(cfg_out), end='')
         # Query table tblD by intervals from table tblL
@@ -209,12 +209,12 @@ def poly_load_apply(x: Sequence, pattern_path_of_poly: str, pattern_format_arg: 
     :param pattern_path_of_poly: path to numpy.loadtxt() formatted with next arg
     :param pattern_format_arg:
     :return: np.ndarray of same size as ``x``
-    poly = '/mnt/D/workData/_experiment/_2018/inclinometr/180416Pcalibr/fitting_result(P#' + '11' + 'calibr_log).txt'
-    >>> dfcum.P = poly_load_apply(y_filt, pattern_path_of_poly = '/mnt/D/workData/_experiment/_2018/inclinometr/180605Pcalibr/fitting_result(inclPres{}).txt', pattern_format_arg=cfg['out']['table'][-2:])
+    poly = '/mnt/D/workData/_experiment/_2018/inclinometer/180416Pcalibr/fitting_result(P#' + '11' + 'calibr_log).txt'
+    >>> dfcum.P = poly_load_apply(y_filt, pattern_path_of_poly = '/mnt/D/workData/_experiment/_2018/inclinometer/180605Pcalibr/fitting_result(inclPres{}).txt', pattern_format_arg=cfg['out']['table'][-2:])
 
     """
 
-    # pattern_path_of_poly ='/mnt/D/workData/_experiment/_2018/inclinometr/180416Pcalibr/fitting_result(P#{}calibr_log).txt')
+    # pattern_path_of_poly ='/mnt/D/workData/_experiment/_2018/inclinometer/180416Pcalibr/fitting_result(P#{}calibr_log).txt')
 
     path_poly = Path(pattern_path_of_poly.format(pattern_format_arg))
 
@@ -250,7 +250,7 @@ y_filt = filt_blocks_array(y_filt, i_burst, func=interpolate)
 # plot2vert(dfcum.index, dfcum.P, y_filt, 'Presure: {} points'.format(dfcum.shape[0]), b_show_diff=False,  ylabel='P, counts')
 
 dfcum.P = poly_load_apply(y_filt,
-                          pattern_path_of_poly='/mnt/D/workData/_experiment/_2018/inclinometr/180605Pcalibr/fitting_result(inclPres{}).txt',
+                          pattern_path_of_poly='/mnt/D/workData/_experiment/_2018/inclinometer/180605Pcalibr/fitting_result(inclPres{}).txt',
                           pattern_format_arg=cfg['out']['table'][-2:])
 # @+node:korzh.20180608193421.1: ** save plot
 plt.plot(dfcum.index, dfcum.P, '-k', linewidth=0.01)
@@ -317,7 +317,7 @@ try:  # set chanks to mean data interval between holes
 except ValueError:  # some default value if no holes
     cfg['out']['chunksize'] = 100000
 
-h5init(cfg['in'], cfg['out'])  # cfg['in'] = {}
+h5out_init(cfg['in'], cfg['out'])  # cfg['in'] = {}
 try:
     cfg['out']['b_incremental_update'] = False  # not copy prev data: True not implemented
     df_log_old, store, cfg['out']['b_incremental_update'] = h5temp_open(**cfg['out'])

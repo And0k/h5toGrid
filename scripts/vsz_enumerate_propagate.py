@@ -11,7 +11,7 @@ from itertools import takewhile
 # my funcs
 import veuszPropagate
 
-# from to_pandas_hdf5.csv_specific_proc import proc_loaded_corr
+# from to_pandas_hdf5.csv_specific_proc import loaded_corr
 
 from to_pandas_hdf5.h5toh5 import h5log_names_gen
 

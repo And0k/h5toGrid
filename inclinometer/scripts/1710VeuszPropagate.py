@@ -8,7 +8,7 @@ from utils2init import this_prog_basename, standard_error_info
 from veuszPropagate import main as veuszPropagate, __file__ as file_veuszPropagate
 
 cfg = {'in': {
-    'path': r'd:\workData\BalticSea\171003_ANS36\inclinometr\171015_intercal_on_board\#*.TXT',
+    'path': r'd:\workData\BalticSea\171003_ANS36\inclinometer\171015_intercal_on_board\#*.TXT',
 
     }}
 
@@ -26,7 +26,7 @@ def main():
     gen_data = veuszPropagate([os_path.join(os_path.dirname(
         file_veuszPropagate), 'veuszPropagate.ini'),
         '--data_yield_prefix', 'Hxyz', '--path', cfg['in']['path'], '--pattern_path',
-        r'd:\workData\BalticSea\171003_ANS36\inclinometr\171015_intercal_on_board\~pattern~.vsz',
+        r'd:\workData\BalticSea\171003_ANS36\inclinometer\171015_intercal_on_board\~pattern~.vsz',
         '--eval_list',
         """
         'ImportFileCSV(u"{nameRFE}", blanksaredata=True, encoding="ascii", headermode="1st", linked=True, dsprefix=u"counts", rowsignore=2, skipwhitespace=True)',

@@ -20,7 +20,7 @@ Calculate Distanse(a1DLat, a1DLon) = trackDist (same size as a1DLat, a1DLon, a1D
 
 if 'useLineDist' in cfg['track']:
     track['useLineDist'] = 0.05
-## check first/ track points
+#%% check first/ track points
 b_use = np.isfinite(a1DLat) & np.isfinite(a1DLon) & np.isfinite(a1DTime)
 iEdge = np.flatnonzero(b_use)([0, -1])
 if iEdge.size:

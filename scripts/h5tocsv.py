@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # coding:utf-8
-from __future__ import print_function, division
+, division
 
 """
   Author:  Andrey Korzh <ao.korzh@gmail.com>
@@ -66,7 +66,7 @@ will be sabstituted with correspondng input file names.
     # Load data #################################################################
     fileOutP = cfg['out']['path'] if 'path' in cfg['out'] else os_path.dirname(
         cfg['in']['path'])
-    qstr_trange_pattern = "index>=Timestamp('{}') & index<=Timestamp('{}')"
+    qstr_trange_pattern = "index>='{}' & index<='{}'"
     if 'file_names_add_fun' in cfg['out']:
         file_names_add = eval(compile(cfg['out']['file_names_add_fun'], [], 'eval'))
     else:

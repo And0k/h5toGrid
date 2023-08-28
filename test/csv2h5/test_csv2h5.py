@@ -52,7 +52,7 @@ def test_h5init():
               'cfgFile': '200901incl_load.yml'
     }
     cfg_out = {}
-    h5init(cfg_in, cfg_out)
+    h5out_init(cfg_in, cfg_out)
     assert cfg_out == {
         'b_insert_separator': False,
         'logfield_fileName_len': 255,

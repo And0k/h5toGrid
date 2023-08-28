@@ -18,7 +18,7 @@ from utils2init import ini2dict, init_file_names, Ex_nothing_done, standard_erro
 from utils_time import timzone_view
 from utils_time_corr import time_corr
 
-def proc_loaded_ADCP_WH(a, cfg_in):
+def loaded_ADCP_WH(a, cfg_in):
     pass
     # ADCP_WH specified proc
     # Time calc
@@ -112,7 +112,7 @@ def main(new_arg=None, **kwargs):
     # Assign castom prep&proc based on args.cfgFile name #######################
     fun_proc_loaded = None  # Assign default proc below column assinment
     # if cfg['in']['cfgFile'].endswith('ADCP_WH'):
-    #    fun_proc_loaded = proc_loaded_ADCP_WH
+    #    fun_proc_loaded = loaded_ADCP_WH
     # Default time postload proc
     if fun_proc_loaded is None:
         if 'coldate' not in cfg['in']:  # Time includes Date

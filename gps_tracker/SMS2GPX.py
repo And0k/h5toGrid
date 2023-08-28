@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # coding:utf-8
-from __future__ import print_function
+
 
 """
   Author:  Andrey Korzh --<ao.korzh@gmail.com>
@@ -17,7 +17,7 @@ import gpxpy.gpx as GPX
 from utils2init import Ex_nothing_done, cfg_from_args, my_argparser_common_part, this_prog_basename, init_logging, standard_error_info
 
 if __name__ == '__main__':
-    l = None  # see main(): l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+    l = None  # see main(): l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
 else:
     l = logging.getLogger(__name__)
 version = '0.0.1'
@@ -177,11 +177,11 @@ lat:54.735578\nlong:20.544967\nspeed:0.07 \nT:19/10/13 05:03\nbat:100%\nhttp://m
             body = neighbor.attrib['body']
             for b_new in old_or_new:
                 m = re_msg[b_new].search(body)
-                if not m is None:
+                if m is not None:
                     old_or_new = [b_new]  # fix neweness for contact for speedup
                     b_year_first = b_new
                     break
-            if (not m is None) and (not m.group(1) is None):  # valid => create points:
+            if (m is not None) and (m.group(1) is not None):  # valid => create points:
                 Comment = m.group('Comment') if bWriteComments else None
                 time_b = gettime(neighbor, m.group('Time'), b_year_first=b_year_first)
                 if not time_b:
@@ -203,7 +203,7 @@ lat:54.735578\nlong:20.544967\nspeed:0.07 \nT:19/10/13 05:03\nbat:100%\nhttp://m
                     gpx_point.course = m.group('Dir')  # where to write dir?
             elif bWriteWithoutCoord:  # invalid => messages
                 m = re_msgBad.match(body)
-                if (not m is None) and (not m.group(1) is None):  # valid time=> create comment
+                if (m is not None) and (m.group(1) is not None):  # valid time=> create comment
                     Comment = m.group('Comment') if bWriteComments else None
                     time_b = gettime(neighbor, m.group('Time'), b_year_first=b_year_first)
                     if not time_b:
@@ -247,7 +247,7 @@ def main(new_arg=None, **kwargs):
         {'path': cfg['in']['path'], 'out_path': cfg['out']['path']},
         default_input_filemask)
 
-    l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+    l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
     l.warning('\n' + this_prog_basename(__file__) + ' started. ')
 
     l.warning(msgFile)

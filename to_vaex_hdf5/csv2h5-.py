@@ -40,7 +40,7 @@ import utils_time_corr
 from to_pandas_hdf5.h5toh5 import h5_dispenser_and_names_gen
 
 if __name__ == '__main__':
-    lf = None  # see main(): lf = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+    lf = None  # see main(): lf = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
 else:
     lf = LoggingStyleAdapter(logging.getLogger(__name__))
 
@@ -240,7 +240,7 @@ def main(cfg_in, cfg_out, cfg_filter, cfg_program):  #
         elif cfg.program.return_ == '<cfg_from_args>':  # to help testing
             return cfg
 
-        lf = LoggingStyleAdapter(init_logging(logging, None, cfg.program.log, cfg.rogram.verbose))
+        lf = LoggingStyleAdapter(init_logging('', cfg.program.log, cfg.rogram.verbose))
         print('\n' + this_prog_basename(__file__), end=' started. ')
         try:
             cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
@@ -266,7 +266,7 @@ def main(cfg_in, cfg_out, cfg_filter, cfg_program):  #
 #
 #     def wrap(**kwargs):
 #         # Prepare loading and writing specific to format
-#         kwargs['in']['fun_proc_loaded'] = get_fun_proc_loaded_converters(**kwargs['in'])
+#         kwargs['in']['fun_proc_loaded'] = get_fun_loaded_converters(**kwargs['in'])
 #         kwargs['in'] = init_input_cols(**kwargs['in'])
 #
 #         return wrapped(**kwargs)
@@ -313,5 +313,3 @@ def version():
 
 if __name__ == '__main__':
     run(main, alt=version)
-
-

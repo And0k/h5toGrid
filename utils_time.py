@@ -26,14 +26,11 @@ if __debug__:
 # from builtins import input
 # from debug import __debug___print
 # from  pandas.tseries.offsets import DateOffset
-from dateutil.tz import tzoffset, tzutc
+from dateutil.tz import tzoffset
 # my:
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
-
 dt64_1s = np.int64(1e9)
-# tzUTC = tzutc()  older version "tzoffset('UTC', 0)" is not compatible if compare dates (pandas?) so expecting issues
-
 
 # def numpy_to_datetime(arr):
 #     return np.apply_along_axis(np.ndarray.item, 0, np.array([arr], 'datetime64[s]'))
@@ -227,7 +224,7 @@ def minInterval(range1: Sequence, range2: Sequence, length: int):
 
 def check_time_diff(t_queried: Union[pd.Series, np.ndarray], t_found: Union[pd.Series, np.ndarray],
                     dt_warn: Union[pd.Timedelta, np.timedelta64],
-                    mesage: str = 'Bad nav. data coverage: difference to nearest point in time [min]:',
+                    msg: str = 'Bad nav. data coverage: difference to nearest point in time [min]:',
                     return_diffs: bool = False) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
     """
     Check time difference between found and requested time points and prints info if big difference is found
@@ -247,17 +244,17 @@ def check_time_diff(t_queried: Union[pd.Series, np.ndarray], t_found: Union[pd.S
 
     dt_arr = np.array(t_found - t_queried_values, 'timedelta64[ns]')
     bbad = abs(dt_arr) > np.timedelta64(dt_warn)
-    if (mesage is not None) and np.any(bbad):
-        if mesage:
-            mesage = '\n'.join([mesage] + ['{}. {}:\t{}{:.1f}'.format(i, tdat, m, dt / 60) for i, tdat, m, dt in zip(
+    if (msg is not None) and np.any(bbad):
+        if msg:
+            msg = '\n'.join([msg] + ['{}. {}:\t{}{:.1f}'.format(i, tdat, m, dt / 60) for i, tdat, m, dt in zip(
                 np.flatnonzero(bbad), t_queried[bbad], np.where(dt_arr[bbad].astype(np.int64) < 0, '-', '+'),
                 np.abs(dt_arr[bbad]) / np.timedelta64(1, 's'))])
-        lf.warning(mesage)
+        lf.warning(msg)
     return (bbad, dt_arr) if return_diffs else bbad
 
 # str_time_short= '{:%d %H:%M}'.format(r.Index.to_datetime())
 # timeUTC= r.Index.tz_convert(None).to_datetime()
-@jit
+# @jit
 def matlab2datetime64ns(matlab_datenum: np.ndarray) -> np.ndarray:
     """
     Matlab serial day to numpy datetime64[ns] conversion

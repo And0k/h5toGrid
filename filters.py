@@ -7,7 +7,7 @@ from numba import njit, objmode, typed
 if __debug__:
     pass
 
-# l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+# l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
 l = logging.getLogger(__name__)
 
 dt64_1s = np.int64(1e9)
@@ -16,6 +16,7 @@ dt64_1s = np.int64(1e9)
 def mad(data, axis=None):
     """Instead this can use: from statsmodels.robust import mad  # or use pd.DataFrame().mad()"""
     return np.mean(np.absolute(data - np.mean(data, axis)), axis)
+
 
 # from scipy.signal import find_peaks_cwt
 # -----------------------------------------------------------------
@@ -29,7 +30,8 @@ def rep2mean(y, bOk=None, x=None):
     :return:
     """
     if bOk is None:
-        b = np.logical_not(np.isnan(y))  # numba KeyError: 'Failed in nopython mode pipeline (step: ensure IR is legal prior to lowering)\n"more than one definition for \'bOk\'"'
+        b = np.logical_not(np.isnan(y))  # numba KeyError: Failed in nopython mode pipeline (step: ensure IR is legal
+        # prior to lowering) "more than one definition for 'bOk'"
     else:
         b = bOk
     try:
@@ -39,8 +41,8 @@ def rep2mean(y, bOk=None, x=None):
             y_ok = np.extract(b, y)  # y[bOk]
             return np.interp(x_bad, x_ok, y_ok)
         else:
-            bBad = np.logical_not(b)
-            y[bBad] = np.interp(x[bBad], x[b], y[b])
+            bad = np.logical_not(b)
+            y[bad] = np.interp(x[bad], x[b], y[b])
             return y
     except Exception:  # ValueError as e:  # array of sample points is empty - replaced for numba
         #l.exception('rep2mean error')
@@ -117,16 +119,16 @@ def i_move2good(ind, bad, side='left'):
     # np.clip(ind_out, 0, ind_possible.size - 1, out=ind_out)
     return ind_out
     # Same porpose code which mostly works the same but can return negative indexes:
-    # s= np.int32(np.cumsum(bBad))
+    # s= np.int32(np.cumsum(bad))
     # ind_out= np.int32(GoodIndIn) - s[GoodIndIn]
-    # ind= np.flatnonzero(bBad[GoodIndIn]) # if some GoodIndIn in bBad regions
+    # ind= np.flatnonzero(bad[GoodIndIn]) # if some GoodIndIn in bad regions
     # for k in ind:
-    #     f= np.flatnonzero(~bBad[GoodIndIn[k]:])[0]
+    #     f= np.flatnonzero(~bad[GoodIndIn[k]:])[0]
     #     if f: # data masked -
     #         f += (GoodIndIn[k] - 1)
     #         ind_out[k]= f - s[f]
     #     else:
-    #         f= np.flatnonzero(~bBad[:GoodIndIn[k]])[-1]
+    #         f= np.flatnonzero(~bad[:GoodIndIn[k]])[-1]
     #         if f:
     #             ind_out[k]= f - s[f]
 
@@ -487,7 +489,7 @@ def repeated2increased(t: np.ndarray, freq: float, b_increased: Optional[np.ndar
         t_add -= np.cumsum(t_sub)
     else:
         print('All elements (', len(t),
-              ') are the same! - Increasing them using constant frequency f =', freq, 'Hz')  # l.debug(%gHz)
+              ') are the same! ↦ Increasing them using constant frequency f =', freq, 'Hz')  # l.debug(%gHz)
     return t + t_add
 
 
@@ -636,8 +638,8 @@ def make_linear(tim: np.int64, freq: float, dt_big_hole=None) -> bool:
                     if np.all(b_inc):
                         b_exclude = False
                     else:
-                        iSt_ch = np.int64(np.searchsorted(dt_cur > 0, 0.5))
-                        iEn_ch = len(dt_cur) - np.int64(np.searchsorted(np.flip(dt_cur > 0, 0), 0.5))
+                        iSt_ch = np.argmax(dt_cur > 0)   # np.int64(np.searchsorted(dt_cur > 0, 0.5))
+                        iEn_ch = len(dt_cur) - np.argmax(np.flip(dt_cur > 0, 0) > 0)   # np.int64(np.searchsorted(np.flip(dt_cur > 0, 0), 0.5)) # finds on right side!
                         b_exclude = iEn_ch > iSt_ch  # can not use changed values if changed only one or less
                     if b_exclude:  # Excluding repeated values at edges
                         dt0new = (t[iEn_ch] - t[iSt_ch]) / (iEn_ch - iSt_ch)
@@ -669,7 +671,7 @@ def is_works(s, noise=0):
     """
     Regions where data is changing
     :param s:
-    :param noise: minimum adjasent data changing when working
+    :param noise: minimum adjacent data changing when working
     :return:
     """
 
@@ -712,11 +714,11 @@ def too_frequent_values(a, max_portion_allowed=0.5):
     bad_portion = 100.0 * n_uniq / a.size
     use_uniq = bad_portion > max_portion_allowed
 
-    bbad = np.zeros_like(a, dtype=np.bool_)
+    bad = np.zeros_like(a, dtype=np.bool_)
     m_all = m_all[use_uniq]
     if m_all.size:
         for i, m in zip(i_uniq[use_uniq], m_all):
-            bbad[a == m] = True
+            bad[a == m] = True
 
         print('too_frequent_values detected: ', np.around(m_all, 3),  #'[' ','.join(['{:.3g}'.format(m) for m in m_all] ']'
             '(last alternates', np.around(bad_portion[m_all.size - 1], 1), '%')  #l.info()
@@ -728,7 +730,7 @@ def too_frequent_values(a, max_portion_allowed=0.5):
                       round(bad_portion[i], 1))
             elif not len(a):
                 print('- no data')
-    return bbad
+    return bad
 
 @njit
 def too_frequent_values__old_bad(s, max_portion_allowed=0.5):
@@ -743,7 +745,7 @@ def too_frequent_values__old_bad(s, max_portion_allowed=0.5):
     ds = np.abs(np.ediff1d(s, to_end=0))
     bfilt = np.logical_or(np.logical_or(ds == 0, ds > 1), s == m)
     s = s[bfilt]
-    bbad = np.zeros_like(s, dtype=np.bool_)
+    bad = np.zeros_like(s, dtype=np.bool_)
     m_all = []
     while True:
         btest = s == m
@@ -752,10 +754,10 @@ def too_frequent_values__old_bad(s, max_portion_allowed=0.5):
         if all(btest) or bad_portion < max_portion_allowed:
             break
         m_all.append(m)
-        bbad[~bbad] |= btest
+        bad[~bad] |= btest
         s = s[~btest]
         m = np.nanmedian(s)
-    bfilt[bfilt] = bbad
+    bfilt[bfilt] = bad
     if m_all:
         print('Detected mixed bad values:,[', ','.join([str(round(m, 3)) for m in m_all]),
               '] (last alternates ', round(bad_portion, 1), '%)' )  #l.info(
@@ -831,8 +833,8 @@ def inearestsorted(array: np.ndarray, values):
 #@njit: Invalid use of Function(<function searchsorted at 0x0000021673822E58>) with argument(s) of type(s): (array(datetime64[ns], 1d, C), array(datetime64[ns], 1d, C))
 def inearestsorted_around(array: np.ndarray, values) -> np.ndarray:
     """
-    Find nearest values before and after of each values in sorted numpy array
-    Returned values useful as indexes for linear interpolation of data associated with values
+    Find the nearest values before and after of each value in sorted numpy array.
+    Returned values useful as indexes for linear interpolation of data associated with values.
     :param array:  numpy array where to search
     :param values: numpy array to which values need to find nearest
     :return: found indexes of length <= len(values)
@@ -883,12 +885,12 @@ def find_sampling_frequency(tim: np.ndarray,
     :param b_show:
     :return: (freq, n_same, n_dec, b_ok):
         freq: frequency, Hz
-        n_same: number of nonincreased elements found
+        n_same: number of non-increased elements found
         n_dec: number of decreased elements found
         i_inc: int, indexes of increased tim elements
 
        Prints n_dec ' time inversions detected!'
-       and n_same '% nonincreased'
+       and n_same '% non-increased'
     """
 
     # diff(tim) should be approcsimately constant but can have some big spikes and many zeros
@@ -912,21 +914,21 @@ def find_sampling_frequency(tim: np.ndarray,
     # all increased positions
     b_ok = dt > 0
     i_inc_out = np.flatnonzero(b_ok)  # where time is increased (allowed by time resolution)
-    bBad = dt < 0
-    bAnyDecreased = bBad.any()
+    bad = dt < 0
+    bAnyDecreased = bad.any()
     if bAnyDecreased:
-        n_dec = bBad.sum()
+        n_dec = bad.sum()
         print(n_dec, 'time inversions detected!')
         # ignore all this:
         # - joined different data in backward order
         # - data with different frequencies
-        bBad = b1spike(tim)
-        dt = np.ediff1d(tim[~bBad].view(np.int64), to_end=1)
-        bBad = dt < 0
-        bAnyDecreased = bBad.any()
+        bad = b1spike(tim)
+        dt = np.ediff1d(tim[~bad].view(np.int64), to_end=1)
+        bad = dt < 0
+        bAnyDecreased = bad.any()
         if bAnyDecreased:  # b1spike can not remove time decreasing
-            dt = dt[~bBad]
-            n_dec = bBad.sum()
+            dt = dt[~bad]
+            n_dec = bad.sum()
             print(n_dec, 'time inversions that are not single spikes!')
             
         b_ok = dt > 0  # filtered increased positions
@@ -946,7 +948,7 @@ def find_sampling_frequency(tim: np.ndarray,
     n_nondec = dt.size - n_inc
     if n_nondec > 0:
         n_nondec_r = n_nondec / np.float64(dt.size)
-        print(round(100 * n_nondec_r, 1), '% nonincreased...')
+        print(round(100 * n_nondec_r, 1), '% non-increased...')
 
     # number of elements between increased elements
     di_inc = np.ediff1d(i_inc, 0)  # areas lengths, last is unknown is set to 0 but value will not be used
@@ -983,29 +985,29 @@ def find_sampling_frequency(tim: np.ndarray,
     else:
         dt = np.pad(np.diff(Time), (0, 1), 'mean')
         b_ok = dt > 0  # all increased positions
-        bBad = np.zeros_like(dt, dtype=np.bool)
+        bad = np.zeros_like(dt, dtype=np.bool)
         for i in range(10):
-            bBad[~bBad] = dt < 0
-            bAnyDecreased = np.any(bBad)
+            bad[~bad] = dt < 0
+            bAnyDecreased = np.any(bad)
             if bAnyDecreased:
-                n_decrease = np.sum(bBad)
+                n_decrease = np.sum(bad)
                 print(str(n_decrease) + ' time inversions detected!')
                 # ignore all this:
                 # - may be splitted different data in backward order
                 # - may be this data with different frequencies
                 if i%2:
-                    dt = np.ediff1d(Time[~bBad], to_end=True)
+                    dt = np.ediff1d(Time[~bad], to_end=True)
                 else:
-                    dt = np.ediff1d(Time[~bBad], to_begin=True)
+                    dt = np.ediff1d(Time[~bad], to_begin=True)
             else:
                 break
-        b_ok[bBad] = False
+        b_ok[bad] = False
         n_same = np.size(dt) - np.sum(b_ok)
         bAnyNonIncreased = n_same > 0
         if bAnyNonIncreased:
             n_same_r = np.float64(n_same) / np.float64(dt.size)
-            print(str(round(100 * n_same_r, 1)) + '% nonincreased elements considered')
-        i_inc = np.flatnonzero(~bBad[b_ok&~bBad])  # where time increased (allowed by time resolution)
+            print(str(round(100 * n_same_r, 1)) + '% non-increased elements considered')
+        i_inc = np.flatnonzero(~bad[b_ok&~bad])  # where time increased (allowed by time resolution)
         dt_f = dt[dt>0]
         b_f = dt_f < (dt_f.mean() + dt64_1s * 10 ** precision)  # not packet starts in i_inc array
         # number of elements between increased elements excluding packets starts:

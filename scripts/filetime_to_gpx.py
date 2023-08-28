@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 from h5toGpx import init_gpx_symbols_fun, save_to_gpx, my_argparser as h5toGpx_parser
-from to_pandas_hdf5.csv_specific_proc import convertNumpyArrayOfStrings
+from to_pandas_hdf5.csv_specific_proc import chars_array_to_datetimeindex
 from to_pandas_hdf5.h5toh5 import h5load_points
 # my:
 from utils2init import init_file_names, cfg_from_args, this_prog_basename, Ex_nothing_done, standard_error_info
@@ -54,7 +54,7 @@ def filename2date(inF):
     except Exception as e:
         print('Can not convert date: ', standard_error_info(e))
         raise e
-    return convertNumpyArrayOfStrings(date, 'datetime64[ns]')
+    return chars_array_to_datetimeindex(date, 'datetime64[ns]')
 
 
 # , '--path', r'd:\workData\BalticSea\171003_ANS36\Baklan\2017*p1d5.txt',

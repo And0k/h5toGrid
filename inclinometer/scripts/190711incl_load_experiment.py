@@ -198,7 +198,7 @@ if start == 1:
         if not in_file:
             continue
 
-        csv2h5([scripts_path / 'cfg/csv_inclin_Kondrashov.ini',
+        csv2h5([scripts_path / 'cfg/csv_tcm.ini',
                 '--path', str(in_file),
                 '--blocksize_int', '10000000',  # 10Mbt
                 '--table', re.sub('^inkl_0', 'incl',

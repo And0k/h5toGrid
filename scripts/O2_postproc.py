@@ -202,7 +202,7 @@ def h5replace_cols(db_path: Union[Path, str], tbl: str, df_new: Union[pd.DataFra
 # For each run
 tbl = f'/{device}'
 tbl_log = f'{tbl}/logRuns'
-qfmt = "index>=Timestamp('{}') and index<=Timestamp('{}')"
+qfmt = "index>='{}' & index<='{}'"
 with pd.HDFStore(path_db, mode='r') as store:
     df_log = store[tbl_log]
     o2_ser_l = []  # accumulates result from each run

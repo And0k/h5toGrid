@@ -16,11 +16,12 @@ path_db= Path(r'temp\test_gpx2h5.h5')
 path_data= Path('data')
 
 def test_main():
-    main(['',
-            '--db_path', str(path_db.absolute()),
-            '--path', str((path_data / r'*.gpx').absolute()),
-            '--tables_list', ',navigation,',  # skip waypoints
-            '--table_prefix', r'',
-            # '--min_date', '2019-07-17T14:00:00',
-            '--b_interact', '0',
-            ])
+    main([
+        '',
+        '--db_path', str(path_db.absolute()),
+        '--path', str((path_data / r'*.gpx').absolute()),
+        '--tables_list', ',navigation,',  # skip waypoints
+        '--table_prefix', r'',
+        # '--min_date', '2019-07-17T14:00:00',
+        '--b_interact', '0',
+    ])

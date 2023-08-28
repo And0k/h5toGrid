@@ -1,5 +1,5 @@
 import pandas as pd
-from to_pandas_hdf5.h5toh5 import h5log_names_gen, h5init, h5_dispenser_and_names_gen, h5move_tables, h5index_sort, h5remove  # ReplaceTableKeepingChilds
+from to_pandas_hdf5.h5toh5 import h5log_names_gen, h5out_init, h5_dispenser_and_names_gen, h5move_tables, h5index_sort, h5remove  # ReplaceTableKeepingChilds
 from to_pandas_hdf5.h5_dask_pandas import h5_append
 from typing import Any, Iterable, Iterator, Mapping, Optional, Sequence, Tuple, Union
 from pathlib import PurePath
@@ -32,7 +32,7 @@ def h5cor(
     def check_len(db, df_len_prev=None):
         df = db[cfg_out['table']]
         df_len = df.shape[0]
-        df_is_sorted = df.index.is_monotonic
+        df_is_sorted = df.index.is_monotonic_increasing
         b_strange = df_len_prev and df_len_prev != df_len
         if b_strange or df_len_prev is None or not df_is_sorted:
             print(
@@ -53,10 +53,10 @@ def h5cor(
         for t_range, edges_source in zip(time_ranges, edges_sources):
             b_st_en = (len(t_range) == 2)
             str_q = (
-                "index>Timestamp('{}') and DateEnd<=Timestamp('{}')".format(*t_range) if b_st_en else
-                "index<=Timestamp('{}') and DateEnd>Timestamp('{}')".format(t_range, t_range)
+                "index>'{}' & DateEnd<='{}'".format(*t_range) if b_st_en else
+                "index<='{}' & DateEnd>'{}'".format(t_range, t_range)
                 ) if edges_source in 'fr' else \
-                "index>=Timestamp('{}+00:00') and index<=Timestamp('{}+00:00')".format(*t_range)
+                "index>='{}+00:00' & index<='{}+00:00'".format(*t_range)
             yield edges_source, str_q
 
     cfg_out = {
@@ -64,7 +64,7 @@ def h5cor(
         'b_insert_separator': False,  # should be already inserted
         'dropna': False  # Not change previously inserted separators
         }
-    h5init({}, cfg_out)
+    h5out_init({}, cfg_out)
     # cfg_out['tables_written'] = set()
     with pd.HDFStore(cfg_out['db_path'], 'r') as store:
         if __debug__:
@@ -84,7 +84,7 @@ def h5cor(
                 print(f' {i}.', df_log_len, log, 'rows loaded', end=', ' if df_log_len else '!!!')
                 if not df_log_len:
                     print('query', query, 'not returns', table_log, 'records.\nCheck input range!')
-                query_df = "index>=Timestamp('{}') and index<=Timestamp('{}')".format(
+                query_df = "index>='{}' & index<='{}'".format(
                    *[df_log.index[0], df_log.DateEnd[-1]]
                    )  # *[t for t in df_log_bad_range.DateEnd.items()][0]
                 print('pointing to data:\n', query_df)

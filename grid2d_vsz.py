@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # coding:utf-8
-# from __future__ import print_function, division
+# , division
 """
   Author:  Andrey Korzh <ao.korzh@gmail.com>
   Purpose:
@@ -30,7 +30,7 @@ from gsw import distance as gsw_distance  # from gsw.gibbs.earth  import distanc
 from scipy import interpolate
 from scipy.signal import medfilt
 from scipy.ndimage.filters import gaussian_filter1d
-from shapely.geometry import MultiPolygon, asPolygon, Polygon
+from shapely.geometry import MultiPolygon, Polygon
 
 import graphics as gr
 
@@ -77,95 +77,75 @@ def my_argparser():
     """
     from utils2init import my_argparser_common_part
 
-    p = my_argparser_common_part({'description':
-        'Grid data from Pandas HDF5 store *.h5 and Veusz files data'
+    p = my_argparser_common_part({
+        'description': 'Grid data from Pandas HDF5 store *.h5 and Veusz files data'
         })
 
     s = p.add_argument_group('in', 'data from hdf5 store')
     s.add('--db_path', help='hdf5 store file path')  # '*.h5'
     s.add('--table_sections', help='table name with sections waypoints data')
     s.add('--table_nav', default='navigation',  # '/navigation/table' after saving without no data_columns= True
-             help='table name with sections waypoints data')
+          help='table name with sections waypoints data')
     s.add('--b_temp_on_its90', default='True',
-             help='When calc CTD parameters treat Temp have red on ITS-90 scale. (i.e. same as "temp90")')
+          help='When calc CTD parameters treat Temp have red on ITS-90 scale. (i.e. same as "temp90")')
 
     s = p.add_argument_group('vsz_files', 'data from hdf5 store')
     s.add('--subdir', default='CTD-sections', help='Path to source file(s) to parse')
     s.add('--filemask', default='[0-9]*.vsz',
-              help='path mask to Veusz pattern file(s). If any files found has names that starts with current section '
-                   'time formatted "%y%m%d_%H%M" then use 1st of it without modification. Else use last name that '
-                   'conforms to filemask as pattern')
+          help='path mask to Veusz pattern file(s). If any files found has names that starts with current section '
+               'time formatted "%y%m%d_%H%M" then use 1st of it without modification. Else use last name that '
+               'conforms to filemask as pattern')
     s.add('--export_pages_int_list', default='0',
-              help='pages numbers to export, comma separated (1 is first), 0= all')
+          help='pages numbers to export, comma separated (1 is first), 0= all')
     s.add('--export_dir', default='images(vsz)',
-              help='subdir relative to input path or absolute path to export images')
+          help='subdir relative to input path or absolute path to export images')
     s.add('--export_format', default='png',
-              help='extention of images to export which defines format')
+          help='extention of images to export which defines format')
 
     s = p.add_argument_group('gpx', 'symbols names')
     s.add('--symbol_break_keeping_point', default='Circle, Red', help='to break all data to sections')
     s.add('--symbol_break_notkeeping_dist_float', default='20', help='km, will not keeping to if big dist')
     s.add('--symbol_excude_point', default='Circle with X', help='to break all data to sections')
     s.add('--symbols_in_veusz_ctd_order_list',
-              help="GPX symbols of section in order of Veusz joins tables of CTD data (use if section has data from several tables, see CTDitable variable in Veusz file). Used only to exclude CTD runs if its number bigger than number of section's points.")  # todo: use names of tables which Veusz loads
+          help="GPX symbols of section in order of Veusz joins tables of CTD data (use if section has data from several tables, see CTDitable variable in Veusz file). Used only to exclude CTD runs if its number bigger than number of section's points.")  # todo: use names of tables which Veusz loads
     s = p.add_argument_group('out',
                                  'Output files: paths, formats... - not calculation intensive affecting parameters')
     s.add('--subdir_out', default='subproduct', help='path relative to in.db_path')
     s.add('--dt_from_utc_hours', default='0')
     s.add('--x_resolution_float', default='0.5',
-              help='Dist, km. Default is 0.5km, but if dd = length/(nuber of profiles) is less then decrease to dd/2')
+          help='Dist, km. Default is 0.5km, but if dd = length/(nuber of profiles) is less then decrease to dd/2')
     s.add('--y_resolution_float', default='1.0', help='Depth, m')
     s.add('--blank_level_under_bot_float', default='-300',
-              help='Depth, m, that higher than maximum of plot y axis to not see it and to create polygon without self intersections')
+          help='Depth, m, that higher than maximum of plot y axis to not see it and to create polygon without self intersections')
     s.add('--data_columns_list',
-              help='Comma separated string with data column names (of hdf5 table) to use. Not existed will skipped')
+          help='Comma separated string with data column names (of hdf5 table) for gridding. Not existed will be skipped')
     s.add('--b_reexport_images',
-              help='Export images of loaded .vsz files (if .vsz created then export ever)')
+          help='Export images of loaded .vsz files (if .vsz created then export ever)')
 
     s = p.add_argument_group('process', 'process')
     s.add('--begin_from_section_int', default='0', help='0 - no skip. > 0 - skipped sections')
     s.add('--interact', default='editable_figures',
-               help='if not "False" then display figures where user can delete data and required to press Q to continue')
+          help='if not "False" then display figures where user can delete data and required to press Q to continue')
     s.add('--dt_search_nav_tolerance_seconds', default='1',
-               help='start interpolate navigation when not found exact data time')
+          help='start interpolate navigation when not found exact data time')
     s.add('--invert_prior_sn_angle_float', default='30',
-               help='[0-90] degrees: from S-N to W-E, 45 - no priority')
+          help='[0-90] degrees: from S-N to W-E, 45 - no priority')
     s.add('--depecho_add_float', default='0', help='add value to echosounder depth data')
     s.add('--convexing_ctd_bot_edge_max_float', default='0',  # filter_ctd_bottom_edge_float, min_ctd_end_as_bot_edge
-               help='filter ctd_bottom_edge line closer to bottom (to be convex) where its depth is lesser')
+          help='filter ctd_bottom_edge line closer to bottom (to be convex) where its depth is lesser')
     s.add('--min_depth', default='4', help='filter out smaller depths')
     s.add('--max_depth', default='1E5', help='filter out deeper depths')
     s.add('--filter_depth_wavelet_level_int', default='4', help='level of wavelet filtering of depth')
-    # s.add(
-    #     '--dt_point2run_max_minutes', #default=None,
+    # s.add('--dt_point2run_max_minutes', #default=None,
     #     help='time interval to sinchronize points on map and table data (to search data marked as excluded on map i.e. runs which start time is in (t_start_good, t_start_good+dt_point2run_max). If None then select data in the range from current to the next point')
 
     s = p.add_argument_group('program', 'program behaviour')
-    s.add('--veusz_path',
-               default=u'C:\\Program Files\\Veusz' if platform == 'win32' else u'/home/korzh/.virtualenvs/veusz_experiments/lib/python3.6/site-packages/veusz-2.2.2-py3.6-linux-x86_64.egg/veusz',
-               help='directory of Veusz')
+    s.add('--veusz_path', default=u'C:\\Program Files\\Veusz' if platform == 'win32' else
+    u'/home/korzh/.virtualenvs/veusz_experiments/lib/python3.6/site-packages/veusz-2.2.2-py3.6-linux-x86_64.egg/veusz',
+          help='directory of Veusz')
 
     return p
-
-
 # ------------------------------------------------------------------------
-def check_time_dif(tstart, t64st_data, dt_max=0, data_name=''):
-    """
-    Check time difference between time of data found and time of requested points
-    :param tstart: datetimeindex of requested points
-    :param t64st_data: time of data found (numpy.datetime64)
-    :param dt_max:
-    :param data_name:
-    :return: datetimeindex of found difference
-    Shows differences
-    """
-    diffValsFound = tstart.difference(t64st_data)
-    diffValsFound = [d for d in diffValsFound.values if d not in t64st_data]  # ?
-    if len(diffValsFound):
-        print('Found {} to {} data differences: '.format(len(diffValsFound), data_name))
-        print('All points time was | found time'.format(tstart, t64st_data))
-        [print('{}|{}'.format(t, nt)) for t, nt in zip(tstart, t64st_data)]
-    return diffValsFound
 
 
 def write_grd_fun(gdal_geotransform):
@@ -488,7 +468,6 @@ def sec_edges(navp_in: pd.DataFrame, cfg_gpx: Mapping[str, Any]) -> Tuple[np.nda
         return ranges, b_navp_exclude, sec_names
 
 
-
 def ge_sections(navp_all: pd.DataFrame,
                 cfg: MutableMapping[str, Any],
                 isec_min=0,
@@ -588,23 +567,24 @@ def load_cur_veusz_section(
     Loads processed CTD data using Veusz:
     - searches existed Veusz file named by start datetime of current section and must contain "Inv" only if
     navp_d['b_invert']
-    - creates and saves its copy with modified setting ``USE_timeRange`` in Custom dafinitions for new sections
+    - creates and saves its copy with modified setting ``USEranges__`` in Custom dafinitions for new sections
     - opens and gets data from it
     :param cfg:
     :param navp_d:
     :param vsze:
     :param max_nav_time_st_shift: сorrect section start/end limits according to available CTD data
     :return: Tuple:
-        ctd: pd.DataFrame, loaded from Veusz CTD data,
-        ctd_prm: dict of parameters of other length than ctd,
-        - starts: runs starts
-        - ends: runs ends
-        vsze: Veusz embedded object
+    - ctd: pd.DataFrame, loaded from Veusz CTD data,
+    - ctd_prm: dict of parameters of other length than ctd,
+      - starts: runs starts
+      - ends: runs ends
+    vsze: Veusz embedded object
     """
 
     global load_vsz
     if load_vsz is None:
         load_vsz = load_vsz_closure(cfg['program']['veusz_path'])
+    
     def good_name(pathname):
         return pathname.startswith(navp_d['stem_time_st']) and navp_d['b_invert'] ^ ('Inv' not in pathname)
     vsz_names = [Path(v).name for v in cfg['vsz_files']['paths'] if good_name(Path(v).name)]
@@ -626,20 +606,21 @@ def load_cur_veusz_section(
                 l.error('vsz data not processed!')
                 return None, None, None
         print('Load our section...', end='')
+
         vsze.AddCustom(
-            'constant', u'USE_runRange', u'[[0, -1]]', mode='replace'
-            )
-        vsze.AddCustom(
-            'constant', u'USE_timeRange', '[[{0}, {0}]]'.format("'{:%Y-%m-%dT%H:%M:%S}'").format(
+            'constant', u'USEranges__', '[[{0}, {0}]]'.format("'{:%Y-%m-%dT%H:%M:%S}'").format(
                 navp_d['time_msg_min'] - max_nav_time_st_shift,
                 timzone_view(navp_d['time_poss_max'], cfg['out']['dt_from_utc'])
                 ),
             mode='replace'
             )
+        vsze.AddCustom(  # todo: exclude runs if there are any excluded runs in loaded section
+            'constant', u'USEruns_in_used_range', u'[[0, None]]', mode='replace'
+        )
         vsze.AddCustom('constant', u'Shifting_multiplier', u'-1' if navp_d['b_invert'] else u'1', mode='replace')
 
         # If pattern has suffix (excluding 'Inv') then add it to our name (why? - adds 'Z')
-        stem_no_inv = Path(cfg['vsz_files']['paths'][0]).stem.split('@')[0]
+        stem_no_inv = Path(cfg['vsz_files']['paths'][0]).stem.split('@')[0].split(' ')[0]
         if stem_no_inv.endswith('Inv'):
             stem_no_inv = stem_no_inv[:-3]
         len_stem_time_st = len(navp_d['stem_time_st'])
@@ -736,10 +717,9 @@ def idata_from_tpoints(tst_approx, tdata, idata_st, dt_point2run_max=None):
 
     # If dt_point2run_max is defined:
     for t_st, t_en in zip(tst_approx, tst_approx + np.timedelta64(dt_point2run_max)):
-        bBetween = np.logical_and(t_st <= tdata_st, tdata_st < t_en)
-
-        if np.any(bBetween):
-            irun = np.flatnonzero(bBetween)
+        b_interval = np.logical_and(t_st <= tdata_st, tdata_st < t_en)
+        if np.any(b_interval):
+            irun = np.flatnonzero(b_interval)
             if len(irun) > 1:
                 print('{} runs found after {} in {}!'.format(len(irun), t_st, dt_point2run_max))
                 sel_run.append(irun)
@@ -850,8 +830,9 @@ def data_sort_to_nav(navp: pd.DataFrame,
     :param b_invert:
     :param ctd:
     :param ctd_prm: dict with fields:
-        'starts', 'ends' - edge indexes of good run downs,
-        'itable' - optional, need if data and nav points is by different CTDs
+    - starts, ends: edge indexes of good run downs,
+    - itable: optional index of data table, required if data from different data talbes (different CTDs) and have
+          corresponded symbols in nav points
     :param cfg: fields:
         route_time_level: not none if points aranged right
     :return: tuple:
@@ -938,7 +919,7 @@ def data_sort_to_nav(navp: pd.DataFrame,
     b_far = check_time_diff(
         ctd.time.iloc[ctd_prm['starts'][navp_ictd]], navp_index,
         dt_warn=pd.Timedelta(cfg['process']['dt_search_nav_tolerance']),
-        mesage='CTD runs which start time is far from nearest time of closest navigation point # [min]:\n'
+        msg='CTD runs which start time is far from nearest time of closest navigation point # [min]:\n'
         )
     # Checking that indexer is correct.
     if len(cfg['gpx']['symbols_in_veusz_ctd_order']) and 'itable' in ctd_prm:
@@ -985,7 +966,7 @@ def data_sort_to_nav(navp: pd.DataFrame,
                         cfg['gpx']['symbols_in_veusz_ctd_order_list'])
                 raise e  # ValueError
         b_far = check_time_diff(ctd.time.iloc[ctd_prm['starts'][navp_ictd]].values, navp_index, pd.Timedelta(minutes=1),
-                                mesage='CTD runs (after correction) far from nearest time of closest navigation point # [min]:\n')
+                                msg='CTD runs (after correction) far from nearest time of closest navigation point # [min]:\n')
         ctd_not_in_navp = np.setdiff1d(np.arange(ctd_prm['starts'].size), navp_ictd)
         if ctd_not_in_navp.size:
             msg = 'Excluding runs # (based on sym index)... '
@@ -1043,9 +1024,9 @@ def data_sort_to_nav(navp: pd.DataFrame,
     else:
         ctd_not_in_navp = np.setdiff1d(np.arange(ctd_prm['starts'].size), navp_ictd)  # []
 
-    # CTD runs and data which excluded in navigation points by symbol_excude_point
+    # CTD runs and data which excluded in navigation points by ``symbol_excude_point``
     # ctd_exclude_time = np.append(navp_exclude.index.values.astype('datetime64[ns]'), ctd_far_time)
-    ctd_idel, bDel = idata_from_tpoints(
+    ctd_idel, b_del = idata_from_tpoints(
         tst_approx=navp_exclude.index.values.astype('datetime64[ns]'),
         tdata=ctd.time.values, idata_st=ctd_prm['starts'],
         dt_point2run_max=cfg['process']['dt_point2run_max'])
@@ -1054,30 +1035,30 @@ def data_sort_to_nav(navp: pd.DataFrame,
     if ctd_not_in_navp.size:
         ctd_st_ext = np.append(ctd_prm['starts'], ctd.time.size)
         for i in ctd_not_in_navp:
-            bDel[slice(*ctd_st_ext[[i, i + 1]])] = True
+            b_del[slice(*ctd_st_ext[[i, i + 1]])] = True
         ctd_idel = np.union1d(ctd_idel, ctd_not_in_navp)
 
     # Remove not needed CTD data
     # remove runs
     if len(ctd_idel):
-        l.info('deleting %d runs # which not in section: %s', len(ctd_idel), ctd_idel)
+        l.info('deleting %d runs which not in section: %s', len(ctd_idel), repr(ctd_idel))
         # remove elements from CTD params that have ones for each run
+        ctd_bdel = np.zeros_like(ctd_prm['starts'], bool)
+        ctd_bdel[np.int32(ctd_idel)] = True
+        navp_ictd = i_move2good(navp_ictd, ctd_bdel)
+        if np.flatnonzero(np.bincount(navp_ictd) > 1):  # inavp_with_many_runs =
+            print("dbstop here: set manually what to exclude")
         try:
             for param in ['starts', 'ends', 'CTDbot_dt']:
                 ctd_prm[param] = np.delete(ctd_prm[param], ctd_idel)
         except KeyError:
             pass  # may be such param (except 'starts' & 'ends') is not needed
-        ctd_bdel = np.zeros_like(ctd_prm['starts'], bool)
-        ctd_bdel[np.int32(ctd_idel)] = True
-        navp_ictd = i_move2good(navp_ictd, ctd_bdel)
-        if np.flatnonzero(np.bincount(navp_ictd) > 1):  # inavp_with_many_runs =
-            print("dbstop here: set manualy what to exclude")
     # remove rows
-    bDel |= ctd.Pres.isna().values
-    if any(bDel):
-        ctd = ctd[~bDel]
-        ctd_prm['starts'] = i_move2good(ctd_prm['starts'], bDel)
-        ctd_prm['ends'] = i_move2good(ctd_prm['ends'], bDel, 'right')
+    b_del |= ctd.Pres.isna().values
+    if any(b_del):
+        ctd = ctd[~b_del]
+        ctd_prm['starts'] = i_move2good(ctd_prm['starts'], b_del)
+        ctd_prm['ends'] = i_move2good(ctd_prm['ends'], b_del, 'right')
 
     # Sort CTD data in order of points.
 
@@ -1129,7 +1110,7 @@ def data_sort_to_nav(navp: pd.DataFrame,
 
 """
     # old
-    b_far = check_time_diff(ctd['time'][ctd_prm['starts']], navp_index[ctd_inavp], pd.Timedelta(minutes=1), mesage='CTD runs which start time is far from nearest time of navigation point [min]:')
+    b_far = check_time_diff(ctd['time'][ctd_prm['starts']], navp_index[ctd_inavp], pd.Timedelta(minutes=1), msg='CTD runs which start time is far from nearest time of navigation point [min]:')
 
     # find navpoints near to each other which can cause ambiguity (only if have many runs in same point)
     inavp_with_many_runs = np.flatnonzero(np.bincount(ctd_inavp) > 1)
@@ -1216,8 +1197,7 @@ def filt_depth(s_ndepth: pd.Series, **cfg_proc: Mapping[str, Any]) -> Tuple[np.n
         ax.plot(np.flatnonzero(ok), bed[ok], color='g', alpha=0.9, label='despike')
 
         # Smooth some big spikes and noise              # - filter_depth_wavelet_level']=11
-        depth_filt, ax = waveletSmooth(depth_filt, 'db4', cfg_proc['filter_depth_wavelet_level'], ax,
-                                       label='Depth')
+        depth_filt, ax = waveletSmooth(depth_filt, 'db4', cfg_proc['filter_depth_wavelet_level'], ax, label='Depth')
 
         # Smooth small high frequency noise (do not use if big spikes exist!)
         sGood = ok.sum()  # ok[:] = False  # to use max of data as bed
@@ -1225,7 +1205,8 @@ def filt_depth(s_ndepth: pd.Series, **cfg_proc: Mapping[str, Any]) -> Tuple[np.n
         n_smooth = 5  # 30
         if sGood > 100 and (np.abs(np.diff(depth_filt)) < 30).all():
             depth_filt_smooth = gaussian_filter1d(depth_filt, n_smooth)
-            if ax: ax.plot(depth_filt_smooth, color='y', alpha=0.7, label='smooth')
+            if ax:
+                ax.plot(depth_filt_smooth, color='y', label='smooth', linewidth=0.7)
             # to cansel gaussian filter: dbstop, set depth_filt_smooth = depth_filt
             depth_out = depth_filt_smooth[ok]
             depth_filt.fill(np.NaN)
@@ -1245,12 +1226,12 @@ def filt_depth(s_ndepth: pd.Series, **cfg_proc: Mapping[str, Any]) -> Tuple[np.n
             depth_out = depth_filt[ok]
             coef_std_offsets = (2, 1.5); wdesp = 600
             # Not execute interactive_deleter() in command line: program hangs!
-
-        gr.interactive_deleter(y_kwrgs=({'data': bed, 'label': 'Depth', 'color': 'k', 'alpha': 0.6},),
-                            mask_kwrgs={'data': ok, 'label': 'initial'},
-                            ax=ax, ax_title='Nav. bottom profile smoothing(index)', ax_invert=True,
-                            lines=lines, stop=cfg_proc['interact'])
-
+        gr.interactive_deleter(
+            y_kwrgs=({'data': bed, 'label': 'Depth', 'color': 'k', 'alpha': 0.6},),
+            mask_kwrgs={'data': ok, 'label': 'initial'},
+            ax=ax, ax_title='Nav. bottom profile smoothing(index)', ax_invert=True,
+            lines=lines, stop=cfg_proc['interact']
+        )
         # while True:  # draw
         #     if ax is None or f is None or not plt.fignum_exists(f.number):  # or get_fignums().
         #         ax, lines = gr.make_figure(bed, ok, position=(10, 0))  # only if closed
@@ -1379,7 +1360,7 @@ def add_data_at_edges(
         np.interp(ctd_add_bt_x, ctd_dist[ctd_ends_f], ctd_z[ctd_ends_f])  # default values, will be replaced gradually
         # np.empty(len(add_bot_x)) + np.NaN # 'z': updating this is a main function task solved below
         ])
-    # intervals indexes (0 - before the second, last - after the last but one)
+    # intervals indexes (input indexes ensures needed find range: 0 - before the second, last - after the last but one)
     i_add = ctd_dist[ctd_ends_f[1:-1]].searchsorted(ctd_add_bt_x)
 
     # Interpolate z along nearest vertical profile (by y) separately between profiles that reach the edge
@@ -1599,7 +1580,7 @@ def main(new_arg=None):
 
     cfg['process'].setdefault('dt_point2run_max')
     # Logging
-    l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+    l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
     print('\n' + this_prog_basename(__file__), end=' started. ')
     if cfg['process']['interact'].lower() == 'false':
         cfg['process']['interact'] = False
@@ -1618,16 +1599,16 @@ def main(new_arg=None):
                 l.error('Sections not found in %s!', cfg['in']['db_path'])
                 raise e
             navp_all = navp_all[np.isfinite(navp_all.Lat)]  # remove nans
-
-            info_all_sec_list = ['{} "{}" {:%d.%m.%y %H:%M} - {:%d.%m.%y %H:%M}UTC'.format(
-                navp_d['sec_#'],
-                navp_d.get('sec_name', navp_d['stem_time_st']),
-                *navp_d['indexs'][[0, -1]].to_pydatetime()
-                ) for navp, navp_d in ge_sections(navp_all, cfg)]
-            l.warning('Found %s sections:\n%s. %s', len(info_all_sec_list), '\n'.join(info_all_sec_list),
-                      'Begin from section {}!'.format(cfg['process']['begin_from_section']) if
-                      cfg['process']['begin_from_section'] > 1 else 'Processing...'
-                      )
+            st = (cfg['process']['begin_from_section'] or 1)
+            _ = [
+                '{} "{}" {:%d.%m.%y %H:%M} - {:%d.%m.%y %H:%M}UTC{}'.format(
+                    navp_d['sec_#'],
+                    navp_d.get('sec_name', navp_d['stem_time_st']),
+                    *navp_d['indexs'][[0, -1]].to_pydatetime(),
+                    (' - starting...' if navp_d['sec_#'] == st else '')
+                    ) for navp, navp_d in ge_sections(navp_all, cfg)
+            ]
+            l.warning('Processing %s%s sections:\n%s.', f"{len(_) - st + 1}/" if st > 1 else '', len(_), '\n'.join(_))
             vsze = None
             for navp, navp_d in ge_sections(navp_all, cfg, isec_min=cfg['process']['begin_from_section']):
                 if __debug__:
@@ -1654,16 +1635,16 @@ def main(new_arg=None):
                             navp_d['indexs'].view(np.int64),
                             navp.iloc[navp_d['isort'], navp.columns.get_loc(coord)].values),
                             x=ctd.time.to_numpy(np.int64))
-                    ctd = add_ctd_params(ctd, {**cfg, 'out': {'data_columns': set(
-                        ctd.columns[~ctd.columns.str.startswith('shift')]).union(
-                        cfg['out']['data_columns'] + ['depth'])
-                        }})
+                    _ = cfg['out']['data_columns'].copy()
+                    _ += list(set(
+                        ['depth'] + ctd.columns[~ctd.columns.str.startswith('shift')].to_list()).difference(_))
+                    ctd = add_ctd_params(ctd, {**cfg, 'out': {'data_columns': _}})
                 except Exception as e:
                     l.exception('\nCTD depth calculation error - assigning it to "Pres" instead! %s')
                     ctd['depth'] = ctd.Pres.abs()
 
                 # Add full resolution bottom profile to section from navigation['DepEcho']
-                qstr = "index>=Timestamp('{}') & index<=Timestamp('{}')".format(
+                qstr = "index>='{}' & index<='{}'".format(
                     navp_d['indexs'][0], navp_d['time_poss_max'])
                 nav = cfg['in']['db'].select(cfg['in']['table_nav'], qstr, columns=['DepEcho', 'Lat', 'Lon'])
                 have_bt = 'DepEcho' in nav.columns and any(nav['DepEcho'])
@@ -1729,7 +1710,7 @@ def main(new_arg=None):
                     )
                 run_dist = run_dist_topbot[::2]
 
-                # Location info to insert in Surfer plot (if need)
+                # Location info you can insert in Surfer plot
                 imax_run_dist_topbot = run_dist_topbot.argmax()
                 msg = '\n'.join([
                     '{:g}km – {:%d.%m.%y %H:%M}UTC, {:.6f}N, {:.6f}E'.format(
@@ -1777,7 +1758,8 @@ def main(new_arg=None):
                     # navp_d['indexs'].values bt.index[bbed].values.view(np.int64),ctd['time'][ctd_prm['starts']].view(np.int64), run_dist)
                     # nav_dist = np.interp(nav_dists, run_dist, run_dist[])
 
-                    ## Keep CTD points only near the bottom ##
+                    # Keep CTD points only near the bottom
+                    ######################################
                     # bottom at each path point:
                     edge_bed = np.interp(run_dist, bt.index, bt.DepEcho)
                     # ctd['time'][ctd_prm['ends']].view(np.int64),
@@ -1821,7 +1803,7 @@ def main(new_arg=None):
 
 
                 ok_edge['soft'][:] = False
-                np.put(ok_edge['soft'], [inds_closest + [0, -1]], True)  # not filter edges anyway
+                np.put(ok_edge['soft'], [inds_closest + [0, -1]], True)  # found indexes + edges (never filter edges)
 
                 # Filter bottom edge of CTD path manually
                 if __debug__:
@@ -1835,8 +1817,8 @@ def main(new_arg=None):
                             'data': ok_edge['soft'], 'label': 'closest to bottom', 'marker': "o", 'fillstyle': 'none'},
                         ax=ax,
                         ax_title='Bottom edge of CTD path filtering',
-                        ax_invert=True, clear=True, stop=cfg['process']['interact']
-                        )
+                        ax_invert=True, stop=cfg['process']['interact']
+                        )  # , clear=True
                 ok_edge['hard'] = ok_edge['soft']
 
                 """

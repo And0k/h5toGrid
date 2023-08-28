@@ -87,7 +87,7 @@ class MutableTuple(Sequence):
 #
 #     ))
 class Plt_select(MutableTuple):
-    __slots__ = 'x_range_arr', 'x_range', 'y_range_arr', 'finish'
+    __slots__ = 'x_range_arr', 'x_range', 'y_range_arr', 'finish', 'reset'
 
 
 plt_select = Plt_select(
@@ -95,7 +95,8 @@ plt_select = Plt_select(
     plt_selected_x_range_arr.copy(),
     plt_selected_x_range_arr.copy(),
     # plt_selected_x_range_arr.view(dtype=(np.record, [('start', '<f8'), ('end', '<f8')]))[0],
-    False)
+    False, False,
+    )
 
 
 def plot_prepare_input(ax,
@@ -117,7 +118,7 @@ def plot_prepare_input(ax,
     :return:
     """
     global plt_select
-    print('Select bad x data region (click -> release)')
+    print('Select bad x data region (click -> release), Q - close, R - remove mask (restore data) in selection')
     if x is None:
 
         def selected_st_en():
@@ -139,18 +140,29 @@ def plot_prepare_input(ax,
         """
         Do a mouseclick somewhere, move the mouse to some destination, release
         the button.  This class gives click- and release-events and also draws
-        a line or a box from the click-point to the actual mouseposition
+        a line or a box from the click-point to the actual mouse position
         (within the same axes) until the button is released.  Within the
         method 'self.ignore()' it is checked whether the button from eventpress
         and eventrelease are the same.
 
         """
         global plt_select
-        print(' Key pressed.')
+        print('Pressed:', event.key, 'when selector is', 'active' if toggle_selector.RS.active else 'not active')
         if event.key in ['Q', 'q'] and toggle_selector.RS.active:
             print(' RectangleSelector deactivated.')
             toggle_selector.RS.set_active(False)
             plt_select.finish = True
+        if event.key in ['R', 'r'] and toggle_selector.RS.active:
+            # mask[:] = True
+            # print(' Mask cleared!')
+            # toggle_selector.RS.set_active(False)
+            plt_select.reset = True
+            # for i in range(-1, -len(ys) - 1, -1):  # from the end
+            #     data = ys[i].copy()
+            #     lines[i].set_ydata(data)
+            #
+            # ax.figure.canvas.draw()
+            
         if event.key in ['A', 'a'] and not toggle_selector.RS.active:
             print(' RectangleSelector activated.')
             toggle_selector.RS.set_active(True)
@@ -179,12 +191,18 @@ def plot_prepare_input(ax,
             :return:
             """
             ranges_select_callback(eclick, erelease)
+            
             sl = slice(*(selected_st_en()))
             print(selected_st_en())
-            mask[sl] = False  # np.diff(plt_select.x_range_arr) > 0
+            if plt_select.reset:
+                plt_select.reset = False
+                mask[sl] = True
+                print(' Mask in range cleared!')  # lines are recovered below
+            else:
+                mask[sl] = False  # np.diff(plt_select.x_range_arr) > 0
             for i in range(-1, -len(ys) - 1, -1):  # from the end
-                data = ys[i].copy()
-                data[sl] = np.NaN
+                data = ys[i].copy()  # lines[i].get_ydata()
+                data[~mask] = np.NaN
                 # if i > 0: print(np.sum(np.isnan(lines[i]._y)))
                 lines[i].set_ydata(data)
             ax.figure.canvas.draw()
@@ -220,17 +238,20 @@ def make_figure(x: Optional[Sequence] = None,
                 ax_title: Optional[str] = None, ax_invert=False,
                 lines: Union[List[matplotlib.lines.Line2D], str, None] = None,
                 position=None,
-                clear=None) -> Tuple[matplotlib.axes.Axes, matplotlib.lines.Line2D]:
+                clear=None,
+                window_title: Optional[str] = None
+                ) -> Tuple[matplotlib.axes.Axes, matplotlib.lines.Line2D]:
     """
     Clear or create new axis with lines
+
     :param x: x data argument of matplotlib.pyplot.plot(), same for all lines plots
     :param y_kwrgs: tuple having in each element dict with fields:
         'data' (requiered) - y data for line i
          ony other matplotlib.pyplot.plot() params to plot line i (optional)
-    :param mask_kwrgs: dict with argumtents to plt.plot(x[mask_kwrgs['data']], y[-1][mask_kwrgs['data']], **mask0kwrgs)
+    :param mask_kwrgs: dict with argumetnts to plt.plot(x[mask_kwrgs['data']], y[-1][mask_kwrgs['data']], **mask0kwrgs)
         where:
-            mask_kwrgs['data']: mask
-            mask0kwrgs is mask_kwrgs without 'data'
+        - 'data' field: mask
+        - mask0kwrgs is mask_kwrgs without 'data'
     :param ax:
     :param ax_title:
     :param ax_invert:
@@ -238,8 +259,9 @@ def make_figure(x: Optional[Sequence] = None,
         - if list then used to shift colors by its length, will be appended with objects returned by ax.plot(
         x, y_kwrgs[i]['data'], ...) for i = 0..len(y_kwrgs)
         - if str 'clear' then clear axes before plot
+    :param window_title:
+    :param clear:
     :param position:
-
     :return: ax, lines
 
     """
@@ -250,8 +272,9 @@ def make_figure(x: Optional[Sequence] = None,
         ax_clear = True
         if (lines is None) or ax_clear:
             if ax_clear and lines != 'clear':
-                l.warning('wrong lines string %s! must be "clear" or not string! Continuing like it was "clear"...',
-                          lines)
+                l.warning(
+                    'wrong lines string %s! must be "clear" or not string! Continuing like it was "clear"...', lines
+                )
         n_prev_lines = 0
     else:
         ax_clear = False
@@ -272,19 +295,22 @@ def make_figure(x: Optional[Sequence] = None,
         if ax_title is not None:
             ax.set_title(ax_title)
 
-
+        if window_title:
+            man = plt.get_current_fig_manager()
+            man.canvas.setWindowTitle(window_title)
 
         # lines will be returned allowing to change them
         for i, (y_kwrg, color, alpha) in enumerate(zip(
                 y_kwrgs, ['r', 'c', 'g', 'm', 'b', 'y'][n_prev_lines:], [0.3] + [0.5] * (5 - n_prev_lines))):
-            y_data = (plot_kwrgs := dict(y_kwrg)).pop('data')  # removes 'data' from copy of y_kwrg to use as plot kwrgs
+            y_data = (plot_kwrgs := dict(y_kwrg)).pop('data')  # removes 'data' from copy of y_kwrg to use as plot kwargs
             lines += ax.plot(x, y_data, **{'color': color, 'alpha': alpha, **plot_kwrgs})
 
         if mask_kwrgs is not None and mask_kwrgs.get('data') is not None:
             # add last line with already applied mask
             mask_data = (plot_kwrgs := dict(mask_kwrgs)).pop('data')  # removes 'data' from copy of mask_kwrgs to use as plot kwrgs
-            y_data[~mask_data] = np.NaN
-            lines += ax.plot(x, y_data, **{'color': 'r', 'label': 'masked initial', **plot_kwrgs})
+            _ = y_data.copy()
+            _[~mask_data] = np.NaN
+            lines += ax.plot(x, _, **{'color': 'r', 'label': 'masked initial', **plot_kwrgs})
 
         ax.legend(prop={'size': 10}, loc='upper right')
         if position is not None:
@@ -312,8 +338,8 @@ def interactive_deleter(x: Optional[Sequence] = None,
             mask0kwrgs is mask_kwrgs without 'data'
     :param ax:
     :param stop: display figure again until user press "Q"
-    :param kwargs: any other that in make_figure(). Among them
-        :param lines: if is not None, the ax must have this lines
+    :param kwargs: any other that in make_figure() (see make_figure()). Among them
+    - lines: if is not None, the ax must have this lines
      and y_kwrgs must have this number of dicts with 'data' field
     :return: mask
 
@@ -367,7 +393,7 @@ def interactive_deleter(x: Optional[Sequence] = None,
                        ys=[y['data'] for y in y_kwrgs])
     if stop:  # dbstop to make stop if noninteruct
         f_number = ax.figure.number
-        plt.show(block=False)  # ? (block=True - hangs) allows select bad regions (pycharm: not stops if dbstops before)
+        plt.show(block=True)  # set False if block=True - hangs. Allows select bad regions (pycharm: not stops if dbstops before)
         while (not plt_select.finish) and plt.fignum_exists(f_number):  # or get_fignums().
             # input()
             sleep(1)

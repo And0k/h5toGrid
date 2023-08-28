@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # coding:utf-8
-from __future__ import print_function
+
 
 """
   Author:  Andrey Korzh --<ao.korzh@gmail.com>

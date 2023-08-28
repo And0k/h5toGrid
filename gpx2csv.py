@@ -81,7 +81,7 @@ def main(new_arg):
     if cfg['program']['return'] == '<cfg_from_args>':  # to help testing
         return cfg
 
-    l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+    l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
     print('\n' + this_prog_basename(__file__), end=' started. ')
     try:
         cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(

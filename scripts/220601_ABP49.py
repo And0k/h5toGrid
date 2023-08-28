@@ -15,14 +15,14 @@ import veuszPropagate
 from to_pandas_hdf5.csv2h5 import main as csv2h5
 from to_pandas_hdf5.gpx2h5 import main as gpx2h5
 from to_pandas_hdf5.CTD_calc import main as CTD_calc
-# from to_pandas_hdf5.csv_specific_proc import proc_loaded_corr
+# from to_pandas_hdf5.csv_specific_proc import loaded_corr
 from h5toGpx import main as h5toGpx
 from grid2d_vsz import main as grid2d_vsz
 from to_pandas_hdf5.h5toh5 import h5log_names_gen
 
 st.go = True   # False #
-st.start = 100   # 1 5 30 70 80 115
-st.end = 120    # 60 80 120
+st.start = 295   # 1 5 30 70 80 115
+st.end = 295    # 60 80 120
 
 path_cruise = Path(r'd:\WorkData\BalticSea\220601_ABP49')
 path_db = path_cruise / path_cruise.with_suffix('.h5').name  # same name as dir
@@ -93,7 +93,7 @@ if st(3, r'Save Depth and navigation from depth@Dudkov\tr_ABP049_000-078_1sec_pr
            **   {'filter': {'min_DepEcho': 4}}  # removes rows
 
            # {'in': {
-           #     'fun_proc_loaded': proc_loaded_corr}}
+           #     'fun_proc_loaded': loaded_corr}}
            )
 
 
@@ -106,9 +106,9 @@ common_ctd_params_list = [
     '--min_dict', f'Cond:0.5, Sal:0.2, O2:-2, O2ppm:-2',  # deletes zeros & strange big negative values  # SigmaT:2,
     '--max_dict', f'O2:200, O2ppm:20',  #, {max_coord} for REDAS-like data
 ]
-common_ctd_params_dict = \
+device_params_dict = \
     {'in':
-        {#'fun_proc_loaded': proc_loaded_corr,
+        {#'fun_proc_loaded': loaded_corr,
         'csv_specific_param':
             {
             'Temp90_fun': lambda x: np.polyval([
@@ -137,7 +137,7 @@ if st(10, f'Save {device} data to DB'):
         # '--on_bad_lines', 'warn'
         #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
         ] + common_ctd_params_list,
-        **common_ctd_params_dict
+        **device_params_dict
         )
 
 
@@ -145,7 +145,7 @@ if st(20, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params
     # Extracts CTD runs (needed if files are not splitted on runs).
     # Note: Saves extended log needed by pattern used in next step with veuszPropagate()
     # todo: be able provide log with (Lat,Lon) separately
-    st.go = () != CTD_calc(['cfg/CTD_calc-find_runs.ini',
+    st.go = () != CTD_calc(['cfg/ctd_calc-find_runs.ini',
         '--db_path', str(path_db),
         '--tables_list', f'{device}',
         #'--table_nav', '',       # uncomment if nav data only in CTD data file
@@ -185,7 +185,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
         }
     f_row2name = lambda r: '{:%y%m%d_%H%M%S}.vsz'.format(r['Index'])
     # It is possible to add exact interval to filename but time after probe is back on surface can be determined only
-    # from next row so we rely on ~pattern_loader.vsz to do it. Even freq=16Hz to determine last time not helps:
+    # from next row, so we rely on ~pattern_loader.vsz to do it. Even freq=16Hz to determine last time not helps:
     # '_{}s.vsz'.format(round(max(r['rows']/16, (r['DateEnd'] - r['Index'] + pd.Timedelta(300, "s")).total_seconds()))
     pattern_code = cfg_in['pattern_path'].read_bytes()  #encoding='utf-8'
 
@@ -218,7 +218,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
 if False:
     # Merge each needed runs
     import pandas as pd
-    from to_pandas_hdf5.h5toh5 import h5move_tables, merge_two_runs  #, h5index_sort, h5init
+    from to_pandas_hdf5.h5toh5 import h5move_tables, merge_two_runs  #, h5index_sort, h5out_init
 
     tbl = f'/{device}'
     tbl_log = f'{tbl}/logRuns'
@@ -307,7 +307,7 @@ if st(80, 'Gridding'):  # and False: #
     # todo: bug: bad top and bottom edges
 
 if st(110, 'Export csv with some new calculated parameters'):  # False: #
-    CTD_calc([  # 'CTD_calc-find_runs.ini',
+    CTD_calc([  # 'ctd_calc-find_runs.ini',
         '--db_path', str(path_db),
         '--tables_list', f'{device}',
         '--tables_log', '{}/logRuns',
@@ -317,7 +317,7 @@ if st(110, 'Export csv with some new calculated parameters'):  # False: #
         '--path_csv', str(path_cruise / device / 'txt_processed'),
         '--data_columns_list', 'Pres, Temp90, Cond, Sal, O2, O2ppm, SA, sigma0, depth, soundV',  #, pH, Eh  , Lat, Lon
         '--b_incremental_update', 'True',
-        # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
+        # todo: check it. If False need delete all previous result of ctd_calc() or set min_time > its last log time
         '--out.tables_list', 'None',
         ])
 
@@ -325,7 +325,9 @@ if st(115, 'Export csv for Obninsk'):
     m = re.match(r'[\d_]*(?P<abbr_cruise>[^\d]*)(?P<i_cruise>.*)', path_cruise.name)
     i_cruise = int(m.group('i_cruise'))
     text_file_name_add = f"E090005O2_{m.group('abbr_cruise')}_{i_cruise}_H10_"
-
+    # read corrected stations numbers
+    st_cor = pd.read_csv(path_cruise / device / f'{text_file_name_add}POS.csv', delimiter=';', usecols=[2], header=0)
+    st_cor_str = f"[{','.join(st_cor['station'].astype('str').values)}]"
     from to_vaex_hdf5.h5tocsv import main_call as h5tocsv
     h5tocsv([
         f'input.db_path="{path_db}"',
@@ -339,13 +341,23 @@ if st(115, 'Export csv for Obninsk'):
         # rec_num;identific;station;Pres;Temp;cond;Sal;O2%;O2ppm;sigmaT;soundV
         f'+out.cols_log={{rec_num: "@i + 1", identific: "@i + 1", station: "{i_cruise * 1000 + 1} + @i" , LONG: Lon_st, LAT: Lat_st, DATE: index}}',
         ''.join([
-            f'+out.cols={{rec_num: "@i + 1", identific: "@i_log + 1", station: "{i_cruise * 1000 + 1} + @i_log", ',
+            f'+out.cols={{rec_num: "@i + 1", identific: "@i_log + 1", station: "{st_cor_str}[@i_log]", ',  # "{i_cruise * 1000 + 1} + @i_log"
             ', '.join([p if ':' in p else f'{p}: {p}' for p in
                        'Pres;Temp:Temp90;Cond;Sal;O2;O2ppm'.split(';')]), #;SigmaT;SoundVel
             '}'
             ]),
         'out.sep=";"'
         ])
+    # get metadata
+    with pd.HDFStore(path_db) as store:
+        df_log = store[f"{device}/logRuns"]
+        bbox = [
+            min(df_log.Lat_st.min(), df_log.Lat_en.min()),
+            max(df_log.Lat_st.max(), df_log.Lat_en.max()),
+            min(df_log.Lon_st.min(), df_log.Lon_en.min()),
+            max(df_log.Lon_st.max(), df_log.Lon_en.max())
+            ]
+        print('"{}"'.format('; '.join([f'{(fun_trim(c*100)):g}' for c, fun_trim in zip(bbox, [np.floor, np.ceil]*2)])))
 
 
 if st(120, 'Meteo'):
@@ -373,8 +385,7 @@ if st(130, 'extract all navigation tracks'):
              # '--select_from_tablelog_ranges_index', None - defaut
              ])
 
-device_prev = device
-device = 'CTD_SST_CTD90'
+device_prev, device = device, 'CTD_SST_CTD90'
 device_veusz_prefix = 'ss_'
 
 common_ctd_params_list = [
@@ -383,35 +394,40 @@ common_ctd_params_list = [
     ]
 
 if st(210, f'Save {device} data to DB'):
-    # IntD        IntT      Press     Temp    SALIN    SIGMA     Turb    SOUND
-    from to_pandas_hdf5.csv_specific_proc import proc_loaded_sst
-
+    from to_pandas_hdf5.csv_specific_proc import loaded_sst
     csv2h5([
         'cfg/csv_CTD_SST.ini',
-        # '--skiprows_integer', '34', # default
-        '--path', str(path_cruise / device / '_raw_csv' / 'АБП*[0-9].CSV'),
-        # '--dt_from_utc_hours', '0',
-        '--header', 'Date(text),Time(text),Pres,Temp90,Sal,SIGMA,Turb,SVel',
-        '--cols_not_save_list', 'SIGMA,SVel',
-        '--delimiter_chars', ',',  # ''\s+',
+        '--path', str(path_cruise / device / '_raw' / '49[0-9]*.TOB'),
         '--table', f'{device}',
-        '--b_interact', '0'
-        # '--on_bad_lines', 'warn',
+        #'--dt_from_utc_hours', '0', #'2'
+        '--header',
+        'Number,Date(text),Time(text),Pres,Temp,Sal,SIGMA,Turb,Trans,Cond,SVel,Vbatt',
+        '--cols_not_save_list', 'Number,SIGMA,Vbatt,SVel',
+        '--delimiter_chars', '\\ \\',  # ''\s+',
+        '--b_interact', '0',
+        #'--cols_not_save_list', 'N',
+        # '--on_bad_lines', 'warn'
+        #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
         ] + common_ctd_params_list,
-        **{'in': {
-            'fun_proc_loaded': proc_loaded_sst,
-            # 'csv_specific_param': {'Temp_fun': lambda x: (x + 0.254) / 1.00024,
-            #                        # 'Temp_add': 0.254, And convert to ITS90
-            #                        'Sal_fun': lambda x: (1 + 0.032204423446495364) * x + 0.045516504802752523,
-            #                        'Cond_fun': lambda x: -0.000098593 * x ** 2 + 1.040626 * x + 0.01386
-            #                        }
-            }}
+        # + ['--min_dict', 'Cond:0.5, Sal:0.2, Trans:40',
+        # '--max_dict', 'Turb:10'],
+        **{  # **device_params_dict,
+            'in': {
+            'fun_proc_loaded': loaded_sst,
+                'csv_specific_param': {
+                    'Temp_fun': lambda x: np.polyval([-1.102460295e-05, 1.00018, 0.037725], x),
+                    'Cond_fun': lambda x: np.polyval([-0.000666294, 1.0279, -0.140743], x),
+                    'Sal_fun': lambda Cond, Temp, Pres: gsw.SP_from_C(Cond, Temp, Pres),
+
+                    }
+                }
+        }
         )
 
 if st(220, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params'):  # False: # (if files are not splitted on runs).
     # Note: extended logRuns fields needed in Veusz in next step
     # todo: be able provide log with (Lat,Lon) separately, improve start message if calc runs, check interpolation
-    st.go = () != CTD_calc(['cfg/CTD_calc-find_runs.ini',
+    st.go = () != CTD_calc(['cfg/ctd_calc-find_runs.ini',
               '--db_path', str(path_db),
               '--tables_list', f'{device}',
               '--min_samples', '100',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
@@ -425,44 +441,53 @@ if st(220, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav param
               ])
 
 if st(230, f'Draw {device} data profiles'):  # False: #
-    from to_pandas_hdf5.h5toh5 import h5log_names_gen
-    import re
-    from os import chdir as os_chdir
-
     cfg_in = {
         'log_row': {},
-        'db_path': str(path_db), # name of hdf5 pandas store where is log table
-        #min_time, max_time: datetime, optional, allows range table_log rows
+        'db_path': str(path_db),  # name of hdf5 pandas store where is log table
         'table_log': f'/{device}/logRuns', # str: name of log table - table with intervals:
-
-        'pattern_path': path_cruise / device / '000000_0000-0000.vsz'
+        'pattern_path': path_cruise / device / 'profiles_vsz' / '000000_000000.vsz',
+        # 'min_time': np.datetime64('2022-12-21T10:02:00'),
+        # 'max_time': '2020-12-30T22:37:00',
         }
     f_row2name = lambda r: '{:%y%m%d_%H%M%S}.vsz'.format(r['Index'])
     # It is possible to add exact interval to filename but time after probe is back on surface can be determined only
-    # from next row so we rely on ~pattern_loader.vsz to do it. Even freq=16Hz to determine last time not helps:
+    # from next row, so we rely on ~pattern_loader.vsz to do it. Even freq=16Hz to determine last time not helps:
     # '_{}s.vsz'.format(round(max(r['rows']/16, (r['DateEnd'] - r['Index'] + pd.Timedelta(300, "s")).total_seconds()))
-    pattern_code = cfg_in['pattern_path'].read_bytes()  #encoding='utf-8'
 
+    # Copy files
+    pattern_code = cfg_in['pattern_path'].read_bytes()  # encoding='utf-8'
+    filename_st = None
     os_chdir(cfg_in['pattern_path'].parent)
     for filename in h5log_names_gen(cfg_in, f_row2name):
         path_vsz = cfg_in['pattern_path'].with_name(filename)
         path_vsz.write_bytes(pattern_code)  # re.sub(rb'^([^\n]+)', str_expr, pattern_code, count=1)
+        # Get filename_st (do once)
+        if filename_st is None:
+            filename_st = filename
 
-    veuszPropagate.main(['cfg/veuszPropagate.ini',
-                         '--path', str(cfg_in['pattern_path'].with_name('??????_??????.vsz')),  #_*s path_db),
-                         '--pattern_path', f"{cfg_in['pattern_path']}_",  # here used to auto get export dir only. must not be not existed file path
-                         #'--table_log', f'/{device}/logRuns',
-                         #'--add_custom_list', f'{device_veusz_prefix}USE_time_search_runs',  # 'i3_USE_timeRange',
-                         # '--add_custom_expressions',
-                         # """'[["{log_row[Index]:%Y-%m-%dT%H:%M:%S}", "{log_row[DateEnd]:%Y-%m-%dT%H:%M:%S}"]]'""",
-                         # '--export_pages_int_list', '7', # 0  '--b_images_only', 'True'
-                         # '--b_update_existed', 'True',  # False is default todo: allow "delete_overlapped" time named files
-                         '--b_interact', '0',
-                         '--b_images_only', 'True',      # mandatory
-                         '--b_execute_vsz', 'True'
-                         #'--min_time', '2020-07-08T03:35:00',
-                         #'--max_time', '2020-06-30T22:37:00',
-                         ])
+    # cfg_in['min_time'] not works on filenames, so we convert it to 'start_file_index'
+    if 'min_time' in cfg_in:
+        del cfg_in['min_time']  # del to count fro 0:
+        start_file_index = len(list(takewhile(lambda x: x < filename_st, h5log_names_gen(cfg_in, f_row2name))))
+    else:
+        start_file_index = 0
+    veuszPropagate.main([
+        'cfg/veuszPropagate.ini',
+        '--path', str(cfg_in['pattern_path'].with_name('??????_??????.vsz')),  #_*s path_db),
+        '--pattern_path', f"{cfg_in['pattern_path']}_",  # here used to auto get export dir only. must not be not existed file path
+        #'--table_log', f'/{device}/logRuns',
+        #'--add_custom_list', f'{device_veusz_prefix}USE_time_search_runs',  # 'i3_USE_timeRange',
+        # '--add_custom_expressions',
+        # """'[["{log_row[Index]:%Y-%m-%dT%H:%M:%S}", "{log_row[DateEnd]:%Y-%m-%dT%H:%M:%S}"]]'""",
+        # '--export_pages_int_list', '7', # 0  '--b_images_only', 'True'
+        '--b_update_existed', 'True',  # False is default todo: allow "delete_overlapped" time named files
+        '--b_interact', '0',
+        '--b_images_only', 'True',      # mandatory
+        '--b_execute_vsz', 'True',
+        '--start_file_index', str(start_file_index),
+        #'--min_time', cfg_in['min_time'].item().isoformat(),  # not works on filenames (no time data)
+        #'--max_time', cfg_in['max_time'].item().isoformat(),
+        ])
 
 if st(250, 'Extract navigation data at time station starts to GPX waypoints'):  # False: #
     h5toGpx([
@@ -506,7 +531,7 @@ if st(280, 'Gridding'):  # and False: #
 
 if st(290, 'Export csv with some new calculated parameters'):  # False: #
     # Extract CTD runs (if files are not splitted on runs):
-    CTD_calc([  # 'CTD_calc-find_runs.ini',
+    CTD_calc([  # 'ctd_calc-find_runs.ini',
         '--db_path', str(path_db),
         '--tables_list', f'{device}',
         '--tables_log', '{}/logRuns',
@@ -514,13 +539,13 @@ if st(290, 'Export csv with some new calculated parameters'):  # False: #
         # '--min_dp', '9',
         # '--b_keep_minmax_of_bad_files', 'True',
         '--path_csv', str(path_cruise / device / 'txt_processed'),
-        '--data_columns_list', 'Pres, Temp90, Cond, Sal, O2, O2ppm, Lat, Lon, SA, sigma0, depth, soundV',  #
+        '--data_columns_list', 'Pres, Temp, Cond, Sal, Turb, Trans, Lat, Lon, SA, sigma0, depth, soundV',  #
         '--b_incremental_update', 'True',
-        # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
+        # todo: check it. If False need delete all previous result of ctd_calc() or set min_time > its last log time
         '--out.tables_list', 'None',
         ])
 
-if st(315, 'Export csv for Obninsk'):
+if st(295, 'Export csv for Obninsk'):
     m = re.match(r'[\d_]*(?P<abbr_cruise>[^\d]*)(?P<i_cruise>.*)', path_cruise.name)
     i_cruise = int(m.group('i_cruise'))
     text_file_name_add = f"E090005O2_{m.group('abbr_cruise')}_{i_cruise}_H10_"
@@ -536,12 +561,22 @@ if st(315, 'Export csv for Obninsk'):
         f'out.file_name_fun="f\'{text_file_name_add}{{i+1:0>2}}.csv\'"',
         f'out.file_name_fun_log="\'{text_file_name_add}POS.csv\'"',
         # rec_num;identific;station;Pres;Temp;cond;Sal;O2%;O2ppm;sigmaT;soundV
-        f'+out.cols_log={{rec_num: "i + 1", identific: "i + 1", station: "{i_cruise * 1000 + 1} + i" , LONG: Lon_st, LAT: Lat_st, DATE: index}}',
+        f'+out.cols_log={{rec_num: "@i + 1", identific: "@i + 1", station: "rep_comma_sep_items(df.fileName)" , LONG: Lon_st, LAT: Lat_st, DATE: index}}',
         ''.join([
-            f'+out.cols={{rec_num: "i + 1", identific: "@i_log + 1", station: "{i_cruise * 1000 + 1} + @i_log", ',
+            f'+out.cols={{rec_num: "@i + 1", identific: "@i_log + 1", station: "@df_log.iloc[@i_log].station", ',
             ', '.join([p if ':' in p else f'{p}: {p}' for p in
-                       'Pres;Temp:Temp90;Sal;Turb'.split(';')]), #;SigmaT;SoundVel;O2;O2ppm
+                       'Pres;Temp;Cond;Sal;SigmaTh:sigma0;Turb;Trans'.split(';')]), #;SigmaT;SoundVel;O2;O2ppm
             '}'
             ]),
         'out.sep=";"'
         ])
+    # get metadata
+    with pd.HDFStore(path_db) as store:
+        df_log = store[f"{device}/logRuns"]
+        bbox = [
+            min(df_log.Lat_st.min(), df_log.Lat_en.min()),
+            max(df_log.Lat_st.max(), df_log.Lat_en.max()),
+            min(df_log.Lon_st.min(), df_log.Lon_en.min()),
+            max(df_log.Lon_st.max(), df_log.Lon_en.max())
+            ]
+        print('"{}"'.format('; '.join([f'{(fun_trim(c*100)):g}' for c, fun_trim in zip(bbox, [np.floor, np.ceil]*2)])))

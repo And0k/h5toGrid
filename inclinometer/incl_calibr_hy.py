@@ -6,20 +6,18 @@ Need check if rotation exist?:
                 # E_w, E_v = np.linalg.eig(E)
 Probes data table contents: index,Ax,Ay,Az,Mx,My,Mz
 """
+from dataclasses import dataclass, field
 import logging
 import re
 import sys
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional, Tuple, Dict, List, Union
-
-import omegaconf
-from omegaconf import MISSING, open_dict
-import hydra
-
+from typing import Any, Mapping, Optional, Tuple, Dict, List
 import numpy as np
 import pandas as pd
 from scipy import linalg, stats
-from dataclasses import dataclass, field
+
+from omegaconf import MISSING
+import hydra
 
 if __debug__:
     import matplotlib
@@ -40,26 +38,24 @@ if __debug__:
 try:
     scripts_path = str(Path(__file__).parent)
 except Exception as e:  # if __file__ is wrong
-    drive_d = Path(
-        'D:/' if sys.platform == 'win32' else '/mnt/D')  # allows to run on both my Linux and Windows systems:
+    drive_d = Path('D:/' if sys.platform == 'win32' else '/mnt/D')  # allows to run on both my Linux and Windows systems
     scripts_path = drive_d.joinpath('Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))
-# from inclinometer.incl_calibr import calibrate, calibrate_plot, coef2str
-from inclinometer.h5inclinometer_coef import h5copy_coef
-from inclinometer.incl_h5clc_hy import incl_calc_velocity_nodask, gen_subconfigs, h5_names_gen
+
+from inclinometer.h5inclinometer_coef import h5copy_coef, channel_cols, dict_matrices_for_h5
+from inclinometer.incl_h5clc_hy import incl_calc_velocity_nodask, gen_subconfigs, probes_gen
 from to_pandas_hdf5.h5_dask_pandas import filter_local
-from utils2init import this_prog_basename, standard_error_info, LoggingStyleAdapter, set_field_if_no
-# init_file_names, Ex_nothing_done, this_prog_basename, standard_error_info, dir_create_if_need, ini2dict, FakeContextIfOpen, set_field_if_no
-from to_pandas_hdf5.h5toh5 import h5load_ranges, h5find_tables
+from utils2init import this_prog_basename, standard_error_info, my_logging
+
+from to_pandas_hdf5.h5toh5 import h5load_ranges
 from filters import is_works
 from filters_scipy import despike
 from graphics import make_figure
 
-from to_vaex_hdf5.cfg_dataclasses import hydra_cfg_store, ConfigInHdf5_Simple, ConfigProgram, main_init, main_call, main_init_input_file  #  ConfigProgram is used indirectly
-#from to_vaex_hdf5.h5tocsv import main_call
+from cfg_dataclasses import hydra_cfg_store, ConfigInHdf5_Simple, ConfigProgram, main_init, main_init_input_file  #  ConfigProgram is used indirectly
 
 
-lf = LoggingStyleAdapter(logging.getLogger(__name__))
+lf = my_logging(__name__)  # LoggingStyleAdapter(logging.getLogger(__name__))
 VERSION = '0.0.1'
 hydra.output_subdir = 'cfg'
 
@@ -70,7 +66,23 @@ hydra.output_subdir = 'cfg'
 
 
 @dataclass
-class ConfigFilter:
+class ConfigFilterComponent:
+    """
+    Filter values specific to components, will overwrite common values of inherited ConfigFilter class next to this
+    """
+    blocks: Optional[List[int]] = field(default_factory=lambda: [21, 7])
+    offsets: Optional[List[float]] = field(default_factory=lambda: [1.5, 2])
+    std_smooth_sigma: Optional[float] = 4
+
+@dataclass
+class ConfigFilterChannel(ConfigFilterComponent):
+    x: Optional[ConfigFilterComponent] = field(default_factory=lambda: ConfigFilterComponent(None, None, None))
+    y: Optional[ConfigFilterComponent] = field(default_factory=lambda: ConfigFilterComponent(None, None, None))
+    z: Optional[ConfigFilterComponent] = field(default_factory=lambda: ConfigFilterComponent(None, None, None))
+    # = {c: ConfigFilterComponent(None, None, None) for c in 'xyz'}?
+
+@dataclass
+class ConfigFilter(ConfigFilterComponent):
     """
     "filter": excludes some data:
 
@@ -82,10 +94,9 @@ class ConfigFilter:
     # Optional[Dict[str, float]] = field(default_factory= dict) leads to .ConfigAttributeError/ConfigKeyError: Key 'Sal' is not in struct
     min_date: Optional[Dict[str, str]] = field(default_factory=dict)
     max_date: Optional[Dict[str, str]] = field(default_factory=dict)
+    A: Optional[ConfigFilterChannel] = field(default_factory=lambda: ConfigFilterChannel)
+    M: Optional[ConfigFilterChannel] = field(default_factory=lambda: ConfigFilterChannel)
     no_works_noise: Dict[str, float] = field(default_factory=lambda: {'M': 10, 'A': 100})
-    blocks: List[int] = field(default_factory=lambda: [21, 7])
-    offsets: List[float] = field(default_factory=lambda: [1.5, 2])
-    std_smooth_sigma: float = 4
 
 
 @dataclass
@@ -107,7 +118,7 @@ class ConfigOut:
 @dataclass
 class ConfigInHdf5_InclCalibr(ConfigInHdf5_Simple):
     """
-    Same as ConfigInHdf5_Simple + specific (inclinometr calibration) data properties:
+    Same as ConfigInHdf5_Simple + specific (inclinometer calibration) data properties:
     channels: List: (, channel can be "magnetometer" or "M" for magnetometer and any else for accelerometer',
     probes: overwrites ``tables``: tables='{prefix}{probes}'
     prefix: used with probes (see above) else if tables not defined then with all probes i.e. probes='.*'
@@ -140,12 +151,11 @@ class ConfigProgramSt(ConfigProgram):
 
 cs_store_name = Path(__file__).stem
 cs, ConfigType = hydra_cfg_store(
-    f'base_{cs_store_name}',
-    {
-        'input': ['in_hdf5__incl_calibr'],  # Load the config ConfigInHdf5_InclCalibr from the config group "input"
-        'out': ['out'],  # Set as MISSING to require the user to specify a value on the command line.
-        'filter': ['filter'],
-        'program': ['program_st'],
+    cs_store_name, {
+        'input': [ConfigInHdf5_InclCalibr],  # Load the config ConfigInHdf5_InclCalibr to the config group "input"
+        'out': [ConfigOut],  # Set as MISSING to require the user to specify a value on the command line.
+        'filter': [ConfigFilter],
+        'program': [ConfigProgramSt],
     },
     module=sys.modules[__name__]
     )
@@ -155,22 +165,15 @@ def fG(Axyz, Ag, Cg):
     return Ag @ (Axyz - Cg)
 
 
-# fG = lambda countsAx, countsAy, countsAz, Ag, Cg: np.dot(
-#     Ag, np.float64((countsAx, countsAy, countsAz)) - Cg)
-#
-# fGi = lambda countsAx, countsAy, countsAz, Ag, Cg, i: np.dot(
-#     Ag, np.float64((countsAx, countsAy, countsAz))[slice(*i)] - Cg)
-
-# fGi = lambda Ax, Ay, Az, Ag, Cg, i: np.dot(
-#     (np.column_stack((Ax, Ay, Az))[slice(*i)] - Cg[0, :]), Ag).T
-
-
-def filter_channes(a3d: np.ndarray, a_time=None, fig=None, fig_save_prefix=None,
-                   blocks=(21, 7), offsets=(1.5, 2), std_smooth_sigma=4
-                   ) -> Tuple[np.ndarray, np.ndarray, matplotlib.figure.Figure]:
+def filter_channes(
+        a3d: np.ndarray, a_time=None, fig=None, fig_save_prefix=None, window_title=None,
+        blocks=(21, 7), offsets=(1.5, 2), std_smooth_sigma=4,
+        x: Mapping[str, Any] = None, y: Mapping[str, Any] = None, z: Mapping[str, Any] = None,
+        **kwargs) -> Tuple[np.ndarray, np.ndarray, matplotlib.figure.Figure]:
     """
     Filter back and forward each column of a3d by despike()
-    despike a3d - 3 channels of data and plot data and overlayed results
+    despike a3d - 3 channels of data and plot data and overlapped results
+
     :param a3d: shape = (3,len)
     :param a_time: x data to plot. If None then use range(len)
     :param fig:
@@ -179,9 +182,13 @@ def filter_channes(a3d: np.ndarray, a_time=None, fig=None, fig_save_prefix=None,
     :param offsets: offsets to std - see despike(). If empty then only filters NaNs.
     Note: filters too many if set some item < 3.
     :param std_smooth_sigma - see despike()
+    :param x: blocks, offsets, std_smooth_sigma dict for channel x
+    :param y: blocks, offsets, std_smooth_sigma dict for channel y
+    :param z: blocks, offsets, std_smooth_sigma dict for channel z
+    :param window_title: str
     :return: a3d[ :,b_ok], b_ok
     """
-
+    args = locals()
     dim_length = 1   # dim_channel = 0
     blocks = np.minimum(blocks, a3d.shape[dim_length])
     b_ok = np.ones((a3d.shape[dim_length],), np.bool8)
@@ -190,6 +197,7 @@ def filter_channes(a3d: np.ndarray, a_time=None, fig=None, fig_save_prefix=None,
         ax = fig.axes[0]
     else:
         ax = None
+
     if a_time is None:
         a_time = np.arange(a3d.shape[1])
 
@@ -197,8 +205,7 @@ def filter_channes(a3d: np.ndarray, a_time=None, fig=None, fig_save_prefix=None,
         ax_title = f'despike({ch})'
         ax, lines = make_figure(x=a_time, y_kwrgs=((
             {'data': a, 'label': 'source', 'color': 'r', 'alpha': 1},
-            )), ax_title=ax_title, ax=ax, lines='clear')
-        # , mask_kwrgs={'data': b_ok, 'label': 'filtered', 'color': 'g', 'alpha': 0.7}
+            )), ax_title=ax_title, ax=ax, lines='clear', window_title=window_title)
         b_nan = np.isnan(a)
         n_nans_before = b_nan.sum()
         b_ok &= ~b_nan
@@ -206,9 +213,14 @@ def filter_channes(a3d: np.ndarray, a_time=None, fig=None, fig_save_prefix=None,
         if len(offsets):
             # back and forward:
             a_f = np.float64(a[b_ok][::-1])
-            a_f, _ = despike(a_f, offsets, blocks, std_smooth_sigma=std_smooth_sigma, x_plot=a_time)
-            a_f, _ = despike(a_f[::-1], offsets, blocks, ax, label=ch,
-                             std_smooth_sigma=std_smooth_sigma, x_plot=a_time[b_ok])
+
+            cfg_filter_component = {
+                p: (args[p] if (ach := args[ch][p]) is None else ach) for p in ['offsets', 'blocks', 'std_smooth_sigma']
+                }
+
+            a_f, _ = despike(a_f, **cfg_filter_component, x_plot=a_time)
+            a_f, _ = despike(a_f[::-1], **cfg_filter_component, x_plot=a_time[b_ok], ax=ax, label=ch)
+
             b_nan[b_ok] = np.isnan(a_f)
             n_nans_after = b_nan.sum()
             b_ok &= ~b_nan
@@ -219,8 +231,8 @@ def filter_channes(a3d: np.ndarray, a_time=None, fig=None, fig_save_prefix=None,
             #     ax_title=f'despike({ch})', lines='clear')
 
             ax.legend(prop={'size': 10}, loc='upper right')
-            lf.info('despike({:s}, offsets={}, blocks={}) deleted {:d}',
-                    ch, offsets, blocks, n_nans_after - n_nans_before)
+            lf.info('despike({ch:s}, offsets={offsets}, blocks={blocks}): deleted={dl:d}'.format(
+                    ch=ch, dl=n_nans_after - n_nans_before, **cfg_filter_component))
         plt.show()
         if fig_save_prefix:  # dbstop
             try:
@@ -234,12 +246,12 @@ def filter_channes(a3d: np.ndarray, a_time=None, fig=None, fig_save_prefix=None,
 
 
 def calc_vel_flat_coef(coef_nested: Mapping[str, Mapping[str, np.ndarray]]) -> Dict[str, np.ndarray]:
-    """ Convert coef_nested in format of incl_calc_velocity() args"""
+    """ Convert coef_nested to format of incl_calc_velocity() args"""
     arg = {}
     for ch, coefs in coef_nested.items():
         sfx = channel_cols(ch)[1].lower()
         for key, val in coefs.items():
-            arg[('C' if key == 'b' else 'A') + sfx] = val
+            arg[f"{'C' if key == 'b' else 'A'}{sfx}"] = val
     return arg
 
 
@@ -469,19 +481,18 @@ def calibrate_plot(raw3d: np.ndarray, a2d: np.ndarray, b, fig=None, window_title
         if clear:
             ax1.clear()
             ax2.clear()
-    if window_title:
+    if window_title:  # not works
         man = plt.get_current_fig_manager()
-        man.canvas.set_window_title(window_title)
+        man.canvas.setWindowTitle(window_title)
     # output data:
     s = np.dot(a2d, raw3d - b)  # s[:,:]
 
-    # Calibrated magnetic ﬁeld measurements plotted on the
+    # Calibrated magnetic field measurements plotted on the
     # sphere manifold whose radius equals 1
-    # the norm of the local Earth’s magnetic ﬁeld
+    # the norm of the local Earth’s magnetic field
 
     # ax = axes3d(fig)
     # ax1 = fig.add_subplot(121, projection='3d')
-
     marker_size = 5  # 0.2
     ax1.set_title('source')
 
@@ -518,28 +529,35 @@ def calibrate_plot(raw3d: np.ndarray, a2d: np.ndarray, b, fig=None, window_title
     return fig
 
 
-def zeroing_azimuth(store, tbl, time_range_nord, coefs=None, cfg_in=None):
+def zeroing_azimuth(store: pd.HDFStore, tbl, time_range_nord, coefs=None, cfg_in=None,
+                    filter_query='10 < inclination & inclination < 170') -> float:
     """
-    azimuth_shift_deg by calculating velocity (u, v) in cfg_in['time_range_nord'] interval of tbl data:
-     taking median, calculating direction, multipling by -1
+    Get correction of azimuth by:
+    1. calculating velocity (u, v) in ``time_range_nord`` interval of tbl data using coefficients to be adjusted,
+    2. filtering with ``filter_query`` and taking median,
+    3. calculating direction,
+    4. multiplying result by -1.
     :param time_range_nord:
-    :param store:
-    :param tbl:
+    :param store: opened pandas HDFStore: interface to its objects in PyTables hdf5 store
+    :param tbl: table name in store
     :param coefs: dict with fields having values of array type with sizes:
     'Ag': (3, 3), 'Cg': (3, 1), 'Ah': (3, 3), 'Ch': array(3, 1), 'azimuth_shift_deg': (1,), 'kVabs': (n,)
     :param cfg_in: dict with fields:
         - time_range_nord
         - other, needed in h5load_ranges() and optionally in incl_calc_velocity_nodask()
-    :return: azimuth_shift_deg
+    :param filter_query: upply this filter query to incl_calc_velocity*() output before mean azimuth calculation
+    :return: azimuth_shift_deg: degrees
     """
     lf.debug('Zeroing Nord direction')
     df = h5load_ranges(store, table=tbl, t_intervals=time_range_nord)
     if df.empty:
         lf.info('Zero calibration range out of data scope')
         return
-    dfv = incl_calc_velocity_nodask(df, **coefs, cfg_filter=cfg_in, cfg_proc=
-    {'calc_version': 'trigonometric(incl)', 'max_incl_of_fit_deg': 70})
-    dfv.query('10 < inclination & inclination < 170', inplace=True)
+    dfv = incl_calc_velocity_nodask(
+        df, **coefs, cfg_filter=cfg_in, cfg_proc={
+            'calc_version': 'trigonometric(incl)', 'max_incl_of_fit_deg': 70
+            })
+    dfv.query(filter_query, inplace=True)
     dfv_mean = dfv.loc[:, ['u', 'v']].median()
     # or df.apply(lambda x: [np.mean(x)], result_type='expand', raw=True)
     # df = incl_calc_velocity_nodask(dfv_mean, **calc_vel_flat_coef(coefs), cfg_in=cfg_in)
@@ -550,101 +568,71 @@ def zeroing_azimuth(store, tbl, time_range_nord, coefs=None, cfg_in=None):
     return azimuth_shift_deg
 
 
-def channel_cols(channel: str) -> Tuple[str, str]:
+def bin_avg_3d_partial(index: np.ndarray | pd.DatetimeIndex, vec3d: np.ndarray, bins=200):
     """
-    Data columns names (col_str M/A) and coef letters (coef_str H/G) from parameter name (or its abbreviation)
-    :param channel:
-    :return: (col_str, coef_str)
+    Reduce nonuniform distribution of data points by replacing where more than 1 point per bin to the bin average.
+    :param index: time coord of points
+    :param vec3d: 3D coordinates of points
+    :param bins: number of spatial bins (see scipystats.binned_statistic_2d()) of one coordinate
+    :return: (index, vec3d, raw3d_other, n_in_cell) where
+    - index: original index with removed averaged points in same bins faced later,
+    - raw3d_other: original points that are replaced by averaging,
+    - n_in_cell: number of averaged points in bin
+    - vec3d, original points if one per bin and averaged else, sorted in order of index.
     """
-    if (channel == 'magnetometer' or channel == 'M'):
-        col_str = 'M'
-        coef_str = 'H'
-    else:
-        col_str = 'A'
-        coef_str = 'G'
-    return (col_str, coef_str)
+    rtp = xyz2spherical(vec3d)  # spherical coord (radius, theta, phi)
+    # We will set u=cos(phi) to be uniformly distributed (so we have du=sin(phi)d(phi))
+
+    # Compare required number of bins with recommended minimum to get 1 point in 2D if points positioned nealy ideal
+    bins_min_recommended = int(np.sqrt(rtp.shape[1]))
+    if bins is None:
+        bins = bins_min_recommended
+    elif bins > bins_min_recommended:
+        # should be warning?
+        lf.info('Bins/coordinate ({bins}) > maximum for our data size to can fill each bin ({bins_min})!',
+                {'bins': bins, 'bins_min': bins_min_recommended, 'filter_same': 6})
+
+    # Bin statistics
+    bin_stats = stats.binned_statistic_2d(
+        rtp[1, :], np.cos(rtp[-1, :]), rtp[0, :], bins=bins, range=[[0, 2 * np.pi], [-1, 1]])
+
+    # Replace where more than 1 point per bin to the bin average
+    i_sort = np.argsort(bin_stats.binnumber)
+    vec3d = vec3d[:, i_sort]
+    i_bins_sorted = bin_stats.binnumber[i_sort]
+    i_bins_sorted_change = np.hstack((0, np.flatnonzero(np.diff(i_bins_sorted)) + 1, len(i_sort)))
+    b_need_mean = (n_in_cell := np.diff(i_bins_sorted_change)) > 1
+    intervals_avg = np.column_stack((i_bins_sorted_change[:-1], i_bins_sorted_change[1:]))
+    # for display: all original points that will be replaced by averaging
+    raw3d_other = vec3d[:, np.hstack([np.arange(*i_st_en) for i_st_en in intervals_avg[b_need_mean]])]
+    # intact points that alone in grid cell and averaging other points in cell
+    vec3d = np.column_stack([vec3d[:, slice(*i_st_en)].mean(axis=1) if b_need else vec3d[:, i_st_en[0]] for
+                             i_st_en, b_need in zip(intervals_avg, b_need_mean)])
+    index = index[i_sort[i_bins_sorted_change[:-1]]]  # starts of vec3d
+    index = index[i_sort := np.argsort(index)]
+    vec3d = vec3d[:, i_sort]
+    return index, vec3d, raw3d_other, n_in_cell
 
 
-def dict_matrices_for_h5(coefs=None, tbl=None, channels=None):
+def xyz2spherical(xyz):
     """
-    Create coefficients dict with fields of fixed size (fill with dummy values if no corresponded coefs):
-    - A: for accelerometer:
-        - A: A 3x3 scale and rotation matrix
-        - C: U_G0 accelerometer 3x1 channels shifts
-    - M: for magnetometer:
-        - A: M 3x3 scale and rotation matrix
-        - C: U_B0 3x1 channels shifts
-        - azimuth_shift_deg: Psi0 magnetometer direction shift to the North, radians
-    - Vabs0: for calculation of velocity magnitude from inclination - 6 element vector:
-      - 5 coefs of trigonometric approx fun
-      - its linear extrapolation start, degrees
-
-    :param coefs: some fields from: {'M': {'A', 'b', 'azimuth_shift_deg'} 'A': {'A', 'b', 'azimuth_shift_deg'}, 'Vabs0'}
-    :param tbl: should include probe number in name. Example: "incl_b01"
-    :param channels: some from default ['M', 'A']: magnetometer, accelerometer
-    :return: dict_matrices
+    Cartesian to spherical coordinates
+    :param xyz: 3xN array
+    :return: rtp (radius, theta, phi)
     """
-    if channels is None:
-        channels = ['M', 'A']
+    rtp = np.zeros_like(xyz)
+    xy = xyz[0, :]**2 + xyz[1, :]**2
+    rtp[0, :] = np.sqrt(xy + xyz[2, :] ** 2)
+    rtp[1, :] = np.arctan2(np.sqrt(xy), xyz[2, :])  # for elevation angle defined from Z-axis down
+    #rtp[1, :] = np.arctan2(xyz[2, :], np.sqrt(xy))  # for elevation angle defined from XY-plane up
+    rtp[2, :] = np.arctan2(xyz[1, :], xyz[0, :])
+    return rtp
 
-    # Fill coefs where not specified
-    dummies = []
-    b_have_coefs = coefs is not None
-    if not b_have_coefs:
-        coefs = {}  # dict(zip(channels,[None]*len(channels)))
-
-    for channel in channels:
-        if not coefs.get(channel):
-            coefs[channel] = ({'A': np.identity(3) * 0.00173, 'b': np.zeros((3, 1))} if channel == 'M' else
-                              {'A': np.identity(3) * 6.103E-5, 'b': np.zeros((3, 1))}
-                              )
-            if b_have_coefs:
-                dummies.append(channel)
-        if channel == 'M':
-            if not coefs['M'].get('azimuth_shift_deg'):
-                coefs['M']['azimuth_shift_deg'] = 180
-                if b_have_coefs and not 'M' in dummies:
-                    dummies.append('azimuth_shift_deg')  # only 'azimuth_shift_deg' for M channel is dummy
-
-    if coefs.get('Vabs0') is None:
-        coefs['Vabs0'] = np.float64([10, -10, -10, -3, 3, 70])
-        if b_have_coefs:
-            dummies.append('Vabs0')
-
-    if dummies or not b_have_coefs:
-        lf.warning('Coping coefficients, {:s} - dummy!', ','.join(dummies) if b_have_coefs else 'all')
-    else:
-        lf.info('Coping coefficients')
-
-    # Fill dict_matrices with coefs values
-    dict_matrices = {}
-    if tbl:
-        # Coping probe number to coefficient to can manually check when copy manually
-        i_search = re.search('\d*$', tbl)
-        if i_search:
-            try:
-                dict_matrices['//coef//i'] = int(i_search.group(0))
-            except Exception as e:
-                pass
-        dict_matrices['//coef//Vabs0'] = coefs['Vabs0']
-
-
-    for channel in channels:
-        (col_str, coef_str) = channel_cols(channel)
-        dict_matrices.update(
-            {f'//coef//{coef_str}//A': coefs[channel]['A'],
-             f'//coef//{coef_str}//C': coefs[channel]['b'],
-             })
-        if channel == 'M':
-            dict_matrices[f'//coef//{coef_str}//azimuth_shift_deg'] = coefs['M']['azimuth_shift_deg']
-
-    return dict_matrices
 
 
 cfg = {}
 
-
-@hydra.main(config_name=cs_store_name, config_path='cfg', version_base='1.3')  # adds config store cs_store_name data/structure to :param config
+@hydra.main(config_name=cs_store_name, config_path='cfg', version_base='1.3')  # adds config store cs_store_name data/structure
 def main(config: ConfigType) -> None:
     """
     ----------------------------
@@ -666,28 +654,21 @@ def main(config: ConfigType) -> None:
     global cfg
     cfg = main_init(config, cs_store_name, __file__=None)
     cfg = main_init_input_file(cfg, cs_store_name)
+    print()
     # Input data tables
     if cfg['in']['probes'] or not len(cfg['in']['tables']):
         # defined by 'probes' or (else) 'prefix' fields of cfg['in']
         if cfg['in']['probes']:
-           cfg['in']['tables'] = [f"{cfg['in']['prefix']}{probe:0>2}" for probe in cfg['in']['probes']]
+            cfg['in']['tables'] = [f"{cfg['in']['prefix']}{probe:0>2}" for probe in cfg['in']['probes']]
         elif cfg['in']['prefix']:
             cfg['in']['tables'] = [f"{cfg['in']['prefix']}.*"]
         # else:  # default config
         #     cfg['in']['tables'] = ['.*']
 
-    #h5init(cfg['in'], cfg['out'])
-    #cfg['out']['dt_from_utc'] = 0
-    # cfg = cfg_from_args(my_argparser(), new_arg)
-
-    # Removing outliers relative to standard coefs calibration
-    default_coef = dict_matrices_for_h5()
-
-
     lf.info(
         "{:s}({:s}) for channels: {} started. ",
         this_prog_basename(__file__), ', '.join(cfg['in']['tables']), cfg['in']['channels']
-        )
+    )
     fig_filt = None
     fig = None
     if not cfg['in']['db_path'].is_absolute():
@@ -695,153 +676,148 @@ def main(config: ConfigType) -> None:
 
     fig_save_dir_path = cfg['in']['db_path'].parent
     (fig_save_dir_path / 'images-channels_calibration').mkdir(exist_ok=True)
-    # with pd.HDFStore(cfg['in']['db_path'], mode='r') as store:
-    #     if len(cfg['in']['tables']) == 1:
-    #         cfg['in']['tables'] = h5find_tables(store, cfg['in']['tables'][0])
-    #     coefs = {}
-    if True:
-        for d, coefs, tbl, probe_number_str in gen_subconfigs(
-                cfg,
-                fun_gen=h5_names_gen,
-                **cfg['in']
-                ):
-            d = filter_local(d, cfg['filter'], ignore_absent={'h_minus_1', 'g_minus_1'})
 
-            # for itbl, tbl in enumerate(cfg['in']['tables'], start=1):
-            # probe_number_str = re.search('(?:(?:w|incl|i)_?(?P<n>[A-z]*\d+)_?)+', tbl).group(
-            #     'n')  # combined data are named by numbers joined by "_"
-            # probe_number = int(re.findall('\d+', probe_number_str)[0])
-            # lf.info(f'{itbl}. {tbl}: ')
-            # if isinstance(cfg['in']['time_ranges'], Mapping):
-            #     probe_number_str = re.findall('(?:_)?(.?[\d_]+)', tbl)[0]  # combined data are named by numbers joined by "_"
-            #     try:
-            #         time_range = cfg['in']['time_ranges'][probe_number_str]
-            #     except (omegaconf.KeyValidationError, KeyError):
-            #         try:
-            #             time_range = cfg['in']['time_ranges'][probe_number]
-            #         except (omegaconf.KeyValidationError, KeyError):
-            #             time_range = cfg['in']['time_range']
-            # else:
-            #     time_range = cfg['in']['time_range']  # same interval for each table
-            # a = h5load_ranges(store, table=tbl, t_intervals=time_range)
-            a = d.compute()
-            if a.empty:
-                lf.error('No data for {}!!! Skipping it...', tbl)
-                continue
-            # iUseTime = np.searchsorted(stime, [np.array(s, 'datetime64[s]') for s in np.array(strTimeUse)])
+    coefs = {}
+    for d, _, tbl, probe_number_str in gen_subconfigs(
+            cfg,
+            fun_gen=probes_gen,
+            **cfg['in']
+            ):
+        # replacing changed table name back (that was prepared by gen_subconfigs() to output processed data we don't)
+        tbl = tbl.replace("i_", "incl_")
+        d = filter_local(d, cfg['filter'], ignore_absent={'h_minus_1', 'g_minus_1'})
 
-            # Calibrate channels of 'accelerometer' or/and 'magnetometer'
-            coefs[tbl] = {}
-            for channel in cfg['in']['channels']:
-                print(f' channel "{channel}"', end=' ')
-                (col_str, coef_str) = channel_cols(channel)
+        # for itbl, tbl in enumerate(cfg['in']['tables'], start=1):
+        # probe_number_str = re.search('(?:(?:w|incl|i)_?(?P<n>[A-z]*\d+)_?)+', tbl).group(
+        #     'n')  # combined data are named by numbers joined by "_"
+        # probe_number = int(re.findall('\d+', probe_number_str)[0])
+        # lf.info(f'{itbl}. {tbl}: ')
+        # if isinstance(cfg['in']['time_ranges'], Mapping):
+        #     probe_number_str = re.findall('(?:_)?(.?[\d_]+)', tbl)[0]  # combined data are named by numbers joined by "_"
+        #     try:
+        #         time_range = cfg['in']['time_ranges'][probe_number_str]
+        #     except (omegaconf.KeyValidationError, KeyError):
+        #         try:
+        #             time_range = cfg['in']['time_ranges'][probe_number]
+        #         except (omegaconf.KeyValidationError, KeyError):
+        #             time_range = cfg['in']['time_range']
+        # else:
+        #     time_range = cfg['in']['time_range']  # same interval for each table
+        # a = h5load_ranges(store, table=tbl, t_intervals=time_range)
+        a = d.compute()
+        if a.empty:
+            lf.error('No data for {}!!! Skipping it...', tbl)
+            continue
+        # iUseTime = np.searchsorted(stime, [np.array(s, 'datetime64[s]') for s in np.array(strTimeUse)])
 
-                # filtering # col_str == 'A'?
-                if True:
-                    b_ok = np.zeros(a.shape[0], bool)
-                    for component in ['x', 'y', 'z']:
-                        b_ok |= is_works(a[col_str + component], noise=cfg['filter']['no_works_noise'][channel])
-                    lf.info('Filtered not working area: {:2.1f}%', (b_ok.size - b_ok.sum())*100/b_ok.size)
-                    # vec3d = np.column_stack(
-                    #     (a[col_str + 'x'], a[col_str + 'y'], a[col_str + 'z']))[:, b_ok].T  # [slice(*iUseTime.flat)]
-                    vec3d = a.loc[b_ok, [col_str + 'x', col_str + 'y', col_str + 'z']].to_numpy(float).T
-                    index = a.index[b_ok]
-                    fig_filt_save_prefix = f"{fig_save_dir_path / 'images-channels_calibration' / tbl}-'{channel}'"
-                    vec3d, b_ok, fig_filt = filter_channes(
-                        vec3d, index, fig_filt, fig_save_prefix=fig_filt_save_prefix,
-                        blocks=cfg['filter']['blocks'],
-                        offsets=(cfg['filter']['offsets'] if col_str == 'A' else [10, 5]),  # almost not filter spikes in magnetometer by this method
-                        std_smooth_sigma=cfg['filter']['std_smooth_sigma'])
+        # Calibrate channels of 'accelerometer' or/and 'magnetometer'
+        coefs[tbl] = {}
+        for channel in cfg['in']['channels']:
+            print(f' channel "{channel}"', end=' ')
+            (col_str, coef_str) = channel_cols(channel)
 
-                # Remove unit sphere outliers relative to standard coefficients
-                if True:
-                    A, b = [default_coef[f'//coef//{coef_str}//{ac}'] for ac in 'AC']
-                    s = np.dot(A, vec3d - b)
-                    dists_to_unit_sphere = abs(1 - np.linalg.norm(s, axis=0))
-                    hist, dists = np.histogram(dists_to_unit_sphere, bins=20, range=[0, 0.75])
-                    outliers_percents = np.cumsum(hist[::-1]) * 100 / b_ok.size
-                    outliers_percent = 15   # remove bins that contain less than ~ outliers_percent outliers
-                    # i_dist_use = np.searchsorted(outliers_percents, outliers_percent); dist_use = dists[-i_dist_use]
-                    dist_use = np.interp(outliers_percent, outliers_percents, dists[:0:-1])  # dists[-2::-1]?
-                    b_ok_new = dists_to_unit_sphere < dist_use
+            # Filtering
+
+            # ## Filter same values is not needed to because of better suited spatial bin average later
+            # b_ok = np.zeros(a.shape[0], bool)
+            # for component in ['x', 'y', 'z']:
+            #     b_ok |= is_works(a[col_str + component], noise=cfg['filter']['no_works_noise'][channel])
+            # lf.info('Filtered not working area: {:2.1f}%', (b_ok.size - b_ok.sum())*100/b_ok.size)
+
+            vec3d = a.loc[:, [f'{col_str}{component}' for component in ['x', 'y', 'z']]].to_numpy(float).T
+            index = a.index
+            fig_filt_save_prefix = f"{fig_save_dir_path / 'images-channels_calibration' / tbl}-'{channel}'"
+            vec3d, b_ok, fig_filt = filter_channes(
+                vec3d, index, fig_filt, fig_save_prefix=fig_filt_save_prefix, window_title=f'channel {channel}',
+                # we almost not filter spikes in magnetometer by this method:
+                **(cfg['filter'][col_str]
+                   # if col_str == 'A' else {
+                   #  **cfg['filter'], **{c: {**cfg['filter'][c], 'offsets': [7, 4]} for c in ['x', 'y', 'z']}  # 10, 5
+                   #  }
+                   )
+                )
+            # # Remove unit sphere outliers relative to standard coefficients
+            # if True:
+            #     A, b = [default_coef[f'//coef//{coef_str}//{ac}'] for ac in 'AC']
+            #     s = np.dot(A, vec3d - b)
+            #     dists_to_unit_sphere = abs(1 - np.linalg.norm(s, axis=0))
+            #     hist, dists = np.histogram(dists_to_unit_sphere, bins=20, range=[0, 0.75])
+            #     outliers_percents = np.cumsum(hist[::-1]) * 100 / b_ok.size
+            #     outliers_percent = 15   # remove bins that contain less than ~ outliers_percent outliers
+            #     # i_dist_use = np.searchsorted(outliers_percents, outliers_percent); dist_use = dists[-i_dist_use]
+            #     dist_use = np.interp(outliers_percent, outliers_percents, dists[:0:-1])  # dists[-2::-1]?
+            #     b_ok_new = dists_to_unit_sphere < dist_use
+            #     b_ok[b_ok] = b_ok_new
+            #     # exact % of removed outliers
+            #     outliers_percent = (dists_to_unit_sphere.size - b_ok_new.sum()) * 100 / dists_to_unit_sphere.size
+            #     lf.info('unit sphere outliers > {} for default coef: {:2.1f}% - deleted', dist_use, outliers_percent)
+            #     vec3d = vec3d[:, b_ok_new]
+            index = index[b_ok]
+
+            # Repeat calibration removing outliers of the previous increasing input data requirements
+            max_outliers_percent = 10  # %
+            b_ok = np.ones(vec3d.shape[1], dtype=np.bool_)
+            # from too big to not too small:
+            dist_check = np.linspace(*np.sqrt([0.3, dist_check_min := 0.07]), dist_check_len := 10)**2  # slower at end
+            i_dc = 0
+            while i_dc < dist_check_len:
+                dc = dist_check[i_dc]
+                # Bin average spatially
+                index_avg, vec3d_avg, raw3d_other, n_in_cell = bin_avg_3d_partial(index[b_ok], vec3d[:, b_ok], bins=1000)
+                # Calibrate
+                A, b = calibrate(vec3d_avg)
+
+                s = np.dot(A, vec3d[:, b_ok] - b)  # s[:,:]
+                # Remove outliers > 1/sqrt(dc) from unit sphere
+                b_ok_new = (dist := abs(1 - np.linalg.norm(s, axis=0))) < dc
+
+                outliers_percent = (b_ok.size - b_ok_new.sum()) * 100 / b_ok.size
+                if outliers_percent > max_outliers_percent:
+                    lf.info('sphere outliers {:2.4f}: {:2.1f}% - too many -> use previous', dc, outliers_percent)
+                    break
+                # Jumps too far: where number of ouliers > max_outliers_percent
+                # elif b_ok_new.all():  # jumping to smaller dc
+                #     lf.info('Distance to unit sphere max/mean: {:.5f}/{:.5f}', dist_max := dist.max(), dist.mean())
+                #     if dist_max >= dist_check_min:  # decreasing dc (as we here because dist_max < dc)
+                #         i_dc = max(np.searchsorted(-dist_check, -dist_max), i_dc + 1)
+                #         continue
+                #     else:
+                #         break
+                else:
+                    lf.info('sphere outliers {:2.4f}: {:2.1f}%', dc, outliers_percent)
                     b_ok[b_ok] = b_ok_new
-                    # exact % of removed outliers
-                    outliers_percent = (dists_to_unit_sphere.size - b_ok_new.sum()) * 100 / dists_to_unit_sphere.size
-                    lf.info('unit sphere outliers > {} for default coef: {:2.1f}% - deleted', dist_use, outliers_percent)
-                    index = index[b_ok]
-                    vec3d = vec3d[:, b_ok_new]
+                i_dc += 1
 
-                # Replace nonuniform distributed data to less number of bins by averaging where more than 1 point im bin
-                rtp = xyz2spherical(vec3d)  # spherical coord (radius, theta, phi)
-                # Set u=cos(phi) to be uniformly distributed (so we have du=sin(phi)d(phi))
-                bin_stats = stats.binned_statistic_2d(
-                    rtp[1, :], np.cos(rtp[-1, :]), rtp[0, :], bins=int(np.fmin(np.sqrt(rtp.shape[1]), 100)),
-                    range=[[0, 2*np.pi], [-1, 1]])
+            # Overlay remained points on raw data (of last drawn coordinate) to get into what data is good/bad
+            fig_filt.axes[0].plot(index_avg, vec3d_avg[2, :], label='distributed 3D avg,\nnear to sphere',
+                                  marker='.', color='k', linewidth=0.5, markersize=2, linestyle='dashed')
+            # fig_filt.axes[0].scatterplot(n_in_cell, alpha=0.5)
+            fig_filt.axes[0].legend(prop={'size': 10}, loc='upper right')
+            try:
+                fig_filt.axes[0].figure.savefig(
+                    f'{fig_filt_save_prefix}{fig_filt.axes[0].title._text}.png', dpi=300, bbox_inches="tight"
+                    )
+            except Exception as e:
+                lf.warning(f'Can not save fig (filt): {standard_error_info(e)}')
 
-                i_sort = np.argsort(bin_stats.binnumber)
-                vec3d = vec3d[:, i_sort]
-                i_bins_sorted = bin_stats.binnumber[i_sort]
-                i_bins_sorted_change = np.hstack((0, np.flatnonzero(np.diff(i_bins_sorted))+1, len(i_sort)))
-                b_need_mean = np.diff(i_bins_sorted_change) > 1
-                # for display: all original points that will be replaced by averaging
-                raw3d_other = vec3d[
-                    :, np.hstack([
-                        np.arange(*i_st_en) for *i_st_en, b_need in zip(
-                        i_bins_sorted_change[:-1], i_bins_sorted_change[1:], b_need_mean) if b_need
-                        ])
-                    ]
-                # intact points that alone in grid cell and averaging other points in cell
-                vec3d = np.column_stack([
-                    vec3d[:, slice(*i_st_en)].mean(axis=1) if b_need else vec3d[:, i_st_en[0]] for *i_st_en, b_need in
-                    zip(i_bins_sorted_change[:-1], i_bins_sorted_change[1:], b_need_mean)
-                    ])
-                index = index[i_sort[i_bins_sorted_change[:-1]]]  # starts of vec3d
-                i_sort = np.argsort(index)
-                index = index[i_sort]
-                vec3d = vec3d[:, i_sort]
+            window_title = f"{tbl} '{channel}' channel ellipse"
+            fig = calibrate_plot(vec3d_avg, A, b, fig, window_title=window_title, raw3d_other=raw3d_other)
+            fig.savefig(fig_save_dir_path / 'images-channels_calibration' / (window_title + '.png'),
+                        dpi=300, bbox_inches='tight')
+            A_str, b_str = coef2str(A, b)
+            lf.info('Calibration coefficients calculated: \nA = \n{:s}\nb = \n{:s}', A_str, b_str)
+            coefs[tbl][channel] = {'A': A, 'b': b}
 
-                A, b = calibrate(vec3d)
-
-                # Repeat calibration removing outliers of the previous increasing input data requirements
-                b_ok = np.ones(vec3d.shape[1], dtype=np.bool_)
-                for rpt in range(2, 11):
-                    s = np.dot(A, vec3d[:, b_ok] - b)  # s[:,:]
-                    b_ok_new = abs(1 - np.linalg.norm(s, axis=0)) < 1 / rpt
-                    outliers_percent = (b_ok.size - b_ok_new.sum()) * 100 / b_ok.size
-                    if outliers_percent < 20:
-                        lf.info('sphere outliers {}: {:2.1f}%', rpt, outliers_percent)
-                        b_ok[b_ok] = b_ok_new
-                        A, b = calibrate(vec3d[:, b_ok])
-                    else:
-                        lf.info('too many sphere outliers {}: {:2.1f}% - stopped on previous', rpt, outliers_percent)
-                    if outliers_percent > 10:
-                        break
-                # overlay remained points on raw data (of last drawn coordinate) to get into what data is good/bad
-
-                fig_filt.axes[0].plot(index[b_ok], vec3d[2, b_ok], color='k', label=f'near to sphere')
-                try:
-                    fig_filt.axes[0].figure.savefig(
-                        f'{fig_filt_save_prefix}{fig_filt.axes[0].title._text}.png', dpi=300, bbox_inches="tight"
-                        )
-                except Exception as e:
-                    lf.warning(f'Can not save fig (filt): {standard_error_info(e)}')
-
-                window_title = f"{tbl} '{channel}' channel ellipse"
-                fig = calibrate_plot(vec3d[:, b_ok], A, b, fig, window_title=window_title, raw3d_other=raw3d_other)
-                fig.savefig(fig_save_dir_path / 'images-channels_calibration' / (window_title + '.png'), dpi=300, bbox_inches="tight")
-                A_str, b_str = coef2str(A, b)
-                lf.info('Calibration coefficients calculated: \nA = \n{:s}\nb = \n{:s}', A_str, b_str)
-                coefs[tbl][channel] = {'A': A, 'b': b}
-
-            # Zeroing Nord direction
-            time_range_nord = cfg['in']['time_range_nord']
-            if isinstance(time_range_nord, Mapping):
-                time_range_nord = time_range_nord.get(probe_number)
-            if time_range_nord:
-                coefs[tbl]['M']['azimuth_shift_deg'] = zeroing_azimuth(
-                    store, tbl, time_range_nord, calc_vel_flat_coef(coefs[tbl]), cfg['in'])
-            else:
-                lf.info('not zeroing North')
+        # Zeroing Nord direction (should be done after zero calibration?)
+        time_range_nord = cfg['in']['time_range_nord']
+        if isinstance(time_range_nord, Mapping):
+            time_range_nord = time_range_nord.get(probe_number_str)
+        if time_range_nord:
+            coefs[tbl]['M']['azimuth_shift_deg'] = zeroing_azimuth(
+                cfg['in']['db'], tbl, time_range_nord, calc_vel_flat_coef(coefs[tbl]), cfg['in']
+                )
+        else:
+            lf.info('not zeroing North')
 
     # Write coefs to each of output tables
     for db_path in cfg['out']['db_paths']:
@@ -869,21 +845,6 @@ def main(config: ConfigType) -> None:
     print('Ok>', end=' ')
 
 
-def xyz2spherical(xyz):
-    """
-    Cartesian to spherical coordinates
-    :param xyz: 3xN array
-    :return: rtp (radius, theta, phi)
-    """
-    rtp = np.zeros_like(xyz)
-    xy = xyz[0, :]**2 + xyz[1, :]**2
-    rtp[0, :] = np.sqrt(xy + xyz[2, :] ** 2)
-    rtp[1, :] = np.arctan2(np.sqrt(xy), xyz[2, :])  # for elevation angle defined from Z-axis down
-    #rtp[1, :] = np.arctan2(xyz[2, :], np.sqrt(xy))  # for elevation angle defined from XY-plane up
-    rtp[2, :] = np.arctan2(xyz[1, :], xyz[0, :])
-    return rtp
-
-
 # def main_call(
 #         cmd_line_list: Optional[List[str]] = None,
 #         fun: Callable[[], Any] = main
@@ -908,130 +869,3 @@ def xyz2spherical(xyz):
 
 if __name__ == '__main__':
     main()
-
-    # Calculation examples:
-    # inclinometer/190901incl_calibr.py
-    # or here:
-    if False:
-        time_ranges = {
-            30: ['2019-07-09T18:51:00', '2019-07-09T19:20:00'],
-            12: ['2019-07-11T18:07:50', '2019-07-11T18:24:22'],
-            5: ['2019-07-11T18:30:11', '2019-07-11T18:46:28'],
-            4: ['2019-07-11T17:25:30', '2019-07-11T17:39:30'],
-            }
-
-        time_ranges_nord = {
-            # 30: ['2019-07-09T17:54:50', '2019-07-09T17:55:22'],
-            # 12: ['2019-07-11T18:04:46', '2019-07-11T18:05:36'],
-            }
-
-        i = 14
-
-        # multiple time_ranges not supported so calculate one by one probe?
-        probes = [i]
-        main(['', '--db_path',
-              r'd:\WorkData\_experiment\inclinometer\190710_compas_calibr-byMe\190710incl.h5',
-              # r'd:\WorkData\_experiment\_2019\inclinometer\190320\190320incl.h5',
-              # r'd:\WorkData\_experiment\_2018\inclinometr\181003_compas\181003compas.h5',
-              '--channels_list', 'M,A',  # 'M,', Note: empty element cause calc of accelerometer coef.
-              '--tables_list', ', '.join(f'incl{i:0>2}' for i in probes),
-              #    'incl02', 'incl03','incl04','incl05','incl06','incl07','incl08','incl09','incl10','incl11','incl12','incl13','incl14','incl15','incl17','incl19','incl20','incl16','incl18',
-              '--time_range_list', str_range(time_ranges, i),
-              '--time_range_nord_list', str_range(time_ranges_nord, i),
-              # '--time_range_list', "'2019-03-20T11:53:35', '2019-03-20T11:57:20'",
-              # '--time_range_list', "'2019-03-20T11:49:10', '2019-03-20T11:53:00'",
-
-              # "'2018-10-03T18:18:30', '2018-10-03T18:20:00'",
-              # "'2018-10-03T17:18:00', '2018-10-03T17:48:00'",
-              # "'2018-10-03T18:10:19', '2018-10-03T18:16:20'",
-              # "'2018-10-03T17:13:09', '2018-10-03T18:20:00'",
-              # "'2018-10-03T17:30:30', '2018-10-03T17:34:10'",
-              # "'2018-10-03T17:27:00', '2018-10-03T17:50:00'",
-              # "'2018-10-03T17:23:00', '2018-10-03T18:05:00'",?
-              # "'2018-10-03T17:23:00', '2018-10-03T18:05:00'",
-              # "'2018-10-03T17:23:00', '2018-10-03T18:07:00'",
-              # "'2018-10-03T17:23:00', '2018-10-03T18:10:00'",
-              # "'2018-10-03T17:45:30', '2018-10-03T18:09:00'",
-              # "'2018-10-03T17:59:00', '2018-10-03T18:03:00'",
-              # "'2018-10-03T18:23:00', '2018-10-03T18:28:20'",
-              # "'2018-10-03T17:23:00', '2018-10-03T18:30:00'",
-              # "'2018-10-03T17:23:00', '2018-10-03T18:03:00'",
-              # "'2018-10-03T17:52:32', '2018-10-03T17:59:00'",
-              # "'2018-10-03T18:21:00', '2018-10-03T18:24:00'",
-              # "'2018-10-03T18:05:39', '2018-10-03T18:46:35'",
-              # "'2018-10-03T17:23:40', '2018-10-03T17:24:55'",
-              # "'2018-10-03T16:13:00', '2018-10-03T17:14:30'",
-
-              ])
-
-    # # Old variant not using argparser
-    #
-    # cfg = {'in': {
-    #     'db_path': r'd:\workData\BalticSea\171003_ANS36\inclinometr\171015_intercal_on_board\#*.TXT',
-    #     'use_time_range_list': ['2017-10-15T15:37:00', '2017-10-15T19:53:00'],
-    #     'delimiter': ',',
-    #     'skiprows': 13}}
-    #
-    # import pandas as pd
-    # from utils2init import ini2dict
-    # from inclinometer.h5inclinometer_coef import h5copy_coef, h5_rotate_coef
-    # cfg = ini2dict(r'D:\Work\_Python3\_projects\PyCharm\h5toGrid\to_pandas_hdf5\csv_inclin_Baranov.ini')
-    # tbl = cfg['out']['table']
-    # tblL = tbl + '/log'
-    # dt_add= np.timedelta64(60, 's')
-    # dt_interval = np.timedelta64(60, 's')
-    # fileInF= r'd:\WorkData\_experiment\_2017\inclinometr\1704calibration.h5'
-    # with pd.HDFStore(fileInF, mode='r') as storeIn:
-    #     # Query table tbl by intervals from table tblL. Join them
-    #     dfL = storeIn[tblL]
-    #     qstr_range_pattern = "index>=Timestamp('{}') & index<=Timestamp('{}')"
-    #     dfL.index= dfL.index + dt_add
-    #     dfcum= pd.DataFrame()
-    #     for n, r in enumerate(dfL.itertuples()): # if n == 3][0]  # dfL.iloc[3], r['Index']= dfL.index[3]
-    #         qstr = qstr_range_pattern.format(r.Index, r.Index + dt_interval) #r.DateEnd
-    #         Dat = storeIn.select(tbl, qstr)
-    #         dfcum= dfcum.append(Dat)
-    #
-    # if False:
-    #     # plot source
-    #     msg = 'Loaded ({})!'.format(dfcum.shape)
-    #     fig= plt.figure(msg)
-    #     ax1 = fig.add_subplot(112)
-    #
-    #     plt.title(msg)
-    #     plt.plot(dfcum['Hx'].values, color='b')
-    #     plt.plot(dfcum['Hy'].values, color='g')
-    #     plt.plot(dfcum['Hz'].values, color='r')
-    #
-    #     # ax = dfcum[['Hx', 'Hy', 'Hz']].plot()
-    #     # dfL['ones']= 1
-    #     # plt.plot(dfL['ones'], color='r')
-    #     # ax.set_ylabel('Magnetomer')
-    #     # plt.show()
-    #
-    # raw3d = np.array(dfcum[['Hx', 'Hy', 'Hz']]).T
-    # a2d, b = calibrate(raw3d)
-    # calibrate_plot(raw3d, a2d, b)
-    # h5copy_coef(r'd:\WorkData\_experiment\_2017\inclinometr\inclinometr.h5', fileInF, tbl, dict_matrices={'//coef//H//A': a2d, '//coef//H//C': b.T})
-    # h5_rotate_coef(h5file_source, h5file_dest, tbl)  # rotate G/A
-    # pass
-
-# Example of 3D sphere(?) plot
-# n_angles = 36
-# n_radii = 8
-#
-# radii = np.linspace(0.125, 1.0, n_radii)
-# angles = np.linspace(0, 2*np.pi, n_angles, endpoint=False)
-# angles = np.repeat(angles[..., np.newaxis], n_radii, axis=1)
-#
-# x = np.append(0, (radii*np.cos(angles)).flatten())
-# y = np.append(0, (radii*np.sin(angles)).flatten())
-# z = np.sin(-x*y)
-#
-# fig = plt.figure( figsize=(13,6))
-# fig.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0)
-# ax = fig.add_subplot(1, 2, 1, projection='3d')
-# ax2 = fig.add_subplot(1, 2, 2, projection='3d')
-#
-# ax.plot_trisurf(x, y, z, cmap=matplotlib.cm.jet, linewidth=0.2)
-# ax2.plot_trisurf(x, y, z, cmap=matplotlib.cm.viridis, linewidth=0.5)

@@ -1,0 +1,28 @@
+# Use as general cfg and overwrite this only specific values here: ``path_cruise`` and ``probes``.
+in:
+  path_cruise: 'd:/WorkData/_experiment/inclinometer/230425_Грузопоршневой'
+  # 200919-inclinometer
+  # raw_subdir: 'Преголя, ноябрь-декабрь 2020.rar'
+  #Balt_spit.zip
+  probes: [1,2,3]  # [10]
+  probes_prefix: incl_p
+  raw_pattern: "*{prefix:}{number:0>2}*.[tT][xX][tT]"
+
+#  time_range_zeroing_dict:
+#    14: [2020-07-10T21:31:00, 2020-07-10T21:39:00]
+
+  db_coefs: d:\WorkData\~configuration~\inclinometer\190710incl.h5
+
+
+filter:
+  min_date: {0: 2023-04-28T13:30:00}
+  max_date: {0: 2023-04-28T20:00}  # 15:05:00
+
+out:
+  # db_name: out_send.h5  # default: "incl.h5"
+  aggregate_period_s: [Null, 2, 300, 600, 7200]  #,   [300]  #[2, 300, 600, 7200]  # Null, Null means no average
+
+
+program:
+  step_start: 1
+  step_end: 1

@@ -4,30 +4,30 @@
   Author:  Andrey Korzh <ao.korzh@gmail.com>
   Purpose: Export pandas hdf5 tables data to csv files (hole or using intervals specified in table/log table)
   Created: 15.09.2020
-  Modified: 20.09.2020
+  See main() docstring
 """
 import sys
 import logging
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, Mapping, Optional, List, Sequence, Tuple, Union
-from datetime import timedelta
+from typing import Any, Callable, Dict, Iterator, Iterable, Mapping, Optional, List, Tuple
+# from datetime import timedelta
 from itertools import zip_longest
 
 import omegaconf  #, OmegaConf DictConfig, MISSING, open_dict OmegaConf, DictConfig, MISSING, open_dict
 import hydra
-from hydra.core.config_store import ConfigStore
+# from hydra.core.config_store import ConfigStore
 import numpy as np
 import pandas as pd
 # import vaex
 
-import to_vaex_hdf5.cfg_dataclasses
+import cfg_dataclasses
 
 from utils2init import LoggingStyleAdapter, dir_create_if_need, FakeContextIfOpen, set_field_if_no
 
 # from csv2h5_vaex import argparser_files, with_prog_config
 
-from to_pandas_hdf5.h5toh5 import h5move_tables, h5index_sort, h5init, h5log_rows_gen, h5find_tables
-from to_pandas_hdf5.CTD_calc import get_runs_parameters
+from to_pandas_hdf5.h5toh5 import h5find_tables
+from to_pandas_hdf5.CTD_calc import get_runs_parameters, add_ctd_params
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
 VERSION = '0.0.1'
@@ -38,6 +38,71 @@ VERSION = '0.0.1'
 # def version():
 #     """Show the version"""
 #     return 'version {0}'.format(VERSION)
+
+
+def rep_comma_sep_items(names: Iterable[str]) -> list[str]:
+    """
+    Replaces names that contain ',' to one word from them splitting them by ','. Repeated names with ',' are replaced
+    with corresponded to name order word from that name. At that, treats word with length less than first (or previous
+    returned) word as abbreviation containing only last characters, so appends them from left with chars equal to that
+    in previous returned word.
+    :param names: iterable of words
+    :return:
+    >>>  rep_comma_sep_items([
+    ... '49001,15,20', '49001,15,20', '49050,65', '50000', '50000,3', '49024', '49001,15,20', '50000,3'])
+    ['49001', '49015', '49050', '50000', '50000', '49024', '49020', '50003']
+    """
+    # Save state
+    prevs = {}
+
+    def replace_comma_separated(name_or_names: str) -> str:
+        """
+        Replaces comma separated items.
+        :param name_or_names: string that returns unmodified if not contains ',' else it is treated as many names
+        separates by ','. Which of them to return and whether to modify it is defined by nonlocal ``prevs`` dict having:
+        - i: index of word in previous same input ``name_or_names``
+        - name: previous name
+        :return:
+        >>>  prevs = {}
+        >>>  replace_comma_separated('49001,15,20')
+        '49001'
+        >>>  prevs = {'49001,15,20': {'name': '49001', 'i': 0}}
+        >>>  replace_comma_separated('49001,15,20')
+        '49015'
+        >>>  prevs = {'49001,15,20': {'name': '49015', 'i': 1}}
+        >>>  replace_comma_separated('49001,15,20')
+        '49020'
+        # If i-field is too big then just return saved name-field:
+        >>>  prevs = {'49001,15,20': {'name': '49001', 'i': 2}}
+        >>>  replace_comma_separated('49001,15,20')
+        '49001'
+        """
+        nonlocal prevs
+        if ',' in name_or_names:
+            names_list = name_or_names.split(',')
+            try:
+                prev = prevs[name_or_names]
+                lp = len(prev_name:=prev['name'])
+                prev_i = prev['i']
+                prev_i += 1
+                try:
+                    name = names_list[prev_i]
+                except IndexError:
+                    # remaining on previous saved name and last prev_i
+                    name = prev_name
+                    prev_i = len(names_list) - 1
+                else:
+                    ln = len(name)
+                    if ln < lp:  # add skipped chars from left of name:
+                        name = f'{prev_name[:-ln]}{name}'
+                prevs[name_or_names] = {'name': name, 'i': prev_i}
+            except KeyError:
+                prevs[name_or_names] = {'name': (name:=names_list[0]), 'i': 0}
+            return name
+        else:  # name_or_names actually is a name
+            return name_or_names
+
+    return [replace_comma_separated(n) for n in names]
 
 
 def dd_to_csv(
@@ -140,8 +205,9 @@ def h5_tables_gen(db_path, tables, tables_log, db=None) -> Iterator[Tuple[str, p
 
 def order_cols(
         df: pd.DataFrame,
-        cols: Mapping[str, str] = None,
-        i_log: Optional[int] = None
+        cols: Mapping[str, Any] = None,
+        i_log: Optional[int] = None,
+        df_log: Optional[int] = None
         ) -> pd.DataFrame:
     """
 
@@ -150,6 +216,7 @@ def order_cols(
     - mapping out column names to expressions (which includes input col. names) for pd.DataFrame.eval()
     - just input column names
     :param i_log: log row index to can eval expressions referring it as '@i_log'
+    :param df_log: log DataFrame to can eval expressions referring it as '@df_log'
     :return:
     """
     if not cols:
@@ -166,7 +233,7 @@ def order_cols(
     #
     # if i_term_is_used():
 
-    # Add row index to local  can eval expressions referring it as '@i'
+    # Add row index to local so in df.eval(expression) we can use it referring as '@i'
     i = np.arange(df.shape[0])  # pd.RangeIndex( , name='rec_num') same effect
 
     df_out = pd.DataFrame(index=df.index)
@@ -176,7 +243,7 @@ def order_cols(
 
     dict_rename = {}
     for icol, (out_col, in_col) in enumerate(cols.items()):
-        if in_col.isidentifier() and in_col not in dict_rename:
+        if isinstance(in_col, str) and in_col.isidentifier() and in_col not in dict_rename:
             if in_col not in df.columns:
                 if icol == 0 and in_col == 'index':
                     # just change index name
@@ -197,7 +264,22 @@ def order_cols(
             cols = {**cols, **dict(zip(df_out.columns, df.columns))}
             break
         else:
-            df_out[out_col] = df.eval(in_col)
+            if isinstance(in_col, str) and ('@' in in_col or 'df.' in in_col): # not
+                df_out[out_col] = df.eval(in_col)
+            elif callable(in_col):  # in_col(df) if callable(in_col) else
+                df_out[out_col] = [in_col(ii) for ii in i]  # .apply(
+            else:
+                df_out[out_col] = eval(in_col)
+                    
+                    # in_col = in_col.strip().replace('\\', '')
+                    # try:
+                    #     df_out[out_col] = eval(f'[out_cols_{out_col}_fun(ii) for ii in i]')
+                    # except NameError as e:
+                    #     if in_col.startswith('def '):
+                    #         gpx_names_fun = exec(in_col)  # gpx_names_fun_str
+                    #         df_out[out_col] = eval('[gpx_names_fun(ii) for ii in i]')
+                    #     else:
+                    
 
     df_to_rename = df[dict_rename.keys()]
     # removing index if exists because df.rename() renames only columns and add it as column
@@ -260,7 +342,8 @@ hydra.output_subdir = 'cfg'
 # hydra.conf.HydraConf.run.dir = './outputs/${now:%Y-%m-%d}_${now:%H-%M-%S}'
 
 cs_store_name = Path(__file__).stem
-cs, ConfigType = to_vaex_hdf5.cfg_dataclasses.hydra_cfg_store(f'base_{cs_store_name}', {
+cs, ConfigType = cfg_dataclasses.hydra_cfg_store(
+    cs_store_name, {
     'input': ['in_hdf5'],  # Load the config "in_hdf5" from the config group "input"
     'out': ['out_csv'],  # Set as MISSING to require the user to specify a value on the command line.
     'filter': ['filter_CTD'],
@@ -271,14 +354,15 @@ cs, ConfigType = to_vaex_hdf5.cfg_dataclasses.hydra_cfg_store(f'base_{cs_store_n
 
 cfg = {}
 
-@hydra.main(config_name=cs_store_name, config_path="cfg")  # adds config store data/structure to :param config
-def main(config: ConfigType) -> None:
+@hydra.main(config_name=cs_store_name, config_path="cfg", version_base='1.3')  # adds config store cs_store_name data/structure to :param config data/structure to :param config
+def cfg_by_hydra(config: ConfigType):
     """
+    Exports Pandas HDF5 store tables data *.h5 to CSV-like files
     ----------------------------
-    Save data tp CSV-like files
-    from Pandas HDF5 store*.h5
-    ----------------------------
-    Can output data csv and headers csv. Corresponded columns are determined by ``cols`` and ``cols_log`` fields of ``config[out]``.
+    Saves to CSV specified columns of the HDF5 store data table and its meta table (that contains starts and
+    ends of records to split data in many files). Applies data modification functions and renaming of columns.
+    Also:
+    - calculates CTD columns, accepted by add_ctd_params() that are specified in config['out']['cols'] values
     :param config: with fields:
     - in - mapping with fields:
       - tables_log: - log table name. Can have placeholder '{}' that will be replaced by data table name
@@ -289,6 +373,8 @@ def main(config: ConfigType) -> None:
       column names and functions with them to eval. Also, these predefined variables can be used:
         - "@i": data row number,
         - "@i_log": log row number that was used to load data range.
+        - "@df_log": log row number that was used to load data range.
+
       - cols_log: Same as cols, but maps output header csv column names to input log table column names.
         Note: predefined variable of log row number here is "@i".
       - text_date_format
@@ -298,13 +384,32 @@ def main(config: ConfigType) -> None:
 
     """
     global cfg
-    cfg = to_vaex_hdf5.cfg_dataclasses.main_init(config, cs_store_name)
-    cfg = to_vaex_hdf5.cfg_dataclasses.main_init_input_file(cfg, cs_store_name)
-    #h5init(cfg['in'], cfg['out'])
+    
+    cfg = cfg_dataclasses.main_init(config, cs_store_name)
+    cfg = cfg_dataclasses.main_init_input_file(cfg, cs_store_name)
+    #h5out_init(cfg['in'], cfg['out'])
     #cfg['out']['dt_from_utc'] = 0
+    return
 
 
-    qstr_trange_pattern = "index>=Timestamp('{}') & index<=Timestamp('{}')"
+def main(**kwargs) -> None:
+    global cfg
+    cfg_by_hydra()
+    
+    if 'out_col_station_fun' in kwargs:
+        # assign to global variable
+        cfg['out']['col_station_fun'] = kwargs['out_col_station_fun']
+        # replace call to of gl
+        cfg['out']['cols'] = dict(cfg['out']['cols'])
+        cfg['out']['cols']['station'] = cfg['out']['cols']['station'].replace(
+            'out_col_station_fun', "cfg['out']['col_station_fun']"
+        )
+        cfg['out']['cols_log'] = dict(cfg['out']['cols_log'])
+        cfg['out']['cols_log']['station'] = cfg['out']['cols_log']['station'].replace(
+            'out_col_station_fun', "cfg['out']['col_station_fun']"
+        )
+      
+    qstr_trange_pattern = "index>='{}' & index<='{}'"
     # Prepare saving to csv
     # file name for files and log list:
     for fun in ['file_name_fun', 'file_name_fun_log']:
@@ -314,11 +419,11 @@ def main(config: ConfigType) -> None:
                     (lambda i_log, t_st, t_en, tbl: f'log@{tbl}.csv') if fun.endswith('log') else
                     (lambda i_log, t_st, t_en, tbl: f'{t_st:%y%m%d_%H%M}-{t_en:%H%M}@{tbl}.csv')
                 )  # f'_{i}.csv'
-            )
+            ) if fun not in kwargs else kwargs[fun]
     set_field_if_no(cfg['out'], 'text_path', cfg['in']['db_path'].parent)
     dir_create_if_need(cfg['out']['text_path'])
 
-    ## Main circle ############################################################
+    # Main circle #############################################################
     i_log_row_st = 0
     for tbl, tbl_log, store in h5_tables_gen(cfg['in']['db_path'], cfg['in']['tables'], cfg['in']['tables_log']):
         # save log list
@@ -358,7 +463,18 @@ def main(config: ConfigType) -> None:
             print('.', end='')
             qstr = qstr_trange_pattern.format(log_row.Index, log_row.DateEnd)
             df_raw = store.select(tbl, qstr)
-            df_csv = order_cols(df_raw, cfg['out']['cols'], i_log=i_log_row)
+
+            # calculate CTD columns that are specified in cfg['out']['cols'] values
+            df_raw = add_ctd_params(
+                df_raw, {
+                    **cfg,
+                    'out': {
+                        'data_columns': [c for c in cfg['out']['cols'].values() if isinstance(c, str) and c.isalnum()]
+                    }
+                },
+                lon=log_row.Lon_st, lat=log_row.Lat_st
+            )
+            df_csv = order_cols(df_raw, cfg['out']['cols'], i_log=i_log_row, df_log=df_log_csv)
             # Save data
             df_csv.to_csv(
                 cfg['out']['text_path'] / cfg['out']['file_name_fun'](
@@ -376,7 +492,8 @@ def main(config: ConfigType) -> None:
 
 def main_call(
         cmd_line_list: Optional[List[str]] = None,
-        fun: Callable[[], Any] = main
+        fun: Callable[[Any], Any] = main,
+        **kwargs
         ) -> Dict:
     """
     Adds command line args, calls fun, then restores command line args
@@ -390,12 +507,10 @@ def main_call(
         sys.argv += cmd_line_list
 
     # hydra.conf.HydraConf.run.dir = './outputs/${now:%Y-%m-%d}_${now:%H-%M-%S}'
-    fun()
+    fun(**kwargs)
     sys.argv = sys_argv_save
     return cfg
 
 
 if __name__ == '__main__':
     main()  #[f'--config-dir={Path(__file__).parent}'])
-
-

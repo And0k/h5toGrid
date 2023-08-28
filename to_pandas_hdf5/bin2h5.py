@@ -21,12 +21,12 @@ import pandas as pd
 
 from to_pandas_hdf5.csv2h5 import init_input_cols, set_filterGlobal_minmax
 from to_pandas_hdf5.h5_dask_pandas import h5_append
-from to_pandas_hdf5.h5toh5 import h5temp_open, h5move_tables, h5init, h5index_sort, h5_dispenser_and_names_gen
+from to_pandas_hdf5.h5toh5 import h5temp_open, h5move_tables, h5out_init, h5index_sort, h5_dispenser_and_names_gen
 from utils2init import my_argparser_common_part, cfg_from_args, init_logging, init_file_names, Ex_nothing_done, \
     set_field_if_no, this_prog_basename
 
 if __name__ == '__main__':
-    l = None  # see main(): l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+    l = None  # see main(): l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
 else:
     l = logging.getLogger(__name__)
 
@@ -195,7 +195,7 @@ def readBinFramed(path_in, cfg_in: Mapping[str, Any], sinchro_words=None):
         bStartOk = d == len_frame
 
         # Detect frames containing data equal to sinchro_words
-        # Check adjasent bad intervals which less than data frame:
+        # Check adjacent bad intervals which less than data frame:
         bAdj_inBad = d < len_frame
         bAdj_inBad[:-1] &= bAdj_inBad[1:]
         bAdj_inBad[-1] = False
@@ -207,7 +207,7 @@ def readBinFramed(path_in, cfg_in: Mapping[str, Any], sinchro_words=None):
             s = 0
             for k, d_cur in zip(iAdj_inBad, d[bAdj_inBad]):
                 kPrev += 1
-                if kPrev != k:  # start cumullate sum of next group of adjasent bad frames
+                if kPrev != k:  # start cumullate sum of next group of adjacent bad frames
                     kPrev = k
                     s = 0
                     continue
@@ -230,7 +230,7 @@ def readBinFramed(path_in, cfg_in: Mapping[str, Any], sinchro_words=None):
         if np.any(~bStartOk):
             temp = np.sum(~bStartOk)
             indOk = 100 * temp / (temp + nFrames)
-            l.warning(', {:d} bad frames ({:2.2f}% of {:d} good)! - continue... '.format(temp, indOk, nFrames))
+            l.warning(', {:d} bad frames ({:2.2f}% of {:d} good)! ↦ continue... '.format(temp, indOk, nFrames))
 
         iSt = iSt[bStartOk]  # use only frames enclosed with sinchro_words
         V = np.zeros(shape=(len(iSt),), dtype=cfg_in['dtype'])  # , cfg_in['data_words'] np.uint16
@@ -280,7 +280,7 @@ def main(new_arg=None, **kwargs):
     elif cfg['program']['return'] == '<cfg_from_args>':  # to help testing
         return cfg
 
-    l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+    l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
     print('\n', this_prog_basename(__file__), end=' started. ')
     try:
         cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
@@ -319,7 +319,7 @@ def main(new_arg=None, **kwargs):
     cfg['out']['dtype'] = np.dtype({
         'formats': cfg['out']['formats'],
         'names': cfg['out']['names']})
-    h5init(cfg['in'], cfg['out'])
+    h5out_init(cfg['in'], cfg['out'])
 
     # cfg['Period'] = 1.0 / cfg['in']['fs']  # instead Second can use Milli / Micro / Nano:
     # cfg['pdPeriod'] = pd.to_timedelta(cfg['Period'], 's')
@@ -483,7 +483,7 @@ bStartOk= diff(indStart)==100;
 nFrames= sum(bStartOk);
 if any(~bStartOk):
     temp= sum(~bStartOk);  indOk= 100*temp/(temp+nFrames);
-    fprintf(', %d bad frames (%2.2f% of %d good)! - skip... ', temp, indOk, nFrames);
+    fprintf(', %d bad frames (%2.2f% of %d good)! ↦ skip... ', temp, indOk, nFrames);
 
 """
 """
@@ -540,7 +540,7 @@ if any(bHB)
         bBad= bBad&(out(:, iOutCols-1)==0);
         out(:, iOutCols-1)= uint32(rep2previous(single(out(:,iOutCols-1)), bBad));
       else
-        fprintf(1, '\nAll zeros in %s! - skip... ', ...
+        fprintf(1, '\nAll zeros in %s! ↦ skip... ', ...
           cfg['']Name{cfg['']iperm(iOutCols)});
       end
     end

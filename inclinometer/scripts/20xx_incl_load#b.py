@@ -6,7 +6,7 @@ from inclinometer.incl_load import main as incl_load
 
 
 incl_load([
-    'cfg/230109incl_load#b.yml',  # 220910incl_load#b.yml 200907incl_load#b.yml
+    'cfg/220906incl_load#b_KaS.yml',  #220910incl_load#b.yml 230109incl_load#b.yml  200907incl_load#b.yml
     #'--raw_subdir', 'Инкл_2022_12_01.rar'  # '{prefix:}{number:0>2}.ZIP',
     #'--min_date_dict', '2: 2020-09-09T15:30:00',
     #'--step_start_int', '1',
@@ -14,7 +14,7 @@ incl_load([
     #'--aggregate_period_s_not_to_text_int_list', '',  #  '2,600,7200',
     #'--split_period', '',
     #'--probes_int_list', '2',  #'3,4,8,9,11,14,17,21,22', #'5,7,19,24', #'11', #
-    #'--dask_scheduler', 'synchronous'
+     '--dask_scheduler', 'synchronous'
     ])
 # '../tests/data/inclinometer/200813incl_load#b-sent.yml'
 # 'cfg/200813incl_load#b-paths_relative_to_scripts.yml', #'--step_start_int', '2'

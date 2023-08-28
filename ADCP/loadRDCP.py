@@ -125,9 +125,9 @@ def repInFile(nameFull, cfg, result):  # result is previous or with ['nameNavFul
     nameD, nameFE = os_path.split(nameFull)
 
     # 1. Get date from file name:
-    m = cfg['re mask']['date'].match(nameFE);
+    m = cfg['re mask']['date'].match(nameFE)
     bTimeInName = False
-    if (not m is None) and (not m.group(1) is None):  # and len(m.groups())>0:
+    if (m is not None) and (m.group(1) is not None):  # and len(m.groups())>0:
         bFoundDate = True
         if m.group(2) is None:
             strDate = m.group(1) + '_0000'
@@ -154,7 +154,7 @@ def repInFile(nameFull, cfg, result):  # result is previous or with ['nameNavFul
                     # 1.1 Get more accurate time from source file for veusz if exist
                     # a) Get source file name
                     m = cfg['re mask']['data'].search(file_content)
-                    if (not m is None) and (not m.group(1) is None):
+                    if (m is not None) and (m.group(1) is not None):
                         nameDatFE = m.group(1)
                         nameDatFull = os_path.join(nameD, nameDatFE)
                         # b) Get date from source binary file modification stamp:

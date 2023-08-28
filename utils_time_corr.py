@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
-from win32com.client import Dispatch
 from time import sleep
 
 from filters import find_sampling_frequency, longest_increasing_subsequence_i, rep2mean, repeated2increased, \
@@ -277,7 +276,7 @@ def time_corr(
                 make_linear(t, freq)  # changes t (and tim?)
                 # Check if we can use them
                 bbad = check_time_diff(tim_before, t.view('M8[ns]'), dt_warn=pd.Timedelta(minutes=2),
-                                       mesage='Big time diff after corr: difference [min]:')
+                                       msg='Big time diff after corr: difference [min]:')
                 if np.any(bbad):
                     b_ok = ~bbad
                     b_show = True
@@ -313,17 +312,17 @@ def time_corr(
 
         if cfg_in.get('b_keep_not_a_time'):
             if n_same > 0:
-                lf.warning('nonincreased time ({:d} times) is detected! - interp ', n_same)
+                lf.warning('non-increased time ({:d} times) is detected! ↦ interp ', n_same)
         else:
-            # prepare to interp all nonincreased (including NaNs)
+            # prepare to interp all non-increased (including NaNs)
             if n_bad_in:
                 b_same_prev &= ~b_ok_in
 
             msg = ', '.join(
-                f'{fault} time ({n} times)' for (n, fault) in ((n_same, 'nonincreased'), (n_bad_in, 'NaN')) if n > 0
+                f'{fault} time ({n} times)' for (n, fault) in ((n_same, 'non-increased'), (n_bad_in, 'NaN')) if n > 0
                 )
             if msg:
-                lf.warning('{:s} is detected! - interp ', msg)
+                lf.warning('{:s} is detected! ↦ interp ', msg)
 
         if n_same > 0 or n_decrease > 0:
             # rep2mean(t, bOk=np.logical_not(b_same_prev if n_decrease==0 else (b_same_prev | b_decrease)))
@@ -351,14 +350,9 @@ def time_corr(
     return pd.to_datetime(t, utc=True), b_ok
 
 
-from bokeh.plotting import figure, output_file, show
-from bokeh.io import export_png, export_svgs
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-
-
-
 def get_version_via_com(filename):
+    from win32com.client import Dispatch
+    
     parser = Dispatch("Scripting.FileSystemObject")
     try:
         version = parser.GetFileVersion(filename)
@@ -384,6 +378,11 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
     :param msg:
     :return:
     """
+    from bokeh.plotting import figure, output_file, show
+    from bokeh.io import export_png, export_svgs
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+    
     save_format_suffix = '.png'
     # output figure name
     fig_name = '{:%y%m%d_%H%M}-{:%H%M}'.format(*(
@@ -475,7 +474,3 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
     if isinstance(fig_name, Path) and save_format_suffix != '.html':
         (export_png if save_format_suffix == '.png' else export_svgs)(
             p, filename=fig_name.with_suffix(save_format_suffix), webdriver=web_driver)
-
-
-
-

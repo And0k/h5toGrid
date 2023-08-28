@@ -20,8 +20,11 @@ from scripts.netcdf2csv import main as netcdf2csv
 # dir_save
 # lat_st, lon_st
 # use_date_range - Set [] to load from last loaded data to now
-dir_save, lat_st, lon_st, use_date_range = r'd:\WorkData\KaraSea\220906_AMK89-1\meteo', 72.33385, 63.53786, ['2022-09-01', '2022-09-15']
-
+dir_save, lat_st, lon_st, use_date_range = r'd:\WorkData\BalticSea\230616_Kulikovo@i3,4,19,37,38,p1-3,5,6\meteo', 54.95328, 20.32387, ['2023-06-15', '2023-07-25']
+# dir_save, lat_st, lon_st, use_date_range = r'd:\WorkData\BalticSea\221105_ASV54\meteo', 55.88, 19.12, ['2022-11-01', '2023-05-01']
+# dir_save, lat_st, lon_st, use_date_range = r'd:\WorkData\BalticSea\230507_ABP53\meteo', 55.922656, 19.018713, ['2023-05-01', '2023-05-31']
+# dir_save, lat_st, lon_st, use_date_range = r'd:\WorkData\KaraSea\220906_AMK89-1\meteo', 72.33385, 63.53786, ['2022-09-01', '2022-09-15']
+# dir_save, lat_st, lon_st, use_date_range = r'd:\WorkData\BalticSea\230423inclinometer_Zelenogradsk\meteo', 54.953351, 20.444820, None # ['2023-04-23', '2023-05-01']
 
 # r'e:\WorkData\BalticSea\181005_ABP44\meteo', 55.88333, 19.13139, ['2018-10-01', '2019-01-01']
 # r'd:\WorkData\BalticSea\220601_ABP49\meteo'
@@ -110,7 +113,9 @@ class ReverseFile(IOBase):
 
 
 if not use_date_range:
-    with ReverseFile(r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\wind\200901wind@ECMWF-ERA5(N54.615,E19.841).tsv',
+    with ReverseFile(
+        r'd:\WorkData\BalticSea\230423inclinometer_Zelenogradsk\meteo\230423wind@ECMWF-ERA5(N54.953,E20.445).tsv',
+        # r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\wind\200901wind@ECMWF-ERA5(N54.615,E19.841).tsv',
               encoding='ascii') as f_prev:
         last_line = next(f_prev)
     print('last ECMWF data found:', last_line)
@@ -209,3 +214,5 @@ if False:  # old
         }})
 
 print('ok')
+
+#%%

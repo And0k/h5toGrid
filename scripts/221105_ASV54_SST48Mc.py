@@ -15,7 +15,7 @@ import veuszPropagate
 from to_pandas_hdf5.csv2h5 import main as csv2h5
 from to_pandas_hdf5.gpx2h5 import main as gpx2h5
 from to_pandas_hdf5.CTD_calc import main as CTD_calc
-# from to_pandas_hdf5.csv_specific_proc import proc_loaded_corr
+# from to_pandas_hdf5.csv_specific_proc import loaded_corr
 from h5toGpx import main as h5toGpx
 from grid2d_vsz import main as grid2d_vsz
 from to_pandas_hdf5.h5toh5 import h5log_names_gen
@@ -86,12 +86,12 @@ common_ctd_params_list = [
     '--min_dict', f'Cond:0.5, Sal:0.2, O2:-2, O2ppm:-2',  # deletes zeros & strange big negative values  # SigmaT:2,
     '--max_dict', f'O2:200, O2ppm:20',  #, {max_coord} for REDAS-like data
 ]
-common_ctd_params_dict = \
+device_params_dict = \
     {
      }
 
 if st(10, f'Save {device} data to DB'):
-    from to_pandas_hdf5.csv_specific_proc import proc_loaded_sst
+    from to_pandas_hdf5.csv_specific_proc import loaded_sst
     csv2h5([
         'cfg/csv_CTD_SST.ini',
         '--path', str(path_cruise / device / '_raw' / '22*[0-9].TOB'),
@@ -106,9 +106,9 @@ if st(10, f'Save {device} data to DB'):
         # '--on_bad_lines', 'warn'
         #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
         ] + common_ctd_params_list,
-        **{  # **common_ctd_params_dict,
+        **{  # **device_params_dict,
             'in': {
-                'fun_proc_loaded': proc_loaded_sst,
+                'fun_proc_loaded': loaded_sst,
                 'csv_specific_param': {
                     'Temp_fun': lambda x: np.polyval([
                         -1.2268433823676e-6, 4.91808363884267e-5, 0.99938539313664, 0.0074516860934196], x),
@@ -126,7 +126,7 @@ if st(20, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params
     # Extracts CTD runs (needed if files are not splitted on runs).
     # Note: Saves extended log needed by pattern used in next step with veuszPropagate()
     # todo: be able provide log with (Lat,Lon) separately
-    st.go = () != CTD_calc(['cfg/CTD_calc-find_runs.ini',
+    st.go = () != CTD_calc(['cfg/ctd_calc-find_runs.ini',
         '--db_path', str(path_db),
         '--tables_list', f'{device}',
         #'--table_nav', '',       # uncomment if nav data only in CTD data file
@@ -166,7 +166,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
         }
     f_row2name = lambda r: '{:%y%m%d_%H%M%S}.vsz'.format(r['Index'])
     # It is possible to add exact interval to filename but time after probe is back on surface can be determined only
-    # from next row so we rely on ~pattern_loader.vsz to do it. Even freq=16Hz to determine last time not helps:
+    # from next row, so we rely on ~pattern_loader.vsz to do it. Even freq=16Hz to determine last time not helps:
     # '_{}s.vsz'.format(round(max(r['rows']/16, (r['DateEnd'] - r['Index'] + pd.Timedelta(300, "s")).total_seconds()))
     pattern_code = cfg_in['pattern_path'].read_bytes()  # encoding='utf-8'
     filename_st = None
@@ -201,7 +201,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
 if False:
     # Merge each needed runs
     import pandas as pd
-    from to_pandas_hdf5.h5toh5 import h5move_tables, merge_two_runs  #, h5index_sort, h5init
+    from to_pandas_hdf5.h5toh5 import h5move_tables, merge_two_runs  #, h5index_sort, h5out_init
 
     tbl = f'/{device}'
     tbl_log = f'{tbl}/logRuns'
@@ -291,7 +291,7 @@ if st(80, 'Gridding'):  # and False: #
     # todo: bug: bad top and bottom edges
 
 if st(110, 'Export csv with some new calculated parameters'):  # False: #
-    CTD_calc([  # 'CTD_calc-find_runs.ini',
+    CTD_calc([  # 'ctd_calc-find_runs.ini',
         '--db_path', str(path_db),
         '--tables_list', f'{device}',
         '--tables_log', '{}/logRuns',
@@ -301,7 +301,7 @@ if st(110, 'Export csv with some new calculated parameters'):  # False: #
         '--path_csv', str(path_cruise / device / 'txt_processed'),
         '--data_columns_list', 'Pres, Temp, Cond, Sal, O2, O2ppm, SA, sigma0, depth, soundV',  #, pH, Eh  , Lat, Lon
         '--b_incremental_update', 'True',
-        # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
+        # todo: check it. If False need delete all previous result of ctd_calc() or set min_time > its last log time
         '--out.tables_list', 'None',
         ])
 
@@ -372,7 +372,7 @@ if st(210, f'Save {device} data to DB'):
     #                                               Sound Vel. [m/s]	Density [kg/mі]	Spec. Cond. [mS/cm]	Comments
     # 08:35:22	0	-0.2	9.158	-0.006	0.000	1443.90	999.77	-0.008
     # 08:35:25	0	-0.2	9.814	6.578	5.205	1452.98	1003.79	9.447
-    from to_pandas_hdf5.csv_specific_proc import proc_loaded_sst_mws
+    from to_pandas_hdf5.csv_specific_proc import loaded_sst_mws
 
     csv2h5([
         #'cfg/csv_CTD_SST.ini',
@@ -392,7 +392,7 @@ if st(210, f'Save {device} data to DB'):
             #                        'Sal_fun': lambda x: (1 + 0.032204423446495364) * x + 0.045516504802752523,
             #                        'Cond_fun': lambda x: -0.000098593 * x ** 2 + 1.040626 * x + 0.01386
             #                        }
-            'fun_proc_loaded': proc_loaded_sst_mws,
+            'fun_proc_loaded': loaded_sst_mws,
             'csv_specific_param': {
                 'Temp_fun': lambda x: np.polyval([
                     - 1.49640674355499e-8, 2.73759658836018e-6, -8.36587113499398e-5, 1.0006301100888,
@@ -407,7 +407,7 @@ if st(210, f'Save {device} data to DB'):
 if st(220, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params'):  # False: # (if files are not splitted on runs).
     # Note: extended logRuns fields needed in Veusz in next step
     # todo: be able provide log with (Lat,Lon) separately, improve start message if calc runs, check interpolation
-    st.go = () != CTD_calc(['cfg/CTD_calc-find_runs.ini',
+    st.go = () != CTD_calc(['cfg/ctd_calc-find_runs.ini',
               '--db_path', str(path_db),
               '--tables_list', f'{device}',
               '--min_samples', '20',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
@@ -506,7 +506,7 @@ if st(280, 'Gridding'):  # and False: #
 
 if st(290, 'Export csv with some new calculated parameters'):  # False: #
     # Extract CTD runs (if files are not splitted on runs):
-    CTD_calc([  # 'CTD_calc-find_runs.ini',
+    CTD_calc([  # 'ctd_calc-find_runs.ini',
         '--db_path', str(path_db),
         '--tables_list', f'{device}',
         '--tables_log', '{}/logRuns',
@@ -516,7 +516,7 @@ if st(290, 'Export csv with some new calculated parameters'):  # False: #
         '--path_csv', str(path_cruise / device_folder / 'txt_processed'),
         '--data_columns_list', 'Pres, Temp, Cond, Sal, Lat, Lon, SA, sigma0, depth, soundV',  # O2, O2ppm,
         '--b_incremental_update', 'True',
-        # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
+        # todo: check it. If False need delete all previous result of ctd_calc() or set min_time > its last log time
         '--out.tables_list', 'None',
         ])
 

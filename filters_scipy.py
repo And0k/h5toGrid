@@ -14,14 +14,17 @@ def despike(x: np.ndarray,
             ) -> Tuple[np.ndarray, Optional[matplotlib.axes.Axes]]:
     r"""
     Compute the statistics of the x ($\mu$ and $\sigma$) and marks (but do not exclude yet) x
-    that deviates more than $n1 \times \sigma$ from the mean, Based on [https://ocefpaf.github.io/python4oceanographers/blog/2013/05/20/spikes/]
+    that deviates more than $n1 \times \sigma$ from the mean,
+    Based on [https://ocefpaf.github.io/python4oceanographers/blog/2013/05/20/spikes/]
     :param x: flat numpy array (that need to filter)
-    :param offsets: offsets to std. First offsets should be bigger to delete big spikes first and then filter be sensetive to more subtle errors
+    :param offsets: offsets to std. First offsets should be bigger to delete big spikes first and then filter be
+    sensitive to more subtle errors
     :param blocks: filter window width
     :param ax: if not None then plots source and x averaged(blocks) on provided ax
-    :param label: if not None then allow plots. If bool(label) result will be plotted with label legend
-    :param std_smooth_sigma: gaussian smooth parameter, if not None std will be smoothed before multiply to offset and compare to |data - <data>|.
-    :param x_plot: x data to plot y
+    :param label: for debug: if not None then allow plots. If bool(label) result will be plotted with label legend
+    :param std_smooth_sigma: gaussian smooth parameter, if not None std will be smoothed before multiply to offset and
+    compare to |data - <data>|.
+    :param x_plot: for debug: x data to plot y
     :return y: x with spikes replaced by NaNs
     """
     if not len(offsets):
@@ -73,7 +76,7 @@ def despike(x: np.ndarray,
     if __debug__:
         print('despike(offsets=', offsets, ', blocks=', blocks, ') deletes', n_filtered, ' points')
         if ax is not None:
-            ax.plot(x_plot, y, color='g', label=f'despike{blocks}{offsets}({label})')
+            ax.plot(x_plot, y, color='g', label=f'despike{blocks}{offsets}({label})', linewidth=0.5)
             ax.set_xlim(x_plot[[0, -1]])
 
     return y, ax

@@ -6,7 +6,7 @@ from functools import partial
 
 from to_pandas_hdf5.csv2h5 import *  # main as csv2h5, __file__ as file_csv2h5, read_csv
 from to_pandas_hdf5.csv_specific_proc import *
-from to_pandas_hdf5.h5toh5 import h5init, h5del_obsolete
+from to_pandas_hdf5.h5toh5 import h5out_init, h5del_obsolete
 
 from to_pandas_hdf5.h5_dask_pandas import filterGlobal_minmax, h5_append_dummy_row
 from utils2init import path_on_drive_d
@@ -23,7 +23,7 @@ sys.path.append(str(Path(test_path).parent.resolve()))
 # os.chdir(os.path.dirname(scripts_path))
 
 
-def test_proc_loaded_nav_HYPACK_SES2000(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any]) -> pd.DatetimeIndex:
+def test_loaded_nav_HYPACK_SES2000(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any]) -> pd.DatetimeIndex:
     """
     Specified prep&proc of SES2000 data from program "HYPACK":
     - Time calc: gets string for time in current zone
@@ -41,7 +41,7 @@ def test_proc_loaded_nav_HYPACK_SES2000(a: Union[pd.DataFrame, np.ndarray], cfg_
     'Depth': 43.01}
     """
 
-    proc_loaded_nav_HYPACK_SES2000(a, cfg_in)
+    loaded_nav_HYPACK_SES2000(a, cfg_in)
 
 
     # extract date from file name
@@ -87,7 +87,7 @@ def test_rep_in_file():
 def cfg():
     path_cruise = path_on_drive_d('/mnt/D/Work/_Python3/And0K/h5toGrid/test/csv2h5/data')  #
     get_cfg = partial(main, [
-        os.path.join(scripts_path, 'cfg/csv_inclin_Kondrashov.ini'),
+        os.path.join(scripts_path, 'cfg/csv_tcm.ini'),
         '--path', os.path.join(path_cruise, 'inclin_Kondrashov_180430.txt'),
         '--b_interact', 'False',
         '--return', '<gen_names_and_log>',
@@ -136,6 +136,6 @@ def test_csv2h5(cfg):
         df = d1.compute()  # [list(cfg_out['dtype'].names)].set_index(tim)
         assert isinstance(df, pd.DataFrame)
 
-    # csv2h5(['cfg/csv_inclin_Kondrashov.ini',
+    # csv2h5(['cfg/csv_tcm.ini',
 #        '--path', os_path.join(path_cruise, r'inclin_Kondrashov_180430.txt'),
 #        ])

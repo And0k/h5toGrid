@@ -3,4 +3,4 @@ defaults:
 - _self_
 hydra:
   searchpath:
-  - file://d:/WorkData/BalticSea/_Pregolya%2CLagoon/221103%40ib26%2C28%2C29%2C30/_raw/cfg_proc
+  - file://d:/WorkData/BalticSea/230507_ABP53/inclinometer@i3,4,15,19,37,38;ib27-30,ip6/_raw/cfg_proc

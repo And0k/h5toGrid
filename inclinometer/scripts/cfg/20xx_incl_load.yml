@@ -6,12 +6,12 @@ in:
   #Balt_spit.zip
   probes: []  # [10]
   probes_prefix: incl
-  raw_pattern: "*{prefix:}{number:0>3}*.[tT][xX][tT]"
+  raw_pattern: "*{prefix:}{number:0>2}*.[tT][xX][tT]"
 
 #  time_range_zeroing_dict:
 #    14: [2020-07-10T21:31:00, 2020-07-10T21:39:00]
 
-  db_coefs: d:\WorkData\~configuration~\inclinometr\190710incl.h5
+  db_coefs: d:\WorkData\~configuration~\inclinometer\190710incl.h5
 
 
 #filter:
@@ -26,7 +26,7 @@ in:
 
 out:
   # db_name: out_send.h5  # default: "incl.h5"
-  aggregate_period_s: [Null, 2, 300, 600, 7200]  #,   [300]  #[2, 300, 600, 7200]  # Null, Null means no average
+  aggregate_period_s: [Null, 2, 600, 3600, 7200]  #,   [300]  #[2, 300, 600, 7200]  # Null, Null means no average
 
 
 program:

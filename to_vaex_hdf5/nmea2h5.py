@@ -12,22 +12,22 @@ import logging
 from pathlib import Path
 
 from datetime import time, datetime, timedelta
-from typing import Any, Callable, Dict, Iterator, Mapping, Optional, List, Sequence, Tuple, Union
+from typing import Mapping, Optional, List, Sequence, Union
 from dataclasses import dataclass, field
-from omegaconf import OmegaConf, DictConfig, MISSING
+from omegaconf import OmegaConf, MISSING
 import hydra
 import numpy as np
 import pandas as pd
 # import vaex
 import pynmea2
 
-import to_vaex_hdf5.cfg_dataclasses
+import cfg_dataclasses
 
-from utils2init import init_file_names, Ex_nothing_done, this_prog_basename, standard_error_info, LoggingStyleAdapter, \
+from utils2init import standard_error_info, LoggingStyleAdapter, \
     call_with_valid_kwargs
 
 # from csv2h5_vaex import argparser_files, with_prog_config
-from to_pandas_hdf5.h5toh5 import h5move_tables, h5index_sort, h5init, h5_dispenser_and_names_gen, h5_close
+from to_pandas_hdf5.h5toh5 import h5move_tables, h5index_sort, h5out_init, h5_dispenser_and_names_gen, h5_close
 from to_pandas_hdf5.gpx2h5 import df_rename_cols, h5_sort_filt_append
 from filters import b1spike
 from to_pandas_hdf5.h5_dask_pandas import filter_local
@@ -237,16 +237,17 @@ class ConfigInNmeaFiles:
     time_interval: List[str] = field(default_factory=lambda: ['2021-01-01T00:00:00', 'now'])  # UTC
     dt_from_utc_hours: int = 0
 
-ConfigOut = to_vaex_hdf5.cfg_dataclasses.ConfigOut
+ConfigOut = cfg_dataclasses.ConfigOut
 # ConfigOut.b_insert_separator will be forced to True where time of new file start > 1D relative to previous time
 
-ConfigFilterNav = to_vaex_hdf5.cfg_dataclasses.ConfigFilterNav
-ConfigProgram = to_vaex_hdf5.cfg_dataclasses.ConfigProgram
+ConfigFilterNav = cfg_dataclasses.ConfigFilterNav
+ConfigProgram = cfg_dataclasses.ConfigProgram
 
 
 
 cs_store_name = Path(__file__).stem  # 'nmea2h5'
-cs, ConfigType = to_vaex_hdf5.cfg_dataclasses.hydra_cfg_store(f'base_{cs_store_name}', {
+cs, ConfigType = cfg_dataclasses.hydra_cfg_store(
+    cs_store_name, {
     'input': ['in_nmea_files'],  # Load the config "in_autofon" from the config group "input"
     'out': ['out'],  # Set as MISSING to require the user to specify a value on the command line.
     #'filter': ['filter'],
@@ -259,7 +260,7 @@ cs, ConfigType = to_vaex_hdf5.cfg_dataclasses.hydra_cfg_store(f'base_{cs_store_n
 
 
 
-@hydra.main(config_name=cs_store_name, config_path="cfg")  # adds config store data/structure to :param config
+@hydra.main(config_name=cs_store_name, config_path="cfg", version_base='1.3')  # adds config store cs_store_name data/structure to :param config data/structure to :param config
 def main(config: ConfigType):
     """
     ----------------------------
@@ -270,8 +271,8 @@ def main(config: ConfigType):
     :return:
     """
     global cfg
-    cfg = to_vaex_hdf5.cfg_dataclasses.main_init(config, cs_store_name, __file__=None)
-    cfg = to_vaex_hdf5.cfg_dataclasses.main_init_input_file(cfg, cs_store_name, in_file_field='path')
+    cfg = cfg_dataclasses.main_init(config, cs_store_name, __file__=None)
+    cfg = cfg_dataclasses.main_init_input_file(cfg, cs_store_name, in_file_field='path')
     do(cfg)
 
 
@@ -315,7 +316,7 @@ def do(cfg: Mapping):
     :param cfg: OmegaConf configuration
     :return:
     """
-    h5init(cfg['in'], cfg['out'])
+    h5out_init(cfg['in'], cfg['out'])
     # OmegaConf.update(cfg, "in", cfg.input, merge=False)  # error
     # to allow non primitive types (cfg.out['db']) and special words field names ('in'):
     #cfg = OmegaConf.to_container(cfg)
@@ -409,5 +410,3 @@ def do(cfg: Mapping):
 
 if __name__ == '__main__':
     main()
-
-

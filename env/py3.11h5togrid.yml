@@ -11,6 +11,7 @@ dependencies:
   - cdsapi
   - chardet
   - clize
+  - cachey
   - colorama
   - colorlog
   - dask
@@ -43,6 +44,8 @@ dependencies:
   - openssl
   - pandas
   - pillow
+  - pip
+  - polars
   - progressbar2
   - py
   - pyinstaller
@@ -53,7 +56,7 @@ dependencies:
   - pytables
   - pytest
   - pytest-arraydiff
-  - python=3.10
+  - python=3.11
   - pywavelets
   - pywin32
   - qt
@@ -74,9 +77,8 @@ dependencies:
   - toolz
   - tqdm
   - urllib3
-  - vaex
   - xarray
   - pip:
       - hydra-colorlog
       - wmm2020
-prefix: C:\Users\and0k\conda\envs\py3.10x64h5togrid
+prefix: C:\Users\and0k\conda\envs\py3.11h5togrid

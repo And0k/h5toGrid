@@ -5,7 +5,7 @@
   Purpose: Convert gpx files to PyTables hdf5 file
   Created: 27.05.2015
 """
-#from __future__ import print_function
+#
 
 import logging
 from codecs import open
@@ -22,14 +22,14 @@ from utils2init import cfg_from_args, my_argparser_common_part, init_file_names,
     this_prog_basename, init_logging, standard_error_info, call_with_valid_kwargs
 from to_pandas_hdf5.h5_dask_pandas import multiindex_timeindex, multiindex_replace, h5_append, \
     filterGlobal_minmax  # filter_global_minmax
-from to_pandas_hdf5.h5toh5 import h5move_tables, h5index_sort, h5init, h5_dispenser_and_names_gen
+from to_pandas_hdf5.h5toh5 import h5move_tables, h5index_sort, h5out_init, h5_dispenser_and_names_gen
 from utils_time_corr import time_corr
 
 dt64_1s = np.int64(1e9)
 df_names = ['waypoints', 'tracks', 'segments', 'routes']
 
 if __name__ == '__main__':
-    l = None  # see main(): l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+    l = None  # see main(): l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
 else:
     l = logging.getLogger(__name__)
 
@@ -290,13 +290,13 @@ def main(new_arg=None):
     elif cfg['program']['return'] == '<cfg_from_args>':  # to help testing
         return cfg
 
-    l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+    l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
     print('\n', this_prog_basename(__file__), end=' started. ')
 
     try:
         cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
             **cfg['in'], b_interact=cfg['program']['b_interact'], cfg_search_parent=cfg['out'])
-        h5init(cfg['in'], cfg['out'])
+        h5out_init(cfg['in'], cfg['out'])
     except Ex_nothing_done as e:
         print(e.message)
         exit()

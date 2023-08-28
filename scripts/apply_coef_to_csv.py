@@ -6,7 +6,7 @@
            3. apply coef. and save result text files to parent dir
   Created: 23.10.2014
 """
-from __future__ import print_function
+
 
 fileCoef = \
     r'd:\WorkData\Experiment\TermoChain\141021\coef#t_TINA_141017.txt'

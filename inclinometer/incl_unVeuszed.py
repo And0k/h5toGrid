@@ -13,7 +13,7 @@ from scripts.incl_calibr import calibrate, calibrate_plot
 
 from to_pandas_hdf5.csv2h5 import init_input_cols
 # my:
-from to_pandas_hdf5.csv_specific_proc import convertNumpyArrayOfStrings
+from to_pandas_hdf5.csv_specific_proc import chars_array_to_datetimeindex
 
 """
 file contents:
@@ -21,7 +21,7 @@ Year,Month,Day,Hour,Minute,Second,Ax,Ay,Az,Mx,My,Mz,Battery,Temp
 2017,10,15,14,29,18,-128,48,-11696,-118,-198,160,9.64,23.00
 """
 cfg = {'in': {
-    'path': r'd:\workData\BalticSea\171003_ANS36\inclinometr\171015_intercal_on_board\#20.TXT',
+    'path': r'd:\workData\BalticSea\171003_ANS36\inclinometer\171015_intercal_on_board\#20.TXT',
     'header': 'yyyy(text),mm(text),dd(text),HH(text),MM(text),SS(text),Ax,Ay,Az,Mx,My,Mz,Battery,Temp',
     'delimiter': ',',
     'skiprows': 13
@@ -64,7 +64,7 @@ def fun_proc_loaded(a, cfg_in):
     except Exception as e:
         print('Can not convert date!')
         raise
-    return convertNumpyArrayOfStrings(date, 'datetime64[ns]')
+    return chars_array_to_datetimeindex(date, 'datetime64[ns]')
 
 
 def ImportFileCSV(file_name, **varargs):
@@ -133,7 +133,7 @@ TimeShift_Log_sec = 60
 # maxT =  np.NaN
 # bP = np.logical_not(a['Temp'] < maxT) # RuntimeWarning: invalid value encountered in less
 bP = np.ones_like(a['Temp'], np.bool8)
-iStEn_auto = atleast_2d((np.searchsorted(bP, 1), len(bP) - np.searchsorted(flipud(bP), 1)))
+iStEn_auto = atleast_2d((np.argmax(bP, 1), len(bP) - np.argmax(flipud(bP), 1)))
 iUseTime = np.searchsorted(stime, [array(s, 'datetime64[s]') for s in array(strTimeUse)]) if len(
     strTimeUse) > 0 else iUse
 iUseC = minInterval(iStEn_auto, minInterval(np.int32(iUse), iUseTime, len(stime)), len(stime))

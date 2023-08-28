@@ -4,7 +4,7 @@ Created on Sat Aug 03 16:50:22 2013
 Purpose: change columns order of PyTables hdf5 file
 @author: Korzh
 """
-from __future__ import print_function
+
 
 import re
 

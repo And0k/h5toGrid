@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, make_dataclass
 from omegaconf import OmegaConf, MISSING, MissingMandatoryValue  # Do not confuse with dataclass.MISSING
 import hydra
 from hydra.core.config_store import ConfigStore
-
+from hydra.errors import HydraException
 from utils2init import this_prog_basename, ini2dict, Ex_nothing_done, init_file_names, standard_error_info, LoggingStyleAdapter
 
 lf = LoggingStyleAdapter(__name__)
@@ -42,12 +42,12 @@ class ConfigInCsv:
     :param max_text_width: maximum length of text fields (specified by "(text)" in header) for dtype in numpy loadtxt
     :param chunksize_percent_float: percent of 1st file length to set up hdf5 store tabe chunk size
     :param blocksize_int: bytes, chunk size for loading and processing csv
-    :param sort: if time not sorted then modify time values trying to affect small number of values. This is different from sorting rows which is performed at last step after the checking table in database
+    :param corr_time_mode: if there is time that is not increased then modify time values trying to affect small number of values. This is different from sorting rows which is performed at last step after the checking table in database
     :param fun_date_from_filename: function(file_stem: str, century: Optional[str]=None) -> Any[compartible to input of pandas.to_datetime()]: to get date from filename to time column in it.
 
     :param csv_specific_param_dict: not default parameters for function in csv_specific_proc.py used to load data
     """
-    path: Any = '.'
+    path: Any = 'to_vaex_hdf5'
     b_search_in_subdirs: bool = False
     exclude_dirs_endswith: Tuple[str] = ('toDel', '-', 'bad', 'test', 'TEST')
     exclude_files_endswith: Tuple[str] = ('coef.txt', '-.txt', 'test.txt')
@@ -58,7 +58,7 @@ class ConfigInCsv:
     on_bad_lines = 'error'
     max_text_width = 1000
     blocksize_int = 20000000
-    sort = True
+    corr_time_mode = True
     dir: Optional[str] = MISSING
     ext: Optional[str] = MISSING
     filemask: Optional[str] = MISSING
@@ -82,7 +82,7 @@ class ConfigInHdf5_Simple:
     :param b_incremental_update: exclude processing of files with same name and which time change is not bigger than recorded in database (only prints ">" if detected). If finds updated version of same file then deletes all data which corresponds old file and after it brfore procesing of next files.
             default='True'
     """
-    db_path: str = MISSING
+    db_path: Optional[str] = None  # if None load from
     tables: List[str] = field(default_factory=lambda: ['.*'])  # field(default_factory=list)
     tables_log: List[str] = field(default_factory=list)
     dt_from_utc_hours = 0
@@ -155,6 +155,7 @@ class ConfigOutCsv:
     text_float_format: Optional[str] = None
     file_name_fun: str = ''
     file_name_fun_log: str = ''
+    col_station_fun: str = ''
     sep: str = '\t'
 
 ParamsCTD = make_dataclass('ParamsCTD', [  # 'Pres, Temp90, Cond, Sal, O2, O2ppm, Lat, Lon, SA, sigma0, depth, soundV'
@@ -175,8 +176,8 @@ class ConfigFilterCTD:
     :param b_bad_cols_in_file_name: find string "<Separator>no_<col1>[,<col2>]..." in file name. Here <Separator> is one of -_()[, and set all values of col1[, col2] to NaN
     """
     #Optional[Dict[str, float]] = field(default_factory= dict) leads to .ConfigAttributeError/ConfigKeyError: Key 'Sal' is not in struct
-    min: Optional[ParamsCTD] = ParamsCTD()
-    max: Optional[ParamsCTD] = ParamsCTD()
+    min: Optional[ParamsCTD] = field(default_factory=ParamsCTD)
+    max: Optional[ParamsCTD] = field(default_factory=ParamsCTD)
     b_bad_cols_in_file_name: bool = False
     corr_time_mode: Any = 'delete_inversions'  # , 'False',  'correct', 'sort_rows'
 
@@ -190,8 +191,8 @@ class ConfigFilterNav:
     :param b_bad_cols_in_file_name: find string "<Separator>no_<col1>[,<col2>]..." in file name. Here <Separator> is one of -_()[, and set all values of col1[, col2] to NaN
     """
     #Optional[Dict[str, float]] = field(default_factory= dict) leads to .ConfigAttributeError/ConfigKeyError: Key 'Sal' is not in struct
-    min: Optional[ParamsNav] = ParamsNav()
-    max: Optional[ParamsNav] = ParamsNav()
+    min: Optional[ParamsNav] = field(default_factory=ParamsNav)
+    max: Optional[ParamsNav] = field(default_factory=ParamsNav)
     b_bad_cols_in_file_name: bool = False
     corr_time_mode: Any = 'delete_inversions'
 
@@ -214,52 +215,85 @@ class ConfigProgram:
     verbose: str = 'INFO'
 
 
+def camel2snake(text, sep='_'):
+    """
+    CamelCase to snake_case: inserts delimiter only if upper letter going after lower.
+    Note: many characters cannot be upper or lower case.
+    :param text: string to reformat  or any text
+    :param sep: delimiter, default: '_'
+    :return:
+    """
+    text_lower = text.lower()
+    b_add_delimiter = False  # initial state: no need to add delimiter before 1st character
+
+    def need_delimiter_check_saving_state(c, l):
+        nonlocal b_add_delimiter
+        add_delimiter_now_possible, b_add_delimiter = b_add_delimiter, c.islower()
+        return add_delimiter_now_possible and c != l  # c != l is same as c.isupper() but, I think, must be faster
+
+    return ''.join(f'{sep}{l}' if need_delimiter_check_saving_state(c, l) else l for c, l in zip(text, text_lower))
+
+
 def hydra_cfg_store(
         cs_store_name: str,
-        cs_store_group_options: Mapping[str, Sequence[str]],
+        cs_store_group_options: Mapping[str, Sequence[Any]],
         module=sys.modules[__name__]  # to_vaex_hdf5.cfg_dataclasses
         ) -> Tuple[ConfigStore, object]:
     """
     Registering Structured config with defaults specified by dataclasses in ConfigStore
-    :param cs_store_name: config name
+    :param cs_store_name: part of output config name: will be prefixed with 'base_'
     :param cs_store_group_options:
-        - keys: config group names
-        - values: list of str, - group option names used for:
-          - Yaml config files stems
-          - Dataclasses to use, - finds names constructed nealy like `Config{capwords(name)}` - must exist in `module`.
-          - setting 1st values item as default option for a group
+    - keys: config group names
+    - values: list of str, - group option names used for:
+      - Yaml config files stems
+      - Dataclasses to use, - finds names constructed nealy like `Config{capwords(name)}` - must exist in `module`.
+      - setting 1st values item as default option for a group, name them 'base_{group_name}' where group_name is
+      current cs_store_group_options key.
     :param module: module where to search Dataclasses names, default: current module
     :return: (cs, Config)
     cs: ConfigStore
     Config: configuration dataclass
     """
 
+    cs = ConfigStore.instance()
+    defaults_list = []  # to save here 1st cs_store_group_options value
+    # Registering groups schemas
+    for group, classes in cs_store_group_options.items():
+        group_option = None
+        for cl in classes:
+            if isinstance(cl, str):
+                name = cl
+                class_name = ''.join(['Config'] + [(s.title() if s.islower() else s) or '_' for s in name.split('_')])
+                try:
+                    cl = getattr(module, class_name)
+                except Exception as err:
+                    raise KeyError(f'"{class_name}" class constructed from provided group option {cl} is not found') from err
+            else:
+                class_name = cl.__name__
+                name = camel2snake(class_name)
+
+            if group_option is None:  # 1st cs_store_group_options value
+                name = f'base_{group}'
+                defaults_list.append({group: name})
+            try:
+                cs.store(group=group, name=name, node=cl)
+            except Exception as err:
+                raise TypeError(f'Error init group {group} by option "{name}" defined as class {class_name}') from err
+
+    # Registering all groups
     # Config class (type of result configuration) with assigning defaults to 1st cs_store_group_options value
-    defaults_list = [{group: names[0]} for group, names in cs_store_group_options.items()]
     Config = make_dataclass(
         'Config',
         [('defaults', List[Any], field(default_factory=lambda: defaults_list))] +
         [(group, Any, MISSING) for group in cs_store_group_options.keys()]
         )
-
-    cs = ConfigStore.instance()
-
-    # Registering groups schemas
-    for group, names in cs_store_group_options.items():
-        for name in names:
-            class_name = ''.join(['Config'] + [(s.title() if s.islower() else s) or '_' for s in name.split('_')])
-            try:
-                cl = getattr(module, class_name)
-                cs.store(name=name, node=cl, group=group)
-            except Exception as err:
-                raise TypeError(f'Error init "{name}" group option of class {class_name}') from err
-    # Registering all groups
-    cs.store(name=cs_store_name, node=Config)
+    cs.store(name=f'base_{cs_store_name}', node=Config)
 
     return cs, Config
 
 
-def main_init_input_file(cfg_t, cs_store_name, in_file_field='db_path'):
+def main_init_input_file(cfg_t, cs_store_name, in_file_field='db_path', **kwargs
+) -> Dict[str, Dict[str, Any]]:
     """
     - finds input files paths
     - renames cfg['input'] to cfg['in'] and fills its field 'cfgFile' to cs_store_name
@@ -267,6 +301,7 @@ def main_init_input_file(cfg_t, cs_store_name, in_file_field='db_path'):
     :param cfg_t:
     :param cs_store_name:
     :param in_file_field:
+    :param kwargs: parameters that will be passed to utils2init.init_file_names()
     :return:
     Note: intended to use after main_init()
     """
@@ -276,14 +311,14 @@ def main_init_input_file(cfg_t, cs_store_name, in_file_field='db_path'):
         # with omegaconf.open_dict(cfg_in):
         cfg_in['paths'], cfg_in['nfiles'], cfg_in['path'] = init_file_names(
             **{**cfg_in, 'path': cfg_in[in_file_field]},
-            b_interact=cfg_t['program']['b_interact']
-            )
+            b_interact=cfg_t['program']['b_interact'],
+            **kwargs)
     except Ex_nothing_done as e:
         print(e.message)
         cfg_t['in'] = cfg_in
         return cfg_t
     except FileNotFoundError as e:
-        print('Initialisation error:', e.message, 'Calling arguments:', sys.argv)
+        print('Initialisation error:', standard_error_info(e), 'Calling arguments:', sys.argv)
         raise
 
     cfg_t['in'] = cfg_in
@@ -310,9 +345,13 @@ def main_init(cfg: Mapping, cs_store_name, __file__=None, ) -> Dict:
 
     print("Working directory : {}".format(os.getcwd()))
     # print not empty / not False values # todo: print only if config changed instead
-    print(OmegaConf.to_yaml({
-        k0: ({k1: v1 for k1, v1 in v0.items() if v1} if hasattr(v0, 'items') else v0) for k0, v0 in cfg.items()
-        }))
+    try:
+        print(OmegaConf.to_yaml({
+            k0: ({k1: v1 for k1, v1 in v0.items() if v1} if hasattr(v0, 'items') else v0) for k0, v0 in cfg.items()
+            }))
+    except MissingMandatoryValue as e:
+        lf.error(standard_error_info(e))
+        raise Ex_nothing_done()
 
     # cfg = cfg_from_args(argparser_files(), **kwargs)
     if not cfg.program.return_:
@@ -359,23 +398,49 @@ def main_call(
     # todo: check colorlog is installed before this:
     cmd_line_list_upd += [
         'hydra/job_logging=colorlog',
-        'hydra/hydra_logging=colorlog'
+        'hydra/hydra_logging=colorlog',
+        "hydra.job_logging.formatters.colorlog.format='%(cyan)s%(asctime)s %(blue)s%(funcName)10s%(cyan)s: "\
+        "%(log_color)s%(message)s%(reset)s\t'",  # \\< not supported
+        #"hydra.job_logging.formatters.colorlog.style='\\{'" not supported
+        #'[%(blue)s%(name)s%(reset)s %(log_color)s%(levelname)s%(reset)s] - %(message)s'
+        # ]
+        #           - %(message)s'
+        # %(asctime)s %(log_color)s[%(name)12s:%(lineno)3s'
+        # ' %(funcName)18s ]\t%(levelname)-.6s  %(message)s'
         ]
     if cmd_line_list is not None:
         len_in_rep = len('in.')
         for c in cmd_line_list:
-            if c.startswith('in.'):
-                cmd_line_list_upd.append(f'input.{c[len_in_rep:]}')
-            else:
-                cmd_line_list_upd.append(c)
+            cmd_line_list_upd.append(
+                f'input.{c[len_in_rep:]}' if c.startswith('in.') else c
+                )
     cmd_line_list_upd += sys.argv[1:]  # (+ ['--config-dir', config_path]) only relative and not works
     sys_argv_save, sys.argv = sys.argv, cmd_line_list_upd
 
     # hydra.conf.HydraConf.run.dir = './outputs/${now:%Y-%m-%d}_${now:%H-%M-%S}'
-    out = fun()
-
+    try:
+        out = fun()
+    except HydraException:
+        lf.exception('Check calling arguments!')
+        return
     sys.argv = sys_argv_save
     return out
+
+
+# Example: override specific fields in the log config from your own config.
+#
+# your_config.yaml
+#
+# # compose the colorlog job_logging config
+# defaults:
+#   - hydra/job_logging: colorlog
+#
+# # override the formatting.
+# hydra:
+#   job_logging:
+#     formatters:
+#       colorlog:
+#         format: '[%(blue)s%(name)s%(reset)s][%(log_color)s%(levelname)s%(reset)s] - %(message)s'
 
 
 
@@ -415,4 +480,3 @@ def main_call(
 
 # hydra.conf.HydraConf.hydra_logging = 'colorlog'  # if installed ("pip install hydra_colorlog --upgrade")
 # hydra.conf.HydraConf.job_logging = 'colorlog'
-

@@ -2,24 +2,25 @@
 # coding:utf-8
 """
   Author:  Andrey Korzh <ao.korzh@gmail.com>
-  Purpose: load from/save to hdf5 using dask library
-  Created: 10.10.2018
+  Purpose: load from/save to hdf5 using pandas/dask libraries
 """
-from datetime import datetime
-import glob
+
+from glob import escape as glob_escape
 import logging
 from pathlib import Path
 import re
 from typing import Any, Dict, Iterable, Iterator, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
-from dateutil.tz import tzutc
-import dask
-import dask.array as da
-import dask.dataframe as dd
 import numpy as np
 import pandas as pd
-from dask.diagnostics import ProgressBar  # or distributed.progress when using the distributed scheduler
 from tables.exceptions import HDF5ExtError, ClosedFileError
-
+try:
+    import dask.array as da
+    from dask import compute, dataframe as dd
+    from dask.diagnostics import ProgressBar  # or distributed.progress when using the distributed scheduler
+except ImportError:
+    # not all functions/their options will work
+    dd = pd
+    da = np
 # my
 from to_pandas_hdf5.h5toh5 import h5remove, ReplaceTableKeepingChilds, df_data_append_fun, df_log_append_fun
 from utils2init import Ex_nothing_done, set_field_if_no, standard_error_info, dir_create_if_need, LoggingStyleAdapter
@@ -29,7 +30,7 @@ pd.set_option('io.hdf.default_format', 'table')
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
 
-qstr_range_pattern = "index>=Timestamp('{}') & index<=Timestamp('{}')"
+qstr_range_pattern = "index>='{}' & index<='{}'"
 
 
 def h5q_interval2coord(
@@ -86,7 +87,7 @@ def h5q_intervals_indexes_gen(
     :param t_prev_interval_start: first index value
     :param t_intervals_start:
     :param i_range: Sequence, 1st and last element will limit the range of returned result
-    :return: Iterator[pd.Index] of lower and upper int limits (adjasent intervals)
+    :return: Iterator[pd.Index] of lower and upper int limits (adjacent intervals)
     """
 
     for t_interval_start in t_intervals_start:
@@ -154,7 +155,7 @@ def h5_load_range_by_coord(
     :param columns: passed without change to dask.read_hdf()
     """
 
-    db_path_esc = glob.escape(db_path) if isinstance(db_path, Path) else db_path  # need for dask, not compatible with pandas if path contains "["
+    db_path_esc = glob_escape(db_path) if isinstance(db_path, Path) else db_path  # need for dask, not compatible with pandas if path contains "["
     if isinstance(columns, pd.Index):
         columns = columns.to_list()  # need for dask\dataframe\io\hdf.py (else ValueError: The truth value of a Index is ambiguous...)
 
@@ -322,11 +323,11 @@ def add_tz_if_need(v, tim: Union[pd.Index, dd.Index]) -> pd.Timestamp:
     """
     If tim has tz then ensure v has too
     :param v: time value that need be comparable with tim
-    :param tim: series/index from wich tz will be copied. If dask.dataframe.Index mast have known divisions
-    :return: v with added timezone if need
+    :param tim: series/index from which tz will be copied. If dask.dataframe.Index mast have known divisions
+    :return: v with added timezone if needed
     """
     try:
-        tz = getattr(tim.divisions[0] if isinstance(tim, dd.Index) else tim, 'tz')
+        tz = getattr(tim.dtype if isinstance(tim, dd.Index) else tim, 'tz')
         try:
             if v.tzname() is None:
                 v = v.tz_localize(tz=tz)
@@ -418,17 +419,16 @@ def filterGlobal_minmax(a, tim=None, cfg_filter=None, b_ok=True, not_warn_if_no_
     return pd.Series(b_ok, index=tim)
 
 
-
 def filter_global_minmax(a: Union[pd.DataFrame, dd.DataFrame],
                          cfg_filter: Optional[Mapping[str, Any]] = None
                          ) -> Union[pd.DataFrame, dd.DataFrame]:
     """
-    Query that filters rows where some values outside min/max limits
-    :param a:           dask or pandas Dataframe. If need filter datetime columns their name must start with 'date'
+    Executes query that filters rows where some values outside min/max limits
+    :param a: dask or pandas Dataframe. If need to filter datetime columns then their name must start with 'date'
     :param cfg_filter: dict with
-       keys: max_`col`, min_`col`, where `col` must be in _a_ (case-insensitive) to filter lower/upper values of `col`
-             or 'date' for filter by index
-       values: are float or ifs str repr - to compare with col/index values
+    - keys: max_`col`, min_`col`, where `col` must be in ``a`` (case-insensitive) to filter lower/upper values of `col`.
+      To filter by index the `col` part must be equal "date".
+    - values: are float or ifs str repr - to compare with col/index values
     :return: dask bool array of good rows (or array if tim is not dask and only tim is filtered)
     """
     if cfg_filter is None:
@@ -439,34 +439,34 @@ def filter_global_minmax(a: Union[pd.DataFrame, dd.DataFrame],
     # key may be lowercase(field) when parsed from *.ini so need find field yet:
     cols = {col.lower(): col for col in (a.dtype.names if isinstance(a, np.ndarray) else a.columns.values)}
 
-    for lim_key, v in cfg_filter.items():  # between(left, right, inclusive=True)
+    for lim_key, val in cfg_filter.items():  # between(left, right, inclusive=True)
         try:
             lim, key = lim_key.rsplit('_', 1)
         except ValueError:  # not enough values to unpack
             continue  # not filter field
 
-        if lim not in ('min', 'max') or v is None or isinstance(v, dict):
-            continue  # if v is None then filtering would get AttributeError: 'NaTType' object has no attribute 'tz'
+        if lim not in ('min', 'max') or val is None or isinstance(val, dict):
+            continue  # if val is None then filtering would get AttributeError: 'NaTType' object has no attribute 'tz'
 
         if key == 'date':  # 'index':
-            # v= pd.to_datetime(v, utc=True)
-            # cf[lim + '_' + key] = pd.Timestamp(v, tz='UTC') not works for queries (?!)
+            # val= pd.to_datetime(val, utc=True)
+            # cf[lim + '_' + key] = pd.Timestamp(val, tz='UTC') not works for queries (?!)
             col = 'index'
             # tim = a.index
             # tim = a.Time.apply(lambda x: x.tz_localize(None), meta=[('ts', 'datetime64[ns]')])
-            v = f"Timestamp('{add_tz_if_need(v, a.index)}')"
+            val = f"'{add_tz_if_need(val, a.index)}'"
         else:
             try:
                 col = cols[key.lower()]
                 if col.startswith('date'):  # have datetime column
-                    # cf[lim_key] = pd.Timestamp(v, tz='UTC')
-                    v = f"Timestamp('{add_tz_if_need(v, a[col])}')"
+                    # cf[lim_key] = pd.Timestamp(val, tz='UTC')
+                    val = f"'{add_tz_if_need(val, a[col])}'"
             except KeyError:
                 lf.warning('filter warning: no column "{}"!'.format(key))
                 continue
 
         # Add expression to query string
-        qstrings.append(f"{col}{'>' if lim == 'min' else '<'}{v}")
+        qstrings.append(f"{col}{'>' if lim == 'min' else '<'}{val}")
     # numexpr.set_num_threads(1)
     try:
         return a.query(' & '.join(qstrings)) if any(qstrings) else a
@@ -765,7 +765,7 @@ def dd_to_csv(
     #pd.set_option('chained_assignment', None)  #  'warn' (the default), 'raise' (raises an exception), or None (no checks are made).
 
     if progress is None:
-        dask.compute(to_csv)
+        compute(to_csv)
         pbar.unregister()
     else:
         futures = client.compute(to_csv)
@@ -802,7 +802,7 @@ def h5_append_dummy_row(df: Union[pd.DataFrame, dd.DataFrame],
     dict_dummy = {}
     tip0 = None
     same_types = True  # tries prevent fall down to object type (which is bad handled by pandas.pytables) if possible
-    for name, field in df.dtypes.iteritems():
+    for name, field in df.dtypes.items():
         typ = field.type
         dict_dummy[name] = typ(0) if np.issubdtype(typ, np.integer) else np.NaN if np.issubdtype(typ,
                                                                                                  np.floating) else ''
@@ -819,7 +819,7 @@ def h5_append_dummy_row(df: Union[pd.DataFrame, dd.DataFrame],
     if isinstance(df, dd.DataFrame):
         return dd.concat([df, df_dummy], axis=0, interleave_partitions=True)  # buggish dask not always can append
     else:
-        return df.append(df_dummy)
+        return pd.concat([df, df_dummy])  # df.append(df_dummy)
 
     # np.array([np.int32(0) if np.issubdtype(field.type, int) else
     #           np.NaN if np.issubdtype(field.type, float) else
@@ -925,10 +925,9 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
 
     for col, dtype in zip(df_cor.columns, df_cor.dtypes):
         d = df_cor[col]
-        # if isinstance(d[0], pd.datetime):
         if dtype != df[col].dtype:
-            if b_correct_time :
-                try:  # if isinstance(d[0], pd.datetime):
+            if b_correct_time and isinstance(d[0], pd.Timestamp):  # is it possible that time types are different?
+                try:
                     df_cor[col] = d.dt.tz_convert(tz=df[col].dt.tz)
                     b_df_cor_changed = True
                 except {AttributeError, ValueError}:  # AttributeError: Can only use .dt accessor with datetimelike values
@@ -949,6 +948,14 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
                     df_cor[col] = df_cor[col].astype(df[col].dtype)
                     b_df_cor_changed = True
                 # pd.api.types.infer_dtype(df_cor.loc[df_cor.index[0], col], df.loc[df.index[0], col])
+        elif b_correct_time and isinstance(d[0], pd.Timestamp):
+            try:
+                if d.dt.tz != df[col].dt.tz:
+                    df_cor[col] = d.dt.tz_convert(tz=df[col].dt.tz)
+                    b_df_cor_changed = True
+            except (AttributeError, ValueError):  # AttributeError: Can only use .dt accessor with datetimelike values
+                pass  # TypeError: Cannot convert tz-naive timestamps, use tz_localize to localize
+            
     if b_df_cor_changed:
         # Update all cfg_out['db'] store data
         try:
@@ -957,20 +964,20 @@ def h5append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, ms
             return tbl_parent
         except Exception as e:
             lf.error('{:s} Can not write to store. May be data corrupted. {:s}', msg_func, standard_error_info(e))
-            raise (e)
+            raise e
         except HDF5ExtError as e:
             lf.exception(e)
-            raise (e)
+            raise e
     else:
         # Append corrected data to cfg_out['db'] store
         try:
             return df_append_fun(df, tbl_parent, cfg_out)
         except Exception as e:
             lf.error('{:s} Can not write to store. May be data corrupted. {:s}', msg_func, standard_error_info(e))
-            raise (e)
+            raise e
         except HDF5ExtError as e:
             lf.exception(e)
-            raise (e)
+            raise e
 
 
 """       store.get_storer(tbl_parent).group.__members__
@@ -1170,3 +1177,32 @@ def h5_append(cfg_out: Mapping[str, Any],
         cfg_out['tables_written'].add(_t)
     else:
         cfg_out['tables_written'] = {_t}
+
+
+def h5_append_to(
+    dfs: Union[pd.DataFrame, dd.DataFrame],
+    tbl: str,
+    cfg_out: Mapping[str, Any],
+    log: Optional[Mapping[str, Any]] = None,
+    msg: Optional[str] = None
+):
+    """
+    Append data to opened cfg_out['db'] by h5_append() without modifying cfg_out['tables_written'] instead returning it
+    """
+    if cfg_out['db'] is None:
+        return set()
+    if dfs is not None:
+        if msg:
+            lf.info(msg)
+        # try:  # tbl was removed by h5temp_open() if b_overwrite is True:
+        #     if h5remove(cfg_out['db'], tbl):
+        #         lf.info('Writing to new table {}/{}', Path(cfg_out['db'].filename).name, tbl)
+        # except Exception as e:  # no such table?
+        #     pass
+        cfg_out_mod = {**cfg_out, 'table': tbl, 'table_log': f'{tbl}/logFiles', 'tables_written': set()}
+        h5_append(cfg_out_mod, dfs, {} if log is None else log)
+        # dfs_all.to_hdf(cfg_out['db_path'], tbl, append=True, format='table', compute=True)
+        return cfg_out_mod['tables_written']
+    else:
+        print('No data.', end=' ')
+        return set()

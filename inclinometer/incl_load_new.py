@@ -22,32 +22,30 @@ Allows to specify some of args:
 import re
 import sys
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import timedelta
 from functools import partial
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional, Tuple, Dict, List
+from typing import Any, Optional, Dict, List
 import numpy as np
 import pandas as pd
 import hydra
-from omegaconf import MISSING
 
 # import my scripts
-import to_vaex_hdf5.cfg_dataclasses
-from to_vaex_hdf5.cfg_dataclasses import hydra_cfg_store, ConfigInHdf5_Simple, ConfigProgram, main_init, main_init_input_file
+import cfg_dataclasses
+from cfg_dataclasses import hydra_cfg_store, ConfigInHdf5_Simple
 
 from to_pandas_hdf5.csv2h5 import main as csv2h5
-from to_pandas_hdf5.csv_specific_proc import mod_incl_name, rep_in_file, correct_txt #correct_kondrashov_txt, correct_baranov_txt
+from to_pandas_hdf5.csv_specific_proc import mod_name, rep_in_file, correct_txt #correct_kondrashov_txt, correct_baranov_txt
 from to_pandas_hdf5.h5_dask_pandas import h5q_interval2coord
-from inclinometer.h5inclinometer_coef import h5copy_coef
-from inclinometer.incl_calibr import dict_matrices_for_h5
+from inclinometer.h5inclinometer_coef import h5copy_coef, dict_matrices_for_h5
 
 import inclinometer.incl_h5clc as incl_h5clc
 import inclinometer.incl_h5spectrum as incl_h5spectrum
 import veuszPropagate
 from utils_time import intervals_from_period # pd_period_to_timedelta
-from utils2init import path_on_drive_d, init_logging, open_csv_or_archive_of_them, st, cfg_from_args, my_argparser_common_part
-from utils2init import this_prog_basename, standard_error_info, LoggingStyleAdapter, constant_factory
+from utils2init import open_csv_or_archive_of_them, st
+from utils2init import LoggingStyleAdapter, constant_factory
 from magneticDec import mag_dec
 
 
@@ -98,7 +96,7 @@ class ConfigOut:
 @dataclass
 class ConfigInHdf5InclCalibr(ConfigInHdf5_Simple):
     """
-    Same as ConfigInHdf5_Simple + specific (inclinometr calibration) data properties:
+    Same as ConfigInHdf5_Simple + specific (inclinometer calibration) data properties:
     channels: List: (, channel can be "magnetometer" or "M" for magnetometer and any else for accelerometer',
     chunksize: limit loading data in memory (default='50000')
     time_range_list: time range to use
@@ -171,7 +169,7 @@ def device_in_out_paths(
 
 
 # config_path="ini",
-@hydra.main(config_name=cs_store_name)  # adds config store cs_store_name data/structure to :param config
+@hydra.main(config_name=cs_store_name, version_base='1.3')  # adds config store cs_store_name data/structure to :param config cs_store_name data/structure to :param config
 def main(config: ConfigType) -> None:
     """
     ----------------------------
@@ -194,7 +192,7 @@ def main(config: ConfigType) -> None:
 
     """
     global cfg
-    cfg = to_vaex_hdf5.cfg_dataclasses.main_init(config, cs_store_name)
+    cfg = cfg_dataclasses.main_init(config, cs_store_name)
     cfg_in = cfg.pop('input')
     cfg_in['cfgFile'] = cs_store_name
     cfg['in'] = cfg_in
@@ -211,7 +209,7 @@ def main(config: ConfigType) -> None:
         )
 
     out = cfg['out']
-    # h5init(cfg['in'], out)
+    # h5out_init(cfg['in'], out)
 
 
     probes = cfg['in']['probes'] or range(1, 41)  # sets default range, specify your values before line ---
@@ -222,14 +220,14 @@ def main(config: ConfigType) -> None:
         # baranov's format
         constant_factory(
             {'correct_fun': partial(correct_txt,
-                mod_file_name= mod_incl_name,
+                mod_file_name= mod_name,
                 sub_str_list=[b'^\r?(?P<use>20\d{2}(\t\d{1,2}){5}(\t\d{5}){8}).*', b'^.+']),
              'fs': 10,
              'format': 'Baranov',
             }),
         {'incl':
             {'correct_fun': partial(correct_txt,
-                mod_file_name= mod_incl_name,
+                mod_file_name= mod_name,
                 sub_str_list=[b'^(?P<use>20\d{2}(,\d{1,2}){5}(,\-?\d{1,6}){6}(,\d{1,2}\.\d{2})(,\-?\d{1,3}\.\d{2})).*',
                               b'^.+']),
              'fs': 5,
@@ -237,7 +235,7 @@ def main(config: ConfigType) -> None:
             },
          'voln':
             {'correct_fun': partial(correct_txt,
-                mod_file_name=mod_incl_name,
+                mod_file_name=mod_name,
                 sub_str_list=[b'^(?P<use>20\d{2}(,\d{1,2}){5}(,\-?\d{1,8})(,\-?\d{1,2}\.\d{2}){2}).*', b'^.+']),
 
              'fs': 5,
@@ -321,7 +319,7 @@ def main(config: ConfigType) -> None:
                     **{
                     'filter': {
                          'min_date': cfg['filter']['min_date'].get(probe, np.datetime64(0, 'ns')),
-                         'max_date': cfg['filter']['max_date'].get(probe, np.datetime64('now', 'ns')),  # simple 'now' works in sinchronious mode
+                         'max_date': cfg['filter']['max_date'].get(probe, np.datetime64('now', 'ns')),  # simple 'now' works in synchronous mode
                         }
                     }
                 )
@@ -349,7 +347,7 @@ def main(config: ConfigType) -> None:
 
     cfg_in['tables'] = ['incl30']
     from inclinometer.incl_h5clc import h5_names_gen
-    from inclinometer.h5inclinometer_coef import rot_matrix_x, rot_matrix_y  #rotate_x, rotate_y
+    from inclinometer.h5inclinometer_coef import rot_matrix_x  #rotate_x, rotate_y
     # R*[xyz]. As we next will need apply coefs Ag = Rz*Ry*Rx we can incorporate this
     # operation by precalculate it adding known angles on each axes to Rz,Ry,Rx.
     # If rotation is 180 deg, then we can add it only to Rx. Modified coef: Ag_new = Rz*Ry*R(x+180)
@@ -429,7 +427,7 @@ def main(config: ConfigType) -> None:
                      # '--time_range_zeroing_list', '2019-08-26T04:00:00, 2019-08-26T05:00:00'
                      '--split_period', '1D'
                     ] if subs_made else
-                    ['--bad_p_at_bursts_starts_peroiod', '1H',
+                    ['--bad_p_at_bursts_starts_period', '1H',
                     ])
             # csv splitted by 1day (default for no avg) and monolith csv if aggregate_period_s==600
             if aggregate_period_s not in cfg['out']['aggregate_period_s_not_to_text']:  # , 300, 600]:
@@ -626,10 +624,10 @@ def call_example(call_by_user=True):
     :return:
     """
     # from to_vaex_hdf5.h5tocsv import main_call as h5tocsv
-    path_db_in = Path(r'd:\WorkData\~configuration~\inclinometr\190710incl.h5')
+    path_db_in = Path(r'd:\WorkData\~configuration~\inclinometer\190710incl.h5')
     path_db_out = Path(r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\_raw\201202.raw.h5')
     device = ['tr0']  # 221912
-    to_vaex_hdf5.cfg_dataclasses.main_call([  # '='.join(k,v) for k,v in pairwise([   # ["2021-04-08T08:35:00", "2021-04-14T11:45:00"]'
+    cfg_dataclasses.main_call([  # '='.join(k,v) for k,v in pairwise([   # ["2021-04-08T08:35:00", "2021-04-14T11:45:00"]'
         'in.time_range=["2021-04-08T09:00:00", "now"]',   # UTC, max (will be loaded and updated what is absent)
         f'in.db_path="{path_db_in}"',
         #'input.dt_from_utc_hours=3',

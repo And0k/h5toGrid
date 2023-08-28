@@ -1,7 +1,7 @@
 # @+leo-ver=5-thin
 # @+node:korzh.20180610155307.4: * @file /mnt/D/Work/_Python3/And0K/h5toGrid/inclinometer/incl_unVeuszed-dask.py
 """
-Zeroing inclinometr and write coef to hdf5 db
+Zeroing inclinometer and write coef to hdf5 db
 Load data by specified interval and
     Calcuate angles
     Calcuate wave parameters: spectrum and its statistics - if Pressure data exists
@@ -110,11 +110,11 @@ def plot2vert(x, y=None, y_new=None, title='', b_show_diff=True, ylabel='P, dBar
 def poly_load_apply(x, pattern_path_of_poly, pattern_format_arg):
     """
     Load and apply calibraion (polynominal coefficients)
-    poly = '/mnt/D/workData/_experiment/_2018/inclinometr/180416Pcalibr/fitting_result(P#' + '11' + 'calibr_log).txt'
-    >>> dfcum.P = poly_load_apply(y_filt, pattern_path_of_poly = '/mnt/D/workData/_experiment/_2018/inclinometr/180605Pcalibr/fitting_result(inclPres{}).txt', pattern_format_arg=cfg['out']['table'][-2:])
+    poly = '/mnt/D/workData/_experiment/_2018/inclinometer/180416Pcalibr/fitting_result(P#' + '11' + 'calibr_log).txt'
+    >>> dfcum.P = poly_load_apply(y_filt, pattern_path_of_poly = '/mnt/D/workData/_experiment/_2018/inclinometer/180605Pcalibr/fitting_result(inclPres{}).txt', pattern_format_arg=cfg['out']['table'][-2:])
     """
 
-    # pattern_path_of_poly ='/mnt/D/workData/_experiment/_2018/inclinometr/180416Pcalibr/fitting_result(P#{}calibr_log).txt')
+    # pattern_path_of_poly ='/mnt/D/workData/_experiment/_2018/inclinometer/180416Pcalibr/fitting_result(P#{}calibr_log).txt')
 
     path_poly = Path(pattern_path_of_poly.format(cfg['out']['table'][-2:]))
 

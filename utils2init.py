@@ -3,20 +3,10 @@
 """
   Purpose:  helper functions for input/output handling
   Author:   Andrey Korzh <ao.korzh@gmail.com>
-  Created:  2016 - 2020
+  Created:  2016 - 2023
 """
-# from __future__ import print_function
+
 import sys
-
-try:
-    if sys.version_info[0] == 2:  # PY2?
-        from future.standard_library import install_aliases
-
-        install_aliases()
-except Exception as e:
-    print('Not found future.standard_library for install_aliases()!')
-    print('So some functions in utils2init may not work')
-
 from os import path as os_path, listdir as os_listdir, access as os_access, R_OK as os_R_OK, W_OK as os_W_OK
 from ast import literal_eval
 import enum
@@ -28,8 +18,10 @@ import logging
 import re
 from pathlib import Path, PurePath
 from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional, Iterable, Iterator, BinaryIO, Sequence, TextIO, TypeVar, Tuple, Union
+from inspect import currentframe
 import io
 from functools import reduce, wraps
+from dataclasses import dataclass
 
 if sys.platform == "win32":
     from win32event import CreateMutex
@@ -37,13 +29,10 @@ if sys.platform == "win32":
     from winerror import ERROR_ALREADY_EXISTS
 
 
-
 def constant_factory(val):
     def default_val():
         return val
     return default_val
-
-
 
 
 def dicts_values_addition(accumulator, element):
@@ -54,9 +43,6 @@ def dicts_values_addition(accumulator, element):
             accumulator[key] = value
 
     return accumulator
-
-
-
 
 
 A = TypeVar('A')
@@ -208,7 +194,7 @@ def dir_create_if_need(dir_like: Union[str, PurePath, Path], b_interact: bool = 
 
 def dir_from_cfg(path_parent: Path, path_child: Union[str, Path]) -> Path:
     """
-    Create path_child if need, if not path_child is absolute path then path_parent will be prepended before
+    Create path_child if needed, if path_child is not absolute path then path_parent will be prepended before
     :param path_parent: parent dir path
     :param path_child: absolute path or relative
     :return: absolute Path(path_child)
@@ -357,8 +343,8 @@ def cfgfile2dict(arg_source: Union[Mapping[str, Any], str, PurePath, None] = Non
         arg_ext = arg_source.suffix
         try:
             dir_create_if_need(arg_source.parent)
-        except FileNotFoundError:  # path is not constist of less than 1 level of new subdirs
-            print('Ini file "{}" dir not found, continue...'.format(arg_source))
+        except FileNotFoundError:  # path is not consist of less than 1 level of new subdirs
+            print('Dir of config file "{}" not found, continue without...'.format(arg_source))
             config = {}
         else:
             if arg_ext.lower() in ['.yml', '.yaml']:
@@ -366,10 +352,14 @@ def cfgfile2dict(arg_source: Union[Mapping[str, Any], str, PurePath, None] = Non
                     on it unless this parser is used
                 """
                 try:
-                    from yaml import safe_load as yaml_safe_load
+                    from ruamel.yaml import safe_load as yaml_safe_load
                 except ImportError:
-                    raise ImportError("Could not import yaml. "
-                                      "It can be installed by running 'pip install PyYAML'")
+                    try:
+                        from yaml import safe_load as yaml_safe_load
+                    except ImportError:
+                        raise ImportError(
+                            "Could not import yaml or ruamel.yaml. It can be installed by running any of combinations:"
+                            "pip/conda install PyYAML/ruamel.yaml")
                 try:
                     with open(arg_source, encoding='utf-8') as f:
                         config = yaml_safe_load(f.read())
@@ -405,11 +395,9 @@ def type_fix(name: str, opt: Any) -> Tuple[str, Any]:
     For different oname's prefix/suffixes use this formattin rules:
     - 'dict': do not use curles, field separator: ',' if no '\n' in it else '\n,', key-value separator: ': ' (or ':' if no ': ')
     - 'list': do not use brackets, item separator: "'," if fist is ``'`` else '",' if fist is ``"`` else ','
-
     ...
     :return: (new_name, new_opt)
     """
-
     key_splitted = name.split('_')
     key_splitted_len = len(key_splitted)
     if key_splitted_len < 1:
@@ -421,7 +409,9 @@ def type_fix(name: str, opt: Any) -> Tuple[str, Any]:
 
 
     def val_type_fix(parent_name, field_name, field_value):
-        """modify type of field_value basing on parent_name"""
+        """
+        Modify type of field_value basing on parent_name (useful for dicts with keys thaty defines types of values)
+        """
         nonlocal name_out
         name_out, val = type_fix(parent_name, field_value)
         return field_name, val
@@ -467,9 +457,9 @@ def type_fix(name: str, opt: Any) -> Tuple[str, Any]:
             #         return name_out, [n.strip(' ",\n') for n in opt.split('",')]
             #     else:  # split to strings separated by ','
             #         return name_out, [n.strip() for n in opt.split(',')]
-        if isinstance(opt, dict):
-            opt = dict([val_type_fix(name, n, v) for n, v in opt.items()])
-            return name, opt
+        if isinstance(opt, Mapping):
+            opt = dict([val_type_fix(name[:-1] if name.endswith('lists') else name, n, v) for n, v in opt.items()])
+            return name_out or name, opt
 
         if suffix == 'dict':
             # remove dict suffix when convert to dict type
@@ -481,12 +471,21 @@ def type_fix(name: str, opt: Any) -> Tuple[str, Any]:
                     if name_new == name_out:
                         break
                     name_new = name_out  # saving previous value for compare to exit cycle
-                dict_fixed = {}
+                return name_out, {}  # ???
+            elif isinstance(opt, str):
+                if '\n' in opt:
+                    opt_list = opt.split('\n,' if ',\n' in opt else ',')
+                    if len(opt_list) > 1:
+                        dict_fixed = [
+                            dict([val_type_fix(name_new, *n.strip().split(': ' if ': ' in n else ':', maxsplit=1))])
+                            if len(n) == 2 else n for n in opt_list  # ???
+                        ]
+                    return name_out, dict_fixed  # ???
+                else:
+                    return type_fix(name_new, opt)  # ???
             else:
-                dict_fixed = dict([val_type_fix(name_new, *n.strip().split(': ' if ': ' in n else ':', maxsplit=1)
-                                                ) for n in opt.split('\n,' if '\n' in opt else ',') if len(n)
-                                   ])
-            return name_out, dict_fixed
+                return type_fix(name_new, opt)  # ???
+            
 
         if prefix == 'b':
             return name, literal_eval(opt)
@@ -607,10 +606,16 @@ def ini2dict(arg_source: Union[Mapping[str, Any], str, PurePath, None] = None):
                     # if new_name in sec:       # to implement this first set sec[new_name] to zero
                     #     val += sec[new_name]  #
 
-                    if new_name in opt_used:
+                    if new_name in opt_used and cfg[sname][new_name] is not None:
                         if opt is None:  # val == opt if opt is None # or opt is Nat
                             continue
-                        cfg[sname][new_name] += val
+                        if isinstance(opt, Mapping):
+                            if isinstance(cfg[sname][new_name], Mapping):
+                                cfg[sname][new_name].update(opt)
+                            else:  # Mapping will overwrite simple values
+                                cfg[sname][new_name] = val
+                        else:
+                            cfg[sname][new_name] += val
                     else:
                         cfg[sname][new_name] = val
                         opt_used.add(new_name)
@@ -681,7 +686,7 @@ def cfg_from_args(p, arg_add, **kwargs):
         '<prog>' strings in p replaces with p.prog
     see also: my_argparser_common_part()
     """
-    import configargparse
+    from argparse import ArgumentError
 
     def is_option_name(arg):
         """
@@ -717,7 +722,7 @@ def cfg_from_args(p, arg_add, **kwargs):
             if not cfg_file.is_file():
                 cfg_file = exe_path.with_suffix('.ini')
                 if not cfg_file.is_file():
-                    print('using default configuration')
+                    print(f'note: default configuration file {exe_path.name}.ini|yml is not exist')
                     cfg_file = None
         sys.argv.insert(1, str(cfg_file))
         if cfg_file:
@@ -737,9 +742,22 @@ def cfg_from_args(p, arg_add, **kwargs):
 
     # Load options from ini file
     config, arg_source, arg_ext = cfgfile2dict(arg_source)
-    if callable(p):  # todo: replace configargparse back to argparse to get rid of this double loading of ini/yaml?
-        p = p({'config_file_parser_class': configargparse.YAMLConfigFileParser
-               } if arg_ext.lower() in ('.yml', '.yaml') else None)
+
+    # todo: check this replacing of configargparse back to argparse to get rid of double loading of ini/yaml
+    # try:
+    #
+    #     from configargparse import YAMLConfigFileParser, ArgumentError
+    #
+    #     if callable(p):
+    #         p = p({'config_file_parser_class': YAMLConfigFileParser
+    #                } if arg_ext.lower() in ('.yml', '.yaml') else None)
+    # except ImportError:
+
+
+    if callable(p):
+        p = p()
+
+
 
     # Collect argument groups
     p_groups = {g.title: g for g in p._action_groups if
@@ -786,12 +804,12 @@ def cfg_from_args(p, arg_add, **kwargs):
 
                     # p_sec.set_defaults(**{'--' + option_name: config.get(section_name, option_name)})
                     p_sec.add(f'{prefix}{option_name}', default=section[option_name])
-                except configargparse.ArgumentError as e:
+                except ArgumentError as e:
                     # Same options name but in other ini section
                     option_name_changed = f'{section_name}.{option_name}'
                     try:
                         p_sec.add(f'{prefix}{option_name_changed}', default=section[option_name])
-                    except configargparse.ArgumentError:
+                    except ArgumentError:
                         # Changed option name was hardcoded so replace defaults defined there
                         p_sec._group_actions[p_sec_hardcoded_list.index(option_name_changed)].default = section[
                             option_name]
@@ -806,20 +824,20 @@ def cfg_from_args(p, arg_add, **kwargs):
         p_sec.add_argument(
             '--b_interact', default='True',
             help='ask showing source files names before process them')
-    except configargparse.ArgumentError as e:
+    except ArgumentError as e:
         pass  # option already exist - need no to do anything
     try:
         p_sec.add_argument(
             '--log', default=os_path.join('log', f'{this_prog_basename()}.log'),
             help='write log if path to existed file is specified')
-    except configargparse.ArgumentError as e:
+    except ArgumentError as e:
         pass  # option already exist - need no to do anything
     try:
         p_sec.add_argument(
             '--verbose', '-V', type=str, default='INFO',  # nargs=1,
             choices=['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET'],
             help='verbosity of messages in log file')
-    except configargparse.ArgumentError as e:
+    except ArgumentError as e:
         pass  # option already exist - need no to do anything
 
     # os_path.join(os_path.dirname(__file__), 'empty.yml')
@@ -980,20 +998,42 @@ def my_argparser_common_part(varargs, version='?'):  # description, version='?',
     :param version: value for `version` parameter
     :return p: configargparse object of parameters
     """
-    import configargparse
-    varargs.setdefault('default_config_files', [])
-    varargs.setdefault('formatter_class', configargparse.ArgumentDefaultsRawHelpFormatter)
-    # formatter_class= configargparse.ArgumentDefaultsHelpFormatter,
     varargs.setdefault('epilog', '')
-    varargs.setdefault('args_for_writing_out_config_file', ["-w", "--write-out-config-file"])
-    varargs.setdefault('write_out_config_file_arg_help_message',
-                       "takes the current command line arguments and writes them out to a configuration file the given path, then exits. But this file have no section headers. So to use this file you need to add sections manually. Sections are listed here in help message: [in], [out] ...")
-    varargs.setdefault('ignore_unknown_config_file_keys', True)
 
-    p = configargparse.ArgumentParser(**varargs)
+    try:
+        import configargparse
+        # varargs.setdefault('default_config_files', [])
+        # varargs.setdefault('formatter_class', configargparse.ArgumentDefaultsRawHelpFormatter)
+        # formatter_class= configargparse.ArgumentDefaultsHelpFormatter,
+        # varargs.setdefault('args_for_writing_out_config_file', ["-w", "--write-out-config-file"])
+        # varargs.setdefault('write_out_config_file_arg_help_message',
+        #                    "takes the current command line arguments and writes them out to a configuration file the given path, then exits. But this file have no section headers. So to use this file you need to add sections manually. Sections are listed here in help message: [in], [out] ...")
+        # varargs.setdefault('ignore_unknown_config_file_keys', True)
+        # p = configargparse.ArgumentParser(**varargs)
+    except ImportError:
+        from argparse import ArgumentParser
+        p = ArgumentParser(**varargs)
+        p.add = p.add_argument
 
-    p.add('cfgFile', is_config_file=True,
-          help='configuration file path(s). Command line parameters will overwrites parameters specified iside it')
+        def with_alias_to_add_argument(fun, *args, **kwargs):
+            """
+            Makes alias to "add_argument" method of add_argument_group() result
+            :param p:
+            :return:
+            """
+            def fun_mod(*args, **kwargs):
+                out = fun(*args, **kwargs)
+                out.add = out.add_argument
+                return out
+
+            return fun_mod
+
+        p.add_argument_group = with_alias_to_add_argument(p.add_argument_group)
+
+    p.add(
+        'cfgFile',  # is_config_file=True,
+         help='configuration file path(s). Command line parameters will overwrites parameters specified inside it'
+        )
     p.add('--version', '-v', action='version', version=
     '%(prog)s version {version} - (c) 2022 Andrey Korzh <ao.korzh@gmail.com>.')
 
@@ -1014,7 +1054,7 @@ def my_argparser_common_part(varargs, version='?'):  # description, version='?',
     #     choices=['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET'],
     #     help='verbosity of messages in log file')
 
-    return (p)
+    return p
 
 
 def pathAndMask(path: str, filemask=None, ext=None):
@@ -1107,28 +1147,29 @@ def init_file_names(
         end_file=None,
         b_interact=True,
         cfg_search_parent=None,
+        msg_action='search for',
         **kwargs):
     """
-      Fill cfg_files filds of file names: {'path', 'filemask', 'ext'}
+      Fill cfg_files fields of file names: {'path', 'filemask', 'ext'}
     which are not specified.
       Searches for files with this mask. Prints number of files found.
       If any - asks user to proceed and if yes returns its names list.
       Else raises Ex_nothing_done exception.
 
-    - path: name of file
-    - filemask', 'ext': optional - path mask or its part
-        exclude_files_endswith - additional filter for ends in file's names
-        b_search_in_subdirs, exclude_dirs_endswith - to search in dirs recursively
-        start_file, end_file - exclude files before and after this values in search list result
-    :param path_field: assigns path to this field initially
+    :param path: name of file
+    :param filemask, ext: optional - path mask or its part
+    :param exclude_files_endswith - additional filter for ends in file's names
+    :param b_search_in_subdirs, exclude_dirs_endswith - to search in dirs recursively
+    :param start_file, end_file - exclude files before and after this values in search list result
     :param b_interact: do ask user to proceed? If false proseed silently
-    :return: (paths, nfiles, path)
-    'path':
-    'nfiles': number of files found,
-    'paths': list of full names of found files
+    :param msg_action: object
     :param kwargs: not used
+    :return: (paths, nfiles, path)
+    - paths: list of full names of found files
+    - nfiles: number of files found,
+    - path:
     """
-
+    # ensure absolute path:
     path = set_cfg_path_filemask(path, filemask, ext, cfg_search_parent)
 
     # Filter unused directories and files
@@ -1172,7 +1213,7 @@ def init_file_names(
         # return False
         return bGood_file(fname, mask, namesBadAtEdge, bPrintGood=False)
 
-    print('search for {} files'.format(path), end='')
+    print(f'{msg_action} {path}', end='')
 
     # Execute declared functions ######################################
     if b_search_in_subdirs:
@@ -1185,20 +1226,22 @@ def init_file_names(
         paths = [path.with_name(f) for f in sorted(os_listdir(
             path.parent)) if filt_file_cur(f, path.name)]
     nfiles = len(paths)
-
-    print(end=f"\n- {nfiles} found")
+    nl1, nl0 = ('\n', '') if nfiles == 1 else ('', '\n')
+    print(end=f"{nl0}- {nfiles} found")
     if nfiles == 0:
         print('!')
         raise Ex_nothing_done
     else:
         print(end='. ')
     if b_interact:
-        s = input(f"Process {'them' if nfiles > 1 else 'it'}? Y/n: ")
+        s = input(f"{nl1}Process {'them' if nfiles > 1 else 'it'}? Y/n: ")
         if 'n' in s or 'N' in s:
             print('answered No')
             raise Ex_nothing_done
         else:
             print('wait... ', end='')
+    else:
+        print()
 
     """
     def get_vsz_full(inFE, vsz_path):
@@ -1347,7 +1390,7 @@ def splitPath(path, default_filemask):
     Split path to (D, mask, Dlast). Enshure that mask is not empty by using default_filemask.
     :param path: file or dir path
     :param default_filemask: used for mask if path is directory
-    :return: (D, mask, Dlast). If path is file then D and mask adjasent parts of path, else
+    :return: (D, mask, Dlast). If path is file then D and mask adjacent parts of path, else
     mask= default_filemask
         mask: never has slash and is never empty
         D: everything leading up to mask
@@ -1422,7 +1465,7 @@ def prep(args, default_input_filemask='*.pdf',
         bWrite2dir = outE.endswith('.%no%')
         if bWrite2dir:  # output path is dir
             outE = '.csv'
-            if not '<filename>' in outF:
+            if '<filename>' not in outF:
                 outF = outF.replace('*', '<filename>')
     if not os_path.isdir(outD):
         os_path.os.mkdir(outD)
@@ -1433,18 +1476,136 @@ def this_prog_basename(path=sys.argv[0]):
     return os_path.splitext(os_path.split(path)[1])[0]
 
 
-def init_logging(logging, logger_name=__name__, log_file=None, level_file='INFO', level_console=None):
+@dataclass(repr=False)  # , slots=True
+class Message:
+    # __slots__ = ('fmt', 'args')
+    fmt: str
+    args: Tuple
+
+    def __str__(self):
+        try:
+            return self.fmt.format(*self.args) if self.args else self.fmt
+        except KeyError:  # allow dict argument
+            try:
+                return self.fmt.format_map(self.args[0])
+            except IndexError:
+                return self.fmt + '\n- Bad format string!\n' + (
+                    f'Logging arguments: {self.args}' if len(self.args) else ''
+                    )
+        except (TypeError, IndexError):
+            print('Logging error due to wrong format string:', self.fmt, 'for arguments:', self.args)
+            raise
+
+
+class LoggingContextFilter(logging.Filter):
+    # https://docs.python.org/3/howto/logging-cookbook.html
+
+    def filter(self, record):
+        # First frame is the file in which this class is defined.
+        frame = currentframe().f_back
+        try:
+            # Walk back through multiple levels of logging.
+            while 'logging' in frame.f_code.co_filename or frame.f_code.co_name.startswith(('log', '<module>')):
+                # print(frame.f_code.co_filename, frame.f_code.co_name)
+                frame = frame.f_back
+        except:
+            pass
+        # Create the overrides
+        # record.filename = full_name
+        record.funcName = frame.f_code.co_name
+        record.lineno = frame.f_lineno
+        return True
+
+
+class LoggingStyleAdapter(logging.LoggerAdapter):
+    """
+    Uses str.format() style in logging messages. Usage:
+    logger = LoggingStyleAdapter(logging.getLogger(__name__))
+    also prepends message with [self.extra['id']]
+    """
+    def __init__(self, logger, extra=None):
+        if isinstance(logger, str):
+            logger = logging.getLogger(logger)
+        f = LoggingContextFilter()
+        logger.addFilter(f)
+
+        self.message = Message('', ())
+        super(LoggingStyleAdapter, self).__init__(logger, extra or {})
+
+    def process(self, msg, kwargs):
+        try:
+            extra_id = self.extra['id']
+        except KeyError:
+            return msg, kwargs
+        else:
+            return f'[{extra_id}] {msg}', kwargs
+
+    def log(self, level, msg, *args, **kwargs):
+        if self.isEnabledFor(level):
+            self.message.fmt, kwargs = self.process(msg, kwargs)
+            self.message.args = args
+            self.logger._log(level, self.message, (), **kwargs)
+
+
+class LoggingFilter_DuplicatesOption(logging.Filter):
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._message_lockup = {}
+
+    def filter(self, record):
+        try:
+            log_interval = (msg_args0 := (msg := record.msg).args[0]).pop('filter_same')
+            b_change_msg = False
+        except KeyError:
+
+            try:  # add number of repetition to the message string?
+                log_interval = (msg_args0 := (msg := record.msg).args[0]).pop('add_same_counter')
+                b_change_msg = True
+            except KeyError:
+                b_change_msg = False
+                return True
+            if log_interval is None or (log_interval == 1 and not b_change_msg):
+                return True
+        except (AttributeError, IndexError):
+            return True
+
+        current_log = (msg.fmt, tuple(msg_args0.items()))
+        try:
+            cnt = self._message_lockup[current_log]
+        except KeyError:
+            self._message_lockup[current_log] = 0
+            return True
+        cnt += 1
+        self._message_lockup[current_log] = cnt
+        if b_change_msg:
+            record.msg.fmt += f' (repeated {cnt})'
+        return not cnt % log_interval
+
+        # self.last_log
+        #     if current_log != getattr(self, "last_log", None):
+        #         self.last_log = current_log
+        #         return True
+
+
+
+def my_logging(name, logger=None):
+    logger = logging.getLogger(name)
+    logger.addFilter(LoggingFilter_DuplicatesOption())
+    return LoggingStyleAdapter(logger)
+
+
+def init_logging(logger='', log_file=None, level_file='INFO', level_console=None):
     """
     Logging to file flogD/flogN.log and console with piorities level_file and levelConsole
-    :param logging: logging class from logging library
-    :param logger_name:
+    :param logger: name of logger or logger. Default: '' - name of root logger.
     :param log_file: name of log file. Default: & + "this program file name"
     :param level_file: 'INFO'
     :param level_console: 'WARN'
     :return: logging Logger
    
     Call example:
-    l= init_logging(logging, None, None, args.verbose)
+    l= init_logging('', None, args.verbose)
     l.warning(msgFile)
     """
     global l
@@ -1459,15 +1620,22 @@ def init_logging(logging, logger_name=__name__, log_file=None, level_file='INFO'
         dir_create_if_need(flogD)
         log_file = os_path.join(flogD, f'&{this_prog_basename()}.log')  # '&' is for autoname indication
 
-    if l:
+    if logger is None:
+        logger = sys._getframe(1).f_back.f_globals['__name__']  # replace with name of caller
+    elif isinstance(logger, str) and __name__ == '__main__':
+        logger = ''
+
+    was_l = bool(l)
+    if was_l:
         try:  # a bit more check that we already have logger
-            l = logging.getLogger(logger_name)
+            l = logging.getLogger(logger) if isinstance(logger, str) else logger
         except Exception as e:
             pass
         if l and l.hasHandlers():
-            l.handlers.clear()  # or if have good handlers return l
+            l.handlers.clear()  # or if we have good handlers return l?
     else:
-        l = logging.getLogger(logger_name)
+        l = logging.getLogger(logger) if isinstance(logger, str) else logger
+
     try:
         filename = Path(log_file)
         b_default_path = not filename.parent.exists()
@@ -1475,16 +1643,21 @@ def init_logging(logging, logger_name=__name__, log_file=None, level_file='INFO'
         b_default_path = True
     if b_default_path:
         filename = Path(__file__).parent / 'logs' / filename.name
-    logging.basicConfig(filename=filename, format='%(asctime)s %(message)s', level=level_file)
 
-    # set up logging to console
-    console = logging.StreamHandler()
-    console.setLevel(level_console if level_console else 'INFO' if level_file != 'DEBUG' else 'DEBUG')  # logging.WARN
-    # set a format which is simpler for console use
-    formatter = logging.Formatter('%(message)s')  # %(name)-12s: %(levelname)-8s ...
-    console.setFormatter(formatter)
-    l.addHandler(console)
-    l.propagate = True  # to default
+    # Create handlers if there no them in root
+    if not l.root.hasHandlers():
+        logging.basicConfig(filename=filename, format='%(asctime)s %(message)s', level=level_file)
+
+        # set up logging to console
+        console = logging.StreamHandler()
+        console.setLevel(level_console if level_console else 'INFO' if level_file != 'DEBUG' else 'DEBUG')  # logging.WARN
+        # set a format which is simpler for console use
+        formatter = logging.Formatter('%(message)s')  # %(name)-12s: %(levelname)-8s ...
+        console.setFormatter(formatter)
+        l.addHandler(console)
+
+    # Or do not use root handlers:
+    # l.propagate = not l.root.hasHandlers()  # to default
 
     if b_default_path:
         l.warning('Bad log path: %s! Using new path with default dir: %s', log_file, filename)
@@ -1546,41 +1719,11 @@ def name_output_and_log(out_path=None,
             path = '.'
         str_print = ''
 
-    l = init_logging(logging, None, path.with_name(log), verbose)
+    l = init_logging('', path.with_name(log), verbose)
     if str_print:
         l.warning(str_print)  # or use "a %(a)d b %(b)s", {'a':1, 'b':2}
 
     return path, ext, writeMode, l
-
-
-class Message:
-    def __init__(self, fmt, args):
-        self.fmt = fmt
-        self.args = args
-
-    def __str__(self):
-        return self.fmt.format(*self.args)
-
-class LoggingStyleAdapter(logging.LoggerAdapter):
-    """
-    Uses str.format() style in logging messages. Usage:
-    logger = LoggingStyleAdapter(logging.getLogger(__name__))
-    also prepends message with [self.extra['id']]
-    """
-    def __init__(self, logger, extra=None):
-        if isinstance(logger, str):
-            logger = logging.getLogger(logger)
-        super(LoggingStyleAdapter, self).__init__(logger, extra or {})
-
-    def process(self, msg, kwargs):
-        return (f'[{self.extra["id"]}] {msg}' if 'id' in self.extra else msg,
-                kwargs)
-
-    def log(self, level, msg, *args, **kwargs):
-        if self.isEnabledFor(level):
-            msg, kwargs = self.process(msg, kwargs)
-            self.logger._log(level, Message(msg, args), (), **kwargs)
-
 
 
 
@@ -1595,7 +1738,7 @@ class FakeContextIfOpen:
                  file: Optional[Any] = None,
                  opened_file_object = None):
         """
-        :param fn_open_file: if not bool(fn_open_file) is True then context manager will do nothing on exit
+        :param fn_open_file: if bool(fn_open_file) is False then context manager will do nothing on exit
         :param file:         if not str or PurePath then context manager will do nothing on exit
         """
         if opened_file_object:  # will return opened_file_object and do nothing
@@ -1699,11 +1842,19 @@ def open_csv_or_archive_of_them(filename: Union[PurePath, Iterable[Union[Path, s
             for path_arc_file in arc_files:
                 with ArcFile(str(path_arc_file), mode='r') as arc_file:
                     for text_file in arc_file.infolist():
-                        # text_file.filename.encode('cp437').decode('CP866') can be needed for russian names
+                        arc_filename_cor_enc = None
                         if pattern and not fnmatch(text_file.filename, pattern):
-                            continue
-
+                            # account for possible bad russian encoding
+                            arc_filename_cor_enc = text_file.filename.encode('cp437').decode('CP866')
+                            if fnmatch(arc_filename_cor_enc, pattern):
+                                pass
+                            else:
+                                continue
+                                
                         with arc_file.open(text_file.filename, mode=read_mode) as f:
+                            if arc_filename_cor_enc:
+                                # return file object with correct encoded name and all properties same as of f
+                                f.name = arc_filename_cor_enc
                             break_flag = yield (f if binary_mode else io.TextIOWrapper(
                                 f, encoding=encoding, errors='replace', line_buffering=True))  # , newline=None
                             if break_flag:

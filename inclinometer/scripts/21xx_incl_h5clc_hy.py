@@ -2,12 +2,14 @@ from pathlib import Path
 import sys
 from yaml import safe_dump as yaml_safe_dump
 
-import to_vaex_hdf5.cfg_dataclasses as cfg_d
+import cfg_dataclasses as cfg_d
 import inclinometer.incl_h5clc_hy as incl_h5clc_hy
 
 # raw data db - data that was converted from csv
 path_db_raw = Path(
-    r'd:\WorkData\BalticSea\_Pregolya,Lagoon\221103@ib26,28,29,30\_raw\221103.raw.h5'
+    r'd:\WorkData\BalticSea\230507_ABP53\inclinometer@i3,4,15,19,37,38;ib27-30,ip6\_raw\230507.raw.h5'
+    # r'd:\WorkData\BalticSea\230423inclinometer_Zelenogradsk\_raw\230423.raw.h5'
+    # r'd:\WorkData\BalticSea\_Pregolya,Lagoon\221103@ib26,28-30\_raw\221103.raw.h5'
     # r'd:\WorkData\KaraSea\220906_AMK89-1\inclinometer\_raw\220910.raw.h5'
     # r'e:\WorkData\BalticSea\181005_ABP44\inclinometer\_raw\181022.raw.h5'
     # r'e:\WorkData\BalticSea\181005_ABP44\inclinometer\_raw\181017.raw.h5'
@@ -38,7 +40,7 @@ path_cfg_default = (lambda p: p.parent / 'cfg' / p.name)(Path(incl_h5clc_hy.__fi
 with path_cfg_default.open('w') as f:
     yaml_safe_dump({
         'defaults': ['base_incl_h5clc_hy', '_self_'],
-        'hydra': {'searchpath': [path_db_raw.with_name("cfg_proc").as_uri().replace('///', '//')]}  # .as_posix()
+        'hydra': {'searchpath': [f'file://{path_db_raw.with_name("cfg_proc").as_posix()}'.replace('///', '//')]}  # .as_posix()
         }, f)
     f.flush()
 
@@ -130,3 +132,5 @@ for probes in 'inclinometers'.split():  # 'inclinometers wavegauges', 'inclinome
             fun=incl_h5clc_hy.main)
 
 sys.argv = sys_argv_save
+
+#%%

@@ -1,10 +1,12 @@
     
 in:
-  path_cruise: d:\WorkData\_experiment\inclinometer\_type_b\230117_stand@ib26,28-30
+  path_cruise: d:\WorkData\_experiment\inclinometer\_type_b\230109_tube@ib26,28-30
+  # d:\WorkData\_experiment\inclinometer\_type_b\230117_stand@ib26,28-30
   # d:\WorkData\KaraSea\220906_AMK89-1\inclinometer
 
-  raw_subdir: I_B26.rar  #Инклинометры 2023.01.09.rar  #INKL_B29.ZIP
-  probes: [26]  #,28,29,30
+  raw_subdir: Инклинометры 2023.01.09.rar
+  # 230117,25_raw@ib26,28-30  #  #INKL_B29.ZIP
+  probes: [26,28,29,30]  #
   probes_prefix: incl_b
   raw_pattern: "*{prefix:}{number:0>2}*.[tT][xX][tT]"
 
@@ -16,19 +18,18 @@ in:
 #  azimuth_add: {constant: 24.63356}  #  31.81 - 6.65644, 31.29 - 6.65644
   # azimuth_add not used, todo: use in step 1.
 
-
 filter:
-#  min_date:
-#    26: 2023-01-09T14:14
-#    28: 2023-01-09T14:23
-#    29: 2023-01-09T14:04
-#    30: 2023-01-09T13:49
-#  max_date:
-#    0 : 2023-01-09T14:31
-#    26: 2023-01-09T14:22
-#    28: 2023-01-09T14:31
-#    29: 2023-01-09T14:13
-#    30: 2023-01-09T14:02
+  min_date:
+    26: 2023-01-09T14:14
+    28: 2023-01-09T14:23
+    29: 2023-01-09T14:04
+    30: 2023-01-09T13:49
+  max_date:
+    0 : 2023-01-09T14:31
+    26: 2023-01-09T14:22
+    28: 2023-01-09T14:31
+    29: 2023-01-09T14:13
+    30: 2023-01-09T14:02
 
     # {22: 2022-09-14T09:00Z}  # {0: 2022-09-14T01:10Z}  #
 

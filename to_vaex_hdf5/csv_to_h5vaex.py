@@ -62,7 +62,7 @@ except ImportError:
 
 
 if __name__ == '__main__':
-    lf = None  # see main(): l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+    lf = None  # see main(): l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
 else:
     lf = LoggingStyleAdapter(logging.getLogger(__name__))
 
@@ -404,7 +404,7 @@ def csv_to_h5(
         key: hdf5 group name in hdf5 file where store data
         ...
     :param dates_formats:
-        column: csv column name wich need to be convert from str to DateTime,
+        column: csv column name which need to be convert from str to DateTime,
         date_format: date formats
     :param processing: dict with
         keys: ((_input cols_), (_output cols_)) and
@@ -650,7 +650,7 @@ def csv_to_h5_vaex(read_csv_args, to_hdf_args, dates_formats: Mapping[str, str],
         key: hdf5 group name in hdf5 file where store data
         ...
     :param dates_formats:
-        column: csv column name wich need to be convert from str to DateTime,
+        column: csv column name which need to be convert from str to DateTime,
         date_format: date formats
     :param processing: dict with
         keys: ((_input cols_), (_output cols_)) and

@@ -20,7 +20,7 @@ def h5del_rows(db_path, tbl, tbl_log=None, keep_where: str = ''):
 db_path = r'd:\WorkData\BalticSea\210515_tracker\210618_1440_wind@tr2\210618_1440tr2.h5'
 tbl = 'tr2'
 tbl_log = f'{tbl}/log'
-q_exclude = "index<=Timestamp('{}') | index>=Timestamp('{}')"  # UTC
+q_exclude = "index<='{}' | index>='{}'"  # UTC
 intervals_to_remove = [
     #('2021-06-21T12:30', '2021-06-21T12:50'),
     ('2021-06-21T17:20', '2021-06-21T19:40'),

@@ -16,7 +16,7 @@ in:
   raw_pattern: "*{prefix:}_V{number:0>2}*.[tT][xX][tT]"
 
   # wavegauge
-  db_coefs: d:\WorkData\~configuration~\inclinometr\190710incl.h5
+  db_coefs: d:\WorkData\~configuration~\inclinometer\190710incl.h5
   # d:\workData\BalticSea\201202_BalticSpit_inclinometer\201202@i3,5,9,10,11,15,19,23,28,30,32,33,w1-6\_raw\201202.raw.h5
   # d:\workData\BalticSea\201202_BalticSpit\210108pres.h5  # todo: check pres. coef adding because fails to found on run
 

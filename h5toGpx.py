@@ -2,17 +2,17 @@
 Extract data from Pandas HDF5 store*.h5 files to GPX
 todo: calc preferred section directions and save updated gpx file with this indication
 """
-from __future__ import print_function
+
 
 import logging
 import sys
-from os import path as os_path
-from pathlib import Path
 
+from pathlib import Path
+from gpxpy.geo import simplify_polyline as gpxpy_simplify_polyline
 from gpxpy.gpx import GPX, GPXTrack, GPXTrackPoint, GPXTrackSegment, GPXWaypoint  # xml.etree.ElementTree as ET
 import numpy as np
 import pandas as pd
-from gpxpy.geo import simplify_polyline as gpxpy_simplify_polyline
+
 
 from to_pandas_hdf5.h5_dask_pandas import filterGlobal_minmax
 from to_pandas_hdf5.h5toh5 import h5load_points, h5find_tables
@@ -35,21 +35,24 @@ def my_argparser():
     s = p.add_argument_group('in', 'data from hdf5 store')
     s.add('--db_path', help='hdf5 store file path')  # '*.h5'
     s.add('--tables_log_list', help='hdf5 log files name', default='logFiles')
-    s.add('--table_nav', help='table where to search coordinates. If empty then use data tables',
-             default='navigation')
+    s.add('--table_nav', default='navigation',
+          help='table where to search coordinates. If empty then use data tables')
 
-    s = p.add_argument_group('out', 'Output files: paths, formats... ' \
+    s = p.add_argument_group('out', 'Output files: paths, formats... '
                              ' - not calculation intensive affecting parameters')
     s.add('--select_from_tablelog_ranges_index',
-              help='if set to 0 (or -1) then use only 1 data point per log row and retrieve navigation at data points only (to calc dist) else if None then use all data for ranges specified in log rows and saves tracks (not points)')
+          help='if set to 0 (or -1) then use only 1 data point per log row and retrieve navigation at data points only (to calc dist) else if None then use all data for ranges specified in log rows and saves tracks (not points)')
     s.add('--gpx_names_funs_list', default='i+1',
-              help='list of functions to name of tracks/waypoints, each item for each table. Use arguments of current indexes: i - waypoint. will be converted to string, to duplicates will be added letter in alphabet order. Functions arguments are i: row index, row: pandas series with fields: Index (datetime), Lat, Lon')
+          help='list of functions to name of tracks/waypoints, each item for each table. Use arguments of current indexes: i - waypoint. will be converted to string, to duplicates will be added letter in alphabet order. Functions arguments are i: row index, row: pandas series with fields: Index (datetime), Lat, Lon')
     s.add('--gpx_names_funs_cobined', default='gpx_names_funs[row.itbl](i)',
-              help='tracks/waypoints names of combined gpx. Possibilites are the same as for gpx_names_funs_list item. Default function will keep combined values same as individual')
+          help='tracks/waypoints names of combined gpx. Possibilites are the same as for gpx_names_funs_list item. Default function will keep combined values same as individual')
     s.add('--gpx_names_fun_format', default='{}',
-              help='name\'s format to display gpx_names_funs_(list/combined) result')
+          help='name\'s format to display gpx_names_funs_(list/combined) result')
+    s.add('--gpx_symbols_list', default="'Diamond, Red','Triangle, Blue'",
+          help='list of symbols supported by your gpx display program. Each item is for correspondig input table')
+
     s.add('--path', default='',
-              help='directory to place output files')
+          help='directory to place output files')
 
     s = p.add_argument_group('process', 'calculation parameters')
     s.add_argument('--b_missed_coord_to_zeros',
@@ -59,7 +62,7 @@ def my_argparser():
     s.add('--dt_search_nav_tolerance_seconds', default='1',
                help='start interpolte nav when not found exact data time')
     s.add('--period_files', default='',
-               help='pandas offset strings as D, 5D, H, ... (most useful: D), exporrt data in intervals')
+               help='pandas offset strings as D, 5D, H, ... (most useful: D), export data in intervals')
     s.add('--period_segments', default='',
                help='pandas offset strings as D, 5D, H, ... to divide track on segments')
 
@@ -101,7 +104,7 @@ def gpx_track_create(gpx, gpx_obj_namef):
     return gpx_track
 
 
-def gpx_proc_and_save(gpx, gpx_obj_namef, cfg_proc, path_stem):
+def gpx_save(gpx, gpx_obj_namef, cfg_proc, path_stem):
     if cfg_proc['b_missed_coord_to_zeros']:
         for p in gpx.walk(only_points=True):
             if p.latitude is None or p.longitude is None:
@@ -165,10 +168,10 @@ def save_to_gpx(nav_df: pd.DataFrame, fileOutPN, gpx_obj_namef=None, waypoint_sy
         # w_name = None # same perpose for not all conditions but faster
         # nav_dft= nav_df.reset_index().set_index('itbl', drop=False, append=True) #, inplace=True
         # for t in range(nav_dft.itbl.min(), nav_dft.itbl.max()+1):  #.ptp() = -
-        for t, nav_dft in nav_df.groupby(['itbl']):  # .reset_index()
+        for t, nav_dft in nav_df.groupby('itbl'):  # .reset_index()
             for i, r in enumerate(nav_dft.itertuples()):  # .loc[t] name=None
-                str_time_short = '{:%d %H:%M}'.format(r.Index.to_pydatetime())
-                timeUTC = r.Index.tz_convert(None).to_pydatetime()
+                str_time_short = '{:%d %H:%M}'.format(r.Index.round('s').to_pydatetime())
+                timeUTC = r.Index.round('s').tz_convert(None).to_pydatetime()
                 str_time_long = '{:%d.%m.%y %H:%M:%S}'.format(timeUTC)
                 name = gpx_obj_namef if isinstance(gpx_obj_namef, str) else gpx_obj_namef(i, r, t)
 
@@ -284,11 +287,11 @@ def save_to_gpx(nav_df: pd.DataFrame, fileOutPN, gpx_obj_namef=None, waypoint_sy
             if cfg_proc['dt_per_file'] and Tcur - Tprev > cfg_proc['dt_per_file']:  # save to next file
                 part += 1
                 if fileOutPN:
-                    gpx_proc_and_save(gpx, gpx_obj_namef, cfg_proc, f'{fileOutPN}part{part}')
+                    gpx_save(gpx, gpx_obj_namef, cfg_proc, f'{fileOutPN}part{part}')
                 gpx_track = gpx_track_create(gpx, gpx_obj_namef)
                 Tprev = Tcur
         if fileOutPN:
-            gpx_proc_and_save(gpx, gpx_obj_namef, cfg_proc, fileOutPN)
+            gpx_save(gpx, gpx_obj_namef, cfg_proc, fileOutPN)
 
     return gpx
 # ___________________________________________________________________________
@@ -318,18 +321,18 @@ def save_to_csv(nav, datetimeindex, filepath):
     """
 
     # Format coordinates for Mapsource GUI of waypoint inserting
-    strLat_deg_minut = str_deg_minut_from_deg(nav['Lat'], '{2:}{0:02.0f} {1:02.6f}', 'N', 'S')
-    strLon_deg_minut = str_deg_minut_from_deg(nav['Lon'], '{2:}{0:02.0f} {1:02.6f}', 'E', 'W')
-    # print(strLat_deg_minut.astype('O') + ', ' + strLon_deg_minut.astype('O'))
+    str_lat = str_deg_minut_from_deg(nav['Lat'], '{2:}{0:02.0f} {1:02.6f}', 'N', 'S')
+    str_lon = str_deg_minut_from_deg(nav['Lon'], '{2:}{0:02.0f} {1:02.6f}', 'E', 'W')
+    # print(str_lat.astype('O') + ', ' + str_lon.astype('O'))
     # strLatLon4mapsource= 'N{} {} E{} {}'.format(Lat_deg, Lat_minut, Lon_deg, Lon_minut)
 
     # - combine results to record array
 
     rnav_dt = np.dtype({'names': ['DateTime', 'strLat', 'strLon'], 'formats': ['M8[us]', '|S30', '|S30']})  # 'f8'
     datetimeindex = datetimeindex.round(pd.Timedelta(seconds=1)).tz_localize(None)  # corrupt but in file look better
-    # rnav = fromarrays([datetimeindex, strLat_deg_minut, strLon_deg_minut], dtype=rnav_dt)  # .astype('M8[us]'
+    # rnav = fromarrays([datetimeindex, str_lat, str_lon], dtype=rnav_dt)  # .astype('M8[us]'
 
-    rnav = pd.DataFrame(np.array([strLat_deg_minut, strLon_deg_minut]).T, columns=['strLat', 'strLon'],
+    rnav = pd.DataFrame(np.array([str_lat, str_lon]).T, columns=['strLat', 'strLon'],
                         index=datetimeindex)
     rnav.index.name = 'Date        Time        '
     rnav.to_csv(filepath, sep='\t')
@@ -377,7 +380,7 @@ def main(new_arg=None):
         return
     if new_arg == '<return_cfg>':  # to help testing
         return cfg
-    l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+    l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
     if not cfg['out']['path'].is_absolute():
         # set path relative to cfg['in']['db_path']
         cfg['out']['path'] = cfg['in']['db_path'].with_name(str(cfg['out']['path']))
@@ -393,7 +396,7 @@ def main(new_arg=None):
     global gpx_names_funs  # Shortcat for cfg['out']['gpx_names_funs']
 
     # Load data #################################################################
-    qstr_trange_pattern = "index>=Timestamp('{}') & index<=Timestamp('{}')"
+    qstr_trange_pattern = "index>='{}' & index<='{}'"
     with pd.HDFStore(cfg['in']['db_path'], mode='r') as store:
         # Find tables by pattern
         if '*' in cfg['in']['tables'][0]:
@@ -441,8 +444,11 @@ def main(new_arg=None):
                 else:
                     dfL = pd.DataFrame.from_records({'DateEnd': st_en[-1], 'fileName': tblD}, index=st_en[:1])
 
-            gpx_names_fun_str = "lambda i, row, t=0: '{}'.format({})".format(
-                cfg['out']['gpx_names_fun_format'],
+            gpx_names_fun_str = "lambda i, row, t=0: {}.format({})".format(
+                (
+                    f"'{cfg['out']['gpx_names_fun_format']}'" if not cfg['out']['gpx_names_fun_format'].startswith("f'")
+                    else cfg['out']['gpx_names_fun_format']
+                ),
                 gpx_names_funs[itbl])
             gpx_names_fun = eval(compile(gpx_names_fun_str, '', 'eval'))
             if cfg['out']['select_from_tablelog_ranges'] is None:

@@ -41,7 +41,7 @@ sys.path.append(str(scripts_path.parent.resolve()))
 
 from utils2init import Ex_nothing_done, init_logging, cfg_from_args, init_file_names, my_argparser_common_part, call_with_valid_kwargs
 from utils_time import intervals_from_period, pd_period_to_timedelta
-from to_pandas_hdf5.h5toh5 import h5init
+from to_pandas_hdf5.h5toh5 import h5out_init
 from to_pandas_hdf5.h5_dask_pandas import h5_load_range_by_coord, filter_local
 # h5q_intervals_indexes_gen
 from inclinometer.incl_h5clc import incl_calc_velocity_nodask, my_argparser, h5_names_gen, filt_data_dd
@@ -394,7 +394,7 @@ def h5_velocity_by_intervals_gen(cfg: Mapping[str, Any], cfg_out: Mapping[str, A
             cfg['in']['columns'] = cfg_in_columns_saved  # recover to not affect next file
 
     else:
-        query_range_pattern = "index>=Timestamp('{}') & index<=Timestamp('{}')"
+        query_range_pattern = "index>='{}' & index<='{}'"
 
         def gen_loaded(tbl):
             """
@@ -644,7 +644,7 @@ def main(new_arg=None, **kwargs):
     elif cfg['program']['return'] == '<cfg_from_args>':  # to help testing
         return cfg
 
-    init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+    init_logging('', cfg['program']['log'], cfg['program']['verbose'])
     l = logging.getLogger(prog)
 
     multitaper.warn = l.warning  # module is not installed but copied. so it can not import this dependace
@@ -675,7 +675,7 @@ def main(new_arg=None, **kwargs):
         cfg['proc']['time_intervals_start'] = np.array(cfg['proc']['time_intervals_center'], np.datetime64) - cfg['proc']['dt_interval'] / 2
 
     cfg_out['chunksize'] = cfg['in']['chunksize']
-    h5init(cfg['in'], cfg_out)
+    h5out_init(cfg['in'], cfg_out)
     # cfg_out_table = cfg_out['table']  need? save because will need to change
     cfg_out['save_proc_tables'] = True  # False
 

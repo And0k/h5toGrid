@@ -30,14 +30,14 @@ from utils2init import my_argparser_common_part, cfg_from_args, this_prog_basena
 from utils_time import timzone_view
 from filters import rep2mean, inearestsorted
 from to_pandas_hdf5.csv2h5 import set_filterGlobal_minmax
-from to_pandas_hdf5.h5toh5 import h5temp_open, h5move_tables, h5init, h5del_obsolete, h5index_sort, query_time_range, \
+from to_pandas_hdf5.h5toh5 import h5temp_open, h5move_tables, h5out_init, h5del_obsolete, h5index_sort, query_time_range, \
     h5remove_duplicates, h5load_points
 from to_pandas_hdf5.h5_dask_pandas import h5_append
 
 date_format_ISO9115 = '%Y-%m-%dT%H:%M:%S'  # for Obninsk
 
 if __name__ == '__main__':
-    l = None  # see main(): l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+    l = None  # see main(): l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
 else:
     l = logging.getLogger(__name__)
 version = '0.0.1'
@@ -61,7 +61,7 @@ process it and save HDF5/CSV
 ----------------------------"""}, version)
 
     # , 'default_config_files': [os_path.join(os_path.dirname(__file__), name) for name in
-    #                            ('CTD_calc.ini', 'CTD_calc.json')]
+    #                            ('ctd_calc.ini', 'ctd_calc.json')]
 
     # Configuration sections
     s = p.add_argument_group('in',
@@ -130,7 +130,7 @@ process it and save HDF5/CSV
 
 
 def extractRuns(P: Sequence, cfg_extract_runs: Mapping[str, Any]) -> Tuple[List[int], List[int]]:
-    '''
+    """
     Extract runs based on length and amplitude of intervals with sign of gradient(P)
     :param P: z coordinate - negative is below surface
     :param cfg_extract_runs: dict with fields:
@@ -140,19 +140,19 @@ def extractRuns(P: Sequence, cfg_extract_runs: Mapping[str, Any]) -> Tuple[List[
     todo: replace with one based on famous line simplification algorithm
 #                          min_samples
 #surface -----------------|-|----+---------------
-#          x     x         x     |                
+#          x     x         x     |
 #           x   x x       x x    |min_dp
 #            x x   x     x   x   |
 #             x     x    x    x  |
 #                    x   x     x-+
-#                     x  x      x x        
-#                      xx        x          
+#                     x  x      x x
+#                      xx        x
 #result separation:
 #          0>>>>>>>>>>>><<<>>>>>0%%%%%%%%%%%%%%%%+
 #positions: |imin(1)  |imax(1)
 #                          |imin(2)
 #                               |imax(2)
-    '''
+    """
     min_samples = np.array(cfg_extract_runs['min_samples']) if (
             'min_samples' in cfg_extract_runs and cfg_extract_runs['min_samples']) else 0
     min_dp = np.array(cfg_extract_runs['min_dp']) if (
@@ -223,7 +223,7 @@ def extractRuns(P: Sequence, cfg_extract_runs: Mapping[str, Any]) -> Tuple[List[
         else:
             pex = pex[bok]
 
-            # Deleting smaller adjasent extremums of one type
+            # Deleting smaller adjacent extremums of one type
             bbad = np.ediff1d(bt.view(np.int8), to_begin=-1, to_end=-1) == 0  # False ... False
             isten = np.flatnonzero(np.ediff1d(bbad.view(np.int8))).reshape((-1, 2))
             isten[:, 1] += 1
@@ -268,24 +268,23 @@ def extractRuns(P: Sequence, cfg_extract_runs: Mapping[str, Any]) -> Tuple[List[
 def CTDrunsExtract(P: np.ndarray,
                    dnT: np.ndarray,
                    cfg_extract_runs: Dict[str, Any]) -> np.ndarray:
-    '''
-    find profiles ("Mainas"). Uses extractRuns()
+    """
+    Find profiles ("mainas"). Uses extractRuns()
     :param P: Pressure/Depth
     :param dnT: Time
     :param cfg_extract_runs: settings dict with fields:
-      - dt_between_min
+      - dt_between_min or dt_hole_max: split runs where dt between adjacent samples bigger (dt_hole_max priority) 
       - min_dp
       - min_samples
-      - dt_hole_max - split runs where dt between adjasent samples bigger. If not
-      specified it is set equal to 'dt_between_min' automatically
-      - b_do - if it is set to False intepret all data as one run
-      - b_keep_minmax_of_bad_files, optional - keep 1 min before max and max of separated parts of data where movements insufficient to be runs
-    :return: iminmax: 2D numpy array np.int64([[minimums],[maximums]])
-    '''
+      - b_do - if it is set to False interpret all data as one run
+      - b_keep_minmax_of_bad_files, optional - keep 1 min before max and max of separated parts of data where movements
+       insufficient to be runs
+    :return: iminmax: 2D numpy array np.int64([[minimums], [maximums]])
+    """
 
     if ('do' not in cfg_extract_runs) or cfg_extract_runs['b_do']:  # not do only if b_do is set to False
         P = np.abs(rep2mean(P))
-        if not 'dt_hole_max' in cfg_extract_runs:
+        if 'dt_hole_max' not in cfg_extract_runs:
             cfg_extract_runs['dt_hole_max'] = cfg_extract_runs['dt_between_min']
         dt64_hole_max = np.timedelta64(cfg_extract_runs['dt_hole_max'], 'ns')
         # time_holes= np.flatnonzero(np.ediff1d(dnT, dt64_hole_max, dt64_hole_max) >= dt64_hole_max) #bug in numpy
@@ -353,9 +352,13 @@ def CTDrunsExtract(P: np.ndarray,
     return iminmax  # , b_maina
 
 
-## Functions for prepare sycle ###################################################
-# - can assign data to cfg['for']
+#%% Functions to prepare cycle ###################################################
 def load_coef(cfg):
+    """
+    Load old sonde configuration in cfg['for']
+    :param cfg:
+    :return:
+    """
     set_field_if_no(cfg, 'for', {})
     cfg['for']['k_names'], cfg['for']['kk'] = \
         np.loadtxt(cfg['in']['path_coef'],
@@ -364,16 +367,16 @@ def load_coef(cfg):
     cfg['for']['kk'] = np.fliplr(cfg['for']['kk'])
 
 
-## Functions for execute in sycle ################################################
+#%% Functions for execute in cycle ################################################
 # - output will be saved
 def process_brown(df_raw, cfg: Mapping[str, Any]):
-    '''
+    """
     Calc physical values from codes
     :param df_raw:
     :param cfg:
     :return: pandas dataframe
     # todo: use signs. For now our data haven't negative values and it is noise if signs!=0. Check: df_raw.signs[df_raw.signs!=0]
-    '''
+    """
     Val = {}
     if b'Pres' in cfg['for']['k_names'] and not 'Pres' in df_raw.columns:
         df_raw = df_raw.rename(columns={'P': 'Pres'})
@@ -391,12 +394,102 @@ def process_brown(df_raw, cfg: Mapping[str, Any]):
     # Val['sigma0'] sw.pden(s, T90conv(t), p=0) - 1000
     return df
 
+def bad_bot_filter(
+        df_raw, imin: np.ndarray, imax: np.ndarray,
+        min_ddens_per_dv=-0.2, pres_range=1, speed_smooth_sigma=3, cfg=None):
+    
+    import sys
+    drive_d = 'D:' if sys.platform == 'win32' else '/mnt/D'  # to run on my Linux/Windows systems both
+    scripts_path = Path(drive_d + '/Work/_Python3/And0K/Veusz_plugins')
+    sys.path.append(str(Path(scripts_path).parent.resolve()))
+    from Veusz_plugins import func_vsz as v
+    
+    def bad_bot_by_diff(
+            pres: np.ndarray, dens: np.ndarray, imin: np.ndarray, imax: np.ndarray, speed_down: np.ndarray = None,
+            min_ddens_per_dv=-0.2, pres_range=1, time: np.ndarray = None, speed_smooth_sigma=3):
+        """
+        Exclude data from near bottom of runs
+        D:\Work\_Python3\And0K\Veusz_plugins
+        bad_bot_by_diff(x, fun, i_en, i_st=None, dp_en=None, p=None, speed=1)
+        functionality is copied from zabor:
+        CTD_SigmaTh_fbot = v.bad_bot_by_diff(
+            CTD_SigmaTh, lambda dxPerdv: dxPerdv < -0.2, CTDends,
+            i_st=CTDstarts, dp_en=1, p=CTD_Pres, speed=CTDspeedDown_MA
+        )
+        :param pres: pressure
+        :param dens: density
+        :param imin: indexes of runs starts (surface)
+        :param imax: indexes of runs ends (bottom)
+        :param speed_down: speed = d(p)/d(time) - if provided then time and std_smooth_sigma will not be used
+        :param min_ddens_per_dv:
+        :param pres_range: parameter specifies search range: from pres = pres(imax) - pres_range to pres(imax)
+        :param time: time, specify to calculate speed_down if latter is not provided
+        :param speed_smooth_sigma: optional gaussian smooth parameter to smooth calculated speed_down if it is not provided
+        :return: imax shifted before 1st bad value found in pres_range
+        """
+
+        if speed_down is None:
+            from filters import rep2mean
+            from scipy.ndimage import gaussian_filter1d
+            
+            speed_down_not_filt = np.append(np.ediff1d(pres) / np.ediff1d(time), 0)
+            # filter big values:
+            speed_down = rep2mean(speed_down_not_filt, speed_down_not_filt < 5)
+            if speed_smooth_sigma:
+                speed_down = gaussian_filter1d(speed_down, speed_smooth_sigma)
+            # negative or near 0 speed_down where dens increases is probably due to speed_down is bad, replacing:
+            bad = (speed_down < 0.001) | (np.ediff1d(dens, 0) > 0)
+            # not use rep2mean(speed_down, ok) - not replaces all near 0 values, for example as in [1,0,-1]
+            speed_down[bad] = 0.005  # to find 1st ddens < min_ddens_per_dv*speed, default -0.2*0.005 = -0.001
+        
+        i_en = imax + 1  # slice end to include end of run
+        dens_filt = v.bad_bot_by_diff(
+            dens, lambda dx_per_dv: dx_per_dv < min_ddens_per_dv, i_en,
+            i_st=imin, p_range=pres_range, p=pres, speed=speed_down
+        )
+        return dens_filt
+    
+    def imax_dens_near_bot(pres: np.ndarray, dens: np.ndarray, imin: np.ndarray, imax: np.ndarray, pres_range=1):
+        # Max dens criteria
+        st_ends = np.column_stack((imin, imax + 1))
+        i_st = v.i_before(pres, pres_range, st_ends)
+        # index of max dens in pres_range before imin_ddens
+        st_ends[:, 0] = i_st
+        try:  # imax_dens
+            return i_st + v.in_ranges(dens, np.nanargmax, st_ends)
+        except ValueError:
+            return i_st
+    
+    if 'sigma0' in df_raw.columns:
+        sigma0 = df_raw['sigma0']
+    else:
+        t90 = df_raw['Temp90'] if 'Temp90' in df_raw.columns else (
+            df_raw['Temp'] if cfg['in'].get('b_temp_on_its90') else gsw.conversions.t90_from_t68(df_raw['Temp'])
+        )
+        sa = gsw.SA_from_SP(df_raw['Sal'].values, df_raw['Pres'].values, lon=16.7, lat=55.2)
+        sigma0 = gsw.sigma0(sa, gsw.CT_from_t(sa, t90.values, df_raw['Pres'].values))
+    
+    dens_filt = bad_bot_by_diff(
+        df_raw['Pres'].values, sigma0, imin, imax,  # speed_down=None,
+        min_ddens_per_dv=-0.2, pres_range=1,
+        time=(lambda x: x - x[0])(df_raw.index.to_numpy(np.int64)) / 1e9, speed_smooth_sigma=3
+    )  # df_raw.index.to_numpy(np.int64) equal to df_raw.index.to_numpy('M8[ns]').astype(np.int64)
+    imin_ddens = imin + [np.flatnonzero(np.isfinite(dens_filt[slice(*ise)]))[-1] for ise in zip(imin, imax + 1)]
+    
+    imax_dens = imax_dens_near_bot(df_raw['Pres'].values, dens_filt, imin, imax, pres_range=1)
+    
+    imax_new = np.fmin(imin_ddens, imax_dens)  # imax_dens always less, but can be NaN
+    di = imax - imax_new
+    if any(di):
+        print('Bottom values filtered(sigma0):', di if len(di) > 1 else di.sum())
+        imax = imax_new
+    return imax
 
 def log_runs(df_raw: pd.DataFrame,
              cfg: Mapping[str, Any],
              log: Optional[MutableMapping[str, Any]] = None) -> pd.DataFrame:
     """
-    Changes log
+    Changes ``log``
     :param df_raw: DataFrame of parameters (data)
     :param cfg: dict with fields:
       - extract_runs:
@@ -419,9 +512,11 @@ def log_runs(df_raw: pd.DataFrame,
         cfg['extract_runs'])
     if not len(imin):
         return pd.DataFrame(data=None, columns=df_raw.columns, index=df_raw.index[[]])  # empty dataframe
-
-    log.update(  # pd.DataFrame(, index=log_update['_st'].index).rename_axis('Date0')
-        {'rows': imax - imin,
+        
+    imax = bad_bot_filter(df_raw, imin, imax, min_ddens_per_dv=-0.2, pres_range=1, speed_smooth_sigma=3, cfg=cfg)
+    
+    log.update({  # pd.DataFrame(, index=log_update['_st'].index).rename_axis('Date0')
+        'rows': imax - imin,
         'rows_filtered': np.append(imin[1:], len(df_raw)) - imax,  # rows between runs down. old: imin - np.append(0, imax[:-1])
         'fileName': [os_path.basename(cfg['in']['file_stem'])] * len(imin),
         'fileChangeTime': [cfg['in']['fileChangeTime']] * len(imin),
@@ -532,7 +627,7 @@ def get_runs_parameters(df_raw, times_min, times_max, cols_good_data: Union[str,
             # Note: tries to find only positive vals:
             df_nav_col = store.select(
                 table_nav,
-                where="index>=Timestamp('{}') & index<=Timestamp('{}') & {} > 0".format(
+                where="index>='{}' & index<='{}' & {} > 0".format(
                     *(time_points[[0, -1]] + np.array(dt_search_nav_tolerance, 'm8[s]') * [-1, 1]), col),
                 columns=[col])
             try:
@@ -603,7 +698,7 @@ def add_ctd_params(df_in: MutableMapping[str, Sequence], cfg: Mapping[str, Any],
     :param cfg: dict with fields:
         ['out']['data_columns'] - list of columns in output dataframe
         ['in'].['b_temp_on_its90'] - optional
-    :param lon:  # 54.8707   # least priority values
+    :param lat:  # 54.8707   # least priority values
     :param lon:  # 19.3212
     :return: DataFrame with only columns specified in cfg['out']['data_columns']
     """
@@ -628,8 +723,10 @@ def add_ctd_params(df_in: MutableMapping[str, Sequence], cfg: Mapping[str, Any],
             ctd['Temp90'] = ctd['Temp']
         else:
             ctd['Temp90'] = gsw.conversions.t90_from_t68(df_in['Temp'])
-
-    ctd['SA'] = gsw.SA_from_SP(ctd['Sal'], ctd['Pres'], lat=lat, lon=lon)  # or Sstar_from_SP() for Baltic where SA=S*
+    try:
+        ctd['SA'] = gsw.SA_from_SP(ctd['Sal'], ctd['Pres'], lat=lat, lon=lon)  # or Sstar_from_SP() for Baltic where SA=S*
+    except NotImplementedError:  # Cannot apply ufunc <ufunc 'sa_from_sp'> to mixed DataFrame and Series inputs
+        ctd['SA'] = gsw.SA_from_SP(ctd['Sal'].values, ctd['Pres'].values, lat=lat, lon=lon)
     # Val['Sal'] = gsw.SP_from_C(Val['Cond'], Val['Temp'], Val['P'])
     if 'soundV' in params_to_calc:
         ctd['soundV'] = gsw.sound_speed_t_exact(ctd['SA'], ctd['Temp90'], ctd['Pres'])
@@ -640,7 +737,7 @@ def add_ctd_params(df_in: MutableMapping[str, Sequence], cfg: Mapping[str, Any],
         CT = gsw.CT_from_t(ctd['SA'], ctd['Temp90'], ctd['Pres'])
         ctd['sigma0'] = gsw.sigma0(ctd['SA'], CT)
         # ctd = pd.DataFrame(ctd, columns=cfg['out']['data_columns'], index=df_in.index)
-    if 'Lat' in params_to_calc and not 'Lat' in ctd.columns:
+    if 'Lat' in params_to_calc and 'Lat' not in ctd.columns:
         ctd['Lat'] = lat
         ctd['Lon'] = lon
 
@@ -669,7 +766,7 @@ def main(new_arg=None):
     elif cfg['program']['return'] == '<cfg_from_args>':  # to help testing
         return cfg
 
-    l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+    l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
     print('\n', this_prog_basename(__file__), end=' started. ')
     try:
         cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
@@ -710,7 +807,7 @@ def main(new_arg=None):
         cfg['out']['tables'] = None
         # cfg['out']['tables_log'] = None  # for _runs cfg will be redefined (this only None case that have sense?)
 
-    h5init(cfg['in'], cfg['out'])
+    h5out_init(cfg['in'], cfg['out'])
     # store, df_log_old = h5temp_open(**cfg['out'])
 
     cfg_fileN = os_path.splitext(cfg['in']['cfgFile'])[0]
@@ -728,7 +825,7 @@ def main(new_arg=None):
 
         # Settings to not affect main data table and switch off not compatible options:
         cfg['out']['tables'] = []
-        cfg['out']['b_incremental_update'] = False  # todo: If False check it: need delete all previous result of CTD_calc() or set min_time > its last log time. True not implemented?
+        cfg['out']['b_incremental_update'] = False  # todo: If False check it: need delete all previous result of ctd_calc() or set min_time > its last log time. True not implemented?
         cfg['program']['b_log_display'] = False  # can not display multiple rows log
         if 'b_save_images' in cfg['extract_runs']:
             cfg['extract_runs']['path_images'] = cfg['out']['db_path'].with_name('_subproduct')
@@ -756,7 +853,7 @@ def main(new_arg=None):
         dir_create_if_need(cfg['out']['path_csv'])
     # Load data Main circle #########################################
     # Open input store and cycle through input table log records
-    qstr_trange_pattern = "index>=Timestamp('{}') & index<=Timestamp('{}')"
+    qstr_trange_pattern = "index>='{}' & index<='{}'"
     iSt = 1
 
     df_log_old, cfg['out']['db'], cfg['out']['b_incremental_update'] = h5temp_open(**cfg['out'])
@@ -836,11 +933,18 @@ def main(new_arg=None):
                     # Copy to csv
                     if cfg['out'].get('path_csv'):
                         fname = '{:%y%m%d_%H%M}-{:%d_%H%M}'.format(r.Index, r.DateEnd) + file_names_add(ifile)
-                        if not 'data_columns' in cfg['out']:
+                        if 'data_columns' not in cfg['out']:
                             cfg['out']['data_columns'] = slice(0, -1)  # all cols
                         df.to_csv(  # [cfg['out']['data_columns']]
                             cfg['out']['path_csv'] / fname, date_format=cfg['out']['text_date_format'],
                             float_format='%5.6g', index_label='Time')  # to_string, line_terminator='\r\n'
+                        
+                        # save last row
+                        if ifile == iSt:
+                            f_last = open(cfg['out']['path_csv'] / 'bot.txt', 'a', newline='')
+                        df.iloc[[-1], :].to_csv(  # [cfg['out']['data_columns']]
+                            f_last, date_format=cfg['out']['text_date_format'],
+                            float_format='%5.6g', index_label='Time', header=(ifile == iSt))
 
                     # Log to screen (if not prohibited explicitly)
                     if cfg['out']['log'].get('Date0') is not None and (

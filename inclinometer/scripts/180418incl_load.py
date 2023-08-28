@@ -22,16 +22,16 @@ if True:  # Faluse:  #    #   # Real data
     # Cruise
     path_cruise = drive_d.joinpath(
         r'd:\workData\BalticSea\191119_Filino'
-        # d:\workData\BalticSea\181005_ABP44\inclinometr
-        # r"WorkData\_experiment\_2018\inclinometr\181004inclinometer\_raw"
-        # '/workData/_experiment/_2018/inclinometr/180905_clockCheck/raw')
-        # '/mnt/D/workData/_experiment/_2018/inclinometr/180828_time/raw')
-        # '/mnt/D/workData/_experiment/_2018/inclinometr/180731_КТИ/raw')
-        # '/mnt/D/workData/_experiment/_2018/inclinometr/180726_КТИ/raw'
+        # d:\workData\BalticSea\181005_ABP44\inclinometer
+        # r"WorkData\_experiment\_2018\inclinometer\181004inclinometer\_raw"
+        # '/workData/_experiment/_2018/inclinometer/180905_clockCheck/raw')
+        # '/mnt/D/workData/_experiment/_2018/inclinometer/180828_time/raw')
+        # '/mnt/D/workData/_experiment/_2018/inclinometer/180731_КТИ/raw')
+        # '/mnt/D/workData/_experiment/_2018/inclinometer/180726_КТИ/raw'
         # '/mnt/D/workData/BalticSea/180418_Svetlogorsk/inclinometer' (r'd:\workData\BalticSea\180418_Svetlogorsk')
         )
-    path_db = 'incl'  # '/mnt/D/workData/_experiment/_2018/inclinometr/180731_КТИ/180731incl.h5'
-    # '/mnt/D/workData/_experiment/_2018/inclinometr/180726_КТИ/180726incl.h5'
+    path_db = 'incl'  # '/mnt/D/workData/_experiment/_2018/inclinometer/180731_КТИ/180731incl.h5'
+    # '/mnt/D/workData/_experiment/_2018/inclinometer/180726_КТИ/180726incl.h5'
     # '/mnt/D/WorkData/BalticSea/180418_Svetlogorsk/inclinometer/180418inclPres.h5'
 
     if True:  # False:  # Baranov format
@@ -68,7 +68,7 @@ if True:  # Faluse:  #    #   # Real data
             in_file = path_cruise / f'INKL_{probe:03d}.TXT'  # '_source/incl_txt/180510_INKL10.txt' # r'_source/180418_INKL09.txt'
 
             in_file_cor = correct_kondrashov_txt(in_file)
-            csv2h5([scripts_path / 'cfg/csv_inclin_Kondrashov.ini',
+            csv2h5([scripts_path / 'cfg/csv_tcm.ini',
                     '--path', str(in_file_cor),
                     '--blocksize_int', block_10Mbt_str,
                     '--table', re.sub('^inkl_0', 'incl',
@@ -95,7 +95,7 @@ else:
                 ])
 
     if True:  # True:  #
-        csv2h5([scripts_path / 'cfg/csv_inclin_Kondrashov.ini',
+        csv2h5([scripts_path / 'cfg/csv_tcm.ini',
                 '--path', str(path_cruise / 'inclin_Kondrashov_180430.txt'),
                 '--blocksize_int', '1000',
                 '--db_path', str(path_db),

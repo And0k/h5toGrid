@@ -2,8 +2,8 @@
 # defaults:
   # - /base_incl_h5clc_hy
   # - override proc/time_range_zeroing: ['2020-12-02T13:00:00', '2020-12-03T13:00:00']
-  # - override filter/bad_p_at_bursts_starts_peroiod: True
+  # - override filter/bad_p_at_bursts_starts_period: True
 process:
   time_range_zeroing: ['2020-12-02T13:00:00', '2020-12-03T13:00:00']
 filter:
-  bad_p_at_bursts_starts_peroiod: True
+  bad_p_at_bursts_starts_period: True

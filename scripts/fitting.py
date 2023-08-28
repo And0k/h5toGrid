@@ -57,7 +57,7 @@ def load_calibr_by_load(file_csv, colon=50):
      
     :param file_csv: str, path
     :param colon: waith to add to Load
-    load_data('/mnt/D/workData/_experiment/_2018/inclinometr/180416Pcalibr/Pcalibr_log.dat')
+    load_data('/mnt/D/workData/_experiment/_2018/inclinometer/180416Pcalibr/Pcalibr_log.dat')
     """
     csv = pd.read_csv(file_csv, header=0, sep='\s+')  # , na_values=
     # pci

@@ -9,7 +9,16 @@ import pandas as pd
 
 import logging
 import imaplib
-from ruamel_yaml import safe_load
+
+try:
+    # from ruamel_yaml import safe_load
+    from ruamel.yaml import safe_load
+    # from ruamel.yaml import YAML
+    # yaml = YAML()
+    # yaml.indent(mapping=2, sequence=4, offset=2)
+    # # yaml.explicit_start=False
+except ImportError:
+    from yaml import safe_load
 
 from gps_tracker.gmail_read import get_gmails_data
 
@@ -50,7 +59,9 @@ def spot_from_gmail(device_number: Union[str, int], time_start: datetime):
 
     #ep = pd.Timestamp('1969-12-31 19:00:00', tz='utc')  # datetime( 0, tzinfo=timezone.utc)
     return get_gmails_data(
-        str(Path.home() / 'client_secret_310771020112-fbq4dukacte2nevs4d7kc5decga1cahb.apps.googleusercontent.com.json'),
+        str(Path.home() / 'client_secret_2_310771020112-fbq4dukacte2nevs4d7kc5decga1cahb.apps.googleusercontent.com.json'
+        # 'client_secret_310771020112-fbq4dukacte2nevs4d7kc5decga1cahb.apps.googleusercontent.com.json'
+        ),
         q=f'subject:"Position Alert Activated: {device_number}" after:{round((time_start - ep).total_seconds())} from:alerts@maps.findmespot.com',
         parse_body=parse_spot_text
         )

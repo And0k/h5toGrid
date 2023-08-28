@@ -17,7 +17,7 @@ path_db= (Path(r'data') / '200520_Nord3-nav&ctd_loaded.h5').absolute()  # Path(_
 #path_data= Path('data')
 device = 'CTD_Idronaut_OS310'
 def test_main():
-    main(['cfg/CTD_calc-find_runs.ini',
+    main(['cfg/ctd_calc-find_runs.ini',
         '--db_path', str(path_db),
         '--tables_list', f'{device}',
         '--min_samples', '50',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
@@ -25,6 +25,6 @@ def test_main():
         # '--b_keep_minmax_of_bad_files', 'True',
         # '--b_incremental_update', 'True',
         '--b_interact', 'False',  # to can check with True value in pytest need to run with -s command line option
-        # todo: check it. If False need delete all previous result of CTD_calc() or set min_time > its last log time
+        # todo: check it. If False need delete all previous result of ctd_calc() or set min_time > its last log time
         # '--out.tables_list', '',
         ])

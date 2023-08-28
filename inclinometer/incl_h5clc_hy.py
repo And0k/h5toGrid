@@ -9,70 +9,74 @@ Load raw data and coefficients from hdf5 table (or group of tables)
 Calculate new data (averaging by specified interval)
 Combine this data to one new table
 """
-
+from dataclasses import dataclass, field
+from datetime import datetime
+from functools import wraps
 import gc
 import logging
+from pathlib import Path
 import re
 import sys
-from functools import wraps
-from pathlib import Path
-from datetime import timedelta, datetime
+
 from time import sleep
-from typing import Any, Callable, Dict, Iterator, Iterable, Mapping, MutableMapping, Optional, Sequence, Tuple, List, Union, TypeVar
-import dask
-import dask.array as da
-import dask.dataframe as dd
+from typing import (Annotated, Any, Callable, Dict, Iterator, Iterable, Mapping, MutableMapping, Optional, Sequence, Tuple, List,
+                    Union, TypeVar)
+from numba import njit, prange
 import numpy as np
 import pandas as pd
-from numba import njit, prange
-from numba.extending import overload
-from dask.diagnostics import ProgressBar
-from dataclasses import dataclass, field
-from omegaconf import MISSING, open_dict
+import dask.array as da
+import dask.dataframe as dd
+from omegaconf import open_dict
 import hydra
 
 # my:
 
-# allows to run on both my Linux and Windows systems:
-scripts_path = Path(f"{'D:' if sys.platform == 'win32' else '/mnt/D'}/Work/_Python3/And0K/h5toGrid/scripts")
-sys.path.append(str(scripts_path.parent.resolve()))
+# # allows to run on both my Linux and Windows systems:
+# scripts_path = Path(f"{'D:' if sys.platform == 'win32' else '/mnt/D'}/Work/_Python3/And0K/h5toGrid/scripts")
+# sys.path.append(str(scripts_path.parent.resolve()))
 # sys.path.append( str(Path(__file__).parent.parent.resolve()) ) # os.getcwd()
 # from utils2init import ini2dict
 # from scripts.incl_calibr import calibrate, calibrate_plot, coef2str
 # from other_filters import despike, rep2mean
-import to_vaex_hdf5.cfg_dataclasses as cfg_d
-from utils2init import Ex_nothing_done, call_with_valid_kwargs, set_field_if_no, init_logging, cfg_from_args, \
-     my_argparser_common_part, this_prog_basename, dir_create_if_need, LoggingStyleAdapter
-from utils_time import intervals_from_period, pd_period_to_timedelta
-from to_pandas_hdf5.h5toh5 import h5init, h5find_tables, h5remove, h5move_tables, h5coords, h5_close, \
+import cfg_dataclasses as cfg_d
+from utils2init import Ex_nothing_done, call_with_valid_kwargs, set_field_if_no, this_prog_basename, LoggingStyleAdapter
+from to_pandas_hdf5.h5toh5 import h5out_init, h5find_tables, h5move_tables, h5coords, h5_close, \
     h5_dispenser_and_names_gen
-from to_pandas_hdf5.h5_dask_pandas import h5_append, h5q_intervals_indexes_gen, h5_load_range_by_coord, i_bursts_starts, \
-    filt_blocks_da, filter_global_minmax, filter_local, cull_empty_partitions, dd_to_csv
+from to_pandas_hdf5.h5_dask_pandas import h5_load_range_by_coord, h5_append_to, i_bursts_starts, \
+    filter_global_minmax, filter_local, cull_empty_partitions, dd_to_csv
 from filters import rep2mean
 from inclinometer.h5inclinometer_coef import rot_matrix_x, rotate_y
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
 prog = 'incl_h5clc'
-VERSION = '0.1.1'
+VERSION = '1.0.1'
 hydra.output_subdir = 'cfg'
+
+# ConfigIn_InclProc config parameters which are dicts with probes ID keys allows select different config value to
+# process each probe data table. For this dict ID keys will be compared to regex group <n> returned by match this
+# expression to table name (also matches tables with names having numbers joined by "_" of combined data):
+re_probe_number = r'(?:(?:w|incl|i)_?(?P<n>[A-z]*\d+)_?)+'
 
 @dataclass
 class ConfigIn_InclProc(cfg_d.ConfigInHdf5_Simple):
     """Parameters of input files
     Constructor arguments:
-    :param db_path: path to pytables hdf5 store to load data. May use patterns in Unix shell style (usually *.h5)
-    :param tables: list of tables names or regex patterns to search. Note: regex search is swithed on only if you include "*" symbol somewhere in the pattern
+    db_paths: path to pytables hdf5 store to load data. May use patterns in Unix shell style (usually *.h5)
+    tables: list of tables names or regex patterns to search. Note: regex search is switched on only if you include "*"
+    symbol somewhere in the pattern.
+
     Note: str for time values is used because datetime not supported by Hydra
     """
     tables: List[str] = field(default_factory=lambda: ['incl.*'])  # table names in hdf5 store to get data. Uses regexp if only one table name
+    db_paths: Optional[List[str]] = None
+
     min_date: Optional[str] = None  # imput data time range minimum
     max_date: Optional[str] = None  # imput data time range maximum
     time_range: Optional[List[str]] = None
     # cruise directories to search in in.db_path to set path of out.db_path under it if out.db_path is not absolute:
     raw_dir_words_list: Optional[List[str]] = field(
         default_factory=lambda: cfg_d.ConfigInCsv().raw_dir_words)
-    db_paths: Optional[List[str]] = None
-    # fields that are dicts of existed fields - they specifies different values for each probe:
+    # fields that are dicts of existed fields - they specifies different values for each probe ID:
     dates_min: Dict[str, Any] = field(default_factory=dict)  # Any is for List[str] but hydra not supported
     dates_max: Dict[str, Any] = field(default_factory=dict)  # - // -
     time_ranges: Optional[Dict[str, Any]] = field(default_factory=dict)
@@ -120,12 +124,12 @@ class ConfigFilter_InclProc:
     :param dates_min_dict: List with items in "key:value" format. Start of time range for each probe: (used instead common for each probe min_dict["Time"]) ')
     :param dates_max_dict: List with items in "key:value" format. End of time range for each probe: (used instead common for each probe max_dict["Time"]) ')
 
-    :param bad_p_at_bursts_starts_peroiod: pandas offset string. If set then marks each 2 samples of Pressure at start of burst as bad')
+    :param bad_p_at_bursts_starts_period: pandas offset string. If set then marks each 2 samples of Pressure at start of burst as bad')
 
     """
     min: Optional[Dict[str, float]] = field(default_factory=dict)
     max: Optional[Dict[str, float]] = field(default_factory=lambda: {'g_minus_1': 1, 'h_minus_1': 8})
-    bad_p_at_bursts_starts_peroiod: str = ''
+    bad_p_at_bursts_starts_period: str = ''
 
 
 @dataclass
@@ -163,13 +167,12 @@ class ConfigProgram_InclProc(cfg_d.ConfigProgram):
 
 cs_store_name = Path(__file__).stem
 cs, ConfigType = cfg_d.hydra_cfg_store(
-    f'base_{cs_store_name}',
-    {
-        'input': ['in__incl_proc'],  # Load the config "in_hdf5" from the config group "input"
-        'out': ['out__incl_proc'],  # Set as MISSING to require the user to specify a value on the command line.
-        'filter': ['filter__incl_proc'],
-        'process': ['process__incl_proc'],
-        'program': ['program__incl_proc']
+    cs_store_name, {
+        'input': [ConfigIn_InclProc],  # Load the config "in_hdf5" from the config group "input"
+        'out': [ConfigOut_InclProc],  # Set as MISSING to require the user to specify a value on the command line.
+        'filter': [ConfigFilter_InclProc],
+        'process': [ConfigProcess_InclProc],
+        'program': [ConfigProgram_InclProc]
         # 'probes': ['probes__incl_proc'],
         # 'search_path': 'empty.yml' not works
     },
@@ -401,12 +404,13 @@ def fG(Axyz: Union[np.ndarray, da.Array],
     """
     Allows use of transposed Cg
     :param Axyz:
-    :param Ag: scaling coef
-    :param Cg: shift coef
+    :param Ag: scaling coefficient
+    :param Cg: shift coefficient
     :return:
     """
     assert Ag.any(), 'Ag coefficients all zeros!!!'
-    return Ag @ (Axyz - (Cg if Cg.shape[0] == Ag.shape[0] else Cg.T))
+    c = np.atleast_2d(Cg)
+    return Ag @ (Axyz - (c if c.shape[0] == Ag.shape[0] else c.T))
 
 
 # @overload(fG)
@@ -502,7 +506,9 @@ def incl_calc_velocity_nodask(
             bad_g = np.fabs(GsumMinus1.compute()) > cfg_filter['max_g_minus_1']
             bad_g_sum = bad_g.sum(axis=0)
             if bad_g_sum > 0.1 * len(GsumMinus1):
-                print('Acceleration is bad in {}% points!'.format(100 * bad_g_sum / len(GsumMinus1)))
+                print('Acceleration is too high (>{}) in {}% points!'.format(
+                    cfg_filter['max_g_minus_1'], 100 * bad_g_sum / len(GsumMinus1))
+                )
             incl_rad[bad_g] = np.NaN
 
         Vabs = v_abs_from_incl(incl_rad, kVabs, cfg_proc['calc_version'], cfg_proc['max_incl_of_fit_deg'])
@@ -551,7 +557,7 @@ def recover_x__sympy_lambdify(y, z, Ah, Ch, mean_Hsum):
 
 
 def recover_magnetometer_x(Mcnts, Ah, Ch, max_h_minus_1, len_data):
-    Hxyz = fG(Mcnts, Ah, Ch)  # #x.rechunk({0: -1, 1: 'auto'}, block_size_limit=1e8)
+    Hxyz = fG(Mcnts, Ah, Ch)  # x.rechunk({0: -1, 1: 'auto'}, block_size_limit=1e8)
     HsumMinus1 = da.linalg.norm(Hxyz, axis=0) - 1  # should be close to zero
 
     # Channel x recovering
@@ -562,23 +568,20 @@ def recover_magnetometer_x(Mcnts, Ah, Ch, max_h_minus_1, len_data):
     if can_recover:
         Mcnts_list = [[], [], []]
         need_recover_mask &= bad  # only where x is bad
-        #sleep(cfg_filter['sleep_s'])
         need_recover = need_recover_mask.sum(axis=0).compute()
-        lf.info('Magnetometer x channel {:s}: {:d} bad where y&z is ok. y&z ok in {:d}/{:d}',
-               'recovering' if need_recover else 'checked - ok', need_recover, can_recover, len_data)
-        if need_recover:  # have poins where recover is needed and is posible
-
+        if need_recover:  # have points where recover is needed and is possible
+            lf.info(
+                'Magnetometer x channel recovering where {:d} it is bad and y&z is ok (y&z ok in {:d}/{:d})',
+                need_recover, can_recover, len_data
+            )
             # Try to recover mean_Hsum (should be close to 1)
-            mean_HsumMinus1 = np.nanmedian(
-                (HsumMinus1[HsumMinus1 < max_h_minus_1]).compute()
-                )
-
+            mean_HsumMinus1 = np.nanmedian((HsumMinus1[HsumMinus1 < max_h_minus_1]).compute())
             if np.isnan(mean_HsumMinus1) or (np.fabs(mean_HsumMinus1) > 0.5 and need_recover / len_data > 0.95):
+                # need recover all x points because too small points with good HsumMinus1
                 lf.warning('mean_Hsum is mostly bad (mean={:g}), most of data need to be recovered ({:g}%) so no trust it'
                           ' at all. Recovering all x-ch.data with setting mean_Hsum = 1',
                           mean_HsumMinus1, 100 * need_recover / len_data)
-                bad = da.ones_like(HsumMinus1,
-                                   dtype=np.bool8)  # need recover all x points because too small points with good HsumMinus1
+                bad = da.ones_like(HsumMinus1, dtype=np.bool8)
                 mean_HsumMinus1 = 0
             else:
                 lf.warning('calculated mean_Hsum - 1 is good (close to 0): mean={:s}', mean_HsumMinus1)
@@ -592,12 +595,11 @@ def recover_magnetometer_x(Mcnts, Ah, Ch, max_h_minus_1, len_data):
             #                               da.square(Ah[1, 1] * (rep2mean_da(Mcnts[1,:], Mcnts[1,:] > 0) - Ch[1]))
             #                               )
 
-
             #Mcnts_x_recover = recover_x__sympy_lambdify(Mcnts[1, :], Mcnts[2, :], Ah, Ch, mean_Hsum=mean_HsumMinus1 + 1)
-            # replaced to this to use numba:
-            Mcnts_x_recover = da.map_blocks(recover_x__sympy_lambdify, Mcnts[1, :], Mcnts[2, :],
-                                            Ah=Ah, Ch=Ch, mean_Hsum=mean_HsumMinus1 + 1, dtype=np.float64, meta=np.float64([]))
-
+            Mcnts_x_recover = da.map_blocks(  # replaced to this to use numba:
+                recover_x__sympy_lambdify, Mcnts[1, :], Mcnts[2, :],
+                Ah=Ah, Ch=Ch, mean_Hsum=mean_HsumMinus1 + 1, dtype=np.float64, meta=np.float64([])
+            )
             Mcnts_list[0] = da.where(need_recover_mask, Mcnts_x_recover, Mcnts[0, :])
             bad &= ~need_recover_mask
 
@@ -614,7 +616,6 @@ def recover_magnetometer_x(Mcnts, Ah, Ch, max_h_minus_1, len_data):
             if (ch != 'x') or not need_recover:
                 Mcnts_list[i] = Mcnts[i, :]
             bad = da.isnan(Mcnts_list[i])
-            #sleep(cfg_filter['sleep_s'])
             n_bad = bad.sum(axis=0).compute()  # exits with "Process finished with exit code -1073741819 (0xC0000005)"!
             if n_bad:
                 n_good = HsumMinus1.shape[0] - n_bad
@@ -623,7 +624,9 @@ def recover_magnetometer_x(Mcnts, Ah, Ch, max_h_minus_1, len_data):
                     Mcnts_list[i] = da.from_array(rep2mean_da2np(Mcnts_list[i], ~bad), chunks=Mcnts_list[0].chunks,
                                                   name=f'Mcnts_list[{ch}]-all_is_finite')
                 else:
-                    lf.warning(f'channel {ch}: bad points: {n_bad} - will not recover because too small good points ({n_good})')
+                    lf.warning(
+                        f'channel {ch}: bad points: {n_bad} - will not recover because too small good points ({n_good})'
+                    )
                     Mcnts_list[i] = np.NaN + da.empty_like(HsumMinus1)
                     need_recover_mask[bad] = False
 
@@ -705,6 +708,8 @@ def rep2mean_da2np(y: da.Array, bOk=None, x=None) -> np.ndarray:
     #     y_out_list[k][:] = y_out_list[n_bad_from_start+1][0]
     # return np.hstack(y_out_list)
 
+# Next function calculates this columns:
+incl_calc_velocity_cols = ('Vabs', 'Vdir', 'v', 'u', 'inclination')
 
 def incl_calc_velocity(a: dd.DataFrame,
                        filt_max: Optional[Mapping[str, float]] = None,
@@ -712,14 +717,14 @@ def incl_calc_velocity(a: dd.DataFrame,
                        Ag: Optional[np.ndarray] = None, Cg: Optional[np.ndarray] = None,
                        Ah: Optional[np.ndarray] = None, Ch: Optional[np.ndarray] = None,
                        kVabs: Optional[np.ndarray] = None, azimuth_shift_deg: Optional[float] = 0,
-                       cols_prepend = None,
+                       cols_prepend: Optional[Sequence[str]] = incl_calc_velocity_cols,
                        **kwargs
                        ) -> dd.DataFrame:
     """
-    Calculates dataframe with velocity vector module and direction. Also
-    :param a: dask dataframe with columns
-    'Ax','Ay','Az'
-    'Mx','My','Mz'
+    Calculates velocity from raw accelerometer/magnetometer data. Replaces raw columns with velocity vector parameters.
+    :param a: dask dataframe with columns (at least):
+    - 'Ax','Ay','Az': accelerometer channels
+    - 'Mx','My','Mz': magnetometer channels
     Coefficients:
     :param Ag: coef
     :param Cg:
@@ -727,13 +732,13 @@ def incl_calc_velocity(a: dd.DataFrame,
     :param Ch:
     :param kVabs: if None then will not try to calc velocity
     :param azimuth_shift_deg:
-    :param filt_max: dict. with fields:
-        g_minus_1: mark bad points where |Gxyz| is greater, if any then its number will be logged,
-        h_minus_1: to set Vdir=0 and...
+    :param filt_max: dict with fields:
+    - g_minus_1: mark bad points where |Gxyz| is greater, if any then its number will be logged,
+    - h_minus_1: to set Vdir=0 and...
     :param cfg_proc: 'calc_version', 'max_incl_of_fit_deg'
     :param cols_prepend: new parameters that will be prepended to a columns (only columns if a have only raw
     accelerometer and magnetometer fields). If None then ('Vabs', 'Vdir', 'v', 'u', 'inclination') will be used. Use
-     any from this elements in needed order.
+     any from these elements in needed order.
     :param kwargs: not affects calculation
     :return: dataframe with prepended columns ``cols_prepend`` and removed accelerometer and
     magnetometer raw data
@@ -771,7 +776,10 @@ def incl_calc_velocity(a: dd.DataFrame,
                 bad_g_sum = bad.sum(axis=0).compute()
                 if bad_g_sum:
                     if bad_g_sum > 0.1 * len(GsumMinus1):  # do not message for few points
-                        lf.warning('Acceleration is bad in {:g}% points!', 100 * bad_g_sum / len(GsumMinus1))
+                        lf.warning(
+                            'Acceleration is too high (>{}) in {:g}% points (data removed)!',
+                            filt_max['g_minus_1'], 100 * bad_g_sum / len(GsumMinus1)
+                        )
                     incl_rad[bad] = np.NaN
             # else:
             #     bad = da.zeros_like(GsumMinus1, np.bool8)
@@ -814,17 +822,16 @@ def incl_calc_velocity(a: dd.DataFrame,
                 Vdir = azimuth_shift_deg - da.degrees(da.arctan2(Gxyz[0, :], Gxyz[1, :]))
             Vdir = Vdir.flatten()
 
-            cols_new = ['Vabs', 'Vdir', 'v', 'u', 'inclination']
-            arrays_new = [Vabs, Vdir] + polar2dekart(Vabs, Vdir) + [da.degrees(incl_rad)]
-            if cols_prepend is None:
-                cols_prepend = cols_new
+            # Combine calculated data with existed in ``a`` except raw accelerometer and magnetometer columns.
             a = a.drop(['Ax', 'Ay', 'Az', 'Mx', 'My', 'Mz'], axis='columns')
             cols_remains = a.columns.to_list()
+            # Placing columns at first, defined in ``cols_prepend`` in their order, and keep remained in previous order
+            _ = zip(incl_calc_velocity_cols, [Vabs, Vdir] + polar2dekart(Vabs, Vdir) + [da.degrees(incl_rad)])
             a = a.assign(
                 **{c: (
                     ar if isinstance(ar, da.Array) else
                     da.from_array(ar, chunks=GsumMinus1.chunks)
-                    ).to_dask_dataframe(index=a.index) for c, ar in zip(cols_new, arrays_new) if c in cols_prepend
+                    ).to_dask_dataframe(index=a.index) for c, ar in _ if c in cols_prepend
                    }
                 )[list(cols_prepend) + cols_remains]  # reindex(, axis='columns')  # a[c] = ar
         except Exception as e:
@@ -835,7 +842,7 @@ def incl_calc_velocity(a: dd.DataFrame,
 
 
 def calc_pressure(a: dd.DataFrame,
-                  bad_p_at_bursts_starts_peroiod: Optional[str] = None,
+                  bad_p_at_bursts_starts_period: Optional[str] = None,
                   P=None,
                   PTemp=None,
                   PBattery=None,
@@ -846,7 +853,7 @@ def calc_pressure(a: dd.DataFrame,
     """
     replaces P column by Pressure applying polyval() and temperature and battery corrections if such coefs exists to P.
     :param a:
-    :param bad_p_at_bursts_starts_peroiod:
+    :param bad_p_at_bursts_starts_period:
     :param P: conversion of raw Pressure to physical units polynom coefficents
     :param PTemp: polynom coefficients for temperature compensation that will be added to raw Pressure
     :param PBattery: raw P battery compensation coefficients
@@ -858,125 +865,175 @@ def calc_pressure(a: dd.DataFrame,
     :param kwargs:
     :return:
     """
-    if (P is not None) and 'P' in a.columns:
-        meta = ('Pressure', 'f8')
-        lengths = tuple(a.map_partitions(len, enforce_metadata=False).compute())
-        len_data = sum(lengths)
-        a = a.rename(columns={'P': 'Pressure'})
-        a['Pressure'] = a['Pressure'].astype(float)  # pressure is in integer counts and we will add float correction
+    if P is None:
+        return a
+    for col_p in ['P', 'P_counts']:
+        if col_p in a.columns:
+            break
+    else:
+        return a
 
-        # Compensate for Temperature
-        if PTemp is not None:
-            a, lengths = cull_empty_partitions(a, lengths)  # removing empty partitions need for no empty chunks for rep2mean_da
+    meta = ('Pressure', 'f8')
+    lengths = tuple(a.map_partitions(len, enforce_metadata=False).compute())
+    len_data = sum(lengths)
+    a = a.rename(columns={col_p: 'Pressure'})
+    a['Pressure'] = a['Pressure'].astype(float)  # pressure is in integer counts and we will add float correction
 
-            arr = a.Temp.to_dask_array(lengths=lengths)
-            # Interpolate Temp jaggies
+    # Compensate for Temperature
+    if PTemp is not None:
+        a, lengths = cull_empty_partitions(a, lengths)  # removing empty partitions need for no empty chunks for rep2mean_da
 
-            # where arr changes:
-            bc = (da.ediff1d(arr, to_begin=1000) != 0).rechunk(chunks=arr.chunks)  # diff get many 1-sized chunks
+        arr = a.Temp.to_dask_array(lengths=lengths)
+        # Interpolate Temp jaggies
 
-            def f_st_en(x):
-                b = np.flatnonzero(x)
-                if b.size:
-                    return b[[0, -1]]
-                else:
-                    return np.int64([-1, -1])
+        # where arr changes:
+        bc = (da.ediff1d(arr, to_begin=1000) != 0).rechunk(chunks=arr.chunks)  # diff get many 1-sized chunks
 
-            st_en_use = bc.map_blocks(f_st_en, dtype=np.int64).compute()
-            i_ok = np.append(
-                (np.append(0, np.cumsum(bc.chunks[0][:-1])).repeat(2) + st_en_use)[st_en_use >= 0],
-                len_data
-                )
-            i_ok = i_ok[np.ediff1d(i_ok, to_begin=i_ok[0]) > 100]
-            d_ok = np.ediff1d(i_ok, to_begin=i_ok[0])
-            assert d_ok.sum() == len_data
-            d_ok = (tuple(d_ok),)
-            # interpolate between change points:
-            arr_smooth = rep2mean_da(arr.rechunk(chunks=d_ok), bOk=bc.rechunk(chunks=d_ok), ovrerlap_depth=1)
-
-            a_add = arr_smooth.rechunk(chunks=arr.chunks).map_blocks(
-                lambda x: np.polyval(PTemp, x), dtype=np.float64, meta=np.float64([])
-                ).to_dask_dataframe(index=a.index)
-            a.Pressure += a_add  #
-
-        # Compensate for Battery
-        if PBattery is not None:
-            arr = a.Battery.to_dask_array(lengths=lengths)
-
-            # Interpolate Battery bad region (near the end where Battery is small and not changes)
-            if Battery_ok_min is not None:
-                i_0, i_1, i_st_interp = da.searchsorted(  # 2 points before bad region start and itself
-                    -arr, -da.from_array(Battery_ok_min + [0.08, 0.02, 0.001]), side='right'
-                    ).compute()
-                # if have bad region => the number of source and target points is sufficient:
-                if i_0 != i_1 and i_st_interp < len_data:
-                    arr[i_st_interp:] = da.arange(len_data - i_st_interp) * \
-                                 ((arr[i_1] - arr[i_0]) / (i_1 - i_0)) + arr[i_st_interp]
-
-            # Compensation on Battery after Battery < PBattery_min, before add constant polyval(PBattery, PBattery_min)
-            if PBattery_min is not None:
-                i_st_compensate = da.searchsorted(-arr, da.from_array(-PBattery_min)).compute().item()
-                arr[:i_st_compensate] = np.polyval(PBattery, PBattery_min)
-                arr[i_st_compensate:] = arr[i_st_compensate:].map_blocks(
-                    lambda x: np.polyval(PBattery, x), dtype=np.float64, meta=np.float64([]))
+        def f_st_en(x):
+            b = np.flatnonzero(x)
+            if b.size:
+                return b[[0, -1]]
             else:
-                arr = arr.map_blocks(lambda x: np.polyval(PBattery, x), dtype=np.float64, meta=np.float64([]))
+                return np.int64([-1, -1])
 
-            a.Pressure += arr.to_dask_dataframe(index=a.index)
+        st_en_use = bc.map_blocks(f_st_en, dtype=np.int64).compute()
+        i_ok = np.append(
+            (np.append(0, np.cumsum(bc.chunks[0][:-1])).repeat(2) + st_en_use)[st_en_use >= 0],
+            len_data
+            )
+        i_ok = i_ok[np.ediff1d(i_ok, to_begin=i_ok[0]) > 100]
+        d_ok = np.ediff1d(i_ok, to_begin=i_ok[0])
+        assert d_ok.sum() == len_data
+        d_ok = (tuple(d_ok),)
+        # interpolate between change points:
+        arr_smooth = rep2mean_da(arr.rechunk(chunks=d_ok), bOk=bc.rechunk(chunks=d_ok), ovrerlap_depth=1)
 
-        # Calculate pressure using P polynom
-        if bad_p_at_bursts_starts_peroiod:   # '1h'
-            # with marking bad P data in first samples of bursts (works right only if bursts is at hours starts!)
-            p_bursts = a.Pressure.repartition(freq=bad_p_at_bursts_starts_peroiod)
+        a_add = arr_smooth.rechunk(chunks=arr.chunks).map_blocks(
+            lambda x: np.polyval(PTemp, x), dtype=np.float64, meta=np.float64([])
+            ).to_dask_dataframe(index=a.index)
+        a.Pressure += a_add  #
 
-            def calc_and_rem2first(p: pd.Series) -> pd.Series:
-                """ mark bad data in first samples of burst"""
-                # df.iloc[0:1, df.columns.get_loc('P')]=0  # not works!
-                pressure = np.polyval(P, p.values)
-                pressure[:2] = np.NaN
-                p[:] = pressure
-                return p
+    # Compensate for Battery
+    if PBattery is not None:
+        arr = a.Battery.to_dask_array(lengths=lengths)
 
-            a.Pressure = p_bursts.map_partitions(calc_and_rem2first, meta=meta)
+        # Interpolate Battery bad region (near the end where Battery is small and not changes)
+        if Battery_ok_min is not None:
+            i_0, i_1, i_st_interp = da.searchsorted(  # 2 points before bad region start and itself
+                -arr, -da.from_array(Battery_ok_min + [0.08, 0.02, 0.001]), side='right'
+                ).compute()
+            # if have bad region => the number of source and target points is sufficient:
+            if i_0 != i_1 and i_st_interp < len_data:
+                arr[i_st_interp:] = da.arange(len_data - i_st_interp) * \
+                             ((arr[i_1] - arr[i_0]) / (i_1 - i_0)) + arr[i_st_interp]
+
+        # Compensation on Battery after Battery < PBattery_min, before add constant polyval(PBattery, PBattery_min)
+        if PBattery_min is not None:
+            i_st_compensate = da.searchsorted(-arr, da.from_array(-PBattery_min)).compute().item()
+            arr[:i_st_compensate] = np.polyval(PBattery, PBattery_min)
+            arr[i_st_compensate:] = arr[i_st_compensate:].map_blocks(
+                lambda x: np.polyval(PBattery, x), dtype=np.float64, meta=np.float64([]))
         else:
-            a.Pressure = a.Pressure.map_partitions(lambda x: np.polyval(P, x), meta=meta)
+            arr = arr.map_blocks(lambda x: np.polyval(PBattery, x), dtype=np.float64, meta=np.float64([]))
+
+        a.Pressure += arr.to_dask_dataframe(index=a.index)
+
+    # Calculate pressure using P polynom
+    if bad_p_at_bursts_starts_period:   # '1h'
+        # with marking bad P data in first samples of bursts (works right only if bursts is at hours starts!)
+        p_bursts = a.Pressure.repartition(freq=bad_p_at_bursts_starts_period)
+
+        def calc_and_rem2first(p: pd.Series) -> pd.Series:
+            """ mark bad data in first samples of burst"""
+            # df.iloc[0:1, df.columns.get_loc('P')]=0  # not works!
+            pressure = np.polyval(P, p.values)
+            pressure[:2] = np.NaN
+            p[:] = pressure
+            return p
+
+        a.Pressure = p_bursts.map_partitions(calc_and_rem2first, meta=meta)
+    else:
+        a.Pressure = a.Pressure.map_partitions(lambda x: np.polyval(P, x), meta=meta)
 
     return a
 
 
-def coef_zeroing(mean_countsG0, Ag_old, Cg, Ah_old):
+def coef_zeroing_rotation(g_xyz_0, Ag_old, Cg) -> np.ndarray:
     """
-    Zeroing: correct Ag_old, Ah_old
-    :param mean_countsG0: 1x3 values of columns 'Ax','Ay','Az' (it is practical to provide mean values of some time range)
+    Zeroing rotation matrix Rz to correct old rotation matrices Ag_old, Ah_old (Ag = Rz @ Ag_old, Ah = Rz @ Ah_old)
+    based on accelerometer values when inclination is zero.
+    :param g_xyz_0: 3x1 values of columns 'Ax','Ay','Az' (it is practical to provide mean values of some time range)
     :param Ag_old, Cg: numpy.arrays, rotation matrix and shift for accelerometer
-    :param Ah_old: numpy.array 3x3, rotation matrix for magnetometer
-    return (Ag, Ah): numpy.arrays (3x3, 3x3), corrected rotation matrices
+    :return Rz: 3x3 numpy.array , corrected rotation matrices
 
-    Methond of calculation of ``mean_countsG0`` from dask dataframe data:
-     mean_countsG0 = da.atleast_2d(da.from_delayed(
+    Method of calculation of ``g_xyz_0`` from dask dataframe data:
+     g_xyz_0 = da.atleast_2d(da.from_delayed(
           a_zeroing.loc[:, ('Ax', 'Ay', 'Az')].mean(
              ).values.to_delayed()[0], shape=(3,), dtype=np.float64, name='mean_G0'))
      """
 
-    if not len(mean_countsG0):
-        print(f'zeroing(): no data {mean_countsG0}, returning same coef')
-        return Ag_old, Ah_old
-    if mean_countsG0.shape[0] != 3:
-        raise ValueError('Bad mean_countsG0 shape')
+    if not len(g_xyz_0):
+        print(f'zeroing(): no data {g_xyz_0}, no rotation is done')
+        return 1
+    if g_xyz_0.shape[0] != 3:
+        raise ValueError('Bad g_xyz_0 shape')
 
-    Gxyz0old = fG(mean_countsG0, Ag_old, Cg)
-    old1pitch = f_pitch(Gxyz0old)
-    old1roll = f_roll(Gxyz0old)
-    lf.info('zeroing pitch = {:s}, roll = {:s} degrees', *np.rad2deg([old1pitch[0], old1roll[0]]))
-    Rcor = rotate_y(
-        rot_matrix_x(np.cos(old1roll), np.sin(old1roll)),
-        angle_rad=old1pitch)
+    old_g_xyz_0 = fG(g_xyz_0, Ag_old, Cg)
+    old_pitch = f_pitch(old_g_xyz_0)
+    old_roll = f_roll(old_g_xyz_0)
+    lf.info('Zeroing pitch = {}°, roll = {}°', *[
+        np.format_float_positional(x, precision=5) for x in np.rad2deg([old_pitch[0], old_roll[0]])
+    ])
+    return rotate_y(rot_matrix_x(np.cos(old_roll), np.sin(old_roll)), angle_rad=old_pitch)
 
-    Ag = Rcor @ Ag_old
-    Ah = Rcor @ Ah_old
+
+def coef_rotate(*A, Z):
+    return [Z @ a for a in A]
+
+
+def coef_zeroing_rotation_from_data(
+        df: dd.DataFrame | pd.DataFrame,
+        Ag, Cg,
+        time_range=None,
+        **kwargs) -> np.ndarray:
+    """
+    Zeroing rotation matrix Rz to correct old rotation matrices Ag_old, Ah_old (Ag = Rz @ Ag_old, Ah = Rz @ Ah_old)
+    based on accelerometer raw data from time range
+    :param df: pandas or dask DataFrame with columns 'Ax', 'Ay', 'Az' - raw accelerometer data
+    :param time_range: optional data index time range to select data
+    Old coefficients:
+    :param Ag:
+    :param Cg:
+    :param kwargs: not used
+    :return: Ag, Ah - updated coefficients
+    """
+    df = df.loc[slice(*pd.to_datetime(time_range, utc=True)) if time_range else None, ('Ax', 'Ay', 'Az')]
+    lf.info('Zeroing data: average {:d} points in interval {:s} - {:s}', len(df),
+            *getattr(df, 'divisions' if (b_dd := isinstance(df, dd.DataFrame)) else 'index')[[0, -1]])
+    g_xyz_0 = np.atleast_2d(df.mean().values.compute() if b_dd else df.mean().values).T
+    return coef_zeroing_rotation(g_xyz_0, Ag, Cg)
+
+
+def coef_zeroing(g_xyz_0, Ag_old, Cg, Ah_old) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Zeroing: correct Ag_old, Ah_old
+    :param g_xyz_0: 1x3 values of columns 'Ax','Ay','Az' (it is practical to provide mean values of some time range)
+    :param Ag_old, Cg: numpy.arrays, rotation matrix and shift for accelerometer
+    :param Ah_old: numpy.array 3x3, rotation matrix for magnetometer
+    return (Ag, Ah): numpy.arrays (3x3, 3x3), corrected rotation matrices
+
+    Calculation method of ``g_xyz_0`` from dask dataframe data can be:
+     g_xyz_0 = da.atleast_2d(da.from_delayed(
+          a_zeroing.loc[:, ('Ax', 'Ay', 'Az')].mean(
+             ).values.to_delayed()[0], shape=(3,), dtype=np.float64, name='mean_G0'))
+     """
+    lf.warning('coef_zeroing() depreciated. Use coef_zeroing_rotation() instead and save rotation matrix for future use')
+    Z = coef_zeroing_rotation(g_xyz_0, Ag_old, Cg, Ah_old)
+    Ag = Z @ Ag_old
+    Ah = Z @ Ah_old
     lf.debug('calibrated Ag = {:s},\n Ah = {:s}', Ag, Ah)
     # # test: should be close to zero:
-    # Gxyz0 = fG(mean_countsG0, Ag, Cg)
+    # Gxyz0 = fG(g_xyz_0, Ag, Cg)
     # #? Gxyz0mean = np.transpose([np.nanmean(Gxyz0, 1)])
 
     return Ag, Ah
@@ -1011,7 +1068,9 @@ def filt_data_dd(a, dt_between_bursts=None, dt_hole_warning: Optional[np.timedel
     """
     Filter and get burst starts (i.e. finds gaps in data)
     :param a:
-    :param dt_between_bursts: minimum time interval between blocks to detect them and get its starts (i_burst), also repartition on found blocks if can i.e. if known_divisions
+    :param dt_between_bursts: minimum time interval between blocks to detect them and get its starts (i_burst),
+    also repartition on found blocks if can i.e. if known_divisions. If None then set as defined in i_bursts_starts():
+    greater than min of two first intervals + 1s
     :param dt_hole_warning: numpy.timedelta64
     :param cfg_filter: if set then filter by removing rows
     :return: (a, i_burst) where:
@@ -1020,10 +1079,6 @@ def filt_data_dd(a, dt_between_bursts=None, dt_hole_warning: Optional[np.timedel
 
     """
     if True:  # try:
-        # determine indexes of bursts starts
-        tim = a.index.compute()  # History: MemoryError((6, 12275998), dtype('float64'))
-        i_burst, mean_burst_size, max_hole = i_bursts_starts(tim, dt_between_blocks=dt_between_bursts)
-
         # filter
 
         # this is will be done by filter_global_minmax() below
@@ -1051,7 +1106,7 @@ def filt_data_dd(a, dt_between_bursts=None, dt_hole_warning: Optional[np.timedel
         return a, i_burst
 
 
-def h5_names_gen(cfg_in: Mapping[str, Any], cfg_out: None = None
+def probes_gen(cfg_in: Mapping[str, Any], cfg_out: None = None
                  ) -> Iterator[Tuple[str, Tuple[Any, ...]]]:
     """
     Generate table names with associated coefficients which are loaded from '{tbl}/coef' node of hdf5 file.
@@ -1065,7 +1120,7 @@ def h5_names_gen(cfg_in: Mapping[str, Any], cfg_out: None = None
      "Vabs0" coef. name are replaced with "kVabs"
     Updates cfg_in['tables'] - sets to list of found tables in store
     """
-
+    
     with pd.HDFStore(cfg_in['db_path'], mode='r') as store:
         if len(cfg_in['tables']) == 1:
             cfg_in['tables'] = h5find_tables(store, cfg_in['tables'][0])
@@ -1075,7 +1130,6 @@ def h5_names_gen(cfg_in: Mapping[str, Any], cfg_out: None = None
                 tbl = tbl.replace('incl', 'i')  # can be useful only if need loading from processed tbl
                 coefs_dict = None
             else:
-                # if int(tbl[-2:]) in {5,9,10,11,14,20}:
                 coefs_dict = {}
                 # Finds up to 2 levels of coefficients, naming rule gives coefs this names (but accepts any paths):
                 # coefs: ['coef/G/A', 'coef/G/C', 'coef/H/A', 'coef/H/C', 'coef/H/azimuth_shift_deg', 'coef/Vabs0'])
@@ -1094,38 +1148,13 @@ def h5_names_gen(cfg_in: Mapping[str, Any], cfg_out: None = None
                     else:  # node_coef_l2 is value
                         coefs_dict[node_name if node_name != 'Vabs0' else 'kVabs'] = node_coef_l2.read()
             yield tbl, coefs_dict
+
     return
-
-
-def h5_append_to(dfs: Union[pd.DataFrame, dd.DataFrame],
-                 tbl: str,
-                 cfg_out: Mapping[str, Any],
-                 log: Optional[Mapping[str, Any]] = None,
-                 msg: Optional[str] = None
-                 ):
-    """ append data to opened cfg_out['db'] by h5_append()
-    """
-    if dfs is not None:
-        if msg:
-            lf.info(msg)
-        # try:  # tbl was removed by h5temp_open() if b_overwrite is True:
-        #     if h5remove(cfg_out['db'], tbl):
-        #         lf.info('Writing to new table {}/{}', Path(cfg_out['db'].filename).name, tbl)
-        # except Exception as e:  # no such table?
-        #     pass
-        cfg_out_mod = {**cfg_out, 'table': tbl, 'table_log': f'{tbl}/logFiles',
-                       'tables_written': set()  # if not add this then h5_append() will modify cfg_out['tables_written']
-                       }
-        h5_append(cfg_out_mod, dfs, {} if log is None else log)
-        # dfs_all.to_hdf(cfg_out['db_path'], tbl, append=True, format='table', compute=True)
-        return cfg_out_mod['tables_written']
-    else:
-        print('No data.', end=' ')
 
 
 def gen_subconfigs(
         cfg: MutableMapping[str, Any],
-        fun_gen=h5_names_gen,
+        fun_gen=probes_gen,
         db_paths=None,
         tables=None,
         dates_min=None,
@@ -1140,7 +1169,7 @@ def gen_subconfigs(
     h5_dispenser_and_names_gen() parameters:
     :param time_ranges:
     :param time_ranges_zeroing:
-    :param bad_p_at_bursts_starts_peroiods:
+    :param bad_p_at_bursts_starts_periods:
     :param cfg: dict
     :param fun_gen: generator of (tbl, coefs)
 
@@ -1151,7 +1180,7 @@ def gen_subconfigs(
     :param dates_max
     :param time_ranges: optional - generate dataframes in this parts, one part equivalent to (date_min, date_max)
     :param time_ranges_zeroing: list of [st1 en1 st2 en2...] - like cfg['process']['time_range_zeroing'] for many probes
-    :param bad_p_at_bursts_starts_periods: True - like cfg['filter']['bad_p_at_bursts_starts_peroiod']
+    :param bad_p_at_bursts_starts_periods: True - like cfg['filter']['bad_p_at_bursts_starts_period']
 
     Other fields originated from cfg['in']:
     :param: cfg_in_common: single valued fields which will be replaced by earlier described fields:
@@ -1159,10 +1188,10 @@ def gen_subconfigs(
     - table:
     - min_date:
     - max_date:
-
-    :return: Iterator(d, coefs_copy, tbl, probe_number), where:
+    - dt_between_bursts, dt_hole_warning - optional - arguments
+    :return: Iterator(d, coefs.copy(), tbl, probe_number), where:
     - d - data
-    - coefs_copy, tbl - fun_gen output
+    - coefs, tbl - fun_gen output
     - probe_number - probe number - digits from tbl
 
     """
@@ -1187,7 +1216,7 @@ def gen_subconfigs(
             ('max_date', dates_max),
             ('time_range', time_ranges),  # time_range can include many intervals: [start1, end1, start2, end2, ...]
             ('time_range_zeroing', time_ranges_zeroing),
-            ('bad_p_at_bursts_starts_peroiods', bad_p_at_bursts_starts_periods)
+            ('bad_p_at_bursts_starts_period', bad_p_at_bursts_starts_periods)
         ]:
         try:
             cfg_many[k] = v or cfg_in_common[k]
@@ -1201,7 +1230,8 @@ def gen_subconfigs(
         """
         Generate dicts {parameter: value} from dict {parameter: {probe: value}} for each probe
         :param param_dicts: dict {parameter: {probe: value}} or {parameter: value} to use this value for all probes
-        :param probes: if some param is list then
+        :param probes: if value is a list and has length = len(probes) then assign each item to each probe. Not
+        used with our configs as cfg['in']['probe'] config parameter even not exist.
         :return: dict with singular named keys having str values
         """
         probes_dict = {}
@@ -1231,7 +1261,7 @@ def gen_subconfigs(
     # copy to exclude the possibility of next cycles be depended on changes in previous
     fields_can_change_all = [k for k in ('filter', 'process') if k in cfg]
     cfg_copy = {k: cfg[k].copy() for k in (fields_can_change_all + ['out'])}
-    for group_in, cfg_in_cur in group_dict_vals(cfg_in_many, cfg['in']['probes']).items():
+    for group_in, cfg_in_cur in group_dict_vals(cfg_in_many, cfg['in'].get('probes', None)).items():
         cfg_in_cur['tables'] = [cfg_in_cur['table']]  # for h5_dispenser_and_names_gen()
 
         n_yields = 1
@@ -1258,14 +1288,14 @@ def gen_subconfigs(
                     aggr
                     )
             # Model and number excluding type (w - wave gauges / i or incl - inclinometers)
-            probe_number_str = re.search('(?:(?:w|incl|i)_?(?P<n>[A-z]*\d+)_?)+', tbl).group('n')  # combined data are named by numbers joined by "_"
+            probe_number_str = re.search(re_probe_number, tbl).group('n')  # combined data are named by numbers joined by "_"
             if probe_number_str in probes_dict:
                 cfg_cur = probes_dict[probe_number_str].copy()
                 # copy() is need because this destructive for cfg_cur cycle can be run for other table of same probe
 
                 # update not cfg['in'] fields that was set by plural-named fields - to use after the yielding
                 for k1, k2 in (
-                        ('filter', 'bad_p_at_bursts_starts_peroiod'),
+                        ('filter', 'bad_p_at_bursts_starts_period'),
                         ('process', 'time_ranges_zeroing')
                         ):
                     try:
@@ -1297,12 +1327,13 @@ def gen_subconfigs(
 
             def yielding(d, msg=':'):
                 """
+                Yield with message
                 :param d:
                 :param msg:
                 :return:
                 changes the name of the output table from incl to i to reflect the fact that the data is processed there
                 """
-                lf.warning('{:s}.{:d}-{:s}{:s}', group_in, itbl, tbl, msg)  # itbl
+                lf.warning(' {:s}.{:d}-{:s}{:s}', group_in, itbl, tbl, msg)  # itbl
                 # cfg_in_copy['tables'] = cfg_in_copy['table']  # recover (seems not need now but may be for future use)
 
                 # copy to not cumulate the coefs corrections in several cycles of generator consumer for same probe:
@@ -1323,19 +1354,19 @@ def gen_subconfigs(
                         # TypeError: cannot create a storer if the object is not existing nor a value are passed
                         lf.warning('Skipping {} without data table found', tbl)
                         continue
+                    b_many_parts = len(iq_edges) > 2
                     for i_part, iq_edges_cur in enumerate(zip(iq_edges[::2], iq_edges[1::2])):
                         n_rows_to_load = -np.subtract(*iq_edges_cur)
                         if n_rows_to_load == 0:  # empty interval - will get errors in main circle
                             continue  # It is normal when used config with many intervals for different source databases
                         ddpart = h5_load_range_by_coord(**cfg_in_copy, range_coordinates=iq_edges_cur)
                         d, iburst = filt_data_dd(
-                            ddpart, cfg_in_copy['dt_between_bursts'], cfg_in_copy['dt_hole_warning'],
+                            ddpart, cfg_in_copy.get('dt_between_bursts'), cfg_in_copy.get('dt_hole_warning'),
                             cfg_in_copy
                             )
                         if index_range is not None:
-                            yield yielding(d, msg='.{}: {:%Y-%m-%d %H:%M:%S}–{:%m-%d %H:%M:%S}'.format(
-                                i_part,
-                                *index_range[iq_edges - i0range]
+                            yield yielding(d, msg='{}: {:%Y-%m-%d %H:%M:%S} – {:%m-%d %H:%M:%S}'.format(
+                                f'.{i_part}' if b_many_parts else '', *index_range[iq_edges - i0range]
                                 ))
                         else:
                             yield yielding(d)
@@ -1344,292 +1375,288 @@ def gen_subconfigs(
 
 
 # ---------------------------------------------------------------------------------------------------------------------
-if __name__ == '__main__':
-    @hydra.main(config_name=cs_store_name, config_path='cfg', version_base='1.3')  # adds config store cs_store_name data/structure to :param config
-    def main(config: ConfigType) -> None:
-        """
-        Load data from hdf5 table (or group of tables)
-        Calculate new data or average by specified interval
-        Combine this data to new table
-        :param config:
-        :return:
-        """
-        # input:
-        global cfg
-        cfg = cfg_d.main_init(config, cs_store_name, __file__=None)
-        cfg = cfg_d.main_init_input_file(cfg, cs_store_name)
 
-        lf.info('Started {:s}(aggregete_period={:s})', this_prog_basename(__file__),
-                cfg['out']['aggregate_period'] or 'None'
-                )
-        aggregate_period_timedelta = pd.Timedelta(pd.tseries.frequencies.to_offset(a)) if (
-            a := cfg['out']['aggregate_period']) else None
+@hydra.main(config_name=cs_store_name, config_path='cfg', version_base='1.3')  # adds config store data/structure to :param config
+def main(config: ConfigType) -> None:
+    """
+    Load data from hdf5 table (or group of tables)
+    Calculate new data or average by specified interval
+    Combine this data to new table
+    :param config:
+    :return:
+    """
+    # input:
+    global cfg
+    cfg = cfg_d.main_init(config, cs_store_name, __file__=None)
+    cfg = cfg_d.main_init_input_file(cfg, cs_store_name, msg_action='Loading data from')
+    lf.info('Begin {:s}(aggregate_period={:s})', this_prog_basename(__file__),
+            cfg['out']['aggregate_period'] or 'None'
+            )
+    aggregate_period_timedelta = pd.Timedelta(pd.tseries.frequencies.to_offset(a)) if (
+        a := cfg['out']['aggregate_period']) else None
 
-        # minimum time between blocks, required in filt_data_dd() for data quality control messages:
-        cfg['in']['dt_between_bursts'] = np.inf  # inf to not use bursts, None to autofind and repartition
-        cfg['in']['dt_hole_warning'] = np.timedelta64(10, 'm')
+    # minimum time between blocks, required in filt_data_dd() for data quality control messages:
+    cfg['in']['dt_between_bursts'] = np.inf  # inf to not use bursts, None to autofind and repartition
+    cfg['in']['dt_hole_warning'] = np.timedelta64(10, 'm')
 
-        _db_path_proc_no_h5suffix = (
-            cfg['in']['db_path'].with_suffix('') if '.proc_noAvg' in cfg['in']['db_path'].suffixes[-2:-1]
-            # by default put proc DBs (with and without "_noAvg") 1 level higher than raw DB with raw's name with "proc"
-            else cfg['in']['db_path'].parent.with_name(cfg['in']['db_path'].stem)  # path with '.raw' or '.proc_noAvg' suffix
+    _db_path_proc_no_h5suffix = (
+        cfg['in']['db_path'].with_suffix('') if '.proc_noAvg' in cfg['in']['db_path'].suffixes[-2:-1]
+        # by default put proc DBs (with and without "_noAvg") 1 level higher than raw DB with raw's name with "proc"
+        else cfg['in']['db_path'].parent.with_name(cfg['in']['db_path'].stem)  # path with '.raw' or '.proc_noAvg' suffix
         )
-        if not cfg['out']['db_path']:
-            cfg['out']['db_path'] = _db_path_proc_no_h5suffix.with_suffix(f'.proc.h5')
+    if not cfg['out']['db_path']:
+        cfg['out']['db_path'] = _db_path_proc_no_h5suffix.with_suffix(f'.proc.h5')
 
+    h5out_init(cfg['in'], cfg['out'])
+    # cfg_out_table = cfg['out']['table']  # need? save because will need to change for h5_append()
 
-        h5init(cfg['in'], cfg['out'])
-        # cfg_out_table = cfg['out']['table']  # need? save because will need to change for h5_append()
+    # will search / use this db:
+    db_path_proc_noAvg = _db_path_proc_no_h5suffix.with_suffix('.proc_noAvg.h5')
+    # If 'split_period' not set use custom splitting to be in memory limits
+    if aggregate_period_timedelta:
+        # Restricting number of counts=100000 in dask partition to not memory overflow
+        split_for_memory = cfg['out']['split_period'] or next(iter(  # timedelta value of biggest unit component + 1
+            [f'{t + 1}{c}' for t, c in zip(tuple((100000 * aggregate_period_timedelta).components), 'Dhms') if t > 0]
+            ))
 
-        # will search / use this db:
-        db_path_proc_noAvg = _db_path_proc_no_h5suffix.with_suffix('.proc_noAvg.h5')
-        # If 'split_period' not set use custom splitting to be in memory limits
+        if cfg['out']['text_date_format'].endswith('.%f') and not np.any(aggregate_period_timedelta.components[-3:]):
+            # milliseconds=0, microseconds=0, nanoseconds=0
+            cfg['out']['text_date_format'] = cfg['out']['text_date_format'][:-len('.%f')]
+
+        if '.proc_noAvg' not in cfg['in']['db_path'].suffixes[-2:-1]:
+            if db_path_proc_noAvg.is_file():
+                # Changing input db and tables
+                cfg['in']['tables'] = [tbl.replace('incl', 'i') for tbl in cfg['in']['tables']]  # can be useful only if need loading from processed tbl
+                lf.info('Using found {}/{} db and its {} tables as source for averaging', *db_path_proc_noAvg.parts[-2:],
+                        cfg['in']['tables'])
+                cfg['in']['db_path'] = db_path_proc_noAvg
+
+        if cfg['out']['text_path'] is None:
+            cfg['out']['text_path'] = Path('text_output')
+        cols_out_h5 = ['v', 'u', 'Pressure', 'Temp']                                # absent here cols will be ignored
+    else:
+        # Restricting dask partition size by time period
+        split_for_memory = cfg['out']['split_period'] or pd.Timedelta(1, 'D')
+        cfg['out']['aggregate_period'] = None  # 0 to None
+
+        if not cfg['out']['not_joined_db_path']:
+            cfg['out']['not_joined_db_path'] = db_path_proc_noAvg
+        cols_out_h5 = ['v', 'u', 'Pressure', 'Temp', 'inclination']                 # absent here cols will be ignored
+
+    if cfg['out']['text_path'] is not None and not cfg['out']['text_path'].is_absolute():
+        cfg['out']['text_path'] = cfg['out']['db_path'].parent / cfg['out']['text_path']
+
+    # Set columns from incl_calc_velocity() we need to prepend: Vabs/dir columns needed only to save them in txt
+    if cfg['out']['text_path']:
+        incl_calc_kwargs = {}  # all its cols
+    else:
+        _ = cols_out_h5.copy(); _.remove('Pressure'); _.remove('Temp')  # ('v', 'u', 'inclination')
+        incl_calc_kwargs = {'cols_prepend': _}
+
+    def map_to_suffixed(names, tbl, probe_number_str):
+        """ Adds tbl suffix to output columns before accumulate in cycle for different tables"""
+        suffix = f'{tbl[0]}{probe_number_str}'  #:02
+        return {col: f'{col}_{suffix}' for col in names}
+
+    # Filter [min/max][M] can be was specified with just key M - it is to set same value for keys Mx My Mz
+    for lim in ['min', 'max']:
+        if 'M' in cfg['filter'][lim]:
+            for ch in ('x', 'y', 'z'):
+                set_field_if_no(cfg['filter'][lim], f'M{ch}', cfg['filter'][lim]['M'])
+
+    cfg['filter']['sleep_s'] = 0.5  # to run slower, helps for system memory management?
+
+    log = {}
+    dfs_all_list = []
+    tbls = []
+    dfs_all: Optional[pd.DataFrame] = None
+    cfg['out']['tables_written'] = set()
+    tables_written_not_joined = set()
+
+    if cfg['program']['return_'] == '<cfg_before_cycle>':  # to help testing
+        return cfg
+    if cfg['program']['dask_scheduler'] == 'distributed':
+        from dask.distributed import Client, progress
+        # cluster = dask.distributed.LocalCluster(n_workers=2, threads_per_worker=1, memory_limit="5.5Gb")
+        client = Client(processes=False)
+        # navigate to http://localhost:8787/status to see the diagnostic dashboard if you have Bokeh installed
+        # processes=False: avoide inter-worker communication for computations releases the GIL (numpy, da.array)  # without is error
+    else:
+        if cfg['program']['dask_scheduler'] == 'synchronous':
+            lf.warning('using "synchronous" scheduler for debugging')
+        import dask
+        dask.config.set(scheduler=cfg['program']['dask_scheduler'])
+        progress = None
+        client = None
+
+    tbl_prev = probe_number_str_prev = None
+    for d, coefs, tbl, probe_number_str in gen_subconfigs(
+            cfg,
+            fun_gen=probes_gen,
+            **cfg['in']
+            ):
+        d = filter_local(d, cfg['filter'], ignore_absent={'h_minus_1', 'g_minus_1'})  # d[['Mx','My','Mz']] = d[['Mx','My','Mz']].mask(lambda x: x>=4096)
+        if '.raw' in cfg['in']['db_path'].suffixes[-2:-1]:
+            # Zeroing
+            if _ := cfg['process']['time_range_zeroing']:
+                coefs['Rz'] = coef_zeroing_rotation_from_data(d, _, **coefs)
+            # Azimuth correction
+            if cfg['process']['azimuth_add']:
+                # individual or the same correction for each table:
+                coefs['azimuth_shift_deg'] += cfg['process']['azimuth_add']
+                lf.warning('Azimuth correction updated ({}° added) to {}°',
+                           coefs['azimuth_shift_deg'], cfg['process']['azimuth_add']
+                           )
+
         if aggregate_period_timedelta:
-            # Restricting number of counts=100000 in dask partition to not memory overflow
-            split_for_memory = cfg['out']['split_period'] or next(iter(  # timedelta value of biggest unit component + 1
-                [f'{t + 1}{c}' for t, c in zip(tuple((100000 * aggregate_period_timedelta).components), 'Dhms') if t > 0]
-                ))
-
-            if cfg['out']['text_date_format'].endswith('.%f') and not np.any(aggregate_period_timedelta.components[-3:]):
-                # milliseconds=0, microseconds=0, nanoseconds=0
-                cfg['out']['text_date_format'] = cfg['out']['text_date_format'][:-len('.%f')]
-
+            # Binning
             if '.proc_noAvg' not in cfg['in']['db_path'].suffixes[-2:-1]:
-                if db_path_proc_noAvg.is_file():
-                    # Changing input db and tables
-                    cfg['in']['tables'] = [tbl.replace('incl', 'i') for tbl in cfg['in']['tables']]  # can be useful only if need loading from processed tbl
-                    lf.info('Using found {}/{} db and its {} tables as source for averaging', *db_path_proc_noAvg.parts[-2:],
-                            cfg['in']['tables'])
-                    cfg['in']['db_path'] = db_path_proc_noAvg
+                lf.warning(str_warning := 'Raw data averaging before processing! Consider calculate physical parameters'
+                           f" to {cfg['in']['db_path'].stem.removesuffix('.raw')}.proc_noAvg.h5 before averaging!")
+                raise Ex_nothing_done(str_warning)  # comment to proceed
 
-            if cfg['out']['text_path'] is None:
-                cfg['out']['text_path'] = Path('text_output')
-            cols_out_h5 = ['v', 'u', 'Pressure', 'Temp']                                # absent here cols will be ignored
-        else:
-            # Restricting number of counts in dask partition by time period
-            split_for_memory = cfg['out']['split_period'] or pd.Timedelta(1, 'D')
-            cfg['out']['aggregate_period'] = None  # 0 to None
+            if aggregate_period_timedelta > np.diff(d.divisions[0::(len(d.divisions)-1)]):  # ~ period > data time span
+                # convert to one row dask dataframe with index = mean index
+                df = d.mean().compute().to_frame().transpose()
+                df.index = [d.index.compute().mean()]
+                d = dd.from_pandas(df, npartitions=1)
+            else:
+                counts = (~d.iloc[:, 0].isna()).resample(aggregate_period_timedelta).count()
+                d = d.resample(aggregate_period_timedelta,
+                               # closed='right' if 'Pres' in cfg['in']['db_path'].stem else 'left'
+                               # 'right' for burst mode because the last value of interval used in wavegauges is round - not true?
+                               ).mean()
+                # detect number of existed values in each resampled period (using 1st column)
+                d = d.where(counts > counts[counts > 0].mean()/10
+                            ).dropna(how='all')  # axis=0 is default
+                try:  # persist speedups calc_velocity greatly but may require too many memory
+                    lf.info('Persisting data aggregated by {:s}', cfg['out']['aggregate_period'])
+                    d.persist()  # excludes missed values?
+                except MemoryError:
+                    lf.info('Persisting failed (not enough memory). Continue...')
 
-            if not cfg['out']['not_joined_db_path']:
-                cfg['out']['not_joined_db_path'] = db_path_proc_noAvg
-            cols_out_h5 = ['v', 'u', 'Pressure', 'Temp', 'inclination']                 # absent here cols will be ignored
-
-        if cfg['out']['text_path'] is not None and not cfg['out']['text_path'].is_absolute():
-            cfg['out']['text_path'] = cfg['out']['db_path'].parent / cfg['out']['text_path']
-
-        # get all or some from calc_velocity(): if not need Vabs/dir for saving to txt then not get:
-        if cfg['out']['text_path']:
-            cols_out_incl = None
-        else:  # ('v', 'u', 'inclination')
-            cols_out_incl = cols_out_h5.copy()
-            cols_out_incl.remove('Pressure')
-            cols_out_incl.remove('Temp')
-
-        def map_to_suffixed(names, tbl, probe_number_str):
-            """ Adds tbl suffix to output columns before accumulate in cycle for different tables"""
-            suffix = f'{tbl[0]}{probe_number_str}'  #:02
-            return {col: f'{col}_{suffix}' for col in names}
-
-        # Filter [min/max][M] can be was specified with just key M - it is to set same value for keys Mx My Mz
-        for lim in ['min', 'max']:
-            if 'M' in cfg['filter'][lim]:
-                for ch in ('x', 'y', 'z'):
-                    set_field_if_no(cfg['filter'][lim], f'M{ch}', cfg['filter'][lim]['M'])
-
-        cfg['filter']['sleep_s'] = 0.5  # to run slower, helps for system memory management?
-
-        log = {}
-        dfs_all_list = []
-        tbls = []
-        dfs_all: Optional[pd.DataFrame] = None
-        cfg['out']['tables_written'] = set()
-        tables_written_not_joined = set()
-
-        if cfg['program']['return_'] == '<cfg_before_cycle>':  # to help testing
-            return cfg
-        if cfg['program']['dask_scheduler'] == 'distributed':
-            from dask.distributed import Client, progress
-            # cluster = dask.distributed.LocalCluster(n_workers=2, threads_per_worker=1, memory_limit="5.5Gb")
-            client = Client(processes=False)
-            # navigate to http://localhost:8787/status to see the diagnostic dashboard if you have Bokeh installed
-            # processes=False: avoide inter-worker communication for computations releases the GIL (numpy, da.array)  # without is error
-        else:
-            if cfg['program']['dask_scheduler'] == 'synchronous':
-                lf.warning('using "synchronous" scheduler for debugging')
-            import dask
-            dask.config.set(scheduler=cfg['program']['dask_scheduler'])
-            progress = None
-            client = None
-
-        tbl_prev = probe_number_str_prev = None
-        for d, coefs, tbl, probe_number_str in gen_subconfigs(
-                cfg,
-                fun_gen=h5_names_gen,
-                **cfg['in']
-                ):
-            d = filter_local(d, cfg['filter'], ignore_absent={'h_minus_1', 'g_minus_1'})  # d[['Mx','My','Mz']] = d[['Mx','My','Mz']].mask(lambda x: x>=4096)
-            if '.raw' in cfg['in']['db_path'].suffixes[-2:-1]:
-                # Zeroing
-                if cfg['process']['time_range_zeroing']:
-                    d_zeroing = d.loc[slice(*pd.to_datetime(cfg['process']['time_range_zeroing'], utc=True)), ('Ax', 'Ay', 'Az')]
-                    lf.info('Zeroing data: average {:d} points in interval {:s} - {:s}', len(d_zeroing),
-                           d_zeroing.divisions[0], d_zeroing.divisions[-1])
-                    mean_countsG0 = np.atleast_2d(d_zeroing.mean().values.compute()).T
-                    coefs['Ag'], coefs['Ah'] = coef_zeroing(mean_countsG0, coefs['Ag'], coefs['Cg'], coefs['Ah'])
-                # Azimuth correction
-                if cfg['process']['azimuth_add']:
-                    # individual or the same correction for each table:
-                    coefs['azimuth_shift_deg'] += cfg['process']['azimuth_add']
-                    lf.warning('Azimuth correction updated ({}° added) to {}°',
-                               coefs['azimuth_shift_deg'], cfg['process']['azimuth_add']
-                               )
-
-            if aggregate_period_timedelta:
-                # Binning
-                if '.proc_noAvg' not in cfg['in']['db_path'].suffixes[-2:-1]:
-                    lf.warning(str_warning := 'Raw data averaging before processing! Consider calculate physical parameters'
-                               f" to {cfg['in']['db_path'].stem.removesuffix('.raw')}.proc_noAvg.h5 before averaging!")
-                    raise Ex_nothing_done(str_warning)  # comment to proceed
-
-                if aggregate_period_timedelta > np.diff(d.divisions[0::(len(d.divisions)-1)]):  # ~ period > data time span
-                    # convert to one row dask dataframe with index = mean index
-                    df = d.mean().compute().to_frame().transpose()
-                    df.index = [d.index.compute().mean()]
-                    d = dd.from_pandas(df, npartitions=1)
-                else:
-                    counts = (~d.iloc[:, 0].isna()).resample(aggregate_period_timedelta).count()
-                    d = d.resample(aggregate_period_timedelta,
-                                   # closed='right' if 'Pres' in cfg['in']['db_path'].stem else 'left'
-                                   # 'right' for burst mode because the last value of interval used in wavegauges is round - not true?
-                                   ).mean()
-                    # detect number of existed values in each resampled period (using 1st column)
-                    d = d.where(counts > counts[counts > 0].mean()/10
-                                ).dropna(how='all')  # axis=0 is default
-                    try:  # persist speedups calc_velocity greatly but may require too many memory
-                        lf.info('Persisting data aggregated by {:s}', cfg['out']['aggregate_period'])
-                        d.persist()  # excludes missed values?
-                    except MemoryError:
-                        lf.info('Persisting failed (not enough memory). Continue...')
-
-                # Recalculating aggregated polar coordinates and angles that are invalid after the direct aggregating
-                d = dekart2polar_df_uv(d)
-                if cfg['out']['split_period']:  # for csv splitting only
-                    d = d.repartition(freq=cfg['out']['split_period'])
-            else:                       # no averaging
-                # Velocity calculation
-                # --------------------
-                # with repartition for ascii splitting (also helps to prevent MemoryError)
-                d = incl_calc_velocity(d.repartition(freq=split_for_memory), cfg_proc=cfg['process'],
-                                       filt_max=cfg['filter']['max'], **coefs,
-                                       cols_out_incl=cols_out_incl)
-                d = calc_pressure(d.loc[:, [c for c in cols_out_h5 if c in d.columns]] if cfg['out']['text_path'] else d,
-                                  # no redundant cols if not kept to save to txt
-                                  **{(pb := 'bad_p_at_bursts_starts_peroiod'): cfg['filter'][pb]},
-                                  **coefs
-                                  )
-                # Write velocity to h5 - for each probe in separated table
-                if cfg['out']['not_joined_db_path']:
-                    log = {
-                        'Date0': d.divisions[0],
-                        'DateEnd': d.divisions[-1],
-                        'fileName': f"{cfg['in']['db_path'].parent.name}/{cfg['in']['db_path'].stem}"[
-                            -cfg['out']['logfield_fileName_len']:],
-                        'fileChangeTime': datetime.fromtimestamp(cfg['in']['db_path'].stat().st_mtime),
-                        'rows': len(d)
-                        }
-                    tables_written_not_joined |= (
-                        h5_append_to(d, tbl, cfg['out'], log,
-                                     msg=f'saving {tbl} to temporary store',
-                                     )
-                    )
-
-            probe_continues = (tbl == tbl_prev and probe_number_str == probe_number_str_prev)
-            tbl_prev = tbl; probe_number_str_prev = probe_number_str
-            dd_to_csv(d, cfg['out']['text_path'], cfg['out']['text_date_format'], cfg['out']['text_columns'],
-                      cfg['out']['aggregate_period'], suffix=f'@{tbl}', b_single_file=not cfg['out']['split_period'],
-                      progress=progress, client=client)  #, mode='a' if probe_continues else 'r'
-
-            # Combine data columns if we aggregate (in such case all data have index of equal period)
-            if aggregate_period_timedelta:
-                try:
-                    cols_save = [c for c in cols_out_h5 if c in d.columns]
-                    sleep(cfg['filter']['sleep_s'])
-                    Vne = d[cols_save].compute()  # MemoryError((1, 12400642), dtype('float64'))
-
-                    if not cfg['out']['b_all_to_one_col']:
-                        Vne.rename(columns=map_to_suffixed(cols_save, tbl, probe_number_str), inplace=True)
-                    dfs_all_list.append(Vne)
-                    tbls.append(tbl)
-                except Exception as e:
-                    lf.exception('Can not cumulate result! ')
-                    raise
-                    # todo: if low memory do it separately loading from temporary tables in chanks
-
-            gc.collect()  # frees many memory. Helps to not crash
-
-        # Combined data to hdf5
-        #######################
-
-        if aggregate_period_timedelta:
-            # Concatenate several columns by one of method:
-            # - consequently, like 1-probe data or
-            # - parallel (add columns): dfs_all without any changes
-            dfs_all = pd.concat(
-                dfs_all_list, sort=True, axis=(0 if cfg['out']['b_all_to_one_col'] or probe_continues else 1)
+            # Recalculating aggregated polar coordinates and angles that are invalid after the direct aggregating
+            d = dekart2polar_df_uv(d)
+            if cfg['out']['split_period']:  # for csv splitting only
+                d = d.repartition(freq=cfg['out']['split_period'])
+        else:                       # no averaging
+            # Velocity calculation
+            # --------------------
+            if 'Rz' in coefs:
+                for c in ['Ag', 'Ah']:
+                    coefs[c] = coefs['Rz'] @ coefs[c]
+            else:
+                lf.info('No rotation coefficient (Rz) loaded. Suppose rotations already applied')
+            d = incl_calc_velocity(  # with repartition for ascii splitting (also helps to prevent MemoryError)
+                d.repartition(freq=split_for_memory), cfg_proc=cfg['process'],
+                filt_max=cfg['filter']['max'], **coefs, **incl_calc_kwargs
+            )
+            d = calc_pressure(d.loc[:, [c for c in cols_out_h5 if c in d.columns]] if cfg['out']['text_path'] else d,
+                              # no redundant cols if not kept to save to txt
+                              **{(pb := 'bad_p_at_bursts_starts_period'): cfg['filter'][pb]},
+                              **coefs
+                              )
+            # Write velocity to h5 - for each probe in separated table
+            if cfg['out']['not_joined_db_path']:
+                log = {
+                    'Date0': d.divisions[0],
+                    'DateEnd': d.divisions[-1],
+                    'fileName': f"{cfg['in']['db_path'].parent.name}/{cfg['in']['db_path'].stem}"[
+                        -cfg['out']['logfield_fileName_len']:],
+                    'fileChangeTime': datetime.fromtimestamp(cfg['in']['db_path'].stat().st_mtime),
+                    'rows': len(d)
+                    }
+                tables_written_not_joined |= (
+                    h5_append_to(d, tbl, cfg['out'], log, msg=f'saving {tbl} to temporary store')
                 )
-            dfs_all_log = pd.DataFrame(
-                [df.index[[0, -1]].to_list() for df in dfs_all_list], columns=['Date0', 'DateEnd']
-                ).assign(table_name=tbls) #.set_index('table_name')\
-                #.sort_index() #\
-            for after_remove_dup_index in [False, True]:
-                try:
-                    cfg['out']['tables_written'] |= (
-                        h5_append_to(dfs_all, cfg['out']['table'], cfg['out'], log=dfs_all_log,
-                                     msg='Saving accumulated data'
-                                     )
-                        )
+
+        probe_continues = (tbl == tbl_prev and probe_number_str == probe_number_str_prev)
+        tbl_prev = tbl; probe_number_str_prev = probe_number_str
+        dd_to_csv(d, cfg['out']['text_path'], cfg['out']['text_date_format'], cfg['out']['text_columns'],
+                  cfg['out']['aggregate_period'], suffix=f'@{tbl}', b_single_file=not cfg['out']['split_period'],
+                  progress=progress, client=client)  #, mode='a' if probe_continues else 'r'
+
+        # Combine data columns if we aggregate (in such case all data have index of equal period)
+        if aggregate_period_timedelta:
+            try:
+                cols_save = [c for c in cols_out_h5 if c in d.columns]
+                sleep(cfg['filter']['sleep_s'])
+                Vne = d[cols_save].compute()  # MemoryError((1, 12400642), dtype('float64'))
+
+                if not cfg['out']['b_all_to_one_col']:
+                    Vne.rename(columns=map_to_suffixed(cols_save, tbl, probe_number_str), inplace=True)
+                dfs_all_list.append(Vne)
+                tbls.append(tbl)
+            except Exception as e:
+                lf.exception('Can not cumulate result! ')
+                raise
+                # todo: if low memory do it separately loading from temporary tables in chanks
+
+        gc.collect()  # frees many memory. Helps to not crash
+
+    # Combined data to hdf5
+    #######################
+
+    if aggregate_period_timedelta:
+        # Concatenate several columns by one of method:
+        # - consequently, like 1-probe data or
+        # - parallel (add columns): dfs_all without any changes
+        dfs_all = pd.concat(
+            dfs_all_list, sort=True, axis=(0 if cfg['out']['b_all_to_one_col'] or probe_continues else 1)
+            )
+        dfs_all_log = pd.DataFrame(
+            [df.index[[0, -1]].to_list() for df in dfs_all_list], columns=['Date0', 'DateEnd']
+            ).assign(table_name=tbls) #.set_index('table_name')\
+            #.sort_index() #\
+        for after_remove_dup_index in [False, True]:
+            try:
+                cfg['out']['tables_written'] |= (
+                    h5_append_to(dfs_all, cfg['out']['table'], cfg['out'], log=dfs_all_log,
+                                 msg='Saving accumulated data'
+                                 )
+                    )
+                break
+            except ValueError as e:
+                # ValueError: cannot reindex from a duplicate axis
+                if dfs_all.index.is_unique and dfs_all_log.index.is_unique:
+                    lf.exception('Can not understand problem. Skipping saving to hdf5!')
                     break
-                except ValueError as e:
-                    # ValueError: cannot reindex from a duplicate axis
-                    if dfs_all.index.is_unique and dfs_all_log.index.is_unique:
-                        lf.exception('Can not understand problem. Skipping saving to hdf5!')
-                        break
-                    lf.error('Removing duplicates in index')
-                    dfs_all = dfs_all.loc[~dfs_all.index.duplicated(keep='last')]
-        h5_close(cfg['out'])  # close temporary output store
-        if tables_written_not_joined:
-            try:
-                failed_storages = h5move_tables(
-                    {**cfg['out'], 'db_path': cfg['out']['not_joined_db_path'], 'b_del_temp_db': False},
-                    tables_written_not_joined
-                    )
-            except Ex_nothing_done as e:
-                lf.warning('Tables {} of separate data not moved', tables_written_not_joined)
-        if cfg['out']['tables_written']:
-            try:
-                failed_storages = h5move_tables(cfg['out'], cfg['out']['tables_written'])
-            except Ex_nothing_done as e:
-                lf.warning('Tables {} of combined data not moved', cfg['out']['tables_written'])
+                lf.error('Removing duplicates in index')
+                dfs_all = dfs_all.loc[~dfs_all.index.duplicated(keep='last')]
+    h5_close(cfg['out'])  # close temporary output store
+    if tables_written_not_joined:
+        try:
+            failed_storages = h5move_tables(
+                {**cfg['out'], 'db_path': cfg['out']['not_joined_db_path'], 'b_del_temp_db': False},
+                tables_written_not_joined
+                )
+        except Ex_nothing_done as e:
+            lf.warning('Tables {} of separate data not moved', tables_written_not_joined)
+    if cfg['out']['tables_written']:
+        try:
+            failed_storages = h5move_tables(cfg['out'], cfg['out']['tables_written'])
+        except Ex_nothing_done as e:
+            lf.warning('Tables {} of combined data not moved', cfg['out']['tables_written'])
 
-            # Write concatenated dataframe to ascii (? with resample if b_all_to_one_col)
-            if dfs_all is not None and len(dfs_all_list) > 1:
-                call_with_valid_kwargs(
-                    dd_to_csv,
-                    (lambda x:
-                        x.resample(rule=aggregate_period_timedelta)
-                        .first() if cfg['out']['b_all_to_one_col'] else x
-                     )(dd.from_pandas(dfs_all, chunksize=500000)),  # .fillna(0): absent values filling with 0  ???
-                    **cfg['out'],
-                    suffix=f"@{','.join(cfg['in']['tables'])}",
-                    progress=progress, client=client
-                    )
+        # Write concatenated dataframe to ascii (? with resample if b_all_to_one_col)
+        if dfs_all is not None and len(dfs_all_list) > 1:
+            call_with_valid_kwargs(
+                dd_to_csv,
+                (lambda x:
+                    x.resample(rule=aggregate_period_timedelta)
+                    .first() if cfg['out']['b_all_to_one_col'] else x
+                 )(dd.from_pandas(dfs_all, chunksize=500000)),  # .fillna(0): absent values filling with 0  ???
+                **cfg['out'],
+                suffix=f"@{','.join(cfg['in']['tables'])}",
+                progress=progress, client=client
+                )
 
-        print('Ok.', end=' ')
+    print('Ok.', end=' ')
 
-        # h5index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5", in_storages= failed_storages)
-        # dd_out = dd.multi.concat(dfs_list, axis=1)
+    # h5index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5", in_storages= failed_storages)
+    # dd_out = dd.multi.concat(dfs_list, axis=1)
 
-
+if __name__ == '__main__':
     main()
 
 

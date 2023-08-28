@@ -115,7 +115,7 @@ if True:  # False: #
             '--table_prefix', r'navigation/sectionsBaklan_d100'])
 
 # extract CTD runs (if files not splitted on runs):
-# to_pandas_hdf5/CTD_calc.py
+# to_pandas_hdf5/ctd_calc.py
 
 # extract navigation data at time station starts to GPX waypoints
 if False:  # True: #

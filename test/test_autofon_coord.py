@@ -205,6 +205,46 @@ def test_call_example_sp6ref5():
     sys.argv = sys_argv_save
 
 
+#%%
+def test_call_example_sp5ref6__230825():
+    """Loading two trackers data in one DB, calc distance between, recalc all"""
+
+    path_db = Path(
+        r'd:\WorkData\BalticSea\230825_Kulikovo@ADCP,ADV,i,tr\tracker_SPOT'.replace('\\', '/')
+    )
+    file_raw_local = str(path_db.parent / 'raw' / 'ActivityReport_test.xlsx').replace('\\', '/')
+    device = ['sp6', 'sp5']
+
+    cfg = {
+        'DEVICE': 'sp5',
+        'ANCHOR_DEVICE_NUM': 6,
+        'ANCHOR_DEVICE_TYPE': 'sp'
+    }
+    cfg.update({
+        'TYPE@DEVICE': 'current@{DEVICE}ref{ANCHOR_DEVICE_NUM}'.format_map(cfg),
+        'file_stem': '230825@{DEVICE}ref{ANCHOR_DEVICE_NUM}'.format_map(cfg)
+    })
+    
+    sys_argv_save = sys.argv.copy()
+    if __name__ != '__main__':
+        sys.argv = [__file__]
+    args = """
+    input.path_raw_local=None ^
+    input.time_interval="[2023-08-25T11:20, now]" ^
+    input.dt_from_utc_hours=2 ^
+    process.anchor_coord="[54.989683, 20.301067]" ^
+    process.anchor_tracker="[{ANCHOR_DEVICE_TYPE}{ANCHOR_DEVICE_NUM}]" ^
+    process.anchor_depth=20 ^
+    +process.max_dr_dict="{{{DEVICE}:200, {DEVICE}_ref_{ANCHOR_DEVICE_TYPE}{ANCHOR_DEVICE_NUM}:100}}" ^
+    out.db_path='{dir_device}/{file_stem}.h5' ^
+    out.tables=["{ANCHOR_DEVICE_TYPE}{ANCHOR_DEVICE_NUM}","{DEVICE}"] ^
+    process.period_tracks=1D""".format_map(cfg).split(r' ^\n')
+    main_call(args)
+    sys.argv = sys_argv_save
+#%%
+
+
+
 path_db = Path(
     r'data/tracker/out/tracker.h5'
     # r'd:/workData/BalticSea/210515_tracker/current@sp2/210611_1300sp2.h5' #.replace('@', '\@')

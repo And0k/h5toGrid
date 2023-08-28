@@ -40,7 +40,7 @@ sys.path.append(str(scripts_path.parent.resolve()))
 from utils2init import Ex_nothing_done, call_with_valid_kwargs, set_field_if_no, init_logging, cfg_from_args, \
      my_argparser_common_part, this_prog_basename, dir_create_if_need
 from utils_time import intervals_from_period, pd_period_to_timedelta
-from to_pandas_hdf5.h5toh5 import h5init, h5find_tables, h5remove, h5move_tables, h5_close, \
+from to_pandas_hdf5.h5toh5 import h5out_init, h5find_tables, h5remove, h5move_tables, h5_close, \
     h5_dispenser_and_names_gen
 from to_pandas_hdf5.h5_dask_pandas import h5_append, h5q_intervals_indexes_gen, h5_load_range_by_coord, i_bursts_starts, \
     filt_blocks_da, filter_global_minmax, filter_local, cull_empty_partitions
@@ -58,7 +58,7 @@ else:
     progress = None
 
 if __name__ == '__main__':
-    l = None  # see main(): l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
+    l = None  # see main(): l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
 else:
     l = logging.getLogger(__name__)
     # level_console = 'INFO'
@@ -124,7 +124,7 @@ def my_argparser(varargs=None):
     s.add('--dates_max_dict',
           help='List with items in "key:value" format. End of time range for each probe: (used instead common for each probe max_dict["Time"]) ')
 
-    s.add('--bad_p_at_bursts_starts_peroiod',
+    s.add('--bad_p_at_bursts_starts_period',
           help='pandas offset string. If set then marks each 2 samples of Pressure at start of burst as bad')
 
 
@@ -826,7 +826,7 @@ def incl_calc_velocity(a: dd.DataFrame,
 
 
 def calc_pressure(a: dd.DataFrame,
-                  bad_p_at_bursts_starts_peroiod: Optional[str] = None,
+                  bad_p_at_bursts_starts_period: Optional[str] = None,
                   P=None,
                   PTemp=None,
                   PBattery=None,
@@ -902,9 +902,9 @@ def calc_pressure(a: dd.DataFrame,
             a.Pressure += arr.to_dask_dataframe(index=a.index)
 
         # Calculate pressure using P polynom
-        if bad_p_at_bursts_starts_peroiod:   # '1h'
+        if bad_p_at_bursts_starts_period:   # '1h'
             # with marking bad P data in first samples of bursts (works right only if bursts is at hours starts!)
-            p_bursts = a.Pressure.repartition(freq=bad_p_at_bursts_starts_peroiod)
+            p_bursts = a.Pressure.repartition(freq=bad_p_at_bursts_starts_period)
 
             def calc_and_rem2first(p: pd.Series) -> pd.Series:
                 """ mark bad data in first samples of burst"""
@@ -1339,8 +1339,8 @@ def main(new_arg=None, **kwargs):
         return cfg
     elif cfg['program']['return'] == '<cfg_from_args>':  # to help testing
         return cfg
-    l = init_logging(logging, None, cfg['program']['log'], cfg['program']['verbose'])
-    l.info('Started %s(aggregete_period=%s)', this_prog_basename(__file__), cfg['out']['aggregate_period'] or 'None')
+    l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
+    l.info('Started %s(aggregate_period=%s)', this_prog_basename(__file__), cfg['out']['aggregate_period'] or 'None')
 
     # minimum time between blocks, required in filt_data_dd() for data quality control messages:
     cfg['in']['dt_between_bursts'] = np.inf  # inf to not use bursts, None to autofind and repartition
@@ -1363,7 +1363,7 @@ def main(new_arg=None, **kwargs):
 
     # Also is possible to set cfg['in']['split_period'] to cycle in parts but not need because dask takes control of parts if cfg_out['split_period'] is set
 
-    h5init(cfg['in'], cfg['out'])
+    h5out_init(cfg['in'], cfg['out'])
     cfg_out_table = cfg['out']['table']  # need? save beacause will need to change for h5_append()
     cols_out_allow = ['v', 'u', 'Pressure', 'Temp']  # absent cols will be ignored
     # cfg_out['data_columns'] = []  # can not index hdf5 complex column (see pandas to_hdf "data_columns" argument)
@@ -1445,7 +1445,7 @@ def main(new_arg=None, **kwargs):
                                    **coefs
                                    )
             d = calc_pressure(d,
-                              **{(pb := 'bad_p_at_bursts_starts_peroiod'): cfg['filter'][pb]},
+                              **{(pb := 'bad_p_at_bursts_starts_period'): cfg['filter'][pb]},
                               **coefs
                               )
             # Write velocity to h5 - for each probe in separated table

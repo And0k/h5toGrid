@@ -17,7 +17,7 @@ from to_pandas_hdf5.h5_dask_pandas import i_bursts_starts, h5_append
 from to_pandas_hdf5.h5toh5 import h5move_tables, h5_dispenser_and_names_gen
 
 # to save through temporary store (with log for each saving data part - here it is burst):
-from to_pandas_hdf5.h5toh5 import h5init, h5remove, h5index_sort
+from to_pandas_hdf5.h5toh5 import h5out_init, h5remove, h5index_sort
 from utils2init import this_prog_basename, standard_error_info, LoggingStyleAdapter
 
 @dataclass
@@ -338,7 +338,7 @@ def pairwise(iterable):
     return zip(a, b)
 
 
-@hydra.main(config_name=cs_store_name, config_path="cfg")  # adds config store cs_store_name data/structure to param:config
+@hydra.main(config_name=cs_store_name, config_path="cfg", version_base='1.3')  # adds config store cs_store_name data/structure to :param config cs_store_name data/structure to param:config
 def main(config: ConfigType) -> None:  #
     raw = 'raw' in cfg_in['db_path'].stem  # else "proc_noAvg" is in
     with pd.HDFStore(cfg_in['db_path'], mode='r') as store:
@@ -398,7 +398,7 @@ def main(config: ConfigType) -> None:  #
         cfg_out['log']['fileChangeTime'] = datetime.fromtimestamp(cfg_in['db_path'].stat().st_mtime)
         yield None
 
-    h5init(cfg_in, cfg_out)  # cfg_in for full path if cfg_out['db_path'] only name
+    h5out_init(cfg_in, cfg_out)  # cfg_in for full path if cfg_out['db_path'] only name
     n_rows_after = 0
     #with pd.HDFStore(out_path) as store:  #, mode='w'
     for _, _ in h5_dispenser_and_names_gen(cfg_in, cfg_out, h5_names_gen):  # handles temporary db for h5_append()
@@ -465,7 +465,3 @@ def _test_filter_periodic_spike():
     out = filter_periodic_spike(
         ser, dp_down_min=0.5, di_period_min=di_period-1, di_period_max=di_period+1, n_bad_start=0
         )
-
-
-
-
