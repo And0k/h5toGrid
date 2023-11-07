@@ -18,25 +18,33 @@ import warnings
 from magneticDec import mag_dec
 from utils2init import ini2dict, dir_walker, readable, bGood_dir, bGood_file
 
-
 from pathlib import Path
 import numpy as np
+import pandas as pd
 
-from grid2d_vsz import save_shape, to_polygon
+from ADCP.loadNortekSignature_txt import save_2d_for_surfer
 
-
-def main():
-
-    a1d = load_rdcp_aux(
-        r'd:\WorkData\BalticSea\_Pregolya,Lagoon\210519-inclin+RDCP\RDCP\txt\TxtExportAuxSensors.txt'
+try:
+    from grid2d_vsz import save_shape, to_polygon
+except ModuleNotFoundError as e:
+    def get_dummies(e):
+        return (
+            lambda *args: print(f'Module to save shape was not imported ({e})'),
+            lambda *args: print(f'Module to save polygon was not imported ({e})')
         )
+    save_shape, to_polygon = get_dummies(e)
+    
+def main():
+    path = r'd:\WorkData\BalticSea\230825_Kulikovo@ADCP,ADV,i,tr\RDCP\_txt(rds)\TxtExportAuxSensors.txt'
+    # r'd:\WorkData\BalticSea\_Pregolya,Lagoon\210519-inclin+RDCP\RDCP\txt\TxtExportAuxSensors.txt'
+    path_2d = Path(path).with_name('TxtExportCol1.txt')
+    path_out = path_2d.parent.parent / '_srf,vsz' / '_'
+    a2d = load_rdcp_profile(path_2d, path_out=path_out)
+    a1d = load_rdcp_aux(path, path_out=path_out)
+    print(a1d, a2d)
 
 
-
-    print(a1d)
-
-
-def load_rdcp_aux(file_in, file_out=None, delimiter='\t'):
+def load_rdcp_aux(file_in, path_out=None, delimiter='\t', modifier=None, filter=None):
     """
     loads RDCP Aux Sensors txt file of format:
     Date - Time Battery Heading Pitch Roll Reference Temperature Conductivity Oxygen 3835 4017 Turbidity 3612 Depth Salinity Speed of sound
@@ -47,9 +55,9 @@ def load_rdcp_aux(file_in, file_out=None, delimiter='\t'):
     :param delimiter: if not ',' useful to invert 1st column of text files of other types
     :return:
     """
-    if not file_out:
-        p_in = Path(file_in)
-        file_out = p_in.with_name(f'{p_in.stem}_out').with_suffix(p_in.suffix)
+    file_in = Path(file_in)
+    if not path_out:
+        path_out = file_in.with_name(f'{file_in.stem}_out').with_suffix(file_in.suffix)
     with open(file_in, 'rb') as f:
         header = f.readline()
         # gsw_z_from_p()
@@ -63,49 +71,154 @@ def load_rdcp_aux(file_in, file_out=None, delimiter='\t'):
             'formats': formats
         }
         a1d = np.loadtxt(f, dtype=dtype, skiprows=0, delimiter=delimiter)
-    a1d['P_dBar'] = a1d['P_dBar'] / 10 - 11.1
-
-    p_min = 0
-    p_max = 15
-    b_good = (p_min < a1d['P_dBar']) & (a1d['P_dBar'] < p_max)
+    
+    if modifier:
+        a1d['P_dBar'] = a1d['P_dBar'] / 10 - 11.1
+    if filter:
+        p_min = 0
+        p_max = 15
+        b_good = (p_min < a1d['P_dBar']) & (a1d['P_dBar'] < p_max)
+    else:
+        b_good = slice(None)
 
     b_excel_time = True
     if b_excel_time:
-        excel_dates_offset_s  = np.int64(np.datetime64(datetime(1899, 12, 30), 's'))
+        excel_dates_offset_s = np.int64(np.datetime64(datetime(1899, 12, 30), 's'))
         dtype['formats'][0] = 'f8'
         a1d_float_time = (np.int64(a1d['Time'].astype('M8[s]')) - excel_dates_offset_s) / (24 * 3600)  # days, Excel time
         a1d = a1d.astype(dtype)
         a1d['Time'] = a1d_float_time
-        np.savetxt(file_out, a1d,
-                   fmt='\t'.join(['%.10f'] + ['%g']*n_float_cols),
-                   delimiter=delimiter,
-                   header='\t'.join(col_names),
-                   comments='',
-                   encoding='ascii'
-                   )
+    
+    np.savetxt(path_out, a1d,
+               fmt='\t'.join(['%.10f'] + ['%g']*n_float_cols),
+               delimiter=delimiter,
+               header='\t'.join(col_names),
+               comments='',
+               encoding='ascii'
+               )
+        
+    # Save lines for Surfer
+    p_max_show = 20
+    save_shape(
+        path_out.with_name(f'{file_in.stem}_P'),
+        to_polygon(a1d_float_time[b_good], a1d['P_dBar'][b_good], p_max_show),
+        'BNA'
+        )
+    np.savetxt(path_out.with_name(f'{file_in.stem}_P').with_suffix('.txt'), a1d[['Time', 'P_dBar']][b_good],
+               fmt='\t'.join(['%.10f'] + ['%g']),
+               delimiter=delimiter,
+               header='\t'.join(col_names),
+               comments='',
+               encoding='ascii'
+               )
+    
+    
+    # else:
+    #     np.savetxt(file_out, a1d,
+    #                fmt='\t'.join(['%s'] + ['%g']*n_float_cols),
+    #                delimiter=delimiter,
+    #                header='\t'.join(col_names),
+    #                comments='',
+    #                encoding='ascii'
+    #                )
 
-        p_max_show = 20
-        save_shape(
-            file_out.with_name(f'{p_in.stem}_P'),
-            to_polygon(a1d_float_time[b_good], a1d['P_dBar'][b_good], p_max_show),
-            'BNA'
-            )
 
-        np.savetxt(file_out.with_name(f'{p_in.stem}_P').with_suffix('.txt'), a1d[['Time', 'P_dBar']][b_good],
-                   fmt='\t'.join(['%.10f'] + ['%g']),
-                   delimiter=delimiter,
-                   header='\t'.join(col_names),
-                   comments='',
-                   encoding='ascii'
-                   )
+def load_rdcp_profile(file_in, path_out=None, delimiter='\t', modifier=None, filter=None):
+    
+    with open(file_in) as f:
+        # Find the distance from the instrument to the center of the cells from line 1 in file.
+        line1 = f.readline()
+        z = np.float64(line1.split('\t')[1:])
+    
+        # Read column headers and determine the number of columns from line 2 in file.
+        line2 = f.readline()
+        column_headers = line2.split('\t')[1:]  # skip 1s that is Time
+        n_columns = len(column_headers)
+    
+        # Read the rest of the file into a pandas DataFrame.
+        data = pd.read_csv(f, sep='\t', header=None)
+    
+    # Organize the data in a pandas DataFrame
+    # Account of selectd cells to export (modified 19.10.2017)
+    cell_number_in_str_st = len('Direction_')
+    icells = np.int32([c[cell_number_in_str_st:] for i, c in enumerate(column_headers) if c.startswith('Direction_')])
+    z = z[icells - 1]
+    n_cells = icells.size
+    
+
+    # Organize the data in structure
+    
+    # Time Matlab to numpy conversion (to seconds and adding matlab epoch start: datetime64('-001-12-31T00:00:00'))
+    
+    if isinstance(data.loc[0, 0], str) and ':' in data.loc[0, 0]:
+        if data.loc[0, 0][3] == '-':
+            dd=str2num(time[:,1:2])
+            mm=str2num(time[:,4:5])
+            yyyy=2000+str2num(time[:,7:8])
+            HH=str2num(time[:,10:11])
+            MM=str2num(time[:,13:14])
+            out.yyyy=yyyy
+            out.mm=mm
+            out.dd=dd
+            out.HH=HH
+            out.MM=MM
+            out.matTime=datenum(yyyy,mm,dd,HH,MM,0)
+        else:
+            out.matTime=datenum(time, 'yyyy-mm-dd HH:MM:SS')
     else:
-        np.savetxt(file_out, a1d,
-                   fmt='\t'.join(['%s'] + ['%g']*n_float_cols),
-                   delimiter=delimiter,
-                   header='\t'.join(col_names),
-                   comments='',
-                   encoding='ascii'
-                   )
+        time = (data.loc[:, 0] * 3600 * 24 - 62167305600).to_numpy('M8[s]').astype('M8[ns]')
+    
+    dt_all = np.diff(time)
+    dt = np.median(dt_all)
+    if all(dt_all == dt):
+        dt = None  # not need interp
+    
+    
+    n_parameters = n_columns // len(z)
+    data = np.reshape(data.values[:, 1:], (data.shape[0], -1, n_parameters)).T
+    out = {}
+    rename = {  # colnames before "_"
+        'Horizontal': 'Vabs',
+        'Direction': 'Vdir',
+        'Vertical': 'Vz',
+        'Beam1': 'Vbeam1',
+        'Beam2': 'Vbeam2',
+        'Beam3': 'Vbeam3',
+        'Beam4': 'Vbeam4',
+        'SP Std.': 'Vstd',      # cm/s Single ping standard deviation
+        'Strength': 'Sv'        # dB Signal strength
+    }
+    for i in range(n_parameters):
+        col_name = column_headers[i].split('_')[0]
+        try:
+            col_name = rename[col_name]
+        except KeyError:
+            print(f'Not known column name: {col_name}')
+        out[col_name] = data[i, :, :]
+    
+    out['Vabs'] = out['Vabs']/100
+    #     name = column_headers[i][:-2].replace(' ', '_').replace('.', '').replace('1', 'a1')
+    #     out[name] = data.iloc[:, (i + 1)::n_parameters].values.flatten()
+    
+    # col_names = out.keys()
+    # n_float_cols = len(col_names) - 1
+    save_2d_for_surfer(
+        time=time,
+        z=z,
+        out=out,
+        path_base=(path_out if path_out else file_in).with_name('RDCP_2d'),
+        dt=[dt] + np.array([30, 120, 360], 'm8[m]').tolist(),  # optimal minimum, and more averaged grids
+        dz=[None]*3 + [2]
+    )
+    return out
+
+
+def matlab_datenum_to_python_datetime(matlab_datenum):
+    python_datetime = (
+        datetime.datetime.fromordinal(int(matlab_datenum)) +
+        datetime.timedelta(days=matlab_datenum%1) - datetime.timedelta(days=366)
+    )
+    return python_datetime
 
 
 def repInFile(nameFull, cfg, result):  # result is previous or with ['nameNavFull']= None, ['nav1D']= None
