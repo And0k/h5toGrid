@@ -19,6 +19,7 @@ from shutil import copyfile
 from typing import Any, Callable, Dict, Iterator, MutableMapping, Optional, List, Tuple, Union
 from datetime import datetime, timedelta, timezone
 from itertools import zip_longest
+from io import IOBase
 from dataclasses import dataclass, field
 import hydra
 import numpy as np
@@ -27,6 +28,7 @@ import pandas as pd
 # import vaex
 from pandas.tseries.frequencies import to_offset
 from tables.exceptions import HDF5ExtError
+from os import PathLike
 import re
 import requests
 # import gc
@@ -52,11 +54,13 @@ from gps_tracker.mail_parse import spot_tracker_data_from_mbox, spot_from_gmail
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
 cfg = None
 tables2mid = {
-    'tr0': 221910,   # MIDs of Autofon trackers are needed to load data
+    # MIDs of Autofon trackers are needed to load data
+    'tr0': 221910,  # - lost 
     'tr1': 221909,
     'tr2': 221912,
+    # ESNs for SPOT trackers (may be for future use)
     'sp1': 4441068,
-    'sp2': 2575092,  # ESNs for SPOT trackers (may be for future use)
+    'sp2': 2575092,  
     'sp3': 3124620,
     'sp4': 3125300,
     'sp5': 3125411,
@@ -103,9 +107,9 @@ def save2gpx(nav_df: pd.DataFrame,
     - path of file, then save with this path and ".gpx" suffix,
     - path of directory, then autoname based on ``nav_df.index[0]`` and ``track_name`` and save in this dir,
     - None - not save, useful to get gpx only
-    :param process: fields to add anchor point (will be not added if no any anchor_coord_default or anchor_coord_time):
-        anchor_coord_default: List[float], [Lat, Lon] degrees, not used if anchor_coord_time specified
-        anchor_coord_time: Dict[time_str, List[float]], {time_str: [Lat, Lon]} degrees. Only last item used
+    :param process: fields to add anchor point (will be not added if no any anchor_coord_default or anchor_coord_at):
+        anchor_coord_default: List[float], [Lat, Lon] degrees, not used if anchor_coord_at specified
+        anchor_coord_at: Dict[time_str, List[float]], {time_str: [Lat, Lon]} degrees. Only last item used
         anchor_depth: float, m
     :param gpx: gpxpy.gpx
     :param dt_from_utc:
@@ -117,10 +121,10 @@ def save2gpx(nav_df: pd.DataFrame,
     path_gpx = path / f'{nav_df.index[0]:%y%m%d_%H%M}{track_name}' if (path and path.is_dir()) else path
     nav_df.index.name = 'Time'
     # anchor point
-    if any(process['anchor_coord_time']):
-        if isinstance(a := process['anchor_coord_time'], dict):
+    if any(process['anchor_coord_at']):
+        if isinstance(a := process['anchor_coord_at'], dict):
             key_last = list(a.keys())[-1]  # only last anchor point will be in gpx (as it is most actual)
-            lat_lon = process['anchor_coord_time'][key_last]
+            lat_lon = process['anchor_coord_at'][key_last]
             tim = [pd.Timestamp(key_last, tz='utc')]
         else:
             # anchor track and not point. Saving
@@ -141,13 +145,13 @@ def save2gpx(nav_df: pd.DataFrame,
         tim = nav_df.index[[0]]
     # save track
     gpx = save_to_gpx(
-        (nav_df if dt_from_utc is None else nav_df.tz_convert(timezone(dt_from_utc))
-         ).dropna(subset=['Lat', 'Lon']),  # *.gpx will be not compatible to GPX if it will have NaN values
+        nav_df.dropna(subset=['Lat', 'Lon']),  # *.gpx will be not compatible to GPX if it will have NaN values
         None if any(lat_lon) else path_gpx,
-        gpx_obj_namef=track_name, cfg_proc=process, gpx=gpx)
+        gpx_obj_namef=track_name, cfg_proc=process, gpx=gpx
+        )
     if any(lat_lon):
         # save anchor
-        return save_to_gpx(
+        gpx = save_to_gpx(
             pd.DataFrame(
                 {
                     'Lat': lat_lon[0],
@@ -162,8 +166,7 @@ def save2gpx(nav_df: pd.DataFrame,
             gpx_obj_namef= f'{track_name} mean' if process.get('b_calc_anchor_mean', False) else f'Anchor {track_name}',
             cfg_proc=process, gpx=gpx
          )
-    else:
-        return gpx
+    return gpx
 
 
 def prepare_loading_xlsx_links_by_pandas():
@@ -173,7 +176,7 @@ def prepare_loading_xlsx_links_by_pandas():
         return()
 
     from pandas.io.excel._openpyxl import OpenpyxlReader
-    from pandas._typing import FilePathOrBuffer, Scalar
+    from pandas._typing import Scalar
     from openpyxl.cell.cell import TYPE_BOOL, TYPE_ERROR, TYPE_NUMERIC, TIME_TYPES
 
     def _convert_cell(self, cell, convert_float: bool) -> Scalar:
@@ -207,7 +210,7 @@ def prepare_loading_xlsx_links_by_pandas():
 
         return cell.value
 
-    def load_workbook(self, filepath_or_buffer: FilePathOrBuffer):
+    def load_workbook(self, filepath_or_buffer: Union[str, PathLike, IOBase]):
         from openpyxl import load_workbook
         # had to change read_only to False:
         return load_workbook(filepath_or_buffer, read_only=False, data_only=True, keep_links=False)
@@ -410,12 +413,20 @@ def loading(
             if path_raw_local.suffix == '.xlsx':
                 with pd.ExcelFile(path_raw_local) as f_xls:
                     # if f_xls.sheet_names
-                    xls = pd.read_excel(f_xls,
-                                        sheet_name=f'{device_number} Positions & Events',
-                                        usecols='B,D',
-                                        skiprows=4,
-                                        index_col=0)
-                    nav_df = xls['Lat/Lng'].str.extract(r'(?P<Lat>[^,]*), (?P<Lon>[^,]*)')
+                    try:
+                        xls = pd.read_excel(f_xls,
+                                            sheet_name=f'{device_number} Positions & Events',
+                                            usecols='B,D',
+                                            skiprows=4,
+                                            index_col=0)
+                        nav_df = xls['Lat/Lng'].str.extract(r'(?P<Lat>[^,]*), (?P<Lon>[^,]*)')
+                    except ValueError:  # Russian localization if "Worksheet named '{} Positions & Events' not found"
+                        xls = pd.read_excel(f_xls,
+                                            sheet_name=f'{device_number} Местоположения & События',
+                                            usecols='B,D',
+                                            skiprows=4,
+                                            index_col=0, decimal=',')
+                        nav_df = xls['Шир/Долг'].str.replace(',', '.').str.extract(r'(?P<Lat>[^ ]*). (?P<Lon>[^ ]*)')
                 nav_df.set_index((nav_df.index - dt_from_utc).tz_localize('utc'), inplace=True)
                 for coord in ['Lat', 'Lon']:
                     nav_df[coord] = pd.to_numeric(nav_df[coord], downcast='float', errors='coerce')
@@ -449,15 +460,16 @@ def loading(
         # download and parse from GMail
         time_lat_lon = spot_from_gmail(
             device_number=device_number,
-            time_start=time_interval[0] - dt_from_utc)
+            time_start=time_interval[0] - dt_from_utc, by_time_range = timedelta(days=2))
         nav_df = pd.DataFrame(time_lat_lon,
                               columns=['Time', 'Lat', 'Lon']).astype(
             {'Lat': np.float32, 'Lon': np.float32}
             )
-        nav_df['Time'] -= dt_from_utc
+        nav_df['Time'] -= dt_from_utc  # local time in email
         nav_df.set_index('Time', inplace=True)  # pd.DatetimeIndex(nav_df['Time']
         nav_df.sort_index(inplace=True)
         nav_df = nav_df.tz_localize('utc', copy=False)
+        tim_last_coord = pd.Timestamp.now(tz='utc')
     else:
         mid = tables2mid[table]
         url = 'http://176.9.114.139:9002/jsonapi'
@@ -466,7 +478,7 @@ def loading(
         # Request and display last info
         try:
             r = requests.post(f'{url}/laststates/?{key_pwd}')
-        except TimeoutError:
+        except (requests.exceptions.ConnectTimeout, TimeoutError):
             print('TimeoutError - skip')
             raise (Ex_nothing_done)
         if r.status_code != 200:
@@ -517,7 +529,7 @@ def saving(nav_dfs, path, process):
         save2gpx(nav_df, tbl, path=path, process=process)
 
         # bin average data
-        bins = ['1H', '5min']
+        bins = ['1h', '5min']
         for bin in bins:
             save2gpx(nav_df.resample(bin).mean(), f'{tbl}_avg({bin})', path=path, process=process)
 
@@ -587,12 +599,13 @@ class ConfigInAutofon:
     # - None: request data from internet,
     # - xls/xlsx-file: load its data instead,
     # - h5-file: loading and use its data for reprocess (same as if table is included in tbl_raw_not_update below):
-    path_raw_local_default: Optional[str] = None
+    path_raw_local_default: Optional[str] = '_raw/ActivityReport.xlsx'  # default filename loaded from spot site
     # If there are different devices' data in different sources then use dict {device: source} where device is regex
     # pattern str. that matches devices name that is output table name defined by ``out`` config. If no key will be
     # found then path_raw_local_default value will be used
-    path_raw_local: Optional[Dict[str, str]] = field(default_factory=dict)
-    dt_from_utc_hours: int = 0
+    path_raw_local: Optional[Dict[str, str]] = field(default_factory=dict)  # Need to be None for tr* to load from internet
+    dt_from_utc_default_hours: int = 0
+    dt_from_utc_hours: Dict[str, float] = field(default_factory=dict)  # for specified output tables
     # b_incremental_update: bool = True
     tbl_raw_not_update: List[str] = field(default_factory=lambda: [])  # List tables in .raw.h5 that not try to update
     alias: Optional[Dict[Any, str]] = field(default_factory=dict)  # load device with name=value  and output with
@@ -609,9 +622,9 @@ class ConfigProcessAutofon:
     # anchor settings
     anchor_coord_default: Any = field(default_factory=lambda: [])    # List[float]: constant coord. (i.e. [44.56905, 37.97308]),
     anchor_coord: Dict[Any, Any] = field(default_factory=dict)  # {tracker: [Lat, Lon]} - anchor for each tracker
-    # or str "mean" to assign mean of each data source to anchor coord else - empty list to use anchor_coord_time
-    anchor_coord_time: Dict[Any, Any] = field(default_factory=dict)  # {time: [Lat, Lon]} - use if anchor moved
-    # If anchor_coord_default and anchor_coord_time are empty, and no tracker key in anchor_coord too then will not
+    # or str "mean" to assign mean of each data source to anchor coord else - empty list to use anchor_coord_at
+    anchor_coord_at_time: Dict[Any, Any] = field(default_factory=dict)  # {time: [Lat, Lon]} - use if anchor moved
+    # If anchor_coord_default and anchor_coord_at are empty, and no tracker key in anchor_coord too then will not
     # calc. distance.
     anchor_depth: float = 0
     anchor_tracker: List[str] = field(default_factory=lambda: [])   # names of devices to calc. distances to them as to anchors
@@ -631,12 +644,12 @@ class ConfigProcessAutofon:
 
 @dataclass
 class ConfigOutAutofon(cfg_dataclasses.ConfigOutSimple):
-    # dt_bins_rolling: List[List[str]] = field(default_factory=lambda: [['2H', None], ['5min', None], ['10min', '1H']])
+    # dt_bins_rolling: List[List[str]] = field(default_factory=lambda: [['2h', None], ['5min', None], ['10min', '1h']])
     # List[List[ or List[Optional[str] not supported so we split it:
-    dt_bins: List[str] = field(default_factory=lambda: ['2H', '5min', '10min'])
-    dt_rollings: List[str] = field(default_factory=lambda: ['', '', '1H'])
-    # len(to_gpx) should be less than 1(for raw table) + dt_bins, if empty then output tho gpx if averaging less than 1h.
-    to_gpx: List[bool] = field(default_factory=list)
+    dt_bins: List[str] = field(default_factory=lambda: ['2h', '5min', '10min'])
+    dt_rollings: List[str] = field(default_factory=lambda: ['', '', '1h'])
+    # len(to_gpx) should be less than 1(for raw table) + dt_bins
+    to_gpx: List[bool] = field(default_factory=list)  # empty: means True for averaging bins <= 1h
 
 
 ConfigProgram = cfg_dataclasses.ConfigProgram
@@ -658,11 +671,11 @@ cs, ConfigType = cfg_dataclasses.hydra_cfg_store(
 def dx_dy_dist_bearing(lon1, lat1, lon2, lat2):
     """
     Distance and bearing between two points
-    :param lon1: degrees, 1st point "lon"-coordinate
-    :param lat1: degrees, 1st point "lat"-coordinate
-    :param lon2: degrees, 2nd point "lon"-coordinate
-    :param lat2: degrees, 2nd point "lat"-coordinate
-    :return: array with 4 columns:
+    :param lon1: degrees, 1st point "lon"-coordinate(s)
+    :param lat1: degrees, 1st point "lat"-coordinate(s)
+    :param lon2: degrees, 2nd point "lon"-coordinate(s)
+    :param lat2: degrees, 2nd point "lat"-coordinate(s)
+    :return: array with 4 columns:(s)
      - dx: m, distance along "lon" coord line
      - dy: m, distance along "lat" coord line
      - dist: m, distance between points
@@ -699,6 +712,21 @@ def format_log_filename(start, end):
     return '{:%y%m%d_%H%M}-{:%m%d_%H%M}'.format(start, end)
 
 
+def resample_df(df, bin_raw, index_st=None, index_en=None, limit=None, new_index=None):
+    """
+    Resample DataFrame with bin_raw or new_index
+    bin_raw, index_st, index_en: used to get new_index if new_index is None
+    """
+    if new_index is None:
+        new_index = pd.date_range(
+            index_st.floor(bin_raw), index_en.ceil(bin_raw), freq=bin_raw
+        )
+    df_upsample = df.reindex(df.index.union(new_index)).interpolate(
+        'index', limit=limit).reindex(new_index)  # method='spline', order=2
+    
+    return df_upsample, new_index
+
+
 def proc_and_h5save(df, tbl, cfg_in, out, process: MutableMapping[str, Any],
                     bin: Optional[str] = None, rolling_dt: Optional[str] = None):
     """
@@ -713,7 +741,7 @@ def proc_and_h5save(df, tbl, cfg_in, out, process: MutableMapping[str, Any],
     :param out: dict, output config
     :param process: dict, processing config with fields:
     - b_calc_anchor_mean: if True then calc anchor coordinates by averaging data and update process['anchor_coord_default']
-    - anchor_coord_time: either
+    - anchor_coord_at: either
       - Dict where keys are times and values are position of anchor. process['anchor_coord_default'] is used before 1st item.
       - Dataframe with position of anchor, which will be interpolated with regular interval (bin_raw=5min)
     - other fields initialised from ConfigProcessAutofon
@@ -729,6 +757,9 @@ def proc_and_h5save(df, tbl, cfg_in, out, process: MutableMapping[str, Any],
      - process['anchor_coord_default']
     """
 
+    if not any(df):  
+        return ()
+    
     if 'n_GPS' in df.columns:
         min_n_GPS = 3
         b_bad = df.n_GPS < min_n_GPS
@@ -785,14 +816,14 @@ def proc_and_h5save(df, tbl, cfg_in, out, process: MutableMapping[str, Any],
     if process['b_calc_anchor_mean']:
         if not (isinstance(process['b_calc_anchor_mean'], str) and
                 tbl.startswith(process['b_calc_anchor_mean'])):
-          # use anchor_coord_default from original table if it is suffixed
+            # use anchor_coord_default from original table if it is suffixed
             process['b_calc_anchor_mean'] = tbl  # save to not recalc for suffixed tables
             process['anchor_coord_default'] = df.loc[:, ['Lat', 'Lon']].values.mean(axis=0).tolist()  # seems numpy mean result in better accuracy
             lf.info('set anchor position to mean {} position: {}', tbl, process['anchor_coord_default'])
     anchor_coord = process['anchor_coord_default']
 
     tbl_anchor = ''
-    if any(a := process['anchor_coord_time']):
+    if any(a := process['anchor_coord_at']):
         if isinstance(a, dict):
             anchor_lat_lon = np.zeros((2, len(df)), np.float32)
             if any(anchor_coord):
@@ -810,17 +841,15 @@ def proc_and_h5save(df, tbl, cfg_in, out, process: MutableMapping[str, Any],
                     anchor_coord = []
                 else:
                     bin_raw = '5min'
-                    lf.info('interpolating {} and {} as moving anchor on regular {}-bin intervals to calc '
-                            'distanses between',
-                            tbl, tbl_anchor, bin_raw
-                            )
-                    new_index = pd.date_range(
-                        min(df.index[0], a.index[0]).floor(bin_raw),
-                        max(df.index[-1], a.index[-1]).ceil(bin_raw),
-                        freq=bin_raw
-                        )
-                    df_upsample = df.reindex(df.index.union(new_index)).interpolate(
-                        'index', limit=process['interp_limit']).reindex(new_index)  # method='spline', order=2
+                    lf.info(
+                        'interpolating {} and {} as moving anchor on regular {}-bin intervals to calc '
+                        'distanses between', tbl, tbl_anchor, bin_raw
+                    )
+                    df_upsample, new_index = resample_df(
+                        df, bin_raw, 
+                        index_st=min(df.index[0], a.index[0]), index_en=max(df.index[-1], a.index[-1]), 
+                        limit=process['interp_limit']
+                    )
                     index_union = a.index.union(new_index)
                     try:
                         a_upsample = a.reindex(index_union)
@@ -943,7 +972,7 @@ def holes_prepare_to_fill(db, tbl, tbl_log,
     """
 
     try:  # Last data time from log table
-        t_max_exist = db.select(tbl_log, columns=['DateEnd'], start=-1)['DateEnd'][0].tz_convert(tz=timezone.utc)
+        t_max_exist = db.select(tbl_log, columns=['DateEnd'], start=-1)['DateEnd'].iat[0].tz_convert(tz=timezone.utc)
     except (KeyError, IndexError, AttributeError) as e:      # no log (yet or lost?)
         try:
             t_min_exist = db.select(tbl, columns=[], stop=1).index[0]
@@ -972,7 +1001,7 @@ def holes_prepare_to_fill(db, tbl, tbl_log,
             return time_holes, None, 'start'
 
 
-    time_start_wait = t_max_exist - to_offset(dt_max_wait).delta if dt_max_wait else None
+    time_start_wait = t_max_exist - pd.Timedelta(dt_max_wait) if dt_max_wait else None
     max_hole_timedelta = to_offset(dt_max_hole)
 
     if time_holes is None:
@@ -1038,8 +1067,8 @@ def h5_names_gen(cfg_in: MutableMapping[str, Any],
                  processed_tables: bool,
                  dt_max_hole: Optional[str] = None,
                  dt_max_wait: Optional[str] = None,
-                 **kwargs) -> Iterator[Union[Tuple[str, str, Optional[str], str, bool],
-                                             Tuple[int, str, str, str, Optional[str], str, bool]]]:
+                 **kwargs) -> Iterator[Union[Tuple[str, str, None, Optional[str], str],
+                                             Tuple[int, str, str, Tuple[str, Optional[str]], str]]]:
     """
     Generate table names from cfg_out['tables'] and other parameters depending on ``processed_tables`` mode parameter,
     sets cfg_out['log'] fields 'fileChangeTime' and 'fileName' depending on cfg_in['time_interval'],
@@ -1056,8 +1085,8 @@ def h5_names_gen(cfg_in: MutableMapping[str, Any],
     # time_holes: holes_prepare_to_fill() parameter: list of found holes' starts
     # time_start: holes_prepare_to_fill() parameter: starting Timestamp to query server
     :return: (tbl, tbl_log, t_start, msg_start_origin, to_gpx) or
-             (tbl, tbl_log, bin, rolling_dt, to_gpx):
-    (`t_start`, msg_start_origin) replaced with (`bin`, rolling_dt) if processed_tables
+             (tbl, tbl_log, t_start, (bin, rolling_dt), to_gpx):
+    msg_start_origin replaced with (`bin`, rolling_dt) if processed_tables
     t_start, msg_start_origin: see holes_prepare_to_fill()
 
     Modifies: cfg_in['time_interval'], cfg_out['log']
@@ -1068,7 +1097,7 @@ def h5_names_gen(cfg_in: MutableMapping[str, Any],
 
     set_field_if_no(cfg_out, 'log', {})
     cfg_in['new_data_time_starts'] = {}  # save here existed data ends to know later from where new data starts
-
+    cfg_tables_save = cfg_out['tables']
     # tables_log_copy = cfg_out['tables_log']
     for itbl, tbl in enumerate(cfg_out['tables'], start=1):
         cfg_out['log']['fileChangeTime'] = cfg_out['time_interval'][-1]
@@ -1082,10 +1111,12 @@ def h5_names_gen(cfg_in: MutableMapping[str, Any],
                 tbl_raw_not_update_copy = cfg_in['path_raw_local_default']  # to update cfg_in before yield and then revert
                 for retry in [False, True]:
                     try:
-                        time_holes, t_start, msg_start_origin = holes_prepare_to_fill(cfg_out['db'], tbl, tbl_log,
-                                                                          time_holes=kwargs.get('time_holes', None),
-                                                                          dt_max_hole=dt_max_hole,
-                                                                          dt_max_wait=dt_max_wait)
+                        time_holes, t_start, msg_start_origin = holes_prepare_to_fill(
+                            cfg_out['db'], tbl, tbl_log,
+                            time_holes=kwargs.get('time_holes', None),
+                            dt_max_hole=dt_max_hole,
+                            dt_max_wait=dt_max_wait
+                        )
                     except HDF5ExtError:
                         lf.exception('Bad DB table. Recovering table...')
                         try:
@@ -1150,8 +1181,10 @@ def h5_names_gen(cfg_in: MutableMapping[str, Any],
 
                 if b_skip:
                     continue
+                cfg_out['tables'] = [tbl]  # for compatibility with del_obsolete()
                 yield (tbl, tbl_log, None, msg_start_origin, cfg_out['to_gpx'][0])
                 cfg_in['path_raw_local_default'] = tbl_raw_not_update_copy
+                cfg_out['tables'] = cfg_tables_save 
                 # cfg_out['tables_log'] = tables_log_copy
             else:
                 # mode 2: Generate parameters for tables that will be processed
@@ -1181,9 +1214,9 @@ def h5_names_gen(cfg_in: MutableMapping[str, Any],
                         to_gpx = max_timedelta <= timedelta(hours=1)
                     cfg_out['log']['index'] = t_start  # will be read in h5del_obsolete() called after this fun. to del.
                     tbl_log = cfg_out['tables_log'][0].format(tbl_avg)
-                    cfg_tables_save, cfg_out['tables'] = cfg_out['tables'], [tbl_avg]  # for compatibility with del_obsolete()
-                    yield (itbl, tbl_avg, tbl_log, bin, rolling_dt, to_gpx)
-                    cfg_out[tables] = cfg_tables_save                                  # recover
+                    cfg_out['tables'] = [tbl_avg]  # for compatibility with del_obsolete()
+                    yield (itbl, tbl_avg, tbl_log, (bin, rolling_dt), to_gpx)
+                    cfg_out['tables'] = cfg_tables_save                                  # recover
         except GeneratorExit:
             print('Something wrong?')
             return ExitStatus.failure
@@ -1227,7 +1260,9 @@ def main(config: ConfigType) -> None:
       - tables_log: - log table name or pattern str for it: in pattern '{}' will be replaced by data table name
 
     - out: mapping with fields:
+    ...
 
+    Note: To create processed files (.gpx, .csv, .h5 (but not raw.h5)) if no data have been received (or recreate them) then delete .h5 (but not raw.h5).
     """
     if GetMutex().IsRunning():
         lf.info("Application is already running. Waiting 10s...")
@@ -1279,9 +1314,10 @@ def main(config: ConfigType) -> None:
     cfg_in['new_data_time_starts'] = {}  # default, will be updated in h5_names_gen with last data time in store
     
     # flag to assign anchor position as its mean coordinates in proc_and_h5save() for each device:
-    cfg['process']['b_calc_anchor_mean'] =\
-        isinstance(cfg['process']['anchor_coord_default'], str) and cfg['process']['anchor_coord_default'] == 'mean'
-    
+    cfg['process']['b_calc_anchor_mean'] = (
+        isinstance(cfg['process']['anchor_coord_default'], str) and
+        cfg['process']['anchor_coord_default'] == 'mean'
+    )
     lf.debug('updating raw data...')
     df_loaded = None
     for b_retry in [False, True]:  # if updating fails then will recover db from *.copy.h5 and try again
@@ -1298,17 +1334,29 @@ def main(config: ConfigType) -> None:
             lf.info('{}. {}: ', i1_tbl, tbl)
             # Loading (file or data from Internet)
             try:
+                path_raw_local = cfg_in['path_raw_local'].get(tbl, cfg_in['path_raw_local_default'])
+                if path_raw_local and not path_raw_local.is_absolute():
+                    path_raw_local = cfg['out']['db_path'].parent / path_raw_local
+                for t, dt in cfg_in['dt_from_utc'].items():
+                    if re.match(t, tbl):
+                        dt_from_utc = dt
+                        break
+                else:
+                    dt_from_utc = cfg_in['dt_from_utc_default']
+                if path_raw_local and not path_raw_local.is_absolute():
+                    path_raw_local = cfg['out']['db_path'].parent / path_raw_local                
                 df_loaded = call_with_valid_kwargs(
-                    loading, table=tbl,
-                    **{**cfg_in, 'path_raw_local': cfg_in['path_raw_local'].get(tbl, cfg_in['path_raw_local_default'])}
+                    loading, table=tbl, **{**cfg_in,
+                                           'path_raw_local': path_raw_local, 'dt_from_utc': dt_from_utc}
                 )
             except (Ex_nothing_done, TimeoutError):
                 if i1_tbl < len(out['tables']):  # need to check other devices
                     continue
                 elif not (df_loaded is None or out_db_path.is_file()):  # need to process
                     break                        # go to processing
-                lf.info('No new data. Exiting...')
-                sys.exit(ExitStatus.failure)
+                lf.warning('No new data. Continuing...')
+                continue
+                # sys.exit(ExitStatus.failure)  #Exiting...
 
             # Update new received/loaded data to HDF5
             # todo: Save current data last good time and tables for which it is valid to reduce searching good start on next run
@@ -1372,10 +1420,16 @@ def main(config: ConfigType) -> None:
     out['db_path_temp'] = out_db_path.with_suffix('.not_sorted.h5')
     lf.info('Processing loaded data to {}...', cfg['out']['db_path'])
     #print('\tSaving to GPX and other processing')
-    # time start to reprocess data with account for averaging period  # todo: use it to reprocess only needed data part
-    time_end_st = min(cfg_in['new_data_time_starts'].values()) - max(
-        to_offset(str_dt) for str_dt in out['dt_bins'] + out['dt_rollings'] if str_dt
+    
+    # Time start to    ocess data with account for averaging period  # todo: use it to reprocess only needed data part
+    time_end_st = min(cfg_in['new_data_time_starts'].values())
+    try:
+        time_end_st -= max(
+            to_offset(str_dt) for str_dt in out['dt_bins'] + out['dt_rollings'] if str_dt
         )
+        b_proc = True
+    except ValueError:  # if no averaging needed
+        b_proc = False
     gpx_raw = None
     gpx = {}  # navigation for different averaging
     df_anch = None  # will keep coordinates of cfg['process']['anchor_tracker'] if it is not empty
@@ -1388,57 +1442,70 @@ def main(config: ConfigType) -> None:
     ))
     qstr_range_pattern = "index>='{}' & index<='{}'"
     qstr = qstr_range_pattern.format(*out['time_interval'])
-    for i1_tbl, (i1_tbl_raw, tbl, tbl_log, bin, rolling_dt, b_to_gpx) in h5_dispenser_and_names_gen(
+    for i1_tbl, (i1_tbl_raw, tbl, tbl_log, bin, b_to_gpx) in h5_dispenser_and_names_gen(
         cfg_in, out,
         fun_gen=h5_names_gen,
-        processed_tables=True
+        processed_tables=b_proc
         # dt_max_hole=cfg['process']['dt_max_hole'],  # dt_max_wait=cfg['process']['dt_max_wait']
         ):
-
-        # load data needed to reprocess
-        tbl_raw, sfx = tbl.split('_', 1)
+        if b_proc:
+            (bin, rolling_dt) = bin
+            tbl_raw, sfx = tbl.split('_', 1)
+        else:
+            bin, rolling_dt = None, None
+            tbl_log = tbl  # will not be needed
+            tbl_raw, i1_tbl_raw = i1_tbl_raw, i1_tbl
+            tbl = tbl_raw + '_proc'
+            sfx = ''
+        
+        # Load data needed to reprocess
         if tbl_raw != tbl_raw_prev:  # next raw table processing
             tbl_raw_prev = tbl_raw
-
-            lf.info('{}. Averaging {} with {}: ', i1_tbl_raw, tbl_raw, sfx)
+            if b_proc:
+                lf.info('{}. Averaging {} with {}: ', i1_tbl_raw, tbl_raw, sfx)
             with pd.HDFStore(out['raw_db_path'], mode='r') as store_raw:
                 # Load concatenated current and previous raw data
                 df_raw = store_raw.select(tbl_raw, where=qstr)
+                if not df_raw.empty:
+                    # 1. Raw data relative to anchor with parameters relative to constant anchor cfg['process']['anchor_coord_default'] or do nothing
+                    df_no_avg = proc_and_h5save(df_raw, tbl_raw, cfg_in, out, cfg['process'])
 
-                # 1. Raw data relative to anchor with parameters relative to constant anchor cfg['process']['anchor_coord_default'] or do nothing
-                df_no_avg = proc_and_h5save(df_raw, tbl_raw, cfg_in, out, cfg['process'])
+                    # 2. Interpolated coord. and parameters relative to device defined by cfg['process']['anchor_tracker']
+                    if tbl_raw in cfg['process']['anchor_tracker']:
+                        assert i1_tbl_raw == 1
+                        # remember
+                        df_anch = df_raw.rename(columns={col: f'{col}_{tbl_raw}' for col in df_raw.columns})
+                        tbl_anch = tbl_raw
+                    elif df_anch is not None:
+                        # process and save: interp, update with params relative to anchor, with df_anch if it is not None
+                        df_no_avg = proc_and_h5save(
+                            df_raw, tbl_raw, cfg_in, out,
+                            {**cfg['process'], 'anchor_coord_at': df_anch}
+                            )
+                        if not any(df_no_avg):
+                            continue
+                        # Mark params relative to anchor (to keep and save after averaging)
+                        # if df_anch is not None:
+                        df_no_avg.rename(inplace=True, columns={
+                            col: f'{col}_{tbl_raw}_ref_{tbl_anch}' for col in df_raw.columns if col.startswith(
+                                ('dx', 'dy', 'dr', 'Vdir'))
+                            })
 
-                # 2. Interpolated coord. and parameters relative to device defined by cfg['process']['anchor_tracker']
-                if tbl_raw in cfg['process']['anchor_tracker']:
-                    assert i1_tbl_raw == 1
-                    # remember
-                    df_anch = df_raw.rename(columns={col: f'{col}_{tbl_raw}' for col in df_raw.columns})
-                    tbl_anch = tbl_raw
-                elif df_anch is not None:  # process and save: interp, update with params relative to anchor, with df_anch if it is not None
-                    df_no_avg = proc_and_h5save(
-                        df_raw, tbl_raw, cfg_in, out,
-                        {**cfg['process'], 'anchor_coord_time': df_anch}
-                        )
-                    # Mark params relative to anchor (to keep and save after averaging)
-                    # if df_anch is not None:
-                    df_no_avg.rename(inplace=True, columns={
-                        col: f'{col}_{tbl_raw}_ref_{tbl_anch}' for col in df_raw.columns if col.startswith(
-                            ('dx', 'dy', 'dr', 'Vdir'))
-                        })
-
-                # Saving GPX: accumulate raw data in gpx_raw and save on last cycle
-                if out['to_gpx'][0]:
-                    gpx_raw = save2gpx(
-                        df_raw,
-                        track_name=tbl_raw,
-                        path=(out['db_path'].with_name(
-                                    f"{df_raw.index[0]:%y%m%d_%H%M}{','.join(sorted(tbls_set))}"
-                                ) if i1_tbl_raw == n_tables else None  # accumulates only if None
-                              ),
-                        process=cfg['process'],
-                        dt_from_utc=cfg_in['dt_from_utc'],
-                        gpx=gpx_raw
-                        )
+                    # Saving GPX: accumulate raw data in gpx_raw and save on last cycle
+                    if out['to_gpx'][0] and not df_raw.empty:  # how df_row becomes empty after skipping if empty before?
+                        gpx_raw = save2gpx(
+                            df_raw,
+                            track_name=tbl_raw,
+                            path=(out['db_path'].with_name(
+                                        f"{df_raw.index[0]:%y%m%d_%H%M}{','.join(sorted(tbls_set))}"
+                                    ) if i1_tbl_raw == n_tables else None  # accumulates only if None
+                                ),
+                            process=cfg['process'],
+                            # dt_from_utc=cfg_in['dt_from_utc'],
+                            gpx=gpx_raw
+                            )
+                else:
+                    df_no_avg = df_raw
         else:
             lf.info('Averaging {} with {}: ', tbl_raw, sfx)
 
@@ -1451,9 +1518,9 @@ def main(config: ConfigType) -> None:
             )
 
         # Saving averaged GPX
-        if b_to_gpx:
+        if b_to_gpx and any(df):
             # Anchor(s) gpx track to memory - if have corresponded columns in df (suffixed by device id)
-            tbls = cfg['process']['anchor_tracker'] if df_anch is not None and f'Lat_{tbl_anch}' in df.columns else []
+            tbls = cfg['process']['anchor_tracker'] if df_anch is not None and any(df_anch) and f'Lat_{tbl_anch}' in df.columns else []
             if tbls:
                 if sfx in gpx and tbls_no_anch_tr:  # have accumulated data
                     # # save it (not tested because was no case to save with and without anchor tracker)
@@ -1471,7 +1538,7 @@ def main(config: ConfigType) -> None:
                     gpx[sfx] = save2gpx(
                         df[cols_anch.keys()].rename(columns=cols_anch), f'{tbl_anch}_{sfx}',
                         path=None, process=cfg['process'],
-                        dt_from_utc=cfg_in['dt_from_utc'],
+                        # dt_from_utc=cfg_in['dt_from_utc'],
                         gpx=gpx.get(sfx, None)
                         )
             else:
@@ -1486,7 +1553,7 @@ def main(config: ConfigType) -> None:
                     ) if i1_tbl_raw == n_tables else None
                 ),
                 process=cfg['process'],
-                dt_from_utc=cfg_in['dt_from_utc'],
+                # dt_from_utc=cfg_in['dt_from_utc'],
                 gpx=gpx.get(sfx, None)
                 )
 
@@ -1495,6 +1562,7 @@ def main(config: ConfigType) -> None:
             'db_path': out['db_path'],
             'table': tbl
             })
+    
 
     if any(unzip_if_need(out['tables_written'])):
         # not need to remove temp db if want use out['b_reuse_temporary_tables'] option: but temporary tables remains else set out['b_del_temp_db'] = True
@@ -1590,7 +1658,7 @@ def call_example():
     device = ['tr0']  # 221912
     main_call([  # '='.join(k,v) for k,v in pairwise([   # ["2021-04-08T08:35:00", "2021-04-14T11:45:00"]'
         'input.time_interval=[2021-05-15T13:00:00, now]',  # ["2021-04-08T09:00:00", "now"]',   # UTC, max (will be loaded and updated what is absent)
-        'input.dt_from_utc_hours=2',  #3
+        'input.dt_from_utc_hours={"sp.*":2}',  #3
         'process.anchor_coord_default=[54.62425, 19.76050]', #[44.56905, 37.97309]',
         'process.anchor_depth=20',
         'process.period_tracks=1D',

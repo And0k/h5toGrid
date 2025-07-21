@@ -18,7 +18,7 @@ lf = LoggingStyleAdapter(logging.getLogger(__name__))
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
 
-def get_gmails_data(json_cred, q: str, parse_body: Callable[[str], Any], cfg_dir=None):
+def get_gmails_data(json_cred, q: str, parse_body: Callable[[str], Any], cfg_dir=None, q_display: Optional[str] = None):
     """
 
     :param json_cred: json file name downloaded from https://console.cloud.google.com/apis/credentials
@@ -62,7 +62,7 @@ def get_gmails_data(json_cred, q: str, parse_body: Callable[[str], Any], cfg_dir
     resource_msg = service.users().messages()
     messages_ids = resource_msg.list(userId='me', q=q, maxResults=max_results, includeSpamTrash=True).execute().get('messages')
     if messages_ids is None:  # shoud be [{'id': x1, y1: z1, ...}, {'id': x2, y3: z2, ...}, ...].
-        lf.info('no new messages matched "{}"', q)
+        lf.info('no new messages matched "{}"', q_display or q)
         return []
     # The add() below will fill this list
     data = []

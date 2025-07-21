@@ -1,7 +1,7 @@
 import sys
 from typing import Any, Callable, Dict, Iterator, Mapping, MutableMapping, Optional, List, Sequence, Tuple, Union
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 import mailbox
 from time import sleep
@@ -48,26 +48,61 @@ from gps_tracker.gmail_read import get_gmails_data
 #     except Exception as e:
 #         print(str(e))
 
-def spot_from_gmail(device_number: Union[str, int], time_start: datetime):
+def spot_from_gmail(device_number: Union[str, int], time_start: datetime, by_time_range: Optional[timedelta] = None):
     """
 
     :param device_number:
     :param time_start: time in utc zone
+    :param by_time_range: timedelta(days=2)
     :return:
     """
     ep = datetime(1970, 1, 1, tzinfo=timezone.utc)  # 'US/Pacific' PST -1 day, 16:00:00 STD
 
     #ep = pd.Timestamp('1969-12-31 19:00:00', tz='utc')  # datetime( 0, tzinfo=timezone.utc)
-    return get_gmails_data(
-        str(Path.home() / 'client_secret_2_310771020112-fbq4dukacte2nevs4d7kc5decga1cahb.apps.googleusercontent.com.json'
-        # 'client_secret_310771020112-fbq4dukacte2nevs4d7kc5decga1cahb.apps.googleusercontent.com.json'
-        ),
-        q=f'subject:"Position Alert Activated: {device_number}" after:{round((time_start - ep).total_seconds())} from:alerts@maps.findmespot.com',
-        parse_body=parse_spot_text
+    if by_time_range:
+        out = []
+        data = True
+        q_pattern = 'subject:"Position Alert Activated: {device_number}" after:{after} before:{before} from:alerts@maps.findmespot.com'
+        while data:
+            time_end = time_start + by_time_range
+            data = get_gmails_data(
+                str(Path.home() / 'client_secret_2_310771020112-fbq4dukacte2nevs4d7kc5decga1cahb.apps.googleusercontent.com.json'
+                # 'client_secret_310771020112-fbq4dukacte2nevs4d7kc5decga1cahb.apps.googleusercontent.com.json'
+                ),
+                q=q_pattern.format(
+                    device_number=device_number,
+                    after=round((time_start - ep).total_seconds()),
+                    before=round((time_end - ep).total_seconds())
+                ),
+                parse_body=parse_spot_text,
+                q_display=q_pattern.format(
+                    device_number=device_number,
+                    after=time_start,
+                    before=time_end
+                )
+            )
+            
+            out += data
+            time_start += by_time_range
+        return out
+    else:
+        q_pattern = 'subject:"Position Alert Activated: {device_number}" after:{after} from:alerts@maps.findmespot.com'
+        return get_gmails_data(
+            str(Path.home() / 'client_secret_2_310771020112-fbq4dukacte2nevs4d7kc5decga1cahb.apps.googleusercontent.com.json'
+            # 'client_secret_310771020112-fbq4dukacte2nevs4d7kc5decga1cahb.apps.googleusercontent.com.json'
+            ),
+            q=q_pattern.format(
+                device_number=device_number,
+                after=round((time_start - ep).total_seconds())
+            ),
+            parse_body=parse_spot_text,
+            q_display=q_pattern.format(
+                device_number=device_number,
+                after=time_start
+            )
         )
-    # cfg_mail = safe_load(f_yml)
-    # txt = read_email_from_gmail(**cfg_mail)  # ['smtp_server'], cfg_mail['from_email'], ['from_pwd']
-
+        # cfg_mail = safe_load(f_yml)
+        # txt = read_email_from_gmail(**cfg_mail)  # ['smtp_server'], cfg_mail['from_email'], ['from_pwd']
 
 
 if False:

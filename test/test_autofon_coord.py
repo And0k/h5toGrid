@@ -6,7 +6,7 @@ import json
 import pandas as pd
 import numpy as np
 
-from to_vaex_hdf5.autofon_coord import *  # autofon_df_from_dict
+from gps_tracker.autofon_coord import *  # autofon_df_from_dict
 
 @pytest.fixture()
 def autofon_dict():
@@ -269,7 +269,7 @@ def test_call_example_sp4(file_raw_local):
         'input.time_interval=[2021-06-02T13:49, now]',
         'input.dt_from_utc_hours=2',
         'process.anchor_coord=[54.616175, 19.84136]', #tr0: 54.616175, 19.84134166
-        "++process.anchor_coord_time_dict={"
+        "++process.anchor_coord_at={"
         r"2021-06-02T13\:50:[54.62355, 19.82249],"
         r"2021-06-02T14\:00:[54.62039, 19.83019],"
         r"2021-06-02T14\:10:[54.61916, 19.83516]"

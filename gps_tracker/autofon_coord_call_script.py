@@ -1,4 +1,4 @@
-from to_vaex_hdf5.autofon_coord import call_example, proc
+from gps_tracker.autofon_coord import call_example, proc
 
 if True:  # b_hydra:
     call_example()
