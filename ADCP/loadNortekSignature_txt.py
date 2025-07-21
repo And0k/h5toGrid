@@ -13,7 +13,10 @@ drive_d = 'D:' if sys.platform == 'win32' else '/mnt/D'  # to run on my Linux/Wi
 for path in ['/Work/_Python3/And0K/Veusz_plugins', '/Work/_Python3/And0K/tcm']:
     scripts_path = Path(drive_d + path)
     sys.path.append(str(Path(scripts_path).parent.resolve()))
-from Veusz_plugins import func_vsz as v
+try:
+    import func_vsz as v
+except ImportError:  # old path:
+    from Veusz_plugins import func_vsz as v
 from tcm.incl_h5clc_hy import polar2dekart
 
 
@@ -40,7 +43,7 @@ def create_dar(data=None, coords=None,
         dims=coords.keys(),
         coords=coords
     )
-    
+
     if interp_dt:
         if isinstance(interp_dt, np.timedelta64):  # to timedelta:
             interp_dt = interp_dt.astype('m8[s]').item()
@@ -108,14 +111,14 @@ def load_adp_adcp_nortek_signature(path_base, cfg=None):
          'Pressure',
          'Temperature',
         ]
-    
+
     # Convert Time because can not store datetime64 in hdf5 by h5py
     out = {'Time': df.Time.astype('f8').to_dask_array()}
     # Not assigning vaex astype('f8') result to df column as it had no good result
     out.update({f'{p}': df[p].to_dask_array() for p in cols_1d})
     # Save only 1D source data
     da.to_hdf5(path_base.with_suffix('.1D.hdf5'), out)
-    
+
     # convert to dask arrays with dimensions (z, time) for GS Surfer
     for p, p_col_start in [
         ('u', 'East#'), ('v', 'North#'), ('up1', 'Up1#'), ('up2', 'Up2#'),
@@ -131,7 +134,7 @@ def load_adp_adcp_nortek_signature(path_base, cfg=None):
             if b_up:
                 cols.reverse()
             out[p] = df[cols].to_dask_array().T
-    
+
     # find interval for most of the data
     dt_all = df.diff(periods=1, column='Time').Time
     dt_value_counts = dt_all.value_counts()  # if 1st is always NaN, so if size > 2 then time is irregular (used below)
@@ -144,7 +147,7 @@ def load_adp_adcp_nortek_signature(path_base, cfg=None):
     df.z_from_device = df.p_mean + cfg['blank_dist'] + cfg['cell_cize'] * (
         np.arange(*((-np.shape(out['u'])[0], 0) if b_up else (1, np.shape(out['u'])[0] + 1)))  # reversed as cols if b_up
         )
-    
+
     save_2d_for_surfer(
         time=df.Time.to_numpy(), z=-df.z_from_device, out=out, path_base=path_base,
         dt=(dt if dt_value_counts.size > 2 else None)
@@ -192,12 +195,12 @@ def save_2d_for_surfer(time, z, out, path_base, dt: Union[None, list, np.timedel
                 bin_dz=dz_cur
             )
             # .chunk({"x": 100, "y": 100, "time": -1})
-            
+
             # Save Vabs and Vdir only after interp/bining of u and v in create_xrds(). Skip saving u and v
             if name in ('u', 'v'):
                 ds_saved[name] = dar
                 continue
-                
+
             if time_coord_converted is None:
                 # to Excel time
                 time_coord_converted = (dar.coords['time'] - np.datetime64('1899-12-30T00:00:00')

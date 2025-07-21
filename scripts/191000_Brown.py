@@ -61,7 +61,7 @@ if st(20):  # False: #
               '--b_incremental_update', 'True',
               # todo: check it. If False need delete all previous result of ctd_calc() or set min_time > its last log time
               # '--out.tables_list', '',
-              '--path_coef', r'd:\Work\_Python3\And0K\h5toGrid\scripts\ini\coef#Brawn_190918.txt'
+              '--path_coef', r'C:\Work\Python\AB_SIO_RAS\h5toGrid\scripts\ini\coef#Brawn_190918.txt'
               ])
 
 if st(30):  # False: #

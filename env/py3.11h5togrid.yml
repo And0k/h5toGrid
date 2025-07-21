@@ -1,4 +1,4 @@
-name: py3.10x64h5togrid
+name: py3.11h5togrid
 channels:
   - conda-forge
   - defaults
@@ -8,10 +8,10 @@ dependencies:
   - blosc
   - bokeh
   - bqplot
+  - cachey
   - cdsapi
   - chardet
   - clize
-  - cachey
   - colorama
   - colorlog
   - dask
@@ -52,6 +52,7 @@ dependencies:
   - pyinstaller-hooks-contrib
   - pynmea2
   - pyproj
+  - pyodbc
   - pyqt
   - pytables
   - pytest
@@ -78,6 +79,7 @@ dependencies:
   - tqdm
   - urllib3
   - xarray
+  - webdriver-manager  
   - pip:
       - hydra-colorlog
       - wmm2020

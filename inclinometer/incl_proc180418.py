@@ -27,9 +27,9 @@ from typing import Any, Sequence
 # my:
 __file__ = '/mnt/D/Work/_Python3/And0K/h5toGrid/scripts/incl_proc180418.py'
 sys.path.append(str(Path(__file__).parent.parent.resolve()))  # os.getcwd()
-from to_pandas_hdf5.csv2h5 import h5out_init, h5temp_open
-from to_pandas_hdf5.h5toh5 import h5move_tables, h5index_sort
-from to_pandas_hdf5.h5_dask_pandas import h5_append
+from to_pandas_hdf5.csv2h5 import h5.out_init, h5.temp_open
+from to_pandas_hdf5.h5toh5 import h5.move_tables, h5.index_sort
+from to_pandas_hdf5.h5_dask_pandas import h5.append
 from filters import rep2mean
 from filters_scipy import despike
 
@@ -53,7 +53,7 @@ cfg = {  # output configuration after loading csv:
 # @+node:korzh.20180520182928.1: *4* load_data_intervals
 def load_data_intervals(df_intervals, cfg_out):
     """
-    Deprishiated! Use to_pandas_hdf5/h5_dask_pandas.h5q_ranges_gen instead
+    Deprishiated! Use to_pandas_hdf5/h5_dask_pandas.h5.q_ranges_gen instead
     :param df_intervals: dataframe, with:
         index - pd.DatetimeIndex for starts of intervals
         DateEnd - pd.Datetime col for ends of intervals
@@ -317,15 +317,15 @@ try:  # set chanks to mean data interval between holes
 except ValueError:  # some default value if no holes
     cfg['out']['chunksize'] = 100000
 
-h5out_init(cfg['in'], cfg['out'])  # cfg['in'] = {}
+h5.out_init(cfg['in'], cfg['out'])  # cfg['in'] = {}
 try:
     cfg['out']['b_incremental_update'] = False  # not copy prev data: True not implemented
-    df_log_old, store, cfg['out']['b_incremental_update'] = h5temp_open(**cfg['out'])
+    df_log_old, store, cfg['out']['b_incremental_update'] = h5.temp_open(**cfg['out'])
     # with pd.HDFStore(fileOut, mode='w') as store:
     # Append to Store
     if df.empty:  # log['rows']==0
         print('No data => skip file')
-    h5_append(cfg['out'], df, log)
+    h5.append(cfg['out'], df, log)
     b_appended = True
 except Exception as e:
     b_appended = False
@@ -337,9 +337,9 @@ if b_appended:
         print('Wait store is closing...')
         # from time import sleep
         # sleep(2)
-    failed_storages = h5move_tables(cfg['out'])
+    failed_storages = h5.move_tables(cfg['out'])
     print('Ok.', end=' ')
-    h5index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5",
+    h5.index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5",
                  in_storages=failed_storages)
 
 # @+node:korzh.20180520131532.4: ** garbage

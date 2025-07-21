@@ -269,7 +269,7 @@ def determine_numpy_types(file_handle, headers=None, messytables_types=None, num
         for h, typ in zip(headers, messytables_types)
         }  # we will replace Nones
     statistics = {
-        'has_nans': np.zeros(len(headers), np.bool),
+        'has_nans': np.zeros(len(headers), np.bool_),
         'unique_vals': {h: set() for h in headers}  # will insert values if only if < 10 unique in chunk
         }
     print(f'Determine types in text data by analyzing {read_csv_args_with_defaults["chunksize"]}-rows length chunks:')
@@ -351,7 +351,7 @@ def coerce_to_exact_dtype(s: Sequence, dtype, replace_bad=None):
     to_integer = np.dtype(dtype).kind == 'i'
     if replace_bad is None:
         if pd.api.types.is_string_dtype(s.dtype):
-            replace_bad = '-1' if to_integer else 'NaN'
+            replace_bad = '-1' if to_integer else 'nan'
         else:
             replace_bad = -1 if to_integer else np.nan
 
@@ -367,7 +367,7 @@ def coerce_to_exact_dtype(s: Sequence, dtype, replace_bad=None):
         :param nums: numpy array
         :return: bool numpy array
         Note switches off and restores warning on nans. Other way:
-        ok = np.zeros_like(nums, dtype=np.bool8)
+        ok = np.zeros_like(nums, dtype=np.bool_)
         not_na = ~np.isnan(nums)
         nums_not_na = nums[not_na]
         """
@@ -560,7 +560,7 @@ def csv_to_h5(
 
             # 2. str to numeric for other_cols and int_and_nans_cols (which is limited support pandas extension dtypes)
             # but we use numpy types instead replasing nans by -1 to able write to hdf5
-            chunk[other_cols] = chunk[other_cols].fillna('NaN')  # <NA> to numpy recognized eq meaning string
+            chunk[other_cols] = chunk[other_cols].fillna('nan')  # <NA> to numpy recognized eq meaning string
             chunk[int_and_nans_cols] = chunk[int_and_nans_cols].fillna('-1')
             for col in (int_and_nans_cols + other_cols):  # for col, typ in zip(nans.columns, chunk[nans.columns].dtypes):
                 typ = dtypes[col]
@@ -576,7 +576,7 @@ def csv_to_h5(
                     # Cleaning. In case of OverflowError we do it here to prevent ValueError while handling of OverflowError below.
                     pattern_match = r'^[\d]$' if is_integer else r'^-?[\d.]$'
                     ibad = ~chunk[col].str.match(pattern_match)
-                    rep_val = '-1' if is_integer else 'NaN'
+                    rep_val = '-1' if is_integer else 'nan'
                     # ibad = np.flatnonzero(chunk[col] == re.search(r'(?:")(.*)(?:")', e.args[0]).group(1), 'ascii')
                     lf.error('Conversion {:s}("{:s}") {:s} -> replacing {:d} values not maching pattern "{:s}" with "{'
                              ':s}" and again...', typ, col, standard_error_info(e), ibad.sum(), pattern_match, rep_val)

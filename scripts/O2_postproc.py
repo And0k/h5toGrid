@@ -13,7 +13,7 @@ from scipy.ndimage.filters import gaussian_filter1d
 from pathlib import Path
 from collections import namedtuple
 from utils2init import LoggingStyleAdapter
-from to_pandas_hdf5.h5toh5 import ReplaceTableKeepingChilds
+from to_pandas_hdf5.h5toh5 import h5.ReplaceTableKeepingChilds
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
 
@@ -151,7 +151,7 @@ def filter_and_show_profile(r: np.recarray, imax: int, iend: int, ts: float, tau
     t_delay_counts = round(t_delay / ts)  # 35
     for tau in taus:
         o2_exp = np.float32(run_f_cor(o2_lpf, f_cor_exp, *coefs_gain(tau)))
-        o2_exp = np.hstack([o2_exp[t_delay_counts:], np.empty(t_delay_counts) + np.NaN])
+        o2_exp = np.hstack([o2_exp[t_delay_counts:], np.empty(t_delay_counts) + np.nan])
         #     o2_exp = np.float32(run_f_cor_speed(
         #         o2_lpf, f_cor_exp, lambda sp: coefs_gain(tau - tau_speed_coef*abs(sp)), speed
         #     ))
@@ -194,7 +194,7 @@ def h5replace_cols(db_path: Union[Path, str], tbl: str, df_new: Union[pd.DataFra
         if len_after > len_before:
             print(f'new {len_after - len_before} rows added')
 
-        with ReplaceTableKeepingChilds(df, tbl, {'db': store}):
+        with h5.ReplaceTableKeepingChilds(df, tbl, {'db': store}):
             pass
 
 
@@ -237,7 +237,7 @@ with pd.HDFStore(path_db, mode='r') as store:
 
 o2_ser = pd.concat(o2_ser_l)
 h5replace_cols(path_db, tbl, o2_ser)
-print('Ok>')
+print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>")
 
 
 # with pd.HDFStore(path_db) as store:

@@ -113,7 +113,7 @@ if st.end >= 15:
             # r'e:\WorkData\BalticSea\181005_ABP44\inclinometer\_raw\181017.raw.h5',
             # r'e:\WorkData\BalticSea\181005_ABP44\inclinometer\_raw\181022.raw.h5',
             # r'd:\WorkData\_experiment\_2018\inclinometer\181003_compas\181004.raw.h5'
-            # r'd:\WorkData\~configuration~\inclinometer\190710incl.h5',
+            # r'C:\Work\Python\AB_SIO_RAS\tcm\tcm\cfg\coef\190710incl.h5',
             # r'd:\WorkData\_experiment\inclinometer\_Schukas\210603_lab\_raw\220128.raw.h5' # 210603incl.h5'
             # r'd:\WorkData\BalticSea\220505_D6\inclinometers\_raw\220505.raw.h5'
             # r'd:\WorkData\_experiment\inclinometer\_Schukas\210603_lab\_raw\220128.raw.h5' # 210603incl.h5'
@@ -202,7 +202,7 @@ if st(35, f'Copy calibration coefficients from {db_path_tank} to other databases
 
     init_logging(logger=__name__)
     db_path_copy.append(path_db_raw)  # db_path_copy = [path_db_raw]
-    db_path_copy.append(r'd:\Work\_Python3\And0K\h5toGrid\inclinometer\tests\data\inclinometer\incl#b.h5')
+    db_path_copy.append(r'C:\Work\Python\AB_SIO_RAS\h5toGrid\inclinometer\tests\data\inclinometer\incl#b.h5')
 
     for db in db_path_copy:
         print('to', db)

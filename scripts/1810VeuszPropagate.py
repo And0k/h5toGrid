@@ -8,7 +8,7 @@ sys.path.append(str(Path(scripts_path).parent.resolve()))  # os.getcwd()
 # my
 import veuszPropagate
 from utils2init import Ex_nothing_done, this_prog_basename
-from to_pandas_hdf5.h5toh5 import h5log_names_gen  # , h5find_tables
+from to_pandas_hdf5.h5toh5 import h5.log_names_gen  # , h5.find_tables
 
 # user's constants ############################################################
 path_db = Path(drive_d).joinpath(
@@ -43,7 +43,7 @@ def main():
     cfg['in']['table_log'] = '/CTD_SST_48M/logRuns'
     cfg['in']['db_path'] = path_db
 
-    gen_veusz_and_logs = veuszPropagate.load_to_veusz(h5log_names_gen(cfg['in']), cfg)
+    gen_veusz_and_logs = veuszPropagate.load_to_veusz(h5.log_names_gen(cfg['in']), cfg)
     cor_savings = veuszPropagate.co_savings(cfg);
     cor_savings.send(None)
     cor_send_data = veuszPropagate.co_send_data(gen_veusz_and_logs, cfg, cor_savings)
@@ -53,7 +53,7 @@ def main():
             vsz_data, log = cor_send_data.send(cfgin_update)
             # will delete cfg['in']['tables']
         except (GeneratorExit, StopIteration, Ex_nothing_done):
-            print('ok>')
+            print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>")
             break
 
         custom_expressions_use_time = "[['{Index:%Y-%m-%dT%H:%M:%S}', '{DateEnd:%Y-%m-%dT%H:%M:%S}']]".format_map(

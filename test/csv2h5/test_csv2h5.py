@@ -64,7 +64,7 @@ def test_h5init():
         'tables': ['200901incl_load'],
         'tables_log': ['200901incl_load/logFiles'],
         'db_path': Path('data/data_out.h5'),
-        'db_path_temp': Path('data/data_out_not_sorted.h5')
+        'temp_db_path': Path('data/data_out_not_sorted.h5')
         }
 
 

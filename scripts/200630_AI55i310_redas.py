@@ -98,7 +98,7 @@ if st(20, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params
               ])
 
 if st(30, f'Draw {device} data profiles'):  # False: #
-    from to_pandas_hdf5.h5toh5 import h5log_names_gen
+    from to_pandas_hdf5.h5toh5 import h5.log_names_gen
     import re
     from os import getcwd as os_getcwd, chdir as os_chdir
     path_prev = os_getcwd()
@@ -119,7 +119,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
     pattern_code = cfg_in['pattern_path'].read_bytes()  #encoding='utf-8'
 
     os_chdir(cfg_in['pattern_path'].parent)
-    for filename, str_expr in h5log_names_gen(cfg_in, f_row):
+    for filename, str_expr in h5.log_names_gen(cfg_in, f_row):
         path_vsz = cfg_in['pattern_path'].with_name(filename)
         path_vsz.write_bytes(re.sub(rb'^([^\n]+)', str_expr, pattern_code, count=1))
 
@@ -339,7 +339,7 @@ if st(220, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav param
 
 if st(230, f'Draw {device} data profiles'):  # False: #
     # save all vsz files that uses separate code
-    from to_pandas_hdf5.h5toh5 import h5log_names_gen
+    from to_pandas_hdf5.h5toh5 import h5.log_names_gen
     import re
     from subprocess import Popen, PIPE, STDOUT
 
@@ -364,7 +364,7 @@ if st(230, f'Draw {device} data profiles'):  # False: #
 
     os_chdir(cfg_in['pattern_path'].parent)
     path_vsz_all = []
-    for filename, str_expr in h5log_names_gen(cfg_in, f_row):
+    for filename, str_expr in h5.log_names_gen(cfg_in, f_row):
 
         path_vsz = cfg_in['pattern_path'].with_name(filename)
         path_vsz.write_bytes(re.sub(rb'^([^\n]+)', str_expr, pattern_code, count=1))  # replaces 1st row

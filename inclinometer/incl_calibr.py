@@ -44,10 +44,10 @@ sys.path.append(str(Path(scripts_path).parent.resolve()))
 from inclinometer.h5inclinometer_coef import h5copy_coef, channel_cols, dict_matrices_for_h5  # , lf
 from inclinometer.incl_h5clc import incl_calc_velocity_nodask
 from utils2init import cfg_from_args, this_prog_basename, init_logging, standard_error_info
-from to_pandas_hdf5.h5toh5 import h5load_ranges, h5find_tables
+from to_pandas_hdf5.h5toh5 import h5.load_ranges, h5.find_tables
 from filters import is_works
 from filters_scipy import despike
-from graphics import make_figure
+from plot_int import make_figure
 
 if __name__ != '__main__':
     l = logging.getLogger(__name__)
@@ -123,7 +123,7 @@ def filter_channes(
     args = locals()
     dim_length = 1   # dim_channel = 0
     blocks = np.minimum(blocks, a3d.shape[dim_length])
-    b_ok = np.ones((a3d.shape[dim_length],), np.bool8)
+    b_ok = np.ones((a3d.shape[dim_length],), np.bool_)
     if fig:
         fig.axes[0].clear()
         ax = fig.axes[0]
@@ -330,8 +330,8 @@ def fit_quadric_form(s):
                       [4, 5, 2]], np.int8)]
     n = v_2[:-1, np.newaxis]
     d = v_2[3]
-    
-    
+
+
     # modified according to Robert R - todo: check and implement:
     # • 2 years ago
     # I believe in your code example your M is incorrect. Based on your notation in your Quadric section you have
@@ -344,7 +344,7 @@ def fit_quadric_form(s):
     #  [g f c]], instead you have the XY term assigned in the f positions.
     # The overall result is that your A_1 matrix will have "mirrored" column 1 and row 1.
     # Interestingly enough, this flip doesn't seem to impact the calibration significantly.
-    
+
     return M, n, d
 
 
@@ -476,12 +476,12 @@ def zeroing_azimuth(store: pd.HDFStore, tbl, time_range_nord, coefs=None, cfg_in
     'Ag': (3, 3), 'Cg': (3, 1), 'Ah': (3, 3), 'Ch': array(3, 1), 'azimuth_shift_deg': (1,), 'kVabs': (n,)
     :param cfg_in: dict with fields:
         - time_range_nord
-        - other, needed in h5load_ranges() and optionally in incl_calc_velocity_nodask()
+        - other, needed in h5.load_ranges() and optionally in incl_calc_velocity_nodask()
     :param filter_query: upply this filter query to incl_calc_velocity*() output before mean azimuth calculation
     :return: azimuth_shift_deg: degrees
     """
     lf.debug('Zeroing Nord direction')
-    df = h5load_ranges(store, table=tbl, t_intervals=time_range_nord)
+    df = h5.load_ranges(store, table=tbl, t_intervals=time_range_nord)
     if df.empty:
         lf.info('Zero calibration range out of data scope')
         return
@@ -560,7 +560,7 @@ def main(new_arg=None):
     fig_save_dir_path = cfg['in']['db_path'].parent
     with pd.HDFStore(cfg['in']['db_path'], mode='r') as store:
         if len(cfg['in']['tables']) == 1:
-            cfg['in']['tables'] = h5find_tables(store, cfg['in']['tables'][0])
+            cfg['in']['tables'] = h5.find_tables(store, cfg['in']['tables'][0])
         coefs = {}
         for itbl, tbl in enumerate(cfg['in']['tables'], start=1):
             probe_number = int(re.findall('\d+', tbl)[0])

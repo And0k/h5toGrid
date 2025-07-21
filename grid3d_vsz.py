@@ -26,7 +26,7 @@ from veuszPropagate import load_vsz_closure
 from grid2d_vsz import ge_sections, write_grd_fun
 from gs_surfer import griddata_by_surfer  #sec_edges
 # idata_from_tpoints, runs_ilast_good, track_b_invert
-from utils_time import timzone_view
+from utils_time import timezone_view
 from utils2init import standard_error_info
 
 # ##############################################################################
@@ -114,9 +114,9 @@ bFirst = True
 timeEnd_Last = np.datetime64('0')
 vsze = None
 ctd_list = []
-db_path_temp = path_dir_temp / 'CTD+Nav.h5'
+temp_db_path = path_dir_temp / 'CTD+Nav.h5'
 try:
-    if not db_path_temp.is_file():
+    if not temp_db_path.is_file():
         # __vsz data to hdf5__
         with pd.HDFStore(cfg['db_path'], mode='r') as storeIn:
             cols_nav = ['Lat', 'Lon']  #, 'Dist'
@@ -169,9 +169,9 @@ try:
                 #                 'formats': ['M8[ns]'] + ['f8'] * len(cols)})
                 # with pd.HDFStore(cfg['db_path'], mode='w') as storeIn:
         df_ctd = pd.DataFrame.from_records(np.hstack(ctd_list), index='time')
-        with pd.HDFStore(db_path_temp, mode='w') as storeOut:
+        with pd.HDFStore(temp_db_path, mode='w') as storeOut:
             storeOut.put('CTD', df_ctd, format='table', data_columns=['Pres', 'Lat', 'Lon'])
-        print('source data, combined with nav. saved to storage ', db_path_temp)
+        print('source data, combined with nav. saved to storage ', temp_db_path)
     else:
         # Gridding
 
@@ -196,11 +196,11 @@ try:
             # [[0, -pwidth, pwidth]]) / 2:  # [:, np.]
             # print('\n{:g}m.'.format(p), end=' ')
             # qstr = qstr_pattern.format(p_st, p_en)
-            ctd_in = pd.read_hdf(db_path_temp, 'CTD', where=qstr)
+            ctd_in = pd.read_hdf(temp_db_path, 'CTD', where=qstr)
             if ctd_in.empty:
                 print('- empty', end='')
                 continue
-            time_st_local, time_en_local = [timzone_view(x, t_our_zone) for x in ctd_in.index[[0, -1]]]
+            time_st_local, time_en_local = [timezone_view(x, t_our_zone) for x in ctd_in.index[[0, -1]]]
             fileN_time =\
                 f'{time_st_local:%y%m%d_%H%M}-'\
                 f'{{:{"%d_" if time_st_local.day!=time_en_local.day else ""}%H%M}}'.format(time_en_local)
@@ -211,9 +211,9 @@ try:
             iruns = np.flatnonzero(np.diff(ctd_in['shift']) != 0)
             ctd = np.empty((iruns.size + 1,), {'names': params + ['Lat', 'Lon'],
                                                'formats': ['f8'] * (len(params) + 2)})
-            ctd.fill(np.NaN)
+            ctd.fill(np.nan)
             for param in ctd.dtype.names:
-                if param not in maxDiff: maxDiff[param] = np.NaN
+                if param not in maxDiff: maxDiff[param] = np.nan
                 for irun, isten in enumerate(np.column_stack((np.append(1, iruns),
                                                               np.append(iruns, len(ctd_in))))):
                     data_check = ctd_in.iloc[slice(*isten), ctd_in.columns.get_indexer(('Pres', param))]
@@ -228,8 +228,8 @@ try:
                                     zorder=10)
                         # delete outlines:
                         bBad = abs(data_check[param] - np.nanmean(data_check[param])) > maxDiff[param]
-                        print('delete {}/{} outlines'.format(bBad.sum(), bBad.size()))
-                        data_check.loc[bBad, param] = np.NaN
+                        print('delete {}/{} outlines'.format(bBad.sum(), bBad.size))
+                        data_check.loc[bBad, param] = np.nan
                     # interpolate to center depth:  # need smooth?
                     if data_check.empty:
                         print(f'\nrun{irun}, {param} - nans only, ', end='')
@@ -299,7 +299,7 @@ try:
                                              np.append(ctd[param], [])[bGood], (xm, ym),
                                              method=interp_method)  # , rescale= True'cubic','linear','nearest'
                     # Blank z below bottom (for compressibility)
-                    # z[ym_blank] = np.NaN
+                    # z[ym_blank] = np.nan
 
                     path_stem = path_dir_temp / interp_method_subdir / f'{file_stem}{label_param}' #f'{fileN_time}{label_param},{file_stem_no_time}'
                     if False:  #__debug__:

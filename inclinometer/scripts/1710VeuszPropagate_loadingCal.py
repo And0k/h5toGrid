@@ -30,7 +30,7 @@ def main():
         '--data_yield_prefix', 'Hxyz',
         '--eval_list',
         """
-        "ImportFileCSV(u'{nameRFE}', blanksaredata=True, encoding='ascii', headermode='1st', linked=True, dsprefix='counts', rowsignore=2, skipwhitespace=True)", 
+        "ImportFileCSV(u'{nameRFE}', blanksaredata=True, encoding='ascii', headermode='1st', linked=True, dsprefix='counts', rowsignore=2, skipwhitespace=True)",
         "TagDatasets(u'source', [u'countsAx', u'countsAy', u'countsAz', u'countsBattery', u'countsDay', u'countsHour', u'countsMinute', u'countsMonth', u'countsMx', u'countsMy', u'countsMz', u'countsSecond', u'countsTemp', u'countsYear'])"
         """,
         # '--import_method', 'ImportFileCSV',
@@ -58,7 +58,7 @@ def main():
             d, log = cfg['co_send_data'].send(cfgin_update)
 
         except (GeneratorExit, StopIteration):
-            print('ok>')
+            print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>")
             break
         except Exception as e:
             print('There are error ', standard_error_info(e))

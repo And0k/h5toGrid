@@ -617,14 +617,14 @@ def call_example(call_by_user=True):
     to run from IDE or from bat-file with parameters
     --- bat file ---
     call conda.bat activate py3.7x64h5togrid
-    D: && cd D:\Work\_Python3\And0K\h5toGrid
+    D: && cd C:\Work\Python\AB_SIO_RAS\h5toGrid
     python -c "from to_vaex_hdf5.autofon_coord import call_example; call_example()"
     ----------------
     # python -m to_vaex_hdf5.autofon_coord.call_example() not works
     :return:
     """
     # from to_vaex_hdf5.h5tocsv import main_call as h5tocsv
-    path_db_in = Path(r'd:\WorkData\~configuration~\inclinometer\190710incl.h5')
+    path_db_in = Path(r'C:\Work\Python\AB_SIO_RAS\tcm\tcm\cfg\coef\190710incl.h5')
     path_db_out = Path(r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\_raw\201202.raw.h5')
     device = ['tr0']  # 221912
     cfg_dataclasses.main_call([  # '='.join(k,v) for k,v in pairwise([   # ["2021-04-08T08:35:00", "2021-04-14T11:45:00"]'

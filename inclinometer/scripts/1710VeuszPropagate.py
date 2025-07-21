@@ -40,7 +40,7 @@ def main():
           [0, 1, 0],\
           [0, 0, 1]])\
         ',
-        
+
         'float64([[0, 0, 0]])'
         """, '--before_next', 'restore_config',
         '--export_pages_int_list', '1'])
@@ -50,7 +50,7 @@ def main():
         try:
             d = gen_data.send(cfgin_update)
         except (GeneratorExit, StopIteration):
-            print('ok>')
+            print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>")
             break
         except Exception as e:
             print('There are error ', standard_error_info(e))

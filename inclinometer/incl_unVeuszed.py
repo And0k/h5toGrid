@@ -111,8 +111,8 @@ fbinning = lambda x, bin1_nAverage: np.nanmean(reshape(x, (-1, bin1_nAverage)), 
 repeat3shift1 = lambda A2: [A2[t:(len(A2) - 2 + t)] for t in range(3)]
 median3cols = lambda a, b, c: np.where(a < b, np.where(c < a, a, np.where(b < c, b, c)),
                                        np.where(a < c, a, np.where(c < b, b, c)))
-median3 = lambda x: np.hstack((np.NaN, median3cols(*repeat3shift1(x)), np.NaN))
-rep2mean = lambda x, bOk: interp(arange(len(x)), flatnonzero(bOk), x[bOk], np.NaN, np.NaN)
+median3 = lambda x: np.hstack((np.nan, median3cols(*repeat3shift1(x)), np.nan))
+rep2mean = lambda x, bOk: interp(arange(len(x)), flatnonzero(bOk), x[bOk], np.nan, np.nan)
 fForce2Vabs_fitted = lambda x: np.where(x > 2, 2, np.where(x < 1, 0.25 * x, 0.25 * x + 0.3 * (x - 1) ** 4))
 fIncl2Force = lambda incl: np.sqrt(np.tan(incl))
 fVabs = lambda Gxyz, kVabs: fForce2Vabs_fitted(fIncl2Force(fInclination(Gxyz)))
@@ -122,7 +122,7 @@ minInterval = lambda iLims1, iLims2, L: f(
     lambda iL1, iL2: transpose([max(iL1[:, 0], iL2[:, 0]), min(iL1[:, -1], iL2[:, -1])]), positiveInd(iLims1, L),
     positiveInd(iLims2, L))
 fStEn2bool = lambda iStEn, length: np.hstack(
-    [(ones(iEn2iSt, dtype=np.bool8) if b else zeros(iEn2iSt, dtype=np.bool8)) for iEn2iSt, b in np.vstack((diff(
+    [(ones(iEn2iSt, dtype=np.bool_) if b else zeros(iEn2iSt, dtype=np.bool_)) for iEn2iSt, b in np.vstack((diff(
         np.hstack((0, iStEn.flat, length))), np.hstack(
         (np.repeat([(False, True)], size(iStEn, 0), 0).flat, False)))).T])
 TimeShift_Log_sec = 60
@@ -130,9 +130,9 @@ TimeShift_Log_sec = 60
 # ImportFileCSV('171008#01.TXT', blanksaredata=True, encoding='ascii', headermode='1st', linked=True, dsprefix='counts', rowsignore=2, skipwhitespace=True)
 
 # 'filter'
-# maxT =  np.NaN
+# maxT =  np.nan
 # bP = np.logical_not(a['Temp'] < maxT) # RuntimeWarning: invalid value encountered in less
-bP = np.ones_like(a['Temp'], np.bool8)
+bP = np.ones_like(a['Temp'], np.bool_)
 iStEn_auto = atleast_2d((np.argmax(bP, 1), len(bP) - np.argmax(flipud(bP), 1)))
 iUseTime = np.searchsorted(stime, [array(s, 'datetime64[s]') for s in array(strTimeUse)]) if len(
     strTimeUse) > 0 else iUse
@@ -165,7 +165,7 @@ Ag_old = np.float64([[1, 0, 0], [0, 1, 0], [0, 0, 1]]) / 16384.0
 Cg = np.float64([[0, 0, 0]])
 Ch = np.float64([[0, 0, 0]])
 
-Gxyz0old = [[np.NaN, np.NaN, np.NaN]] if nansum(isnan(iCalibr0V)) > 0 else fG(column_stack((np.nanmean(
+Gxyz0old = [[np.nan, np.nan, np.nan]] if nansum(isnan(iCalibr0V)) > 0 else fG(column_stack((np.nanmean(
     a['Ax'][slice(*iCalibr0V[0, :])]), np.nanmean(a['Ay'][slice(*iCalibr0V[0, :])]), np.nanmean(
     a['Az'][slice(*iCalibr0V[0, :])]))), Ag_old, Cg)
 old1pitch = -fPitch(Gxyz0old)
@@ -201,10 +201,10 @@ sPitch = fPitch(Gxyz)
 sRoll = fRoll(Gxyz)
 sTmin = min(a['Temp'])
 
-Tfilt = interp(arange(len(bP)), flatnonzero(bP), median3(a['Temp'][np.bool8(bP)]), np.NaN, np.NaN)
+Tfilt = interp(arange(len(bP)), flatnonzero(bP), median3(a['Temp'][np.bool_(bP)]), np.nan, np.nan)
 T = Tfilt[slice(*bin2_iStEn)]
 T_bin = fbinningClip(Tfilt, bin2_iStEn, bin1_nAverage)
-Vabs = fVabs_old(np.where(np.abs(GsumMinus1) > maxGsumMinus1, np.NaN, Gxyz), kVabs)
+Vabs = fVabs_old(np.where(np.abs(GsumMinus1) > maxGsumMinus1, np.nan, Gxyz), kVabs)
 Vdir = np.degrees(np.arctan2(np.tan(sRoll), np.tan(sPitch)) + fHeading(Hxyz, sPitch, sRoll))
 
 # DatasetPlugin('PolarToCartesian', {'x_out': v, 'units': np.degrees, 'r_in': Vabs, 'y_out': u, 'theta_in': Vdir})
@@ -249,10 +249,10 @@ d_HGsumMinus1 = f(lambda Lbin, g, h, n: Lbin(np.sqrt((Lbin(g, n) - g) ** 2 + (Lb
                   (lambda x, n: np.repeat(fbinning(x, n), n)), GsumMinus1, HsumMinus1, np.int32(bin1_nAverage))
 if len(i_burst) > 0:
     dt = diff(time[[0, np.int32(mean_burst_size)]]) / mean_burst_size
-    time_streched = np.array(np.arange(*np.int64([time[0], time[-1], dt])), 'datetime64[ns]')
+    time_stretched = np.array(np.arange(*np.int64([time[0], time[-1], dt])), 'datetime64[ns]')
     # arange(time[0], time[-1], dt) # not works with numpy 'datetime64[ns]'
 else:
-    time_streched = time
+    time_stretched = time
 
 iDisp_TimeZoom = np.searchsorted(stime, np.ravel(array(DISP_TimeZoom, 'datetime64[s]')))
 iDisp_TimeZoom_burst1St = i_burst[np.searchsorted(i_burst, iDisp_TimeZoom[0])] if len(i_burst) > 0 else iDisp_TimeZoom[
@@ -273,7 +273,7 @@ print('calibration coefficients calculated:', '\nA:\n', '[{}]'.format(
 """
 TagDatasets(u'binning', [u'T_bin', u'VabsBin', u'VabsD_Bin', u'VdirBin', u'u_Bin', u'u_BinCum', u'v_Bin', u'v_BinCum', u'bin0_nAveragePreferCoef', u'bin1_nAverage', u'bin1_nAveragePrefer_testErr', u'bin2_iStEn', u'bin3_dtime', u'bin3_sliceMid', u'bin3_timeMid', u'bin3_timeSt', u'i_burst1St'])
 TagDatasets(u'coeficient', [u'Ag', u'Ag_old', u'Ah', u'Cg', u'kVabs'])
-TagDatasets(u'display', [u'LegMinMax', u'LegV', u'LegY', u'iDisp_TimeZoom', u'iDisp_TimeZoom_bin_iStEn', u'iDisp_TimeZoom_burst1St', u'iDisp_TimeZoom_bursts', u'iDisp_TimeZoom_inbinStEn', u'ones_lenNBursts', u'time_BurstStarts', u'time_streched', u'txtEnd', u'txtStartTitle', u'txt_mean_T'])
+TagDatasets(u'display', [u'LegMinMax', u'LegV', u'LegY', u'iDisp_TimeZoom', u'iDisp_TimeZoom_bin_iStEn', u'iDisp_TimeZoom_burst1St', u'iDisp_TimeZoom_bursts', u'iDisp_TimeZoom_inbinStEn', u'ones_lenNBursts', u'time_BurstStarts', u'time_stretched', u'txtEnd', u'txtStartTitle', u'txt_mean_T'])
 TagDatasets(u'filter', [u'GsumMinus1', u'HsumMinus1', u'Tfilt', u'bP', u'iStEn_auto', u'iUseC', u'iUseTime'])
 TagDatasets(u'mainparam', [u'Gxyz', u'Hxyz', u'T', u'Vabs', u'Vdir', u'u', u'v', u'dstime', u'sPitch', u'sRoll', u'tEnd', u'tStart', u'time'])
 TagDatasets(u'statistics', [u'max_VabsBin', u'mean_T', u'mean_VabsBin', u'mean_VabsVdirBin', u'mean_VdirBin', u'mean_u_Bin', u'mean_v_Bin', u'mid_VabsBin', u'min_VabsBin', u'sTmin', u'txt_mean_Vabs', u'txt_mean_Vdir'])

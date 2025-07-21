@@ -2,9 +2,8 @@
 # coding:utf-8
 """
   Author:  Andrey Korzh <ao.korzh@gmail.com>
-  Purpose: Trying using Hydra
-  Created: 15.09.2020
-  Modified: 20.09.2020, not implemented!
+  Purpose: Load NMEA to HDF5 pytables table
+  Modified: 20.09.2023
 """
 
 import sys
@@ -12,7 +11,7 @@ import logging
 from pathlib import Path
 
 from datetime import time, datetime, timedelta
-from typing import Mapping, Optional, List, Sequence, Union
+from typing import Mapping, Optional, List, Sequence, Tuple, Union
 from dataclasses import dataclass, field
 from omegaconf import OmegaConf, MISSING
 import hydra
@@ -27,7 +26,7 @@ from utils2init import standard_error_info, LoggingStyleAdapter, \
     call_with_valid_kwargs
 
 # from csv2h5_vaex import argparser_files, with_prog_config
-from to_pandas_hdf5.h5toh5 import h5move_tables, h5index_sort, h5out_init, h5_dispenser_and_names_gen, h5_close
+from to_pandas_hdf5.h5toh5 import h5.move_tables, h5.index_sort, h5.out_init, h5.dispenser_and_names_gen, h5.close
 from to_pandas_hdf5.gpx2h5 import df_rename_cols, h5_sort_filt_append
 from filters import b1spike
 from to_pandas_hdf5.h5_dask_pandas import filter_local
@@ -37,8 +36,10 @@ enc = 'cp1251'  # conversion that will be used for not unicode friendly console 
 cfg = None
 
 
-def load_nmea(file: Path, in_cols: Optional[Sequence[str]] = None, time_prev: Optional[datetime] = None
-              ) -> pd.DataFrame:
+def load_nmea(
+        file: Path, in_cols: Optional[Sequence[str]] = None,
+        time_prev: Optional[datetime] = None
+) -> pd.DataFrame:
     """
     NMEA to DataFrame convertor
     :param file: NMEA file Path
@@ -49,7 +50,11 @@ def load_nmea(file: Path, in_cols: Optional[Sequence[str]] = None, time_prev: Op
     """
     max_no_time_to_same_row = 15
     if in_cols is None:
-        search_fields = ('latitude', 'longitude', 'spd_over_grnd', 'true_course', 'depth_meters', 'depth')
+        search_fields = (
+            'latitude', 'longitude', 'spd_over_grnd_kmph', 'true_course', 'true_track',
+            'depth_meters', 'depth'
+        )
+        # spd_over_grnd - knots are 2 times less than kmph so spd_over_grnd_kmph has better resolution
         # not includes index. Also Magnetic Variation ('mag_variation') may be useful for ADCP proc
         index = 'datetime'  # todo: also try 'timestamp' if 'datetime' not found, will requre to add date
     else:
@@ -61,13 +66,18 @@ def load_nmea(file: Path, in_cols: Optional[Sequence[str]] = None, time_prev: Op
     time_last = time_prev
     time_with_date_1st_parsed = None
 
-    def do_if_no_time(no_time_sentences: int, t_prev: Union[datetime, None], d: Mapping, nmea_sentence=''):
+    def do_if_no_time(
+            no_time_sentences: int,
+            t_prev: Union[datetime, None],
+            d: Mapping,
+            nmea_sentence=''
+    ) -> Tuple[int, Union[datetime, None], Mapping]:
         """
         What to do if no good timestamp in sentence
         :param no_time_sentences: counter of no good timestamp sentences
         :param t_prev: previous timestamp
         :param d: sentence data dict
-        :return:
+        :return: overwritten (no_time_sentences, t_prev, d)
         """
         no_time_sentences += 1
         if no_time_sentences > max_no_time_to_same_row:     # too long no timestamp after previous
@@ -95,13 +105,14 @@ def load_nmea(file: Path, in_cols: Optional[Sequence[str]] = None, time_prev: Op
     with pynmea2.NMEAFile(file.open(mode='r', encoding='ascii', errors='replace')) as _h_nmea:
         while True:  # to continue on error
             try:
-                for nmea_sentence in _h_nmea:  # best method because with _h_nmea.readline() need to check for EOF, nmea_sentences = _h_nmea.read() fails when tries to read all at once
-
+                for i_nmea, nmea_sentence in enumerate(_h_nmea):  # best method because with _h_nmea.readline() need to check for EOF, nmea_sentences = _h_nmea.read() fails when tries to read all at once
                     # Begin row with new timestamp index (or append to existed if still no)
                     try:
+                        if nmea_sentence.sentence_type in cfg['in']['skip_sentences']:
+                            continue
                         time_last = getattr(nmea_sentence, index)
                         b_time_parsed = True
-                    except (AttributeError, KeyError, TypeError):
+                    except (AttributeError, KeyError, TypeError) as e:
                         # AttributeError/KeyError/TypeError if bad timestamp or
                         try:
                             b_time_parsed = isinstance(nmea_sentence.timestamp, time)  # good time
@@ -115,7 +126,8 @@ def load_nmea(file: Path, in_cols: Optional[Sequence[str]] = None, time_prev: Op
                             if b_time_parsed:
                                 if bad_date:
                                     if time_last is None:  # need other date source
-                                        date_in_str = input(f'Input date (in ISO format like 2022-12-20) for file {file}:')  # todo recover from file name
+                                        date_in_str = input(f'Input data start date (in ISO format like {datetime.fromtimestamp(file.stat().st_mtime):%Y-%m-%d}) in file {file}:'
+                                        )  # todo: try recover from file name
                                         try:
                                             time_last = datetime.combine(datetime.fromisoformat(date_in_str),
                                                                          nmea_sentence.timestamp)
@@ -141,6 +153,8 @@ def load_nmea(file: Path, in_cols: Optional[Sequence[str]] = None, time_prev: Op
                             b_time_parsed = False
 
                     if b_time_parsed:  # time_last parsed Ok
+                        if cfg['filter']['b_time_round'] and (t_us := time_last.microsecond) > 0:
+                            time_last = round_time(time_last, t_us)
                         try:
                             if time_last != d[index]:
                                 # # new time => new row
@@ -211,6 +225,14 @@ def load_nmea(file: Path, in_cols: Optional[Sequence[str]] = None, time_prev: Op
     return df
 
 
+def round_time(t_full, t_us):
+    if t_us < 500000:
+        t_full = t_full.replace(microsecond=0)
+    else:
+        t_full += timedelta(1000000 - t_us)
+    return t_full
+
+
 VERSION = '0.0.1'
 
 # def cmdline_help_mod(version, info):
@@ -236,14 +258,15 @@ class ConfigInNmeaFiles:
     path: str
     time_interval: List[str] = field(default_factory=lambda: ['2021-01-01T00:00:00', 'now'])  # UTC
     dt_from_utc_hours: int = 0
+    skip_sentences: Optional[List[str]] = field(default_factory=list)
+    cols: Optional[List[str]] = field(default_factory=list)
 
-ConfigOut = cfg_dataclasses.ConfigOut
-# ConfigOut.b_insert_separator will be forced to True where time of new file start > 1D relative to previous time
+@dataclass
+class ConfigOut(cfg_dataclasses.ConfigOut):
+    cols: Optional[List[str]] = field(default_factory=lambda: ['Time', 'Lat', 'Lon', 'DepEcho'])
+    # ConfigOut.b_insert_separator will be forced to True where time of new file start > 1D relative to previous time
 
-ConfigFilterNav = cfg_dataclasses.ConfigFilterNav
 ConfigProgram = cfg_dataclasses.ConfigProgram
-
-
 
 cs_store_name = Path(__file__).stem  # 'nmea2h5'
 cs, ConfigType = cfg_dataclasses.hydra_cfg_store(
@@ -251,13 +274,12 @@ cs, ConfigType = cfg_dataclasses.hydra_cfg_store(
     'input': ['in_nmea_files'],  # Load the config "in_autofon" from the config group "input"
     'out': ['out'],  # Set as MISSING to require the user to specify a value on the command line.
     #'filter': ['filter'],
-    'filter': ['filter_nav'],  # may be move fields to input?
+    'filter': [cfg_dataclasses.ConfigFilterNav],  # 'filter_nav'
     'program': ['program'],
     # 'search_path': 'empty.yml' not works
     },
     module=sys.modules[__name__]
     )
-
 
 
 @hydra.main(config_name=cs_store_name, config_path="cfg", version_base='1.3')  # adds config store cs_store_name data/structure to :param config data/structure to :param config
@@ -267,7 +289,7 @@ def main(config: ConfigType):
     Add data from CSV-like files
     to Pandas HDF5 store*.h5
     ----------------------------
-    :param cfg: is a hydra required arg, not use when call
+    :param config: hydra required arg, not use when call
     :return:
     """
     global cfg
@@ -316,71 +338,96 @@ def do(cfg: Mapping):
     :param cfg: OmegaConf configuration
     :return:
     """
-    h5out_init(cfg['in'], cfg['out'])
+    h5.out_init(cfg['in'], cfg['out'])
     # OmegaConf.update(cfg, "in", cfg.input, merge=False)  # error
     # to allow non primitive types (cfg.out['db']) and special words field names ('in'):
     #cfg = OmegaConf.to_container(cfg)
 
-    cfg['filter']['min'] = OmegaConf.to_container(cfg['filter']['min'])
-    cfg['filter']['max'] = OmegaConf.to_container(cfg['filter']['max'])
-    cfg['filter']['min']['depth'] = cfg['filter']['min']['DepEcho']
-    cfg['filter']['max']['depth'] = cfg['filter']['max']['DepEcho']
-    cfg['filter']['min'] = {k: v for k, v in cfg['filter']['min'].items() if v is not MISSING}
-    cfg['filter']['max'] = {k: v for k, v in cfg['filter']['max'].items() if v is not MISSING}
-
+    # cfg['filter']['min'] = OmegaConf.to_container(cfg['filter']['min'])
+    # cfg['filter']['max'] = OmegaConf.to_container(cfg['filter']['max'])
+    # cfg['filter']['min']['depth'] = cfg['filter']['min']['DepEcho']
+    # cfg['filter']['max']['depth'] = cfg['filter']['max']['DepEcho']
+    cfg['filter']['min'] = {k: v for k, v in cfg['filter']['min'].items() if v not in (MISSING, None)}
+    cfg['filter']['max'] = {k: v for k, v in cfg['filter']['max'].items() if v not in (MISSING, None)}
     cfg['filter']['min_date'], cfg['filter']['max_date'] = cfg['in']['time_interval']
 
     cfg['out']['table_log'] = f"{cfg['out']['table']}/logFiles"
     b_insert_separator_original = cfg['out']['b_insert_separator']
-    in_cols = ('datetime', 'latitude', 'longitude', 'depth_meters', 'depth')
-    out_cols = ('Time', 'Lat', 'Lon', 'DepEcho')
-    out_dtypes = {'Lat': np.float64, 'Lon': np.float64, 'DepEcho': np.float16}
+    
+    out_dtypes = {
+        'Lat': np.float64, 'Lon': np.float64, 'DepEcho': np.float16,
+        'Course': np.float16, 'Heading': np.float16, 'Speed': np.float16
+    }
+    out_dtypes = {col: out_dtypes.get(col, np.float16) for col in cfg['out']['cols'][1:]}
+    if not cfg['in']['cols']:
+        out2in = {
+            'Time': 'datetime', 'Lat': 'latitude', 'Lon': 'longitude',
+            'DepEcho': ['depth_meters', 'depth'],
+            'Speed': 'spd_over_grnd_kmph', 'Course': ['true_course', 'true_track'],
+        }
+        cfg['in']['cols'] = []
+        out_cols_for_each_of_in = cfg['out']['cols'].copy()  # with repetitions if ``in`` has several variants
+        for col in cfg['out']['cols']:
+            try:
+                col_or_cols = out2in[col]
+                if isinstance(col_or_cols, str):
+                    cfg['in']['cols'].append(col_or_cols)
+                else:
+                    i_col_last = len(cfg['in']['cols'])
+                    for i in range(len(col_or_cols) - 1):  # add same output cols referring different input
+                        out_cols_for_each_of_in.insert(i_col_last, out_cols_for_each_of_in[i_col_last])
+                    cfg['in']['cols'].extend(col_or_cols)
+            except KeyError:
+                cfg['in']['cols'].append(col.lower())
+
     time_prev = None
     df_list = []
 
     ## Main circle ############################################################
     try:
-        for i1_file, file in h5_dispenser_and_names_gen(cfg['in'], cfg['out'],
+        for i1_file, file in h5.dispenser_and_names_gen(cfg['in'], cfg['out'],
                                                         b_close_at_end=False,
                                                         check_have_new_data=False
                                                         ):
             lf.info('{}. {}: ', i1_file, file.name)
             ## Loading data #############
-            df = load_nmea(file, in_cols, time_prev)
+            df = load_nmea(file, cfg['in']['cols'], time_prev)
             if df.empty:
                 continue
             time_prev = df.index[-1]
-
-            df_rename_cols(df, in_cols, out_cols)
+            try:
+                df['spd_over_grnd_kmph'] /= 1.852  # output speed units is always in knots
+            except KeyError:
+                pass
+            df_rename_cols(df, cfg['in']['cols'][1:], *out_cols_for_each_of_in)
 
             df = filter_local(df, cfg['filter'])
 
-            if 'DepEcho' in df.columns and 'depth' in df.columns:
-                df['DepEcho'] = df['DepEcho'].where(df['DepEcho'].isna(), df['depth'])
-                df.drop(columns='depth', inplace=True)
-            elif 'depth' in df.columns:
-                df.rename(columns={'depth': 'DepEcho'}, inplace=True)
+            # if 'DepEcho' in df.columns and 'depth' in df.columns:  # todo
+            #     df['DepEcho'] = df['DepEcho'].where(df['DepEcho'].isna(), df['depth'])
+            #     df.drop(columns='depth', inplace=True)
+            # elif 'depth' in df.columns:
+            #     df.rename(columns={'depth': 'DepEcho'}, inplace=True)
 
             msg_parts = ['Spikes deleted ']
             for col in ['Lat', 'Lon']:
                 bad = b1spike(df[col].values, max_spike=0.1)
                 n_bad = bad.sum()
                 if n_bad:
-                    df.loc[bad, col] = np.NaN
+                    df.loc[bad, col] = np.nan
                     msg_parts += [f'{col}: {n_bad:d},']
             if len(msg_parts) > 1:
                 msg_parts[-1] = msg_parts[-1][:-1]  # del last comma
                 lf.info(' '.join(msg_parts))
-
-            cols_absent = [col for col in out_cols[1:] if col not in df.columns]
+            
+            # make dataframes uniform and append
+            cols_absent = [col for col in out_dtypes.keys() if col not in df.columns]
             if cols_absent:
                 lf.info('Empty cols: {} - filling with NaNs', cols_absent)
                 for col in cols_absent:
-                    df[col] = np.array(np.NaN, out_dtypes[col])
-                if any(df.columns != out_cols[1:]):
-                    df = df[list(out_cols[1:])]
-
-            # make dataframes uniform and append
+                    df[col] = np.array(np.nan, out_dtypes.get(col, np.float16))
+                if any(df.columns != out_dtypes.keys()):
+                    df = df[list(out_dtypes.keys())]
             df_list.append(df.astype(out_dtypes))
 
         lf.info('Filter (delete bad rows) and write')
@@ -393,15 +440,15 @@ def do(cfg: Mapping):
 
             call_with_valid_kwargs(h5_sort_filt_append, df, **cfg, input=cfg['in'])
     finally:
-        h5_close(cfg['out'])
-    failed_storages = h5move_tables(cfg['out'], tbl_names=cfg['out']['tables_written'])
+        h5.close(cfg['out'])
+
+    failed_storages = h5.move_tables(cfg['out'], tbl_names=cfg['out']['tables_written'])
     print('Finishing...' if failed_storages else 'Ok.', end=' ')
-
-    # Sort if have any processed data, else don't because ``ptprepack`` not closes hdf5 source if it not finds data
+    # Sort
     if cfg['in'].get('time_prev'):
-
+        # sort only if have data, else don't because ``ptprepack`` not closes hdf5 source if it not finds data
         cfg['out']['b_remove_duplicates'] = True
-        h5index_sort(
+        h5.index_sort(
             cfg['out'],
             out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5",
             in_storages=failed_storages,

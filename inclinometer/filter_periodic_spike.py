@@ -13,11 +13,11 @@ import numpy as np
 import pandas as pd
 
 from filters import b1spike_up
-from to_pandas_hdf5.h5_dask_pandas import i_bursts_starts, h5_append
-from to_pandas_hdf5.h5toh5 import h5move_tables, h5_dispenser_and_names_gen
+from to_pandas_hdf5.h5_dask_pandas import i_bursts_starts, h5.append
+from to_pandas_hdf5.h5toh5 import h5.move_tables, h5.dispenser_and_names_gen
 
 # to save through temporary store (with log for each saving data part - here it is burst):
-from to_pandas_hdf5.h5toh5 import h5out_init, h5remove, h5index_sort
+from to_pandas_hdf5.h5toh5 import h5.out_init, h5.remove, h5.index_sort
 from utils2init import this_prog_basename, standard_error_info, LoggingStyleAdapter
 
 @dataclass
@@ -119,7 +119,7 @@ def start_sinch(v, cur, max_shift, std_fraq_noise=0.2):
     # ish, jsh = np.nonzero(b_ok)
     # if ish.size:
     #     # where starts indexes for each shift in jsh
-    #     jsh_st = np.flatnonzero(np.ediff1d(ish, to_begin=1).astype(np.bool8))
+    #     jsh_st = np.flatnonzero(np.ediff1d(ish, to_begin=1).astype(np.bool_))
     #     # jsh_en = jsh_st[1:]  # last jsh index for each shift
     #     ish0 = jsh[jsh_st]
     #     ishifts = ish[jsh_st]
@@ -393,17 +393,17 @@ def main(config: ConfigType) -> None:  #
            cfg_in['db_path'].with_name(f"{cfg_in['db_path'].stem}_filt_s.h5")
         )}
 
-    def h5_names_gen(cfg_in, cfg_out: Mapping[str, Any], **kwargs) -> Iterator[None]:
+    def h5.names_gen(cfg_in, cfg_out: Mapping[str, Any], **kwargs) -> Iterator[None]:
         #cfg_out['log']['fileName'] = pname.name[-cfg_out['logfield_fileName_len']:-4]
         cfg_out['log']['fileChangeTime'] = datetime.fromtimestamp(cfg_in['db_path'].stat().st_mtime)
         yield None
 
-    h5out_init(cfg_in, cfg_out)  # cfg_in for full path if cfg_out['db_path'] only name
+    h5.out_init(cfg_in, cfg_out)  # cfg_in for full path if cfg_out['db_path'] only name
     n_rows_after = 0
     #with pd.HDFStore(out_path) as store:  #, mode='w'
-    for _, _ in h5_dispenser_and_names_gen(cfg_in, cfg_out, h5_names_gen):  # handles temporary db for h5_append()
+    for _, _ in h5.dispenser_and_names_gen(cfg_in, cfg_out, h5.names_gen):  # handles temporary db for h5.append()
         try:
-            if h5remove(cfg_out['db'], cfg_in['table']):
+            if h5.remove(cfg_out['db'], cfg_in['table']):
                 lf.info('previous table removed')
         except Exception as e:  # no such table?
             pass
@@ -422,18 +422,18 @@ def main(config: ConfigType) -> None:  #
                 ind_ok = ind_ok[~bad_p]
                 if not ind_ok.size:
                     continue
-                # df.loc[bad_p, p_name] = np.NaN
+                # df.loc[bad_p, p_name] = np.nan
 
             # save result
 
-            h5_append(cfg_out, df.loc[ind_ok], cfg_out['log'])
+            h5.append(cfg_out, df.loc[ind_ok], cfg_out['log'])
             n_rows_after += ind_ok.size
 
     # Temporary db to compressed db with pandas index
-    if n_rows_after:  # check needed because ``ptprepack`` in h5index_sort() not closes hdf5 source if it not finds data
-        failed_storages = h5move_tables(cfg_out)
+    if n_rows_after:  # check needed because ``ptprepack`` in h5.index_sort() not closes hdf5 source if it not finds data
+        failed_storages = h5.move_tables(cfg_out)
         print('Ok.', end=' ')
-        h5index_sort(cfg_out, out_storage_name=f"{cfg_out['db_path'].stem}-resorted.h5", in_storages=failed_storages)
+        h5.index_sort(cfg_out, out_storage_name=f"{cfg_out['db_path'].stem}-resorted.h5", in_storages=failed_storages)
 
     lf.info(f'Removed {n_rows_before - n_rows_after} rows. Saved {n_rows_after} rows to {cfg_out["db_path"]}...')
 

@@ -2,7 +2,7 @@
 in:
   db_path: 'd:\workData\BalticSea\190713_ABP45\inclinometer\190721incl.h5'
   tables: ['incl.*']
-  period: '2H'               # pandas offset string (D, 5D, H, ...) ['D' ]
+  period: '2H'               # pandas offset string (2H, H, T, S, ms, U...) ['D' ]
   overlap: 0.5
   chunksize: 1000000         # 'chunksize_percent': 10,  # we'll repace this with burst size if it suit
   min_date: 2019-07-21T20:00:00Z
@@ -15,5 +15,3 @@ out:
 program:
   log: 'log/incl_h5spectrum.log'  # str(scripts_path /
   verbose: 'DEBUG'
-
-

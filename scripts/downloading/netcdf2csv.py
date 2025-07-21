@@ -37,26 +37,41 @@ def main(file_path: Union[Path, str],
     :param var_short_names:
     :return:
     """
+    if isinstance(file_path, (str, Path)):  # file_path.suffix.lower() != ".zip"
+        file_path = Path(file_path)
+        if output_dir is None:
+            output_dir = file_path.parent
+        # Open netCDF4 file
+        f = netCDF4.Dataset(file_path)
 
-    file_path = Path(file_path)
-    if output_dir is None:
-        output_dir = file_path.parent
+        if variables is None:
+            itim = list(f.variables.keys()).index('time')
+            variables = list(f.variables.keys())[(itim+1):]  # not in first 'longitude', 'latitude', 'expver', 'time',
+            # ['u10', 'v10', 'i10fg', 'fg10', 'mwd', 'mwp', 'pp1d', 'swh', 'sp']
 
-    # Open netCDF4 file
-    f = netCDF4.Dataset(file_path)
+            # del variables[variables.index('fg10')]
+            # del variables[variables.index('i10fg')]
 
-    if variables is None:
-        itim = list(f.variables.keys()).index('time')
-        variables = list(f.variables.keys())[(itim+1):]  # not in first 'longitude', 'latitude', 'expver', 'time',
-        # ['u10', 'v10', 'i10fg', 'fg10', 'mwd', 'mwp', 'pp1d', 'swh', 'sp']
-        del variables[variables.index('fg10')]
-        del variables[variables.index('i10fg')]
+        if var_short_names is None:
+            var_short_names = variables
 
-    if var_short_names is None:
-        var_short_names = variables
-
-    # Extract variable
-    t2m = f.variables[variables[0]]
+        # Extract variable
+        t2m = f.variables[variables[0]]
+    else:  # len(file_path) != 1
+        # file_path = file_path / "data_stream-oper_stepType-instant.nc"  # todo
+        # data_stream-wave_stepType-instant.nc, ...
+        vars = []
+        for file_p in file_path:
+            try:
+                f = netCDF4.Dataset(file_path)
+            except OSError as e:
+                raise (NotImplementedError("multiple hdf5 files not supported"))
+            if variables is None:
+                itim = list(f.variables.keys()).index("time")
+                vars += list(f.variables.keys())[(itim + 1) :]  # not in first 'longitude', 'latitude',
+        if variables is None:
+            variables = vars
+        raise(NotImplementedError("multiple files not supported"))
 
     # Get dimensions assuming 3D: time, latitude, longitude
     dims_list = t2m.get_dims()
@@ -93,8 +108,7 @@ def main(file_path: Union[Path, str],
     elif method == 'file_for_each_coord':
         # To construct filename from date, source name excluding source area coordinates info, and point's coordinates:
         filename_part_time = f'{times[0]:%y%m%d_%H%M}'.replace('_0000', '')
-        filename_part_source= re.sub('_?area\([^)]*\)', '', file_path.stem)
-        nvars_ok_cum = np.ones(dims[time_name], dtype=bool)
+        filename_part_source = re.sub(r'_?area\([^)]*\)', '', file_path.stem)
         for ilat, lat in enumerate(latitudes):
             for ilon, lon in enumerate(longitudes):
                 var_dict = {}
@@ -104,25 +118,21 @@ def main(file_path: Union[Path, str],
                         nvars_ok = np.ma.count_masked(vv[:, :, ilat, ilon], axis=1) == 1
                         if not nvars_ok.all():
                             mask = ~nvars_ok
-                            nvars_ok_cum &= nvars_ok
                             print(f'{mask.sum()} data is bad (first 3 indexes: {np.flatnonzero(mask)[0:3]}...) - ignored')
                             # unmasking to keep shape on next op. (and delete later):
                             vv_no_bad_mask = vv[:, :, ilat, ilon]
-                            vv_no_bad_mask[mask, :] = np.ma.masked_array([np.ma.masked]*(vv.shape[1] -1) + [np.NaN])
+                            vv_no_bad_mask[mask, :] = np.ma.masked_array([np.ma.masked]*(vv.shape[1] - 1) + [np.nan])
                             var_dict[n] = vv_no_bad_mask.compressed()
                         else:
-                            var_dict[n] = f.variables[v][:, 0, ilat, ilon]
+                            var_dict[n] = vv[:, :, ilat, ilon].compressed()  # vv[:, 0, ilat, ilon]
                     else:
                         var_dict[n] = f.variables[v][:, ilat, ilon]  # old worked: f.variables[v][:, ilat, ilon]
-                if not nvars_ok_cum.all():
-                    var_dict = {k: v[nvars_ok_cum] for k, v in var_dict.items()}
-                    df = pd.DataFrame({'Time': times[nvars_ok_cum], **var_dict})
-                else:
-                    df = pd.DataFrame({'Time': times, **var_dict})
+                df = pd.DataFrame({'Time': times, **var_dict})
 
                 filename = output_dir / f'{filename_part_time}{filename_part_source}(N{lat:.5g},E{lon:.5g}).tsv'
-                df.to_csv(filename, index=False, date_format='%Y-%m-%d %H:%M', float_format='%.5g',
-                         sep='\t', encoding="ascii")
+                df.to_csv(
+                    filename, index=False, date_format='%Y-%m-%d %H:%M', float_format='%.5g', sep='\t', encoding="ascii"
+                )
     else:
         print(f'Unknown method: {method}.', 'Set one of:',
               ', '.join('file_for_each_coord', 'file_for_each_time', 'one_file', 'file_for_each_coord')
@@ -133,9 +143,18 @@ def main(file_path: Union[Path, str],
 
 if __name__ == '__main__':
     #
-    main(file_path=r'd:\WorkData\BalticSea\230507_ABP53\meteo\wind@ECMWF-ERA5_area(55.922656,19.018713,55.922656,19.018713).nc'
+    main(
+        file_path=
+        r"C:\Work\Veusz\meteo\ECMWF\wind@ECMWF-ERA5_area(54.744417,19.5799,54.744417,19.5799).zip",
+        variables= [
+            '10m_u_component_of_wind', '10m_v_component_of_wind', 'surface_pressure', 'sea_surface_temperature', 'total_precipitation', '10m_wind_gust_since_previous_post_processing', 'mean_wave_direction', 'mean_wave_period', 'peak_wave_period', 'significant_height_of_combined_wind_waves_and_swell']
+    )
+
+    # r'd:/WorkData/BalticSea/220505_D6/meteo/ECMWF/wind@ECMWF-ERA5_area(55.3266,20.5789,55.3266,20.5789).nc'
+    # r'd:\WorkData\BalticSea\_Pregolya,Lagoon\231208@i19,ip5,6\meteo\wind@ECMWF-ERA5_area(54.64485,21.07382,54.64485,21.07382).nc'
+    # r'd:\WorkData\BalticSea\230507_ABP53\meteo\wind@ECMWF-ERA5_area(55.922656,19.018713,55.922656,19.018713).nc'
     # r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\wind@ECMWF-ERA5_area(54.615,19.841,54.615,19.841).nc'
-         )         # d:\workData\BalticSea\201202_BalticSpit_inclinometer\wind@ECMWF-ERA5_area(54.615,19.841,54.615,19.841).nc
+    # d:\workData\BalticSea\201202_BalticSpit_inclinometer\wind@ECMWF-ERA5_area(54.615,19.841,54.615,19.841).nc
 #
 # r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\processed_h5,vsz\wind@ECMWF-ERA5_area(54.615,19.841,54.615,19.841).nc'
 # d:\workData\BalticSea\201202_BalticSpit\inclinometer\processed_h5,vsz/wind@ECMWF-ERA5_area(54.9689,20.2446,54.9689,20.2446).nc'

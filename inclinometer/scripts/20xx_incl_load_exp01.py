@@ -19,5 +19,5 @@ incl_load([
 
 # commad line example:
 """  
-d: && cd d:\Work\_Python3\And0K\h5toGrid && python -m inclinometer.incl_load --path_cruise "d:\workData\_experiment\inclinometer\210331_tank[4,5,9,10,11,19,28,33,36,37,38]" --time_start_utc_dict "4: 2021-03-30T18:51:06" --step_end 1
+d: && cd C:\Work\Python\AB_SIO_RAS\h5toGrid && python -m inclinometer.incl_load --path_cruise "d:\workData\_experiment\inclinometer\210331_tank[4,5,9,10,11,19,28,33,36,37,38]" --time_start_utc_dict "4: 2021-03-30T18:51:06" --step_end 1
 """

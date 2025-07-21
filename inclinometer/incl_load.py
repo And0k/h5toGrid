@@ -77,7 +77,7 @@ saves loading log in inclinometer\scripts\log\csv2h5_inclin_Kondrashov.log
                   starts with "incl" or "voln" is in, then raw data must be in Kondrashov format else Baranov's format.
                   For "voln" we replace "voln_v" with "w" when saving corrected raw files and use it to name tables so 
                   only "w" in outputs and we replace "voln" with "w" to search tables''')
-    s.add('--db_coefs', default=r'd:\WorkData\~configuration~\inclinometer\190710incl.h5',
+    s.add('--db_coefs', default=r'C:\Work\Python\AB_SIO_RAS\tcm\tcm\cfg\coef\190710incl.h5',
           help='coefficients will be copied from this hdf5 store to output hdf5 store')
     s.add('--time_range_zeroing_list', help='See incl_h5clc')
     s.add('--time_range_zeroing_dict', help='See incl_h5clc. Example: incl14: [2020-07-10T21:31:00, 2020-07-10T21:39:00]')
@@ -485,7 +485,7 @@ def main(new_arg=None, **kwargs):
             else:
                 kwarg['proc']['azimuth_add'] = 0
             if cfg['in']['azimuth_add'].get('constant'):
-                # and add constant. For example, subtruct declination at the calibration place if it was applied
+                # and add constant. For example, subtract declination at the calibration place if it was applied
                 kwarg['proc']['azimuth_add'] += cfg['in']['azimuth_add']['constant']  # add -6.656 to account for calibration in Kaliningrad (mag deg = 6.656°)
                 msgs.append("constant: {cfg['in']['azimuth_add']['constant']}")
             if kwarg['proc']['azimuth_add']:

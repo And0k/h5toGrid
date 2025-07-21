@@ -6,9 +6,9 @@ from functools import partial
 
 from to_pandas_hdf5.csv2h5 import *  # main as csv2h5, __file__ as file_csv2h5, read_csv
 from to_pandas_hdf5.csv_specific_proc import *
-from to_pandas_hdf5.h5toh5 import h5out_init, h5del_obsolete
+from to_pandas_hdf5.h5toh5 import h5.out_init, h5.del_obsolete
 
-from to_pandas_hdf5.h5_dask_pandas import filterGlobal_minmax, h5_append_dummy_row
+from to_pandas_hdf5.h5_dask_pandas import filterGlobal_minmax, h5.append_dummy_row
 from utils2init import path_on_drive_d
 # import imp; imp.reload(csv2h5)
 
@@ -129,9 +129,9 @@ def test_csv2h5(cfg):
         cfg['in']['time_last'] = tim[-1]  # save last time to can filter next file
         print(f'Filtering success, data range: {tim[0]} - {tim[-1]}')
 
-        # test h5_append_dummy_row()
+        # test h5.append_dummy_row()
         cfg_out.setdefault('fs')
-        d1 = h5_append_dummy_row(d, cfg_out['fs'], tim)
+        d1 = h5.append_dummy_row(d, cfg_out['fs'], tim)
 
         df = d1.compute()  # [list(cfg_out['dtype'].names)].set_index(tim)
         assert isinstance(df, pd.DataFrame)

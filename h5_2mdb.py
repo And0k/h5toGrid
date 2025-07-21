@@ -5,6 +5,7 @@ from datetime import timedelta
 from pandas import HDFStore, isna
 import pyodbc
 
+from to_pandas_hdf5.h5toh5 import h5.load_ranges
 """
   Author:  Andrey Korzh --<ao.korzh@gmail.com>
   Purpose: Insert PyTables timeseries data from table of hdf5 file to existed table in Microsoft Access database.
@@ -14,7 +15,7 @@ import pyodbc
 
 def insert(in_path, out_path, in_tbl=None, out_tbl=None, time_add=None,
            odbc_conn_str='DRIVER=Microsoft Access Driver (*.mdb, *.accdb);DBQ={out_path};',
-           cols=None):
+           cols=None, time_ranges=None):
     """
 
     :param in_path:
@@ -28,14 +29,14 @@ def insert(in_path, out_path, in_tbl=None, out_tbl=None, time_add=None,
         {'Lat': 'Lat', 'Lon': 'Lon', '': 'DepEcho': 'Depth'}
     :return:
 
-    
+
     out_path = r'd:\WorkData\_subproduct\BalticSea\160310_DrLubecki\BaS1603.mdb'
     in_tbl = 'navigation'
     """
-    
+
     if in_tbl is None:
         in_path, in_tbl = in_path.rsplit('/', 1)
-        
+
     if out_tbl is None:
         out_tbl = in_tbl
 
@@ -45,8 +46,10 @@ def insert(in_path, out_path, in_tbl=None, out_tbl=None, time_add=None,
     cursor = cnxn.cursor()
 
     with HDFStore(in_path) as store:
-        df = store[in_tbl]
+        df = h5.load_ranges(store, table=in_tbl, t_intervals=time_ranges)
+        # df = store[in_tbl]
         df.index += time_add
+        print(f'Loaded data ({df.columns}) of range:', df.index[[0, -1]])
         # from sqlalchemy import create_engine
         # engine = create_engine('access+pyodbc:///' + DB['name'])
         # df.to_sql(in_tbl, engine, if_exists='append')
@@ -95,12 +98,12 @@ def insert(in_path, out_path, in_tbl=None, out_tbl=None, time_add=None,
         if iError > 0:
             print(f'Error occurred {iError} times')
         if iCheck != df.shape[0]:
-            print('program logic error: Data size (' + format(df.shape[0], '2') + 
+            print('program logic error: Data size (' + format(df.shape[0], '2') +
                   ') not equal ' + format(iCheck, '2') + ' lines processed'
                   )
         cursor.close()
         cnxn.close()
-    print('ok>')
+    print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>")
 
 
 if __name__ == '__main__':
@@ -109,25 +112,33 @@ if __name__ == '__main__':
     cfg = {
         'in': {
             'tbl': 'navigation',
-            'time_shifted': timedelta(hours=0),  # from needed output
-            'path': r'd:\WorkData\_source\BalticSea\160310_DrLubecki\ADCP_WH600\nav_NMEA\converted\160319,21WinRiver.h5',
-            'cols': ['Lat', 'Lon'] #, 'DepEcho']
+            'time_shifted': timedelta(hours=0),  # shift of source data relative to needed output
+            'time_ranges': None,                 # ranges of source data (before we'll remove the shift)
+            'path': r'',
+            'cols': ['Lat', 'Lon']  # , 'DepEcho']
+
         },
         'out': {
-            'path': r'd:\WorkData\_subproduct\BalticSea\160310_DrLubecki\BaS1603.mdb',
+            'path': r'',
             'tbl': None,
-            'cols': ['Lat', 'Lon'] #, 'Depth']
+            'cols': ['Lat', 'Lon']  #, 'Depth']
         }
        }
 
     # Overwrite default config:
-    cfg['in']['path'] = r'd:\WorkData\BlackSea\220920\220920.nav.h5'
-    cfg['out']['path'] = r'd:\WorkData\BlackSea\220920\220920.mdb'
-    cfg['in']['time_shifted'] = timedelta(hours=-3)
-
+    cfg['in']['path'] = r'd:\WorkData\KaraSea\231110_AMK93\231110_AMK93.h5'
+        # r'BlackSea\220920\220920.nav.h5'  # r'160310_DrLubecki\ADCP_WH600\nav_NMEA\converted\160319,21WinRiver.h5',
+    cfg['out']['path'] = r'd:\WorkData\KaraSea\231110_AMK93\ADCP_75kHz\ADCP_75kHz.mdb'
+    #  cfg['in']['time_shifted'] = timedelta(hours=-3)
+    cfg['in']['time_ranges'] = ['2000-01-01', '2023-11-10T17:05:35']
     # Run
-    insert(cfg['in']['path'], cfg['out']['path'], cfg['in']['tbl'], cfg['out']['tbl'],
-           time_add=-cfg['in']['time_shifted'], cols=dict(zip(cfg['in']['cols'], cfg['out']['cols'])))
+    insert(
+        cfg['in']['path'], cfg['out']['path'],
+        cfg['in']['tbl'], cfg['out']['tbl'],
+        time_add=-cfg['in']['time_shifted'],
+        cols=dict(zip(cfg['in']['cols'], cfg['out']['cols'])),
+        time_ranges=cfg['in']['time_ranges']
+    )
 
 
 # d:\WorkData\_source\BalticSea\160310_DrLubecki\navigation\Garmin_GPSmap_62stc\Garmin_GPSmap_62stc.h5'

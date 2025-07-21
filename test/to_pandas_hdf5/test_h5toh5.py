@@ -7,7 +7,7 @@ drive_d = 'D:' if sys.platform == 'win32' else '/mnt/D'  # to run on my Linux/Wi
 scripts_path = Path(drive_d + '/Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))
 
-from to_pandas_hdf5.h5toh5 import h5move_tables
+from to_pandas_hdf5.h5toh5 import h5.move_tables
 
 
 store_in = Path(r'd:\workData\BalticSea\200819_AI56\200819_AI56.h5')
@@ -19,7 +19,7 @@ with pd.HDFStore(store_in, 'r') as sr, pd.HDFStore(store_out, 'w') as sw:
     df['DepEcho'] = df['DepEcho'].abs()
     #sw.put(tbl, df, format='table', data_columns=True)
 
-    # index=False is mandatory because it will not be CSI and ptrepack used in h5move_tables raises error
+    # index=False is mandatory because it will not be CSI and ptrepack used in h5.move_tables raises error
     df.to_hdf(sw, tbl, format='table', data_columns=True, append=False, index=False) # dropna=not cfg_out.get('b_insert_separator'
 
     # copy childs
@@ -35,8 +35,8 @@ sleep(8)
 
 # write tables back with sorted index
 store_in, store_out = store_out, store_in
-h5move_tables({
-    'db_path_temp': store_in,
+h5.move_tables({
+    'temp_db_path': store_in,
     'db_path': store_out,
     'tables': [tbl],
     'tables_log': [],
@@ -53,8 +53,8 @@ with pd.HDFStore(store_in, 'r') as sr, pd.HDFStore(store_out, 'w') as sw:
     sw.create_table_index(tbl, columns=['index'], kind='full')
 
 store_in, store_out = store_out, str(Path(store_out).with_name('sort_man_ptp.h5'))
-h5move_tables({
-    'db_path_temp': store_in,
+h5.move_tables({
+    'temp_db_path': store_in,
     'db_path': store_out,
     'tables': [tbl],
     'tables_log': [],

@@ -11,18 +11,19 @@ import logging
 from codecs import open
 from pathlib import PurePath
 from sys import stdout as sys_stdout
-from typing import Any, Dict, Mapping, MutableMapping, Union
+from typing import Any, Dict, Mapping, MutableMapping, Sequence, Union
 
 import gpxpy
 import numpy as np
 import pandas as pd
 from gpxpy.gpx import GPX
 # my
-from utils2init import cfg_from_args, my_argparser_common_part, init_file_names, Ex_nothing_done, set_field_if_no, \
-    this_prog_basename, init_logging, standard_error_info, call_with_valid_kwargs
-from to_pandas_hdf5.h5_dask_pandas import multiindex_timeindex, multiindex_replace, h5_append, \
-    filterGlobal_minmax  # filter_global_minmax
-from to_pandas_hdf5.h5toh5 import h5move_tables, h5index_sort, h5out_init, h5_dispenser_and_names_gen
+from utils2init import (
+    cfg_from_args, my_argparser_common_part, init_file_names, Ex_nothing_done, set_field_if_no, this_prog_basename, init_logging, standard_error_info, call_with_valid_kwargs
+    )
+from to_pandas_hdf5.h5_dask_pandas import filterGlobal_minmax  # filter_global_minmax
+from to_pandas_hdf5 import h5
+from utils_time import multiindex_timeindex, multiindex_replace
 from utils_time_corr import time_corr
 
 dt64_1s = np.int64(1e9)
@@ -110,11 +111,18 @@ def my_argparser():
 
 
 # ----------------------------------------------------------------------
-def df_rename_cols(df, col_in, col_out):
+def df_rename_cols(df: pd.DataFrame, col_in: Sequence[str], col_index: str, *col_out: Sequence[str]):
+    """
+    :param df:
+    :param col_in:
+    :param col_index:
+    :param col_out: must be same number as col_in
+    :return:
+    """
     if df.empty:
         return
-    df.index.name = col_out[0]  # ?df = df.reindex(df.index.rename(['Date']))
-    df.rename(columns=dict(zip(col_in[1:], col_out[1:])), inplace=True)
+    df.index.name = col_index  # ?df = df.reindex(df.index.rename(['Date']))
+    df.rename(columns=dict(zip(col_in, col_out)), inplace=True)
 
 
 def gpxConvert(cfg: Mapping[str, Any],
@@ -167,22 +175,26 @@ def gpxConvert(cfg: Mapping[str, Any],
         cols_list = tr_cols
 
     if cols_list is not None:
+        dfs['segments'] = []
+        dfs['tracks'] = []
         for track in gpx.tracks:
             for segment in track.segments:
-                if sg_cols is not None:
-                    dfs['segments'] = pd.concat([
-                        dfs['segments'],
-                        pd.DataFrame.from_records(
-                            [[getattr(segment.points[0], c) for c in cols_list]],
-                            columns=cols_list,
-                            index=cols_list[0])
-                        ])
-                if tr_cols is not None:    # too tired to check compatibility to cfg tracks:
-                    dfs['tracks'] = pd.concat([dfs['tracks'], pd.DataFrame.from_records(
-                        [[getattr(point, c) for c in tr_cols] for point in segment.points],
-                        columns=tr_cols,
-                        index=tr_cols[0])])  # .__dict__ -> dir()
-
+                for name, cols, vals in (
+                    [
+                        ('segments', cols_list,
+                        [[getattr(segment.points[0], c) for c in cols_list]])
+                    ] if sg_cols else []
+                ) + (
+                    [('tracks', tr_cols, [[getattr(point, c) for c in tr_cols] for point in segment.points])
+                    ] if tr_cols else []
+                ):
+                    df_new = pd.DataFrame.from_records(vals, columns=cols, index=cols[0])
+                    dfs[name].append(df_new)
+        for name in ('segments', 'tracks'):
+            if dfs[name]:
+                dfs[name] = pd.concat(dfs[name])
+            else:
+                del dfs[name]
     # dfs['waypoints']= pd.DataFrame(columns= cfg['in']['waypoints_cols'][Ncols_t:])
     # pd.concat([dfs['waypoints'],
     if (wp_cols := cfg['in'].get('waypoints_cols')) is not None:
@@ -214,7 +226,7 @@ def gpxConvert(cfg: Mapping[str, Any],
 
     for dfname, df in dfs.items():  # df_names
         c = dfname + '_cols'
-        df_rename_cols(df, cfg['in'][c], cfg['out'][c])
+        df_rename_cols(df, cfg['in'][c][1:], *cfg['out'][c])
 
     return dfs
 
@@ -262,8 +274,8 @@ def h5_sort_filt_append(
         return df
 
     # # Log statistic
-    # out['log']['Date0'  ]= timzone_view(df_t_index[ 0], input['dt_from_utc'])
-    # out['log']['DateEnd']= timzone_view(df_t_index[-1], input['dt_from_utc'])
+    # out['log']['Date0'  ]= timezone_view(df_t_index[ 0], input['dt_from_utc'])
+    # out['log']['DateEnd']= timezone_view(df_t_index[-1], input['dt_from_utc'])
     # # Add separation row of NaN and save to store
     # if out['b_insert_separator'] and itm is None:
     #     # 0 (can not use np.nan in int) [tim[-1].to_datetime() + timedelta(seconds = 0.5/cfg['fs'])]
@@ -277,7 +289,7 @@ def h5_sort_filt_append(
     # store.append(tables_log[key], dfLog, data_columns= True, expectedrows= input['nfiles'], index=False) #append
 
     log_dt_from_utc = {'log_dt_from_utc': dt_from_utc} if (dt_from_utc := input.get('dt_from_utc')) else {}
-    h5_append(out, df, out['log'], tim=df_t_index, **log_dt_from_utc)
+    h5.append(out, df, out['log'], tim=df_t_index, **log_dt_from_utc)
     return df
 
 
@@ -296,7 +308,7 @@ def main(new_arg=None):
     try:
         cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
             **cfg['in'], b_interact=cfg['program']['b_interact'], cfg_search_parent=cfg['out'])
-        h5out_init(cfg['in'], cfg['out'])
+        h5.out_init(cfg['in'], cfg['out'])
     except Ex_nothing_done as e:
         print(e.message)
         exit()
@@ -326,7 +338,7 @@ def main(new_arg=None):
         # ###############################################################
         # ## Cumulate all data in cfg['out']['path_temp'] ##################
         ## Main circle ############################################################
-        for i1_file, path_gpx in h5_dispenser_and_names_gen(cfg['in'], cfg['out']):
+        for i1_file, path_gpx in h5.dispenser_and_names_gen(cfg['in'], cfg['out']):
             l.info('{}. {}: '.format(i1_file, path_gpx.name))
             # Loading data
             dfs = gpxConvert(cfg, path_gpx)
@@ -410,16 +422,16 @@ def main(new_arg=None):
     #     code.interact(local=ns)
     # finally:
     #     cfg['out']['db'].close()
-    #     failed_storages= h5move_tables(cfg['out'], cfg['out']['tables_written'])
+    #     failed_storages= h5.move_tables(cfg['out'], cfg['out']['tables_written'])
 
     try:
-        failed_storages = h5move_tables(cfg['out'], tbl_names=cfg['out'].get('tables_written', set()))
+        failed_storages = h5.move_tables(cfg['out'], tbl_names=cfg['out'].get('tables_written', set()))
         print('Finishing...' if failed_storages else 'Ok.', end=' ')
         # Sort if you have any processed data that needs it (not the case for the routes and waypoints), else don't because ``ptprepack`` not closes hdf5 source if it not finds data
         if cfg['in'].get('time_last') and cfg['out']['b_sort']:
             cfg['out']['b_remove_duplicates'] = True
             # do not tauch sections points order
-            h5index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5", in_storages=failed_storages,
+            h5.index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5", in_storages=failed_storages,
                          tables=cfg['out'].get('tables_written', set()))
     except Ex_nothing_done:
         print('ok')
@@ -459,6 +471,6 @@ with pd.HDFStore('d:\\WorkData\\BalticSea\\171003_ANS36\\171003Strahov_not_sorte
             store.create_table_index(cfg['out']['strProbe'],
                                      columns=['index'], kind='full')
         #Save result in h5NameOut
-        h5sort_pack(cfg['out']['path_temp'], h5NameOut, cfg['out']['strProbe'])
+        h5.sort_pack(cfg['out']['path_temp'], h5NameOut, cfg['out']['strProbe'])
         print('ok')
 """

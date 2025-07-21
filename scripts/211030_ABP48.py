@@ -107,7 +107,7 @@ if st(20, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params
         ])
 
 if st(30, f'Draw {device} data profiles'):  # False: #
-    from to_pandas_hdf5.h5toh5 import h5log_names_gen
+    from to_pandas_hdf5.h5toh5 import h5.log_names_gen
     import re
     from os import chdir as os_chdir
 
@@ -126,7 +126,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
     pattern_code = cfg_in['pattern_path'].read_bytes()  #encoding='utf-8'
 
     os_chdir(cfg_in['pattern_path'].parent)
-    for filename in h5log_names_gen(cfg_in, f_row2name):
+    for filename in h5.log_names_gen(cfg_in, f_row2name):
         path_vsz = cfg_in['pattern_path'].with_name(filename)
         path_vsz.write_bytes(pattern_code)  # re.sub(rb'^([^\n]+)', str_expr, pattern_code, count=1)
 
@@ -149,7 +149,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
 if False:
     # Merge each needed runs
     import pandas as pd
-    from to_pandas_hdf5.h5toh5 import h5move_tables, merge_two_runs  #, h5index_sort, h5out_init
+    from to_pandas_hdf5.h5toh5 import h5.move_tables, h5.merge_two_runs  #, h5.index_sort, h5.out_init
 
     tbl = f'/{device}'
     tbl_log = f'{tbl}/logRuns'
@@ -159,7 +159,7 @@ if False:
 
     # repeat if need:
     irow_to = 130  # 85
-    merge_two_runs(df_log, irow_to, irow_from=None)
+    h5.merge_two_runs(df_log, irow_to, irow_from=None)
 
     # write back
     with pd.HDFStore(path_db.with_name('_not_sorted.h5')) as store_tmp:
@@ -169,8 +169,8 @@ if False:
             pass
         df_log.to_hdf(store_tmp, tbl_log, append=True, data_columns=True,
                       format='table', dropna=True, index=False)
-    h5move_tables({
-        'db_path_temp': path_db.with_name('_not_sorted.h5'),
+    h5.move_tables({
+        'temp_db_path': path_db.with_name('_not_sorted.h5'),
         'db_path': path_db,
         'tables': [tbl_log],
         'tables_log': [],
@@ -373,7 +373,7 @@ if st(220, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav param
               ])
 
 if st(230, f'Draw {device} data profiles'):  # False: #
-    from to_pandas_hdf5.h5toh5 import h5log_names_gen
+    from to_pandas_hdf5.h5toh5 import h5.log_names_gen
     import re
     from os import chdir as os_chdir
 
@@ -392,7 +392,7 @@ if st(230, f'Draw {device} data profiles'):  # False: #
     pattern_code = cfg_in['pattern_path'].read_bytes()  #encoding='utf-8'
 
     os_chdir(cfg_in['pattern_path'].parent)
-    for filename in h5log_names_gen(cfg_in, f_row2name):
+    for filename in h5.log_names_gen(cfg_in, f_row2name):
         path_vsz = cfg_in['pattern_path'].with_name(filename)
         path_vsz.write_bytes(pattern_code)  # re.sub(rb'^([^\n]+)', str_expr, pattern_code, count=1)
 

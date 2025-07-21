@@ -181,7 +181,7 @@ def zeroing(a_zeroing, Ag_old, Cg, Ah_old):
 
     # Gxyz0old = delayed(fG, pure=True)(a.loc[:, ('Ax','Ay','Az')].mean().values, Ag_old, Cg).compute().compute()
 
-    # Gxyz0old = [[np.NaN, np.NaN, np.NaN]] if np.nansum(isnan(iCalibr0V))>0 else \
+    # Gxyz0old = [[np.nan, np.nan, np.nan]] if np.nansum(isnan(iCalibr0V))>0 else \
     # fG(np.column_stack((np.nanmean(a['Ax'][slice(*iCalibr0V[0,:])]),
     # np.nanmean(a['Ay'][slice(*iCalibr0V[0,:])]),
     # np.nanmean(a['Az'][slice(*iCalibr0V[0,:])]) )), Ag_old, Cg)
@@ -248,10 +248,10 @@ def waves_proc(df, i_burst, len_avg=600, i_burst_good_exactly=1):
     # use freqencies as calculated for normal burst:
     wfreq = df2ts(df['Pressure'][slice(*i_burst[i_burst_good_exactly:(i_burst_good_exactly + 2)])]).tospecdata(
         L=600).args
-    Sp = np.empty((i_burst.size, wfreq.size)) + np.NaN
-    df['P_detrend'] = df['Pressure'] + np.NaN
+    Sp = np.empty((i_burst.size, wfreq.size)) + np.nan
+    df['P_detrend'] = df['Pressure'] + np.nan
     calc_spectrum_characteristics = ['Hm0', 'Tm_10', 'Tp', 'Ss', 'Rs']
-    ar_spectrum_characteristics = np.empty((i_burst.size, len(calc_spectrum_characteristics))) + np.NaN
+    ar_spectrum_characteristics = np.empty((i_burst.size, len(calc_spectrum_characteristics))) + np.nan
     # Hm0 = 4*sqrt(m0)                          - Significant wave height
     # Tm_10 = 2*pi*m_1/m0                       - Energy period
     # Tp = 2*pi*int S(w)^4 dw / int w*S(w)^4 dw - Peak Period
@@ -375,10 +375,10 @@ fbinning = lambda x, bin1_nAverage: da.mean(da.reshape(x, (-1, bin1_nAverage)), 
 repeat3shift1 = lambda A2: [A2[t:(len(A2) - 2 + t)] for t in range(3)]
 median3cols = lambda a, b, c: da.where(a < b, da.where(c < a, a, da.where(b < c, b, c)),
                                        da.where(a < c, a, da.where(c < b, b, c)))
-median3 = lambda x: da.hstack((np.NaN, median3cols(*repeat3shift1(x)), np.NaN))
+median3 = lambda x: da.hstack((np.nan, median3cols(*repeat3shift1(x)), np.nan))
 # not convertable to dask easily:
 fVabs_old = lambda Gxyz, kVabs: np.polyval(kVabs.flat, np.sqrt(np.tan(fInclination(Gxyz))))
-rep2mean = lambda x, bOk: np.interp(np.arange(len(x)), np.flatnonzero(bOk), x[bOk], np.NaN, np.NaN)
+rep2mean = lambda x, bOk: np.interp(np.arange(len(x)), np.flatnonzero(bOk), x[bOk], np.nan, np.nan)
 fForce2Vabs_fitted = lambda x: da.where(x > 2, 2, da.where(x < 1, 0.25 * x, 0.25 * x + 0.3 * (x - 1) ** 4))
 fIncl2Force = lambda incl: da.sqrt(da.tan(incl))
 fVabs = lambda Gxyz, kVabs: fForce2Vabs_fitted(fIncl2Force(fInclination(Gxyz)))
@@ -388,7 +388,7 @@ minInterval = lambda iLims1, iLims2, L: f(
     lambda iL1, iL2: da.transpose([max(iL1[:, 0], iL2[:, 0]), min(iL1[:, -1], iL2[:, -1])]), positiveInd(iLims1, L),
     positiveInd(iLims2, L))
 fStEn2bool = lambda iStEn, length: da.hstack(
-    [(da.ones(iEn2iSt, dtype=np.bool8) if b else da.zeros(iEn2iSt, dtype=np.bool8)) for iEn2iSt, b in da.vstack((
+    [(da.ones(iEn2iSt, dtype=np.bool_) if b else da.zeros(iEn2iSt, dtype=np.bool_)) for iEn2iSt, b in da.vstack((
         da.diff(
             da.hstack(
                 (
@@ -512,7 +512,7 @@ for t_interval_start in t_intervals_start:
             # df.mask(lambda x: abs(x)>2, inplace=True) 
             bP = ~(Pfilt < min_P)  # a['P'].values
         else:
-            bP = np.ones_like(a.index, np.bool8)
+            bP = np.ones_like(a.index, np.bool_)
 
         iStEn_auto = np.flatnonzero(bP)[
             [0, -1]]  # ? np.atleast_2d((np.searchsorted(bP, 1), len(bP) - np.searchsorted(np.flipud(bP), 1)))
@@ -548,7 +548,7 @@ for t_interval_start in t_intervals_start:
             def interp_after_median3(x, b):
                 return np.interp(
                     da.arange(len(bP), chunks=cfg_out['chunksize']),
-                    da.flatnonzero(bP), median3(x[b]), da.NaN, da.NaN)
+                    da.flatnonzero(bP), median3(x[b]), da.nan, da.nan)
 
 
             b = da.from_array(bP, chunks=chunks, meta=('Tfilt', 'f8'))
@@ -558,7 +558,7 @@ for t_interval_start in t_intervals_start:
             # hangs:
             # Tfilt = dd.map_partitions(interp_after_median3, a['Temp'], da.from_array(bP, chunks=cfg_out['chunksize']), meta=('Tfilt', 'f8')).compute()   
 
-            # Tfilt = np.interp(da.arange(len(bP)), da.flatnonzero(bP), median3(a['Temp'][bP]), da.NaN,da.NaN)
+            # Tfilt = np.interp(da.arange(len(bP)), da.flatnonzero(bP), median3(a['Temp'][bP]), da.nan,da.nan)
         # @+node:korzh.20180524213634.8: *3* main
         # @+others
         # @-others
@@ -597,7 +597,7 @@ for t_interval_start in t_intervals_start:
 
         if False:
             # Velocity
-            Vabs = fVabs_old(np.where(bad_g, np.NaN, Gxyz), kVabs)
+            Vabs = fVabs_old(np.where(bad_g, np.nan, Gxyz), kVabs)
             # DatasetPlugin('PolarToCartesian', {'x_out': v, 'units': np.degrees, 'r_in': Vabs, 'y_out': u, 'theta_in': Vdir})
             v = Vabs * np.cos(np.radians(Vdir))
             u = Vabs * np.sin(np.radians(Vdir))

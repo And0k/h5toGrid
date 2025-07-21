@@ -19,7 +19,7 @@ from to_pandas_hdf5.CTD_calc import main as ctd_calc
 # from to_pandas_hdf5.csv_specific_proc import loaded_corr
 from h5toGpx import main as h5_to_gpx
 from grid2d_vsz import main as grid2d_vsz
-from to_pandas_hdf5.h5toh5 import h5log_names_gen
+from to_pandas_hdf5.h5toh5 import h5.log_names_gen
 
 st.go = True   # False #
 st.start = 80   # 1 5 30 70 80 115
@@ -161,12 +161,12 @@ if st(30, f'Draw {device} data profiles'):  # False: #
     # It is possible to add exact interval to filename but time after probe is back on surface can be determined only
     # from next row, so we rely on ~pattern_loader.vsz to do it. Even freq=16Hz to determine last time not helps:
     # '_{}s.vsz'.format(round(max(r['rows']/16, (r['DateEnd'] - r['Index'] + pd.Timedelta(300, "s")).total_seconds()))
-    
+
     # Copy files
     pattern_code = cfg_in['pattern_path'].read_bytes()  # encoding='utf-8'
     filename_st = None
     os_chdir(cfg_in['pattern_path'].parent)
-    for filename in h5log_names_gen(cfg_in, f_row2name):
+    for filename in h5.log_names_gen(cfg_in, f_row2name):
         path_vsz = cfg_in['pattern_path'].with_name(filename)
         path_vsz.write_bytes(pattern_code)  # re.sub(rb'^([^\n]+)', str_expr, pattern_code, count=1)
         # Get filename_st (do once)
@@ -175,7 +175,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
             # cfg_in['min_time'] not works on filenames, so we convert it to 'start_file_index'
     if 'min_time' in cfg_in:
         del cfg_in['min_time']  # del to count fro 0:
-        start_file_index = len(list(takewhile(lambda x: x < filename_st, h5log_names_gen(cfg_in, f_row2name))))
+        start_file_index = len(list(takewhile(lambda x: x < filename_st, h5.log_names_gen(cfg_in, f_row2name))))
     else:
         start_file_index = 0
     veuszPropagate.main([
@@ -191,7 +191,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
         '--b_interact', '0',
         '--b_images_only', 'True',      # mandatory
         '--b_execute_vsz', 'True',
-        '--start_file_index', str(start_file_index),
+        '--start_file', str(start_file_index),
         #'--min_time', cfg_in['min_time'].item().isoformat(),  # not works on filenames (no time data)
         #'--max_time', cfg_in['max_time'].item().isoformat(),
         ])
@@ -199,7 +199,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
 if False:
     # Merge needed runs
     import pandas as pd
-    from to_pandas_hdf5.h5toh5 import h5move_tables, merge_two_runs  #, h5index_sort, h5out_init
+    from to_pandas_hdf5.h5toh5 import h5.move_tables, h5.merge_two_runs  #, h5.index_sort, h5.out_init
 
     tbl = f'/{device}'
     tbl_log = f'{tbl}/logRuns'
@@ -209,7 +209,7 @@ if False:
 
     # repeat if need:
     irow_to = 130  # 85
-    merge_two_runs(df_log, irow_to, irow_from=None)
+    h5.merge_two_runs(df_log, irow_to, irow_from=None)
 
     # write back
     with pd.HDFStore(path_db.with_name('_not_sorted.h5')) as store_tmp:
@@ -219,8 +219,8 @@ if False:
             pass
         df_log.to_hdf(store_tmp, tbl_log, append=True, data_columns=True,
                       format='table', dropna=True, index=False)
-    h5move_tables({
-        'db_path_temp': path_db.with_name('_not_sorted.h5'),
+    h5.move_tables({
+        'temp_db_path': path_db.with_name('_not_sorted.h5'),
         'db_path': path_db,
         'tables': [tbl_log],
         'tables_log': [],
@@ -230,10 +230,10 @@ if False:
 
 file_tracks = 'CTD-sections=routes.gpx'
 gpx_names_funs_list = """
-    i+1 if i <= 3 else i+2 if i <= 5 else i+3 if i < 25 else f"ctd{i-24:02d}" if i<41 else i-13 if i<=41 
-    else i-10 if i<=42  # 29 -> 32 
+    i+1 if i <= 3 else i+2 if i <= 5 else i+3 if i < 25 else f"ctd{i-24:02d}" if i<41 else i-13 if i<=41
+    else i-10 if i<=42  # 29 -> 32
     else i-7 if i<=45  # 30 -> 36
-    else i+1 if i<=54  # 33 -> 47 
+    else i+1 if i<=54  # 33 -> 47
     else i+9 if i<=56  # 42 -> 64
     else i+ 15
     """  # variable
@@ -456,7 +456,7 @@ if st(230, f'Draw {device} data profiles'):  # False: #
     pattern_code = cfg_in['pattern_path'].read_bytes()  # encoding='utf-8'
     filename_st = None
     os_chdir(cfg_in['pattern_path'].parent)
-    for filename in h5log_names_gen(cfg_in, f_row2name):
+    for filename in h5.log_names_gen(cfg_in, f_row2name):
         path_vsz = cfg_in['pattern_path'].with_name(filename)
         path_vsz.write_bytes(pattern_code)  # re.sub(rb'^([^\n]+)', str_expr, pattern_code, count=1)
         # Get filename_st (do once)
@@ -476,8 +476,8 @@ if st(230, f'Draw {device} data profiles'):  # False: #
         '--b_interact', '0',
         '--b_images_only', 'True',      # mandatory
         '--b_execute_vsz', 'True',
-        '--start_file_index', str(
-            len(list(takewhile(lambda x: x != filename_st, h5log_names_gen(cfg_in, f_row2name))))
+        '--start_file', str(
+            len(list(takewhile(lambda x: x != filename_st, h5.log_names_gen(cfg_in, f_row2name))))
             ),
         #'--min_time', cfg_in['min_time'].item().isoformat(),  # not works on filenames (no time data)
         #'--max_time', cfg_in['max_time'].item().isoformat(),

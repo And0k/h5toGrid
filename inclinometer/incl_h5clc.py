@@ -40,9 +40,8 @@ sys.path.append(str(scripts_path.parent.resolve()))
 from utils2init import Ex_nothing_done, call_with_valid_kwargs, set_field_if_no, init_logging, cfg_from_args, \
      my_argparser_common_part, this_prog_basename, dir_create_if_need
 from utils_time import intervals_from_period, pd_period_to_timedelta
-from to_pandas_hdf5.h5toh5 import h5out_init, h5find_tables, h5remove, h5move_tables, h5_close, \
-    h5_dispenser_and_names_gen
-from to_pandas_hdf5.h5_dask_pandas import h5_append, h5q_intervals_indexes_gen, h5_load_range_by_coord, i_bursts_starts, \
+from to_pandas_hdf5 import h5
+from to_pandas_hdf5.h5_dask_pandas import h5_load_range_by_coord, i_bursts_starts, \
     filt_blocks_da, filter_global_minmax, filter_local, cull_empty_partitions
 from filters import rep2mean
 from inclinometer.h5inclinometer_coef import rot_matrix_x, rotate_y
@@ -277,7 +276,7 @@ def fVabs_from_force(force, coefs, vabs_good_max=0.5):
         return np.interp(x, force_range0, incl_range0) * np.polyval(coefs, 0.25) / incl_good_min
 
     force = np.where(force > 0.25, v_normal(force), v_linear(force))
-    force[is_nans] = np.NaN
+    force[is_nans] = np.nan
     return force
 
     """
@@ -499,7 +498,7 @@ def incl_calc_velocity_nodask(
             bad_g_sum = bad_g.sum(axis=0)
             if bad_g_sum > 0.1 * len(GsumMinus1):
                 print('Acceleration is bad in {}% points!'.format(100 * bad_g_sum / len(GsumMinus1)))
-            incl_rad[bad_g] = np.NaN
+            incl_rad[bad_g] = np.nan
 
         Vabs = v_abs_from_incl(incl_rad, kVabs, cfg_proc['calc_version'], cfg_proc['max_incl_of_fit_deg'])
 
@@ -526,12 +525,12 @@ def incl_calc_velocity_nodask(
 def recover_x__sympy_lambdify(y, z, Ah, Ch, mean_Hsum):
     """
     After sympy added abs() under sqrt() to exclude comlex values
-    :param y: 
-    :param z: 
-    :param Ah: 
-    :param Ch: 
-    :param mean_Hsum: 
-    :return: 
+    :param y:
+    :param z:
+    :param Ah:
+    :param Ch:
+    :param mean_Hsum:
+    :return:
     """
 
     [a00, a01, a02] = Ah[0]
@@ -574,7 +573,7 @@ def recover_magnetometer_x(Mcnts, Ah, Ch, max_h_minus_1, len_data):
                           ' at all. Recovering all x-ch.data with setting mean_Hsum = 1',
                           mean_HsumMinus1, 100 * need_recover / len_data)
                 bad = da.ones_like(HsumMinus1,
-                                   dtype=np.bool8)  # need recover all x points because too small points with good HsumMinus1
+                                   dtype=np.bool_)  # need recover all x points because too small points with good HsumMinus1
                 mean_HsumMinus1 = 0
             else:
                 l.warning('calculated mean_Hsum - 1 is good (close to 0): mean=%s', mean_HsumMinus1)
@@ -620,7 +619,7 @@ def recover_magnetometer_x(Mcnts, Ah, Ch, max_h_minus_1, len_data):
                                                   name=f'Mcnts_list[{ch}]-all_is_finite')
                 else:
                     l.warning(f'channel {ch}: bad points: {n_bad} - will not recover because too small good points ({n_good})')
-                    Mcnts_list[i] = np.NaN + da.empty_like(HsumMinus1)
+                    Mcnts_list[i] = np.nan + da.empty_like(HsumMinus1)
                     need_recover_mask[bad] = False
 
         Mcnts = da.vstack(Mcnts_list)
@@ -633,7 +632,7 @@ def recover_magnetometer_x(Mcnts, Ah, Ch, max_h_minus_1, len_data):
     return Hxyz, need_recover_mask
 
 
-def rep2mean_da(y: da.Array, bOk=None, x=None, ovrerlap_depth=None) -> da.Array:
+def rep2mean_da(y: da.Array, bOk=None, x=None, overlap_depth=None) -> da.Array:
     """
     Interpolates bad values (inverce of bOk) in each dask block.
     Note: can leave NaNs if no good data in block
@@ -648,9 +647,9 @@ def rep2mean_da(y: da.Array, bOk=None, x=None, ovrerlap_depth=None) -> da.Array:
 >>> result = da.overlap.trim_internal(g2, {0: 2, 1: 2})     # todo it
     """
     if x is None:  # dask requires "All variadic arguments must be arrays"
-        return da.map_overlap(rep2mean, y, bOk, depth=ovrerlap_depth, dtype=np.float64, meta=np.float64([]))
+        return da.map_overlap(rep2mean, y, bOk, depth=overlap_depth, dtype=np.float64, meta=np.float64([]))
     else:
-        return da.map_overlap(rep2mean, y, bOk, x, depth=ovrerlap_depth, dtype=np.float64, meta=np.float64([]))
+        return da.map_overlap(rep2mean, y, bOk, x, depth=overlap_depth, dtype=np.float64, meta=np.float64([]))
     #y.map_blocks(rep2mean, bOk, x, dtype=np.float64, meta=np.float64([]))
 
 
@@ -763,9 +762,9 @@ def incl_calc_velocity(a: dd.DataFrame,
                 if bad_g_sum:
                     if bad_g_sum > 0.1 * len(GsumMinus1):  # do not message for few points
                         l.warning('Acceleration is bad in %g%% points!', 100 * bad_g_sum / len(GsumMinus1))
-                    incl_rad[bad] = np.NaN
+                    incl_rad[bad] = np.nan
             # else:
-            #     bad = da.zeros_like(GsumMinus1, np.bool8)
+            #     bad = da.zeros_like(GsumMinus1, np.bool_)
 
             # l.debug('{:.1g}Mb of data accumulated in memory '.format(dfs_all.memory_usage().sum() / (1024 * 1024)))
 
@@ -781,7 +780,7 @@ def incl_calc_velocity(a: dd.DataFrame,
                                        calc_version=cfg_proc['calc_version'],
                                        max_incl_of_fit_deg=cfg_proc['max_incl_of_fit_deg'],
                                        dtype=np.float64, meta=np.float64([]))
-            # Vabs = np.polyval(kVabs, np.where(bad, np.NaN, Gxyz))
+            # Vabs = np.polyval(kVabs, np.where(bad, np.nan, Gxyz))
             # v = Vabs * np.cos(np.radians(Vdir))
             # u = Vabs * np.sin(np.radians(Vdir))
 
@@ -869,7 +868,7 @@ def calc_pressure(a: dd.DataFrame,
             assert d_ok.sum() == len_data
             d_ok = (tuple(d_ok),)
             # interpolate between change points:
-            arr_smooth = rep2mean_da(arr.rechunk(chunks=d_ok), bOk=bc.rechunk(chunks=d_ok), ovrerlap_depth=1)
+            arr_smooth = rep2mean_da(arr.rechunk(chunks=d_ok), bOk=bc.rechunk(chunks=d_ok), overlap_depth=1)
 
             a_add = arr_smooth.rechunk(chunks=arr.chunks).map_blocks(
                 lambda x: np.polyval(PTemp, x), dtype=np.float64, meta=np.float64([])
@@ -910,7 +909,7 @@ def calc_pressure(a: dd.DataFrame,
                 """ mark bad data in first samples of burst"""
                 # df.iloc[0:1, df.columns.get_loc('P')]=0  # not works!
                 pressure = np.polyval(P, p.values)
-                pressure[:2] = np.NaN
+                pressure[:2] = np.nan
                 p[:] = pressure
                 return p
 
@@ -968,7 +967,7 @@ def coef_zeroing(mean_countsG0, Ag_old, Cg, Ah_old):
     # def interp_after_median3(x, b):
     #     return np.interp(
     #         da.arange(len(b_ok), chunks=cfg_out['chunksize']),
-    #         da.flatnonzero(b_ok), median3(x[b]), da.NaN, da.NaN)
+    #         da.flatnonzero(b_ok), median3(x[b]), da.nan, da.nan)
     #
     # b = da.from_array(b_ok, chunks=chunks, meta=('Tfilt', 'f8'))
     # with ProgressBar():
@@ -977,7 +976,7 @@ def coef_zeroing(mean_countsG0, Ag_old, Cg, Ah_old):
     # hangs:
     # Tfilt = dd.map_partitions(interp_after_median3, a['Temp'], da.from_array(b_ok, chunks=cfg_out['chunksize']), meta=('Tfilt', 'f8')).compute()
 
-    # Tfilt = np.interp(da.arange(len(b_ok)), da.flatnonzero(b_ok), median3(a['Temp'][b_ok]), da.NaN,da.NaN)
+    # Tfilt = np.interp(da.arange(len(b_ok)), da.flatnonzero(b_ok), median3(a['Temp'][b_ok]), da.nan,da.nan)
     # @+node:korzh.20180524213634.8: *3* main
     # @+others
     # @-others
@@ -1057,7 +1056,7 @@ def gen_data_on_intervals(t_prev_interval_start: pd.Timestamp, t_intervals_start
     :param **kwargs:
     :return:
     """
-    for start_end in h5q_intervals_indexes_gen(db_path, table, t_prev_interval_start, t_intervals_start):
+    for start_end in h5.q_intervals_indexes_gen(db_path, table, t_prev_interval_start, t_intervals_start):
         a = h5_load_range_by_coord(
             db_path, table, range_coordinates=start_end,
             columns=columns, chunksize=chunksize, sorted_index=sorted_index)
@@ -1065,20 +1064,20 @@ def gen_data_on_intervals(t_prev_interval_start: pd.Timestamp, t_intervals_start
 
 
 def h5_names_gen(cfg_in: Mapping[str, Any], cfg_out: None = None
-                 ) -> Iterator[Tuple[str, Tuple[Any, ...]]]:
+    ) -> Iterator[Tuple[str, Tuple[Any, ...]]]:
     """
     Generate table names with associated coefficients. Coefs are loaded from '{tbl}/coef' node of hdf5 file.
     :param cfg_in: dict with fields:
-      - tables: tables names search pattern or sequence of table names
-      - db_path: hdf5 file with tables which have coef group nodes.
-    :param cfg_out: not used but kept for the requirement of h5_dispenser_and_names_gen() argument
+    - tables: tables names search pattern or sequence of table names
+    - db_path: hdf5 file with tables which have coef group nodes.
+    :param cfg_out: not used but kept for the requirement of h5.dispenser_and_names_gen() argument
     :return: iterator that returns (table name, coefficients). "Vabs0" coef. will be replaced with "kVabs"
     updates cfg_in['tables'] - sets to list of found tables in store
     """
 
     with pd.HDFStore(cfg_in['db_path'], mode='r') as store:
         if len(cfg_in['tables']) == 1:
-            cfg_in['tables'] = h5find_tables(store, cfg_in['tables'][0])
+            cfg_in['tables'] = h5.find_tables(store, cfg_in['tables'][0])
 
         if cfg_in['db_path'].stem.endswith('proc_noAvg'):
             # Loading already processed data
@@ -1119,11 +1118,11 @@ def h5_append_to(dfs: Union[pd.DataFrame, dd.DataFrame],
         if msg: l.info(msg)
         tables_dict = {'table': tbl, 'table_log': f'{tbl}/logFiles'}
         try:
-            if h5remove(cfg_out['db'], tbl):
+            if h5.remove(cfg_out['db'], tbl):
                 l.info('previous table removed')
         except Exception as e:  # no such table?
             pass
-        h5_append({**cfg_out, **tables_dict}, dfs,
+        h5.append({**cfg_out, **tables_dict}, dfs,
                   {} if log is None else log)  # , cfg_out['log'], log_dt_from_utc=cfg_in['dt_from_utc'], 'tables': None, 'tables_log': None
         # dfs_all.to_hdf(cfg_out['db_path'], tbl, append=True, format='table', compute=True)
         if print_ok: print(print_ok, end=' ')
@@ -1143,7 +1142,7 @@ def gen_subconfigs(
         # db_path=None,
         **cfg_in_common) -> Iterator[Tuple[dd.DataFrame, np.array]]:
     """
-    Wraps h5_dispenser_and_names_gen() to deal with many db_paths, tables, dates_min and dates_max
+    Wraps h5.dispenser_and_names_gen() to deal with many db_paths, tables, dates_min and dates_max
     :param cfg_out: dict with fields:
     Dicts with fields for each probe:
     :param db_paths,
@@ -1213,10 +1212,10 @@ def gen_subconfigs(
     for d_source in gen_sources_dict(cfg_many):
         cfg_in_copy = cfg_in_common.copy()  # exclude the possibility of next cycles be depended on changes in previous
         cfg_in_copy.update(d_source)
-        cfg_in_copy['tables'] = [cfg_in_copy['table']]            # for h5_dispenser_and_names_gen()
+        cfg_in_copy['tables'] = [cfg_in_copy['table']]            # for h5.dispenser_and_names_gen()
         t_prev_interval_start, t_intervals_start = intervals_from_period(
             **{k: cfg_in_copy.get(k) for k in ['datetime_range', 'min_date', 'max_date']}, period=split_period)
-        for itbl, (tbl, coefs) in h5_dispenser_and_names_gen(cfg_in_copy, cfg_out,
+        for itbl, (tbl, coefs) in h5.dispenser_and_names_gen(cfg_in_copy, cfg_out,
                                                              fun_gen=fun_gen, b_close_at_end=False):
             l.info('%s. %s: ', n, tbl)  # itbl
             cfg_in_copy['table'] = tbl                           # for gen_data_on_intervals()
@@ -1363,8 +1362,8 @@ def main(new_arg=None, **kwargs):
 
     # Also is possible to set cfg['in']['split_period'] to cycle in parts but not need because dask takes control of parts if cfg_out['split_period'] is set
 
-    h5out_init(cfg['in'], cfg['out'])
-    cfg_out_table = cfg['out']['table']  # need? save beacause will need to change for h5_append()
+    h5.out_init(cfg['in'], cfg['out'])
+    cfg_out_table = cfg['out']['table']  # need? save beacause will need to change for h5.append()
     cols_out_allow = ['v', 'u', 'Pressure', 'Temp']  # absent cols will be ignored
     # cfg_out['data_columns'] = []  # can not index hdf5 complex column (see pandas to_hdf "data_columns" argument)
     # if len(cfg['in']['tables']) == 1 and '*' in cfg['in']['tables'][0]:  # pattern specified
@@ -1389,7 +1388,7 @@ def main(new_arg=None, **kwargs):
     dfs_all: Optional[pd.DataFrame] = None
     cfg['out']['tables_written'] = set()
 
-    # for itbl, (tbl, coefs) in h5_dispenser_and_names_gen(cfg['in'], cfg['out'], fun_gen=h5_names_gen):
+    # for itbl, (tbl, coefs) in h5.dispenser_and_names_gen(cfg['in'], cfg['out'], fun_gen=h5_names_gen):
     #     l.info('{}. {}: '.format(itbl, tbl))
     #     cfg['in']['table'] = tbl  # to get data by gen_intervals()
     #     for d, i_burst in (gen_data_on_intervals if False else gen_data_on_intervals_from_many_sources)(cfg):
@@ -1439,11 +1438,12 @@ def main(new_arg=None, **kwargs):
             # Velocity calculation
             # --------------------
             # with repartition for split ascii (also helps to prevent MemoryError)
-            d = incl_calc_velocity(d.repartition(freq=split_for_memory),
-                                   filt_max=cfg['filter']['max'],
-                                   cfg_proc=cfg['proc'],
-                                   **coefs
-                                   )
+            d = incl_calc_velocity(
+                d.repartition(freq=split_for_memory),
+                filt_max=cfg["filter"]["max"],
+                cfg_proc=cfg["proc"],
+                **coefs,
+            )
             d = calc_pressure(d,
                               **{(pb := 'bad_p_at_bursts_starts_period'): cfg['filter'][pb]},
                               **coefs
@@ -1493,9 +1493,9 @@ def main(new_arg=None, **kwargs):
 
     #
     # close temporary output store
-    h5_close(cfg['out'])
+    h5.close(cfg['out'])
     try:
-        failed_storages = h5move_tables(cfg['out'], cfg['out']['tables_written'])
+        failed_storages = h5.move_tables(cfg['out'], cfg['out']['tables_written'])
     except Ex_nothing_done as e:
         l.warning('Tables not moved')
 
@@ -1515,7 +1515,7 @@ def main(new_arg=None, **kwargs):
             )
 
     print('Ok.', end=' ')
-    # h5index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5", in_storages= failed_storages)
+    # h5.index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5", in_storages= failed_storages)
     # dd_out = dd.multi.concat(dfs_list, axis=1)
 
 

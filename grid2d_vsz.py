@@ -32,16 +32,16 @@ from scipy.signal import medfilt
 from scipy.ndimage.filters import gaussian_filter1d
 from shapely.geometry import MultiPolygon, Polygon
 
-import graphics as gr
+import plot_int as gr
 
 from filters import rep2mean, is_works, too_frequent_values, i_move2good, inearestsorted, closest_node
 from filters_scipy import despike
 from filt_wavelet import waveletSmooth
 from to_pandas_hdf5.CTD_calc import add_ctd_params
-from to_pandas_hdf5.h5toh5 import h5load_points
+from to_pandas_hdf5 import h5
 # my
 from utils2init import init_logging, Ex_nothing_done, standard_error_info
-from utils_time import datetime_fun, timzone_view, multiindex_timeindex, check_time_diff
+from utils_time import datetime_fun, timezone_view, multiindex_timeindex, check_time_diff
 from veuszPropagate import load_vsz_closure, export_images  # , veusz_data
 
 Axes2d = namedtuple('axes2d', ('x', 'y'))
@@ -231,6 +231,9 @@ def save_shape(target_path, shapelyGeometries, driverName='ESRI Shapefile'):
     return target_path
 
 
+def save_stations(path):
+    pass
+
 class GeometryError(Exception):
     """Exception raised when there is an error loading or saving geometries"""
     pass
@@ -276,7 +279,8 @@ def to_polygon(x: Sequence, y: Sequence, y_add_at_edges: Union[int, Sequence]) -
     return p
 
 
-distance = lambda lon, lat: gsw_distance(lon, lat, p=np.float(0))  # fix gsw bug of require input of numpy type for "p"
+def distance(lon, lat):
+    return gsw_distance(lon, lat, p=np.float64(0))  # fix gsw bug of require input of numpy type for "p"
 
 
 def dist_clc(nav, ctd_time, cfg):
@@ -486,8 +490,8 @@ def ge_sections(navp_all: pd.DataFrame,
     - sec_#
     - sec_name
     - exclude
-    - isort
-    - indexs
+    - isort: indexes to sort time
+    - indexs: sorted time index
     - time_poss_max
     - b_invert
     - time_msg_min
@@ -496,7 +500,6 @@ def ge_sections(navp_all: pd.DataFrame,
     - msg
 
     """
-
     ranges, b_navp_all_exclude, sec_names = sec_edges(navp_all, cfg['gpx'])
     navp_all_index, cfg['route_time_level'] = multiindex_timeindex(navp_all.index)
     navp_all_indexs = navp_all_index.sort_values()
@@ -546,14 +549,13 @@ def ge_sections(navp_all: pd.DataFrame,
             msg_invert = 'Veusz section will {}need to be inverted to approximate this route '.format(
                 '' if navp_d['b_invert'] else 'not ')
 
-        navp_d['time_msg_min'], navp_d['time_msg_max'] = [timzone_view(x, cfg['out'][
+        navp_d['time_msg_min'], navp_d['time_msg_max'] = [timezone_view(x, cfg['out'][
             'dt_from_utc']) for x in navp_d['indexs'][[0, -1]]]
         navp_d['stem_time_st'] = '{:%y%m%d_%H%M}'.format(navp_d['time_msg_min'])
         navp_d['msg'] = '\n{} "{}". Section of {}runs {} ({:.0f}\xb0=>{}). '.format(
             isec, navp_d.get('sec_name', ''), len(navp),
             '{time_msg_min:%m.%d %H:%M} - {time_msg_max:%d %H:%M}'.format_map(navp_d),
             course, msg_inv_reason) + msg_invert
-
         yield navp, navp_d
 
 
@@ -561,8 +563,8 @@ def load_cur_veusz_section(
         cfg: Mapping[str, Any],
         navp_d: Mapping[str, Any],
         vsze=None,
-        max_nav_time_st_shift=pd.Timedelta(minutes=2)
-        ) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, Any]], Any]:
+        custom_defs: Mapping[str, str] = None
+    ) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, Any]], Any]:
     """
     Loads processed CTD data using Veusz:
     - searches existed Veusz file named by start datetime of current section and must contain "Inv" only if
@@ -572,7 +574,7 @@ def load_cur_veusz_section(
     :param cfg:
     :param navp_d:
     :param vsze:
-    :param max_nav_time_st_shift: сorrect section start/end limits according to available CTD data
+    :param custom_defs: dict to update Veusz Custom Definitions
     :return: Tuple:
     - ctd: pd.DataFrame, loaded from Veusz CTD data,
     - ctd_prm: dict of parameters of other length than ctd,
@@ -584,19 +586,14 @@ def load_cur_veusz_section(
     global load_vsz
     if load_vsz is None:
         load_vsz = load_vsz_closure(cfg['program']['veusz_path'])
-    
+    vsz_vars_prefixes = ('CTDbot_dt', 'CTDstarts', 'CTDends', 'CTD_')
+
     def good_name(pathname):
         return pathname.startswith(navp_d['stem_time_st']) and navp_d['b_invert'] ^ ('Inv' not in pathname)
+
     vsz_names = [Path(v).name for v in cfg['vsz_files']['paths'] if good_name(Path(v).name)]
-    vsz_vars_prefixes = ('CTDbot_dt', 'CTDstarts', 'CTDends', 'CTD_')
-    if vsz_names:  # Load data from Veusz vsz
-        l.warning('%s\nOpening matched %s as source...', navp_d['msg'], vsz_names[0])
-        vsz_path = cfg['vsz_files']['path'].with_name(vsz_names[0])
-        vsze, ctd_dict = load_vsz(vsz_path, vsze, prefix=vsz_vars_prefixes)
-        # vsz_path = vsz_path.with_suffix('')  # for comparbility with result of 'else' part below
-        b_new_vsz = False
-    else:  # Modify Veusz pattern and Load data from it, save it
-        l.warning(navp_d['msg'])  # , end=' '
+    if b_new_vsz := not vsz_names:  # Modify Veusz pattern and Load data from it, save it
+        l.warning(navp_d['msg'])
         if vsze:
             print('Use currently opened pattern...', end=' ')
         else:
@@ -607,17 +604,9 @@ def load_cur_veusz_section(
                 return None, None, None
         print('Load our section...', end='')
 
-        vsze.AddCustom(
-            'constant', u'USEranges__', '[[{0}, {0}]]'.format("'{:%Y-%m-%dT%H:%M:%S}'").format(
-                navp_d['time_msg_min'] - max_nav_time_st_shift,
-                timzone_view(navp_d['time_poss_max'], cfg['out']['dt_from_utc'])
-                ),
-            mode='replace'
-            )
-        vsze.AddCustom(  # todo: exclude runs if there are any excluded runs in loaded section
-            'constant', u'USEruns_in_used_range', u'[[0, None]]', mode='replace'
-        )
-        vsze.AddCustom('constant', u'Shifting_multiplier', u'-1' if navp_d['b_invert'] else u'1', mode='replace')
+        if custom_defs:
+            for key, val in custom_defs.items():
+                vsze.AddCustom('constant', key, val, mode='replace')
 
         # If pattern has suffix (excluding 'Inv') then add it to our name (why? - adds 'Z')
         stem_no_inv = Path(cfg['vsz_files']['paths'][0]).stem.split('@')[0].split(' ')[0]
@@ -629,25 +618,30 @@ def load_cur_veusz_section(
             stem_no_inv[len_stem_time_st:] if len_stem_time_st < len(stem_no_inv) else 'Z',
             'Inv' if navp_d['b_invert'] else '']))
         vsze.Save(str(vsz_path.with_suffix('.vsz')))
-        b_new_vsz = True
         vsze, ctd_dict = load_vsz(veusze=vsze, prefix=vsz_vars_prefixes)
+    else:  # Load data from existed vsz
+        l.warning('%s\nOpening matched %s as source...', navp_d['msg'], vsz_names[0])
+        vsz_path = cfg['vsz_files']['path'].with_name(vsz_names[0])
+        vsze, ctd_dict = load_vsz(vsz_path, vsze, prefix=vsz_vars_prefixes)
+        # vsz_path = vsz_path.with_suffix('')  # for comparbility with result of 'else' part below
 
     if 'time' not in ctd_dict:
         l.error('vsz data is bad!')
         return None, None, None
 
-    # Group all data columns in datframe
+    # Group all data columns in dataframe
     ctd_prm = {k: v for k, v in ctd_dict.items() if v.size != ctd_dict['time'].size}
     for k in ctd_prm.keys():
         del ctd_dict[k]
-    ctd_prm['stem'] = vsz_path.stem
     ctd = pd.DataFrame.from_dict(ctd_dict)
 
     if b_new_vsz or cfg['out']['b_reexport_images'] is not False:
-        export_images(vsze, cfg['vsz_files'], vsz_path.stem,
-                      b_skip_if_exists=cfg['out']['b_reexport_images'] is None)
-
+        export_images(
+            vsze, cfg['vsz_files'], vsz_path.stem, b_skip_if_exists=cfg['out']['b_reexport_images'] is None
+        )
     l.info('- %s CTD runs loaded', ctd_prm['starts'].size)
+    ctd_prm['stem'] = vsz_path.stem
+    # ctd_prm['is_new'] = b_new_vsz
     return ctd, ctd_prm, vsze
 
 
@@ -746,7 +740,7 @@ def runs_ilast_good(bctd_ok: Sequence[bool], starts: Sequence[int], ends: Sequen
         - ends_cor: index of last value have found in each run skipping ones having bad range_to_bot
         - ok_runs: bool mask size of starts: 1 for runs having good range_to_bot, else 0.
     """
-    ok_runs = np.ones_like(starts, np.bool)
+    ok_runs = np.ones_like(starts, np.bool_)
     ends_cor = np.empty_like(starts)
     # for each profile:
     for k, (st, en) in enumerate(zip(starts, ends)):
@@ -779,7 +773,7 @@ def b_add_ctd_depth(dist, depth, add_dist, add_depth, max_dist=0.5, max_bed_grad
     """
     # Set bottom depth by bottom edge of CTD path (keep lowest) where no bottom profile data near the run's bot edge
     # todo: also allow filter depth far from CTD bot using this method
-    b_add = np.ones_like(add_dist, np.bool8)
+    b_add = np.ones_like(add_dist, np.bool_)
     b_any_r = True
     for i, (dSt, dEn) in enumerate(add_dist[:, np.newaxis] + np.array([[-1, 1]]) * max_dist):
         b_near_l = np.logical_and(dSt < dist, dist <= add_dist[i])
@@ -804,7 +798,7 @@ def b_add_ctd_depth(dist, depth, add_dist, add_depth, max_dist=0.5, max_bed_grad
             if not (b_any_r | b_any_l):
                 # remove Dep data (think it bad) in all preivious interval:
                 b_near_l = np.logical_and(add_dist[i - 1] < dist, dist <= add_dist[i])
-                depth[b_near_l] = np.NaN
+                depth[b_near_l] = np.nan
                 b_add[int(i - 1)] = True  # add data from CTD if was not added
 
             b_near_r = depth[b_near_r] < add_depth[i] + max_bed_add + max_bed_gradient * np.abs(
@@ -819,8 +813,8 @@ def data_sort_to_nav(navp: pd.DataFrame,
                      navp_exclude: pd.Series,
                      b_invert: np.ndarray,
                      ctd: pd.DataFrame,
-                     ctd_prm: Dict[str, Any],
-                     cfg: Mapping[str, Any]) -> Tuple[pd.DataFrame, Dict[str, Any], np.ndarray]:
+                     ctd_prm: MutableMapping[str, Any],
+                     cfg: Mapping[str, Any]) -> Tuple[pd.DataFrame, np.ndarray]:
     """
     Finds correspondence of CTD runs to nav points using its times and device markers.
     Excludes CTD runs and data where corresponding navigation points marked by `symbol_exclude_point`
@@ -834,12 +828,13 @@ def data_sort_to_nav(navp: pd.DataFrame,
     - itable: optional index of data table, required if data from different data talbes (different CTDs) and have
           corresponded symbols in nav points
     :param cfg: fields:
-        route_time_level: not none if points aranged right
+        route_time_level: not none if points arranged right
     :return: tuple:
-        - ctd - sorted in order of its nav.: index - integer range, column 'time' - original index
-        - ctd_prm - dict with replaced fields: 'starts', 'ends'
-        - navp_ictd - order in accordance to nav
-
+    - ctd: sorted in order of its nav. with integer index, column 'time' - original index
+    - i2nav: CTD order to nav points order indexer
+    Modifies: ctd_prm fields:
+    - starts, ends (will be replaced), CTDbot_dt,
+    - i_used: will be added to track used points # from loaded nav
 
     navp            0   1   2   3   4  ...
     navp_isort      3   4   2   1   0  ... - time order
@@ -856,39 +851,39 @@ def data_sort_to_nav(navp: pd.DataFrame,
     ctd_isort = ctd.time.iloc[ctd_prm['starts']].values.argsort()
     ctd_sts = ctd.time.iloc[ctd_prm['starts'][ctd_isort]].values  # sorted start time
     # closest CTD indexes to each nav point:
-    navp_ictd = datetime_fun(inearestsorted, ctd_sts, navp_index, type_of_operation='<M8[ms]', type_of_result='i8')
+    i2nav = datetime_fun(inearestsorted, ctd_sts, navp_index, type_of_operation='<M8[ms]', type_of_result='i8')
 
     # Check/correct one to one correspondence
-    navp_ictd_isort = navp_ictd.argsort()
-    navp_ictd_isort_diff = np.diff(navp_ictd[navp_ictd_isort])  # skipped/repeated CTD where not 1
+    i2nav_isort = i2nav.argsort()
+    i2nav_isort_diff = np.diff(i2nav[i2nav_isort])  # skipped/repeated CTD where not 1
     inav_jumped = None
     to_del_navs = []
-    for inav, ictd in zip(
-            (navp_ictd_ibads := np.flatnonzero(navp_ictd_isort_diff != 1)),
-            navp_ictd[navp_ictd_isort[navp_ictd_ibads]]
+    for inav, i2nav in zip(
+            (i2nav_ibads := np.flatnonzero(i2nav_isort_diff != 1)),
+            i2nav[i2nav_isort[i2nav_ibads]]
             ):
-        #  Can correct if have pairs of nav points assigned to one CTD
+        #  Correcting if pairs of nav points assigned to one CTD
         #  n1   n2  n3    n4    - nav time not sorted
-        #  |     \ /       \    - navp_ictd
+        #  |     \ /       \    - i2nav
         #  C1    C2   C3   C4   - CTD time sorted
 
-        if navp_ictd_isort_diff[inav] == 0:
+        if i2nav_isort_diff[inav] == 0:
             # Same CTD assigned to this nav point and next
             # - because current or next nav point is bad and skipped/no previous or next CTD
             try:
                 if inav_jumped is None:  # have no not assigned nav point(s)
                     # check that next CTD is skipped (diff > 1)
                     inav_jumped = inav + 1
-                    if navp_ictd_isort_diff[inav_jumped] > 1:
+                    if i2nav_isort_diff[inav_jumped] > 1:
                         # the guess just made was correct
-                        ictd_skipped = ictd + 1
+                        i2nav_skipped = i2nav + 1
                     else:
                         inav_jumped = None  # not correct
                         l.warning('Not implemented condition 1! Reassign nav to CTD manually')
-                        if ctd_isort < navp_ictd.size:  # if number of CTD < number of nav
+                        if ctd_isort.size < i2nav.size:  # if number of CTD < number of nav
                             # insert 1 dummy ctd point but mark this nav for deletion (experimental)
                             to_del_navs.append(inav)
-                            navp_ictd.insert(inav, inav)  # increase length to decrease chance of this block repetition
+                            i2nav.insert(inav, inav)  # increase length to decrease chance of this block repetition
                         raise NotImplementedError()
                 elif inav == inav_jumped:
                     inav += 1
@@ -901,23 +896,23 @@ def data_sort_to_nav(navp: pd.DataFrame,
                 # variants: (C2n2, C3n3), (C3n2, C2n3) - here n2,n3 - current&next nav, C2,C3 - current&skipped CTD time
                 # reassign skipped CTD to nav by minimise sum(C - n). So check 2 assignment variants:
                 # 1. direct:
-                sum1 = abs(ctd_sts[[ictd, ictd_skipped]] - navp_index[navp_ictd_isort[[inav, inav_jumped]]]).sum()
+                sum1 = abs(ctd_sts[[i2nav, i2nav_skipped]] - navp_index[i2nav_isort[[inav, inav_jumped]]]).sum()
                 # 2. reverse:
-                sum2 = abs(ctd_sts[[ictd, ictd_skipped]] - navp_index[navp_ictd_isort[[inav_jumped, inav]]]).sum()
+                sum2 = abs(ctd_sts[[i2nav, i2nav_skipped]] - navp_index[i2nav_isort[[inav_jumped, inav]]]).sum()
                 if sum1 < sum2:
-                    navp_ictd[navp_ictd_isort[[inav, inav_jumped]]] = [ictd, ictd_skipped]
+                    i2nav[i2nav_isort[[inav, inav_jumped]]] = [i2nav, i2nav_skipped]
                 else:
-                    navp_ictd[navp_ictd_isort[[inav_jumped, inav]]] = [ictd, ictd_skipped]
+                    i2nav[i2nav_isort[[inav_jumped, inav]]] = [i2nav, i2nav_skipped]
         else:  # next CTD point was skipped (diff > 1)
             inav_jumped = inav + 1
-            ictd_skipped = ictd + 1
+            i2nav_skipped = i2nav + 1
             continue
 
-    # ctd to points order indexer:
-    navp_ictd = ctd_isort[navp_ictd]  # convert index of CTD sorted to CTD
+    # Loaded CTD to nav points order indexer
+    i2nav = ctd_isort[i2nav]  # converts index of sorted CTD to loaded CTD
 
     b_far = check_time_diff(
-        ctd.time.iloc[ctd_prm['starts'][navp_ictd]], navp_index,
+        ctd.time.iloc[ctd_prm['starts'][i2nav]], navp_index,
         dt_warn=pd.Timedelta(cfg['process']['dt_search_nav_tolerance']),
         msg='CTD runs which start time is far from nearest time of closest navigation point # [min]:\n'
         )
@@ -928,12 +923,12 @@ def data_sort_to_nav(navp: pd.DataFrame,
         navp_isym = -np.ones(navp.shape[0], np.int32)
         for i, sym in enumerate(cfg['gpx']['symbols_in_veusz_ctd_order']):
             navp_isym[navp.sym == sym] = i
-        b_wrong_ctd = ctd_prm['itable'][navp_ictd] != navp_isym
+        b_wrong_ctd = ctd_prm['itable'][i2nav] != navp_isym
         if any(b_wrong_ctd):
             if len(navp_isym) - len(ctd_prm['itable']) == sum(b_wrong_ctd):
                 l.warning('it looks like Veusz data have not all navigation points. Excluding')
                 # navp = navp[~b_wrong_ctd]
-                navp_ictd = navp_ictd[~b_wrong_ctd]
+                i2nav = i2nav[~b_wrong_ctd]
                 navp_index = navp_index[~b_wrong_ctd]
                 b_far = b_far[~b_wrong_ctd]
                 b_wrong_ctd = [False]
@@ -951,12 +946,12 @@ def data_sort_to_nav(navp: pd.DataFrame,
                         igood = datetime_fun(inearestsorted, ctd_sts[b_ctd_goods], navp_index[p],
                                              type_of_operation='<M8[s]', type_of_result='i8')
                         igood = (ctd_isort[b_ctd_goods])[igood]
-                        if igood in navp_ictd:  # need remove previous assignment
-                            iprev = np.flatnonzero(navp_ictd == igood)
+                        if igood in i2nav:  # need remove previous assignment
+                            iprev = np.flatnonzero(i2nav == igood)
                             if not b_far[iprev]:
                                 print('dbstop here: replacing previous assignment which was good!')
                             b_wrong_ctd[iprev] = True  # becouse used in more than 1 point
-                        navp_ictd[p] = igood
+                        i2nav[p] = igood
                         b_wrong_ctd[p] = False
 
                         # if b_far[igood]:
@@ -965,9 +960,9 @@ def data_sort_to_nav(navp: pd.DataFrame,
                         ' Current gpx.symbols_in_veusz_ctd_order_list = {}',
                         cfg['gpx']['symbols_in_veusz_ctd_order_list'])
                 raise e  # ValueError
-        b_far = check_time_diff(ctd.time.iloc[ctd_prm['starts'][navp_ictd]].values, navp_index, pd.Timedelta(minutes=1),
+        b_far = check_time_diff(ctd.time.iloc[ctd_prm['starts'][i2nav]].values, navp_index, pd.Timedelta(minutes=1),
                                 msg='CTD runs (after correction) far from nearest time of closest navigation point # [min]:\n')
-        ctd_not_in_navp = np.setdiff1d(np.arange(ctd_prm['starts'].size), navp_ictd)
+        ctd_not_in_navp = np.setdiff1d(np.arange(ctd_prm['starts'].size), i2nav)
         if ctd_not_in_navp.size:
             msg = 'Excluding runs # (based on sym index)... '
             ctd_far_time = ctd.time.values[ctd_prm['starts']][ctd_not_in_navp]
@@ -1022,7 +1017,9 @@ def data_sort_to_nav(navp: pd.DataFrame,
                             # b_ctd_exclude[0]= False  # don't want to delete run index 0
                     ctd_far_time = ctd.time.values[ctd_prm['starts']][b_ctd_exclude]
     else:
-        ctd_not_in_navp = np.setdiff1d(np.arange(ctd_prm['starts'].size), navp_ictd)  # []
+        ctd_not_in_navp = np.setdiff1d(np.arange(ctd_prm['starts'].size), i2nav)  # []
+    # saving i2nav before removing indexes of not used CTD runs:
+    ctd_prm['i_used'] = i2nav
 
     # CTD runs and data which excluded in navigation points by ``symbol_excude_point``
     # ctd_exclude_time = np.append(navp_exclude.index.values.astype('datetime64[ns]'), ctd_far_time)
@@ -1039,23 +1036,23 @@ def data_sort_to_nav(navp: pd.DataFrame,
         ctd_idel = np.union1d(ctd_idel, ctd_not_in_navp)
 
     # Remove not needed CTD data
-    # remove runs
+    # - remove runs
     if len(ctd_idel):
         l.info('deleting %d runs which not in section: %s', len(ctd_idel), repr(ctd_idel))
         # remove elements from CTD params that have ones for each run
         ctd_bdel = np.zeros_like(ctd_prm['starts'], bool)
         ctd_bdel[np.int32(ctd_idel)] = True
-        navp_ictd = i_move2good(navp_ictd, ctd_bdel)
-        if np.flatnonzero(np.bincount(navp_ictd) > 1):  # inavp_with_many_runs =
+        i2nav = i_move2good(i2nav, ctd_bdel)
+        if np.flatnonzero(np.bincount(i2nav) > 1):  # inavp_with_many_runs =
             print("dbstop here: set manually what to exclude")
         try:
             for param in ['starts', 'ends', 'CTDbot_dt']:
                 ctd_prm[param] = np.delete(ctd_prm[param], ctd_idel)
         except KeyError:
             pass  # may be such param (except 'starts' & 'ends') is not needed
-    # remove rows
+    # - remove rows
     b_del |= ctd.Pres.isna().values
-    if any(b_del):
+    if b_del.any():
         ctd = ctd[~b_del]
         ctd_prm['starts'] = i_move2good(ctd_prm['starts'], b_del)
         ctd_prm['ends'] = i_move2good(ctd_prm['ends'], b_del, 'right')
@@ -1064,21 +1061,21 @@ def data_sort_to_nav(navp: pd.DataFrame,
 
     # CTD order to points order:
     if cfg['route_time_level'] is None:  # arrange runs according to b_invert
-        navp_ictd = np.arange(
+        i2nav = np.arange(
             navp_index.size - 1, -1, -1, dtype=np.int32) if b_invert else np.arange(
             navp_index.size, dtype=np.int32)
     # else:  # runs will exactly follow to route
-    #     navp_ictd = np.empty_like(navp_isort, dtype=np.int32)
-    #     navp_ictd[navp_isort] = np.arange(navp_isort.size, dtype=np.int32)
+    #     i2nav = np.empty_like(navp_isort, dtype=np.int32)
+    #     i2nav[navp_isort] = np.arange(navp_isort.size, dtype=np.int32)
 
-    if np.any(navp_ictd != np.arange(navp_ictd.size, dtype=np.int32)):
-        # arrange run starts and ends in points order
+    if np.any(i2nav != np.arange(i2nav.size, dtype=np.int32)):
+        # Arrange run starts and ends in points order
         # 1. from existed intervals (sorted by time like starts from Veusz)
         run_endup_from = np.append(ctd_prm['starts'][1:], ctd.time.size)
         run_edges_from = np.column_stack((ctd_prm['starts'], run_endup_from))  #
-        if len(run_edges_from) != navp_ictd.size:
-            l.error('Number of loaded nav. points %d != %d ctd points', navp_ictd.size, len(run_edges_from))
-        run_edges_from = run_edges_from[navp_ictd, :]  # rearrange ``from`` intervals
+        if len(run_edges_from) != i2nav.size:
+            l.error('Number of loaded nav. points %d != %d ctd points', i2nav.size, len(run_edges_from))
+        run_edges_from = run_edges_from[i2nav, :]  # rearrange ``from`` intervals
 
         # 2. to indexes
         run_dst = np.diff(run_edges_from).flatten()
@@ -1095,7 +1092,7 @@ def data_sort_to_nav(navp: pd.DataFrame,
 
 
         # 'ends' will be needed later
-        _junks_to = (run_endup_from - ctd_prm['ends'])[navp_ictd]
+        _junks_to = (run_endup_from - ctd_prm['ends'])[i2nav]
         ctd_prm['ends'] = run_edges_to[:, 1] - _junks_to
 
         # temp = np.empty(ctd['time'].size)
@@ -1105,7 +1102,7 @@ def data_sort_to_nav(navp: pd.DataFrame,
         #         for ise, ises in zip(run_edges_to, run_edges_to):
         #             ctd[key][slice(*ise)] = temp[slice(*ises)]
 
-    return ctd, ctd_prm, navp_ictd
+    return ctd, i2nav
 
 
 """
@@ -1209,10 +1206,10 @@ def filt_depth(s_ndepth: pd.Series, **cfg_proc: Mapping[str, Any]) -> Tuple[np.n
                 ax.plot(depth_filt_smooth, color='y', label='smooth', linewidth=0.7)
             # to cansel gaussian filter: dbstop, set depth_filt_smooth = depth_filt
             depth_out = depth_filt_smooth[ok]
-            depth_filt.fill(np.NaN)
+            depth_filt.fill(np.nan)
             depth_filt[ok] = depth_out
     elif wdesp == 0:
-        return np.array([np.NaN]), False, None
+        return np.array([np.nan]), False, None
     else:
         sGood = True
 
@@ -1220,8 +1217,8 @@ def filt_depth(s_ndepth: pd.Series, **cfg_proc: Mapping[str, Any]) -> Tuple[np.n
         if False:
             # More filter source data basing on current output to repeat
             depth_filt_smooth = gaussian_filter1d(rep2mean(depth_filt, x=s_ndepth.index.view(np.int64)), 111)
-            bed[bed > depth_filt_smooth] = np.NaN  # need data mostly at high edge of noise area
-            bed[bed < depth_filt_smooth - 7] = np.NaN
+            bed[bed > depth_filt_smooth] = np.nan  # need data mostly at high edge of noise area
+            bed[bed < depth_filt_smooth - 7] = np.nan
             ok = ~np.isnan(bed)
             depth_out = depth_filt[ok]
             coef_std_offsets = (2, 1.5); wdesp = 600
@@ -1336,7 +1333,7 @@ def add_data_at_edges(
         ctd_add_lr[sl_out, 0] = lim_val
     for sl_in, sl_out in zip(edges_sl_in, edges_sl_out):
         ctd_add_lr[sl_out, 1] = ctd_depth[sl_in]
-        ctd_add_lr[sl_out, 2] = np.NaN
+        ctd_add_lr[sl_out, 2] = np.nan
         # pd.DataFrame({
         # 'x': np.empty(edges_sl_out[1].stop, np.float64),
         # 'y': np.empty(edges_sl_out[1].stop, np.float64),
@@ -1358,7 +1355,7 @@ def add_data_at_edges(
         ctd_add_bt_x,
         np.interp(ctd_add_bt_x, ctd_dist[ctd_ends_f], ctd_depth[ctd_ends_f]),  # 'y'
         np.interp(ctd_add_bt_x, ctd_dist[ctd_ends_f], ctd_z[ctd_ends_f])  # default values, will be replaced gradually
-        # np.empty(len(add_bot_x)) + np.NaN # 'z': updating this is a main function task solved below
+        # np.empty(len(add_bot_x)) + np.nan # 'z': updating this is a main function task solved below
         ])
     # intervals indexes (input indexes ensures needed find range: 0 - before the second, last - after the last but one)
     i_add = ctd_dist[ctd_ends_f[1:-1]].searchsorted(ctd_add_bt_x)
@@ -1395,18 +1392,18 @@ def add_data_at_edges(
         #                         s - shorter (shallow), l - longer (deeper) profile
         """
         Figure. Trying the interpolation to be more hydrophysic
-        - left: scaling the bottom part of longer profile (l-profile) to the depth where its field value z is equal  
+        - left: scaling the bottom part of longer profile (l-profile) to the depth where its field value z is equal
         to the last z of shorter one.
         - right: projection of PE to SE, where P is found such that z(P) nealy equal to z(S) (with restrictions)
 
                                 l     s                                 l     s
         ~st_l+i_y_l_prior       _|...|-en_s, y_s, z_s
                                  | ~/                                   P   S new y end
-        st_z_l_prior, y_found, ~z_s -|~/                    ->          ~z_s-|~/ 
+        st_z_l_prior, y_found, ~z_s -|~/                    ->          ~z_s-|~/
         en_l                    _|/                                     _|/
                                                                           E   y_max
                                      [y_s, y_e] to [st_z_l_prior, y_e]
-        Then interp z from l-profile bottom part 
+        Then interp z from l-profile bottom part
         """
 
         y0, y1 = ctd_depth[[en0, en1]]
@@ -1608,7 +1605,11 @@ def main(new_arg=None):
                     (' - starting...' if navp_d['sec_#'] == st else '')
                     ) for navp, navp_d in ge_sections(navp_all, cfg)
             ]
-            l.warning('Processing %s%s sections:\n%s.', f"{len(_) - st + 1}/" if st > 1 else '', len(_), '\n'.join(_))
+            n_sections = len(_)
+            l.warning(
+                'Processing %s%s sections:\n%s.', f'none because selected section number {st} > number of sections '
+                if st > n_sections else f"{n_sections - st + 1}/" if st > 1 else '', n_sections, '\n'.join(_)
+            )
             vsze = None
             for navp, navp_d in ge_sections(navp_all, cfg, isec_min=cfg['process']['begin_from_section']):
                 if __debug__:
@@ -1618,17 +1619,48 @@ def main(new_arg=None):
                 print(end='\n...')
                 stem_time = navp_d['stem_time_st'] + '{:-%d_%H%M}'.format(navp_d['time_msg_max'])  # name section files
                 gr.backup_user_input_prefix = stem_time
+
                 # Load processed CTD data from Veusz vsz
-                ctd, ctd_prm, vsze = load_cur_veusz_section(cfg, navp_d, vsze)
+                custom_defs = {  # сorrect section start/end limits according to available CTD data
+                    'USEranges__': '[[{0}, {0}]]'.format("'{:%Y-%m-%dT%H:%M:%S}'").format(
+                        navp_d['time_msg_min'] - pd.Timedelta(minutes=2),
+                        timezone_view(navp_d['time_poss_max'], cfg['out']['dt_from_utc'])
+                    ),
+                    'USEruns_in_used_range': (use_runs_default := '[[0, None]]'),
+                    'Shifting_multiplier':   '-1' if navp_d['b_invert'] else '1'
+                }
+                while True:  # will run 1 or 2 times
+                    ctd, ctd_prm, vsze = load_cur_veusz_section(cfg, navp_d, vsze, custom_defs)
+                    ctd, ctd_prm['i2nav'] = data_sort_to_nav(
+                        navp, navp_d['exclude'], navp_d['b_invert'], ctd, ctd_prm, cfg
+                    )
+
+                    # Exclude runs if there are any excluded runs in loaded section
+
+                    # To overwrite vsz by load_cur_veusz_section run: vsze.AddCustom('constant',
+                    # 'USEruns_in_used_range', (use_runs_default := '[[0, None]]'), mode='replace');
+                    if custom_defs['USEruns_in_used_range'] == use_runs_default and ctd_prm.get('i_used').any() and (  # detects reodered runs:
+                        len(ctd_prm['i2nav']) > len(ctd_prm['i_used']) or (abs(np.diff(ctd_prm['i_used'])) != 1).any()
+                    ):
+                        _ = ctd_prm['i_used'].copy()
+                        custom_defs = {'USEruns_in_used_range': '{}'.format(_.tolist())}
+                        l.warning(
+                            'Vsz was updated to account of excluded runs. '
+                            'Repeating loading vsz data + saving figures'
+                        )
+                        if ((_ := Path(cfg['vsz_files']['paths'][0]).with_name(ctd_prm['stem']).with_suffix('.vsz'))
+                            in cfg['vsz_files']['paths']
+                        ):
+                            cfg['vsz_files']['paths'].remove(_)  # load_cur_veusz_section() will treat vsze as new
+                        # vsze.Save(Path(cfg['vsz_files']['paths'][0]).with_name(ctd_prm['stem']).with_suffix('.vsz'))
+                    else:
+                        break
+
                 b_go_next_section = False  # b_go_next_section = True
                 if b_go_next_section:
                     continue
-                ctd, ctd_prm, navp_d['ictd'] = data_sort_to_nav(
-                    navp, navp_d['exclude'], navp_d['b_invert'], ctd, ctd_prm, cfg)
                 # Calculate CTD depth and other output fields
-
-                try:
-                    # for interp must (np.diff(navp_d['indexs'].values.view(np.int64)) > 0).all()
+                try:  # for interp must (np.diff(navp_d['indexs'].values.view(np.int64)) > 0).all()
                     for coord in ['Lat', 'Lon']:
                         ctd.loc[:, coord] = rep2mean(np.interp(
                             ctd.time.to_numpy(np.int64),
@@ -1664,7 +1696,7 @@ def main(new_arg=None):
                 # 1. load navigation at CTD run starts and ends
                 # todo: dist_clc(nav, ctd_time, cfg): calc full dist
                 # - need direction to next route point and projection on it?
-                df_points = h5load_points(cfg['in']['db'], cfg['in']['table_nav'], ['Lat', 'Lon', 'DepEcho'],
+                df_points = h5.load_points(cfg['in']['db'], cfg['in']['table_nav'], ['Lat', 'Lon', 'DepEcho'],
                                           time_points=ctd.time.iloc[
                                               np.append(ctd_prm['starts'], ctd_prm['ends'])].values,
                                           dt_check_tolerance=cfg['process']['dt_search_nav_tolerance'],
@@ -1787,7 +1819,7 @@ def main(new_arg=None):
                     edge_bed = np.max(edge_depth) * np.ones_like(edge_depth)
 
                 # Go along bottom and collect nearest CTD bottom edge path points
-                ok_edge = np.zeros_like(edge_dist, [('hard', np.bool8), ('soft', np.bool8)])
+                ok_edge = np.zeros_like(edge_dist, [('hard', np.bool_), ('soft', np.bool_)])
                 ok_edge['soft'][:] = abs(edge_depth) > cfg['process']['convexing_ctd_bot_edge_max']
                 if 'CTDbot_dt' in ctd_prm:
                     ok_edge['soft'][:] |= (
@@ -1795,11 +1827,11 @@ def main(new_arg=None):
                         (np.interp(run_dist, run_dist[ok_dt], edge_depth[ok_dt]) < edge_depth)  # take only that make result deeper
                     )
                 k = 2  # vert to hor. scale for filter, m/km
-                edge_path_scaled = np.where(ok_edge['soft'], np.vstack((edge_dist * k, edge_depth)), np.NaN)
+                edge_path_scaled = np.where(ok_edge['soft'], np.vstack((edge_dist * k, edge_depth)), np.nan)
                 inds_closest = [
                     closest_node(bed_point[:, np.newaxis], edge_path_scaled) for bed_point in
                     np.vstack((edge_path_scaled[0, :], edge_bed))[:, ok_edge['soft']].T
-                    ]
+                ]
 
 
                 ok_edge['soft'][:] = False
@@ -1818,7 +1850,7 @@ def main(new_arg=None):
                         ax=ax,
                         ax_title='Bottom edge of CTD path filtering',
                         ax_invert=True, stop=cfg['process']['interact']
-                        )  # , clear=True
+                    )  # , clear=True
                 ok_edge['hard'] = ok_edge['soft']
 
                 """
@@ -1890,7 +1922,7 @@ def main(new_arg=None):
                     except Exception as e:
                         pass
 
-                    b_good = np.ones_like(nav_dist, dtype=np.bool8)
+                    b_good = np.ones_like(nav_dist, dtype=np.bool_)
                     depth_lowess = gaussian_filter1d(nav_dep, 10)  # 300, mode='nearest'
 
                     if ax is None or not plt.fignum_exists(ax.figure.number):
@@ -1947,7 +1979,7 @@ def main(new_arg=None):
                     top_edge_dist,
                     -(lambda a: np.fmin(medfilt(a), a))(ctd.depth.iloc[ctd_prm['starts']].values),
                     0)
-                save_shape(cfg['out']['path'] / (stem_time + 'P'), MultiPolygon(
+                save_shape(cfg['out']['path'] / f'{stem_time}P', MultiPolygon(
                     [polygon_top_edge_path, polygon_edge_path]), 'BNA')
 
                 # Runs down tracks
@@ -1955,18 +1987,33 @@ def main(new_arg=None):
                 print('Saving CTD pressure(depth) runs in "*P.txt" and data with coord. for gridding in "*params.txt"')
                 ok_ctd = ctd.depth.notna()  # find NaNs in Pres
                 ctd.depth = -ctd.depth  # temporary
-                np.savetxt(cfg['out']['path'] / (stem_time + 'P.txt'),
+                np.savetxt(cfg['out']['path'] / f'{stem_time}P.txt',
                            ctd.loc[ok_ctd, ['dist', 'depth']].values,
                            fmt='%g\t%g', header='Dist_km\tDepth_m', delimiter='\t', comments='')
                 cols_nav = ['dist', 'depth', 'Lat', 'Lon']
                 cols_nav_suffix = ['km', 'm', '°', '°']
                 cols = ['_'.join(c).capitalize() for c in zip(cols_nav, cols_nav_suffix)] + cfg['out']['data_columns']
-                np.savetxt(cfg['out']['path'] / (stem_time + 'params.txt'),
+                np.savetxt(cfg['out']['path'] / f'{stem_time}params.txt',
                            ctd.loc[ok_ctd, cols_nav + cfg['out']['data_columns']].values,
                            fmt='\t'.join(['%g'] * len(cols)), delimiter='\t', header='\t'.join(cols), comments='')
                 ctd.depth = -ctd.depth  # back to positive
 
-                # Gridding ######################################################################
+                # Save station names and coordinates
+                _ = navp.columns
+                navp['dist_km'] = edge_dist[ctd_prm['i2nav']]
+                navp['depth_m'] = edge_depth[ctd_prm['i2nav']]
+                navp = navp.loc[:, ['dist_km', 'depth_m', *_.drop('sym')]]
+                if (navp['name'].str.slice(-1) == navp.iat[0, navp.columns.get_loc('name')][-1]).all():
+                    # remove device suffix
+                    navp['name'] = navp['name'].str.slice(0, -1)
+                _ = navp.columns; cols = _.to_list(); cols[_.get_loc('cmt')] = 'time'
+                np.savetxt(
+                    cfg['out']['path'] / f'{stem_time}sec_st.tsv', navp.values,
+                    fmt='\t'.join(['%g' if t.kind == 'f' else '%s' for t in navp.dtypes]),
+                    delimiter='\t', header='\n'.join([msg, '\t'.join(cols)]), comments=''
+                )
+                # Gridding #############################################################################################
+                ########################################################################################################
 
                 for i_col, (col, ax, lim_ax) in enumerate(zip(ax2col[:], ax2col._fields, lim[:])):
                     shift = cfg.get(f'{ax}_resolution_use', cfg['out'][f'{ax}_resolution'])
@@ -2017,9 +2064,9 @@ def main(new_arg=None):
                         iruns_del = np.int32([18, 19])  # insert right run indexes of current section
                         l.warning('Removing ', col_z, ' runs:')
                         for st, en in zip(ctd_prm['starts'][iruns_del], ctd_prm['ends'][iruns_del]):
-                            l.warning('{:%d %H:%M}'.format(timzone_view(pd.to_datetime(
+                            l.warning('{:%d %H:%M}'.format(timezone_view(pd.to_datetime(
                                 ctd.time.iloc[st]), cfg['out']['dt_from_utc'])))
-                            ctd.iloc[st:en, icol_z] = np.NaN
+                            ctd.iloc[st:en, icol_z] = np.nan
 
                     ctd_with_adds = add_data_at_edges(
                         *ctd[['dist', 'depth', col_z]].values.T, ctd_prm, edge_depth, edge_dist,
@@ -2062,7 +2109,7 @@ def main(new_arg=None):
                                                  xi=(xm, ym),
                                                  method=interp_method)  # , rescale= True'cubic','linear','nearest'
                         # Blank z below bottom (for compressibility)
-                        z[ym_blank] = np.NaN
+                        z[ym_blank] = np.nan
                         # if navp_d['b_invert']:
                         #    z= np.fliplr(z)
 
@@ -2105,7 +2152,8 @@ def main(new_arg=None):
         print('\nOk.')
         if __debug__:
             plt.close('all')
-        vsze.Close()
+        if vsze is not None:
+            vsze.Close()
     except Ex_nothing_done as e:
         print(e.message)
     except Exception as e:
@@ -2159,8 +2207,8 @@ if __name__ == '__main__':
     xr = x + randn(2048,2048)
     zn = griddata(xr.ravel(),yr.ravel(),z.ravel(),x,y)
     zl = griddata(xr.ravel(),yr.ravel(),z.ravel(),x,y,interp='linear')
-    
-    
+
+
 # Nind_st = storeIn.select_as_coordinates(cfg['in']['table_nav'], qstr)[0]
 #
 # Nind= bt.index.searchsorted(ctd['time'][ctd_prm['starts']])

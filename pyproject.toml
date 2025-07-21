@@ -1,0 +1,103 @@
+[project]
+description = "Add a short description here"
+name = "h5toGrid"
+requires-python = ">= 3.11"
+version = "0.1.0"
+dependencies = [
+"hydra-colorlog",
+"wmm2020"
+]
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[tool.pixi.project]
+channels = ["conda-forge"]
+platforms = ["win-64"]
+
+[tool.pixi.pypi-dependencies]
+
+[tool.pixi.tasks]
+
+[tool.pixi.dependencies]
+antlr = "*"
+attrs = "*"
+blosc = "*"
+bokeh = "*"
+bqplot = "*"
+cachey = "*"
+cdsapi = "*"
+chardet = "*"
+clize = "*"
+colorama = "*"
+colorlog = "*"
+dask = "*"
+dask-funk = "*"
+dtale = "*"
+frictionless = "*"
+ftputil = "*"
+gdal = "*"
+geopandas = "*"
+google-api-python-client = "*"
+google-auth-oauthlib = "*"
+gpxpy = "*"
+gsw = "*"
+h5py = "*"
+hdf5 = "*"
+hydra-core = "*"
+json2html = "*"
+jupyterlab = "*"
+jupyterlab-spellchecker = "*"
+lxml = "*"
+matplotlib = "*"
+mkl = "*"
+more-itertools = "*"
+motuclient = "*"
+nb_conda = "*"
+nbconvert = "*"
+netcdf4 = "*"
+numba = "*"
+numexpr = "*"
+openssl = "*"
+pandas = "*"
+pillow = "*"
+polars = "*"
+progressbar2 = "*"
+py = "*"
+pyinstaller = "*"
+pyinstaller-hooks-contrib = "*"
+pynmea2 = "*"
+pyproj = "*"
+pyodbc = "*"
+pyqt = "*"
+pytables = "*"
+pytest = "*"
+pytest-arraydiff = "*"
+pywavelets = "*"
+pywin32 = "*"
+qt = "*"
+rarfile = "*"
+re2 = "*"
+requests = "*"
+scikit-learn = "*"
+scipy = "*"
+seaborn = "*"
+selenium = "*"
+shapely = "*"
+snappy = "*"
+sqlite = "*"
+statsmodels = "*"
+sympy = "*"
+tabulate = "*"
+toolz = "*"
+tqdm = "*"
+urllib3 = "*"
+xarray = "*"
+webdriver-manager = "*"
+pixi-kernel = "*"
+astropy = "*"
+cfgrib = "*"
+
+[tool.ruff]
+line-length = 110

@@ -37,7 +37,7 @@ from utils2init import init_file_names, Ex_nothing_done, set_field_if_no, cfg_fr
 import utils_time_corr
 
 #from csv2h5_vaex import argparser_files , with_prog_config
-from to_pandas_hdf5.h5toh5 import h5_dispenser_and_names_gen
+from to_pandas_hdf5.h5toh5 import h5.dispenser_and_names_gen
 
 if __name__ == '__main__':
     lf = None  # see main(): lf = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
@@ -288,7 +288,7 @@ def do(cfg):
     :return:
     """
     ## Main circle ############################################################
-    for i1_file, file in h5_dispenser_and_names_gen(cfg['in'], cfg['out']):
+    for i1_file, file in h5.dispenser_and_names_gen(cfg['in'], cfg['out']):
         lf.info('{}. {}: '.format(i1_file, file.name))
         # Loading data
 

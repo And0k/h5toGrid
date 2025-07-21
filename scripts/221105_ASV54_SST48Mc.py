@@ -18,7 +18,7 @@ from to_pandas_hdf5.CTD_calc import main as CTD_calc
 # from to_pandas_hdf5.csv_specific_proc import loaded_corr
 from h5toGpx import main as h5toGpx
 from grid2d_vsz import main as grid2d_vsz
-from to_pandas_hdf5.h5toh5 import h5log_names_gen
+from to_pandas_hdf5.h5toh5 import h5.log_names_gen
 
 st.go = True   # False #
 st.start = 80  # 1 5 30 70 80 115
@@ -171,7 +171,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
     pattern_code = cfg_in['pattern_path'].read_bytes()  # encoding='utf-8'
     filename_st = None
     os_chdir(cfg_in['pattern_path'].parent)
-    for filename in h5log_names_gen(cfg_in, f_row2name):
+    for filename in h5.log_names_gen(cfg_in, f_row2name):
         path_vsz = cfg_in['pattern_path'].with_name(filename)
         path_vsz.write_bytes(pattern_code)  # re.sub(rb'^([^\n]+)', str_expr, pattern_code, count=1)
         # Get filename_st (do once)
@@ -191,8 +191,8 @@ if st(30, f'Draw {device} data profiles'):  # False: #
         '--b_interact', '0',
         '--b_images_only', 'True',      # mandatory
         '--b_execute_vsz', 'True',
-        '--start_file_index', str(
-            len(list(takewhile(lambda x: x != filename_st, h5log_names_gen(cfg_in, f_row2name))))
+        '--start_file', str(
+            len(list(takewhile(lambda x: x != filename_st, h5.log_names_gen(cfg_in, f_row2name))))
             ),
         #'--min_time', cfg_in['min_time'].item().isoformat(),  # not works on filenames (no time data)
         #'--max_time', cfg_in['max_time'].item().isoformat(),
@@ -201,7 +201,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
 if False:
     # Merge each needed runs
     import pandas as pd
-    from to_pandas_hdf5.h5toh5 import h5move_tables, merge_two_runs  #, h5index_sort, h5out_init
+    from to_pandas_hdf5.h5toh5 import h5.move_tables, h5.merge_two_runs  #, h5.index_sort, h5.out_init
 
     tbl = f'/{device}'
     tbl_log = f'{tbl}/logRuns'
@@ -211,7 +211,7 @@ if False:
 
     # repeat if need:
     irow_to = 130  # 85
-    merge_two_runs(df_log, irow_to, irow_from=None)
+    h5.merge_two_runs(df_log, irow_to, irow_from=None)
 
     # write back
     with pd.HDFStore(path_db.with_name('_not_sorted.h5')) as store_tmp:
@@ -221,8 +221,8 @@ if False:
             pass
         df_log.to_hdf(store_tmp, tbl_log, append=True, data_columns=True,
                       format='table', dropna=True, index=False)
-    h5move_tables({
-        'db_path_temp': path_db.with_name('_not_sorted.h5'),
+    h5.move_tables({
+        'temp_db_path': path_db.with_name('_not_sorted.h5'),
         'db_path': path_db,
         'tables': [tbl_log],
         'tables_log': [],
@@ -437,7 +437,7 @@ if st(230, f'Draw {device} data profiles'):  # False: #
     pattern_code = cfg_in['pattern_path'].read_bytes()  # encoding='utf-8'
     filename_st = None
     os_chdir(cfg_in['pattern_path'].parent)
-    for filename in h5log_names_gen(cfg_in, f_row2name):
+    for filename in h5.log_names_gen(cfg_in, f_row2name):
         path_vsz = cfg_in['pattern_path'].with_name(filename)
         path_vsz.write_bytes(pattern_code)  # re.sub(rb'^([^\n]+)', str_expr, pattern_code, count=1)
         # Get filename_st (do once)
@@ -457,8 +457,8 @@ if st(230, f'Draw {device} data profiles'):  # False: #
         '--b_interact', '0',
         '--b_images_only', 'True',      # mandatory
         '--b_execute_vsz', 'True',
-        '--start_file_index', str(
-            len(list(takewhile(lambda x: x != filename_st, h5log_names_gen(cfg_in, f_row2name))))
+        '--start_file', str(
+            len(list(takewhile(lambda x: x != filename_st, h5.log_names_gen(cfg_in, f_row2name))))
             ),
         #'--min_time', cfg_in['min_time'].item().isoformat(),  # not works on filenames (no time data)
         #'--max_time', cfg_in['max_time'].item().isoformat(),

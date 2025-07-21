@@ -124,7 +124,7 @@ def download_index_files(dataset, local_dir: Path):
                 print(index, end=', ')
                 remote_file= '/'.join(['Core', dataset['product'], dataset['name'], index])
                 ftp_host.download(remote_file, local_subdir / index)  # remote, local
-        print('Ok>')
+        print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>")
     return local_subdir
 
 
@@ -210,7 +210,7 @@ def read_index_files(indexes_dir: Path, targeted_bbox_polygon):
                'last_latitude_observation', 'last_longitude_observation', 'last_date_observation'
                ]
     result = pd.merge(netcdf_collections, indexPlatform[headers], on='platform_code')
-    print('Ok>')
+    print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>")
     return result
 
 
@@ -307,7 +307,7 @@ if __name__ == '__main__':
                     print(f'{i}.', remote_file_name)
                     remote_file = '/'.join(remote_file_path.parts[2:])
                     ftp_host.download(remote_file, local_path / remote_file_name)  # remote, local
-                print('Ok>')
+                print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>")
         except Exception as e:
             print(e)
 

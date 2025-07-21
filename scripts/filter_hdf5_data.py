@@ -1,3 +1,4 @@
+import json
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
@@ -5,14 +6,13 @@ from pathlib import Path
 # from scipy.fft import fft, fftfreq, fftshift, highpass
 from scipy.signal import kaiserord, lfilter, firwin, freqz
 
-
-import json
 pd.set_option('display.max_columns', None)  # for better display tables
 pd.set_option('display.width', None)
-cfg = {'in': {
-    'path': r'd:\WorkData\BalticSea\231121_ABP54\inclinometer@i37,38,58-60\231121.proc_noAvg.h5',
-    'table': ['i37', 'i58', 'i59'],  # ['i37', 'i38', 'i58', 'i59', 'i60'],
-    'cols': ['u', 'v'],
+cfg = {
+    "in": {
+        "path": r"D:\WorkData\BalticSea-rc\231121_ABP54\inclinometer@i4,37,38,58-60,91\231121.proc_noAvg.h5",
+        "table": ["i37", "i58", "i59"],  # ['i37', 'i38', 'i58', 'i59', 'i60'],
+        "cols": ["u", "v"],
     }
 }
 
@@ -41,7 +41,7 @@ if b_info_devices_json_found:
         )(*pid_info)))
     print('info_devices.json loaded ok')
 
-file_intervals = r'd:\WorkData\BalticSea\231121_ABP54\meteo\ECMWF\..vsz\intervals_selected.txt'
+file_intervals = r'D:\WorkData\BalticSea-rc\231121_ABP54\meteo\ECMWF\..vsz\intervals_selected.txt'
 d = []
 with Path(file_intervals).open('rt') as hf:
     hf.readline()
@@ -79,12 +79,12 @@ def main():
                     # Create_hf to filter signal with the FIR filter by scipy.signal.lfilter.
                     taps, beta = create_hf_filter(cutoff_hz=freq_min, sample_rate=sample_rate)
                     N = len(taps)
-                val_sum = 0 
+                val_sum = 0
                 for col in cfg['in']['cols']:
                     # removing mean since it is not interested and can lead to filtering errors
                     mean = df[col].mean()
                     df[col] -= mean
-                    
+
                     std = df[col].std()
                     mean_std[t_st][col] = std
                     val_sum += std
@@ -107,7 +107,7 @@ def main():
         dfc = dfc.rename(columns={pid: f"{device_info[pid]['d']}m" for pid in cfg['in']['table']}).round(3).sort_index(axis=1)
         print(dfc)
 
-    print('ok>')
+    print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>")
 
 
 def create_hf_filter(cutoff_hz=freq_min, sample_rate=1, show_filter=False):
@@ -131,7 +131,7 @@ def create_hf_filter(cutoff_hz=freq_min, sample_rate=1, show_filter=False):
 
     # Use firwin with a Kaiser window to create a highpass (by pass_zero=False) FIR filter.
     taps = firwin(N, cutoff_hz/nyq_rate, window=('kaiser', beta), pass_zero=False)
-    
+
     if show_filter:
         """Plot the filter coefficients.
         """
@@ -151,7 +151,7 @@ def create_hf_filter(cutoff_hz=freq_min, sample_rate=1, show_filter=False):
         figure(2)
         clf()
         w, h = freqz(taps, worN=8000)
-        plot((w/pi)*nyq_rate, absolute(h), linewidth=2)
+        plot((w/np.pi)*nyq_rate, np.absolute(h), linewidth=2)
         xlabel('Frequency (Hz)')
         ylabel('Gain')
         title('Frequency Response')
@@ -160,14 +160,14 @@ def create_hf_filter(cutoff_hz=freq_min, sample_rate=1, show_filter=False):
 
         # Upper inset plot.
         ax1 = axes([0.42, 0.6, .45, .25])
-        plot((w/pi)*nyq_rate, absolute(h), linewidth=2)
+        plot((w/np.pi)*nyq_rate, np.absolute(h), linewidth=2)
         xlim(0,8.0)
         ylim(0.9985, 1.001)
         grid(True)
 
         # Lower inset plot
         ax2 = axes([0.42, 0.25, .45, .25])
-        plot((w/pi)*nyq_rate, absolute(h), linewidth=2)
+        plot((w/np.pi)*nyq_rate, np.absolute(h), linewidth=2)
         xlim(12.0, 20.0)
         ylim(0.0, 0.0025)
         grid(True)
@@ -188,7 +188,7 @@ if plot_results:
         plot(t, x)
         # Plot the filtered signal, shifted to compensate for the phase delay.
         plot(t-delay, filtered_x, 'r-', linewidth=1)
-        
+
         # Plot just the "good" part of the filtered signal.  The first N-1
         # samples are "corrupted" by the initial conditions.
         plot(t[N-1:]-delay, filtered_x[N-1:], 'g', linewidth=1)

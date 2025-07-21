@@ -5,7 +5,7 @@ import pandas as pd
 
 from h5toGpx import init_gpx_symbols_fun, save_to_gpx, my_argparser as h5toGpx_parser
 from to_pandas_hdf5.csv_specific_proc import chars_array_to_datetimeindex
-from to_pandas_hdf5.h5toh5 import h5load_points
+from to_pandas_hdf5.h5toh5 import h5.load_points
 # my:
 from utils2init import init_file_names, cfg_from_args, this_prog_basename, Ex_nothing_done, standard_error_info
 
@@ -94,7 +94,7 @@ def main(new_arg=None):
 
     with pd.HDFStore(cfg['in']['db_path'], mode='r') as storeIn:
         # dfL = storeIn[tblD + '/logFiles']
-        nav2add = h5load_points(storeIn, cfg['in']['table_nav'], ['Lat', 'Lon', 'DepEcho'], time_points=tim)[0]
+        nav2add = h5.load_points(storeIn, cfg['in']['table_nav'], ['Lat', 'Lon', 'DepEcho'], time_points=tim)[0]
         rnav_df_join = nav2add.assign(itbl=itbl)  # copy/append on first/next cycle
         # Save to gpx waypoints
 

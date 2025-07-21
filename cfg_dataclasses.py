@@ -2,19 +2,55 @@
 # coding:utf-8
 """
   Author:  Andrey Korzh <ao.korzh@gmail.com>
-  Purpose:
+  Purpose: Help manage hydra (OmegaConf) custom configurations
   Created: 14.09.2020
-  Modified: 19.12.2020
+  Modified: 20.09.2024
 """
 
-import os, sys
-from typing import Any, Callable, Optional, Dict, List, Mapping, Sequence, Tuple, Union
-from dataclasses import dataclass, field, make_dataclass
-from omegaconf import OmegaConf, MISSING, MissingMandatoryValue  # Do not confuse with dataclass.MISSING
+import os
+import sys
+
+from dataclasses import dataclass, Field, field, fields, is_dataclass, make_dataclass, MISSING as dataclasses_missing
+from datetime import date as datetime_date
+
+# from collections.abc import Mapping
+from datetime import datetime, timedelta
+from types import ModuleType
+from typing import (
+    Annotated,
+    Any,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    Type,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
+from pathlib import Path
 import hydra
 from hydra.core.config_store import ConfigStore
 from hydra.errors import HydraException
-from utils2init import this_prog_basename, ini2dict, Ex_nothing_done, init_file_names, standard_error_info, LoggingStyleAdapter
+from omegaconf import (
+    MISSING,  # Do not confuse with dataclass.MISSING
+    MissingMandatoryValue,
+    OmegaConf,
+    open_dict,
+)
+
+from utils2init import (
+    Ex_nothing_done,
+    LoggingStyleAdapter,
+    ini2dict,
+    init_file_names,
+    standard_error_info,
+    this_prog_basename,
+)
 
 lf = LoggingStyleAdapter(__name__)
 
@@ -125,7 +161,7 @@ class ConfigOutSimple:
     b_reuse_temporary_tables: bool = False
     b_remove_duplicates: bool = False
     b_incremental_update: bool = True  # todo: link to ConfigIn
-    db_path_temp: Any = None
+    temp_db_path: Any = None
     b_overwrite: Optional[bool] = False
     db: Optional[Any] = None  # False?
     logfield_fileName_len: Optional[int] = 255
@@ -159,12 +195,12 @@ class ConfigOutCsv:
     sep: str = '\t'
 
 ParamsCTD = make_dataclass('ParamsCTD', [  # 'Pres, Temp90, Cond, Sal, O2, O2ppm, Lat, Lon, SA, sigma0, depth, soundV'
-    (p, Optional[float], MISSING) for p in 'Pres Temp Cond Sal SigmaTh O2sat O2ppm soundV'.split()
+    (p, Optional[float], None) for p in 'Pres Temp Cond Sal SigmaTh O2sat O2ppm soundV'.split()
     ])
 
 ParamsNav = make_dataclass('ParamsNav', [
-    (p, Optional[float], MISSING) for p in 'Lat Lon DepEcho'.split()
-    ] + [('date', Optional[Any], MISSING)])
+    (p, Optional[float], None) for p in 'Lat Lon DepEcho'.split()
+    ] + [('date', Optional[Any], None)])
 
 @dataclass
 class ConfigFilterCTD:
@@ -195,6 +231,7 @@ class ConfigFilterNav:
     max: Optional[ParamsNav] = field(default_factory=ParamsNav)
     b_bad_cols_in_file_name: bool = False
     corr_time_mode: Any = 'delete_inversions'
+    b_time_round: bool = True  # round to seconds
 
 @dataclass
 class ConfigProgram:
@@ -218,7 +255,7 @@ class ConfigProgram:
 def camel2snake(text, sep='_'):
     """
     CamelCase to snake_case: inserts delimiter only if upper letter going after lower.
-    Note: many characters cannot be upper or lower case.
+    Note: many characters have no upper or lower case.
     :param text: string to reformat  or any text
     :param sep: delimiter, default: '_'
     :return:
@@ -226,12 +263,17 @@ def camel2snake(text, sep='_'):
     text_lower = text.lower()
     b_add_delimiter = False  # initial state: no need to add delimiter before 1st character
 
-    def need_delimiter_check_saving_state(c, l):
-        nonlocal b_add_delimiter
-        add_delimiter_now_possible, b_add_delimiter = b_add_delimiter, c.islower()
-        return add_delimiter_now_possible and c != l  # c != l is same as c.isupper() but, I think, must be faster
 
-    return ''.join(f'{sep}{l}' if need_delimiter_check_saving_state(c, l) else l for c, l in zip(text, text_lower))
+    def need_delimiter_check_saving_state(char, char_low):
+        """
+        :param char_low: `char` in low case to speedup detecting that `char` is not in low case
+        """
+        nonlocal b_add_delimiter
+        add_delimiter_now_possible, b_add_delimiter = b_add_delimiter, char.islower()
+        return add_delimiter_now_possible and char != char_low
+
+    return ''.join(
+        f'{sep}{l}' if need_delimiter_check_saving_state(c, l) else l for c, l in zip(text, text_lower))
 
 
 def hydra_cfg_store(
@@ -263,11 +305,15 @@ def hydra_cfg_store(
         for cl in classes:
             if isinstance(cl, str):
                 name = cl
-                class_name = ''.join(['Config'] + [(s.title() if s.islower() else s) or '_' for s in name.split('_')])
+                class_name = 'Config' + ''.join(
+                    [(s.title() if s.islower() else s) or '_' for s in name.split('_')]
+                )
                 try:
                     cl = getattr(module, class_name)
                 except Exception as err:
-                    raise KeyError(f'"{class_name}" class constructed from provided group option {cl} is not found') from err
+                    raise KeyError(
+                        f'"{class_name}" class constructed from provided group option {cl} is not found'
+                    ) from err
             else:
                 class_name = cl.__name__
                 name = camel2snake(class_name)
@@ -325,7 +371,7 @@ def main_init_input_file(cfg_t, cs_store_name, in_file_field='db_path', **kwargs
     return cfg_t
 
 
-def main_init(cfg: Mapping, cs_store_name, __file__=None, ) -> Dict:
+def main_init(cfg: Mapping[str, Any], cs_store_name, __file__=None, ) -> Mapping[str, Any]:
     """
     - prints parameters
     - prints message that program (__file__ or cs_store_name) started
@@ -347,7 +393,8 @@ def main_init(cfg: Mapping, cs_store_name, __file__=None, ) -> Dict:
     # print not empty / not False values # todo: print only if config changed instead
     try:
         print(OmegaConf.to_yaml({
-            k0: ({k1: v1 for k1, v1 in v0.items() if v1} if hasattr(v0, 'items') else v0) for k0, v0 in cfg.items()
+            k0: ({k1: v1 for k1, v1 in v0.items() if v1}
+                 if hasattr(v0, 'items') else v0) for k0, v0 in cfg.items()
             }))
     except MissingMandatoryValue as e:
         lf.error(standard_error_info(e))
@@ -364,7 +411,7 @@ def main_init(cfg: Mapping, cs_store_name, __file__=None, ) -> Dict:
 
     print('\n' + this_prog_basename(__file__) if __file__ else cs_store_name, end=' started. ')
     try:
-        cfg_t = ini2dict(cfg)  # fields named with type pre/suffixes are converted
+        cfg_t = ini2dict(cfg)  # fields named with type prefixes/suffixes are converted
     except MissingMandatoryValue as e:
         lf.error(standard_error_info(e))
         raise Ex_nothing_done()

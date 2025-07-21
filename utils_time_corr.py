@@ -7,7 +7,7 @@ import pandas as pd
 from time import sleep
 
 from filters import find_sampling_frequency, longest_increasing_subsequence_i, rep2mean, repeated2increased, \
-    make_linear, rep2mean_with_const_freq_ends
+    make_linear, make_linear_with_shifts, rep2mean_with_const_freq_ends
 from utils2init import dir_create_if_need
 from utils_time import lf, datetime_fun, check_time_diff
 
@@ -29,6 +29,7 @@ def time_corr(
     :param cfg_in: dict with fields:
     - dt_from_utc: correct time by adding this constant
     - fs: sampling frequency
+    - linearize_accuracy_s: None
     - corr_time_mode: same as :param process, used only if :param process is None. Default: None.
     - b_keep_not_a_time: NaNs in :param date will be unchanged
     - path: where save images of bad time corrected
@@ -54,7 +55,7 @@ def time_corr(
     if __debug__:
         lf.debug('time_corr (time correction) started')
     if dt_from_utc := cfg_in.get('dt_from_utc'):
-        if isinstance(date[0], str):
+        if isinstance(date.iat[0] if isinstance(date, pd.Series) else date[0], str):
             # add zone that compensate time shift
             hours_from_utc_f = dt_from_utc.total_seconds() / 3600
             Hours_from_UTC = int(hours_from_utc_f)
@@ -88,10 +89,10 @@ def time_corr(
                     np.subtract, tim.values, np.timedelta64(dt_from_utc), type_of_operation='<M8[ms]'
                     ), utc=True)
             # tim += np.timedelta64(pd.Timedelta(hours=hours_from_utc_f)) #?
-        lf.info('Time constant: {} {:s}', abs(dt_from_utc),
+        lf.info('Time constant ({}) {:s}', abs(dt_from_utc),
                 'subtracted' if dt_from_utc > timedelta(0) else 'added')
     else:
-        if not isinstance(date[0], pd.Timestamp):  # isinstance(date, (pd.Series, np.datetime64))
+        if not isinstance(date.iat[0] if isinstance(date, pd.Series) else date[0], pd.Timestamp):  # isinstance(date, (pd.Series, np.datetime64))
             date = date.astype('datetime64[ns]')
         tim = pd.to_datetime(date, utc=True)  # .tz_localize('UTC')tz_convert(None)
 
@@ -158,10 +159,10 @@ def time_corr(
             lf.warning('Using fallback (last) sampling frequency fs = {:s}', cfg_in['fs_last'])
             freq = cfg_in['fs_last']
         elif cfg_in.get('fs'):
-            lf.warning('Ready to use specified sampling frequency fs = {:s}', cfg_in['fs'])
+            lf.warning('Using specified sampling frequency fs = {:s}', cfg_in['fs'])
             freq = cfg_in['fs']
         elif cfg_in.get('fs_old_method'):
-            lf.warning('Ready to use specified sampling frequency fs_old_method = {:s}', cfg_in['fs_old_method'])
+            lf.warning('Using specified sampling frequency fs_old_method = {:s}', cfg_in['fs_old_method'])
             freq = cfg_in['fs_old_method']
         else:
             lf.warning('Ready to set sampling frequency to default value: fs = 1Hz')
@@ -252,43 +253,72 @@ def time_corr(
 
 
         if n_same > 0 and cfg_in.get('fs') and not cfg_in.get('fs_old_method'):
-            # This is the most simple operation that should be done usually for CTD
-            t = repeated2increased(t, cfg_in['fs'], b_ok if n_decrease else None)  # if n_decrease then b_ok is calculated before
+            # The most simple operation that should be done usually for CTD, but requires fs:
+            if cfg_in.get('linearize_accuracy_s'):
+                t = make_linear_with_shifts(t, cfg_in['fs'], cfg_in['linearize_accuracy_s'])
+            else:
+                t = repeated2increased(t, cfg_in['fs'], b_ok if n_decrease else None)  # if n_decrease then b_ok is calculated before
             tim = pd.to_datetime(t, utc=True)
         elif n_same > 0 or n_decrease > 0:
             # message with original t
 
             # Replace t by linear increasing values using constant frequency excluding big holes
             if cfg_in.get('fs_old_method'):
-                lf.warning('Linearize time interval using provided freq = {:f}Hz (determined: {:f})',
-                          cfg_in.get('fs_old_method'), freq)
+                lf.info('Flatten time interval using provided freq = {:f}Hz (determined: {:f})',
+                        cfg_in.get('fs_old_method'), freq)
                 freq = cfg_in.get('fs_old_method')
             else:  # constant freq = filtered mean
-                lf.warning('Linearize time interval using median* freq = {:f}Hz determined', freq)
-            t = np.int64(rep2mean(t, bOk=b_ok))  # interp to can use as pandas index even if any bad
+                lf.info('Flatten time interval using median* freq = {:f}Hz determined', freq)
             b_show = n_decrease > 0
             if freq <= 1:
                 # Skip: typically data resolution is sufficient for this frequency
-                lf.warning('Not linearizing for frequency < 1')
+                lf.warning('Not flattening for frequency < 1')
             else:
                 # Increase time resolution by recalculating all values
-                tim_before = pd.to_datetime(t, utc=True)
-                make_linear(t, freq)  # changes t (and tim?)
+
+                dt_interp_between = cfg_in.get('dt_interp_between', timedelta(seconds=1.5))
+                # interp to can use as pandas index even if any bad. Note: if ~b_ok at i_st_hole then interp. is bad
+                tim_before = pd.to_datetime(np.int64(rep2mean(t, bOk=b_ok)))
+                i_st_hole = make_linear(t, freq, dt_big_hole=dt_interp_between)  # changes t (and tim?)
                 # Check if we can use them
-                bbad = check_time_diff(tim_before, t.view('M8[ns]'), dt_warn=pd.Timedelta(minutes=2),
-                                       msg='Big time diff after corr: difference [min]:')
-                if np.any(bbad):
+                bbad = np.ones_like(t, dtype=np.bool_)
+                bbad[i_st_hole] = False
+                bbad[i_st_hole[1:] - 1] = False  # last data point before hole
+                bbad[bbad] = check_time_diff(
+                    t[bbad].view('M8[ns]'), tim_before[bbad],
+                    dt_warn=cfg_in.get('dt_max_interp_err', timedelta(seconds=1.5)),  # pd.Timedelta(minutes=2)
+                    msg='Time difference [{units}] in {n} points exceeds {dt_warn} after flattening:',
+                    max_msg_rows=20
+                )
+                # replace regions of big error with original data ignoring single values with big error
+                _ = bbad[:-1] & bbad[1:]  # repeated error mask
+                if _.any():
+                    bbad[:-1] = _
+                    bbad[1:] = _
+                    n_repeated = bbad.sum()
                     b_ok = ~bbad
                     b_show = True
-
+                    t[bbad] = tim_before.to_numpy(dtype=np.int64)[bbad]
+                    dt = np.ediff1d(t, to_begin=1)
+                    if (dt < 0).any():
+                        t = tim_before.to_numpy(dtype=np.int64)
+                        lf.info("flattening frequency failed => keeping variable frequency")
+                    else:
+                        lf.info(f'There are {n_repeated} adjacent among them => '
+                                'revert to original not constant frequency there')
+                else:
+                    lf.info("Discarded isolated gaps")
             # Show what is done
             if b_show:
                 if b_ok is None:
                     dt = np.ediff1d(t, to_begin=1)
                     b_ok = dt > 0
-                plot_bad_time_in_thread(cfg_in, t, b_ok, idel, tim,
-                                        (tim_min, tim_max) if cfg_in.get('min_date') else None, path_save_image, msg)
-
+                plot_bad_time_in_thread(
+                    cfg_in, t, b_ok, idel, tim,
+                    (tim_min, tim_max) if cfg_in.get('min_date') else None,
+                    path_save_image,
+                    msg
+                )
         # Checking all is ok
 
         dt = np.ediff1d(t, to_begin=1)
@@ -298,13 +328,14 @@ def time_corr(
         n_decrease = b_decrease.sum()
         if n_decrease > 0:
             lf.warning(
-                'Decreased remaining time ({:d}) are masked!{:s}{:s}',
+                'Decreased time ({:d}) remains:{:s}{:s}{:s}! => rows masked',
                 n_decrease,
-                '\n'.join(' < '.join('{:%y.%m.%d %H:%M:%S.%f%z}'.format(_) for _ in tim[se].to_numpy()) for se in
-                         np.flatnonzero(b_decrease)[:3, None] + np.int32([-1, 0])),
+                '\n' if n_decrease > 1 else ' ',
+                '\n'.join(' follows '.join(
+                    '{:%y.%m.%d %H:%M:%S.%f}'.format(_) for _ in tim.iloc[se].to_numpy()
+                    ) for se in np.flatnonzero(b_decrease)[:3, None] + np.int32([0, 1])),  # [-1, 0]
                 '...' if n_decrease > 3 else ''
-                )
-
+            )
             b_ok &= ~b_decrease
 
         b_same_prev = np.ediff1d(t, to_begin=1) == 0  # with set of first element as changing
@@ -312,7 +343,7 @@ def time_corr(
 
         if cfg_in.get('b_keep_not_a_time'):
             if n_same > 0:
-                lf.warning('non-increased time ({:d} times) is detected! ↦ interp ', n_same)
+                lf.warning('non-increasing time ({:d} times) is detected! => interp ', n_same)
         else:
             # prepare to interp all non-increased (including NaNs)
             if n_bad_in:
@@ -322,19 +353,20 @@ def time_corr(
                 f'{fault} time ({n} times)' for (n, fault) in ((n_same, 'non-increased'), (n_bad_in, 'NaN')) if n > 0
                 )
             if msg:
-                lf.warning('{:s} is detected! ↦ interp ', msg)
+                lf.warning('{:s} is detected! => interp ', msg)
 
         if n_same > 0 or n_decrease > 0:
             # rep2mean(t, bOk=np.logical_not(b_same_prev if n_decrease==0 else (b_same_prev | b_decrease)))
             b_bad = b_same_prev if n_decrease == 0 else (b_same_prev | b_decrease)
             t = rep2mean_with_const_freq_ends(t, ~b_bad, freq)
-
+            dt = np.ediff1d(t, to_begin=1)
+            b_ok = dt > 0
     else:  # not need to check / correct time
-        b_ok = np.ones(tim.size, np.bool8)
+        b_ok = np.ones(tim.size, np.bool_)
     # make initial shape: paste NaNs back
     if n_bad_in and cfg_in.get('b_keep_not_a_time'):
         # place initially bad elements back
-        t, t_in = (np.NaN + np.empty_like(b_ok_in)), t
+        t, t_in = (np.nan + np.empty_like(b_ok_in)), t
         t[b_ok_in] = t_in
         b_ok_in[b_ok_in] = b_ok
         b_ok = b_ok_in
@@ -343,7 +375,10 @@ def time_corr(
     # make initial shape: pad with constants of config. limits where data was removed because input is beyond this limits
     if is_time_filt:   # cfg_min_date and np.any(it_se != np.int64([0, date.size])):
         pad_width = (it_se[0], date.size - it_se[1])
-        t = np.pad(t, pad_width, constant_values=np.array((cfg_in['min_date'], cfg_in['max_date']), 'M8[ns]'))
+        t = np.pad(
+            t, pad_width,
+            constant_values=np.array((cfg_in['min_date'], cfg_in['max_date']), 'M8[ns]').astype(np.int64)
+        )
         b_ok = np.pad(b_ok, pad_width, constant_values=False)
     assert t.size == b_ok.size
 
@@ -352,7 +387,7 @@ def time_corr(
 
 def get_version_via_com(filename):
     from win32com.client import Dispatch
-    
+
     parser = Dispatch("Scripting.FileSystemObject")
     try:
         version = parser.GetFileVersion(filename)
@@ -382,7 +417,7 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
     from bokeh.io import export_png, export_svgs
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
-    
+
     save_format_suffix = '.png'
     # output figure name
     fig_name = '{:%y%m%d_%H%M}-{:%H%M}'.format(*(
@@ -390,10 +425,14 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
         tim[[0, -1]] if isinstance(tim, pd.DatetimeIndex) else
         tim.iloc[[0, -1]] if isinstance(tim, pd.Series) else
         (x for x in tim[[0, -1]].astype('M8[m]').astype(datetime))))
-    if 'path' in cfg_in and path_save_image:
+    if path_save_image:
         path_save_image = Path(path_save_image)
         if not path_save_image.is_absolute():
-            path_save_image = dir_create_if_need(Path(cfg_in['path']).with_name(str(path_save_image)))
+            for p in ['path', 'text_path', 'file_cur']:
+                p_use = cfg_in.get(p)
+                if p_use:
+                    break
+            path_save_image = dir_create_if_need(Path(p_use).with_name(str(path_save_image)))
         fig_name = (path_save_image / fig_name).with_suffix(save_format_suffix)
         if fig_name.is_file():
             # work have done before
@@ -403,11 +442,13 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
     if isinstance(fig_name, Path):
         lf.info('saving figure to {!s}', fig_name)
         if save_format_suffix != '.html':
-            from selenium.common.exceptions import SessionNotCreatedException, WebDriverException
+            from selenium.common.exceptions import SessionNotCreatedException, WebDriverException, NoSuchDriverException
+
             try:
                 # To png/svg
                 chrome_options = Options()
                 chrome_options.add_argument("--headless")
+                from selenium import webdriver
 
                 chrome_options.binary_location = r'C:\Program Files (x86)\Slimjet\Slimjet.exe'
                 # version = [get_version_via_com(p) for p in paths if p is not None][0]
@@ -434,6 +475,9 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
                         sleep(1)
                         lf.error(f'{k}/{len(range(n_tries))}. {e.__class__}: {msg_trace}')
                         web_driver = None
+                    except ImportError:
+                        lf.exception('Skipping of figure creating because there is no needed package...')
+
             except SessionNotCreatedException:
                 lf.exception('Can not save png so will save html instead')
                 save_format_suffix = '.html'
@@ -449,7 +493,7 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
 
 
     # Create a new plot with a datetime axis type
-    p = figure(plot_width=1400, plot_height=700, y_axis_type="datetime")   # plt.figure('Decreasing time corr')
+    p = figure(width=1400, height=700, y_axis_type="datetime")   # old: plot_width=1400, plot_height=700  # plt.figure('Decreasing time corr')
     p.title.text = 'Decreasing time corr'
 
     # add renderers
@@ -472,5 +516,8 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
 
     # export figure
     if isinstance(fig_name, Path) and save_format_suffix != '.html':
-        (export_png if save_format_suffix == '.png' else export_svgs)(
-            p, filename=fig_name.with_suffix(save_format_suffix), webdriver=web_driver)
+        try:
+            (export_png if save_format_suffix == '.png' else export_svgs)(
+                p, filename=fig_name.with_suffix(save_format_suffix), webdriver=web_driver)
+        except Exception as e:
+            lf.exception('Can not save figure of bad source time detected')

@@ -10,7 +10,7 @@ import sys
 import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, Iterable, Mapping, Optional, List, Tuple
-# from datetime import timedelta
+from datetime import timedelta
 from itertools import zip_longest
 
 import omegaconf  #, OmegaConf DictConfig, MISSING, open_dict OmegaConf, DictConfig, MISSING, open_dict
@@ -26,7 +26,7 @@ from utils2init import LoggingStyleAdapter, dir_create_if_need, FakeContextIfOpe
 
 # from csv2h5_vaex import argparser_files, with_prog_config
 
-from to_pandas_hdf5.h5toh5 import h5find_tables
+from to_pandas_hdf5 import h5
 from to_pandas_hdf5.CTD_calc import get_runs_parameters, add_ctd_params
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
@@ -186,7 +186,7 @@ def h5_tables_gen(db_path, tables, tables_log, db=None) -> Iterator[Tuple[str, p
     :param tables: tables names search pattern or sequence of table names
     :param tables_log: tables names for metadata of data in `tables`
     :param db_path:
-    :param cfg_out: not used but kept for the requirement of h5_dispenser_and_names_gen() argument
+    :param cfg_out: not used but kept for the requirement of h5.dispenser_and_names_gen() argument
     :return: iterator that returns (table name, coefficients)
     updates cfg_in['tables'] - sets to list of found tables in store
     """
@@ -198,7 +198,7 @@ def h5_tables_gen(db_path, tables, tables_log, db=None) -> Iterator[Tuple[str, p
         tables_log = ['']
     with FakeContextIfOpen(lambda f: pd.HDFStore(f, mode='r'), file=db_path, opened_file_object=db) as store:
         if len(tables) == 1:
-            tables = h5find_tables(store, tables[0])
+            tables = h5.find_tables(store, tables[0])
         for tbl, tbl_log in zip_longest(tables, tables_log, fillvalue=tbl_log_pattern):
             yield tbl, tbl_log.format(tbl), store
 
@@ -213,8 +213,9 @@ def order_cols(
 
     :param df:
     :param cols: one of:
-    - mapping out column names to expressions (which includes input col. names) for pd.DataFrame.eval()
-    - just input column names
+    - mapping out column names to expressions (which includes input col. names) for pd.DataFrame.eval().
+    1st item will be the index
+    - can be also simply input column names
     :param i_log: log row index to can eval expressions referring it as '@i_log'
     :param df_log: log DataFrame to can eval expressions referring it as '@df_log'
     :return:
@@ -264,13 +265,13 @@ def order_cols(
             cols = {**cols, **dict(zip(df_out.columns, df.columns))}
             break
         else:
-            if isinstance(in_col, str) and ('@' in in_col or 'df.' in in_col): # not
-                df_out[out_col] = df.eval(in_col)
+            if isinstance(in_col, str) and ('@' in in_col or 'df.' in in_col) and not any(s for s in [':', 'f\''] if s in in_col):
+                df_out[out_col] = df.eval(in_col.replace('df.', ''))
             elif callable(in_col):  # in_col(df) if callable(in_col) else
                 df_out[out_col] = [in_col(ii) for ii in i]  # .apply(
             else:
                 df_out[out_col] = eval(in_col)
-                    
+
                     # in_col = in_col.strip().replace('\\', '')
                     # try:
                     #     df_out[out_col] = eval(f'[out_cols_{out_col}_fun(ii) for ii in i]')
@@ -279,7 +280,7 @@ def order_cols(
                     #         gpx_names_fun = exec(in_col)  # gpx_names_fun_str
                     #         df_out[out_col] = eval('[gpx_names_fun(ii) for ii in i]')
                     #     else:
-                    
+
 
     df_to_rename = df[dict_rename.keys()]
     # removing index if exists because df.rename() renames only columns and add it as column
@@ -300,16 +301,17 @@ def order_cols(
 
 
 if False:
-    def interp_vals(df: pd.DataFrame, cols: Mapping[str, str] = None,
-                   i_log_row_st=0,
-                   times_min=None,
-                   times_max=None,
-                   df_search=None,
-                   cols_good_data=('P', 'Depth'),
-                   db=None,
-                   db_path=None,
-                   table_nav='navigation',
-                   dt_search_nav_tolerance=timedelta(minutes=2)):
+    def interp_vals(
+            df: pd.DataFrame, cols: Mapping[str, str] = None,
+            i_log_row_st=0,
+            times_min=None,
+            times_max=None,
+            df_search=None,
+            cols_good_data=('P', 'Depth'),
+            db=None,
+            db_path=None,
+            table_nav='navigation',
+            dt_search_nav_tolerance=timedelta(minutes=2)):
         """
 
         :param df:
@@ -326,13 +328,12 @@ if False:
         """
         # replace NaNs where it can be found in other tables
         df_out = get_runs_parameters(
-            df_search,
-            times_min=df.index,
-            times_max=df.index,  # ?
+            df_search, times_min=df.index, times_max=df.index,
             cols_good_data=cols_good_data,
-            dt_search_nav_tolerance=dt_search_nav_tolerance,
-            dt_from_utc=None, db=db, db_path=db_path, table_nav=table_nav)
-
+            dt_from_utc=None, db=db, db_path=db_path,
+            add_tables_cols={table_nav: ('Lat', 'Lon', 'DepEcho', 'Speed', 'Course')},
+            dt_search_tolerances=dt_search_nav_tolerance
+        )
 
 # @dataclass hydra_conf(hydra.conf.HydraConf):
 #     run: field(default_factory=lambda: defaults)dir
@@ -373,7 +374,7 @@ def cfg_by_hydra(config: ConfigType):
       column names and functions with them to eval. Also, these predefined variables can be used:
         - "@i": data row number,
         - "@i_log": log row number that was used to load data range.
-        - "@df_log": log row number that was used to load data range.
+        - "@df_log": @i_log-th log row object
 
       - cols_log: Same as cols, but maps output header csv column names to input log table column names.
         Note: predefined variable of log row number here is "@i".
@@ -384,10 +385,10 @@ def cfg_by_hydra(config: ConfigType):
 
     """
     global cfg
-    
+
     cfg = cfg_dataclasses.main_init(config, cs_store_name)
     cfg = cfg_dataclasses.main_init_input_file(cfg, cs_store_name)
-    #h5out_init(cfg['in'], cfg['out'])
+    #h5.out_init(cfg['in'], cfg['out'])
     #cfg['out']['dt_from_utc'] = 0
     return
 
@@ -395,10 +396,10 @@ def cfg_by_hydra(config: ConfigType):
 def main(**kwargs) -> None:
     global cfg
     cfg_by_hydra()
-    
-    if 'out_col_station_fun' in kwargs:
+
+    if _ := kwargs.get('out_col_station_fun'):
         # assign to global variable
-        cfg['out']['col_station_fun'] = kwargs['out_col_station_fun']
+        cfg['out']['col_station_fun'] = _
         # replace call to of gl
         cfg['out']['cols'] = dict(cfg['out']['cols'])
         cfg['out']['cols']['station'] = cfg['out']['cols']['station'].replace(
@@ -408,8 +409,8 @@ def main(**kwargs) -> None:
         cfg['out']['cols_log']['station'] = cfg['out']['cols_log']['station'].replace(
             'out_col_station_fun', "cfg['out']['col_station_fun']"
         )
-      
     qstr_trange_pattern = "index>='{}' & index<='{}'"
+
     # Prepare saving to csv
     # file name for files and log list:
     for fun in ['file_name_fun', 'file_name_fun_log']:
@@ -445,7 +446,7 @@ def main(**kwargs) -> None:
 
             df_log_csv.to_csv(
                 cfg['out']['text_path'] / cfg['out']['file_name_fun_log'](
-                    i_log_row_st, df_log.index[0], df_log.DateEnd[-1], tbl
+                    i_log_row_st, df_log.index[0], df_log.DateEnd.iat[-1], tbl
                     ),
                 date_format=cfg['out']['text_date_format'],
                 float_format=cfg['out']['text_float_format'],
@@ -455,39 +456,79 @@ def main(**kwargs) -> None:
             lf.info('No log tables found. So exporting all data from {}: ', tbl)
             # set interval bigger than possible to load and export all data in one short
             df_log = pd.DataFrame({'DateEnd': [np.datetime64('now')]}, index=[np.datetime64('1970', 'ns')])
+            df_log_csv = None
         else:
             raise(KeyError(f'Table {tbl} not found.'))
 
-        for i_log_row, log_row in enumerate(df_log.itertuples(), start=i_log_row_st):  #  h5log_rows_gen(table_log=tbl_log, db=store, ):
+        for i_log_row, log_row in enumerate(df_log.itertuples(), start=i_log_row_st):  #  h5.log_rows_gen(table_log=tbl_log, db=store, ):
             # Load data chunk that log_row describes
             print('.', end='')
             qstr = qstr_trange_pattern.format(log_row.Index, log_row.DateEnd)
             df_raw = store.select(tbl, qstr)
 
-            # calculate CTD columns that are specified in cfg['out']['cols'] values
-            df_raw = add_ctd_params(
-                df_raw, {
-                    **cfg,
-                    'out': {
-                        'data_columns': [c for c in cfg['out']['cols'].values() if isinstance(c, str) and c.isalnum()]
-                    }
-                },
-                lon=log_row.Lon_st, lat=log_row.Lat_st
+            # Calculate CTD columns that are specified in cfg['out']['cols'] values
+            ctd2csv(
+                df_raw, cfg_in=cfg['in'], cfg_out=cfg['out'], df_log_csv=df_log_csv,
+                lat=log_row.Lat_st, lon=log_row.Lon_st, i_log_row=i_log_row, tbl=tbl
             )
-            df_csv = order_cols(df_raw, cfg['out']['cols'], i_log=i_log_row, df_log=df_log_csv)
-            # Save data
-            df_csv.to_csv(
-                cfg['out']['text_path'] / cfg['out']['file_name_fun'](
-                    i_log_row, df_raw.index[0], df_raw.index[-1], tbl
-                    ),
-                date_format=cfg['out']['text_date_format'],
-                float_format=cfg['out']['text_float_format'],
-                sep=cfg['out']['sep']
-                )
 
         i_log_row_st += df_log.shape[0]
 
-    print('Ok>', end=' ')
+    print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>", end=' ')
+
+
+def ctd2csv(
+        df_raw, cfg_out: Mapping[str, Any], cfg_in: Optional[Mapping[str, Any]] = None,
+        df_log_csv=None, lat=None, lon=None, log_row=None, i_log_row=None, tbl=None
+):
+    """
+    Calculates specified additional params of CTD and add data related to current record using order_cols dict.
+    Saves result to CSV.
+    :param cfg_out:
+    - cols: list of columns in output dataframe (you may add new columns to calculate)
+    - text_path
+    - file_name_fun: callable(i_log_row, t_st, t_en, tbl) where t_st, t_en will be df_raw.index[0], df_raw.index[-1]
+    - text_date_format
+    - text_float_format
+    - sep
+    :param df_raw:
+    :param df_log_csv: can be used for cfg_out['cals'] items to eval
+    :param i_log_row:
+    :param log_row:
+    :param tbl:
+    :return:
+    """
+    # Calculate CTD parameters of cols if they are not in df_raw
+    if isinstance(cfg_out['cols'], Mapping):
+        ctd_cols = [c for c in cfg_out['cols'].values() if isinstance(c, str) and c.isalnum()]
+    else:
+        ctd_cols = cfg_out['cols']
+        cfg_out['cols'] = {'Time': 'index', **{c: c for c in ctd_cols}}
+    df_raw = add_ctd_params(
+        df_raw, {
+            'in': {} if cfg_in is None else cfg_in,
+            'out': {
+                **cfg_out,
+                'data_columns': ctd_cols
+            }
+        },
+        lon=lon, lat=lat
+    )
+
+    # Calculate user custom parameters
+    df_csv = order_cols(
+        df_raw, cfg_out['cols'], i_log=i_log_row, df_log=df_log_csv
+    )
+
+    # Save data
+    df_csv.to_csv(
+        cfg_out['text_path'] / cfg_out['file_name_fun'](
+            i_log_row, df_raw.index[0], df_raw.index[-1], tbl
+        ),
+        date_format=cfg_out['text_date_format'],
+        float_format=cfg_out['text_float_format'],
+        sep=cfg_out['sep']
+    )
 
 
 def main_call(

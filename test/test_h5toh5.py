@@ -26,8 +26,8 @@ class test_1(unittest.TestCase):
 
     def test_h5find_tables(self):
         with pd.HDFStore(self.cfg['in']['path'], mode='r') as store:
-            tables_found1 = h5find_tables(store, self.cfg['in']['tables'][0])
-            tables_found2 = h5find_tables(store, 'incl.*', '.*inclinometers')  # splitted arguments for same path
+            tables_found1 = h5.find_tables(store, self.cfg['in']['tables'][0])
+            tables_found2 = h5.find_tables(store, 'incl.*', '.*inclinometers')  # splitted arguments for same path
         assert tables_found1 == tables_found2
 
 

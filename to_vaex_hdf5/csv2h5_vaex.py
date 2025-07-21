@@ -157,7 +157,7 @@ def init_input_cols(*, header=None, dtype, converters=None, cols_load, max_text_
         cfg_in['cols'] = ('stime', 'latitude', 'longitude')
 
     # default parameters dependent from ['cols']
-    cols_load_b = np.ones(len(cfg_in['cols']), np.bool8)
+    cols_load_b = np.ones(len(cfg_in['cols']), np.bool_)
 
     # assign data type of input columns
     b_was_no_dtype = not 'dtype' in cfg_in
@@ -234,7 +234,7 @@ def init_input_cols(*, header=None, dtype, converters=None, cols_load, max_text_
     col_names_out = cfg_in['cols_load'].copy()
     # Convert ``cols_load`` to index (to be compatible with numpy loadtxt()), names will be in cfg_in['dtype'].names
     cfg_in['cols_load'] = np.int32([cfg_in['cols'].index(c) for c in cfg_in['cols_load'] if c in cfg_in['cols']])
-    # not_cols_load = np.array([n in cfg_in['cols_not_save'] for n in cfg_in['cols']], np.bool)
+    # not_cols_load = np.array([n in cfg_in['cols_not_save'] for n in cfg_in['cols']], np.bool_)
     # cfg_in['cols_load']= np.logical_and(~not_cols_load, cfg_in['cols_load'])
     # cfg_in['cols']= np.array(cfg_in['cols'])[cfg_in['cols_load']]
     # cfg_in['dtype']=  cfg_in['dtype'][cfg_in['cols_load']]
@@ -265,7 +265,7 @@ def init_input_cols(*, header=None, dtype, converters=None, cols_load, max_text_
                 cfg_in['dtype'].names.index(
                     cfg_in['cols'][cfg_in['coldate']])] = False
     else:  # list to array
-        cfg_in['cols_loaded_save_b'] = np.bool8(cfg_in['cols_loaded_save_b'])
+        cfg_in['cols_loaded_save_b'] = np.bool_(cfg_in['cols_loaded_save_b'])
 
     # Exclude index from cols_loaded_save_b
     if b_index_exist and cfg_in['col_index_name']:
@@ -432,11 +432,11 @@ def read_csv(paths: Sequence[Union[str, Path]], cfg_in: Mapping[str, Any]) -> Un
 
     n_overlap = 2 * int(np.ceil(cfg_in['fs'])) if cfg_in.get('fs') else 50
     # reset_index().set_index('index').
-    meta2 = {'Time': 'M8[ns]', 'b_ok': np.bool8}
+    meta2 = {'Time': 'M8[ns]', 'b_ok': np.bool_}
 
     #     pd.DataFrame(columns=('Time', 'b_ok'))
     # meta2.time = meta2.time.astype('M8[ns]')
-    # meta2.b_ok = meta2.b_ok.astype(np.bool8)
+    # meta2.b_ok = meta2.b_ok.astype(np.bool_)
 
     def time_corr_df(t, cfg_in):
         """convert tuple returned by time_corr() to dataframe"""

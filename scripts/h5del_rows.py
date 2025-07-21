@@ -1,5 +1,5 @@
 import pandas as pd
-from to_pandas_hdf5.h5toh5 import ReplaceTableKeepingChilds
+from to_pandas_hdf5.h5toh5 import h5.ReplaceTableKeepingChilds
 
 def h5del_rows(db_path, tbl, tbl_log=None, keep_where: str = ''):
     with pd.HDFStore(db_path) as store_in:
@@ -13,7 +13,7 @@ def h5del_rows(db_path, tbl, tbl_log=None, keep_where: str = ''):
             print('Nothing to do')
             return
         # df_log = store.select(tbl_log, where=keep_where)
-        with ReplaceTableKeepingChilds(df, tbl, {'db': store_in}):
+        with h5.ReplaceTableKeepingChilds(df, tbl, {'db': store_in}):
             pass
 
 

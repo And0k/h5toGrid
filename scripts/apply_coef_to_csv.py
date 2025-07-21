@@ -2,7 +2,7 @@
 """
   Author:  Andrey Korzh --<ao.korzh@gmail.com>
   Purpose: 1. load polinom coeffcients from text file,
-           2. load all text data files provided by mask 
+           2. load all text data files provided by mask
            3. apply coef. and save result text files to parent dir
   Created: 23.10.2014
 """
@@ -42,4 +42,4 @@ for fileInF in dir_walker(dirname, strMask, readable):
                header=cfg['NamesOut'] if Nprobes > 1 else fileInF, fmt='%2.8f', comments='')
 else:
     if not fileInF: print('"nothing"')
-print('OK>')
+print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>")

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # coding:utf-8
 """
-  Author:  Andrey Korzh <ao.korzh@gmail.com>
-  Purpose: Golden Software Surfer Automation Rutines
-  Created: 25.07.2020
-  Modified: 25.07.2020
+Author:  Andrey Korzh <ao.korzh@gmail.com>
+Purpose: Golden Software Surfer Automation Rutines
+Created: 25.07.2020
+Modified: 25.07.2020
 """
 import functools
 from pathlib import Path
@@ -46,8 +46,8 @@ def griddata_by_surfer(
     :param ctd: pd.DataFrame or np.ndarray with >= 3 columns
     :param path_stem_pattern:
     :param margins: extend grid size on all directions:
-      - True - use 10% if limits (xMin...) passed else use InflateHull value
-      - Tuple[float, float] - use this values to add to edges. Note: limits (xMin...) args must be provided in this case
+    - True - use 10% if limits (xMin...) passed else use InflateHull value
+    - Tuple[float, float] - use this values to add to edges. Note: limits (xMin...) args must be provided in this case
     :param zCols: z column indexes in ctd
     :param xCol: x column index in ctd
     :param yCol: y column index in ctd
@@ -166,7 +166,14 @@ def set_item_of_item(d, v1, v2, v3):
         d[v1] = {v2: v3}
 
 
-def get_objpaths(re_ovr, re_shp=None, f_path=lambda p: p.name, f_text=None, sub_shp=None, sub_ovr=None) -> Dict[Tuple[int, str], Any]:
+def get_objpaths(
+        re_ovr, re_shp=None,
+        f_path=lambda p: p.name,
+        f_text=None,
+        sub_shp: str = None,
+        sub_ovr: Union[Callable[[Path], str], str, None] = None,
+        fmod_dup_name = (lambda name, i: f'{name}-{i}')
+) -> Dict[Tuple[int, str], Any]:
     """
     In currently open document finds paths to matched objects/properties. Returns dict with keys shape (type, name) and
     values that is dict of overlays {(type, number): properties that points to data or can be changed if data changed}.
@@ -174,8 +181,9 @@ def get_objpaths(re_ovr, re_shp=None, f_path=lambda p: p.name, f_text=None, sub_
     :param re_ovr: saves only matched overlays' properties
     :param re_shp: if specified, save also properties of shapes' which name is matched to
     :param f_path: function(data_path: Path) which replaces data path in output obj_path, default: extract name
-    :param f_text: function(str, old_text: str) which replaces Text property of matched obj with name that matches 1st argument
-    :param sub_shp:
+    :param f_text: function(str, old_text: str) which replaces Text property of matched obj with name that matches 1st
+    argument
+    :param sub_shp: postpone shape renaming by substitute shp_name with this where re_shp matches using re.sub
     :param sub_ovr:
     :return: obj_path of exported grids: {(shp.Type, shp.Name): {(ovrl.Type, ovr_i): data}}
     """
@@ -185,95 +193,100 @@ def get_objpaths(re_ovr, re_shp=None, f_path=lambda p: p.name, f_text=None, sub_
     if shapes.Count > 0:
         for i_shp, shp in enumerate(shapes):
             shp_name = shp.Name
-            if re_shp:
+            if ':' in shp_name:  # Cansel modified Name effect of selected shape
+                shp.Deselect()
+                shp_name = shp.Name
+            if re_shp and not re.match(re_shp, shp_name):
+                continue
+            if shp.Type == constants.srfShapeMapFrame:
+                if (shp.Type, shp_name) in obj_path:  # same obj name of same type
+                    if fmod_dup_name:  # rename now
+                        i_next_name = 1
+                        while (shp.Type, (shp_name_new := fmod_dup_name(shp_name, i_next_name))) in obj_path:
+                            i_next_name += 1
+                        shp_name = shp.Name = shp_name_new
                 if sub_shp and (shp_name_new := re.sub(re_shp, sub_shp, shp_name)):
+                    # rename later
                     if shp_name_new != shp_name:
                         set_item_of_item(obj_path, (shp.Type, shp_name), 'Name', shp_name_new)
-                elif re.match(re_shp, shp_name):
-                    pass
-                else:
-                    continue
-            if shp.Type == constants.srfShapeMapFrame:
+
                 overlays = shp.Overlays
-                if shp_name.upper() != "ICON":  # Do not touch Icons
-                    for ovr_i, ovrl in enumerate(overlays):
-                        ovr_name = ovrl.Name
-                        if re.match(re_ovr, ovr_name):
-                            pass
-                        else:
-                            continue
+                if shp_name.upper() == "ICON":  # Do not touch Icons
+                    continue
+                for ovr_i, ovrl in enumerate(overlays):
+                    ovr_name = ovrl.Name
+                    if re.match(re_ovr, ovr_name):
+                        pass
+                    else:
+                        continue
+                    if ovrl.Type in (constants.srfShapeContourMap, constants.srfShapeImageMap):
+                        ovrl = CastTo(ovrl, obj_interface[ovrl.Type])
+                        data = {'GridFile': (data_path := f_path(Path(ovrl.GridFile)))}
+                    elif ovrl.Type == constants.srfShapeVector2Grid:  # srfShapeVectorMap
+                        ovrl = CastTo(ovrl, obj_interface[ovrl.Type])
+                        data = {
+                            'SetInputGrids': {
+                                'GridFileName1': (data_path:=f_path(Path(ovrl.AspectGridFile))),    # East component
+                                'GridFileName2': f_path(Path(ovrl.GradientGridFile)),  # North component
+                                'AngleSys': ovrl.AngleSystem,
+                                'CoordSys': ovrl.VecCoordSys
+                            },
+                            'SetScaling': {
+                                'Type': constants.srfVSMagnitude,
+                                'Minimum': ovrl.MinMagnitude,
+                                'Maximum': ovrl.MaxMagnitude
+                            }  # also saves command to recover vector limits that is needed after grid replacing
+                        }
+                    elif ovrl.Type in (constants.srfShapePostmap, constants.srfShapeClassedPost):
+                        ovrl = CastTo(ovrl, obj_interface[ovrl.Type])
+                        data = {'DataFile': (data_path := f_path(Path(ovrl.DataFile)))}
+                    else:
+                        data = None
+
+                    if data:
+                        if sub_ovr:
+                            sub_ovrl = sub_ovr(data_path=data_path) if callable(sub_ovr) else sub_ovr
+                            ovr_name = re.sub(re_ovr, sub_ovrl, ovr_name)
+                            set_item_of_item(obj_path, (shp.Type, shp_name), (ovrl.Type, ovr_i), {'Name': ovr_name})
+
+                        set_item_of_item(obj_path, (shp.Type, shp_name), (ovrl.Type, ovr_i), data)
                         if ovrl.Type in (constants.srfShapeContourMap, constants.srfShapeImageMap):
-                            ovrl = CastTo(ovrl, obj_interface[ovrl.Type])
-                            data = {'GridFile': (data_path:=f_path(Path(ovrl.GridFile)))}
-                        elif ovrl.Type == constants.srfShapeVector2Grid:  # srfShapeVectorMap
-                            ovrl = CastTo(ovrl, obj_interface[ovrl.Type])
-                            data = {
-                                'SetInputGrids': {
-                                    'GridFileName1': (data_path:=f_path(Path(ovrl.AspectGridFile))),    # East component
-                                    'GridFileName2': f_path(Path(ovrl.GradientGridFile)),  # North component
-                                    'AngleSys': ovrl.AngleSystem,
-                                    'CoordSys': ovrl.VecCoordSys
-                                    },
-                                'SetScaling': {
-                                    'Type': constants.srfVSMagnitude,
-                                    'Minimum': ovrl.MinMagnitude,
-                                    'Maximum': ovrl.MaxMagnitude
-                                    }  # also saves command to recover vector limits that is needed after grid replacing
-                                    }
-                        elif ovrl.Type in (constants.srfShapePostmap, constants.srfShapeClassedPost):
-                            ovrl = CastTo(ovrl, obj_interface[ovrl.Type])
-                            data = {'DataFile': (data_path:=f_path(Path(ovrl.DataFile)))}
-                        else:
-                            data = None
+                            # also save color limits that need to recover after grid replacing
+                            try:
+                                obj_path[(shp.Type, shp_name)][(ovrl.Type, ovr_i)].update(
+                                    {'ColorMap.SetDataLimits': {
+                                        'DataMin': ovrl.ColorMap.DataMin,
+                                        'DataMax': ovrl.ColorMap.DataMax
+                                    }})
+                            except AttributeError:
+                                obj_path[(shp.Type, shp_name)][(ovrl.Type, ovr_i)].update(
+                                    {'FillForegroundColorMap.SetDataLimits': {
+                                        'DataMin': ovrl.FillForegroundColorMap.DataMin,
+                                        'DataMax': ovrl.FillForegroundColorMap.DataMax
+                                    }},
+                                    # {'ColorMap.ApplyFilltoLevels': {}}  # needed?
+                                    )
+                                pass  # IContourLayer now has not ColorMap property but FillForegroundColorMap
 
-                        if data:
-                            if sub_ovr:
-                                sub_ovrl = sub_ovr(data_path=data_path) if callable(sub_ovr) else sub_ovr
-                                ovr_name = re.sub(re_ovr, sub_ovrl, ovr_name)
-                                set_item_of_item(obj_path, (shp.Type, shp_name), (ovrl.Type, ovr_i), {'Name': ovr_name})
+                        print(list(data.values())[0])
+                    # if ovrl.Type == srfShapePostmap:
+                    # if ovrl.Type == srfShapeBaseMap:
+                    # else:
+                    #     print('What?')
 
-
-
-                            if ':' in shp_name:  # Cansel modified Name effect of selected shape
-                                shp.Deselect()
-                            set_item_of_item(obj_path, (shp.Type, shp_name), (ovrl.Type, ovr_i), data)
-                            if ovrl.Type in (constants.srfShapeContourMap, constants.srfShapeImageMap):
-                                # also save color limits that need to recover after grid replacing
-                                try:
-                                    obj_path[(shp.Type, shp_name)][(ovrl.Type, ovr_i)].update(
-                                        {'ColorMap.SetDataLimits': {
-                                            'DataMin': ovrl.ColorMap.DataMin,
-                                            'DataMax': ovrl.ColorMap.DataMax}
-                                         })
-                                except AttributeError:
-                                    obj_path[(shp.Type, shp_name)][(ovrl.Type, ovr_i)].update(
-                                        {'FillForegroundColorMap.SetDataLimits': {
-                                            'DataMin': ovrl.FillForegroundColorMap.DataMin,
-                                            'DataMax': ovrl.FillForegroundColorMap.DataMax}
-                                         },
-                                        # {'ColorMap.ApplyFilltoLevels': {}}  # needed?
-                                        )
-                                    pass  # IContourLayer now has not ColorMap property but FillForegroundColorMap
-
-                            print(list(data.values())[0])
-                        # if ovrl.Type == srfShapePostmap:
-                        # if ovrl.Type == srfShapeBaseMap:
-                        # else:
-                        #     print('What?')
-
-                        # if b_setNames:
-                        #     ovrl.Name= File + ovrl.Name Else ovrl.Name= Left(ovrl.Name,17)
-                    if (shp.Type, shp_name) in obj_path:  # data to replace was found
-                        # also save shp limits that need to recover after grid replacing
-                        obj_path[(shp.Type, shp_name)].update({'SetLimits': {key: getattr(shp, key) for key in (
-                            'xMin', 'xMax', 'yMin', 'yMax')},
-                            'xMapPerPU': shp.xMapPerPU,
-                            'yMapPerPU': shp.yMapPerPU})
+                    # if b_setNames:
+                    #     ovrl.Name= File + ovrl.Name Else ovrl.Name= Left(ovrl.Name,17)
+                if (shp.Type, shp_name) in obj_path:  # data to replace was found
+                    # also save shp limits that need to recover after grid replacing
+                    obj_path[(shp.Type, shp_name)].update({'SetLimits': {key: getattr(shp, key) for key in (
+                        'xMin', 'xMax', 'yMin', 'yMax')},
+                        'xMapPerPU': shp.xMapPerPU,
+                        'yMapPerPU': shp.yMapPerPU})
 
             elif shp.Type == constants.srfShapeText:
                 #cast = 'IText'
                 text = f_text(shp_name, old_text=shp.Text) if f_text else None
-                data = {'Text': text or shp.Text}
+                data = {'Text': text if text is not None else shp.Text}
 
                 if (shp.Type, shp_name) in obj_path:
                     if isinstance(obj_path[(shp.Type, shp_name)], list):  # Text shapes has no child objects
@@ -285,12 +298,12 @@ def get_objpaths(re_ovr, re_shp=None, f_path=lambda p: p.name, f_text=None, sub_
     return obj_path
 
 
-def gen_objects(obj_path: Dict[Tuple[Any, Any], Any],
-                srf: Optional[str] = None
-                ) -> Iterator[Tuple[Tuple[Any, Union[int, str, None]], Any]]:
+def gen_objects(
+    obj_path: Dict[Tuple[Any, Any], Any], srf: Optional[str] = None
+) -> Iterator[Tuple[Tuple[Any, Union[int, str, None]], Any]]:
     """
     Finds all objects that `obj_path` points to and yields them with `obj_path`'s values
-    :param obj_path: dict as returned by objpath_fill()
+    :param obj_path: dict as returned by get_objpaths()
     :param srf: Surfer plot file name (*.srf) if str, else currently opened Surfer.Document if None
     :return: ((ovrl, ovr_i), data_dict): ovr_i - overlay/shape index with same name and type as in input obj_path
     """
@@ -317,7 +330,9 @@ def gen_objects(obj_path: Dict[Tuple[Any, Any], Any],
             k = 0
             for shp in shapes:
                 if shp.Type == shp_t and shp.Name == shp_n:
-                    yield from yield_obj_and_data(shp, ovr_data[k], k)
+                    yield from yield_obj_and_data(
+                        shp, *([ovr_data[k], k] if isinstance(ovr_data, list) else [ovr_data])
+                    )
                     k += 1
 
     if srf:
@@ -388,9 +403,30 @@ def load_my_var_grid_from_netcdf_closure_grid():
 load_my_var_grid_from_netcdf = load_my_var_grid_from_netcdf_closure_grid()
 
 
-def objpath_data_paste(obj_path,
-                       f_prop: Callable[[str, str, Any], str] = load_my_var_grid_from_netcdf
-                       ):
+def obj_set(obj, prop, val):
+    if isinstance(val, dict):
+        # prop is a function name, val - contains function arguments
+        if '.' in prop:
+            obj_method = obj
+            # function is defined in child object
+            for prop in prop.split('.'):
+                obj_method = getattr(obj_method, prop)
+        else:
+            obj_method = getattr(obj, prop)
+        obj_method(**val)
+        return
+    try:
+        setattr(obj, prop, val)
+    except pywintypes.com_error:
+        if not val and prop == 'Text':
+            setattr(obj, prop, " ")
+            # (-2147352567, 'Ошибка.', (0, 'Surfer.Application.2', 'Empty strings not allowed'
+
+
+def objpath_data_paste(
+        obj_path,
+        f_prop: Callable[[str, str, Any], str] = load_my_var_grid_from_netcdf
+    ):
     """
     Sets attributes of all objects that obj_path points with obj_path's values
     :param obj_path:
@@ -404,33 +440,50 @@ def objpath_data_paste(obj_path,
         #     data_dict = data_dict.copy()
         #     del data_dict['AspectGridFile']
         #     del data_dict['GradientGridFile']
-
         for prop, val in data_dict.items():
             if f_prop:
                 if (val := f_prop(prop, val, obj)) is None:
                     continue
+            try:
+                obj_set(obj, prop, val)
+            except pywintypes.com_error as e:
+                if prop == 'GridFile' and val.endswith('Vdir.grd'):
+                    # If no Vdir grid then calculate it (for constants.srfShapeImageMap)
+                    try:
+                        val = dir_grid(val)
+                    except pywintypes.com_error as e:
+                        val_path = Path(val)
+                        lf.warning(
+                            "Error calculate .grd for which we usually give higher resolution. "
+                            "May be no u/v sources to do it"
+                        )
+                        # So we try use .nc extension of original resolution as we do for Vabs
+                        if not val_path.is_file():
+                            _ = val.replacesuffix('Vdir.grd', 'Vdir.nc')  # or todo: calc if not exist
+                            if Path(_).is_file():
+                                val = _
+                            else:
+                                val = abs_grid(val)
 
-            if isinstance(val, dict):
-                # prop is a function name, val - contains function arguments
-                if '.' in prop:
-                    obj_method = obj
-                    # function is defined in child object
-                    for prop in prop.split('.'):
-                        obj_method = getattr(obj_method, prop)
+                    obj_set(obj, prop, val)
+                elif prop == 'GridFile' and val.endswith('Vabs.grd'):
+                    if not Path(val).is_file():
+                        _ = val.replace('Vabs.grd', 'Vabs.nc')  # or todo: calc if not exist
+                        if Path(_).is_file():
+                            val = _
+                        else:
+                            val = abs_grid(val)
+                    obj_set(obj, prop, val)
                 else:
-                    obj_method = getattr(obj, prop)
-                obj_method(**val)
-                continue
+                    raise e
 
-            setattr(obj, prop, val)
-
-
-def srf_update_grids(re_ovr='*', re_shp=None, f_fname: Optional[Callable[[...], str]] = None,
-                     f_text: Optional[Callable[[...], str]] = None, dir_in: Union[Path, str, None] = None,
-                     srf_out: Union[Path, str, None] = None, srf_in: Union[Path, str, None] = None,
-                     dry_run: bool = False,
-                     sub_ovr=None, sub_shp=None,
-                     export_suffix: str = None, options: str = None, **kwargs):
+def srf_update_grids(
+    re_ovr='*', re_shp=None, f_fname: Optional[Callable[[...], str]] = None,
+    f_text: Optional[Callable[[...], str]] = None, dir_in: Union[Path, str, None] = None,
+    srf_out: Union[Path, str, None] = None, srf_in: Union[Path, str, None] = None,
+    dry_run: bool = False,
+    sub_ovr=None, sub_shp=None,
+    export_suffix: str = None, options: str = None, **kwargs):
     """
     Replaces all grids in opened pattern with same named grid files in path_dir_in and saves to srf and exports image
     srf file name increases to not overwrite existed files: todo rename existed files
@@ -444,13 +497,12 @@ def srf_update_grids(re_ovr='*', re_shp=None, f_fname: Optional[Callable[[...], 
     :param srf_in: path to srf to modify. If None srf must be opened before run this function
     :param dry_run: not modify srf if True
     :param sub_shp:
-    :param sub_ovr:
+    :param sub_ovr: requires sub_shp
     :param export_suffix: exporting name suffix. If None then not export
     :param options: exporting Options
     :param kwargs: other exporting kwargs such as Quality for jpg
     :return: obj_path with replaced grids
     """
-
     doc = Surfer.ActiveDocument if srf_in is None else Surfer.Documents.Open(srf_in)
     path_dir_in = Path(dir_in or doc.Path)  # 'C:\Windows\TEMP'
 
@@ -522,7 +574,7 @@ def srf_update_grids(re_ovr='*', re_shp=None, f_fname: Optional[Callable[[...], 
         path_srf_out = doc_dir / f'{doc_stem}_{i}.{doc_suffix}'
     try:
         doc.SaveAs(str(path_srf_out))
-    except pywintypes.pywintypes.com_error:
+    except pywintypes.com_error as e:
         lf.exception(f'Can not save to {path_srf_out}')
 
     if export_suffix:
@@ -534,7 +586,6 @@ def srf_update_grids(re_ovr='*', re_shp=None, f_fname: Optional[Callable[[...], 
         doc.Export2(str(path_srf_out.with_suffix(export_suffix)), Options=options, **kwargs)
 
     return obj_path
-
 
 
 def objpath_update_and_get_grids(obj_path, path_dir_out: Path, srf=None):
@@ -607,9 +658,9 @@ def srfs_replace_pattern(path_srfs, re_ovr='*', re_shp=None,
                     path_dir_out: Union[Path, str, None] = None,
                     path_dir_tmp: Union[Path, str, None] = None):  # 'C:\Windows\TEMP'
     """
-    Replaces all grids in opened pattern with extracted grids from files in path_srfs
+    Replaces all grids in opened pattern with extracted grids from *.srf files in path_srfs
     Note: open srf pattern before run this function!
-    :param path_srfs: srfs having needed data
+    :param path_srfs: path to *.srf files having needed data
     :param re_ovr: regular expression for names of overlays having needed data
     :param re_shp: regular expression for names of shapes having needed data
     :param path_dir_out: where to save srfs made by replacing data in opened srf
@@ -638,7 +689,7 @@ def srfs_replace_pattern(path_srfs, re_ovr='*', re_shp=None,
         Surfer.ScreenUpdating = False
         obj_path = objpath_update_and_get_grids(obj_path, path_dir_tmp, srf)
         objpath_data_paste(obj_path)
-        
+
         path_doc = path_dir_out / Path(srf).name
         try:
             doc.SaveAs(str(path_doc))
@@ -691,6 +742,61 @@ def export_all_grids(path_dir_out:Optional[Path]=None):
 
                         # if b_setNames:
                         #     ovrl.Name= File + ovrl.Name Else ovrl.Name= Left(ovrl.Name,17)
+
+
+def f_v_proj_name(path_in, proj):
+    parent, stem, suffix = (lambda p: (p.parent, p.stem, p.suffix))(path_in)
+    name_st, name_en = stem.rsplit('V', 1)
+    name_en = 'uo' if proj == 'e' else 'vo'  # f'V{proj}'
+    suffix = '.nc'
+    return str(parent / f'{name_st}{name_en}{suffix}')
+
+
+def dir_grid(grid_dir_fname, f_v_proj_name=f_v_proj_name, k_dir_resolution_x=0.2, k_dir_resolution_y=0.2):
+    """
+    :param grid_dir_fname: out dir grid name with any suffix (will have ".grd" suffix anyway)
+    """
+    # better resolution of Vdir grid we make from Ve&Vn to minimize regions of 0 to 360
+    # 0.25, 0.005
+    path_out = Path(grid_dir_fname).with_suffix('.grd')
+    grid_proj_fnames = [f_v_proj_name(path_out, proj) for proj in 'en']
+    if k_dir_resolution_x or k_dir_resolution_y:
+        # increase resolution
+        grid_proj_fnames_in, grid_proj_fnames = grid_proj_fnames.copy(), []
+        grid = None
+        for proj, grid_proj_fname in zip('en', grid_proj_fnames_in):
+            if grid is None:
+                grid = CastTo(Surfer.NewGrid(), 'IGrid3')  # 'IGrid2' for Surfer20
+            grid.LoadFile2(grid_proj_fname, HeaderOnly=True)  # Options=f'VariableName={var}')
+            Surfer.GridMosaic(
+                InGrids=[grid_proj_fname], ResampleMethod=constants.srfBilinear,
+                OutGrid=(_ := fr"C:\Windows\Temp\temp_V{proj}.grd"),
+                xSpacing=grid.xSize * k_dir_resolution_x,
+                ySpacing=grid.ySize * k_dir_resolution_y  # (*30/D.yMapPerPU)
+            )
+            grid_proj_fnames.append(_)
+    Surfer.GridMath(
+        Function="C=fmod(360 + r2d(atan2(A,B)), 360)",
+        InGridA=grid_proj_fnames[0],
+        InGridB=grid_proj_fnames[1],
+        OutGridC=path_out, OutFmt=constants.srfGridFmtS7
+    )
+    return str(path_out)
+
+
+def abs_grid(grid_abs_fname, f_v_proj_name=f_v_proj_name):
+    """
+    param grid_abs_fname: out abs grid name with any suffix (.grd suffix will be used anyway)
+    """
+    path_out = Path(grid_abs_fname).with_suffix('.grd')
+    grid_proj_fnames = [f_v_proj_name(path_out, proj) for proj in 'en']
+    Surfer.GridMath(
+        Function="C=sqrt(pow(A,2)+pow(B,2))",
+        InGridA=grid_proj_fnames[0],
+        InGridB=grid_proj_fnames[1],
+        OutGridC=path_out, OutFmt=constants.srfGridFmtS7
+    )
+    return str(path_out)
 
 
 # --- 20.02.2021
@@ -850,8 +956,8 @@ def range_including_stop(start, stop, step):
         start += step
 
 
-########################################################################################################################
-# Run examples subfunctions ############################################################################################
+######################################################################################################
+# Run examples subfunctions ######################################################################################################
 
 # def current_file_name_replace(fname, old_str, new_str):
 #     return fname.name.replace(old_str, new_str)
@@ -880,17 +986,44 @@ def change_file_name(fname, old_re, new_re):
     return re.sub(old_re, new_re, fname.name)
 
 
+add_text_time_ranges = [
+        (datetime(2023, 10, 4), datetime(2023, 10, 7)),
+        (datetime(2023, 10, 13), datetime(2023, 10, 16)),
+        (datetime(2023, 12, 19), datetime(2023, 12, 27)),
+        (datetime(2024, 1, 19), datetime(2024, 1, 27))
+    ]
+
 def change_text(shp_name, old_text=None, date=None, z=None):
+    """
+    Update Text of text shape
+    :param shp_name:
+    :param old_text:
+    :param date:
+    :param z:
+    :return:
+    """
     if shp_name == 'PositionText':
-        return f'{date:%d.%m.%Y}'
+        return f'{date:%Y-%m-%d}'  # %d.%m.%Y
     elif shp_name == 'zText':
-        return re.sub(r'([ =])(\d+)', fr'\g<1>{z}', old_text)  # Note: may be special symbols: "\\fs\d+" that is why space used
+        return re.sub(r'([ =])(\d+)', fr'\g<1>{z}', old_text)
+        # Note: may be special symbols: "\\fs\d+" that is why space is used
+    elif shp_name == 'AddText':
+        # for start_date, end_date in add_text_time_ranges:
+        #     if start_date <= date <= end_date:
+        #         return "Inflow !!!"
+        return ""
+    elif shp_name.startswith('AddText_flooding'):
+        # return (
+        #     r"Промывка\n Борнхольма" if shp_name == 'AddText_flooding' else
+        #     r"Кислород\n у дна \n Борнхольма"
+        #     ) if datetime(2024, 1, 2) <= date <= datetime(2024, 1, 8) else ""
+        return ""
 
 # Run examples #########################################################################################################
 
 def do_gen_ragnes():
     """
-    Update grids
+    Update grids constructing new grid names from date str of time range
     """
     dir_in = Path(
         r'd:\WorkData\BlackSea\220620\_subproduct\surfer'
@@ -902,7 +1035,7 @@ def do_gen_ragnes():
         # r'd:\workData\BalticSea\_other_data\_model\Copernicus\section_z\211125BalticSpit@CMEMS\V(lon,lat)_54.3583-56.0082,18.0138-21.0417'
         )
     #old_str = '211206_V'  # '211102'
-    old_re = '([_\d-]+)(below|above)(\d+)(\D+)'
+    old_re = r'([_\d-]+)(below|above)(\d+)(\D+)'
     #out_prefix = dir_in.name.partition('_')[0]
 
     for date in [datetime.fromisoformat('2022-06-20'), datetime.fromisoformat('2022-06-27')]:
@@ -931,34 +1064,65 @@ def do_gen_ragnes():
 
 def do_gen_from_files():
     """
-    Update grids
+    Update grids constructing new grid names from found files matched dir_in / name_in_glob
     """
     dir_in = Path(
-        r'd:\WorkData\BlackSea\220920\_subproduct\surfer'
+        r"\\Natte-netbook\e\!ДАННЫЕ\WorkData\BalticSea\_other_data\_model\NEMO@CMEMS\section_z"
+        # r"d:\workData\BalticSea\_other_data\_model\NEMO@CMEMS\section_z"
+
+        r"\231220_inflow\231220_inflow\_sources_for_srf"  # for vert*
+        # r'\231220_inflow\231220_inflow\(lon,lat)_54.0083-58.9915,10.5138-21.3195'  # for hor*
+        # r'd:\workData\BalticSea\_other_data\_model\NEMO@CMEMS\section_z\231220_inflow\231220_inflow\(dist,depth)so,thetao,V,wo,o2'
+        # r'd:\workData\BalticSea\_other_data\_model\NEMO@CMEMS\section_z\231220_inflow\231220_inflow'
+        # r'\(dist,depth)bottomT,so,sob,thetao,V,wo,o2,o2b'
+        # r'd:\WorkData\BlackSea\220920\_subproduct\surfer'
         # r'd:\WorkData\BlackSea\220620\_subproduct\surfer'
-        )
-    name_glob_in = '(*)Temp.grd'  # (220627,75m)Temp.grd
-    old_re = r'(\([\d_,-]+m\))'
+    )
 
-    for path_in in Path(dir_in).glob(name_glob_in):
-        new_str_range = path_in.stem.replace('Temp', '')
-        z = re.match(r'[^,]+,(\d+)', path_in.stem).group(1)
-        f_fname = functools.partial(change_file_name, old_re=old_re, new_re=new_str_range)
+    # string to get one file in group of replacement files
+    str_search_one = '_so'  # _so vthetao  # '_sob' for hor*
+
+    # glob pattern (not regex!)
+    name_in_glob = f"13_*{str_search_one}.nc"  # f"*{str_search_one}.nc" for hor*
+    # f'0*{str_search_one}.nc' (*)Temp.grd  (220627,75m)Temp.grd
+
+    # regex to match part of grid name that need to be replaced
+    old_re = '([\\d,-]{3,})'  # r'^([\d_,-]+)' r'(\([\d_,-]+m\))'
+    # or '^(\\d+)_([\\d_,-]+)' with f'\g<1>_{date_str}_'
+
+    # Search grid files
+    paths = list(Path(dir_in).glob(name_in_glob))
+    print(f"Found {len(paths)} files matched {name_in_glob} in {dir_in}")
+    for path_in in paths:
+        new_str_range = path_in.stem.replace(str_search_one, '')
+        srf_out = Path(r"D:\WorkData\_model\CMEMS\231220_inflow") / fr'{new_str_range}.srf'
+        # dir_in.parent / fr'{new_str_range}.srf'
+
+        # Skip if png existed
+        if srf_out.with_suffix('.png').is_file():
+            continue
+        # z = re.match(r'[^,]+,(\d+)', path_in.stem).group(1)
+        date_pattern = '%y%m%d'
+        date_str = new_str_range if len(new_str_range)==len(date_pattern) else new_str_range.split('_')[1]
+        date = datetime.strptime(date_str, '%y%m%d')
+        f_fname = functools.partial(change_file_name, old_re=old_re, new_re=date_str)  # new_re=new_str_range
+
         # Update grids
-
         srf_update_grids(
-            re_shp=r'^(\D+Text|DO|map|\|V\||vectors|theta|S|sigma|t)(\d.*)$',
-            re_ovr=r'^((?!(bathymetry|-))[^\.]*)\.(grd|nc|csv)$',
+            re_shp=".*",  # r'^(\D+Text|DO|map|\|V\||vectors|theta|S|sigma|t)(\d.*)$'
+            re_ovr=r"^((?!(bathymetry|-))[^\.]*)\.(grd|nc|csv)$",
             f_fname=f_fname,
-            f_text=functools.partial(change_text, date=None, z=z),  #functools.partial(current_text, date=date),
+            f_text=functools.partial(
+                change_text, date=date, z=None
+            ),  # functools.partial(current_text, date=date),
             dir_in=dir_in,
-            srf_out=dir_in.parent / fr'{new_str_range}.srf',  # f'{out_prefix}{new_str}.srf',
-            export_suffix='.jpg',
-            sub_shp=rf'\g<1>{z}',
-            sub_ovr=(lambda data_path: Path(data_path).stem),
-            )
+            srf_out=srf_out,  # f'{out_prefix}{new_str}.srf',
+            export_suffix=".png",
+            sub_shp=None,  # rf'\g<1>{z}',
+            sub_ovr=None,  # (lambda data_path: Path(data_path).stem),
+        )
         # old_str = new_str
-
+    print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>")
 
 def do1():
     """
@@ -967,12 +1131,12 @@ def do1():
     srfs_replace_pattern(
         path_srfs=r'd:\WorkData\BalticSea\_other_data\_model\POM_GMasha\190801_80,85,90m\_srf',
         re_ovr=r'.*\d_filt_',
-        re_shp='\d\dm|PositionText',
+        re_shp=r'\d\dm|PositionText',
         path_dir_out=r'd:\WorkData\BalticSea\_other_data\_model\POM_GMasha\190801_80,85,90m\_srf_bold_isobaths',
         )
 
 
-# ######################################################################################################################
+##############################################################################################################
 
 def do_in_surfer(f_do):
     """
@@ -984,15 +1148,16 @@ def do_in_surfer(f_do):
         gencache.EnsureModule('{54C3F9A2-980B-1068-83F9-0000C02A351C}', 0, 1, 4)
         Surfer = Dispatch("Surfer.Application")
         # interfaces to get specific obj methods by calling Cast(obj, interface):
-        obj_interface.update(                                   # old interface in comments:
-            {constants.srfShapeContourMap: 'IContourLayer',     # IContourMap
-             constants.srfShapeVectorMap: 'IVectorMap',
-             constants.srfShapeImageMap: 'IColorReliefLayer2',  # IImageLayer2
-             constants.srfShapeVector2Grid: 'IVectorLayer',
-             constants.srfShapeMapFrame: 'IMapFrame2',
-             constants.srfShapePostmap: 'IPostLayer2',
-             }
-            )
+        obj_interface.update(  # old interface in comments:
+            {
+                constants.srfShapeContourMap: "IContourLayer",  # IContourMap
+                constants.srfShapeVectorMap: "IVectorMap",
+                constants.srfShapeImageMap: "IColorReliefLayer2",  # IImageLayer2
+                constants.srfShapeVector2Grid: "IVectorLayer",
+                constants.srfShapeMapFrame: "IMapFrame2",
+                constants.srfShapePostmap: "IPostLayer2",
+            }
+        )
     with TemporaryDirectory(prefix='~GS') as temp_dir:
         temp_dir_path = Path(temp_dir)
         try:
@@ -1003,6 +1168,7 @@ def do_in_surfer(f_do):
 
         finally:
             Surfer.ScreenUpdating = True
+            print('Surfer screen updating is returned')
 
 
 def main():
@@ -1022,5 +1188,3 @@ def main1():
 
 if __name__ == '__main__':
     main()
-
-

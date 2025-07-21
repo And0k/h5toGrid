@@ -73,7 +73,7 @@ def test_multiple_with_anchor_as_mean():
     """Loading 5 trackers data in one DB, calc mean positions and displacements relative to them"""
     # todo: check why tr2 anchor so North shifted (maybe data filtered after anchor pos. determined?)
     path_db = Path(
-        r'd:\Work\_Python3\And0K\h5toGrid\test\data\tracker\220810@sp2,4,5,tr1,2.h5'.replace('\\', '/')
+        r'C:\Work\Python\AB_SIO_RAS\h5toGrid\test\data\tracker\220810@sp2,4,5,tr1,2.h5'.replace('\\', '/')
         )
     file_raw_local = str(path_db.with_suffix('.raw.h5')).replace('\\', '/')
     device = ['sp2', 'sp4', 'sp5', 'tr1', 'tr2']
@@ -100,7 +100,7 @@ def test_multiple_with_anchor_as_mean():
     """Loading 5 trackers data in one DB, calc mean positions and displacements relative to them"""
     # Same as previous for other data
     path_db_in = Path(
-        r'd:\Work\_Python3\And0K\h5toGrid\test\data\tracker\220831@sp2,4,5,6,tr1,2.raw.h5'.replace('\\', '/')
+        r'C:\Work\Python\AB_SIO_RAS\h5toGrid\test\data\tracker\220831@sp2,4,5,6,tr1,2.raw.h5'.replace('\\', '/')
         )
     path_db_out = path_db_in.parent / '220831_1340@sp2,4,5,6,tr1,2.h5'
 
@@ -301,7 +301,7 @@ def test_call_example_sp2(file_raw_local=None):
     sys.argv = sys_argv_save
 
 
-def test_call_example_tr2(db_path=r'd:\Work\_Python3\And0K\h5toGrid\test\data\tracker\210726_1000tr2.h5'):
+def test_call_example_tr2(db_path=r'C:\Work\Python\AB_SIO_RAS\h5toGrid\test\data\tracker\210726_1000tr2.h5'):
     device = ['tr2']
     sys_argv_save = sys.argv.copy()
     sys.argv = [__file__]
@@ -335,8 +335,8 @@ def test_call_example_tr2(db_path=r'd:\workData\BalticSea\210515_tracker\map-set
 
 # if __name__=='__main__':  # not works
 #     sys.path.extend([
-#         r'd:\Work\_Python3\And0K\h5toGrid',
-#         r'd:\Work\_Python3\And0K\h5toGrid\to_pandas_hdf5',
-#         r'd:\Work\_Python3\And0K\h5toGrid\to_pandas_hdf5\h5_dask_pandas'
+#         r'C:\Work\Python\AB_SIO_RAS\h5toGrid',
+#         r'C:\Work\Python\AB_SIO_RAS\h5toGrid\to_pandas_hdf5',
+#         r'C:\Work\Python\AB_SIO_RAS\h5toGrid\to_pandas_hdf5\h5_dask_pandas'
 #         ])
 #     test_call_example_sp2to3()

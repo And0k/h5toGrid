@@ -38,7 +38,7 @@ def digits_first(text):
 
 def main(new_arg=None, veusze=None):
     """
-    For each veusz file according to in.pattern_path (see Veusz_propogate) and corresponded table name obtained using
+    For each veusz file according to in.pattern_path (see Veusz_propagate) and corresponded table name obtained using
     regex out.re_match_tbl_from_vsz_name
     1. gets data from Veusz file:
     - Rcor
@@ -188,7 +188,7 @@ def main(new_arg=None, veusze=None):
                 h5copy_coef(None, cfg['out']['path'], table,
                             dict_matrices={f'//coef//Vabs{i}': coef_list,
                                            f'//coef//date': np.float64(
-                                               [np.NaN, np.datetime64(datetime.now()).astype(np.int64)])})
+                                               [np.nan, np.datetime64(datetime.now()).astype(np.int64)])})
                 # h5savecoef(cfg['out']['path'], path=f'//{table}//coef//Vabs{i}', coef=coef_list)
                 txt_results[names_get_txt_results[i]][table] = str(coef)
 

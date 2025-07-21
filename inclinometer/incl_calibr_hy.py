@@ -47,10 +47,10 @@ from inclinometer.incl_h5clc_hy import incl_calc_velocity_nodask, gen_subconfigs
 from to_pandas_hdf5.h5_dask_pandas import filter_local
 from utils2init import this_prog_basename, standard_error_info, my_logging
 
-from to_pandas_hdf5.h5toh5 import h5load_ranges
+from to_pandas_hdf5.h5toh5 import h5.load_ranges
 from filters import is_works
 from filters_scipy import despike
-from graphics import make_figure
+from plot_int import make_figure
 
 from cfg_dataclasses import hydra_cfg_store, ConfigInHdf5_Simple, ConfigProgram, main_init, main_init_input_file  #  ConfigProgram is used indirectly
 
@@ -191,7 +191,7 @@ def filter_channes(
     args = locals()
     dim_length = 1   # dim_channel = 0
     blocks = np.minimum(blocks, a3d.shape[dim_length])
-    b_ok = np.ones((a3d.shape[dim_length],), np.bool8)
+    b_ok = np.ones((a3d.shape[dim_length],), np.bool_)
     if fig:
         fig.axes[0].clear()
         ax = fig.axes[0]
@@ -398,8 +398,8 @@ def fit_quadric_form(s):
                       [4, 3, 2]], np.int8)]
     n = v_2[:-1, np.newaxis]
     d = v_2[3]
-    
-    
+
+
     # modified according to Robert R - todo: check:
     # • 2 years ago
     # I believe in your code example your M is incorrect. Based on your notation in your Quadric section you have
@@ -412,7 +412,7 @@ def fit_quadric_form(s):
     #  [g f c]], instead you have the XY term assigned in the f positions.
     # The overall result is that your A_1 matrix will have "mirrored" column 1 and row 1.
     # Interestingly enough, this flip doesn't seem to impact the calibration significantly.
-    
+
     return M, n, d
 
 
@@ -436,7 +436,7 @@ def calibrate(raw3d: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     # Calibration parameters
 
     Q_inv = linalg.inv(Q)
-    # combined bias:           
+    # combined bias:
     b = -np.dot(Q_inv, n) + meanHxyz
     # scale factors, soft iron, and misalignment:
     # note: some implementations of sqrtm return complex type, taking real
@@ -544,12 +544,12 @@ def zeroing_azimuth(store: pd.HDFStore, tbl, time_range_nord, coefs=None, cfg_in
     'Ag': (3, 3), 'Cg': (3, 1), 'Ah': (3, 3), 'Ch': array(3, 1), 'azimuth_shift_deg': (1,), 'kVabs': (n,)
     :param cfg_in: dict with fields:
         - time_range_nord
-        - other, needed in h5load_ranges() and optionally in incl_calc_velocity_nodask()
+        - other, needed in h5.load_ranges() and optionally in incl_calc_velocity_nodask()
     :param filter_query: upply this filter query to incl_calc_velocity*() output before mean azimuth calculation
     :return: azimuth_shift_deg: degrees
     """
     lf.debug('Zeroing Nord direction')
-    df = h5load_ranges(store, table=tbl, t_intervals=time_range_nord)
+    df = h5.load_ranges(store, table=tbl, t_intervals=time_range_nord)
     if df.empty:
         lf.info('Zero calibration range out of data scope')
         return
@@ -703,7 +703,7 @@ def main(config: ConfigType) -> None:
         #             time_range = cfg['in']['time_range']
         # else:
         #     time_range = cfg['in']['time_range']  # same interval for each table
-        # a = h5load_ranges(store, table=tbl, t_intervals=time_range)
+        # a = h5.load_ranges(store, table=tbl, t_intervals=time_range)
         a = d.compute()
         if a.empty:
             lf.error('No data for {}!!! Skipping it...', tbl)
@@ -842,7 +842,7 @@ def main(config: ConfigType) -> None:
             dict_matrices = dict_matrices_for_h5(coefs[tbl], tbl, cfg['in']['channels'])
             h5copy_coef(None, db_path, tbl, dict_matrices=dict_matrices)
             # todo: add text info what source data (path), was used to calibrate which channels, date of calibration
-    print('Ok>', end=' ')
+    print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>", end=' ')
 
 
 # def main_call(

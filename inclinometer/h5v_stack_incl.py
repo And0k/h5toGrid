@@ -79,8 +79,8 @@ if to_vaex:
 else:
     import numpy as np
     import pandas as pd
-    from to_pandas_hdf5.h5_dask_pandas import h5_load_range_by_coord, h5_append
-    from to_pandas_hdf5.h5toh5 import h5move_tables
+    from to_pandas_hdf5.h5_dask_pandas import h5_load_range_by_coord, h5.append
+    from to_pandas_hdf5.h5toh5 import h5.move_tables
 
 
     path_db_out_temp = path_db_out.with_suffix('.temp.h5')
@@ -115,7 +115,7 @@ else:
                         }
                     print(log)
                     cfg_out['table'] = table_out
-                    h5_append(cfg_out,
+                    h5.append(cfg_out,
                         d_mod,
                         log=log,
                         tim=d.index.compute()  # need if b_insert_separator=True
@@ -123,12 +123,12 @@ else:
                     # todo: insert row of NaNs
 
 
-                # # if want sort by index (that will be done also if call with h5move_tables with arguments=None or ='fast')
+                # # if want sort by index (that will be done also if call with h5.move_tables with arguments=None or ='fast')
                 # # then add index first:
                 # cfg_out['db'].create_table_index(table, columns=['index'], kind='full')
 
-    failed_storages = h5move_tables({
-        'db_path_temp': path_db_out_temp,
+    failed_storages = h5.move_tables({
+        'temp_db_path': path_db_out_temp,
         'db_path': path_db_out
         #'tables_log': []
         },

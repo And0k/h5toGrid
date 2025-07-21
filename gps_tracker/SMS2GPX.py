@@ -260,8 +260,8 @@ def main(new_arg=None, **kwargs):
         if bMissedCoordTo0:
             for p in gpx.walk(only_points=True):
                 if p.latitude is None or p.longitude is None:
-                    p.latitude = '0'  # float('NaN') #0
-                    p.longitude = '0'  # float('NaN') #0
+                    p.latitude = '0'  # float('nan') #0
+                    p.longitude = '0'  # float('nan') #0
                 # if p_prev==p:
                 # p.delete
                 # p_prev= p

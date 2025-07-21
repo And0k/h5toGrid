@@ -65,7 +65,7 @@ def chars_array_to_datetimeindex(date: Union[np.ndarray, pd.Series],
             date.ffill(inplace=True)
             # 'nearest' interpolating date is not works, so
             # s2 = date.astype('i8').astype('f8')
-            # s2[t_is_bad] = np.NaN
+            # s2[t_is_bad] = np.nan
             # s2.interpolate(method='nearest', inplace=True)
             # date[t_is_bad] = pd.to_datetime(s2[t_is_bad])
         if date.dtype != dtype:
@@ -149,7 +149,7 @@ def out_fields(
     """
     Removes from ``types`` fields with keys that in ``keys_del`` and adds fields ``add*``
     :param types:
-    :param keys_del:
+    :param keys_del: columns that will be excluded, may contains col names that not in types
     :param add_before:
     :param add_after:
     :return: dict of {field: dtype} metadata
@@ -177,7 +177,7 @@ def log_csv_specific_param_operation(
     """
     Shows info message of csv_specific_param operations.
     Sets cfg_in['csv_specific_param_logged' + key_logged] to not repeat message on repeating call
-    :param key_logged: key of csv_specific_param triggering specific calculations when func will be called and this 
+    :param key_logged: key of csv_specific_param triggering specific calculations when func will be called and this
     message about
     :param functions_str: string representing operations applied
     :param cfg_in: dict to set/check field
@@ -270,6 +270,8 @@ def loaded_corr(
     - 'fun': fun_expr specifies function assign to ``param``
     - 'add': fun_expr specifies value to add to ``param`` to modify it
 
+    Note: fun code must have args and outputs that are column names of loaded DataFrame
+
     :return: pandas.DataFrame
     """
     if csv_specific_param is not None:
@@ -336,6 +338,27 @@ def loaded_Idronaut_terminal(
 
 
 @meta_out_fields(keys_del={'Date', 'Time'}, add_before={'Time': 'M8[ns]'})
+def loaded_sbe(
+        a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
+        csv_specific_param: Optional[Mapping[str, Any]] = None,
+) -> pd.DataFrame:
+    """
+    Specified prep&proc of data :
+    - Time calc: gets string for time (mm/dd/yyyy	hh:mm:ss) in current zone
+
+    :param a: numpy record array. Will be modified inplace.
+    :param cfg_in: dict
+    :param csv_specific_param: {param_suffix: fun_expr} where ``suffix`` in param_suffix string can be 'fun' or 'add':
+    - 'fun': fun_expr specifies function assign to ``param``
+    - 'add': fun_expr specifies value to add to ``param`` to modify it
+    :return: pandas.DataFrame
+
+    """
+    date = pd.to_datetime(a['Date'], format='%m/%d/%Y') + pd.to_timedelta(a['Time'])  #, unit='ms'
+    return a.assign(Time=date)
+
+
+@meta_out_fields(keys_del={'Date', 'Time'}, add_before={'Time': 'M8[ns]'})
 def loaded_sst(
         a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
         csv_specific_param: Optional[Mapping[str, Any]] = None,
@@ -352,12 +375,37 @@ def loaded_sst(
     :return: pandas.DataFrame
     """
 
-    date = (
-            pd.to_datetime(a['Date'].str.decode('utf-8', errors='replace'), format='%d.%m.%Y') +
-            pd.to_timedelta(a['Time'].str.decode('utf-8', errors='replace'))  #, unit='ms'
-            )
+    date = (  # .str.decode('utf-8', errors='replace')
+        pd.to_datetime(a['Date'], format='%d.%m.%Y') + pd.to_timedelta(a['Time'])  #, unit='ms'
+    )
     # check that used
     return a.assign(Time=date)
+
+@meta_out_fields(keys_del={'Time', 'Lat', 'Lon'}, add_before={'Time': 'M8[ns]'}, add_after={'Lat': 'f8', 'Lon': 'f8'})
+def loaded_sst_mws_with_coord(
+        a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
+        csv_specific_param: Optional[Mapping[str, Any]] = None,
+        # cols_out: Union[slice, Sequence[Any]] = slice(None)
+) -> pd.DataFrame:
+    """
+
+    :param a: Lat: 60°02'52.11'' N	Lon: 26°46'59.67'' E
+    :param cfg_in:
+    :param csv_specific_param:
+    :return:
+    """
+
+    def deg_min_sec_text_to_deg(dms):
+        """
+        :param degmin: 26°46'59.67'' E
+        """
+        dms = dms.str.split("['° ]", n=3, expand=True, regex=True).iloc[:, :3].astype(float)
+        return dms.iloc[:, 0] + dms.iloc[:, 1]/60 + dms.iloc[:, 2]/3600
+
+    a.Lat = deg_min_sec_text_to_deg(a.Lat)
+    a.Lon = deg_min_sec_text_to_deg(a.Lon)
+    a.Time = chars_array_to_datetimeindex(a.Time, 'datetime64[ns]')
+    return a
 
 
 @meta_out_fields(keys_del={'Time'}, add_before={'Time': 'M8[ns]'})
@@ -439,6 +487,36 @@ def loaded_sst_old(a: pd.DataFrame, cfg_in: Optional[Mapping[str, Any]] = None) 
 #         np.sum(np.float64(hh_mm_s.split(b':')) * np.float64([3600, 60, 1]))
 #     }
 
+@meta_out_fields(keys_del={'Date', 'Time'}, add_before={'Time': 'M8[ns]'})
+def loaded_rock(
+        a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
+        csv_specific_param: Optional[Mapping[str, Any]] = None
+    ) -> pd.DataFrame:
+    """
+    Specified prep&proc of ROCK CTD data :
+    ROCK_CTD, S/N 2301
+    Pres Temp Cond Date Time
+    -0.0013 3.8218 0.1531 2023-11-21 11:53:22
+
+    - Time calc: gets string for time in current zone
+
+    :param a: numpy record array. Will be modified inplace.
+    :param cfg_in: dict
+    :param csv_specific_param: {param_suffix: fun_expr} where ``suffix`` in param_suffix string can be 'fun' or 'add':
+    - 'fun': fun_expr specifies function assign to ``param``
+    - 'add': fun_expr specifies value to add to ``param`` to modify it
+    :return: pandas.DataFrame
+    """
+
+    date = (
+        pd.to_datetime(a['Date'].str.decode('utf-8', errors='replace'), format='%Y-%m-%d') +
+        pd.to_timedelta(a['Time'].str.decode('utf-8', errors='replace'))  # , unit='ms'
+    )
+    # check that used
+    return a.assign(Time=date)
+
+
+
 # ----------------------------------------------------------------------
 def loaded_csv_log(a: Union[pd.DataFrame, np.ndarray], cfg_in: Optional[Mapping[str, Any]] = None) -> np.ndarray:
     # Log format specific proc
@@ -505,7 +583,7 @@ def loaded_Baklan(
     from scipy import signal
     from gsw.conversions import t90_from_t68, CT_from_t
     from gsw import SA_from_SP, Nsquared
-    
+
     out_names_need_decimate = set(cfg_in['dtype_out'].names).difference(['Time', 'N^2'])
     # w: set(a.dtype.names); names_not_time.remove('Time')
 
@@ -539,9 +617,9 @@ def loaded_Baklan(
     SA = SA_from_SP(out['Sal'], out['Pres'], cfg_in['lon'], cfg_in['lat'])  # Absolute Salinity  [g/kg]
 
     conservative_temperature = CT_from_t(SA, Temp90, out['Pres'])
-    N2 = np.append(Nsquared(SA, conservative_temperature, out['Pres'], cfg_in['lat'])[0], np.NaN)
+    N2 = np.append(Nsquared(SA, conservative_temperature, out['Pres'], cfg_in['lat'])[0], np.nan)
 
-    # np.append(Nsquared(SA, conservative_temperature, out['Pres'], cfg_in['lat'])[1], np.NaN) - out['Pres'] is small
+    # np.append(Nsquared(SA, conservative_temperature, out['Pres'], cfg_in['lat'])[1], np.nan) - out['Pres'] is small
     return out.assign(**{'Time': date, 'N^2': N2})
 
     # works before change shape of a in caller only:
@@ -641,7 +719,7 @@ def day_jumps_correction(cfg_in: Mapping[str, Any], t: Union[np.ndarray, pd.Date
         jumps = np.hstack((jumpU, jumpD))
         ijumps = np.argsort(jumps)
         jumps = np.append(jumps[ijumps], len(t))
-        bjumpU = np.append(np.ones(lU, np.bool8), np.zeros(lD, np.bool8))[ijumps]
+        bjumpU = np.append(np.ones(lU, np.bool_), np.zeros(lD, np.bool_))[ijumps]
         t_orig = t
         # if __debug__:  # if run  under debugger
         #     plt.plot(t, color='r', alpha=0.5)  # ; plt.show()
@@ -704,18 +782,33 @@ def loaded_chain_Baranov(a: Union[pd.DataFrame, np.ndarray],
 loaded_inclin_Baranov = loaded_chain_Baranov  # to find this function by csv_inclin_Baranov.ini config file name
 
 
-def concat_to_iso8601(a: pd.DataFrame) -> pd.Series:
+def concat_to_iso8601_with_decode(a: pd.DataFrame, names=('yyyy', 'mm', 'dd', 'HH', 'MM', 'SS')) -> pd.Series:
+    """
+    This is old version of concat_to_iso8601() that now gets error AttributeError: 'str' object has no attribute 'decode'!
+    Concatenate date/time parts to get iso8601 strings
+    :param a: pd.DataFrame with columns 'yyyy', 'mm', 'dd', 'HH', 'MM', 'SS' having byte strings
+    :return:  series of byte strings of time in iso8601 format
+    """
+    y, m, d, h, mm, s = names
+    date = a[y].str.decode("utf-8")
+    date = date.str.cat([a[c].str.decode("utf-8").str.zfill(2) for c in [m, d]], sep='-')
+    time = a[h].str.decode("utf-8").str.zfill(2)
+    time = time.str.cat([a[c].str.decode("utf-8").str.zfill(2) for c in [mm, s]], sep=':')
+    return date.str.cat(time, sep='T')
+
+
+def concat_to_iso8601(a: pd.DataFrame, names=('yyyy', 'mm', 'dd', 'HH', 'MM', 'SS')) -> pd.Series:
     """
     Concatenate date/time parts to get iso8601 strings
     :param a: pd.DataFrame with columns 'yyyy', 'mm', 'dd', 'HH', 'MM', 'SS' having byte strings
     :return:  series of byte strings of time in iso8601 format
     """
-
-    d = a['yyyy'].str.decode("utf-8")
-    d = d.str.cat([a[c].str.decode("utf-8").str.zfill(2) for c in ['mm', 'dd']], sep='-')
-    t = a['HH'].str.decode("utf-8").str.zfill(2)
-    t = t.str.cat([a[c].str.decode("utf-8").str.zfill(2) for c in ['MM', 'SS']], sep=':')
-    return d.str.cat(t, sep='T')
+    y, m, d, h, mm, s = names  # todo: , *ms
+    date = a[y] if names[0] != 'y' else century.decode() + a[y]
+    date = date.str.cat([a[c].str.zfill(2) for c in [m, d]], sep='-')
+    time = a[h].str.zfill(2)
+    time = time.str.cat([a[c].str.zfill(2) for c in [mm, s]], sep=':')
+    return date.str.cat(time, sep='T')
 
 
 @meta_out_fields(keys_del={'yyyy', 'mm', 'dd', 'HH', 'MM', 'SS'}, add_before={'Time': 'M8[ns]'})
@@ -743,8 +836,15 @@ def loaded_tcm(
     try:
         date = concat_to_iso8601(a)  # .compute() #da.from_delayed(, (a.shape[0],), '|S19') #, ndmin=1)
     except Exception as e:
-        lf.exception('Can not convert date: ')
+        lf.exception('Can not convert date in {}', a)
         raise e
+
+        # Bad date? Try set manually like this:
+        time_st = '2023-06-16T09:13:59'  # '2023-05-08T23:24:00'
+        time_en = '2023-07-24T13:10:00'  # '24.07.2023 в 13:10'
+        n_rows = date.size  # 6322918
+        date = pd.date_range(start=time_st, end=time_en, periods=n_rows)
+
     tim_index = chars_array_to_datetimeindex(date, 'datetime64[ns]')  # a['Time']
     try:
         lf.info('Time {:%y-%m-%d %H:%M} – {:%d %H:%M} converted', *tim_index[[0, -1]].to_pydatetime())
@@ -878,8 +978,10 @@ def rep_in_file(file_in: Union[str, PurePath, BinaryIO, TextIO], file_out,
         file_out_original = ''
 
     sum_deleted = 0
-    with FakeContextIfOpen(lambda x: open(x, 'rb' if binary_mode else 'r'), file_in) as fin,\
-         open(file_out, 'wb' if binary_mode else 'w') as fout:
+    with FakeContextIfOpen(
+            lambda x: open(x, **{'mode': 'rb'} if binary_mode else {'mode': 'r', 'errors': 'ignore'}),
+            file_in
+    ) as fin, open(file_out, 'wb' if binary_mode else 'w') as fout:
         if isinstance(header_rows, range):
             for row in range(header_rows[0]):
                 # removing rows
@@ -936,7 +1038,7 @@ def mod_name(file_in: Union[str, PurePath], add_prefix=None) -> Tuple[str, Path]
     """
     file_in = PurePath(file_in)
     name = file_in.stem.lower().replace('inkl', 'incl')  # convert Translit to English
-    
+
     m = re.match(
         r'\*?(?P<type>[iw])(?P<chars1>ncl(?:_|)|)(?P<model>[bdp]|)(?P<number>\*?\d{0,4})(?P<chars2>\D*)', name
         )
@@ -948,7 +1050,7 @@ def mod_name(file_in: Union[str, PurePath], add_prefix=None) -> Tuple[str, Path]
             m = m.groupdict()
             m['type'] = 'w'
             m['model'] = ''
-    
+
     # Return "i" for inclinometer if model is not specified else matched regex model; "w" for wave gauge
     if m:
         model = m['model']
@@ -958,7 +1060,7 @@ def mod_name(file_in: Union[str, PurePath], add_prefix=None) -> Tuple[str, Path]
     else:
         print('Not known probe name:', file_in)
         model = None
-        
+
     # Paste add_prefix before extension, keeping asterixes if exist
     if add_prefix:
         def rep(matchobj):
@@ -1080,8 +1182,8 @@ def correct_txt(
     dir_create_if_need(out_dir)
     file_out = out_dir / file_out.name
 
-    if file_out.is_file() and file_out.stat().st_size > 100:  # If file size is small it may be damaged. Try to
-        # reprocess (not hard to reprocess small files)
+    if file_out.is_file() and file_out.stat().st_size > 100:  # If file size is small it may be damaged.
+        # Try to reprocess (not hard to reprocess small files)
         if is_opened:
             msg_file_in = correct_old_zip_name_ru(msg_file_in)
         lf.warning(f'skipping of pre-correcting csv file {msg_file_in} to {file_out.name}: destination exist')
@@ -1327,7 +1429,7 @@ def loaded_nav_HYPACK_SES2000(
     a.loc[uniq, 'Time'] = day_jumps_correction(cfg_in, date.to_numpy())
 
     for in_f, out_f in (('LatNS', 'Lat'),('LonEW', 'Lon')):
-        a[out_f] = np.NaN
+        a[out_f] = np.nan
         a.loc[uniq, out_f] = deg_min_float_as_text2deg(
             pd.to_numeric(a.loc[uniq, in_f].str.decode('utf-8', errors='replace').str.split(',').str.get(0))
             )
@@ -1383,6 +1485,58 @@ def loaded_nav_ADCP_WinRiver2_at(a: Union[pd.DataFrame, np.ndarray], cfg_in: Map
 
     tim = pd.to_datetime(a['Time'].str.decode('utf-8', errors='replace'), format='%y,%m,%d,%H,%M,%S,%f')
     return tim
+
+
+@meta_out_fields(
+        keys_del={'y', 'm', 'd', 'H', 'M', 'S', 'ms', 'z1_m', 'dz_m', 'Vabs+', 'Vdir+'},
+        add_before={'Time': 'M8[ns]', 'Depth': 'f8', 'Vabs': 'f8', 'Vdir': 'f8'}
+        )
+def loaded_ADCP_WH_BTabs_dir(a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any]) -> pd.DatetimeIndex:
+    """
+    Specified prep&proc of Depth and navigation from ADCP data, exported by WinRiver II with .ttf settings:
+    after "dz_m" in each row there are a-cols followed same number of d-cols:
+    1	2	3	4	5	6	7	8	    9	   10	11	    12	    13 a2 ... ak d1 d2 ... dk
+    Y	M	D	h	m	s	ms	Dist_m	Bot_m	N	z1_m	dz_m	a1 a2 ... ak d1 d2 ... dk
+    23	11	21	19	58	51	9	0	219.8308434	80	12.39	4	0.25
+
+    23,11,17,12,5,0,74,0.00000000,78.09342254,8,15.94000000,8.00000000,0.238,0.122,0.110,0.141,0.138,-32768,-32768,-32768,7.722,2.816,5.763,0.406,357.510,-32768,-32768,-32768
+    23,12,5,6,1,38,1,10173.21363593,175.40091123,30,16.42000000,8.00000000,
+    - Time calc: gets string for time in UTC from b'20,9,9,13,36,18,78' (yy,mm,dd,HH,MM,SS )
+
+    :param a: numpy record array. Will be modified inplace.
+    :param cfg_in: dict
+    :return: numpy 'datetime64[ns]' array
+
+    # tim = pd.to_datetime(a['Time'].str.decode('utf-8', errors='replace'), format='%y,%m,%d,%H,%M,%S,%f')
+        Example input:
+    a = {
+    'y': "23", 'm': "1", 'd': "4",
+    'H': '9','M': '5', 'S': '0', 'ms': 0}
+    """
+
+    try:
+        date = concat_to_iso8601(a, names=('y', 'm', 'd', 'H', 'M', 'S'))
+        # Convert string series to numeric (integers), then to timedeltas
+        timedeltas = pd.to_timedelta(pd.to_numeric(a['ms']), unit='ms')
+
+        tim = pd.to_datetime(date, format="ISO8601") + timedeltas
+    except Exception as e:
+        lf.exception('Can not convert date in {}', a)
+        raise e
+    # tim_index = chars_array_to_datetimeindex(date, 'datetime64[ns]')  # a['Time']
+    try:
+        lf.info('Time {:%y-%m-%d %H:%M} – {:%d %H:%M} converted', *tim[[0, -1]].to_pydatetime())
+    except KeyError:
+        lf.warning('Time of block size {} converted', tim.size)
+
+    # concat a rows of 2d measurements into single rows (drop 'd' needed as it in stubnames, others not ness.)
+    b = pd.wide_to_long(
+        a.drop(['y', 'm', 'd', 'H', 'M', 'S', 'ms'], axis=1).assign(Time=tim),
+        stubnames=['Vabs', 'Vdir'], i='Time', j='cell')
+    # Number,Latitude,Longitude,Depth,East,North
+    b['Depth'] = b.z1_m + b.dz_m * (b.index.get_level_values('cell') - 1)
+    b = b.sort_index().droplevel(level=1)  # collects same time vals. togather, moves incr. Depth to col
+    return b.loc[(b.Vabs > -32767), :].reset_index()  # | (b.Vdir > -32767) not needed
 
 
 @meta_out_fields(keys_del={'Time', 'X', 'Y'}, add_before={'Time': 'M8[ns]', 'Lat': 'f8', 'Lon': 'f8'})

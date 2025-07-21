@@ -40,9 +40,9 @@ import hydra
 # from other_filters import despike, rep2mean
 import cfg_dataclasses as cfg_d
 from utils2init import Ex_nothing_done, call_with_valid_kwargs, set_field_if_no, this_prog_basename, LoggingStyleAdapter
-from to_pandas_hdf5.h5toh5 import h5out_init, h5find_tables, h5move_tables, h5coords, h5_close, \
-    h5_dispenser_and_names_gen
-from to_pandas_hdf5.h5_dask_pandas import h5_load_range_by_coord, h5_append_to, i_bursts_starts, \
+from to_pandas_hdf5.h5toh5 import h5.out_init, h5.find_tables, h5.move_tables, h5.coords, h5.close, \
+    h5.dispenser_and_names_gen
+from to_pandas_hdf5.h5_dask_pandas import h5_load_range_by_coord, h5.append_to, i_bursts_starts, \
     filter_global_minmax, filter_local, cull_empty_partitions, dd_to_csv
 from filters import rep2mean
 from inclinometer.h5inclinometer_coef import rot_matrix_x, rotate_y
@@ -284,7 +284,7 @@ def fVabs_from_force(force, coefs, vabs_good_max=0.5):
         return np.interp(x, force_range0, incl_range0) * np.polyval(coefs, 0.25) / incl_good_min
 
     force = np.where(force > 0.25, v_normal(force), v_linear(force))
-    force[is_nans] = np.NaN
+    force[is_nans] = np.nan
     return force
 
     """
@@ -456,11 +456,12 @@ def dekart2polar_df_uv(df, **kwargs):
 
     if 'u' in df.columns:
 
-        kdegrees = 180 / np.pi
+        # kdegrees = 180 / np.pi
+        # *{kdegrees:.20}
 
         return df.eval(f"""
-        Vabs = sqrt(u**2 + v**2)
-        Vdir = arctan2(u, v)*{kdegrees:.20}
+        Vabs = hypot(u, v)
+        Vdir = degrees(arctan2(u, v))
         """, **kwargs)
     else:
         return df
@@ -509,7 +510,7 @@ def incl_calc_velocity_nodask(
                 print('Acceleration is too high (>{}) in {}% points!'.format(
                     cfg_filter['max_g_minus_1'], 100 * bad_g_sum / len(GsumMinus1))
                 )
-            incl_rad[bad_g] = np.NaN
+            incl_rad[bad_g] = np.nan
 
         Vabs = v_abs_from_incl(incl_rad, kVabs, cfg_proc['calc_version'], cfg_proc['max_incl_of_fit_deg'])
 
@@ -536,12 +537,12 @@ def incl_calc_velocity_nodask(
 def recover_x__sympy_lambdify(y, z, Ah, Ch, mean_Hsum):
     """
     After sympy added abs() under sqrt() to exclude comlex values
-    :param y: 
-    :param z: 
-    :param Ah: 
-    :param Ch: 
-    :param mean_Hsum: 
-    :return: 
+    :param y:
+    :param z:
+    :param Ah:
+    :param Ch:
+    :param mean_Hsum:
+    :return:
     """
 
     [a00, a01, a02] = Ah[0]
@@ -581,7 +582,7 @@ def recover_magnetometer_x(Mcnts, Ah, Ch, max_h_minus_1, len_data):
                 lf.warning('mean_Hsum is mostly bad (mean={:g}), most of data need to be recovered ({:g}%) so no trust it'
                           ' at all. Recovering all x-ch.data with setting mean_Hsum = 1',
                           mean_HsumMinus1, 100 * need_recover / len_data)
-                bad = da.ones_like(HsumMinus1, dtype=np.bool8)
+                bad = da.ones_like(HsumMinus1, dtype=np.bool_)
                 mean_HsumMinus1 = 0
             else:
                 lf.warning('calculated mean_Hsum - 1 is good (close to 0): mean={:s}', mean_HsumMinus1)
@@ -610,7 +611,7 @@ def recover_magnetometer_x(Mcnts, Ah, Ch, max_h_minus_1, len_data):
             Mcnts_list[0] = Mcnts[0, :]
 
         lf.debug('interpolating magnetometer data using neighbor points separately for each channel...')
-        need_recover_mask = da.ones_like(HsumMinus1, dtype=np.bool8)  # here save where Vdir can not recover
+        need_recover_mask = da.ones_like(HsumMinus1, dtype=np.bool_)  # here save where Vdir can not recover
         for ch, i in [('x', 0), ('y', 1), ('z', 2)]:  # in ([('y', 1), ('z', 2)] if need_recover else
             print(ch, end=' ')
             if (ch != 'x') or not need_recover:
@@ -627,7 +628,7 @@ def recover_magnetometer_x(Mcnts, Ah, Ch, max_h_minus_1, len_data):
                     lf.warning(
                         f'channel {ch}: bad points: {n_bad} - will not recover because too small good points ({n_good})'
                     )
-                    Mcnts_list[i] = np.NaN + da.empty_like(HsumMinus1)
+                    Mcnts_list[i] = np.nan + da.empty_like(HsumMinus1)
                     need_recover_mask[bad] = False
 
         Mcnts = da.vstack(Mcnts_list)
@@ -640,7 +641,7 @@ def recover_magnetometer_x(Mcnts, Ah, Ch, max_h_minus_1, len_data):
     return Hxyz, need_recover_mask
 
 
-def rep2mean_da(y: da.Array, bOk=None, x=None, ovrerlap_depth=None) -> da.Array:
+def rep2mean_da(y: da.Array, bOk=None, x=None, overlap_depth=None) -> da.Array:
     """
     Interpolates bad values (inverce of bOk) in each dask block.
     Note: can leave NaNs if no good data in block
@@ -655,9 +656,9 @@ def rep2mean_da(y: da.Array, bOk=None, x=None, ovrerlap_depth=None) -> da.Array:
     result = da.overlap.trim_internal(g2, {0: 2, 1: 2})
     """
     if x is None:  # dask requires "All variadic arguments must be arrays"
-        return da.map_overlap(rep2mean, y, bOk, depth=ovrerlap_depth, dtype=np.float64, meta=np.float64([]))
+        return da.map_overlap(rep2mean, y, bOk, depth=overlap_depth, dtype=np.float64, meta=np.float64([]))
     else:
-        return da.map_overlap(rep2mean, y, bOk, x, depth=ovrerlap_depth, dtype=np.float64, meta=np.float64([]))
+        return da.map_overlap(rep2mean, y, bOk, x, depth=overlap_depth, dtype=np.float64, meta=np.float64([]))
     #y.map_blocks(rep2mean, bOk, x, dtype=np.float64, meta=np.float64([]))
 
 
@@ -780,9 +781,9 @@ def incl_calc_velocity(a: dd.DataFrame,
                             'Acceleration is too high (>{}) in {:g}% points (data removed)!',
                             filt_max['g_minus_1'], 100 * bad_g_sum / len(GsumMinus1)
                         )
-                    incl_rad[bad] = np.NaN
+                    incl_rad[bad] = np.nan
             # else:
-            #     bad = da.zeros_like(GsumMinus1, np.bool8)
+            #     bad = da.zeros_like(GsumMinus1, np.bool_)
 
             # lf.debug('{:.1g}Mb of data accumulated in memory '.format(dfs_all.memory_usage().sum() / (1024 * 1024)))
 
@@ -798,7 +799,7 @@ def incl_calc_velocity(a: dd.DataFrame,
                                        calc_version=cfg_proc['calc_version'],
                                        max_incl_of_fit_deg=cfg_proc['max_incl_of_fit_deg'],
                                        dtype=np.float64, meta=np.float64([]))
-            # Vabs = np.polyval(kVabs, np.where(bad, np.NaN, Gxyz))
+            # Vabs = np.polyval(kVabs, np.where(bad, np.nan, Gxyz))
             # v = Vabs * np.cos(np.radians(Vdir))
             # u = Vabs * np.sin(np.radians(Vdir))
 
@@ -906,7 +907,7 @@ def calc_pressure(a: dd.DataFrame,
         assert d_ok.sum() == len_data
         d_ok = (tuple(d_ok),)
         # interpolate between change points:
-        arr_smooth = rep2mean_da(arr.rechunk(chunks=d_ok), bOk=bc.rechunk(chunks=d_ok), ovrerlap_depth=1)
+        arr_smooth = rep2mean_da(arr.rechunk(chunks=d_ok), bOk=bc.rechunk(chunks=d_ok), overlap_depth=1)
 
         a_add = arr_smooth.rechunk(chunks=arr.chunks).map_blocks(
             lambda x: np.polyval(PTemp, x), dtype=np.float64, meta=np.float64([])
@@ -947,7 +948,7 @@ def calc_pressure(a: dd.DataFrame,
             """ mark bad data in first samples of burst"""
             # df.iloc[0:1, df.columns.get_loc('P')]=0  # not works!
             pressure = np.polyval(P, p.values)
-            pressure[:2] = np.NaN
+            pressure[:2] = np.nan
             p[:] = pressure
             return p
 
@@ -1048,7 +1049,7 @@ def coef_zeroing(g_xyz_0, Ag_old, Cg, Ah_old) -> Tuple[np.ndarray, np.ndarray]:
     # def interp_after_median3(x, b):
     #     return np.interp(
     #         da.arange(len(b_ok), chunks=cfg_out['chunksize']),
-    #         da.flatnonzero(b_ok), median3(x[b]), da.NaN, da.NaN)
+    #         da.flatnonzero(b_ok), median3(x[b]), da.nan, da.nan)
     #
     # b = da.from_array(b_ok, chunks=chunks, meta=('Tfilt', 'f8'))
     # with ProgressBar():
@@ -1057,7 +1058,7 @@ def coef_zeroing(g_xyz_0, Ag_old, Cg, Ah_old) -> Tuple[np.ndarray, np.ndarray]:
     # hangs:
     # Tfilt = dd.map_partitions(interp_after_median3, a['Temp'], da.from_array(b_ok, chunks=cfg_out['chunksize']), meta=('Tfilt', 'f8')).compute()
 
-    # Tfilt = np.interp(da.arange(len(b_ok)), da.flatnonzero(b_ok), median3(a['Temp'][b_ok]), da.NaN,da.NaN)
+    # Tfilt = np.interp(da.arange(len(b_ok)), da.flatnonzero(b_ok), median3(a['Temp'][b_ok]), da.nan,da.nan)
     # @+node:korzh.20180524213634.8: *3* main
     # @+others
     # @-others
@@ -1113,17 +1114,17 @@ def probes_gen(cfg_in: Mapping[str, Any], cfg_out: None = None
     :param cfg_in: dict with fields:
     - tables: tables names search pattern or sequence of table names
     - db_path: hdf5 file with tables which have coef group nodes.
-    :param cfg_out: not used but kept for the requirement of h5_dispenser_and_names_gen() argument
+    :param cfg_out: not used but kept for the requirement of h5.dispenser_and_names_gen() argument
     :return: iterator that returns (table_name, coefficients).
     - table_name is same as input tables names except that "incl" replaced with "i"
     - coefficients are None if db_path ends with 'proc_noAvg'.
      "Vabs0" coef. name are replaced with "kVabs"
     Updates cfg_in['tables'] - sets to list of found tables in store
     """
-    
+
     with pd.HDFStore(cfg_in['db_path'], mode='r') as store:
         if len(cfg_in['tables']) == 1:
-            cfg_in['tables'] = h5find_tables(store, cfg_in['tables'][0])
+            cfg_in['tables'] = h5.find_tables(store, cfg_in['tables'][0])
         for tbl in cfg_in['tables']:
             if '.proc_noAvg' in cfg_in['db_path'].suffixes[-2:-1]:
                 # Loading already processed data
@@ -1164,9 +1165,9 @@ def gen_subconfigs(
         bad_p_at_bursts_starts_periods=None,
         **cfg_in_common) -> Iterator[Tuple[dd.DataFrame, Dict[str, np.array], str, int]]:
     """
-    Wraps h5_dispenser_and_names_gen() to deal with many db_paths, tables, dates_min and dates_max
+    Wraps h5.dispenser_and_names_gen() to deal with many db_paths, tables, dates_min and dates_max
 
-    h5_dispenser_and_names_gen() parameters:
+    h5.dispenser_and_names_gen() parameters:
     :param time_ranges:
     :param time_ranges_zeroing:
     :param bad_p_at_bursts_starts_periods:
@@ -1262,16 +1263,16 @@ def gen_subconfigs(
     fields_can_change_all = [k for k in ('filter', 'process') if k in cfg]
     cfg_copy = {k: cfg[k].copy() for k in (fields_can_change_all + ['out'])}
     for group_in, cfg_in_cur in group_dict_vals(cfg_in_many, cfg['in'].get('probes', None)).items():
-        cfg_in_cur['tables'] = [cfg_in_cur['table']]  # for h5_dispenser_and_names_gen()
+        cfg_in_cur['tables'] = [cfg_in_cur['table']]  # for h5.dispenser_and_names_gen()
 
         n_yields = 1
-        for itbl, (tbl, coefs) in h5_dispenser_and_names_gen(
+        for itbl, (tbl, coefs) in h5.dispenser_and_names_gen(
                 cfg_in_cur, cfg['out'],
                 fun_gen=fun_gen,
                 b_close_at_end=False
                 ):  # gets cfg['out']['db'] to write
 
-            # recover initial cfg (not ['out']['db'/'b_remove_duplicates'] that h5_dispenser_and_names_gen() updates)
+            # recover initial cfg (not ['out']['db'/'b_remove_duplicates'] that h5.dispenser_and_names_gen() updates)
             for k in fields_can_change_all:
                 cfg[k] = cfg_copy[k]
             cfg_in_copy = cfg_in_common.copy()
@@ -1349,7 +1350,7 @@ def gen_subconfigs(
                     # query and process several independent intervals
                     # Get index only and find indexes of data
                     try:
-                        index_range, i0range, iq_edges = h5coords(store, tbl, cfg_in_copy['time_range'])
+                        index_range, i0range, iq_edges = h5.coords(store, tbl, cfg_in_copy['time_range'])
                     except TypeError:  # skip empty nodes
                         # TypeError: cannot create a storer if the object is not existing nor a value are passed
                         lf.warning('Skipping {} without data table found', tbl)
@@ -1407,8 +1408,8 @@ def main(config: ConfigType) -> None:
     if not cfg['out']['db_path']:
         cfg['out']['db_path'] = _db_path_proc_no_h5suffix.with_suffix(f'.proc.h5')
 
-    h5out_init(cfg['in'], cfg['out'])
-    # cfg_out_table = cfg['out']['table']  # need? save because will need to change for h5_append()
+    h5.out_init(cfg['in'], cfg['out'])
+    # cfg_out_table = cfg['out']['table']  # need? save because will need to change for h5.append()
 
     # will search / use this db:
     db_path_proc_noAvg = _db_path_proc_no_h5suffix.with_suffix('.proc_noAvg.h5')
@@ -1567,7 +1568,7 @@ def main(config: ConfigType) -> None:
                     'rows': len(d)
                     }
                 tables_written_not_joined |= (
-                    h5_append_to(d, tbl, cfg['out'], log, msg=f'saving {tbl} to temporary store')
+                    h5.append_to(d, tbl, cfg['out'], log, msg=f'saving {tbl} to temporary store')
                 )
 
         probe_continues = (tbl == tbl_prev and probe_number_str == probe_number_str_prev)
@@ -1611,7 +1612,7 @@ def main(config: ConfigType) -> None:
         for after_remove_dup_index in [False, True]:
             try:
                 cfg['out']['tables_written'] |= (
-                    h5_append_to(dfs_all, cfg['out']['table'], cfg['out'], log=dfs_all_log,
+                    h5.append_to(dfs_all, cfg['out']['table'], cfg['out'], log=dfs_all_log,
                                  msg='Saving accumulated data'
                                  )
                     )
@@ -1623,10 +1624,10 @@ def main(config: ConfigType) -> None:
                     break
                 lf.error('Removing duplicates in index')
                 dfs_all = dfs_all.loc[~dfs_all.index.duplicated(keep='last')]
-    h5_close(cfg['out'])  # close temporary output store
+    h5.close(cfg['out'])  # close temporary output store
     if tables_written_not_joined:
         try:
-            failed_storages = h5move_tables(
+            failed_storages = h5.move_tables(
                 {**cfg['out'], 'db_path': cfg['out']['not_joined_db_path'], 'b_del_temp_db': False},
                 tables_written_not_joined
                 )
@@ -1634,7 +1635,7 @@ def main(config: ConfigType) -> None:
             lf.warning('Tables {} of separate data not moved', tables_written_not_joined)
     if cfg['out']['tables_written']:
         try:
-            failed_storages = h5move_tables(cfg['out'], cfg['out']['tables_written'])
+            failed_storages = h5.move_tables(cfg['out'], cfg['out']['tables_written'])
         except Ex_nothing_done as e:
             lf.warning('Tables {} of combined data not moved', cfg['out']['tables_written'])
 
@@ -1653,7 +1654,7 @@ def main(config: ConfigType) -> None:
 
     print('Ok.', end=' ')
 
-    # h5index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5", in_storages= failed_storages)
+    # h5.index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5", in_storages= failed_storages)
     # dd_out = dd.multi.concat(dfs_list, axis=1)
 
 if __name__ == '__main__':

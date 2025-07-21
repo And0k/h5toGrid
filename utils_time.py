@@ -8,15 +8,13 @@
 import logging
 import re
 from typing import Optional, Union, Tuple, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 from numba import jit
 from pandas.tseries.frequencies import to_offset
-
-from filters import l
-from utils2init import LoggingStyleAdapter
-
+# from  pandas.tseries.offsets import DateOffset
+from dateutil.tz import tzoffset
 if __debug__:
     # datetime converter for a matplotlib plotting method
     from pandas.plotting import register_matplotlib_converters
@@ -25,9 +23,10 @@ if __debug__:
 # from future.moves.itertools import zip_longest
 # from builtins import input
 # from debug import __debug___print
-# from  pandas.tseries.offsets import DateOffset
-from dateutil.tz import tzoffset
+
 # my:
+from filters import l
+from utils2init import LoggingStyleAdapter
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
 dt64_1s = np.int64(1e9)
@@ -101,29 +100,39 @@ def multiindex_replace(pd_index, new1index, itm):
     return pd_index
 
 
-def timzone_view(t, dt_from_utc=0):
+def timezone_view(t, dt_from_utc=0):
     """
-    
-    :param t: Pandas Timestamp time
-    :param dt_from_utc: pd.Timedelta - timezone offset
-    :return: t with applied timezone dt_from_utc
-      Assume that if time zone of tz-naive Timestamp is naive then it is UTC
-    """
-    tzinfo = 'UTC' if dt_from_utc in (0, pd.Timedelta(0)) else tzoffset(
-        None, pd.to_timedelta(dt_from_utc).total_seconds())  # better pd.datetime.timezone?
+    Convert a given time 't' to a specific timezone offset from UTC.
+    If the time 't' is timezone-naive, it's assumed to be in UTC.
 
-    if isinstance(t, pd.DatetimeIndex) or isinstance(t, pd.Timestamp):
+    :param t: Pandas Timestamp or DatetimeIndex. The time to be converted.
+    :param dt_from_utc: int or any pd.to_timedelta() compatible argument.
+        The offset from UTC in seconds. Defaults to 0.
+    :return: The time 't' converted to the timezone offset by 'dt_from_utc' from UTC.
+    """
+    # If dt_from_utc is 0 or equivalent to pd.Timedelta(0), set timezone info to 'UTC'
+    tzinfo = (
+        "UTC"
+        if dt_from_utc in (0, pd.Timedelta(0))
+        else tzoffset(None, pd.to_timedelta(dt_from_utc).total_seconds())
+    )
+
+    # Check if 't' is either a Pandas DatetimeIndex or a Timestamp
+    if isinstance(t, (pd.DatetimeIndex, pd.Timestamp)):
+        # If 't' is timezone-naive, localize it to 'UTC'
         if t.tz is None:
-            # think if time zone of tz-naive Timestamp is naive then it is UTC
-            t = t.tz_localize('UTC')
+            t = t.tz_localize("UTC")
+        # Convert 't' to the desired timezone
         return t.tz_convert(tzinfo)
     else:
+        # If 't' is not a subclass of pd.Timestamp/DatetimeIndex, convert it
         lf.error(
-            'Bad time format {}: {} - it is not subclass of pd.Timestamp/DatetimeIndex => Converting...', type(t), t)
+            "Bad time format {}: {} - it is not subclass of pd.Timestamp/DatetimeIndex => Converting...",
+            type(t),
+            t,
+        )
         t = pd.to_datetime(t).tz_localize(tzinfo)
         return t
-        # t.to_datetime().replace(tzinfo= tzinfo) + dt_from_utc
-    # t.astype(datetime).replace(
 
 
 # ----------------------------------------------------------------------
@@ -142,11 +151,12 @@ def pd_period_to_timedelta(period: str) -> pd.Timedelta:
 
 
 def intervals_from_period(
-        datetime_range: Optional[np.ndarray] = None,
-        min_date: Optional[pd.Timestamp] = None,
-        max_date: Optional[pd.Timestamp] = None,
-        period: Optional[str] = '999D',
-        **kwargs) -> (pd.Timestamp, pd.DatetimeIndex):
+    datetime_range: Optional[np.ndarray] = None,
+    min_date: Optional[pd.Timestamp] = None,
+    max_date: Optional[pd.Timestamp] = None,
+    period: Optional[str] = '999D',
+    **kwargs
+) -> Tuple[pd.Timestamp, pd.DatetimeIndex]:
     """
     Divide datetime_range on intervals of period, normalizes starts[1:] if period>1D and returns them in tuple's 2nd element
     :param period: pandas offset string 'D' (Y, D, 5D, H, ...) if None such field must be in cfg_in
@@ -222,16 +232,25 @@ def minInterval(range1: Sequence, range2: Sequence, length: int):
     return maxmin(positiveInd(range1, length), positiveInd(range2, length))
 
 
-def check_time_diff(t_queried: Union[pd.Series, np.ndarray], t_found: Union[pd.Series, np.ndarray],
-                    dt_warn: Union[pd.Timedelta, np.timedelta64],
-                    msg: str = 'Bad nav. data coverage: difference to nearest point in time [min]:',
-                    return_diffs: bool = False) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+def check_time_diff(
+        t_queried: Union[pd.Series, np.ndarray], t_found: Union[pd.Series, np.ndarray],
+        dt_warn: Union[pd.Timedelta, np.timedelta64, timedelta],
+        msg: str = ('Bad nav. data time coverage at {} points where time difference [{units}] to nearest data exceeds '
+                    '{dt_warn}:'),
+        return_diffs: bool = False, max_msg_rows=1000
+) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
     """
     Check time difference between found and requested time points and prints info if big difference is found
+
     :param t_queried: pandas TimeSeries or numpy array of 'datetime64[ns]'
     :param t_found:   pandas TimeSeries or numpy array of 'datetime64[ns]'
     :param dt_warn: pd.Timedelta - prints info about bigger differences found only
     :param return_diffs: if True also returns time differences (t_found - t_queried_values, 'timedelta64[ns]')
+    :param msg: message header before bad rows found. May use placeholders:
+    :param max_msg_rows:
+    - {n} to include info about number of rows,
+    - {dt_warn},
+    - {units}
     :return: mask where time difference is bigger than ``dt_warn`` and time differences if return_diffs=True
     """
     try:
@@ -244,17 +263,28 @@ def check_time_diff(t_queried: Union[pd.Series, np.ndarray], t_found: Union[pd.S
 
     dt_arr = np.array(t_found - t_queried_values, 'timedelta64[ns]')
     bbad = abs(dt_arr) > np.timedelta64(dt_warn)
-    if (msg is not None) and np.any(bbad):
-        if msg:
-            msg = '\n'.join([msg] + ['{}. {}:\t{}{:.1f}'.format(i, tdat, m, dt / 60) for i, tdat, m, dt in zip(
-                np.flatnonzero(bbad), t_queried[bbad], np.where(dt_arr[bbad].astype(np.int64) < 0, '-', '+'),
-                np.abs(dt_arr[bbad]) / np.timedelta64(1, 's'))])
-        lf.warning(msg)
+    if msg:
+        n = bbad.sum()
+        if n:
+            if dt_warn > timedelta(minutes=1):
+                units = 'min'
+                dt_div = 60
+            else:
+                units = 's'
+                dt_div = 1
+            msg = '\n'.join([msg.format(n=n, dt_warn=dt_warn, units=units)] + [
+                '{}. {}:\t{}{:.1f}'.format(i, tdat, m, dt / dt_div) for i, tdat, m, dt in zip(
+                    np.flatnonzero(bbad)[:max_msg_rows], t_queried[bbad], np.where(dt_arr[bbad].astype(np.int64) < 0, '-', '+'),
+                    np.abs(dt_arr[bbad]) / np.timedelta64(1, 's')
+                )] + ['...' if n > max_msg_rows else ''])
+            lf.warning(msg)
     return (bbad, dt_arr) if return_diffs else bbad
+
 
 # str_time_short= '{:%d %H:%M}'.format(r.Index.to_datetime())
 # timeUTC= r.Index.tz_convert(None).to_datetime()
-# @jit
+# @jit(nopython=True)  # astype(datetime64[ns]) not supported on array(float64, 1d, C)
+
 def matlab2datetime64ns(matlab_datenum: np.ndarray) -> np.ndarray:
     """
     Matlab serial day to numpy datetime64[ns] conversion
@@ -268,6 +298,8 @@ def matlab2datetime64ns(matlab_datenum: np.ndarray) -> np.ndarray:
     # LOCAL_ZONE_m8= np.timedelta64(tzlocal().utcoffset(datetime.now()))
     return ((matlab_datenum + origin_day) * day_ns).astype('datetime64[ns]')  # - LOCAL_ZONE_m8
 
+
+# assert matlab2datetime64ns.nopython_signatures  # this was compiled in nopython mode
 
 def date_from_filename(file_stem: str, century: str = '20'):
     """

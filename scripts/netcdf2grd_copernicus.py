@@ -83,9 +83,9 @@ def calc_iso_surface(v3d, v_isosurface, zi, interp_order=1, weight_power=1, dv_m
 
     # Add top & bot edges
     dv = v3d - v_isosurface
-    dv_filled = dv.filled(np.NaN)
+    dv_filled = dv.filled(np.nan)
     shape_collect = list(v3d.shape[:-1]) + [interp_order * 2]
-    # collect nearest values with positve dv and negative separately to:
+    # collect nearest values with positive dv and negative separately to:
     arg_nearest = np.zeros(shape_collect, dtype=int)
     # collect its weights and mask to:
     z_weight = np.ma.zeros(shape_collect, dtype=float)
@@ -105,7 +105,7 @@ def calc_iso_surface(v3d, v_isosurface, zi, interp_order=1, weight_power=1, dv_m
     # # set output to NaN if from some side have no points:
     # b_outside = ~arg_nearest[..., (interp_order - 1):(interp_order + 1)].all(axis=-1)
     z_nearest = zi[arg_nearest]
-    z_nearest[b_ambiguous, :] = np.NaN
+    z_nearest[b_ambiguous, :] = np.nan
     # average
     return np.ma.average(z_nearest, weights=abs(z_weight), axis=-1)
     # np.ma.masked_array(z_nearest, z_weight.mask)
@@ -134,7 +134,7 @@ else:
         file_name = f'{t:%y%m%d_%H%M}{v_name}.grd'
         file_path = output_dir / file_name
         print(f'Writing to {file_name}')
-        save_grd(np.flipud(v2d.filled(np.NaN)), x_min, y_max, x_resolution, y_resolution, file_path)
+        save_grd(np.flipud(v2d.filled(np.nan)), x_min, y_max, x_resolution, y_resolution, file_path)
 
 
 if method == 'file_for_each_time':      # METHOD 1
@@ -197,4 +197,4 @@ elif method == 'file_for_each_coord':
                      sep='\t', encoding="ascii")
 
     print('saved to', filename)
-print('ok>')
+print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>")

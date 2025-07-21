@@ -82,7 +82,7 @@ def main():
             try:
                 vsz_data, log = cor_send_data.send(cfgin_update)
             except (GeneratorExit, StopIteration, Ex_nothing_done):
-                print('ok>')
+                print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>")
                 break
             # except Exception as e:
             #     print('There are error: ', standard_error_info(e))

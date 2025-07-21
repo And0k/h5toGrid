@@ -24,28 +24,28 @@ if 'useLineDist' in cfg['track']:
 b_use = np.isfinite(a1DLat) & np.isfinite(a1DLon) & np.isfinite(a1DTime)
 iEdge = np.flatnonzero(b_use)([0, -1])
 if iEdge.size:
-    trackDist = np.NaN
+    trackDist = np.nan
 if not a1DTime.size:
     l.warning('DistClc:NoData - empty track')
 else:
     l.warning('DistClc:NoData - no Lat,Lon for track starts at {}'.format(a1DTime[0]))
 
 track['Points']['Time'] = a1DTime(b_use)
-track['Points']['Dist'] = np.NaN(b_use.size)
-track['Points']['Lat'] = np.NaN(b_use.size)
-track['Points']['Lon'] = np.NaN(b_use.size)
+track['Points']['Dist'] = np.nan(b_use.size)
+track['Points']['Lat'] = np.nan(b_use.size)
+track['Points']['Lon'] = np.nan(b_use.size)
 return
 
 bnan = ~np.isfinite(a1DLat)
 k = np.sum(bnan)
 if k > 0:
-    print('#g np.NaNs found in Lat!!! Check navInterp\n', k)
+    print('#g np.nans found in Lat!!! Check navInterp\n', k)
     a1DLat = rep2mean(a1DLat, bnan, a1DTime)
 
 bnan = ~np.isfinite(a1DLon)
 k = np.sum(bnan)
 if k > 0:
-    print('#g np.NaNs found in Lon!!! Check navInterp\n', k)
+    print('#g np.nans found in Lon!!! Check navInterp\n', k)
     a1DLon = rep2mean(a1DLon, bnan, a1DTime)
 
 b_use = ~(~np.isfinite(a1DLat) | ~np.isfinite(a1DLon) | ~np.isfinite(a1DTime))
@@ -77,7 +77,7 @@ elif np.isfinite(track['useLineDist']):
     # np.flatnonzero b_use where dDist>track['useLineDist']
     trackDist = legs(a1DLat[b_use], a1DLon[b_use])[1]  # nm
     b_use[iEdge[0]] = False
-    dDist = np.full_like(a1DLat, np.NaN)
+    dDist = np.full_like(a1DLat, np.nan)
     dDist[b_use] = trackDist
     dDist[~np.isfinite(dDist)] = 0
     trackDist = 0
@@ -91,11 +91,11 @@ elif np.isfinite(track['useLineDist']):
     b_use[iEdge] = True
     trackDist = legs(a1DLat[b_use], a1DLon[b_use])[1]
     b_use[iEdge[0]] = False
-    dDist = np.full_like(a1DLat, np.NaN)
+    dDist = np.full_like(a1DLat, np.nan)
     dDist[b_use] = trackDist
     dDist[iEdge[0]] = 0
     b_use[iEdge[0]] = True
-    trackDist = np.full_like(a1DLat, np.NaN)
+    trackDist = np.full_like(a1DLat, np.nan)
     trackDist[b_use] = np.cumsum(dDist[b_use])
     if track['bInvert']:
         trackDist = trackDist(iEdge(2)) - trackDist
@@ -106,8 +106,8 @@ elif np.isfinite(track['useLineDist']):
         p = 1;
         b_use[0] = False
         temp = np.flatnonzero(b_use) + 1
-        track['Points']['Time'] = np.NaN(temp.size)
-        track['Points']['Lat'] = np.NaN(temp.size)
+        track['Points']['Time'] = np.nan(temp.size)
+        track['Points']['Lat'] = np.nan(temp.size)
         track['Points']['Lon'] = track['Points']['Lat']
         for k in temp.T:
             ind = slice(kLast, (k - 1))
@@ -157,7 +157,7 @@ else:  # line distance
 
     dDist = dDist * (2 * (abs(temp - track['Course']) < 90) - 1)  # (* sign)
     dDist = np.cumsum(dDist)
-    trackDist = np.full_like(a1DLat, np.NaN)
+    trackDist = np.full_like(a1DLat, np.nan)
     trackDist[b_use] = dDist
     track['Points']['Lat'] = lats
     track['Points']['Lon'] = lons

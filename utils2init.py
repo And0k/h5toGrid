@@ -20,7 +20,7 @@ from pathlib import Path, PurePath
 from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional, Iterable, Iterator, BinaryIO, Sequence, TextIO, TypeVar, Tuple, Union
 from inspect import currentframe
 import io
-from functools import reduce, wraps
+from functools import wraps
 from dataclasses import dataclass
 
 if sys.platform == "win32":
@@ -232,7 +232,8 @@ def first_of_paths_text(paths):
 
 def set_field_if_no(dictlike, dictfield, value=None):
     """
-    Modifies dict: sets field to value only if it not exists
+    Note: In contrast to `setdefault` this function sets `dictlike` value also if it was exist and was equal
+    to None. Equal to `dictlike[dictfield] = dictlike.get(dictfield) or value` but may be faster
     :param dictlike: dict
     :param dictfield: field
     :param value: value
@@ -275,12 +276,15 @@ def getDirBaseOut(mask_in_path, raw_dir_words: Optional[Sequence[str]]=None, rep
     for source_dir_word in raw_dir_words:
         # Start of source_dir_word in 1st detected variant
         st = mask_in_str.find(source_dir_word, 3)  # .lower()
-        if st >= 0: break
+        if st >= 0:
+            break
 
     if st < 0:
-        print("Directory structure should be ..."
-              "*{}{}'Sea'{}'Cruise'{}'Device'{}!".format(source_dir_word, os_path.sep, os_path.sep, os_path.sep,
-                                                         os_path.sep))
+        print(
+            "Directory structure should be ...*{}{}'Sea'{}'Cruise'{}'Device'{}!".format(
+                source_dir_word, os_path.sep, os_path.sep, os_path.sep, os_path.sep
+            )
+        )
         out_path, cruise = os_path.split(mask_in_str)
         return out_path, cruise, ("" if replaceDir is None else replaceDir)
 
@@ -392,9 +396,9 @@ def type_fix(name: str, opt: Any) -> Tuple[str, Any]:
 
     :param name: option's name. If special prefix/suffix provided then opt's type will be converted accordingly
     :param opt: option's value, usually str that need to convert to the type specified by oname's prefix/suffix.
-    For different oname's prefix/suffixes use this formattin rules:
+    For different oname's prefix/suffixes use this formatting rules:
     - 'dict': do not use curles, field separator: ',' if no '\n' in it else '\n,', key-value separator: ': ' (or ':' if no ': ')
-    - 'list': do not use brackets, item separator: "'," if fist is ``'`` else '",' if fist is ``"`` else ','
+    - 'list', 'names': do not use brackets, item separator: "'," if fist is ``'`` else '",' if fist is ``"`` else ','
     ...
     :return: (new_name, new_opt)
     """
@@ -410,7 +414,7 @@ def type_fix(name: str, opt: Any) -> Tuple[str, Any]:
 
     def val_type_fix(parent_name, field_name, field_value):
         """
-        Modify type of field_value basing on parent_name (useful for dicts with keys thaty defines types of values)
+        Modify type of field_value basing on parent_name (dicts should have keys that defines types of values)
         """
         nonlocal name_out
         name_out, val = type_fix(parent_name, field_value)
@@ -420,8 +424,10 @@ def type_fix(name: str, opt: Any) -> Tuple[str, Any]:
     try:
         if is_simple_sequence(opt):
             opt = [type_fix('_'.join(key_splitted[0:-1]) if suffix in {'list', 'names'} else name, v)[1] for v in opt]
+            return name, opt
+
         if suffix in {'list', 'names'}:  # , '_endswith_list' -> '_endswith'
-            # parse list
+            # parse list. Todo: support square brackets
             name_out = '_'.join(key_splitted[0:-1])
             if not opt:
                 opt_list_in = [None]
@@ -458,8 +464,14 @@ def type_fix(name: str, opt: Any) -> Tuple[str, Any]:
             #     else:  # split to strings separated by ','
             #         return name_out, [n.strip() for n in opt.split(',')]
         if isinstance(opt, Mapping):
-            opt = dict([val_type_fix(name[:-1] if name.endswith('lists') else name, n, v) for n, v in opt.items()])
-            return name_out or name, opt
+            if opt:
+                opt_out = dict([val_type_fix(name[:-1] if name.endswith('lists') else name, n, v)
+                            for n, v in opt.items()])
+                # Note: global name_out was changed during val_type_fix()
+            else:  # Call type_fix() only to set name_out
+                name_out, val = type_fix(name[:-1] if name.endswith('lists') else name, None)
+                opt_out = {}
+            return name_out or name, opt_out
 
         if suffix == 'dict':
             # remove dict suffix when convert to dict type
@@ -471,21 +483,15 @@ def type_fix(name: str, opt: Any) -> Tuple[str, Any]:
                     if name_new == name_out:
                         break
                     name_new = name_out  # saving previous value for compare to exit cycle
-                return name_out, {}  # ???
+                return name_out, {}  # None value to empty dict
             elif isinstance(opt, str):
-                if '\n' in opt:
-                    opt_list = opt.split('\n,' if ',\n' in opt else ',')
-                    if len(opt_list) > 1:
-                        dict_fixed = [
-                            dict([val_type_fix(name_new, *n.strip().split(': ' if ': ' in n else ':', maxsplit=1))])
-                            if len(n) == 2 else n for n in opt_list  # ???
-                        ]
-                    return name_out, dict_fixed  # ???
-                else:
-                    return type_fix(name_new, opt)  # ???
+                sep = '\n,' if ',\n' in opt else ','
+                dict_fixed = dict([val_type_fix(
+                    name_new, *n.strip().split(': ' if ': ' in n else ':', maxsplit=1)
+                ) for n in opt.split(sep) if len(n)])
+                return name_out, dict_fixed
             else:
                 return type_fix(name_new, opt)  # ???
-            
 
         if prefix == 'b':
             return name, literal_eval(opt)
@@ -494,15 +500,19 @@ def type_fix(name: str, opt: Any) -> Tuple[str, Any]:
         if prefix == 'dt':
             if suffix in {'days', 'seconds', 'microseconds', 'milliseconds', 'minutes', 'hours', 'weeks'}:
                 name_out = '_'.join(key_splitted[:-1])
-                if opt:
-                    try:
-                        opt = timedelta(**{suffix: float(opt)})
-                    except TypeError as e:
-                        raise KeyError(e.msg) from e  # changing error type to be not caught and accepted
-                else:  # not need convert
-                    opt = timedelta(0)
-            else:  # do nothing
-                name_out = name
+            else:  # input in seconds by default, also allow 's' suffix instead of 'seconds'
+                name_out = '_'.join(key_splitted[:-1]) if suffix == 's' else name
+                suffix = 'seconds'
+            if opt:
+                try:
+                    opt = timedelta(**{suffix: float(opt)})
+                except TypeError as e:  # Not need convert (like for list of timedeltas after items converted)
+                    raise KeyError(e.msg) from e  # changing error type to be not caught and accepted
+                except OverflowError:
+                    opt = timedelta.max
+            else:  # not need convert
+                opt = timedelta(0)
+
             return name_out, opt
         b_trig_is_prefix = prefix in {'date', 'time'}
         if b_trig_is_prefix or suffix in {'date', 'time'}:
@@ -1171,16 +1181,28 @@ def init_file_names(
     """
     # ensure absolute path:
     path = set_cfg_path_filemask(path, filemask, ext, cfg_search_parent)
-
     # Filter unused directories and files
     filt_dirCur = lambda f: bGood_dir(f, namesBadAtEdge=exclude_dirs_endswith)
 
     def skip_to_start_file(fun):
         if start_file or end_file:
-            fun_skip = generator_good_between(start_file, end_file)
 
-            def call_skip(*args, **kwargs):
-                return (fun(*args, **kwargs) and fun_skip.__next__())
+            if isinstance(start_file, str) or isinstance(end_file, str):
+                if end_file is None:
+                    fun_skip = lambda name: name >= start_file
+                elif start_file is None:
+                    fun_skip = lambda name: end_file > name
+                else:
+                    fun_skip = lambda name: end_file > name >= start_file
+
+                def call_skip(*args, **kwargs):
+                    return fun(*args, **kwargs) and fun_skip(args[0])
+
+            else:
+                fun_skip = generator_good_between(start_file, end_file)
+
+                def call_skip(*args, **kwargs):
+                    return fun(*args, **kwargs) and next(fun_skip)
 
             return call_skip
         return fun
@@ -1223,8 +1245,8 @@ def init_file_names(
             bGoodFile=filt_file_cur, bGoodDir=filt_dirCur)]
     else:
         print(':', end=' ')
-        paths = [path.with_name(f) for f in sorted(os_listdir(
-            path.parent)) if filt_file_cur(f, path.name)]
+        paths = [path.with_name(f) for f in sorted(os_listdir(path.parent))
+                 if filt_file_cur(f, path.name)]
     nfiles = len(paths)
     nl1, nl0 = ('\n', '') if nfiles == 1 else ('', '\n')
     print(end=f"{nl0}- {nfiles} found")
@@ -1364,9 +1386,7 @@ def set_cfg_path_filemask(path=None, filemask=None, ext=None,
 
     Note: Extension may be within :param path or in :param ext
     """
-
     path = Path(*pathAndMask(*[path, filemask, ext]))
-
     if not path.is_absolute():
         if cfg_search_parent:
             for field in ['path', 'db_path']:
@@ -1603,7 +1623,7 @@ def init_logging(logger='', log_file=None, level_file='INFO', level_console=None
     :param level_file: 'INFO'
     :param level_console: 'WARN'
     :return: logging Logger
-   
+
     Call example:
     l= init_logging('', None, args.verbose)
     l.warning(msgFile)
@@ -1731,6 +1751,7 @@ class FakeContextIfOpen:
     """
     Context manager that does nothing if file is not str/PurePath or custom open function is None/False
     useful if instead file want use already opened file object
+    # see better contextlib.nullcontext
     """
 
     def __init__(self,
@@ -1803,7 +1824,7 @@ def open_csv_or_archive_of_them(filename: Union[PurePath, Iterable[Union[Path, s
                 if pattern_parent:
                     pattern = str(PurePath(pattern_parent[1:]) / pattern)
                     filename_str = f'{filename_str_no_ext}{arc_suffix}'
-                    arc_files = [Path(filename_str).resolve().absolute()]
+                arc_files = [Path(filename_str).resolve().absolute()]
                 break
             else:
                 if arc_suffix in (pattern_lower := pattern.lower()):
@@ -1826,6 +1847,7 @@ def open_csv_or_archive_of_them(filename: Union[PurePath, Iterable[Union[Path, s
             from zipfile import ZipFile as ArcFile
         elif arc_suffix == '.rar':
             import rarfile
+            rarfile.UNRAR_TOOL = r"c:\Programs\_catalog\TotalCmd\Plugins\arc\UnRAR.exe"  # Set Your UnRAR executable
             ArcFile = rarfile.RarFile
             try:  # only try increase performance
                 # Configure RarFile Temp file size: keep ~1Gbit free, always take at least ~20Mbit:
@@ -1850,7 +1872,7 @@ def open_csv_or_archive_of_them(filename: Union[PurePath, Iterable[Union[Path, s
                                 pass
                             else:
                                 continue
-                                
+
                         with arc_file.open(text_file.filename, mode=read_mode) as f:
                             if arc_filename_cor_enc:
                                 # return file object with correct encoded name and all properties same as of f
@@ -1884,14 +1906,18 @@ def path_on_drive_d(path_str: str = '/mnt/D',
     return Path(path_str)
 
 
-def import_file(path: PurePath, module_name: str):
+def import_file(path: PurePath, module_name: str = None):
     """Import a python module from a path. 3.4+ only.
 
     Does not call sys.modules[full_name] = path
     """
     from importlib import util
 
-    f = (path / module_name).with_suffix('.py')
+    if module_name:
+        f = (path / module_name).with_suffix('.py')
+    else:
+        f = path
+        module_name = path.stem
     try:
         spec = util.spec_from_file_location(module_name, f)
         mod = util.module_from_spec(spec)
@@ -1936,14 +1962,19 @@ st.go = True
 
 def call_with_valid_kwargs(func: Callable[[Any], Any], *args, **kwargs):
     """
-    Calls func with extracted valid arguments from kwargs
-    inspired by https://stackoverflow.com/a/9433836
-    :param func: function you're calling
-    :param args:
-    :param kwargs:
-    :return:
+    Call the provided function with valid arguments that are extracted from kwargs.
+
+    :param func: The function to be called.
+    :param *args: The variable arguments that the function will be called with.
+    :param **kwargs: The keyword arguments from which valid arguments will be selected.
+    :Return: The result of calling func with valid arguments extracted from kwargs.
+    How it works:
+    It first finds the intersection of the keys in kwargs and the expected arguments of func.
+    It then calls func, with positional arguments *args and only those key-value pairs from kwargs that are
+    valid arguments for func.
+    Inspired by https://stackoverflow.com/a/9433836
     """
-    valid_keys = kwargs.keys() & func.__code__.co_varnames[len(args):func.__code__.co_argcount]
+    valid_keys = kwargs.keys() & func.__code__.co_varnames[len(args) : func.__code__.co_argcount]
     return func(*args, **{k: kwargs[k] for k in valid_keys})
 
 

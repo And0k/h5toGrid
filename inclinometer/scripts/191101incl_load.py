@@ -35,7 +35,7 @@ scripts_path = drive_d.joinpath('Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))  # os.getcwd()
 from to_pandas_hdf5.csv2h5 import main as csv2h5
 from to_pandas_hdf5.csv_specific_proc import correct_kondrashov_txt, rep_in_file, correct_baranov_txt
-from to_pandas_hdf5.h5_dask_pandas import h5q_interval2coord
+from to_pandas_hdf5 import h5
 from inclinometer.h5inclinometer_coef import h5copy_coef
 import inclinometer.incl_h5clc as incl_h5clc
 import inclinometer.incl_h5spectrum as incl_h5spectrum
@@ -56,10 +56,12 @@ if False:  #  True:  # False:  #
     dask.config.set(scheduler='synchronous')
 
 # Directory where inclinometer data will be stored
-path_cruise = path_on_drive_d(r'd:\WorkData\BalticSea\200628_Pregolya,Lagoon-inclinometer'
-                              )
+path_cruise = path_on_drive_d(
+    r'd:\WorkData\BalticSea\231121_ABP54\inclinometer@i4,37,38,58-60,91'
+)
 
 r"""
+d:\WorkData\BalticSea\200628_Pregolya,Lagoon-inclinometer
 d:\WorkData\BalticSea\200630_AI55\inclinometer
 d:\WorkData\_experiment\inclinometer\200610_tank_ex[4,5,7,9,10,11][3,12,13,14,15,16,19]
 d:\WorkData\BalticSea\200514_Pregolya,Lagoon-inclinometer
@@ -102,13 +104,14 @@ raw_archive_name = 'INKL_009.rar'
 # 'Преголя и залив №4.rar', 'INKL_014.ZIP', 'экс2кти100620.zip' 'Преголя и залив №3.rar' 'Преголя и залив №2.rar'
 
 # Note: Not affects steps 2, 3, set empty list to load all:
-probes = []  # 14, 7, 23, 30, 32  [3, 13] [7][12,19,14,15,7,11,4,9]  [11, 9, 10, 5, 13, 16] range(1, 20)  #[2]   #  [29, 30, 33][3, 16, 19]   # [4, 14]  #  [9] #[1,4,5,7,11,12]  # [17, 18] # range(30, 35) #  # [10, 14] [21, 23] #   [25,26]  #, [17, 18]
+probes = [4]  # 14, 7, 23, 30, 32  [3, 13] [7][12,19,14,15,7,11,4,9]  [11, 9, 10, 5, 13, 16] range(1, 20)  #[2]   #  [29, 30, 33][3, 16, 19]   # [4, 14]  #  [9] #[1,4,5,7,11,12]  # [17, 18] # range(30, 35) #  # [10, 14] [21, 23] #   [25,26]  #, [17, 18]
 # set None for auto:
 db_name = None  # '191210incl.h5'  # 191224incl 191108incl.h5 190806incl#29,30,33.h5 190716incl 190806incl 180418inclPres
 
 # dafault and specific to probe limits (use "i_proc_file" index instead "probe" if many files for same probe)
 min_date = defaultdict(
-    lambda: '2020-06-28T18:00', {
+    lambda: '2023-11-17T19:30', {
+#    lambda: '2020-06-28T18:00'
 #'2020-06-28T15:30','2020-06-30T22:00','2020-05-14T13:00'
 # 13: '2020-05-14T11:49:00',
 # 3: '2020-05-14T12:02:50',
@@ -119,7 +122,8 @@ min_date = defaultdict(
 #  '2020-03-17T13:00','2019-12-10T13:00','2020-01-17T13:00''2019-08-07T14:10:00''2019-11-19T16:00''2019-11-19T12:30''2019-11-08T12:20' 2019-11-08T12:00 '2019-11-06T12:35''2019-11-06T10:50''2019-07-16T17:00:00' 2019-06-20T14:30:00  '2019-07-21T20:00:00', #None,
 # 0: #'2019-08-07T16:00:00' '2019-08-17T18:00', 0: '2018-04-18T07:15',# 1: '2018-05-10T15:00',
 
-max_date = defaultdict(lambda: '2020-07-27T09:00', {  # 'now'
+max_date = defaultdict(lambda: '2030-01-01T00:00', {  # 'now'
+# lambda: '2020-07-27T09:00'
 # '2020-06-28T16:30','2020-07-13T14:10'
 # 13: '2020-05-14T12:02',
 # 3: '2020-05-14T12:15',
@@ -131,7 +135,7 @@ max_date = defaultdict(lambda: '2020-07-27T09:00', {  # 'now'
 # 0:  # '2019-09-09T17:00:00' '2019-09-06T04:00:00' '2019-08-27T02:00', 0: '2018-05-07T11:55', # 1: '2018-05-30T10:30',
 
 # Run steps (inclusive):
-st.start = 2 # 1
+st.start = 3 # 1
 st.end = 1 # 3
 st.go = True  # False #
 
@@ -139,9 +143,24 @@ prefix = 'incl'  # 'incl' or 'w'  # table name prefix in db and in raw files (to
 
 dir_incl = '' if 'inclinometer' in str(path_cruise) else 'inclinometer'
 if not db_name:  # then name by cruise dir:
-    db_name = re.match('(^[\d_]*).*', (path_cruise.parent if dir_incl or path_cruise.name.startswith('inclinometer') else path_cruise).name
-                       ).group(1).strip('_') + 'incl.h5'  # group(0) if db name == cruise dir name
-db_path = path_cruise / db_name  # _z  '190210incl.h5' 'ABP44.h5', / '200514incl_experiment.h5'
+    db_name = (
+        re.match(
+            "(^[\d_]*).*",
+            (
+                path_cruise.parent
+                if dir_incl or path_cruise.name.startswith("inclinometer")
+                else path_cruise
+            ).name,
+        )
+        .group(1)
+        .strip("_")
+        + ".h5"  # + "incl.h5"
+    )  # group(0) if db name == cruise dir name
+db_path = (
+    path_cruise / db_name
+)  # _z  '190210incl.h5' 'ABP44.h5', / '200514incl_experiment.h5'
+
+
 # ---------------------------------------------------------------------------------------------
 def fs(probe, name):
     if 'w' in name.lower():  # Baranov's wavegauge electronic
@@ -212,10 +231,10 @@ if st(1):  # Can not find additional not corrected files for same probe if alrea
                ['--cols_load_list', "yyyy,mm,dd,HH,MM,SS,P,U"
                 ]
                )
-                 )
+            )
 
             # Get coefs:
-            db_coefs = r'd:\WorkData\~configuration~\inclinometer\190710incl.h5'
+            db_coefs = r'C:\Work\Python\AB_SIO_RAS\tcm\tcm\cfg\coef\190710incl.h5'
             try:
                 tbl = f'{prefix}{probe:0>2}'
                 l.info(f"Adding coefficients to {db_path}/{tbl} from {db_coefs}")
@@ -291,20 +310,20 @@ if st(3):  # Can be done at any time after step 1
     def raise_ni():
         raise NotImplementedError('Can not proc probes having different fs in one run: you need to do it separately')
 
-
+    prefix = prefix.replace("incl", "i")
     args = [
-        Path(incl_h5clc.__file__).with_name(f'incl_h5spectrum{db_path.stem}.yaml'),
+        Path(incl_h5clc.__file__).parent / "cfg" / f'incl_h5spectrum{db_path.stem}.yaml',
         # if no such file all settings are here
         '--db_path', str(db_path.with_name(f'{db_path.stem}.proc_noAvg.h5')),
-        '--tables_list', f'{prefix}.*',  # inclinometers or wavegauges w\d\d  ## 'w02', 'incl.*',
+        '--tables_list', ",".join([f'{prefix}{probe:02}' for probe in probes]),  # f'{prefix}.*',  # inclinometers or wavegauges w\d\d  ## 'w02', 'incl.*',
         # '--aggregate_period', f'{aggregate_period_s}S' if aggregate_period_s else '',
 
         '--min_date', datetime64_str(min_date[0]),
         '--max_date', datetime64_str(max_date[0]),  # '2019-09-09T16:31:00',  #17:00:00
         # '--max_dict', 'M[xyz]:4096',  # use if db_path is not ends with .proc_noAvg.h5 i.e. need calc velocity
-        '--out.db_path', f'{db_path.stem.replace("incl", prefix)}_proc_psd.h5',
+        '--out.db_path', f'{db_path.with_name(db_path.stem.replace("incl", prefix))}_proc_psd.h5',
         # '--table', f'psd{aggregate_period_s}' if aggregate_period_s else 'psd',
-        '--fs_float', f'{fs(probes[0], prefix)}',
+        '--fs_float', '5', # f'{fs(probes[0], prefix)}',
         # (lambda x: x == x[0])(np.vectorize(fs)(probes, prefix))).all() else raise_ni()
         #
         # '--time_range_zeroing_list', '2019-08-26T04:00:00, 2019-08-26T05:00:00'
@@ -312,19 +331,39 @@ if st(3):  # Can be done at any time after step 1
         # '--chunksize', '20000',
         '--b_interact', '0',
         ]
-    if 'w' in prefix:
-        args += ['--split_period', '1H',
-                 '--dt_interval_minutes', '10',  # burst mode
-                 '--fmin', '0.0001',
-                 '--fmax', '4'
-                 ]
+    if "w" in prefix:
+        args += [
+            "--split_period", "1H",
+            "--dt_interval_minutes", "10",  # burst mode
+            "--fmin", "0.0001",
+            "--fmax", "4",
+        ]
     else:
-        args += ['--split_period', '2H',
-                 '--fmin', '0.0004',  #0.0004
-                 '--fmax', '1.05'
-                 ]
+        # burst mode
+        args += [
+            "--split_period", "30T",
+            "--dt_interval_minutes", "2",  # 1 + delta of inaccuracy
+            "--fmin", "0.03334",    # >= 1/(2*dt_interval_minutes)
+            "--fmax", "1",          # <= fs/2
+        ]
+        if False:
+            args += [
+                "--split_period", "2H",
+                "--fmin", "0.0004",  # 0.0004
+                "--fmax", "1.05",
+            ]
 
     incl_h5spectrum.main(args)
+
+
+
+
+
+
+
+
+
+
 
 # Draw in Veusz
 if st(4):
@@ -372,7 +411,7 @@ if st(4):
                 t_interval_start = t_interval_end - pd.Timedelta(dt_custom_s, 's')
 
             try:  # skipping absent probes
-                start_end = h5q_interval2coord(
+                start_end = h5.q_interval2coord(
                     db_path=str(db_path),
                     table=f'/{probe_name}',
                     t_interval=(t_interval_start, t_interval_end))

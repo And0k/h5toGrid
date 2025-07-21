@@ -13,7 +13,7 @@ drive_d = 'D:' if sys.platform == 'win32' else '/mnt/D'  # to run on my Linux/Wi
 scripts_path = Path(drive_d + '/Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))
 
-from to_pandas_hdf5.h5toh5 import h5move_tables
+from to_pandas_hdf5.h5toh5 import h5.move_tables
 from utils2init import Ex_nothing_done
 
 store_in = Path(r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\201202raw_proc.h5')
@@ -27,7 +27,7 @@ store_out_temp = store_out.with_suffix('.noindex.h5')
 with pd.HDFStore(store_in, 'r') as sr, pd.HDFStore(store_out, 'r') as sw, pd.HDFStore(store_out_temp, 'w') as st:
     for tbl in tables:
         print(f'{tbl}:')
-        # index=False is mandatory because it will not be CSI and ptrepack used in h5move_tables raises error
+        # index=False is mandatory because it will not be CSI and ptrepack used in h5.move_tables raises error
         same_columns = set(sw[tbl].columns).intersection(sr[tbl].columns)
         if same_columns:
             print(f'{store_out} already have columns {same_columns}')
@@ -62,8 +62,8 @@ sleep(8)
 
 # write tables with sorted index
 try:
-    failed_storages = h5move_tables({
-        'db_path_temp': store_out_temp,
+    failed_storages = h5.move_tables({
+        'temp_db_path': store_out_temp,
         'db_path': store_out,
         'addargs': ['--overwrite']  # '--checkCSI'
         },
@@ -83,8 +83,8 @@ if False:
         sw.create_table_index(tbl, columns=['index'], kind='full')
 
     store_in, store_out = store_out, str(Path(store_out).with_name('sort_man_ptp.h5'))
-    h5move_tables({
-        'db_path_temp': store_in,
+    h5.move_tables({
+        'temp_db_path': store_in,
         'db_path': store_out,
         'tables': [tbl],
         'tables_log': [],

@@ -11,7 +11,7 @@ import pandas as pd
 import gsw
 from itertools import takewhile
 # my funcs
-from utils2init import st, pairwise
+from utils2init import st, pairwise, LoggingStyleAdapter
 import veuszPropagate
 from to_pandas_hdf5.csv2h5 import main as csv2h5
 from to_pandas_hdf5.gpx2h5 import main as gpx2h5
@@ -19,17 +19,23 @@ from to_pandas_hdf5.CTD_calc import main as ctd_calc
 # from to_pandas_hdf5.csv_specific_proc import loaded_corr
 from h5toGpx import main as h5_to_gpx
 from grid2d_vsz import main as grid2d_vsz
-from to_pandas_hdf5.h5toh5 import h5log_names_gen
+from to_pandas_hdf5.h5toh5 import h5.log_names_gen
+import cfg_dataclasses as cfg_d
+from to_vaex_hdf5.nmea2h5 import main as nmea2h5
 
 st.go = True   # False #
-st.start = 80   # 1 5 30 70 80 115
-st.end = 120   # 60 80 120
+st.start = 8   # 1 5 30 70 80 115
+st.end = 7   # 60 80 120
 
-path_cruise = Path(r'd:\WorkData\BalticSea\230507_ABP53')
+path_cruise = Path(r'd:\WorkData\KaraSea\231110_AMK93')
 path_db = path_cruise / path_cruise.with_suffix('.h5').name  # same name as dir
 
-min_coord = 'Lat:53, Lon:18.6'  # 10
-max_coord = 'Lat:60.55, Lon:30.3'  # includes Gulf Of Finland
+min_coord = 'Lat:53, Lon:18'  # 10
+max_coord = 'Lat:80, Lon:90'
+
+lf = LoggingStyleAdapter(__name__)
+devices = {}
+
 if st(1, 'Save gpx navigation to DB'):
     # Save navigation to DB
     for folder in (['_copy(selected_parts_for_loading)']):
@@ -42,83 +48,104 @@ if st(1, 'Save gpx navigation to DB'):
             # '--min_date', '2019-07-17T14:00:00',
             '--min_dict', f'{min_coord}',  # use at least -32768 to replace it by NaN
             '--max_dict', f'{max_coord}',
-            '--corr_time_mode', 'False', #'delete_inversions?',
+            '--corr_time_mode', 'False',  #'delete_inversions?',
             # '--b_incremental_update', '0',  # '1' coerce to delete data loaded in same table in previous steps (only if previous same log file detected?)
             '--b_interact', '0',
             # '--b_remove_duplicates', '1',  # not allowed and not need: does always
             ])
 
-if st(2, r'Save to DB depth and navigation from SeaBat B50 echosounder (Dudkov)'):
+
+if st(5, 'Save NMEA navigation to DB'):
+    for folder in [r'ADCP_75kHz/_raw/nav_NMEA/*.N1R']:
+        path_raw_pattern = str(path_cruise / folder)
+        cfg_d.main_call([
+            # 'input.time_interval=[2023-10-20T00:00, 2023-10-24T00:00]',
+            'input.dt_from_utc_hours=0',
+            # 'process.period_tracks=1D',
+            'input.path="{}"'.format(path_raw_pattern),
+            'in.skip_sentences=[GGA,RMC]',
+            'out.db_path="{}"'.format(path_db),
+            'out.tables=[navigation]',
+            'out.b_remove_duplicates=True',
+            'out.b_insert_separator=False',
+            'out.cols=[Time, Lat, Lon, Heading, Speed, Course]',
+            # '+filter.min={{{}, DepEcho:3}}'.format(min_coord),
+            '+filter.max={{{}}}'.format(max_coord),
+        ], nmea2h5)
+
+##############################################################################################################
+device = 'ADCP_75kHz'
+devices[device] = {'table': 'ADCP_WH'}  # 'abbr': 'sm', 'folder': 'CTD_SST_MWS#3613', 'gpx_symbol': 'Triangle, Green'}
+# ##############################################################################################################
+if st(7, r'Save ADCP (*BTabs,dir_ASC.TXT)'):
     # Save {device} data to DB. DepthReading is used for DepEcho column
     csv2h5([
-        'cfg/csv_nav_Dudkov_HydroProfiles.ini',
+        'cfg/csv_ADCP_WH_BTabs_dir.ini',
         '--db_path', str(path_db),
-        '--path', str(path_cruise / 'navigation' / r'depth_profile@SeaBat_B50(Dudkov)\tr_*_nadirdepths.csv'),
-        '--header', 'Time(text),X,Y,DepEcho',
-        # '--cols_load_list', 'Time, X, Y, DepEcho',
-        # '--delimiter_chars', r',',
-        # '--skiprows_integer', '1',
-        # '--table', 'navigation',
-        # '--b_remove_duplicates', 'True',
-        '--b_incremental_update', '0',  # '1' coerce to delete data loaded in same table in previous steps
+        '--path', str(path_cruise / r'ADCP_75kHz\_raw\LTA\AMK93*_BTabs,dir_ASC.TXT'),
         '--b_interact', '0',
-        # '--min_dict', 'DepEcho:3',
-        '--min_dict', f'{min_coord}, DepEcho:4',
-        '--max_dict', f'{max_coord}',
+        '--min_dict', 'Vabs:-10, Vdir:-360',  # also filers values=-32768
+        # '--max_dict', f'{max_coord}',
         # '--min_date', '2023-04-20',  # use some value to filter NaTs
         '--corr_time_mode', 'False',  # 'not delete_inversions',
         # '--csv_specific_param_dict', 'DepEcho_add:4.5',
-    ],
-        # **{'filter': {'min_DepEcho': 4}}  # removes rows
-    )
+    ])
+
+
+if st(8, r'Export ADCP hdf5 to csv with some new calculated parameters'):
+    ctd_calc([  # 'ctd_calc-find_runs.ini',
+        '--db_path', str(path_db),
+        '--tables_list', '{table}'.format_map(devices[device]),
+        '--tables_log', '{}/logFiles',
+        '--path_csv', str(path_cruise / devices[device].get('folder', device) / 'txt_processed'),
+        '--data_columns_list', 'Depth, Lat, Lon, Vabs, Vdir, u, v, Bot_m',  # Time is not a column but index
+        #'--b_incremental_update', 'True',
+        '--out.tables_list', 'None',
+        '--b_interact', '0',
+    ])
+
+
 
 
 common_ctd_params_list = [
     '--db_path', str(path_db),
-    '--min_dict', f'Cond:0.5, Sal:0.2, O2:-2, O2ppm:-2',  # deletes zeros & strange big negative values  # SigmaT:2,
-    '--max_dict', f'O2:200, O2ppm:20',  #, {max_coord} for REDAS-like data
+    '--min_dict', f'Cond:0.5, Sal:0.2', #O2:-2, O2ppm:-2',  # deletes zeros & strange big negative values  # SigmaT:2,
+    #'--max_dict', f'O2:200, O2ppm:20',  #, {max_coord} for REDAS-like data
 ]
 device_params_dict = \
     {
      }
 
-device = 'CTD_SST_48Mc#1253'
+device = 'CTD_SBE_911plus@Rozeta'
 
 if st(10, f'Save {device} data to DB'):
-    from to_pandas_hdf5.csv_specific_proc import loaded_sst
+    from to_pandas_hdf5.csv_specific_proc import loaded_sbe
     csv2h5([
         'cfg/csv_CTD_SST.ini',
-        '--path', str(path_cruise / device / '_raw' / '23*.TOB'),
+        '--path', str(path_cruise / device / '_raw' / '7*.asc'),
         '--table', f'{device}',
         #'--dt_from_utc_hours', '0', #'2'
         '--header',
-        'Number,Date(text),Time(text),Pres,Temp,Sal,O2,O2ppm,SIGMA,Cond,Vbatt,SVel',
-        '--cols_not_save_list', 'Number,SIGMA,Vbatt,SVel',
-        '--delimiter_chars', '\\ \\',  # ''\s+',
+        'Date(text),Time(text),Pres,Temp,Cond,ChlA,Turb,Lat,Lon,AltM,Sal,SigmaTh,DepSM',
+        '--cols_not_save_list', 'DepSM,',
+        '--delimiter_chars', r'\t',
+        '--skiprows_integer', '1',
         '--b_interact', '0',
+        '--fs_float', '24', '--linearize_accuracy_s_float', '1'
         #'--cols_not_save_list', 'N',
         # '--on_bad_lines', 'warn'
         #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
         ] + common_ctd_params_list,
         **{  # **device_params_dict,
             'in': {
-                'fun_proc_loaded': loaded_sst,
-                'csv_specific_param': {
-                    'Temp_fun': lambda x: np.polyval([
-                        -1.2268433823676e-6, 4.91808363884267e-5, 0.99938539313664, 0.0074516860934196], x),
-                    'Cond_fun': lambda x: np.polyval([
-                        -7.57195308190065e-7, 3.80941696689889e-5, 1.0018619893672, -0.034845948296864], x),
-                    'Sal_fun': lambda Cond, Temp, Pres: gsw.SP_from_C(Cond, Temp, Pres)
-                    # 'O2_fun': lambda x: (x - 3.04733)*100/106.63753,           # _add': -3.477,
-                    # 'O2ppm_fun': lambda x: (x - 0.272)*10.2745973/10.3573,     # _add': -0.39
-                    }
-                }
+                'fun_proc_loaded': loaded_sbe,
+            }
         }
     )
 
 if st(20, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params'):
     # Note: this "logRuns" table needed by pattern used in next step with veuszPropagate()
-    # todo: add station name column
+    # todo: add station name column. Add bot.depth from altimeter
     st.go = () != ctd_calc(['cfg/ctd_calc-find_runs.ini',
         '--db_path', str(path_db),
         '--tables_list', f'{device}',
@@ -161,12 +188,12 @@ if st(30, f'Draw {device} data profiles'):  # False: #
     # It is possible to add exact interval to filename but time after probe is back on surface can be determined only
     # from next row, so we rely on ~pattern_loader.vsz to do it. Even freq=16Hz to determine last time not helps:
     # '_{}s.vsz'.format(round(max(r['rows']/16, (r['DateEnd'] - r['Index'] + pd.Timedelta(300, "s")).total_seconds()))
-    
+
     # Copy files
     pattern_code = cfg_in['pattern_path'].read_bytes()  # encoding='utf-8'
     filename_st = None
     os_chdir(cfg_in['pattern_path'].parent)
-    for filename in h5log_names_gen(cfg_in, f_row2name):
+    for filename in h5.log_names_gen(cfg_in, f_row2name):
         path_vsz = cfg_in['pattern_path'].with_name(filename)
         path_vsz.write_bytes(pattern_code)  # re.sub(rb'^([^\n]+)', str_expr, pattern_code, count=1)
         # Get filename_st (do once)
@@ -175,7 +202,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
             # cfg_in['min_time'] not works on filenames, so we convert it to 'start_file_index'
     if 'min_time' in cfg_in:
         del cfg_in['min_time']  # del to count fro 0:
-        start_file_index = len(list(takewhile(lambda x: x < filename_st, h5log_names_gen(cfg_in, f_row2name))))
+        start_file_index = len(list(takewhile(lambda x: x < filename_st, h5.log_names_gen(cfg_in, f_row2name))))
     else:
         start_file_index = 0
     veuszPropagate.main([
@@ -191,7 +218,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
         '--b_interact', '0',
         '--b_images_only', 'True',      # mandatory
         '--b_execute_vsz', 'True',
-        '--start_file_index', str(start_file_index),
+        '--start_file', str(start_file_index),
         #'--min_time', cfg_in['min_time'].item().isoformat(),  # not works on filenames (no time data)
         #'--max_time', cfg_in['max_time'].item().isoformat(),
         ])
@@ -199,7 +226,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
 if False:
     # Merge needed runs
     import pandas as pd
-    from to_pandas_hdf5.h5toh5 import h5move_tables, merge_two_runs  #, h5index_sort, h5out_init
+    from to_pandas_hdf5.h5toh5 import h5.move_tables, h5.merge_two_runs  #, h5.index_sort, h5.out_init
 
     tbl = f'/{device}'
     tbl_log = f'{tbl}/logRuns'
@@ -209,7 +236,7 @@ if False:
 
     # repeat if need:
     irow_to = 130  # 85
-    merge_two_runs(df_log, irow_to, irow_from=None)
+    h5.merge_two_runs(df_log, irow_to, irow_from=None)
 
     # write back
     with pd.HDFStore(path_db.with_name('_not_sorted.h5')) as store_tmp:
@@ -219,8 +246,8 @@ if False:
             pass
         df_log.to_hdf(store_tmp, tbl_log, append=True, data_columns=True,
                       format='table', dropna=True, index=False)
-    h5move_tables({
-        'db_path_temp': path_db.with_name('_not_sorted.h5'),
+    h5.move_tables({
+        'temp_db_path': path_db.with_name('_not_sorted.h5'),
         'db_path': path_db,
         'tables': [tbl_log],
         'tables_log': [],
@@ -230,10 +257,10 @@ if False:
 
 file_tracks = 'CTD-sections=routes.gpx'
 gpx_names_funs_list = """
-    i+1 if i <= 3 else i+2 if i <= 5 else i+3 if i < 25 else f"ctd{i-24:02d}" if i<41 else i-13 if i<=41 
-    else i-10 if i<=42  # 29 -> 32 
+    i+1 if i <= 3 else i+2 if i <= 5 else i+3 if i < 25 else f"ctd{i-24:02d}" if i<41 else i-13 if i<=41
+    else i-10 if i<=42  # 29 -> 32
     else i-7 if i<=45  # 30 -> 36
-    else i+1 if i<=54  # 33 -> 47 
+    else i+1 if i<=54  # 33 -> 47
     else i+9 if i<=56  # 42 -> 64
     else i+ 15
     """  # variable
@@ -377,9 +404,97 @@ if st(130, 'extract all navigation tracks'):
              # '--select_from_tablelog_ranges_index', None - defaut
              ])
 
-device_prev, device = device, 'CTD_SST_MWS#3613'
-device_folder = 'CTD_SST_MWS#3613(Rozeta)'
-device_veusz_prefix = 'ss_'
+device_prev, device = device, 'ADV_Nortek_AquadoppDW@Rozeta'
+device_folder = device
+
+if st(150, f'{device} time profiles processing'):  # False: #
+    # Note: if vsz pattern uses map from *.h5, then be sure that it exists
+    cfg_in = {
+        # 'log_row':      {},
+        # 'db_path':      str(path_db),  # name of hdf5 pandas store where is log table
+        # 'table_log':    f'/{device}/logRuns',  # str: name of log table - table with intervals:
+        'pattern_path': path_cruise / device / '_txt,vsz' / '000000_0000.vsz',
+        'min_time':     np.datetime64('2023-05-22T00:00:00')
+        # 'max_time': '2020-12-30T22:37:00',
+    }
+    file_in2vsz = lambda n: cfg_in['pattern_path'].with_name(n.name).with_suffix('.vsz')
+
+    # Copy files
+    b_copy = False  # reprocess existed vsz-files only
+    dir_raw = cfg_in['pattern_path'].parent
+    if b_copy:
+        pattern_code = cfg_in['pattern_path'].read_bytes()  # encoding='utf-8'
+        filename_st = None
+        get_names_gen = lambda: dir_raw.glob('*.dat')
+        for file_raw in get_names_gen():
+            path_vsz = file_in2vsz(file_raw)
+            if path_vsz.is_file():
+                continue
+            path_vsz.write_bytes(pattern_code)  # re.sub(rb'^([^\n]+)', str_expr, pattern_code, count=1)
+            # Get filename_st (do once)
+            if filename_st is None:
+                filename_st = path_vsz
+                # cfg_in['min_time'] not works on filenames, so we convert it to 'start_file_index'
+
+    print(end='.')
+    os_chdir(dir_raw)
+
+    b_images_only = True  # False  # Set False to run embedded saving functions if they not works by veuszPropagate
+    if b_images_only:
+        veuszPropagate.main([
+            'cfg/veuszPropagate.ini',
+            '--path', str(cfg_in['pattern_path'].with_name('AMK_*.vsz')),  # _*s path_db),
+            '--pattern_path', '',  # f"{cfg_in['pattern_path']}_",
+            # here used to auto get export dir only. Must be not existed file path
+            # '--table_log', f'/{device}/logRuns',
+            # '--add_custom_list', f'{device_veusz_prefix}USE_time_search_runs',  # 'i3_USE_timeRange',
+            # '--add_custom_expressions',
+            # """'[["{log_row[Index]:%Y-%m-%dT%H:%M:%S}", "{log_row[DateEnd]:%Y-%m-%dT%H:%M:%S}"]]'""",
+            '--export_pages_int_list', '1,2,7,10,11',  # 0  '--b_images_only', 'True'
+            '--b_update_existed', 'True',  # False is default todo: allow "delete_overlapped" time named files
+            '--b_interact', '0',
+            '--b_images_only', 'True',  # mandatory
+            '--b_execute_vsz', 'True',  # need to run composite vsz files
+            '--start_file', 'AMK_7759.vsz'  # 'AMK_7753.vsz',  # str(start_file_index),
+            # '--min_time', cfg_in['min_time'].item().isoformat(),  # not works on filenames (no time data)
+            # '--max_time', cfg_in['max_time'].item().isoforma                                                                          t(),
+        ])
+    else:
+        from subprocess import call, PIPE, STDOUT, TimeoutExpired
+
+        for i, file_raw in enumerate(get_names_gen()):
+            path_vsz = file_in2vsz(file_raw)
+            out = ''
+
+            if path_vsz.is_file():
+                i_try = 0
+                print(f'{i} {path_vsz.name}', end=': ')
+                while not path_vsz.with_name(f'{path_vsz.stem}_out.tsv').is_file():
+                    i_try += 1
+                    try:
+                        out = call(["c:/Program Files/Veusz/veusz.exe", path_vsz, "--unsafe-mode", "--quiet"],  # "--listen",
+                            timeout=20*i_try, stdout=PIPE, stderr=STDOUT
+                        )  # re.sub(rb'^([^\n]+)', str_expr, pattern_code, count=1)
+                    except TimeoutExpired:
+                        print(
+                            f'killed{f" {i_try}" if i_try > 1 else ""},', end=' '
+                        )
+                    if i_try > 4:
+                        print('No succsess!')
+                        break
+                    else:
+                        print('.')
+            print(out, end='.')  #
+
+
+
+
+
+
+
+
+
+
 
 common_ctd_params_list = [
     '--db_path', str(path_db),
@@ -456,7 +571,7 @@ if st(230, f'Draw {device} data profiles'):  # False: #
     pattern_code = cfg_in['pattern_path'].read_bytes()  # encoding='utf-8'
     filename_st = None
     os_chdir(cfg_in['pattern_path'].parent)
-    for filename in h5log_names_gen(cfg_in, f_row2name):
+    for filename in h5.log_names_gen(cfg_in, f_row2name):
         path_vsz = cfg_in['pattern_path'].with_name(filename)
         path_vsz.write_bytes(pattern_code)  # re.sub(rb'^([^\n]+)', str_expr, pattern_code, count=1)
         # Get filename_st (do once)
@@ -476,8 +591,8 @@ if st(230, f'Draw {device} data profiles'):  # False: #
         '--b_interact', '0',
         '--b_images_only', 'True',      # mandatory
         '--b_execute_vsz', 'True',
-        '--start_file_index', str(
-            len(list(takewhile(lambda x: x != filename_st, h5log_names_gen(cfg_in, f_row2name))))
+        '--start_file', str(
+            len(list(takewhile(lambda x: x != filename_st, h5.log_names_gen(cfg_in, f_row2name))))
             ),
         #'--min_time', cfg_in['min_time'].item().isoformat(),  # not works on filenames (no time data)
         #'--max_time', cfg_in['max_time'].item().isoformat(),

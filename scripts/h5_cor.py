@@ -1,6 +1,6 @@
 import pandas as pd
-from to_pandas_hdf5.h5toh5 import h5log_names_gen, h5out_init, h5_dispenser_and_names_gen, h5move_tables, h5index_sort, h5remove  # ReplaceTableKeepingChilds
-from to_pandas_hdf5.h5_dask_pandas import h5_append
+from to_pandas_hdf5.h5toh5 import h5.log_names_gen, h5.out_init, h5.dispenser_and_names_gen, h5.move_tables, h5.index_sort, h5.remove  # h5.ReplaceTableKeepingChilds
+from to_pandas_hdf5.h5_dask_pandas import h5.append
 from typing import Any, Iterable, Iterator, Mapping, Optional, Sequence, Tuple, Union
 from pathlib import PurePath
 from time import sleep
@@ -46,7 +46,7 @@ def h5cor(
 
     def yield_intervals(*args) -> Iterator:
         """
-        :param args: for compatibility with intended usage as fun_gen argument of h5_dispenser_and_names_gen()
+        :param args: for compatibility with intended usage as fun_gen argument of h5.dispenser_and_names_gen()
         globals: time_ranges
         yields: (edges_source, pattern)
         """
@@ -64,12 +64,12 @@ def h5cor(
         'b_insert_separator': False,  # should be already inserted
         'dropna': False  # Not change previously inserted separators
         }
-    h5out_init({}, cfg_out)
+    h5.out_init({}, cfg_out)
     # cfg_out['tables_written'] = set()
     with pd.HDFStore(cfg_out['db_path'], 'r') as store:
         if __debug__:
             out_len = out_len_tmp = check_len(store)
-        for i, (edges_source, query) in h5_dispenser_and_names_gen(
+        for i, (edges_source, query) in h5.dispenser_and_names_gen(
                 cfg_in={'db': store}, cfg_out=cfg_out,
                 fun_gen=yield_intervals,
                 ):
@@ -102,10 +102,10 @@ def h5cor(
             else:
                 print('Removing log rows from temp store(', PurePath(cfg_out['db'].filename).name, end='), ')
                 # cfg_out['db'].remove(table_log, where=query)
-                h5remove(cfg_out['db'], table_log, query)
+                h5.remove(cfg_out['db'], table_log, query)
 
             print('Removing rows from temp store (', PurePath(cfg_out['db'].filename).name, end=')')
-            h5remove(cfg_out['db'], cfg_out['table'], query_df)
+            h5.remove(cfg_out['db'], cfg_out['table'], query_df)
 
             if b_update:
                 print('appending corrected rows to temp store...')
@@ -114,24 +114,24 @@ def h5cor(
 
                 # cfg_out['tables_written'] = {cfg_out['table']}
                 try:
-                    h5_append(cfg_out={**cfg_out, 'b_log_ready': True}, df=df, log={})
+                    h5.append(cfg_out={**cfg_out, 'b_log_ready': True}, df=df, log={})
                     cfg_out['db'].flush()  # not helps: 2304900 # 1679834
                     # flush() not works, so alternative:
                     cfg_out['db'].close(); sleep(1); cfg_out['db'].open('r+');
                     if __debug__:
-                       # why gets pandas.io.pytables.ClosedFileError on next cycle?
+                        # why gets pandas.io.pytables.ClosedFileError on next cycle?
                         sleep(1)
                         out_len_tmp = check_len(cfg_out['db'], out_len_tmp)
                     pass
                 except Exception as e:
                     print(e)
-        # h5remove(store, cfg_out['table'])
+        # h5.remove(store, cfg_out['table'])
     #if cfg['in'].get('time_last'):
     # Replace old store with temp store
     if b_update:  # optional speedup, log tables will be copied with parent anyway
         # del cfg_out['table_log']
         del cfg_out['tables_log']
-    failed_storages = h5move_tables({
+    failed_storages = h5.move_tables({
         **cfg_out,
         'addargs': ['--overwrite-nodes', '--checkCSI', '--verbose']
         })
@@ -141,12 +141,14 @@ def h5cor(
         with pd.HDFStore(cfg_out['db_path']) as store:
             out_len = check_len(store, out_len)
 
-        with pd.HDFStore(cfg_out['db_path_temp']) as store:
+        with pd.HDFStore(cfg_out['temp_db_path']) as store:
             out_len_tmp = check_len(store, out_len_tmp)
 
-    h5index_sort(cfg_out,
-                 out_storage_name=f"{cfg_out['db_path'].stem}-resorted.h5",
-                 in_storages=failed_storages)
+    h5.index_sort(
+        cfg_out,
+        out_storage_name=f"{cfg_out['db_path'].stem}-resorted.h5",
+        in_storages=failed_storages
+    )
 
     if __debug__:
         with pd.HDFStore(cfg_out['db_path']) as store:
@@ -154,7 +156,7 @@ def h5cor(
             pass
 
     with pd.HDFStore(cfg_out['db_path']) as store:
-        h5remove(store, f"/{cfg_out['table']}/logRuns")
+        h5.remove(store, f"/{cfg_out['table']}/logRuns")
 
 
 def main(path_db, device):

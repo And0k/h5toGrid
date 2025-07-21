@@ -1,9 +1,8 @@
 #!/usr/bin/env python
 # coding:utf-8
 """
-  Plotting
-
-  Author:  Andrey Korzh --<ao.korzh@gmail.com>
+Interactive plotting
+Author:  Andrey Korzh <ao.korzh@gmail.com>
 
 """
 import logging
@@ -24,9 +23,8 @@ if True:  # __debug__:
 
     matplotlib.rcParams['axes.linewidth'] = 1.5
     matplotlib.rcParams['figure.figsize'] = (16, 7)
-    try:
-        matplotlib.use(
-            'Qt5Agg')  # must be before importing plt (rases error after although documentation sed no effect)
+    try:  # must be before importing plt (raises error after although documentation sed no effect)
+        matplotlib.use('Qt5Agg')
     except ImportError:
         pass
     from matplotlib import pyplot as plt
@@ -99,12 +97,13 @@ plt_select = Plt_select(
     )
 
 
-def plot_prepare_input(ax,
-                       callback: Optional[Callable[[Any, Any], None]] = None,
-                       mask: np.ndarray = None,
-                       x: Optional[np.ndarray] = None,
-                       ys: Sequence[np.ndarray] = None,
-                       lines: Sequence[Any] = None):
+def plot_prepare_input(
+    ax,
+    callback: Optional[Callable[[Any, Any], None]] = None,
+    mask: np.ndarray = None,
+    x: Optional[np.ndarray] = None,
+    ys: Sequence[np.ndarray] = None,
+    lines: Sequence[Any] = None):
     """
     initiate RectangleSelector on ax to change plt_select.* variables accordingly
     :param ax: axis
@@ -112,7 +111,7 @@ def plot_prepare_input(ax,
     Next arguments not used if callback is None.
     :param mask: mask to fill by False in selected range
     :param x: array with same length as mask. If not sorted then last must be > 1st to detect it
-    :param ys: sequence of arrays with same length as mask to fill by np.NaN in selected range
+    :param ys: sequence of arrays with same length as mask to fill by np.nan in selected range
     :param lines: list of plot.line of length len(data - 1): data[0] is x data and next are
          y1, y2... data of same length as x data
     :return:
@@ -162,7 +161,7 @@ def plot_prepare_input(ax,
             #     lines[i].set_ydata(data)
             #
             # ax.figure.canvas.draw()
-            
+
         if event.key in ['A', 'a'] and not toggle_selector.RS.active:
             print(' RectangleSelector activated.')
             toggle_selector.RS.set_active(True)
@@ -178,7 +177,7 @@ def plot_prepare_input(ax,
     if callback is None:
         callback = ranges_select_callback
     elif callback == 'fill mask':
-        # mask = kwargs.get('mask', np.ones_like(ys, dtype=np.bool8))
+        # mask = kwargs.get('mask', np.ones_like(ys, dtype=np.bool_))
 
         def fill_mask_and_nan_data_callback(eclick, erelease):
             """
@@ -191,7 +190,7 @@ def plot_prepare_input(ax,
             :return:
             """
             ranges_select_callback(eclick, erelease)
-            
+
             sl = slice(*(selected_st_en()))
             print(selected_st_en())
             if plt_select.reset:
@@ -202,7 +201,7 @@ def plot_prepare_input(ax,
                 mask[sl] = False  # np.diff(plt_select.x_range_arr) > 0
             for i in range(-1, -len(ys) - 1, -1):  # from the end
                 data = ys[i].copy()  # lines[i].get_ydata()
-                data[~mask] = np.NaN
+                data[~mask] = np.nan
                 # if i > 0: print(np.sum(np.isnan(lines[i]._y)))
                 lines[i].set_ydata(data)
             ax.figure.canvas.draw()
@@ -212,7 +211,7 @@ def plot_prepare_input(ax,
     plt_select.finish = False
     plt_select.x_range_arr[:] = 0
     toggle_selector.RS = matplotlib.widgets.RectangleSelector(  # drawtype is 'box' or 'line' or 'none'
-        ax, callback, drawtype='box', useblit=True,
+        ax, callback, useblit=True,  # , drawtype='box'
         button=[1, 3],  # don't use middle button
         minspanx=5, minspany=5, spancoords='pixels', interactive=True)
     plt.connect('key_press_event', toggle_selector)
@@ -309,7 +308,7 @@ def make_figure(x: Optional[Sequence] = None,
             # add last line with already applied mask
             mask_data = (plot_kwrgs := dict(mask_kwrgs)).pop('data')  # removes 'data' from copy of mask_kwrgs to use as plot kwrgs
             _ = y_data.copy()
-            _[~mask_data] = np.NaN
+            _[~mask_data] = np.nan
             lines += ax.plot(x, _, **{'color': 'r', 'label': 'masked initial', **plot_kwrgs})
 
         ax.legend(prop={'size': 10}, loc='upper right')
@@ -358,9 +357,9 @@ def interactive_deleter(x: Optional[Sequence] = None,
     if b_x_is_simple_range:
         x = np.arange(len(y_kwrgs[0]['data']))
     if mask_kwrgs is None:
-        mask_kwrgs = {'data': np.ones_like(x, dtype=np.bool8), 'label': 'masked'}
+        mask_kwrgs = {'data': np.ones_like(x, dtype=np.bool_), 'label': 'masked'}
     elif mask_kwrgs.get('data') is None:
-        mask_kwrgs['data'] = np.ones_like(x, dtype=np.bool8)
+        mask_kwrgs['data'] = np.ones_like(x, dtype=np.bool_)
     print('interactive_deleter "%s" start: %d data values masked already' % (
         kwargs.get('ax_title', ''), mask_kwrgs['data'].sum()))
 

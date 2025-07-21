@@ -9,7 +9,7 @@ import pandas as pd
 # my
 import veuszPropagate
 from utils2init import Ex_nothing_done, this_prog_basename
-from to_pandas_hdf5.h5toh5 import h5find_tables
+from to_pandas_hdf5.h5toh5 import h5.find_tables
 
 # user's constants ############################################################
 path_db = Path(drive_d).joinpath(
@@ -64,7 +64,7 @@ ImportFileHDF5(u'../181005_ABP44.h5', [u'/181017inclinometers/incl03/coef', u'/1
         """
         with pd.HDFStore(cfg['in']['path'], mode='r') as store:
             if len(cfg['in']['tables']) == 1:
-                cfg['in']['tables'] = h5find_tables(store, cfg['in']['tables'][0],
+                cfg['in']['tables'] = h5.find_tables(store, cfg['in']['tables'][0],
                                                     parent_name=cfg['in']['db_parent_path'])
         for tbl in cfg['in']['tables']:
             # if int(tbl[-2:]) in {5,9,10,11,14,20}:
@@ -82,7 +82,7 @@ ImportFileHDF5(u'../181005_ABP44.h5', [u'/181017inclinometers/incl03/coef', u'/1
             vsz_data, log = cor_send_data.send(cfgin_update)
             # will delete cfg['in']['tables']
         except (GeneratorExit, StopIteration, Ex_nothing_done):
-            print('ok>')
+            print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>")
             break
         # i_ = log['fileName'].rfind('incl')
         probe = log['fileName'].replace(str_date,

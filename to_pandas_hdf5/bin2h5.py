@@ -20,8 +20,8 @@ import numpy as np
 import pandas as pd
 
 from to_pandas_hdf5.csv2h5 import init_input_cols, set_filterGlobal_minmax
-from to_pandas_hdf5.h5_dask_pandas import h5_append
-from to_pandas_hdf5.h5toh5 import h5temp_open, h5move_tables, h5out_init, h5index_sort, h5_dispenser_and_names_gen
+from to_pandas_hdf5.h5_dask_pandas import h5.append
+from to_pandas_hdf5.h5toh5 import h5.temp_open, h5.move_tables, h5.out_init, h5.index_sort, h5.dispenser_and_names_gen
 from utils2init import my_argparser_common_part, cfg_from_args, init_logging, init_file_names, Ex_nothing_done, \
     set_field_if_no, this_prog_basename
 
@@ -167,7 +167,7 @@ def readBinFramed(path_in, cfg_in: Mapping[str, Any], sinchro_words=None):
                                      b'', mm), dtype=np.uint8)
         else:
             c = np.frombuffer(mm, dtype=np.uint8)
-        bFound = np.zeros_like(c, np.bool)
+        bFound = np.zeros_like(c, np.bool_)
         # np.flatnonzero(np.bitwise_xor(*[np.frombuffer(s, 'uint8') for s in sinchro_words]))
         for sinchro_w in sinchro_words:
             # Find 1st sinchro:
@@ -230,7 +230,7 @@ def readBinFramed(path_in, cfg_in: Mapping[str, Any], sinchro_words=None):
         if np.any(~bStartOk):
             temp = np.sum(~bStartOk)
             indOk = 100 * temp / (temp + nFrames)
-            l.warning(', {:d} bad frames ({:2.2f}% of {:d} good)! ↦ continue... '.format(temp, indOk, nFrames))
+            l.warning(', {:d} bad frames ({:2.2f}% of {:d} good)! => continue... '.format(temp, indOk, nFrames))
 
         iSt = iSt[bStartOk]  # use only frames enclosed with sinchro_words
         V = np.zeros(shape=(len(iSt),), dtype=cfg_in['dtype'])  # , cfg_in['data_words'] np.uint16
@@ -319,7 +319,7 @@ def main(new_arg=None, **kwargs):
     cfg['out']['dtype'] = np.dtype({
         'formats': cfg['out']['formats'],
         'names': cfg['out']['names']})
-    h5out_init(cfg['in'], cfg['out'])
+    h5.out_init(cfg['in'], cfg['out'])
 
     # cfg['Period'] = 1.0 / cfg['in']['fs']  # instead Second can use Milli / Micro / Nano:
     # cfg['pdPeriod'] = pd.to_timedelta(cfg['Period'], 's')
@@ -335,7 +335,7 @@ def main(new_arg=None, **kwargs):
     # type_log_files = namedtuple('type_log_files', ['label','iStart'])
     # log.sort(axis=0, order='log_item['Date0']')#sort files by time
 
-    df_log_old, cfg['out']['db'], cfg['out']['b_incremental_update'] = h5temp_open(**cfg['out'])
+    df_log_old, cfg['out']['db'], cfg['out']['b_incremental_update'] = h5.temp_open(**cfg['out'])
     if 'log' in cfg['program'].keys():
         f = open(PurePath(sys_argv[0]).parent / cfg['program']['log'], 'a', encoding='cp1251')
         f.writelines(datetime.now().strftime('\n\n%d.%m.%Y %H:%M:%S> processed '
@@ -349,7 +349,7 @@ def main(new_arg=None, **kwargs):
     cfg['out']['fs'] = cfg['in']['fs']
     if True:
         ## Main circle ############################################################
-        for i1_file, path_in in h5_dispenser_and_names_gen(cfg['in'], cfg['out']):
+        for i1_file, path_in in h5.dispenser_and_names_gen(cfg['in'], cfg['out']):
             l.info('{}. {}: '.format(i1_file, path_in.name))
 
             # Loading data
@@ -394,7 +394,7 @@ def main(new_arg=None, **kwargs):
                 continue
 
             # Append to Store
-            h5_append(cfg['out'], df.astype('int32'), log_item)
+            h5.append(cfg['out'], df.astype('int32'), log_item)
 
             if 'txt' in cfg['program'].keys():  # can be saved as text too
                 np.savetxt(cfg['program']['txt'], V, delimiter='\t', newline='\n',
@@ -426,9 +426,9 @@ def main(new_arg=None, **kwargs):
         code.interact(local=ns)
     # sort index if have any processed data (needed because ``ptprepack`` not closses hdf5 source if it not finds data)
     if cfg['in'].get('time_last'):
-        failed_storages = h5move_tables(cfg['out'])
+        failed_storages = h5.move_tables(cfg['out'])
         print('Ok.', end=' ')
-        h5index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5", in_storages=failed_storages)
+        h5.index_sort(cfg['out'], out_storage_name=f"{cfg['out']['db_path'].stem}-resorted.h5", in_storages=failed_storages)
 
 
 if __name__ == '__main__':
@@ -483,7 +483,7 @@ bStartOk= diff(indStart)==100;
 nFrames= sum(bStartOk);
 if any(~bStartOk):
     temp= sum(~bStartOk);  indOk= 100*temp/(temp+nFrames);
-    fprintf(', %d bad frames (%2.2f% of %d good)! ↦ skip... ', temp, indOk, nFrames);
+    fprintf(', %d bad frames (%2.2f% of %d good)! => skip... ', temp, indOk, nFrames);
 
 """
 """
@@ -505,7 +505,7 @@ iuseBytes= uint32(repmat(int32([-2;-1;-0]),1, numel(iOutCols))+repmat(iOutCols*3
 indOk= repmat(indStart(bStartOk),1,numel(iuseBytes))+repmat(iuseBytes(:)', nFrames,1);
 % add2end= [];
 % if indOk(end)>numel(mm) %dStart(end)>1 %~bStartOk(end)&&
-%     add2end= [mm(indOk(end,1):end); NaN(size((numel(mm)+1):indOk(end)))'];
+%     add2end= [mm(indOk(end,1):end); nan(size((numel(mm)+1):indOk(end)))'];
 %     indOk(end,:)= [];
 % end
 % mm= [; add2end']; %dec2bin(mm(1:3))
@@ -540,7 +540,7 @@ if any(bHB)
         bBad= bBad&(out(:, iOutCols-1)==0);
         out(:, iOutCols-1)= uint32(rep2previous(single(out(:,iOutCols-1)), bBad));
       else
-        fprintf(1, '\nAll zeros in %s! ↦ skip... ', ...
+        fprintf(1, '\nAll zeros in %s! => skip... ', ...
           cfg['']Name{cfg['']iperm(iOutCols)});
       end
     end

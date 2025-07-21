@@ -65,8 +65,8 @@ from inclinometer.incl_h5clc_hy import *
 
 
 path_db = Path(
-    r'D:\Work\_Python3\And0K\h5toGrid\inclinometer\tests\data\inclinometer\210519incl.h5'
-    ).absolute()
+    r'C:\Work\Python\AB_SIO_RAS\h5toGrid\inclinometer\tests\data\inclinometer\210519incl.h5'
+).absolute()
 
 
 @pytest.mark.parametrize('return_', ['<end>', '<cfg_before_cycle>'])

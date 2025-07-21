@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # coding:utf-8
 """
-  Author:  Andrey Korzh <ao.korzh@gmail.com>
-  Purpose: Calculate spectrum at specified time intervals
-  Created: 25.06.2019
+Author:  Andrey Korzh <ao.korzh@gmail.com>
+Purpose: Calculate spectrum at specified time intervals
+Created: 25.06.2019
 
 """
 
@@ -41,12 +41,12 @@ sys.path.append(str(scripts_path.parent.resolve()))
 
 from utils2init import Ex_nothing_done, init_logging, cfg_from_args, init_file_names, my_argparser_common_part, call_with_valid_kwargs
 from utils_time import intervals_from_period, pd_period_to_timedelta
-from to_pandas_hdf5.h5toh5 import h5out_init
+from to_pandas_hdf5 import h5
 from to_pandas_hdf5.h5_dask_pandas import h5_load_range_by_coord, filter_local
-# h5q_intervals_indexes_gen
+# h5.q_intervals_indexes_gen
 from inclinometer.incl_h5clc import incl_calc_velocity_nodask, my_argparser, h5_names_gen, filt_data_dd
 
-path_mne = Path(r'd:\Work\_Python3\And0K\h5toGrid\other\mne')
+path_mne = Path(r'C:\Work\Python\AB_SIO_RAS\h5toGrid\third_party\mne')
 sys.path.append(str(path_mne)) #.parent.resolve()
 # sep = ';' if sys.platform == 'win32' else ':'
 # os_environ['PATH'] += f'{sep}{path_mne}'
@@ -215,10 +215,22 @@ def _psd_from_mt_adaptive(x_mt: np.ndarray, eigvals, freq_mask, max_iter=150,
         # start with an estimate from incomplete data--the first 2 tapers
         psd_iter = _psd_from_mt(xk[:2, :], rt_eig[:2, np.newaxis])
 
+        b_zero = psd_iter == 0
+        if any(b_zero):
+            if all(b_zero):
+                l.warning('No data for PSD computation')
+                psd[i, :] = np.nan
+                if return_weights:
+                    weights[i, :, :] = np.nan
+                continue
+            # todo: check problems if any b_zero
+            pass
+
         err = np.zeros_like(xk)
         for n in range(max_iter):
-            d_k = (psd_iter / (eigvals[:, np.newaxis] * psd_iter +
-                               (1 - eigvals[:, np.newaxis]) * var))
+            d_k = psd_iter / (
+                eigvals[:, np.newaxis] * psd_iter + (1 - eigvals[:, np.newaxis]) * var
+            )
             d_k *= rt_eig[:, np.newaxis]
             # Test for convergence -- this is overly conservative, since
             # iteration only stops when all frequencies have converged.
@@ -281,20 +293,20 @@ def h5q_starts2coord(
         table,
         starts_time: Union[np.ndarray, pd.Series, list],
         dt_interval: timedelta
-        ) -> pd.Index:
+        ) -> Iterator[pd.Index]:
     """
     Edge coordinates of index range query
-    As it is nealy part of h5toh5.h5load_ranges() may be depreshiated? See Note
+    As it is nealy part of h5toh5.h5.load_ranges() may be depreshiated? See Note
     :param starts_time: array or list with strings convertable to pandas.Timestamp
     :param dt_interval: pd.TimeDelta
     :param db_path, str
     :param table, str
     :return: ``qstr_range_pattern`` edge coordinates
-    See also: h5_dask_pandas.h5q_interval2coord
+    See also: h5_dask_pandas.h5.q_interval2coord
     Note: can use instead:
-    >>> from to_pandas_hdf5.h5toh5 import h5load_ranges
+    >>> from to_pandas_hdf5.h5toh5 import h5.load_ranges
     ... with pd.HDFStore(db_path, mode='r') as store:
-    ...     df, bbad = h5load_ranges(store, table, columns=None, query_range_lims=time_range)
+    ...     df, bbad = h5.load_ranges(store, table, columns=None, query_range_lims=time_range)
 
     """
     # qstr_range_pattern = f"index>=st[{i}] & index<=en[{i}]"
@@ -328,8 +340,9 @@ def h5q_starts2coord(
                     print('many data ahead...')  # it was just check for speed up
 
 
-def h5_velocity_by_intervals_gen(cfg: Mapping[str, Any], cfg_out: Mapping[str, Any]
-                                 ) -> Iterator[Tuple[str, Tuple[Any, ...]]]:
+def h5_velocity_by_intervals_gen(
+        cfg: Mapping[str, Any], cfg_out: Mapping[str, Any]
+    ) -> Iterator[Tuple[str, Tuple[Any, ...]]]:
     """
     Loads data and calculates velocity: many intervals from many of hdf5 tables sequentially.
     :param cfg: dict with fields:
@@ -402,11 +415,13 @@ def h5_velocity_by_intervals_gen(cfg: Mapping[str, Any], cfg_out: Mapping[str, A
             :param tbl:
             :return:
             """
-            for start_end in zip(cfg['in']['time_intervals_start'],
-                                 cfg['in']['time_intervals_start'] + cfg['proc']['dt_interval']):
+            for start_end in zip(
+                cfg["in"]["time_intervals_start"],
+                cfg["in"]["time_intervals_start"] + cfg["proc"]["dt_interval"],
+            ):
                 query_range_lims = pd.to_datetime(start_end)
                 qstr = query_range_pattern.format(*query_range_lims)
-                l.info(f'query:\n%s... ', qstr)
+                l.info('query:\n%s... ', qstr)
                 df0 = store.select(tbl, where=qstr, columns=None)
                 yield df0, start_end
 
@@ -419,7 +434,7 @@ def h5_velocity_by_intervals_gen(cfg: Mapping[str, Any], cfg_out: Mapping[str, A
         for (tbl, coefs) in h5_names_gen(cfg['in'], cfg_out):
             # Get data in ranges
             for df0, start_end in gen_loaded(tbl):
-                if cfg['in']['db_path'].suffixes[-1]('proc_noAvg'):  # have processed data (not averaged)
+                if '.proc_noAvg' in cfg['in']['db_path'].suffixes[:-1]:  # have processed data (not averaged)
                     df = df0
                 else:  # loading source data and calculate velocity
                     df0 = filter_local(df0, cfg['filter'])
@@ -527,23 +542,24 @@ def psd_mt(x, dpss, weights, dt, n_fft, freq_mask, adaptive_if_can=None, eigvals
         x_mt[:, :, 0] /= np.sqrt(2.)
     if freq_mask[-1] and x.shape[1] % 2 == 0:
         x_mt[:, :, -1] /= np.sqrt(2.)
-    if not adaptive_if_can:
-        psds = weights * x_mt
-        psds *= psds.conj()  # same to abs(psd)**2
-        psd = psds.real.sum(axis=-2)
-        psd *= 2 / (weights * weights.conj()).real.sum(axis=-2)
-    else:
+    if adaptive_if_can:
         # # from mne.parallel import parallel_func
         # # from mne.time_frequency.multitaper import _psd_from_mt_adaptive
         # psds = list(
-        #     _psd_from_mt_adaptive(x, eigvals, np.ones((sum(freq_mask),), dtype=np.bool))
+        #     _psd_from_mt_adaptive(x, eigvals, np.ones((sum(freq_mask),), dtype=np.bool_))
         #      # x already masked so we put all ok mask
         #            for x in np.array_split(x_mt, 1)
         #            )
         # psd = np.concatenate(psds)
-        psd = _psd_from_mt_adaptive(x_mt, eigvals, np.ones((freq_mask.sum(),), dtype=np.bool))
+        psd = _psd_from_mt_adaptive(x_mt, eigvals, np.ones((freq_mask.sum(),), dtype=np.bool_))
 
         # make output units V^2/Hz:  (like mne.mne.time_frequency.psd_array_multitaper option normalization = 'full')
+    else:
+        psds = weights * x_mt
+        psds *= psds.conj()  # same to abs(psd)**2
+        psd = psds.real.sum(axis=-2)
+        psd *= 2 / (weights * weights.conj()).real.sum(axis=-2)
+
     psd *= dt
     return psd
 
@@ -600,7 +616,7 @@ def psd_calc(df, fs, freqs, adaptive=None, b_plot=False, **kwargs):
 
 def main(new_arg=None, **kwargs):
     """
-    Accumulats results of differen source tables in 2D netcdf matrices of each result parameter.
+    Accumulats results of different source tables in 2D NetCDF matrices of each result parameter.
     :param new_arg:
     :return:
     Spectrum parameters used (taken from nitime/algorithems/spectral.py):
@@ -675,7 +691,7 @@ def main(new_arg=None, **kwargs):
         cfg['proc']['time_intervals_start'] = np.array(cfg['proc']['time_intervals_center'], np.datetime64) - cfg['proc']['dt_interval'] / 2
 
     cfg_out['chunksize'] = cfg['in']['chunksize']
-    h5out_init(cfg['in'], cfg_out)
+    h5.out_init(cfg['in'], cfg_out)
     # cfg_out_table = cfg_out['table']  need? save because will need to change
     cfg_out['save_proc_tables'] = True  # False
 
@@ -687,9 +703,9 @@ def main(new_arg=None, **kwargs):
     prm['bandwidth'] = 8 / cfg['proc']['dt_interval'].astype('timedelta64[s]').astype(
         'float')  # 8 * 2 * prm['fs']/34000  # 4 * 2 * 5/34000 ~= 4 * 2 * fs / N
     prm['low_bias'] = True
-
-    nc_root = netCDF4.Dataset(Path(cfg_out['db_path']).with_suffix('.nc'), 'w',
-                              format='NETCDF4')  # (for some types may need 'NETCDF4_CLASSIC' to use CLASSIC format for Views compatibility)
+    nc_root = netCDF4.Dataset(
+        Path(cfg_out['db_path']).with_suffix('.nc'), 'w', format='NETCDF4'
+    )  # (for some types may need 'NETCDF4_CLASSIC' to use CLASSIC format for Views compatibility)
     nc_psd = nc_root.createGroup(cfg_out['table'])
     nc_psd.createDimension('time', None)
     nc_psd.createDimension('value', 1)
@@ -698,9 +714,13 @@ def main(new_arg=None, **kwargs):
     nc_psd.createVariable('time_interval', 'f4', ('value',))
     if cfg['out'].get('split_period'):
         # nv_time_interval = nc_psd.createVariable('time_interval', 'f8', ('time',), zlib=False)
-        nc_psd.variables['time_interval'][:] = pd_period_to_timedelta(cfg['out']['split_period']).delta
+        nc_psd.variables["time_interval"][:] = pd_period_to_timedelta(
+            cfg["out"]["split_period"]
+        ).total_seconds()  # .delta
     else:
-        nc_psd.variables['time_interval'][:] = cfg['proc']['dt_interval']
+        nc_psd.variables["time_interval"][:] = (
+            cfg["proc"]["dt_interval"].astype("m8[s]").item().total_seconds()
+        )
     # Dataframe of accumulating results: adding result columns in cycle with appending source table name to column names
     dfs_all = None
     # Initialasing variables to search data time range of calculated
@@ -710,12 +730,28 @@ def main(new_arg=None, **kwargs):
     nv_vars_for_tbl = {}
     tbl_prev = ''
     itbl = 0
+    cols = []
     for df, tbl_in, dataname in h5_velocity_by_intervals_gen(cfg, cfg_out):
         tbl = tbl_in.replace('incl', '_i')
-        # _, (df, tbl, dataname) in h5_dispenser_and_names_gen(cfg['in'], cfg_out, fun_gen=h5_velocity_by_intervals_gen):
+        # _, (df, tbl, dataname) in h5.dispenser_and_names_gen(cfg['in'], cfg_out, fun_gen=h5_velocity_by_intervals_gen):
 
         # interpolate to regular grid
-        df = df.resample(timedelta(seconds=1 / prm['fs'])).interpolate()
+
+        # following sometimes gives all same values (!) so we use numpy instead
+        # df = df.resample(timedelta(seconds=1 / prm['fs'])).interpolate()
+
+        # Create a linear timedelta index with the desired frequency
+        fixed_freq_index = pd.date_range(
+            *df.index[[0, -1]].to_list(), freq=timedelta(seconds=1 / prm["fs"])
+        )
+        fixed_freq_values = {}
+        for col in cols or df.columns:
+            ser_col_ok = df[col]
+            ser_col_ok = ser_col_ok[~df[col].isna()]
+            fixed_freq_values[col] = np.interp(
+                fixed_freq_index, ser_col_ok.index, ser_col_ok.values
+            )
+        df = pd.DataFrame.from_records(fixed_freq_values, index=fixed_freq_index)
 
         len_data_cur = df.shape[0]
         if tbl_prev != tbl:
@@ -740,9 +776,9 @@ def main(new_arg=None, **kwargs):
         elif prm['length'] != len_data_cur:
             prm['length'] = len_data_cur
             try:
-                prm['dpss'], prm['eigvals'], prm['adaptive_if_can'] = \
-                    multitaper._compute_mt_params(prm['length'], prm['fs'], prm['bandwidth'],
-                                                  prm['low_bias'], prm['adaptive'])
+                prm['dpss'], prm['eigvals'], prm['adaptive_if_can'] = multitaper._compute_mt_params(
+                        prm['length'], prm['fs'], prm['bandwidth'], prm['low_bias'], prm['adaptive']
+                    )
             except (ModuleNotFoundError, ValueError) as e:
                 # l.error() already reported as multitaper.warn is reassignred to l.warning()
                 prm['eigvals'] = np.int32([0])
@@ -751,31 +787,40 @@ def main(new_arg=None, **kwargs):
 
         if tbl not in nc_psd.groups:
             nc_tbl = nc_psd.createGroup(tbl)
-            cols = set()
+            cols = []
             if 'Pressure' in df.columns:
-                cols.add('Pressure')
+                cols.append('Pressure')
                 nc_tbl.createVariable('Pressure', 'f4', ('time', 'freq',), zlib=True)
             if 'u' in df.columns:
-                cols.update(['u', 'v'])
+                cols += ['u', 'v']
                 nc_tbl.createVariable('u', 'f4', ('time', 'freq',), zlib=True)
                 nc_tbl.createVariable('v', 'f4', ('time', 'freq',), zlib=True)
             nc_tbl.createVariable('time_start', 'f8', ('time',), zlib=True)
             nc_tbl.createVariable('time_end', 'f8', ('time',), zlib=True)
             out_row = 0
-        nc_tbl.variables['time_start'][out_row], nc_tbl.variables['time_end'][out_row] = df.index[[0, -1]].values
+        (
+            nc_tbl.variables["time_start"][out_row],
+            nc_tbl.variables["time_end"][out_row],
+        ) = df.index[[0, -1]].values
 
         # Calculate PSD
         if prm['eigvals'].any():
-            for var_name in cols:
 
-                nc_tbl.variables[var_name][out_row, :] = call_with_valid_kwargs(psd_mt, df[var_name], **prm)[0, :]
-            if time_good_min.to_numpy('<M8[ns]') > df.index[0].to_numpy('<M8[ns]'):  # to_numpy() get values to avoid tz-naive/aware comparing restrictions
+            b_ok_cols = np.diff(df[cols].values, axis=0).any(axis=0)
+            for var_name, b_ok_col in zip(cols, b_ok_cols):
+                if not b_ok_col:
+                    nc_tbl.variables[var_name][out_row, :] = np.nan
+                    continue
+                nc_tbl.variables[var_name][out_row, :] = call_with_valid_kwargs(
+                    psd_mt, df[var_name], **prm
+                )[0, :]
+            if time_good_min.to_numpy() > df.index[0].to_numpy():  # to_numpy('<M8[ns]') get values to avoid tz-naive/aware comparing restrictions
                 time_good_min = df.index[0]
-            if time_good_max.to_numpy('<M8[ns]') < df.index[-1].to_numpy('<M8[ns]'):
+            if time_good_max.to_numpy() < df.index[-1].to_numpy():
                 time_good_max = df.index[-1]
         else:
             for var_name in cols:
-                nc_tbl.variables[var_name][out_row, :] = np.NaN
+                nc_tbl.variables[var_name][out_row, :] = np.nan
 
         out_row += 1
 
@@ -784,7 +829,7 @@ def main(new_arg=None, **kwargs):
         #     #f.to_hdf('d:\\WorkData\\BlackSea\\190210\\190210incl_test.psd.h5', 'psd', format='fixed')
         #     # tables_have_write.append(tbl)
         #     try:
-        #         h5_append_to(df_psd, tbl, cfg_out, msg='save (temporary)', print_ok=None)
+        #         h5.append_to(df_psd, tbl, cfg_out, msg='save (temporary)', print_ok=None)
         #     except HDF5ExtError:
         #         cfg_out['save_proc_tables'] = False
         #         l.warning('too very many colums for "table" format but "fixed" is not updateble so store result in memory 1st')
@@ -799,7 +844,7 @@ def main(new_arg=None, **kwargs):
         #     dfs_all = dfs_all.join(df_cur, how='outer')  # , rsuffix=tbl[-2:] join not works on dask
 
         # if itbl == len(cfg['in']['tables']):  # after last cycle. Need incide because of actions when exit generator
-        #     h5_append_to(dfs_all, cfg_out_table, cfg_out, msg='save accumulated data', print_ok='Ok.')
+        #     h5.append_to(dfs_all, cfg_out_table, cfg_out, msg='save accumulated data', print_ok='Ok.')
 
     # nv_time_start_query = nc_psd.createVariable('time_start_query', 'f8', ('time',), zlib=True)
     # nv_time_start_query[:] = cfg['in']['time_intervals_start'].to_numpy(dtype="datetime64[ns]") \
@@ -807,7 +852,7 @@ def main(new_arg=None, **kwargs):
 
     nc_psd.variables['time_good_min'][:] = np.array(time_good_min.value, 'M8[ns]')
     nc_psd.variables['time_good_max'][:] = np.array(time_good_max.value, 'M8[ns]')
-    # failed_storages = h5move_tables(cfg_out)
+    # failed_storages = h5.move_tables(cfg_out)
     print('Ok.', end=' ')
     nc_root.close()
 
@@ -962,7 +1007,7 @@ def psd_calc_other_methods(df, prm: Mapping[str, Any]):
             'verbose': 'DEBUG'
         }
     }
-    
+
     # not used if cfg['out']['split_period'] is specified:
     cfg['proc']['time_intervals_center'] = pd.to_datetime(np.sort(np.array(
         ['2019-02-16T08:00', '2019-02-17T04:00', '2019-02-18T00:00', '2019-02-28T00:00',

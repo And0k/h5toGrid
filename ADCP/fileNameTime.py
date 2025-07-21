@@ -15,7 +15,7 @@ import numpy as np
 
 from to_pandas_hdf5.csv2h5 import init_input_cols
 from utils2init import ini2dict, init_file_names, Ex_nothing_done, standard_error_info, my_argparser_common_part, cfg_from_args
-from utils_time import timzone_view
+from utils_time import timezone_view
 from utils_time_corr import time_corr
 
 def loaded_ADCP_WH(a, cfg_in):
@@ -216,8 +216,8 @@ def main(new_arg=None, **kwargs):
         # Save last time to can filter next file
         cfg['in']['time_last'] = date[-1]
         log_item['rows'] = 1
-        log_item['Date0'] = timzone_view(tim[0], cfg['in']['dt_from_utc'])
-        log_item['DateEnd'] = datetime.now()  # can not paste np.NaN
+        log_item['Date0'] = timezone_view(tim[0], cfg['in']['dt_from_utc'])
+        log_item['DateEnd'] = datetime.now()  # can not paste np.nan
         log_item['fileNameNew'] = '{Date0:%y%m%d_%H%M}'.format(**log_item)
         log.append(log_item.copy())
         strLog = '{fileName}:\t{Date0:%d.%m.%Y %H:%M:%S}->\t{fileNameNew}.txt'.format(
