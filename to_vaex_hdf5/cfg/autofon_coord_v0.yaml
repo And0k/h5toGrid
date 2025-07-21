@@ -1,0 +1,3 @@
+defaults:
+  - base_autofon_coord_v0
+  - _self_

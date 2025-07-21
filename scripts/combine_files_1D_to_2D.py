@@ -15,7 +15,7 @@ def save2d2netcdf(path, xyz, table=None, format='NETCDF4'):
     :param path:
     :param xyz: items with
      - keys are x,y,z NetCDF variables names. `x` and `y` dimension names will be the same.
-     - values are corresponded  NetCDF variables values: `x`, `y`, `z` of size `n`, `m` and `n` x `m` correspondingly 
+     - values are corresponded  NetCDF variables values: `x`, `y`, `z` of size `n`, `m` and `n` x `m` correspondingly
     :param table: if not None put grid in this NetCDF group (not compatible to Surfer if not None)
     :param format: for some types may need 'NETCDF4_CLASSIC' to use CLASSIC format for Views compatibility
     :return:
@@ -54,8 +54,8 @@ def save2d2netcdf(path, xyz, table=None, format='NETCDF4'):
 
 def combine_1d_files_to_grd(path, x_min, x_resolution, cols, delimiter, file_dim_name='time', transpose=False):
     """
-    Saves NetCDF (*.nc) and Surfer binary (*.grd) grid for data of each `z` cols column with `x` is changed along with
-    order of found files in `path`.
+    Saves NetCDF (*.nc) and Surfer binary (*.grd) grid for data of each `z` cols column
+    with `x` is changed along with order of found files in `path`.
     :param path:
     :param x_min: `x[0]` that is value corresponded to 1st file.
     :param x_resolution: increment value of `x` with next file.
@@ -161,4 +161,4 @@ if __name__ == '__main__':
             x_min=x_min, x_resolution=x_resolution, delimiter=delimiter, transpose=transpose, **param
             )
 
-    print('Ok>')
+    print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>")
