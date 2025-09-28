@@ -1,0 +1,7 @@
+# @package projects.kulikovo
+
+# Configuration for CMEMS Wind Kulikovo project
+dir_suffix: "CMEMS_Wind_Kulikovo"
+lat: 54.9896
+lon: 20.299717
+date_range: ["2023-08-20", "2023-09-20"]

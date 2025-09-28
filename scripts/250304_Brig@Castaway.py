@@ -10,18 +10,18 @@ import numpy as np
 import pandas as pd
 from itertools import takewhile
 # my funcs
-from utils2init import st
-import veuszPropagate
-from to_pandas_hdf5.gpx2h5 import main as gpx2h5
-from to_pandas_hdf5.CTD_calc import main as ctd_calc
-# from to_pandas_hdf5.csv_specific_proc import loaded_corr
-from h5toGpx import main as h5_to_gpx
+from utils.init import st
+from utils import veuszPropagate
+from hdf5_pandas.gpx2h5 import main as gpx2h5
+from hdf5_pandas.ctd_calc import main as ctd_calc
+# from hdf5_pandas.csv_specific_proc import loaded_corr
+from utils.h5_to_gpx import main as h5_to_gpx
 # try:  # requires GDAL
-#     from grid2d_vsz import main as grid2d_vsz
+#     from utils.grid2d_vsz import main as grid2d_vsz
 # except ModuleNotFoundError as e:
 #     print('grid2d_vsz not imported', e)
-from to_pandas_hdf5 import h5
-from to_vaex_hdf5.h5tocsv import main_call as h5tocsv
+from hdf5_pandas import h5
+from hdf5_alt.h5tocsv import main_call as h5tocsv
 
 st.go = True   # False #
 st.start = 80  # 115   # 1 5 20 30 70 80 115
@@ -91,7 +91,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
         # Get filename_st (do once)
         if filename_st is None:
             filename_st = filename
-            # cfg_in['min_time'] not works on filenames, so we convert it to 'start_file_index'
+    # cfg_in['min_time'] not works on filenames, so we convert it to 'start_file_index'
     if 'min_time' in cfg_in:
         del cfg_in['min_time']  # del to count fro 0:
         start_file_index = len(list(takewhile(lambda x: x < filename_st, h5.log_names_gen(cfg_in, f_row2name))))
@@ -126,7 +126,7 @@ gpx_names_funs_list = """
 gpx_names_fun_format = '{:s}'
 if st(50, 'Extract navigation data at time station starts to GPX waypoints'):  # False: #
     h5_to_gpx([
-        'cfg/h5toGpx_CTDs.ini',
+        'cfg/h5_to_gpx_CTDs.ini',
         '--db_path', str(path_db),
         '--tables_list', f"{','.join(devices)}",
         '--tables_log_list', 'logRuns',
@@ -139,7 +139,7 @@ if st(50, 'Extract navigation data at time station starts to GPX waypoints'):  #
 
 if False:  # st(60, 'Extract navigation data at runs/starts to GPX tracks.'): # Useful to indicate where no nav?
     h5_to_gpx([
-        'cfg/h5toGpx_CTDs.ini',
+        'cfg/h5_to_gpx_CTDs.ini',
         '--db_path', str(path_db),
         '--tables_list', f"{','.join(devices)}",
         '--tables_log_list', 'logRuns',
@@ -235,7 +235,7 @@ if st(315, 'Export csv for Obninsk'):
     i_cruise = int(m.group('i_cruise'))
     text_file_name_add = f"E090005O2_{m.group('abbr_cruise')}_{i_cruise}_H10_"
 
-    # eval same as in h5toGpx.py
+    # eval same as in h5_to_gpx.py
     gpx_names_fun_str = "lambda i, row, t=0: {}.format({})".format(
         (f"'{gpx_names_fun_format}'" if not gpx_names_fun_format.startswith("f'") else gpx_names_fun_format),
         gpx_names_funs_list
@@ -248,7 +248,7 @@ if st(315, 'Export csv for Obninsk'):
         # j = i+1 if i < 5 else i+2 if i < 8 else i+3 if i < 25 else f"ctd{i-24:02d}" if i < 41 else i-13
         # return f"{i_cruise:02d}" + (f"{j:s}" if isinstance(j, str) else f"{j:03d}")
 
-    from to_vaex_hdf5.h5tocsv import main_call as h5tocsv
+    from hdf5_alt.h5tocsv import main_call as h5tocsv
     h5tocsv([
         f'input.db_path="{path_db}"',
         f'input.tables=["{device}"]',

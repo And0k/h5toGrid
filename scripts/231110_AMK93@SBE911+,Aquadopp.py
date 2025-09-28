@@ -11,17 +11,17 @@ import pandas as pd
 import gsw
 from itertools import takewhile
 # my funcs
-from utils2init import st, pairwise, LoggingStyleAdapter
-import veuszPropagate
-from to_pandas_hdf5.csv2h5 import main as csv2h5
-from to_pandas_hdf5.gpx2h5 import main as gpx2h5
-from to_pandas_hdf5.CTD_calc import main as ctd_calc
-# from to_pandas_hdf5.csv_specific_proc import loaded_corr
-from h5toGpx import main as h5_to_gpx
-from grid2d_vsz import main as grid2d_vsz
-from to_pandas_hdf5.h5toh5 import h5.log_names_gen
+from utils.init import st, pairwise, LoggingStyleAdapter
+from utils import veuszPropagate
+from hdf5_pandas.csv2h5 import main as csv2h5
+from hdf5_pandas.gpx2h5 import main as gpx2h5
+from hdf5_pandas.ctd_calc import main as ctd_calc
+# from hdf5_pandas.csv_specific_proc import loaded_corr
+from utils.h5_to_gpx import main as h5_to_gpx
+from utils.grid2d_vsz import main as grid2d_vsz
+from hdf5_pandas import h5
 import cfg_dataclasses as cfg_d
-from to_vaex_hdf5.nmea2h5 import main as nmea2h5
+from hdf5_alt.nmea2h5 import main as nmea2h5
 
 st.go = True   # False #
 st.start = 8   # 1 5 30 70 80 115
@@ -119,7 +119,7 @@ device_params_dict = \
 device = 'CTD_SBE_911plus@Rozeta'
 
 if st(10, f'Save {device} data to DB'):
-    from to_pandas_hdf5.csv_specific_proc import loaded_sbe
+    from hdf5_pandas.csv_specific_proc import loaded_sbe
     csv2h5([
         'cfg/csv_CTD_SST.ini',
         '--path', str(path_cruise / device / '_raw' / '7*.asc'),
@@ -226,7 +226,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
 if False:
     # Merge needed runs
     import pandas as pd
-    from to_pandas_hdf5.h5toh5 import h5.move_tables, h5.merge_two_runs  #, h5.index_sort, h5.out_init
+    from hdf5_pandas import h5
 
     tbl = f'/{device}'
     tbl_log = f'{tbl}/logRuns'
@@ -267,7 +267,7 @@ gpx_names_funs_list = """
 gpx_names_fun_format = """f'{{:{"s" if 25 <= i < 41 else "02d"}}}'"""
 if st(50, 'Extract navigation data at time station starts to GPX waypoints'):  # False: #
     h5_to_gpx([
-        'cfg/h5toGpx_CTDs.ini',
+        'cfg/h5_to_gpx_CTDs.ini',
          '--db_path', str(path_db),
          '--tables_list', f'{device}',
          '--tables_log_list', 'logRuns',
@@ -280,7 +280,7 @@ if st(50, 'Extract navigation data at time station starts to GPX waypoints'):  #
 
 if False:  # st(60, 'Extract navigation data at runs/starts to GPX tracks.'): # Useful to indicate where no nav?
     h5_to_gpx([
-        'cfg/h5toGpx_CTDs.ini',
+        'cfg/h5_to_gpx_CTDs.ini',
          '--db_path', str(path_db),
          '--tables_list', f'{device}',
          '--tables_log_list', 'logRuns',
@@ -342,7 +342,7 @@ if st(115, 'Export csv for Obninsk'):
     i_cruise = int(m.group('i_cruise'))
     text_file_name_add = f"E090005O2_{m.group('abbr_cruise')}_{i_cruise}_H10_"
 
-    # eval same as in h5toGpx.py
+    # eval same as in h5_to_gpx.py
     gpx_names_fun_str = "lambda i, row, t=0: {}.format({})".format(
         (f"'{gpx_names_fun_format}'" if not gpx_names_fun_format.startswith("f'") else gpx_names_fun_format),
         gpx_names_funs_list
@@ -355,7 +355,7 @@ if st(115, 'Export csv for Obninsk'):
         # j = i+1 if i < 5 else i+2 if i < 8 else i+3 if i < 25 else f"ctd{i-24:02d}" if i < 41 else i-13
         # return f"{i_cruise:02d}" + (f"{j:s}" if isinstance(j, str) else f"{j:03d}")
 
-    from to_vaex_hdf5.h5tocsv import main_call as h5tocsv
+    from hdf5_alt.h5tocsv import main_call as h5tocsv
     h5tocsv([
         f'input.db_path="{path_db}"',
         f'input.tables=["{device}"]',
@@ -381,7 +381,7 @@ if st(115, 'Export csv for Obninsk'):
 
 if st(120, 'Meteo'):
     csv2h5([
-        'cfg/csv_meteo.ini', '--path',  # to_pandas_hdf5/
+        'cfg/csv_meteo.ini', '--path',  # hdf5_pandas/
         str(path_cruise / r"meteo\ship's_meteo_st_source\*.mxt"), '--header',
         'date(text),Time(text),t_air,Vabs_m__s,Vdir,dew_point,Patm,humidity,t_w,precipitation',
         '--coldate_integer', '0', '--coltime_integer', '1',
@@ -394,8 +394,8 @@ if st(120, 'Meteo'):
         ])
 
 if st(130, 'extract all navigation tracks'):
-    # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5toGpx)
-    h5_to_gpx(['cfg/h5toGpx_nav_all.ini',
+    # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5_to_gpx)
+    h5_to_gpx(['cfg/h5_to_gpx_nav_all.ini',
              '--db_path', str(path_db),
              '--tables_list', 'navigation',
              '--simplify_tracks_error_m_float', '10',
@@ -506,7 +506,7 @@ if st(210, f'Save {device} data to DB'):
     #                                               Sound Vel. [m/s]	Density [kg/mі]	Spec. Cond. [mS/cm]	Comments
     # 08:35:22	0	-0.2	9.158	-0.006	0.000	1443.90	999.77	-0.008
     # 08:35:25	0	-0.2	9.814	6.578	5.205	1452.98	1003.79	9.447
-    from to_pandas_hdf5.csv_specific_proc import loaded_sst_mws
+    from hdf5_pandas.csv_specific_proc import loaded_sst_mws
 
     csv2h5([
         #'cfg/csv_CTD_SST.ini',
@@ -599,7 +599,7 @@ if st(230, f'Draw {device} data profiles'):  # False: #
                          ])
 if st(250, 'Extract navigation data at time station starts to GPX waypoints'):  # False: #
     h5_to_gpx([
-        'cfg/h5toGpx_CTDs.ini',
+        'cfg/h5_to_gpx_CTDs.ini',
         '--db_path', str(path_db),
         '--tables_list', f'{device_prev}, {device}',
         '--gpx_symbols_list', "'Diamond, Blue', 'Triangle, Red'",
@@ -659,7 +659,7 @@ if st(315, 'Export csv for Obninsk'):
     i_cruise = int(m.group('i_cruise'))
     text_file_name_add = f"E090005O2_{m.group('abbr_cruise')}_{i_cruise}_H10_"
 
-    # eval same as in h5toGpx.py
+    # eval same as in h5_to_gpx.py
     gpx_names_fun_str = "lambda i, row, t=0: {}.format({})".format(
         (f"'{gpx_names_fun_format}'" if not gpx_names_fun_format.startswith("f'") else gpx_names_fun_format),
         gpx_names_funs_list
@@ -672,7 +672,7 @@ if st(315, 'Export csv for Obninsk'):
         # j = i+1 if i < 5 else i+2 if i < 8 else i+3 if i < 25 else f"ctd{i-24:02d}" if i < 41 else i-13
         # return f"{i_cruise:02d}" + (f"{j:s}" if isinstance(j, str) else f"{j:03d}")
 
-    from to_vaex_hdf5.h5tocsv import main_call as h5tocsv
+    from hdf5_alt.h5tocsv import main_call as h5tocsv
     h5tocsv([
         f'input.db_path="{path_db}"',
         f'input.tables=["{device}"]',

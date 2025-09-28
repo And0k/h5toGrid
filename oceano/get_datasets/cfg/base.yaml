@@ -1,0 +1,9 @@
+# Base configuration for downloading scripts
+defaults:
+  - _self_
+  - copernicus # Compose copernicus.yaml
+  - projects: null # Allow project-specific configurations to be composed
+base:
+  local_path: "data/downloaded" # Base directory for downloaded data
+  history_file: "history/download_history.json" # Path to download history file
+  interpolation_delta: 0.25 # Default delta for spatial interpolation (e.g., for CMEMS point wind)

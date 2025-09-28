@@ -5,9 +5,9 @@ drive_d = 'D:' if sys.platform == 'win32' else '/mnt/D'  # to run on my Linux/Wi
 scripts_path = Path(drive_d + '/Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))
 # my funcs
-import veuszPropagate
-from to_pandas_hdf5.bin2h5 import main as bin2h5
-from to_pandas_hdf5.CTD_calc import main as CTD_calc
+from utils import veuszPropagate
+from hdf5_pandas.bin2h5 import main as bin2h5
+from hdf5_pandas.ctd_calc import main as ctd_calc
 
 # ---------------------------------------------------------------------------------------------
 device = 'CTD_NeilBrown_Mark3'
@@ -49,7 +49,7 @@ if st(20):  # False: #
     # Extract CTD runs (if files are not splitted on runs).
     # Note: Saves extended log needed by pattern used in next step with veuszPropagate
     # todo: be able provide log with (Lat,Lon) separately
-    CTD_calc(['cfg/CTD_calc_Brown.ini',
+    ctd_calc(['cfg/ctd_calc_Brown.ini',
               '--db_path', str(path_db_raw),
               '--tables_list', f'{device}',
               '--out.db_path', str(path_db),
@@ -101,7 +101,7 @@ if start <= 40 and False:  #: # may not comment always because can not delete sa
 
 if st(50):  # False: #
     # Extract navigation data at time station starts to GPX waypoints
-    h5toGpx(['cfg/h5toGpx_CTDs.ini',
+    h5_to_gpx(['cfg/h5_to_gpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'{device}',  # CTD_Idronaut_OS316',
              '--tables_log_list', 'logRuns',
@@ -114,7 +114,7 @@ if st(50):  # False: #
 go = True
 if start <= 60 and False:
     # Extract navigation data at runs/starts to GPX tracks. Useful to indicate where no nav?
-    h5toGpx(['cfg/h5toGpx_CTDs.ini',
+    h5_to_gpx(['cfg/h5_to_gpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'{device}',
              '--tables_log_list', 'logRuns',
@@ -156,7 +156,7 @@ go = False
 # Export csv with new parameters
 if st(110):  # False: #
     # Extract CTD runs (if files are not splitted on runs):
-    CTD_calc([  # 'ctd_calc-find_runs.ini',
+    ctd_calc([  # 'ctd_calc-find_runs.ini',
         '--db_path', str(path_db),
         '--tables_list', f'{device}',
         '--tables_log', '{}/logRuns',
@@ -196,7 +196,7 @@ if st(220):  # False: #
     # Extract CTD runs (if files are not splitted on runs).
     # Note: Saves extended log needed by pattern used in next step with veuszPropagate
     # todo: be able provide log with (Lat,Lon) separately
-    CTD_calc(['ctd_calc-find_runs.ini',
+    ctd_calc(['ctd_calc-find_runs.ini',
               '--db_path', str(path_db),
               '--tables_list', f'{device}',
               '--min_samples', '99',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
@@ -224,7 +224,7 @@ if st(230):  # False: #
 
 if st(250):  # False: #
     # Extract navigation data at time station starts to GPX waypoints
-    h5toGpx(['cfg/h5toGpx_CTDs.ini',
+    h5_to_gpx(['cfg/h5_to_gpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'{device_prev}, {device}',
              '--tables_log_list', 'logRuns',
@@ -256,7 +256,7 @@ if st(300):  # False: #
 # go = True
 if st(310):  # False: #
     # Export trackers tracks to GPX tracks
-    h5toGpx(['cfg/h5toGpx_nav_all.ini',
+    h5_to_gpx(['cfg/h5_to_gpx_nav_all.ini',
              '--db_path', str(path_db_device.with_name(
             path_db_device.stem + '_not_sorted.h5')),
              '--tables_list', f'{device}.*',

@@ -11,16 +11,16 @@ import pandas as pd
 import gsw
 from itertools import takewhile
 # my funcs
-from utils2init import st, pairwise
-import veuszPropagate
-from to_pandas_hdf5.csv2h5 import main as csv2h5
-from to_pandas_hdf5.gpx2h5 import main as gpx2h5
-from to_pandas_hdf5.CTD_calc import main as ctd_calc
-# from to_pandas_hdf5.csv_specific_proc import loaded_corr
-from h5toGpx import main as h5_to_gpx
-from grid2d_vsz import main as grid2d_vsz
-from to_pandas_hdf5 import h5
-from to_vaex_hdf5.h5tocsv import main_call as h5tocsv
+from utils.init import st, pairwise
+from utils import veuszPropagate
+from hdf5_pandas.csv2h5 import main as csv2h5
+from hdf5_pandas.gpx2h5 import main as gpx2h5
+from hdf5_pandas.ctd_calc import main as ctd_calc
+# from hdf5_pandas.csv_specific_proc import loaded_corr
+from utils.h5_to_gpx import main as h5_to_gpx
+from utils.grid2d_vsz import main as grid2d_vsz
+from hdf5_pandas import h5
+from hdf5_alt.h5tocsv import main_call as h5tocsv
 
 st.go = True   # False #
 st.start = 430   # 1 5 30 70 80 115 | 210 315
@@ -89,7 +89,7 @@ devices[device] = {'abbr': 'ss', 'gpx_symbol': 'Triangle, Red'}
 
 st_prefix = re.match(r'.*\D(\d+)$', path_db.stem).group(1)  # or now().year=23
 if st(10, f'Save {device} data to DB'):
-    from to_pandas_hdf5.csv_specific_proc import loaded_sst
+    from hdf5_pandas.csv_specific_proc import loaded_sst
     csv2h5([
         'cfg/csv_CTD_SST.ini',
         '--path', str(path_cruise / device / '_raw' / f'{st_prefix}*.csv'),
@@ -204,7 +204,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
 if False:
     # Merge needed runs
     import pandas as pd
-    from to_pandas_hdf5.h5toh5 import h5.move_tables, h5.merge_two_runs  #, h5.index_sort, h5.out_init
+    from hdf5_pandas import h5
 
     tbl = f'/{device}'
     tbl_log = f'{tbl}/logRuns'
@@ -240,28 +240,28 @@ gpx_names_funs_list = """
 gpx_names_fun_format = '{:s}'
 if st(50, 'Extract navigation data at time station starts to GPX waypoints'):  # False: #
     h5_to_gpx([
-        'cfg/h5toGpx_CTDs.ini',
-         '--db_path', str(path_db),
-         '--tables_list', f"{','.join(devices)}",
-         '--tables_log_list', 'logRuns',
-         '--gpx_names_funs_list', gpx_names_funs_list,
-         '--gpx_names_fun_format', gpx_names_fun_format,  # print variable
-         '--select_from_tablelog_ranges_index', '0',
-         '--dt_search_nav_tolerance_minutes', '1'  # to trigger interpolate
-         ])
-    st.go = (False, f'Hey! Prepare gpx tracks ({file_tracks}) from waypoints _manually_ before continue and rerun from st.start = 70!')
+        'cfg/h5_to_gpx_CTDs.ini',
+        '--db_path', str(path_db),
+        '--tables_list', f"{','.join(devices)}",
+        '--tables_log_list', 'logRuns',
+        '--gpx_names_funs_list', gpx_names_funs_list,
+        '--gpx_names_fun_format', gpx_names_fun_format,  # print variable
+        '--select_from_tablelog_ranges_index', '0',
+        '--dt_search_nav_tolerance_minutes', '1'  # to trigger interpolate
+        )
+    st.g = (False, f'Hey! Prepare gpx tracks ({file_tracks}) from waypoints _manually_ before continue and rerun frm st.start = 70!')
 
-if False:  # st(60, 'Extract navigation data at runs/starts to GPX tracks.'): # Useful to indicate where no nav?
-    h5_to_gpx([
-        'cfg/h5toGpx_CTDs.ini',
-         '--db_path', str(path_db),
-         '--tables_list', f"{','.join(devices)}",
-         '--tables_log_list', 'logRuns',
-         '--select_from_tablelog_ranges_index', None,  # Export tracks
-         '--gpx_names_fun_format', '{1:%y%m%d}_{0:}',  # track name of format(timeLocal, tblD_safe)
-         '--gpx_names_funs_list', '"i, row.Index"',
-         '--gpx_names_funs_cobined', ''
-         ])
+if False  # st(60, 'Extract navigation data at runs/starts to GPX tracks.'): # Useful to indicate where no nav?
+    h5_t_gpx([
+        cfg/h5_to_gpx_CTDs.ini',
+        '--db_path', str(path_db),
+        '--tables_list', f"{','.join(devices)}",
+        '--tables_log_list', 'logRuns',
+        '--select_from_tablelog_ranges_index', None,  # Export tracks
+        '--gpx_names_fun_format', '{1:%y%m%d}_{0:}',  # track name of format(timeLocal, tblD_safe)
+        '--gpx_names_funs_list', '"i, row.Index"',
+        '--gpx_names_funs_cobined', ''
+        ])
     st.go = (False, 'Hey! Prepare gpx tracks _manually_ before continue (rerun from st.start = 70)!')
 
 if st(70, f'Save waypoints/routes from _manually_ prepared {file_tracks} to hdf5'):  # False: #
@@ -340,7 +340,7 @@ if st(115, 'Export csv for Obninsk'):
 
 if st(120, 'Meteo'):
     csv2h5([
-        'cfg/csv_meteo.ini', '--path',  # to_pandas_hdf5/
+        'cfg/csv_meteo.ini', '--path',  # hdf5_pandas/
         str(path_cruise / r"meteo\ship's_meteo_st_source\*.mxt"), '--header',
         'date(text),Time(text),t_air,Vabs_m__s,Vdir,dew_point,Patm,humidity,t_w,precipitation',
         '--coldate_integer', '0', '--coltime_integer', '1',
@@ -353,8 +353,8 @@ if st(120, 'Meteo'):
         ])
 
 if st(130, 'extract all navigation tracks'):
-    # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5toGpx)
-    h5_to_gpx(['cfg/h5toGpx_nav_all.ini',
+    # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5_to_gpx)
+    h5_to_gpx(['cfg/h5_to_gpx_nav_all.ini',
              '--db_path', str(path_db),
              '--tables_list', 'navigation',
              '--simplify_tracks_error_m_float', '10',
@@ -377,7 +377,7 @@ common_ctd_params_list = [
 if st(210, f'Save {device} data to DB'):
     # Time [hh:mm:ss]	Bottle []	Pressure [dbar]	Temperature [░C]	Conductivity [mS/cm]	Salinity [PSU]	Sound Vel. [m/s]	Density [kg/m│]	Spec. Cond. [mS/cm]	Latitude	Longitude	UTC	Comments  [Index]
     # 14:22:48	0	-0.4	-1.870	-0.002	0.000	1392.76	999.68	-0.004	54░32'24.02'' N	19░39'7.75'' E	2023-12-09 14:22:47
-    from to_pandas_hdf5.csv_specific_proc import loaded_sst_mws_with_coord
+    from hdf5_pandas.csv_specific_proc import loaded_sst_mws_with_coord
     #  todo: check why incremental_update not works
     #  todo: remove "Error" lines from files before loading
     csv2h5([
@@ -469,7 +469,7 @@ if st(230, f'Draw {device} data profiles'):  # False: #
 
 if st(250, 'Extract navigation data at time station starts to GPX waypoints'):  # False: #
     h5_to_gpx([
-        'cfg/h5toGpx_CTDs.ini',
+        'cfg/h5_to_gpx_CTDs.ini',
         '--db_path', str(path_db),
         '--tables_list', f"{','.join(devices)}",
         '--gpx_symbols_list', ','.join("'{gpx_symbol}'".format_map(d) for d in devices.values()),
@@ -567,7 +567,7 @@ if st(410, f'Save {device} data to DB'):
     # Ser	Meas	Sal.	Cond.	Temp	Ox %	mg/l	F (µg/l)	T (FTU)	Density	S. vel.	Depth(u)	Date	Time
     # 1	108	7.669	8.333	5.167	103.88	12.50	0.76	0.46	6.058	1436.77	0.3075	09.12.2023	14:23:09
     # Ser	Meas	Sal.	Cond.	Temp	                                    Density	S. vel.	Depth(u)	Date	Time
-    from to_pandas_hdf5.csv_specific_proc import loaded_sst
+    from hdf5_pandas.csv_specific_proc import loaded_sst
     csv2h5([
         # 'cfg/csv_CTD_SST.ini',
         '--skiprows_integer', '4',
@@ -649,7 +649,7 @@ if st(430, f'Draw {device} data profiles'):  # False: #
     ])
 if st(450, 'Extract navigation data at time station starts to GPX waypoints'):  # False: #
     h5_to_gpx([
-        'cfg/h5toGpx_CTDs.ini',
+        'cfg/h5_to_gpx_CTDs.ini',
         '--db_path', str(path_db),
         '--tables_list', f"{','.join(devices)}",
         '--gpx_symbols_list', ','.join("'{gpx_symbol}'".format_map(d) for d in devices.values()),

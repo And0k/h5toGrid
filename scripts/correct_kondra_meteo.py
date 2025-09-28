@@ -1,4 +1,4 @@
-from to_pandas_hdf5.csv_specific_proc import rep_in_file, correct_txt
+from hdf5_pandas.csv_specific_proc import rep_in_file, correct_txt
 from pathlib import Path
 import sys
 sys.argv = [sys.argv[0], r'd:\WorkData\BalticSea\220505_D6\meteo_GMX500\_raw\220505@GMX500.csv']

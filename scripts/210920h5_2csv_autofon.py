@@ -8,15 +8,15 @@ drive_d = 'D:' if sys.platform == 'win32' else '/mnt/D'  # to run on my Linux/Wi
 scripts_path = Path(drive_d + '/Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))
 # my funcs
-from to_vaex_hdf5.h5tocsv import main_call as h5tocsv
-from utils2init import st
-import veuszPropagate
-from to_pandas_hdf5.csv2h5 import main as csv2h5
-from to_pandas_hdf5.gpx2h5 import main as gpx2h5
-from to_pandas_hdf5.CTD_calc import main as CTD_calc
-from to_pandas_hdf5.csv_specific_proc import loaded_corr
-from h5toGpx import main as h5toGpx
-from grid2d_vsz import main as grid2d_vsz
+from hdf5_alt.h5tocsv import main_call as h5tocsv
+from utils.init import st
+from utils import veuszPropagate
+from hdf5_pandas.csv2h5 import main as csv2h5
+from hdf5_pandas.gpx2h5 import main as gpx2h5
+from hdf5_pandas.ctd_calc import main as ctd_calc
+from hdf5_pandas.csv_specific_proc import loaded_corr
+from utils.h5_to_gpx import main as h5_to_gpx
+from utils.grid2d_vsz import main as grid2d_vsz
 
 devices = ['tr2', 'sp4', 'sp5']
 

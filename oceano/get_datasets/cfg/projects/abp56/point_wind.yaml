@@ -1,0 +1,7 @@
+# @package projects.abp56
+
+# Configuration for CMEMS Wind ABP56 project
+dir_suffix: "CMEMS_Wind_ABP56"
+lat: 55.13533
+lon: 19.76305
+date_range: ["2024-06-25", "2024-09-05"]

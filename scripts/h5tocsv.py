@@ -7,7 +7,7 @@
   Purpose: load CTD data from hdf5 db (from Veusz data source store) and save it to csv,
             with adding nav.
   Created: 18.10.2016
-  See also newer to_vaex_hdf5/h5tocsv.py
+  See also newer hdf5_alt/h5tocsv.py
 """
 
 from os import path as os_path
@@ -15,8 +15,8 @@ from sys import stdout as sys_stdout
 import numpy as np
 import pandas as pd
 
-from utils2init import ini2dict
-from grid2d_vsz import inearestsorted
+from utils.init import ini2dict
+from utils.grid2d_vsz import inearestsorted
 
 date_format_ISO9115 = '%Y-%m-%dT%H:%M:%S'  # for Obninsk
 # ##############################################################################

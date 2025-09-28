@@ -6,9 +6,9 @@ scripts_path = Path(drive_d).joinpath('Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))  # os.getcwd()
 
 # my
-import veuszPropagate
-from utils2init import Ex_nothing_done, this_prog_basename
-from to_pandas_hdf5.h5toh5 import h5.log_names_gen  # , h5.find_tables
+from utils import veuszPropagate
+from utils.init import Ex_nothing_done, this_prog_basename
+from hdf5_pandas import h5
 
 # user's constants ############################################################
 path_db = Path(drive_d).joinpath(

@@ -12,7 +12,7 @@ fileCoef = \
     r'd:\WorkData\Experiment\TermoChain\141021\coef#t_TINA_141017.txt'
 fileMaskIn = \
     r'd:\WorkData\Experiment\TermoChain\141021\TERM_GRUNT\*.txt'
-from utils2init import dir_walker, readable
+from utils.init import dir_walker, readable
 import os.path
 import numpy as np
 

@@ -1,0 +1,10 @@
+# @package projects.abp56_tchain
+
+# Configuration for CMEMS Region ABP56 (t-chain) project
+dir_suffix: "240616_ABP56(t-chain)"
+date_range: ["2024-06-25", "2024-09-05"]
+bbox: {lon_min: 17.5, lon_max: 21.5, lat_min: 54.25, lat_max: 56.0}
+depth_min: 0.5
+depth_max: 125
+dataset_vars:
+  cmems_mod_bal_phy_anfc_P1D-m: ["bottomT", "thetao", "so", "sob", "uo", "vo", "wo"]

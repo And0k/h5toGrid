@@ -1,6 +1,6 @@
 [project]
-description = "Add a short description here"
-name = "h5toGrid"
+description = "Monorepo for oceanology projects"
+name = "absioras"
 requires-python = ">= 3.11"
 version = "0.1.0"
 dependencies = [
@@ -12,13 +12,52 @@ dependencies = [
 build-backend = "hatchling.build"
 requires = ["hatchling"]
 
+[tool.hatch.workspace]
+members = [
+    "oceano/*",
+    "shared/*"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = [
+"oceano/adcp", "oceano/gps_tracker", "oceano/tcm", "oceano/ctd", "oceano/get_datasets", "shared/utils", "shared/hdf5_pandas", "shared/hdf5_alt",
+"third_party/descartes", "third_party/veusz", "third_party/mne", "third_party/wafo"
+]
+
 [tool.pixi.project]
 channels = ["conda-forge"]
 platforms = ["win-64"]
 
 [tool.pixi.pypi-dependencies]
+absioras-adcp  = { path = "oceano/adcp", editable = true }
+absioras-gps_tracker  = { path = "oceano/gps_tracker", editable = true }
+absioras-tcm  = { path = "oceano/tcm", editable = true }
+absioras-ctd  = { path = "oceano/ctd", editable = true }
+absioras-get_datasets  = { path = "oceano/get_datasets", editable = true }
+absioras-utils = { path = "shared/utils", editable = true }
+absioras-hdf5_pandas = { path = "shared/hdf5_pandas", editable = true }
+absioras-hdf5_alt = { path = "shared/hdf5_alt", editable = true }
+absioras-veusz_helpers = { path = "shared/veusz_helpers", editable = true }
+absioras-third_party-descartes = { path = "third_party/descartes", editable = true } 
+absioras-third_party-veusz = { path = "third_party/veusz", editable = true } 
+absioras-third_party-mne = { path = "third_party/mne", editable = true } 
+absioras-third_party-wafo = { path = "third_party/wafo", editable = true } 
+
+
+# Зависимости сервисов как features
+[tool.pixi.feature.get_datasets]
+dependencies = { copernicusmarine = "*" }
+
+[tool.pixi.feature.dev]
+dependencies = { pytest = "*" }
 
 [tool.pixi.tasks]
+test = "pytest tests/"
+test-all = "hatch run test:*"
+
+# Окружения
+[tool.pixi.environments]
+default = ["get_datasets", "dev"]
 
 [tool.pixi.dependencies]
 antlr = "*"
@@ -101,3 +140,4 @@ cfgrib = "*"
 
 [tool.ruff]
 line-length = 110
+builtins = ["SetData", "SetData2D", "SetDataExpression", "SetData2DExpression", "SetData2DExpressionXYZ", "SetData2DXYFunc", "AddCustom", "DatasetPlugin", "TagDatasets", "Add", "To", "Set", "CreateHistogram", "FilterDatasets", "ImportFileCSV"]

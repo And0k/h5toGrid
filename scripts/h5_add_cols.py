@@ -13,8 +13,8 @@ drive_d = 'D:' if sys.platform == 'win32' else '/mnt/D'  # to run on my Linux/Wi
 scripts_path = Path(drive_d + '/Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))
 
-from to_pandas_hdf5.h5toh5 import h5.move_tables
-from utils2init import Ex_nothing_done
+from hdf5_pandas import h5
+from utils.init import Ex_nothing_done
 
 store_in = Path(r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\201202raw_proc.h5')
 store_out = Path(r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\processed_h5,vsz\201202raw_proc.h5')

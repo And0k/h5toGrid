@@ -2,8 +2,8 @@
 import sys
 from pathlib import Path
 # my funcs
-from utils2init import LoggingStyleAdapter
-from to_vaex_hdf5.h5tocsv import ctd2csv
+from utils.init import LoggingStyleAdapter
+from hdf5_alt.h5tocsv import ctd2csv
 sys.path.append(r'C:\Work\Python\AB_SIO_RAS\tcm')
 from tcm.csv_load import load_from_csv_gen
 from tcm.csv_specific_proc import loaded_rock, century
@@ -34,7 +34,7 @@ def ctd_rock_sal(cfg_in, cfg_out, lat, lon):
     Saves to tab separated values files named by start and end data time.
     :return:
     """
-    
+
     paths_csv_prev = None
     for itbl, pid, paths_csv, df_raw in load_from_csv_gen(cfg_in):
         if paths_csv_prev != paths_csv:
@@ -43,7 +43,7 @@ def ctd_rock_sal(cfg_in, cfg_out, lat, lon):
         else:
             csv_part += 1  # next part of same csv
         # todo: append previous file if next part is of same source file (if csv_part > 0)
-        
+
         n_rows = len(df_raw)
         ind = longest_increasing_subsequence_i(df_raw.Pres.to_numpy())
         df_raw = df_raw.iloc[ind, :]
@@ -51,7 +51,7 @@ def ctd_rock_sal(cfg_in, cfg_out, lat, lon):
             f'Removed {n_rows - len(df_raw)} rows of non-increased Pressure '
             f'in possible shortest intervals. Remains {len(df_raw)} rows'
         )
-        
+
         ctd2csv(
             df_raw,
             cfg_out,
@@ -80,10 +80,10 @@ if __name__ == '__main__':
     # CTD data collected near region with nav info: 7730.07885328,N,06634.94560096,E
     lat = 77.30
     lon = 66.35
-    
+
     # min_coord = 'Lat:53, Lon:18.6'  # 10
     # max_coord = 'Lat:80.55, Lon:30.3'
-    
+
     cfg_out = {
         'cols':              ['Pres', 'Temp90', 'Cond', 'Sal', 'sigma0'],
         'text_path':         path_cruise / device,
@@ -92,5 +92,5 @@ if __name__ == '__main__':
         'text_float_format': "%.4f",
         'sep':               '\t'
     }
-    
+
     ctd_rock_sal(cfg_in, cfg_out, lat, lon)

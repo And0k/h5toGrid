@@ -8,10 +8,10 @@ import gpxpy
 from pandas.tseries.frequencies import to_offset
 from gpxpy.gpx import GPX
 
-from h5toGpx import save_to_gpx
+from utils.h5_to_gpx import save_to_gpx
 
-from to_pandas_hdf5.gpx2h5 import df_rename_cols  # gpxConvert
-from to_pandas_hdf5.h5_dask_pandas import h5_append, df_to_csv
+from hdf5_pandas.gpx2h5 import df_rename_cols  # gpxConvert
+from hdf5_pandas.h5_dask_pandas import h5_append, df_to_csv
 from re import search
 
 # Input csv data
@@ -26,7 +26,7 @@ cfg = {
     'out': {
         'path': (  # time_st will be replaced to datastart
             path_csv.parent if path_csv.parent.stem == '_raw' else path_csv
-            ).with_name(f'{{time_st:%y%m%d}}{add_sfx}').with_suffix('.gpx')  
+            ).with_name(f'{{time_st:%y%m%d}}{add_sfx}').with_suffix('.gpx')
     }}
 
 
@@ -75,7 +75,7 @@ def utm34to_latlon(
     nav_df.set_index('Time', inplace=True)
     # date = pd.to_datetime(a.loc[uniq, 'Time'].str.decode('utf-8', errors='replace'), format='%d.%m.%YT%H:%M:%S.%F')
     # 'DepEcho'
-    
+
     for wp in [False, True]:
         if not wp:
             # track rows
@@ -83,13 +83,13 @@ def utm34to_latlon(
             if not b.any():
                 continue
             # not save gpx but return track to save on next iteration
-            wp_args = {'fileOutPN': None, 'gpx_obj_namef': device}  
+            wp_args = {'fileOutPN': None, 'gpx_obj_namef': device}
             print(f'saving {b.sum()} track rows', end=', ')
         else:
             # waypoints rows
             b = ~b
             if b.any():
-                
+
                 # replace file name time_st pattern with value
                 p_out = cfg['out']['path']
                 p_out = p_out.with_name(p_out.name.format(time_st=nav_df.index.min()))

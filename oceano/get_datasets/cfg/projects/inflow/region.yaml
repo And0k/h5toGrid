@@ -1,0 +1,10 @@
+# @package projects.inflow
+
+# Configuration for CMEMS Region Inflow project
+dir_suffix: "231220_inflow"
+date_range: ["2023-09-15", "2024-02-10"]
+bbox: {lon_min: 10.51, lon_max: 21.32, lat_min: 54.01, lat_max: 58.99}
+depth_min: 0.5
+depth_max: 125
+dataset_vars:
+  cmems_mod_bal_phy_anfc_P1D-m: ["bottomT", "thetao", "so", "sob", "uo", "vo", "wo"]

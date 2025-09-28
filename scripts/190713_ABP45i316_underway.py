@@ -5,13 +5,13 @@ drive_d = 'D:' if sys.platform == 'win32' else '/mnt/D'  # to run on my Linux/Wi
 scripts_path = Path(drive_d + '/Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))
 # my funcs
-from utils2init import st
-import veuszPropagate
-from to_pandas_hdf5.csv2h5 import main as csv2h5
-from to_pandas_hdf5.gpx2h5 import main as gpx2h5
-from to_pandas_hdf5.CTD_calc import main as CTD_calc
-from h5toGpx import main as h5toGpx
-from grid2d_vsz import main as grid2d_vsz
+from utils.init import st
+from utils import veuszPropagate
+from hdf5_pandas.csv2h5 import main as csv2h5
+from hdf5_pandas.gpx2h5 import main as gpx2h5
+from hdf5_pandas.ctd_calc import main as ctd_calc
+from utils.h5_to_gpx import main as h5_to_gpx
+from utils.grid2d_vsz import main as grid2d_vsz
 
 device = 'CTD_Idronaut_OS316'
 path_cruise = Path(r'd:\workData\BalticSea\190713_ABP45')
@@ -66,7 +66,7 @@ if st(4):  # nav with depth is in next section
 
 if st(5):  # False: #
     # Extract CTD runs (if files are not splitted on runs):
-    CTD_calc(['ctd_calc-find_runs.ini',
+    ctd_calc(['ctd_calc-find_runs.ini',
               '--db_path', str(path_db),
               '--tables_list', f'{device}',
               '--min_samples', '99',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
@@ -112,8 +112,8 @@ if False:  #: # may not comment always because can not delete same time more tha
                 print('Not found run with time {}'.format(t))
 
 if st(50, 'Extract navigation data at time station starts to GPX waypoints'):  # False: #
-    h5toGpx([
-        'cfg/h5toGpx_CTDs.ini',
+    h5_to_gpx([
+        'cfg/h5_to_gpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'{device}',
              '--tables_log_list', 'logRuns',
@@ -124,8 +124,8 @@ if st(50, 'Extract navigation data at time station starts to GPX waypoints'):  #
     st.go = False  # Hey! Prepare gpx tracks _manually_ before continue.
 
 if False: # st(60, 'Extract navigation data at runs/starts to GPX tracks.'):    # Extract     # Useful to indicate where no nav?
-    h5toGpx([
-        'cfg/h5toGpx_CTDs.ini',
+    h5_to_gpx([
+        'cfg/h5_to_gpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'{device}',
              '--tables_log_list', 'logRuns',
@@ -161,8 +161,8 @@ go = False
 
 # extract all navigation tracks
 if False:  # True: #
-    # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5toGpx)
-    h5toGpx(['cfg/h5toGpx_nav_all.ini',
+    # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5_to_gpx)
+    h5_to_gpx(['cfg/h5_to_gpx_nav_all.ini',
              '--path_cruise', str(path_cruise),
              '--tables_list', 'navigation',
              '--simplify_tracks_error_m_float', '10',

@@ -1,0 +1,12 @@
+# @package _group_
+
+# Configuration for CMEMS Region Mariculture 3 project
+copernicus:
+  region:
+    dir_suffix: "150101_Mariculture_3"
+    date_range: ["2015-01-01", "2025-03-23"]
+    bbox: {lon_min: 19.304722, lon_max: 19.596667, lat_min: 54.551389, lat_max: 54.769444}
+    depth_min: 0.5
+    depth_max: 125
+    dataset_vars:
+      cmems_mod_bal_phy_anfc_P1D-m: ["bottomT", "thetao", "so", "sob", "uo", "vo", "wo"]

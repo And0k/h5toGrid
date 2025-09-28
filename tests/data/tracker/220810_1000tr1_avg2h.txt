@@ -1,0 +1,2 @@
+DateTime_UTC,Lat,Lon,Speed,LGSM,HDOP,n_GPS,Temp,speed_x,speed_y,dx,dy,dr,Vdir
+2022-08-10T10:00:00.000000,54.70304,20.48683,472.0,-72.0,0.6504,15.5,35.5,0.0,0.0,0.0,0.0,0.0,0.0

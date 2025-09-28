@@ -16,9 +16,9 @@ import re
 
 from gsw import Sstar_from_SP, sound_speed_t_exact
 
-from to_pandas_hdf5.csv_specific_proc import deg_min_float_as_text2deg
+from hdf5_pandas.csv_specific_proc import deg_min_float_as_text2deg
 # my functions:
-from veuszPropagate import load_vsz_closure
+from utils.veuszPropagate import load_vsz_closure
 
 cfg = {'in': {}, 'out': {}, 'program': {}}
 

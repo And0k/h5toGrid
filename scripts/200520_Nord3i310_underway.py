@@ -6,13 +6,13 @@ drive_d = 'D:' if sys.platform == 'win32' else '/mnt/D'  # to run on my Linux/Wi
 scripts_path = Path(drive_d + '/Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))
 # my funcs
-from utils2init import st as st_full
-import veuszPropagate
-from to_pandas_hdf5.csv2h5 import main as csv2h5
-from to_pandas_hdf5.gpx2h5 import main as gpx2h5
-from to_pandas_hdf5.CTD_calc import main as CTD_calc
-from h5toGpx import main as h5toGpx
-from grid2d_vsz import main as grid2d_vsz
+from utils.init import st as st_full
+from utils import veuszPropagate
+from hdf5_pandas.csv2h5 import main as csv2h5
+from hdf5_pandas.gpx2h5 import main as gpx2h5
+from hdf5_pandas.ctd_calc import main as ctd_calc
+from utils.h5_to_gpx import main as h5_to_gpx
+from utils.grid2d_vsz import main as grid2d_vsz
 
 device = 'CTD_Idronaut_OS310'
 path_cruise = Path(r'd:\workData\BalticSea\200520_Nord3')
@@ -56,7 +56,7 @@ if st(20):  # False: #
     # Extract CTD runs (if files are not splitted on runs).
     # Note: Saves extended log needed by pattern used in next step with veuszPropagate
     # todo: be able provide log with (Lat,Lon) separately
-    CTD_calc(['cfg/ctd_calc-find_runs.ini',
+    ctd_calc(['cfg/ctd_calc-find_runs.ini',
               '--db_path', str(path_db),
               '--tables_list', f'{device}',
               '--min_samples', '50',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
@@ -104,7 +104,7 @@ if st(40) and False:  # may not comment always because can not delete same time 
 
 if st(50):  # False: #
     # Extract navigation data at time station starts to GPX waypoints
-    h5toGpx(['cfg/h5toGpx_CTDs.ini',
+    h5_to_gpx(['cfg/h5_to_gpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'{device}',
              '--tables_log_list', 'logRuns',
@@ -117,7 +117,7 @@ if st(50):  # False: #
 go = True
 if start <= 60 and False:
     # Extract navigation data at runs/starts to GPX tracks. Useful to indicate where no nav?
-    h5toGpx(['cfg/h5toGpx_CTDs.ini',
+    h5_to_gpx(['cfg/h5_to_gpx_CTDs.ini',
              '--db_path', str(path_db),
              '--tables_list', f'{device}',
              '--tables_log_list', 'logRuns',
@@ -162,7 +162,7 @@ if st(80):  # False: #
 # Export csv with some new calculated parameters
 if st(110):  # False: #
     # Extract CTD runs (if files are not splitted on runs):
-    CTD_calc([  # 'ctd_calc-find_runs.ini',
+    ctd_calc([  # 'ctd_calc-find_runs.ini',
         '--db_path', str(path_db),
         '--tables_list', f'{device}',
         '--tables_log', '{}/logRuns',
@@ -179,7 +179,7 @@ if st(110):  # False: #
 # Meteo
 if st(120):  # True: #
     csv2h5([
-        'cfg/csv_meteo.ini', '--path',  # to_pandas_hdf5/
+        'cfg/csv_meteo.ini', '--path',  # hdf5_pandas/
         str(path_cruise / r"meteo\ship's_meteo_st_source\*.mxt"), '--header',
         'date(text),Time(text),t_air,Vabs_m__s,Vdir,dew_point,Patm,humidity,t_w,precipitation',
         '--coldate_integer', '0', '--coltime_integer', '1',
@@ -193,8 +193,8 @@ if st(120):  # True: #
 
 # extract all navigation tracks
 if st(130):  # True: #
-    # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5toGpx)
-    h5toGpx(['cfg/h5toGpx_nav_all.ini',
+    # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5_to_gpx)
+    h5_to_gpx(['cfg/h5_to_gpx_nav_all.ini',
              '--db_path', str(path_db),
              '--tables_list', 'navigation',
              '--simplify_tracks_error_m_float', '10',

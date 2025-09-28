@@ -3,15 +3,15 @@ from os import path as os_path
 import numpy as np
 import pandas as pd
 
-from h5toGpx import init_gpx_symbols_fun, save_to_gpx, my_argparser as h5toGpx_parser
-from to_pandas_hdf5.csv_specific_proc import chars_array_to_datetimeindex
-from to_pandas_hdf5.h5toh5 import h5.load_points
+from utils.h5_to_gpx import init_gpx_symbols_fun, save_to_gpx, my_argparser as h5_to_gpx_parser
+from hdf5_pandas.csv_specific_proc import chars_array_to_datetimeindex
+from hdf5_pandas import h5
 # my:
-from utils2init import init_file_names, cfg_from_args, this_prog_basename, Ex_nothing_done, standard_error_info
+from utils.init import init_file_names, cfg_from_args, this_prog_basename, Ex_nothing_done, standard_error_info
 
 
 def my_argparser():
-    p = h5toGpx_parser()
+    p = h5_to_gpx_parser()
     # Append arguments with my common options:
     s = [g for g in p._action_groups if g.title == 'in'][0]
     s.add('--path', default='.',  # nargs=?,
@@ -59,7 +59,7 @@ def filename2date(inF):
 
 # , '--path', r'd:\workData\BalticSea\171003_ANS36\Baklan\2017*p1d5.txt',
 def main(new_arg=None):
-    new_arg = [r'.\h5toGpx_CTDs.ini',
+    new_arg = [r'.\h5_to_gpx_CTDs.ini',
                '--db_path', r'd:\workData\BalticSea\170614_ANS34\170614Strahov.h5',
                '--path', r'd:\workData\BalticSea\170614_ANS34\Baklan\2017*p1d5.txt',
                '--gpx_names_fun_format', '+{:02d}',

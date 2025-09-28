@@ -1,6 +1,6 @@
 import pandas as pd
-from to_pandas_hdf5.h5toh5 import h5.log_names_gen, h5.out_init, h5.dispenser_and_names_gen, h5.move_tables, h5.index_sort, h5.remove  # h5.ReplaceTableKeepingChilds
-from to_pandas_hdf5.h5_dask_pandas import h5.append
+from hdf5_pandas import h5
+from hdf5_pandas.h5_dask_pandas import h5
 from typing import Any, Iterable, Iterator, Mapping, Optional, Sequence, Tuple, Union
 from pathlib import PurePath
 from time import sleep

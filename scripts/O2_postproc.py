@@ -12,8 +12,8 @@ from scipy.ndimage.filters import gaussian_filter1d
 # import gsw
 from pathlib import Path
 from collections import namedtuple
-from utils2init import LoggingStyleAdapter
-from to_pandas_hdf5.h5toh5 import h5.ReplaceTableKeepingChilds
+from utils.init import LoggingStyleAdapter
+from hdf5_pandas import h5
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
 

@@ -120,7 +120,7 @@ if b_2d_to_txt:
         df.to_csv(file_path)
 
 else:
-    from gs_surfer import save_grd
+    from utils.gs_surfer import save_grd
 
     x_min, x_max = longitudes[[0, -1]]
     y_min, y_max = latitudes[[0, -1]]

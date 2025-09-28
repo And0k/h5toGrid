@@ -9,11 +9,11 @@ scripts_path = Path(drive_d + '/Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))
 from itertools import takewhile
 # my funcs
-import veuszPropagate
+from utils import veuszPropagate
 
-# from to_pandas_hdf5.csv_specific_proc import loaded_corr
+# from hdf5_pandas.csv_specific_proc import loaded_corr
 
-from to_pandas_hdf5.h5toh5 import h5.log_names_gen
+from hdf5_pandas import h5
 
 
 path_cruise = Path(
@@ -50,7 +50,7 @@ if 'min_time' in cfg_in:
     start_file_index = len(list(takewhile(lambda x: x < filename_st, h5.log_names_gen(cfg_in, f_row2name))))
 else:
     start_file_index = 0  # 65 - 230904_0600@i_p06.vsz
-    
+
 veuszPropagate.main([
     'cfg/veuszPropagate.ini',
     '--path', str(cfg_in['pattern_path'].with_name('23*.vsz')),  #i_p05 i37.vsz i_p06.vsz  '???.vsz'   _*s path_db),

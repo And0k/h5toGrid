@@ -14,8 +14,8 @@ from typing import Callable, BinaryIO, Mapping, Optional, Sequence, TextIO, Tupl
 from re import subn
 
 # my funcs
-from utils2init import LoggingStyleAdapter
-from to_vaex_hdf5.h5tocsv import ctd2csv
+from utils.init import LoggingStyleAdapter
+from hdf5_alt.h5tocsv import ctd2csv
 
 sys.path.append(r'C:\Work\Python\AB_SIO_RAS\tcm')
 from tcm.csv_load import load_from_csv_gen
@@ -29,15 +29,15 @@ sep = ','
 
 
 def align_block_rows(block, n_acols=100, sep=sep, header:str = None):
-    
+
     """
     Get all values after "dz_m" in each row: these are a-cols followed same number of d-cols:
     1	2	3	4	5	6	7	8	    9	   10	11	    12	    13 a2 ... ak d1 d2 ... dk
     Y	M	D	h	m	s	ms	Dist_m	Bot_m	N	z1_m	dz_m	a1 a2 ... ak d1 d2 ... dk
     23	11	21	19	58	51	9	0	219.8308434	80	12.39	4	0.25
-    
+
     Ignore rows where all a-cols is bad (equal to -32768)
-    
+
     Determine k and if file has less values than previous then append empty vals to a and d-cols
     :param block:
     :param n_acols: number of output a-cols (equal to output number of d-cols)
@@ -58,7 +58,7 @@ def align_block_rows(block, n_acols=100, sep=sep, header:str = None):
             n_add_acols = n_acols - n_acols_cur
             if n_acols_cur > n_acols:
                 lf.warning(f'File hase more a-cols ({n_acols_cur}) than needed cols number {n_acols}. Increasing former value')
-        
+
         # Get max number of good a-cols
         try:
             n_bad_at_end = next(dropwhile(
@@ -71,7 +71,7 @@ def align_block_rows(block, n_acols=100, sep=sep, header:str = None):
             continue
         n_acols_good = n_acols_cur - n_bad_at_end
         max_acols_good = max(max_acols_good, n_acols_good)
-        
+
         # Get aligned rows
         out_row = sep.join(
             vals[:(n_before_acols + n_acols_cur)] + [''] * n_add_acols +
@@ -81,15 +81,15 @@ def align_block_rows(block, n_acols=100, sep=sep, header:str = None):
     if no_data_rows:
         print(f'junk_rows:{no_data_rows}', end=', ')
     return out_rows, max_acols_good
-    
-    
+
+
 def fun_combine_closure():
 
     def get_group(vals):
         return float(vals[11])  # cell size (element dz you can see in header)
-    
+
     file_out_group_prev = None
-    
+
     def file_name_from_data(text_1st_block, ext='tsv' if sep == '\t' else 'csv'):
         """
         Also returns header
@@ -107,16 +107,16 @@ def fun_combine_closure():
         time_vals['year'] += int(century)*100
         t_st = datetime(**time_vals)
         out_name = f'{t_st:%y%m%d_%H%M}_cell={out_group:g}.{ext}'
-        
+
         z0_1 = float(vals[10]) + 5.8  # depth of 1st cell
         out_header = (
             'Y M D h m s ms Dist_m Bot_m N z1_m dz_m'.split() +
             [f'{l}{round(z0_1 + k*out_group)}' for l in 'ad' for k in range(n_acols)]
         )
         return out_group, out_name, sep.join(out_header)
-        
+
     file_outs_cur = {}
-    
+
     def fun_combine(
             file_in: Union[str, Path, BinaryIO, TextIO],
             file_out: Optional[Path] = None,
@@ -126,7 +126,7 @@ def fun_combine_closure():
             **kwargs
     ) -> Tuple[Path, Mapping]:
         """
-        
+
         :param file_in:
         :param file_out:
         :param dir_out:
@@ -145,11 +145,11 @@ def fun_combine_closure():
                 binary_mode = False
 
             the_end = b'' if binary_mode else ''
-            
+
             f_out = None
             if not dir_out:
                 dir_out = file_in.parent
-                
+
             for i, block in enumerate(iter(lambda: f_in.read(block_size), the_end)):
                 if block == the_end:
                     break
@@ -169,7 +169,7 @@ def fun_combine_closure():
                         print(end=f'{file_in.stem}: ')
                         f_out = file_outs_cur[out_group]
                         # out_name = Path(file_outs_cur[out_group].name) if not want output None
-                
+
                 lines, n_acols_with_data = align_block_rows(block, n_acols=n_acols, header=out_header)
                 for line in lines:
                     f_out.write(line)
@@ -177,11 +177,11 @@ def fun_combine_closure():
                 # f_out.write(block)
 
         return out_name, out_group
-    
+
     def fun_close():
         for f_out in file_outs_cur.values():
             f_out.close()
-            
+
     return fun_combine, fun_close
 
 
@@ -193,7 +193,7 @@ def combine_csv_by_cell(cfg_in, cfg_out):
     :return:
     """
     fun_combine, fun_close = fun_combine_closure()
-    
+
     path = cfg_in['path']
     files = list(path.parent.glob(path.name))
     n_files = len(files)
@@ -205,10 +205,10 @@ def combine_csv_by_cell(cfg_in, cfg_out):
             grouped[group].append(file)
         else:
             grouped[group] = [file]
-        
+
     fun_close()
     # --------------
-    
+
     paths_csv_prev = None
     for itbl, pid, paths_csv, df_raw in load_from_csv_gen(cfg_in):
         if paths_csv_prev != paths_csv:
@@ -216,7 +216,7 @@ def combine_csv_by_cell(cfg_in, cfg_out):
             csv_part = 0
         else:
             csv_part += 1  # next part of same csv
-        
+
 
 
 if __name__ == '__main__':
@@ -236,7 +236,7 @@ if __name__ == '__main__':
         'delimiter': ',',
         'nrows': 1
     }
-    
+
     cfg_out_orig = {
         'cols': 'Y M D h m s ms Dist_m Bot_m N z1_m dz_m'.split(),
         'text_path':         path_cruise / device,
@@ -245,7 +245,7 @@ if __name__ == '__main__':
         'text_float_format': "%.4f",
         'sep':               '\t'
     }
-    
+
     cfg_out = {
         'cols': 'Y M D h m s ms Dist_m Bot_m N z1_m dz_m '.split(),
         'text_path':         path_cruise / device,

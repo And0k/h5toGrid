@@ -8,7 +8,7 @@ drive_d = 'D:' if sys.platform == 'win32' else '/mnt/D'  # to run on my Linux/Wi
 scripts_path = Path(drive_d + '/Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))
 # my funcs
-from to_vaex_hdf5.h5tocsv import main_call as h5tocsv
+from hdf5_alt.h5tocsv import main_call as h5tocsv
 
 
 devices = ['i', 'w']

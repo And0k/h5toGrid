@@ -4,7 +4,7 @@
 # @+node:korzh.20180606191204.1: ** <<declarations>>
 import sys
 
-from to_pandas_hdf5.csv_specific_proc import *
+from hdf5_pandas.csv_specific_proc import *
 
 try:
     __file__
@@ -14,7 +14,7 @@ except NameError as e:
 path_h5toGrid = Path(__file__).parent.parent
 sys.path.append(str(path_h5toGrid))
 
-from to_pandas_hdf5.csv2h5 import *  # main as csv2h5, __file__ as file_csv2h5, read_csv
+from hdf5_pandas.csv2h5 import *  # main as csv2h5, __file__ as file_csv2h5, read_csv
 
 
 # @-<<declarations>>

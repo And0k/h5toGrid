@@ -1,0 +1,8 @@
+# NCEP CFSv2 specific configurations
+
+ncep:
+  base_url: "http://apdrc.soest.hawaii.edu:80/dods/public_data/CFSv2/hourly_timeseries_analysis"
+  variables: ["wnd10mu", "wnd10mv"] # Default wind variables
+  default_point: {lat: 54.99, lon: 20.3}
+  default_date_range: ["2023-08-25", "2023-09-10"]
+  output_subdir: "NCEP_CFSv2" # Subdirectory within local_path for NCEP data

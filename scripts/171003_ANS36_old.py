@@ -39,7 +39,7 @@ if False:  # True: #
 # to DB
 if False:  # True: #
 
-    sys.argv[0] = os_path.join(path0, 'to_pandas_hdf5', 'script')  # to find ini
+    sys.argv[0] = os_path.join(path0, 'hdf5_pandas', 'script')  # to find ini
     os_chdir(os_path.dirname(sys.argv[0]))  # to can write log
 
     # CTD_Idronaut#493 (sinked)
@@ -84,7 +84,7 @@ if False:  # True: #
     # Meteo
     if False:  # True: #
         csv2h5([
-            'csv_meteo.ini', '--path',  # to_pandas_hdf5/
+            'csv_meteo.ini', '--path',  # hdf5_pandas/
             os_path.join(path_cruise, r"meteo\ship's_meteo_st_source\*.mxt"), '--header',
             'date(text),Time(text),t_air,Vabs_m__s,Vdir,dew_point,Patm,humidity,t_w,precipitation',
             '--coldate_integer', '0', '--coltime_integer', '1',
@@ -107,19 +107,19 @@ if False:  # True: #
     os_chdir(path0)
 
 # extract CTD runs (if files not splitted on runs):
-# to_pandas_hdf5/ctd_calc.py
+# hdf5_pandas/ctd_calc.py
 
 # extract navigation data at time station starts to GPX waypoints
 if False:  # True: #
     # sys.argv[0]= argv0
-    h5toGpx([os_path.join(os_path.dirname(file_h5toGpx), 'h5toGpx_CTDs.ini'),
+    h5_to_gpx([os_path.join(os_path.dirname(file_h5_to_gpx), 'h5_to_gpx_CTDs.ini'),
              '--select_from_tablelog_ranges_index', '0'
              ])
 
 # extract all navigation tracks
 if False:  # True: #
     # sys.argv[0]= argv0
-    h5toGpx([os_path.join(os_path.dirname(file_h5toGpx), 'h5toGpx_nav_all.ini'),
+    h5_to_gpx([os_path.join(os_path.dirname(file_h5_to_gpx), 'h5_to_gpx_nav_all.ini'),
              '--path_cruise', path_cruise,
              '--tables_list', 'navigation',
              '--simplify_tracks_error_m_float', '10',
@@ -131,8 +131,8 @@ if False:  # True: #
 
 # Load waypoints/routes to hdf5
 if False:  # True: #
-    # sys.argv[0]= argv0 to_pandas_hdf5 /
-    gpx2h5(['',  # os_path.join(os_path.dirname(file_h5toGpx), 'Gpx2h5.ini')#'--path_cruise', path_cruise,
+    # sys.argv[0]= argv0 hdf5_pandas /
+    gpx2h5(['',  # os_path.join(os_path.dirname(file_h5_to_gpx), 'Gpx2h5.ini')#'--path_cruise', path_cruise,
             '--path', os_path.join(path_cruise, r'navigation\CTD-sections=routes.gpx'),
             '--table_prefix', r'navigation/CTDsections'])
 

@@ -1,7 +1,7 @@
 from os import path as os_path
 
 # my funcs
-from grid2d_vsz import main as grid2d_vsz
+from utils.grid2d_vsz import main as grid2d_vsz
 
 path_cruise = r'd:\WorkData\BalticSea\171003_ANS36'
 path_in_OS320 = os_path.join(path_cruise, r'CTD_Idronaut_OS320\txt\17????_*.txt')
@@ -39,7 +39,7 @@ if False:  # True: #
 # to DB
 if True:  # False: #
 
-    # sys.argv[0] = os_path.join(path0, 'to_pandas_hdf5', 'script')   # to find ini
+    # sys.argv[0] = os_path.join(path0, 'hdf5_pandas', 'script')   # to find ini
     # os_chdir(os_path.dirname(sys.argv[0]))                          # to can write log
 
     # CTD_Idronaut#493 (sinked)
@@ -84,7 +84,7 @@ if True:  # False: #
     # Meteo
     if False:  # True: #
         csv2h5([
-            'cfg/csv_meteo.ini', '--path',  # to_pandas_hdf5/
+            'cfg/csv_meteo.ini', '--path',  # hdf5_pandas/
             os_path.join(path_cruise, r"meteo\ship's_meteo_st_source\*.mxt"), '--header',
             'date(text),Time(text),t_air,Vabs_m__s,Vdir,dew_point,Patm,humidity,t_w,precipitation',
             '--coldate_integer', '0', '--coltime_integer', '1',
@@ -102,7 +102,7 @@ if True:  # False: #
             '--delimiter_chars', '\\t',
             '--table', 'Baklan_d100'])
     if False:  # True: #
-        h5toGpx(['cfg/h5toGpx_Baklan.ini', '--db_path', path_db,
+        h5_to_gpx(['cfg/h5_to_gpx_Baklan.ini', '--db_path', path_db,
                  '--select_from_tablelog_ranges_index', '0'])
     # also to get gpx is possible to execute ../scripts/filetime_to_gpx.py without csv2h5
 
@@ -115,19 +115,19 @@ if True:  # False: #
             '--table_prefix', r'navigation/sectionsBaklan_d100'])
 
 # extract CTD runs (if files not splitted on runs):
-# to_pandas_hdf5/ctd_calc.py
+# hdf5_pandas/ctd_calc.py
 
 # extract navigation data at time station starts to GPX waypoints
 if False:  # True: #
     # sys.argv[0]= argv0
-    h5toGpx(['cfg/h5toGpx_CTDs.ini',
+    h5_to_gpx(['cfg/h5_to_gpx_CTDs.ini',
              '--select_from_tablelog_ranges_index', '0'
              ])
 
 # extract all navigation tracks
 if False:  # True: #
-    # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5toGpx)
-    h5toGpx(['cfg/h5toGpx_nav_all.ini',
+    # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5_to_gpx)
+    h5_to_gpx(['cfg/h5_to_gpx_nav_all.ini',
              '--path_cruise', path_cruise,
              '--tables_list', 'navigation',
              '--simplify_tracks_error_m_float', '10',
@@ -140,7 +140,7 @@ if False:  # True: #
     # using MapSource or other GPX waypoints/routes editor                      #
     # and save result as a new GPX-sections file                                #
 
-    gpx2h5(['',  # os_path.join(os_path.dirname(file_h5toGpx), 'Gpx2h5.ini')#'--path_cruise', path_cruise,
+    gpx2h5(['',  # os_path.join(os_path.dirname(file_h5_to_gpx), 'Gpx2h5.ini')#'--path_cruise', path_cruise,
             '--path', os_path.join(path_cruise, r'navigation\CTD-sections=routes.gpx'),
             '--table_prefix', r'navigation/sectionsCTD'])
 

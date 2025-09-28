@@ -1,0 +1,28 @@
+[project]
+description = "Download and process data from GPS trackers"
+name = "absioras-gps_tracker"
+requires-python = ">= 3.11"
+version = "0.1.0"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gps_tracker"]
+
+[tool.pixi.pypi-dependencies]
+# Подмодули автоматически доступны через workspace
+
+[tool.hatch.envs.test]
+dependencies = ["pytest"]
+
+[tool.hatch.envs.test.scripts]
+test = "pytest tests/"
+
+[tool.ruff]
+line-length = 110

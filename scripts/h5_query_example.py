@@ -1,8 +1,8 @@
 import pandas as pd
 
-from utils2init import ini2dict
+from utils.init import ini2dict
 
-cfg = ini2dict(r'D:\Work\_Python3\_projects\PyCharm\h5toGrid\CTD_calc.ini')
+cfg = ini2dict(r'D:\Work\_Python3\_projects\PyCharm\h5toGrid\ctd_calc.ini')
 tblD = cfg['out']['table'][0]
 tblL = tblD + '/logFiles'
 store = pd.HDFStore(r'd:\WorkData\_source\AtlanticOcean\161113_Strahov\161113_Strahov.h5')

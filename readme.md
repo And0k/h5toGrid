@@ -10,7 +10,7 @@ conda env create --file py3.11h5togrid.yml
 *Examples of workflow can be found in ``scripts`` directory*. They usually includs steps:
 
  - ``csv2h5``: convert all tabular data to PyTables HDF5 Store which is used by [pandas](https://pandas.pydata.org) library and can be loaded in [Veusz](https://github.com/veusz/veusz).
- - ``h5toGpx``: extract navigation data at time station starts to GPX waypoints
+ - ``h5_to_gpx``: extract navigation data at time station starts to GPX waypoints
  - create new GPX-sections file (using Garmin MapSource or other GPX waypoints editor) that contains or:
     - routes over stations waypoints (method allows adjust direction of each section) or
     - same waypoints but breaks (i.e. starts) of sections and excluded stations marked by special symbols

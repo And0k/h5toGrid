@@ -1,0 +1,10 @@
+"""
+Executes vsz_loader which path must be in current dir or PYTHONPATH
+Note: Saving this file in the Veusz GUI replaces it with Veusz commands executed by vsz_loader"""
+import os
+import sys
+from pathlib import Path
+from runpy import run_module
+parent, basename = (lambda p: (p.parent, p.name))(Path(sys.argv[1]))
+sys.path[:0] = [str(parent)] + os.environ.get('PYTHONPATH', '').split(os.pathsep)
+run_module("vsz_loader", locals(), run_name=__name__)

@@ -26,8 +26,8 @@ import pandas as pd
 drive_d = Path('D:/' if sys.platform == 'win32' else '/mnt/D')  # allows to run on both my Linux and Windows systems:
 scripts_path = drive_d.joinpath('Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))  # os.getcwd()
-import veuszPropagate
-from utils_time import intervals_from_period
+from utils import veuszPropagate
+from utils.time import intervals_from_period
 
 path_cruise = drive_d.joinpath(
     'workData/BalticSea/190210/')

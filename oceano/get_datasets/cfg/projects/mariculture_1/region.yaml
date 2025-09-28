@@ -1,0 +1,10 @@
+# @package projects.mariculture_1
+
+# Configuration for CMEMS Region Mariculture 1 project
+dir_suffix: "150101_Mariculture_1"
+date_range: ["2015-01-01", "2025-03-23"]
+bbox: {lon_min: 19.611389, lon_max: 19.846389, lat_min: 55.133889, lat_max: 55.300833}
+depth_min: 0.5
+depth_max: 125
+dataset_vars:
+  cmems_mod_bal_phy_anfc_P1D-m: ["bottomT", "thetao", "so", "sob", "uo", "vo", "wo"]

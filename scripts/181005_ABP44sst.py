@@ -6,11 +6,11 @@ from pathlib import Path
 drive_d = 'D:' if sys.platform == 'win32' else '/mnt/D'  # allows to run on both my Linux and Windows systems:
 scripts_path = Path(drive_d + '/Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))
-import veuszPropagate
-from to_pandas_hdf5.csv2h5 import main as csv2h5
-from to_pandas_hdf5.gpx2h5 import main as gpx2h5
-from h5toGpx import main as h5toGpx
-from grid2d_vsz import main as grid2d_vsz
+from utils import veuszPropagate
+from hdf5_pandas.csv2h5 import main as csv2h5
+from hdf5_pandas.gpx2h5 import main as gpx2h5
+from utils.h5_to_gpx import main as h5_to_gpx
+from utils.grid2d_vsz import main as grid2d_vsz
 
 path_cruise = r'd:\workData\BalticSea\181005_ABP44'  # d:\WorkData\181005_ABP44
 path_in_SST_48Mc = os_path.join(path_cruise, 'CTD_SST_48Mc#1253/Time_in_TOB=UTC+2h/ABP44*[0-9].TOB')
@@ -72,7 +72,7 @@ if st(5):  # False: #
 # go = False
 if st(6):  # False: #
     # Extract navigation data at time station starts to GPX waypoints
-    h5toGpx(['cfg/h5toGpx_CTDs.ini',
+    h5_to_gpx(['cfg/h5_to_gpx_CTDs.ini',
              '--db_path', path_db,
              '--tables_list', 'CTD_SST_48Mc',
              '--gpx_names_fun_format', 's{:02d}',
@@ -107,7 +107,7 @@ if st(10):  # False: #
 # go = True
 if st(11):  # False: #
     # Export trackers tracks to GPX tracks
-    h5toGpx(['cfg/h5toGpx_nav_all.ini',
+    h5_to_gpx(['cfg/h5_to_gpx_nav_all.ini',
              '--db_path', path_db,
              '--tables_list', 'tracker{}',
              '--select_from_tablelog_ranges_index', None,  # Export tracks
@@ -118,7 +118,7 @@ if st(11):  # False: #
 
 if st(20):  # False: #
     # extract all navigation tracks
-    h5toGpx(['cfg/h5toGpx_nav_all.ini',
+    h5_to_gpx(['cfg/h5_to_gpx_nav_all.ini',
              '--db_path', path_db,
              '--tables_list', 'navigation',
              # '--period_segments', 'D',

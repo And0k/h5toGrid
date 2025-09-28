@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import netCDF4
 # My functions:
-from gs_surfer import save_2d_to_grd
+from utils.gs_surfer import save_2d_to_grd
 
 
 def save2d2netcdf(path, xyz, table=None, format='NETCDF4'):

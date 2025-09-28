@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1" creator="MapSource 6.16.3" version="1.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+
+  <metadata>
+    <link href="http://www.garmin.com">
+      <text>Garmin International</text>
+    </link>
+    <time>2025-09-05T10:28:06Z</time>
+    <bounds maxlat="55.519145568832755" maxlon="19.809180507436395" minlat="54.954374693334103" minlon="19.564738981425762"/>
+  </metadata>
+
+  <wpt lat="55.519145568832755" lon="19.809180507436395">
+    <time>2025-09-05T10:24:08Z</time>
+    <name>Marine Chart</name>
+    <cmt>Marine Chart</cmt>
+    <desc>Marine Chart</desc>
+    <sym>Flag, Blue</sym>
+    <extensions>
+      <gpxx:WaypointExtension xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3">
+        <gpxx:DisplayMode>SymbolAndName</gpxx:DisplayMode>
+      </gpxx:WaypointExtension>
+    </extensions>
+  </wpt>
+
+  <wpt lat="54.954374693334103" lon="19.564738981425762">
+    <time>2025-09-05T10:23:09Z</time>
+    <name>Military Practice Area</name>
+    <cmt>Military Practice Area</cmt>
+    <desc>Military Practice Area</desc>
+    <sym>Flag, Blue</sym>
+    <extensions>
+      <gpxx:WaypointExtension xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3">
+        <gpxx:DisplayMode>SymbolAndName</gpxx:DisplayMode>
+      </gpxx:WaypointExtension>
+    </extensions>
+  </wpt>
+
+</gpx>

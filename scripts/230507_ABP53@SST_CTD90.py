@@ -11,15 +11,15 @@ import pandas as pd
 import gsw
 from itertools import takewhile
 # my funcs
-from utils2init import st
-import veuszPropagate
-from to_pandas_hdf5.csv2h5 import main as csv2h5
-from to_pandas_hdf5.gpx2h5 import main as gpx2h5
-from to_pandas_hdf5.CTD_calc import main as ctd_calc
-# from to_pandas_hdf5.csv_specific_proc import loaded_corr
-from h5toGpx import main as h5togpx
-from grid2d_vsz import main as grid2d_vsz
-from to_pandas_hdf5.h5toh5 import h5.log_names_gen
+from utils.init import st
+from utils import veuszPropagate
+from hdf5_pandas.csv2h5 import main as csv2h5
+from hdf5_pandas.gpx2h5 import main as gpx2h5
+from hdf5_pandas.ctd_calc import main as ctd_calc
+# from hdf5_pandas.csv_specific_proc import loaded_corr
+from utils.h5_to_gpx import main as h5_to_gpx
+from utils.grid2d_vsz import main as grid2d_vsz
+from hdf5_pandas import h5
 
 st.go = True   # False #
 st.start = 315   # 1 5 30 70 80 115
@@ -44,21 +44,21 @@ device_params_dict = \
 device = 'CTD_SST_CTD90'
 
 if st(10, f'Save {device} data to DB'):
-    from to_pandas_hdf5.csv_specific_proc import loaded_sst
+    from hdf5_pandas.csv_specific_proc import loaded_sst
     csv2h5([
-               'cfg/csv_CTD_SST.ini',
-               '--path', str(path_cruise / device / '_raw' / '23*.TOB'),
-               '--table', f'{device}',
-               # '--dt_from_utc_hours', '0', #'2'
-               '--header',
-               'Number,Date(text),Time(text),Pres,Temp,Sal,SIGMA,Turb,Trans,Cond,SVel,Vbatt',
-               '--cols_not_save_list', 'Number,SIGMA,Vbatt,SVel',
-               '--delimiter_chars', '\\ \\',  # ''\s+',
-               '--b_interact', '0',
-               # '--cols_not_save_list', 'N',
-               # '--on_bad_lines', 'warn'
-               # '--min_dict', 'O2:0, O2ppm:0',  # replace strange values
-           ] + common_ctd_params_list,
+        'cfg/csv_CTD_SST.ini',
+        '--path', str(path_cruise / device / '_raw' / '23*.TOB'),
+        '--table', f'{device}',
+        # '--dt_from_utc_hours', '0', #'2'
+        '--header',
+        'Number,Date(text),Time(text),Pres,Temp,Sal,SIGMA,Turb,Trans,Cond,SVel,Vbatt',
+        '--cols_not_save_list', 'Number,SIGMA,Vbatt,SVel',
+        '--delimiter_chars', '\\ \\',  # ''\s+',
+        '--b_interact', '0',
+        # '--cols_not_save_list', 'N',
+        # '--on_bad_lines', 'warn'
+        # '--min_dict', 'O2:0, O2ppm:0',  # replace strange values
+        ] + common_ctd_params_list,
         # + ['--min_dict', 'Cond:0.5, Sal:0.2, Trans:40',
         # '--max_dict', 'Turb:10'],
         **{  # **device_params_dict,
@@ -68,7 +68,7 @@ if st(10, f'Save {device} data to DB'):
                     'Temp_fun': lambda x: np.polyval([-1.102460295e-05, 1.00018, 0.037725], x),
                     'Cond_fun': lambda x: np.polyval([-0.000666294, 1.0279, -0.140743], x),
                     'Sal_fun': lambda Cond, Temp, Pres: gsw.SP_from_C(Cond, Temp, Pres),
-                    
+
                 }
             }
         }
@@ -85,7 +85,7 @@ if st(20, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params
         '--dt_between_min_minutes', '5',  # default 1s lead to split when communication with sonde lost
         '--b_keep_minmax_of_bad_files', 'True',  # (True helps get small runs if files was splitted on runs)
         # '--b_incremental_update', 'True', - not works. Delete previous table manually, and from ~not_sorted!
-        
+
         # '--out.tables_list', '',
         '--b_interact', '0'
     ])
@@ -103,7 +103,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
     # It is possible to add exact interval to filename but time after probe is back on surface can be determined only
     # from next row, so we rely on ~pattern_loader.vsz to do it. Even freq=16Hz to determine last time not helps:
     # '_{}s.vsz'.format(round(max(r['rows']/16, (r['DateEnd'] - r['Index'] + pd.Timedelta(300, "s")).total_seconds()))
-    
+
     # Copy files
     pattern_code = cfg_in['pattern_path'].read_bytes()  # encoding='utf-8'
     filename_st = None
@@ -114,7 +114,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
         # Get filename_st (do once)
         if filename_st is None:
             filename_st = filename
-    
+
     # cfg_in['min_time'] not works on filenames, so we convert it to 'start_file_index'
     if 'min_time' in cfg_in:
         del cfg_in['min_time']  # del to count fro 0:
@@ -142,7 +142,7 @@ if st(30, f'Draw {device} data profiles'):  # False: #
 
 file_tracks = 'CTD-sections=routes.gpx'
 gpx_names_funs_list = """
-    i+1 if i < 2 else i+2 if i < 3 else i+3 if i < 5 else i+2 if i < 6 else i+3 if i < 8 else i+2 if i < 13 else 
+    i+1 if i < 2 else i+2 if i < 3 else i+3 if i < 5 else i+2 if i < 6 else i+3 if i < 8 else i+2 if i < 13 else
     i+1 if i <= 15 else
     i+2 if i <= 26 else
     i+5 if i <= 27 else
@@ -153,8 +153,8 @@ gpx_names_funs_list = """
 gpx_names_fun_format = '{:02d}⁹'
 
 if st(50, 'Extract navigation data at time station starts to GPX waypoints'):  # False: #
-    h5togpx([
-        'cfg/h5toGpx_CTDs.ini',
+    h5_to_gpx([
+        'cfg/h5_to_gpx_CTDs.ini',
         '--db_path', str(path_db),
         '--tables_list', device,
         '--gpx_symbols_list', "'Triangle, Blue',",
@@ -164,7 +164,7 @@ if st(50, 'Extract navigation data at time station starts to GPX waypoints'):  #
         '--select_from_tablelog_ranges_index', '0',
         '--dt_search_nav_tolerance_minutes', '1'  # to trigger interpolate
     ])
-    st.go = (False, f'Hey! Prepare gpx tracks ({file_tracks}) from waypoints _manually_ before continue ' 
+    st.go = (False, f'Hey! Prepare gpx tracks ({file_tracks}) from waypoints _manually_ before continue '
              'and rerun from st.start = 70!')
 
 if st(70, 'Save waypoints/routes from _manually_ prepared gpx to hdf5'):  # False: #
@@ -216,7 +216,7 @@ if st(95, 'Export csv for Obninsk'):
     i_cruise = int(m.group('i_cruise'))
     text_file_name_add = f"E090005O2_{m.group('abbr_cruise')}_{i_cruise}_H10_"
 
-    # eval same as in h5toGpx.py
+    # eval same as in h5_to_gpx.py
     gpx_names_fun_str = "lambda i, row, t=0: {}.format({})".format(
         (f"'{gpx_names_fun_format}'" if not gpx_names_fun_format.startswith("f'") else gpx_names_fun_format),
         gpx_names_funs_list
@@ -229,7 +229,7 @@ if st(95, 'Export csv for Obninsk'):
         # j = i+1 if i < 5 else i+2 if i < 8 else i+3 if i < 25 else f"ctd{i-24:02d}" if i < 41 else i-13
         # return f"{i_cruise:02d}" + (f"{j:s}" if isinstance(j, str) else f"{j:03d}")
 
-    from to_vaex_hdf5.h5tocsv import main_call as h5tocsv
+    from hdf5_alt.h5tocsv import main_call as h5tocsv
     h5tocsv([
         f'input.db_path="{path_db}"',
         f'input.tables=["{device}"]',
@@ -269,7 +269,7 @@ if st(210, f'Save {device} data to DB'):
     # 08:35:25	0	-0.2	9.814	6.578	5.205	1452.98	1003.79	9.447
 
 
-    from to_pandas_hdf5.csv_specific_proc import loaded_sst_mws
+    from hdf5_pandas.csv_specific_proc import loaded_sst_mws
 
     csv2h5([
         #'cfg/csv_CTD_SST.ini',
@@ -321,7 +321,7 @@ if st(220, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav param
 if False:
     # Merge needed runs
     import pandas as pd
-    from to_pandas_hdf5.h5toh5 import h5.move_tables, h5.merge_two_runs  #, h5.index_sort, h5.out_init
+    from hdf5_pandas import h5
 
     tbl = f'/{device}'
     tbl_log = f'{tbl}/logRuns'
@@ -400,19 +400,19 @@ file_tracks = 'CTD-sections=routes.gpx'
 gpx_names_funs_list = """
     i+1 if i <=  3 else
     i+2 if i <=  5 else
-    i+1 if i <=  6 else 
-    i+2 if i <= 12 else 
+    i+1 if i <=  6 else
+    i+2 if i <= 12 else
     i+1 if i <= 16 else
     i+1 if i <= 27 else
     i+4 if i <= 28 else
     i+7 if i <= 31 else
-    i+15 
+    i+15
     """  # variable  # if i <= 29 else i+17
 gpx_names_fun_format = '{:02d}¹'
 
 if st(250, 'Extract navigation data at time station starts to GPX waypoints'):  # False: #
-    h5togpx([
-    'cfg/h5toGpx_CTDs.ini',
+    h5_to_gpx([
+    'cfg/h5_to_gpx_CTDs.ini',
     '--db_path', str(path_db),
     '--tables_list', device,
     '--gpx_symbols_list', "'Triangle, Blue',",
@@ -475,7 +475,7 @@ if st(315, 'Export csv for Obninsk'):
     i_cruise = int(m.group('i_cruise'))
     text_file_name_add = f"E090005O2_{m.group('abbr_cruise')}_{i_cruise}_H10_"
 
-    # eval same as in h5toGpx.py
+    # eval same as in h5_to_gpx.py
     gpx_names_fun_str = "lambda i, row, t=0: {}.format({})".format(
         (f"'{gpx_names_fun_format}'" if not gpx_names_fun_format.startswith("f'") else gpx_names_fun_format),
         gpx_names_funs_list
@@ -489,7 +489,7 @@ if st(315, 'Export csv for Obninsk'):
         # return f"{i_cruise:02d}" + (f"{j:s}" if isinstance(j, str) else f"{j:03d}")
 
 
-    from to_vaex_hdf5.h5tocsv import main_call as h5tocsv
+    from hdf5_alt.h5tocsv import main_call as h5tocsv
     h5tocsv([
         f'input.db_path="{path_db}"',
         f'input.tables=["{device}"]',

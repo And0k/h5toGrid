@@ -8,11 +8,11 @@ from os import path as os_path
 import numpy as np
 from messytables import CSVTableSet, any_tableset, type_guess, headers_guess, headers_processor, offset_processor, types
 
-from to_pandas_hdf5.csv2h5 import init_input_cols
+from hdf5_pandas.csv2h5 import init_input_cols
 # DateSense.detect_format(["15 Dec 2014", "9 Jan 2015"])
 # rule_pattern_hms = DateSense.DSPatternRule( (('%H','%I'),':','%M',':','%S'), posscore = 3 )
 # DateSense.detect_format( dates, rules )
-from utils2init import ini2dict, init_file_names, Ex_nothing_done, set_field_if_no, standard_error_info
+from utils.init import ini2dict, init_file_names, Ex_nothing_done, set_field_if_no, standard_error_info
 
 time_regex = re.compile(r'''^(?P<H>\d{1,2}):(?P<M>\d{2}):(?P<S>\d{2})\S*''')
 
@@ -56,7 +56,7 @@ def parse_csv(filename, cfg_in):
     :param cfg_in:
     :param known_structure: list of strings formats in order of columns, from start
     but may be not all (next is auto treeted)
-    :return: lst_types, offset, headers 
+    :return: lst_types, offset, headers
 
 
     * quotechar - specifies a one-character string to use as the

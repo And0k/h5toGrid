@@ -5,10 +5,10 @@ drive_d = 'D:' if sys.platform == 'win32' else '/mnt/D'  # to run on my Linux/Wi
 scripts_path = Path(drive_d + '/Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))
 # my funcs
-from to_pandas_hdf5.csv2h5 import main as csv2h5
-from to_pandas_hdf5.gpx2h5 import main as gpx2h5
-from to_pandas_hdf5.CTD_calc import main as CTD_calc
-from h5toGpx import main as h5toGpx
+from hdf5_pandas.csv2h5 import main as csv2h5
+from hdf5_pandas.gpx2h5 import main as gpx2h5
+from hdf5_pandas.ctd_calc import main as ctd_calc
+from utils.h5_to_gpx import main as h5_to_gpx
 
 device = 'CTD_Idronaut#387'
 path_cruise = Path(r'd:\workData\BalticSea\160802_ANS32')
@@ -19,7 +19,7 @@ start = 6
 
 if st(5):  # False: #
     # Extract CTD runs (if files are not splitted on runs):
-    CTD_calc([  # 'ctd_calc-find_runs.ini',
+    ctd_calc([  # 'ctd_calc-find_runs.ini',
         '--db_path', str(path_db),
         '--tables_list', f'{device}',
         # '--min_samples', '99',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
@@ -43,7 +43,7 @@ if go:  # True: #
         '--delimiter_chars', '\\t',
         '--table', device_tbl])
 if go:  # True: #
-    h5toGpx([f'cfg/h5toGpx_{device}.ini', '--db_path', str(path_db),
+    h5_to_gpx([f'cfg/h5_to_gpx_{device}.ini', '--db_path', str(path_db),
              '--select_from_tablelog_ranges_index', '0'])
 # also to get gpx is possible to execute ../scripts/filetime_to_gpx.py without csv2h5
 
@@ -60,8 +60,8 @@ go = False
 
 # extract all navigation tracks
 if False:  # True: #
-    # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5toGpx)
-    h5toGpx(['cfg/h5toGpx_nav_all.ini',
+    # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5_to_gpx)
+    h5_to_gpx(['cfg/h5_to_gpx_nav_all.ini',
              '--path_cruise', str(path_cruise),
              '--tables_list', 'navigation',
              '--simplify_tracks_error_m_float', '10',

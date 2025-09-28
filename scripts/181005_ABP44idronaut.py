@@ -7,11 +7,11 @@ scripts_path = Path(drive_d + '/Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))
 from os import path as os_path
 # my funcs
-import veuszPropagate
-from to_pandas_hdf5.csv2h5 import main as csv2h5
-from to_pandas_hdf5.gpx2h5 import main as gpx2h5
-from h5toGpx import main as h5toGpx
-from grid2d_vsz import main as grid2d_vsz
+from utils import veuszPropagate
+from hdf5_pandas.csv2h5 import main as csv2h5
+from hdf5_pandas.gpx2h5 import main as gpx2h5
+from utils.h5_to_gpx import main as h5_to_gpx
+from utils.grid2d_vsz import main as grid2d_vsz
 
 path_cruise = r'd:\workData\BalticSea\181005_ABP44'  # d:\WorkData\181005_ABP44
 path_in_Idronaut = os_path.join(path_cruise, r'CTD_Idronaut#493\18*[0-9].txt')
@@ -60,7 +60,7 @@ if st(3):  # False: #
 
 if st(4):  # False: #
     # Extract navigation data at time station starts to GPX waypoints
-    h5toGpx(['cfg/h5toGpx_CTDs.ini',
+    h5_to_gpx(['cfg/h5_to_gpx_CTDs.ini',
              '--db_path', path_db,
              '--tables_list', 'CTD_Idronaut#493',
              '--select_from_tablelog_ranges_index', '0'
@@ -93,7 +93,7 @@ if st(10):  # False: #
 # go = True
 if st(11):  # False: #
     # Export trackers tracks to GPX tracks
-    h5toGpx(['cfg/h5toGpx_nav_all.ini',
+    h5_to_gpx(['cfg/h5_to_gpx_nav_all.ini',
              '--db_path', path_db,
              '--tables_list', 'tracker{}',
              '--select_from_tablelog_ranges_index', None,  # Export tracks
@@ -103,8 +103,8 @@ if st(11):  # False: #
              ])
 # extract all navigation tracks
 if False:  # True: #
-    # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5toGpx)
-    h5toGpx(['cfg/h5toGpx_nav_all.ini',
+    # sys.argv[0]= argv0   os_path.join(os_path.dirname(file_h5_to_gpx)
+    h5_to_gpx(['cfg/h5_to_gpx_nav_all.ini',
              '--path_cruise', path_cruise,
              '--tables_list', 'navigation',
              '--simplify_tracks_error_m_float', '10',
