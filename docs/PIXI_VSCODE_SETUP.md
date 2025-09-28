@@ -1,10 +1,11 @@
-# Setting up VSCode with Pixi Environment for Python Development
+# Setting up VSCode with Pixi Environment for Python Development'
+if VSCode's testing extension cannot find pytest even though it's installed in your pixi environment.
 
 This guide explains how to properly configure VSCode to work with your pixi environment, particularly for pytest testing.
 
 ## Issue Analysis
 
-The problem you're experiencing is that VSCode's testing extension cannot find pytest even though it's installed in your pixi environment. This happens because:
+The problem you're experiencing  This happens because:
 
 1. Your user-level VSCode settings contain global Python configurations that override workspace settings
 2. The Python interpreter path is not correctly set to use the pixi environment

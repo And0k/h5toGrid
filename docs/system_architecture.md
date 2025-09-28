@@ -113,7 +113,7 @@ cruise_data.h5
 ### CTD Sensors
 - **SST (Sea & Sun Technology)**: Specialized processing for their CTD instruments
 - **Idronaut**: Processing for Idronaut CTD data
-- **Schuka**: Format-specific handling
+- **Schuka**: User format-specific handling of SST CTD
 - **Rock**: Processing for ROCK CTD data
 
 ### Navigation Data
