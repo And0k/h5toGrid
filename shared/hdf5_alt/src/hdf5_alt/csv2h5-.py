@@ -175,7 +175,7 @@ def config_program(
     to Pandas HDF5 store*.h5
     ----------------------------
 
-    "program": program behaviour:
+    "program": program behavior:
 
     :param return_: choices=[],
         <cfg_from_args>: returns cfg based on input args only and exit,
@@ -288,7 +288,7 @@ def do(cfg):
     :return:
     """
     ## Main circle ############################################################
-    for i1_file, file in h5.dispenser_and_names_gen(cfg['in'], cfg['out']):
+    for i1_file, file in h5.dispenser_and_names_gen(cfg_out=cfg["out"], **cfg["in"]):
         lf.info('{}. {}: '.format(i1_file, file.name))
         # Loading data
 

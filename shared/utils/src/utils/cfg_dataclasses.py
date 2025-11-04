@@ -239,7 +239,7 @@ class ConfigFilterNav:
 class ConfigProgram:
     """
 
-    "program": program behaviour:
+    "program": program behavior:
 
     :param return_: one_of('<cfg_from_args>', '<gen_names_and_log>', '<end>')
         <cfg_from_args>: returns cfg based on input args only and exit,

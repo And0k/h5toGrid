@@ -122,7 +122,7 @@ file based on vsz pattern
     s.add('--exclude_files_endswith_list', default='coef.txt, -.txt, test.txt',
         help='exclude files which ends with this srings')
 
-    s = p.add_argument_group("program", "program behaviour")
+    s = p.add_argument_group("program", "program behavior")
     s.add('--export_timeout_s_float', default='0',
         help='export asyncroniously with this timeout, s (tried 600s?)')
     s.add('--load_timeout_s_float', default='180',

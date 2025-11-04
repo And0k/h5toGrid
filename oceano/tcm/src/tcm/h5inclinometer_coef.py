@@ -420,7 +420,7 @@ def dict_matrices_for_h5(coefs=None, tbl=None, channels=None, msg='Saving coeffi
     dict_matrices = {}
     if tbl:
         # Coping probe number to coefficient to can manually check when copy manually
-        i_search = re.search('\d*$', tbl)
+        i_search = re.search(r'\d*$', tbl)
         if i_search:
             try:
                 dict_matrices['//coef//i'] = int(i_search.group(0))
@@ -431,10 +431,10 @@ def dict_matrices_for_h5(coefs=None, tbl=None, channels=None, msg='Saving coeffi
 
     for channel in channels:
         (col_str, coef_str) = channel_cols(channel)
-        dict_matrices.update(
-            {f'//coef//{coef_str}//A': coefs[channel]['A'],
-             f'//coef//{coef_str}//C': coefs[channel]['b'],
-             })
+        dict_matrices.update({
+            f"//coef//{coef_str}//A": coefs[channel]["A"],
+            f"//coef//{coef_str}//C": coefs[channel]["b"],
+        })
         if channel == 'M':
             dict_matrices[f'//coef//{coef_str}//azimuth_shift_deg'] = coefs['M']['azimuth_shift_deg']
 

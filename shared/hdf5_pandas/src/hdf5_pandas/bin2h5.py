@@ -77,7 +77,7 @@ to Pandas HDF5 store*.h5
     s.add('--max_dict',
               help='List with items in  "key:value" format. Filter out data of ``key`` columns if it is above ``value``')
 
-    s = p.add_argument_group('program', 'program behaviour')
+    s = p.add_argument_group('program', 'program behavior')
     s.add('--return', default='<end>',  # nargs=1,
                choices=['<cfg_from_args>', '<gen_names_and_log>', '<end>'],
                help='<cfg_from_args>: returns cfg based on input args only and exit, <gen_names_and_log>: execute init_input_cols() and also returns fun_proc_loaded function... - see main()')
@@ -319,7 +319,7 @@ def main(new_arg=None, **kwargs):
     cfg['out']['dtype'] = np.dtype({
         'formats': cfg['out']['formats'],
         'names': cfg['out']['names']})
-    h5.out_init(cfg['in'], cfg['out'])
+    h5.out_init(cfg['out'], **cfg['in'])
 
     # cfg['Period'] = 1.0 / cfg['in']['fs']  # instead Second can use Milli / Micro / Nano:
     # cfg['pdPeriod'] = pd.to_timedelta(cfg['Period'], 's')
@@ -349,7 +349,7 @@ def main(new_arg=None, **kwargs):
     cfg['out']['fs'] = cfg['in']['fs']
     if True:
         ## Main circle ############################################################
-        for i1_file, path_in in h5.dispenser_and_names_gen(cfg['in'], cfg['out']):
+        for i1_file, path_in in h5.dispenser_and_names_gen(cfg_out=cfg["out"], **cfg["in"]):
             l.info('{}. {}: '.format(i1_file, path_in.name))
 
             # Loading data

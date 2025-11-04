@@ -47,7 +47,7 @@ def h5cor(
     def yield_intervals(*args) -> Iterator:
         """
         :param args: for compatibility with intended usage as fun_gen argument of h5.dispenser_and_names_gen()
-        globals: time_ranges
+        globals: time_ranges, edges_sources
         yields: (edges_source, pattern)
         """
         for t_range, edges_source in zip(time_ranges, edges_sources):
@@ -64,15 +64,14 @@ def h5cor(
         'b_insert_separator': False,  # should be already inserted
         'dropna': False  # Not change previously inserted separators
         }
-    h5.out_init({}, cfg_out)
+    h5.out_init(cfg_out)
     # cfg_out['tables_written'] = set()
     with pd.HDFStore(cfg_out['db_path'], 'r') as store:
         if __debug__:
             out_len = out_len_tmp = check_len(store)
         for i, (edges_source, query) in h5.dispenser_and_names_gen(
-                cfg_in={'db': store}, cfg_out=cfg_out,
-                fun_gen=yield_intervals,
-                ):
+                yield_intervals, cfg_out=cfg_out, db=store
+            ):
             if __debug__:
                 out_len_tmp = check_len(cfg_out['db'], out_len_tmp)
 

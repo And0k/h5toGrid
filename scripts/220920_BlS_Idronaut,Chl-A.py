@@ -9,7 +9,7 @@ sys.path.append(str(Path(scripts_path).parent.resolve()))
 # my funcs
 from utils.init import st
 from utils import veuszPropagate
-import cfg_dataclasses as cfg_d
+from utils import cfg_dataclasses as cfg_d
 from hdf5_alt.nmea2h5 import main as nmea2h5
 from hdf5_pandas.csv2h5 import main as csv2h5
 from hdf5_pandas.gpx2h5 import main as gpx2h5

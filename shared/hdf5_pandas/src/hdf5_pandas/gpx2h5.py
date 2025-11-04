@@ -103,7 +103,7 @@ def my_argparser():
     s.add('--min_dict', help='List with items in "key:value" format. Global filtering as for min_{param}. Todo: set to NaN data of ``key`` columns if it is below ``value``')
     s.add('--max_dict', help='List with items in "key:value" format. Global filtering as for min_{param}. Todo: set  to NaN data of ``key`` columns if it is above ``value``')
     s.add('--fun_dict', help='List with items in "key:fun" format. Global filtering as for min_{param}. Todo: set  to NaN data of ``key`` columns where numpy.fun(data) is False')
-    s = p.add_argument_group('program', 'program behaviour')
+    s = p.add_argument_group('program', 'program behavior')
     s.add('--return', default='<end>',  # nargs=1,
                choices=['<cfg_from_args>', '<gen_names_and_log>', '<end>'],
                help='<cfg_from_args>: returns cfg based on input args only and exit, <gen_names_and_log>: execute init_input_cols() and also returns fun_proc_loaded function... - see main()')
@@ -308,7 +308,7 @@ def main(new_arg=None):
     try:
         cfg['in']['paths'], cfg['in']['nfiles'], cfg['in']['path'] = init_file_names(
             **cfg['in'], b_interact=cfg['program']['b_interact'], cfg_search_parent=cfg['out'])
-        h5.out_init(cfg['in'], cfg['out'])
+        h5.out_init(cfg['out'], **cfg['in'])
     except Ex_nothing_done as e:
         print(e.message)
         exit()
@@ -338,7 +338,7 @@ def main(new_arg=None):
         # ###############################################################
         # ## Cumulate all data in cfg['out']['path_temp'] ##################
         ## Main circle ############################################################
-        for i1_file, path_gpx in h5.dispenser_and_names_gen(cfg['in'], cfg['out']):
+        for i1_file, path_gpx in h5.dispenser_and_names_gen(cfg_out=cfg["out"], **cfg["in"]):
             l.info('{}. {}: '.format(i1_file, path_gpx.name))
             # Loading data
             dfs = gpxConvert(cfg, path_gpx)

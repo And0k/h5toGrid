@@ -20,7 +20,7 @@ from hdf5_pandas.ctd_calc import main as ctd_calc
 from utils.h5_to_gpx import main as h5_to_gpx
 from utils.grid2d_vsz import main as grid2d_vsz
 from hdf5_pandas import h5
-import cfg_dataclasses as cfg_d
+from utils import cfg_dataclasses as cfg_d
 from hdf5_alt.nmea2h5 import main as nmea2h5
 
 st.go = True   # False #

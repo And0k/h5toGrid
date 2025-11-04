@@ -829,7 +829,7 @@ def cfg_from_args(p, arg_add, **kwargs):
                 p_sec._group_actions[p_sec_hardcoded_list.index(option_name)].default = section[option_name]
 
     # Append arguments with my common options:
-    p_sec = get_or_add_sec('program', p_groups, 'Program behaviour')
+    p_sec = get_or_add_sec('program', p_groups, 'Program behavior')
     try:
         p_sec.add_argument(
             '--b_interact', default='True',
@@ -966,7 +966,8 @@ def cfg_from_args(p, arg_add, **kwargs):
     finally:
         if arg_add:  # recover argv for possible outer next use
             sys.argv = argv_save
-
+    if "log" not in cfg["program"] and not arg_source.is_file():  # todo: initialize in any way
+        print(f"Currently program is not initializes some fields if ini file not found as {arg_source}!")
     return cfg
 
 
@@ -992,7 +993,7 @@ def cfg_from_args(p, arg_add, **kwargs):
 #         will be sabstituted with correspondng input file names.
 #         '''
 #
-#         # p_program = p.add_argument_group('program', 'Program behaviour')
+#         # p_program = p.add_argument_group('program', 'Program behavior')
 #         # p_program.add_argument(
 #         #     '--verbose', '-V', type=str, default='INFO', #nargs=1,
 #         #     choices=['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET'],
@@ -1058,7 +1059,7 @@ def my_argparser_common_part(varargs, version='?'):  # description, version='?',
     will be substituted with corresponding input file names.
     '''
 
-    # p_program = p.add_argument_group('program', 'Program behaviour')
+    # p_program = p.add_argument_group('program', 'Program behavior')
     # p_program.add_argument(
     #     '--verbose', '-V', type=str, default='INFO', #nargs=1,
     #     choices=['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG', 'NOTSET'],
@@ -1160,11 +1161,11 @@ def init_file_names(
         msg_action='search for',
         **kwargs):
     """
-      Fill cfg_files fields of file names: {'path', 'filemask', 'ext'}
-    which are not specified.
-      Searches for files with this mask. Prints number of files found.
-      If any - asks user to proceed and if yes returns its names list.
-      Else raises Ex_nothing_done exception.
+    Fill cfg_files fields of file names: {'path', 'filemask', 'ext'} which are not specified.
+
+    Searches for files with this mask. Prints number of files found.
+    If any - asks user to proceed and if yes returns its names list.
+    Else raises Ex_nothing_done exception.
 
     :param path: name of file
     :param filemask, ext: optional - path mask or its part
@@ -1245,8 +1246,7 @@ def init_file_names(
             bGoodFile=filt_file_cur, bGoodDir=filt_dirCur)]
     else:
         print(':', end=' ')
-        paths = [path.with_name(f) for f in sorted(os_listdir(path.parent))
-                 if filt_file_cur(f, path.name)]
+        paths = [path.with_name(f) for f in sorted(os_listdir(path.parent)) if filt_file_cur(f, path.name)]
     nfiles = len(paths)
     nl1, nl0 = ('\n', '') if nfiles == 1 else ('', '\n')
     print(end=f"{nl0}- {nfiles} found")

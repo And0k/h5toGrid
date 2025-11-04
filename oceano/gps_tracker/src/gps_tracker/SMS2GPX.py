@@ -63,7 +63,7 @@ Convert SMS *.xml to *.gpx
     s.add_argument('--min_date',
                         help='UTC, not output data with < min_date (if date is smaller then treat it as bad, so tries get from stamp if b_all_time_from_stamp is False. If it smaller too then data discard, format like in 13.05.2017 09:00:00')
 
-    s = p.add_argument_group('program', 'Program behaviour')
+    s = p.add_argument_group('program', 'Program behavior')
     s.add_argument('--log',
                            help='write log if path to existed file is specified')
     return p

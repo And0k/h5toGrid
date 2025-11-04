@@ -16,16 +16,12 @@ thetao  sea water potential temperature, degree Celsius
 uo      eastward sea water velocity, m/s
 vo      northward sea water velocity, m/s
 """
+from collections import defaultdict
+from datetime import datetime
 import re
 import numpy as np
 from pathlib import Path
 import pandas as pd
-from collections import defaultdict
-
-def constant_factory(val):
-    def default_val():
-        return val
-    return default_val
 
 
 def calc_iso_surface(
@@ -38,7 +34,7 @@ def calc_iso_surface(
     dy_ambiguity: int = 1,
 ) -> np.array:
     """
-    weighted average to compute the iso-surface
+    Weighted average to compute the iso-surface
     :param v3d: with zi axes last
     :param v_isosurface: sequence of values of isolines
     :param zi: 1d or 2d array of z values corresponded to v3d data last dimension(s)
@@ -131,6 +127,13 @@ def calc_iso_surface(
     # average
     return np.ma.average(z_nearest, weights=abs(z_weight), axis=-1)
     # np.ma.masked_array(z_nearest, z_weight.mask)
+
+
+def constant_factory(val):
+    def default_val():
+        return val
+
+    return default_val
 
 
 ##############################################################################################################

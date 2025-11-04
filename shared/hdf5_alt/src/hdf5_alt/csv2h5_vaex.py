@@ -106,7 +106,7 @@ def argparser_files(
     :param max_dict: List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is above ``value``'). To filter time use ``date`` key
     :param b_bad_cols_in_file_name: find string "<Separator>no_<col1>[,<col2>]..." in file name. Here <Separator> is one of -_()[, and set all values of col1[, col2] to NaN
 
-    "program": program behaviour:
+    "program": program behavior:
 
     :param return_: choices=[],
         <cfg_from_args>: returns cfg based on input args only and exit,

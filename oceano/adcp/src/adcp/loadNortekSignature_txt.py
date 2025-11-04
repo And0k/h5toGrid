@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Tuple, Optional, Union
+from typing import Optional, Union, Mapping
 from datetime import timedelta
 import numpy as np
 import dask.array as da  # import h5py
@@ -14,15 +14,14 @@ for path in ['/Work/_Python3/And0K/Veusz_plugins', '/Work/_Python3/And0K/tcm']:
     scripts_path = Path(drive_d + path)
     sys.path.append(str(Path(scripts_path).parent.resolve()))
 try:
-    import func_vsz as v
+    import func_vsz as fv
 except ImportError:  # old path:
-    from Veusz_plugins import func_vsz as v
+    from Veusz_plugins import func_vsz as fv
 from tcm.incl_h5clc_hy import polar2dekart
 
 
-def create_dar(data=None, coords=None,
-        interp_dt: Tuple[None, np.timedelta64, timedelta]=None,
-        bin_dt=None, bin_dz=None
+def create_dar(
+    data=None, coords=None, interp_dt: Union[None, np.timedelta64, timedelta] = None, bin_dt=None, bin_dz=None
 ):
     """
     Helper function to create NetCDF dataset
@@ -104,13 +103,13 @@ def load_adp_adcp_nortek_signature(path_base, cfg=None):
 
     # Dict of {hdf5 key: dask data array}
     cols_1d = [
-         'Battery',
-         'Heading',
-         'Pitch',
-         'Roll',
-         'Pressure',
-         'Temperature',
-        ]
+        "Battery",
+        "Heading",
+        "Pitch",
+        "Roll",
+        "Pressure",
+        "Temperature",
+    ]
 
     # Convert Time because can not store datetime64 in hdf5 by h5py
     out = {'Time': df.Time.astype('f8').to_dask_array()}
@@ -145,8 +144,8 @@ def load_adp_adcp_nortek_signature(path_base, cfg=None):
 
     df.p_mean = df.Pressure.mean().item()
     df.z_from_device = df.p_mean + cfg['blank_dist'] + cfg['cell_cize'] * (
-        np.arange(*((-np.shape(out['u'])[0], 0) if b_up else (1, np.shape(out['u'])[0] + 1)))  # reversed as cols if b_up
-        )
+        np.arange(*((-np.shape(out['u'])[0], 0) if b_up else (1, np.shape(out['u'])[0] + 1)))
+        )  # reversed as cols if b_up
 
     save_2d_for_surfer(
         time=df.Time.to_numpy(), z=-df.z_from_device, out=out, path_base=path_base,
@@ -154,14 +153,22 @@ def load_adp_adcp_nortek_signature(path_base, cfg=None):
     )
 
 
-def save_2d_for_surfer(time, z, out, path_base, dt: Union[None, list, np.timedelta64], dz=None):
+def save_2d_for_surfer(
+    time: np.ndarray,
+    z: np.ndarray,
+    out: Mapping[str, np.ndarray],
+    path_base: Path,
+    dt: Union[None, list, np.timedelta64],
+    dz=None,
+):
+
     print(
         f'Export 2D datasets to {path_base.parent.name}/{path_base.stem}_{{param}}.nc '
         'files as NetCdf grids for param = ', end=''
     )
-    b_have_u = 'u' in out
-    da_np = da if isinstance(out.get('u' if b_have_u else 'Vabs'), da.Array) else np
-    if not b_have_u:
+    b_have_v_dekart = 'u' in out
+    da_np = da if isinstance(out['u'] if b_have_v_dekart else next(iter(out.values())), da.Array) else np
+    if "Vabs" in out and not b_have_v_dekart:
         out['v'], out['u'] = polar2dekart(out['Vabs'], out['Vdir'])
         del out['Vabs'], out['Vdir']
         out['Vabs'] = out['Vdir'] = None  # to the end of ``out``
@@ -205,7 +212,7 @@ def save_2d_for_surfer(time, z, out, path_base, dt: Union[None, list, np.timedel
                 # to Excel time
                 time_coord_converted = (dar.coords['time'] - np.datetime64('1899-12-30T00:00:00')
                                         ).astype('M8[ns]').values.astype('f8') / (24 * 3600E9)
-                str_dt = v.str_dt(dt.astype('m8[s]') if isinstance(dt, np.timedelta64) else np.timedelta64(dt, 's'))
+                str_dt = fv.str_dt(dt.astype('m8[s]') if isinstance(dt, np.timedelta64) else np.timedelta64(dt, 's'))
             dar['time'] = time_coord_converted  # changes dar.coords['time']
             xr.Dataset({name: dar}).to_netcdf(
                 path_base.parent / f'{path_base.stem}_{name}_dt={str_dt}{f",dz={dz}" if dz else ""}.nc',

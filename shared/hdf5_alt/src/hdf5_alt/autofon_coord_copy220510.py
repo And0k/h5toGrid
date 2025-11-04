@@ -38,7 +38,7 @@ from utils.h5_to_gpx import save_to_gpx  # gpx_track_create
 from hdf5_pandas.h5_dask_pandas import df_to_csv  #, filter_global_minmax, filter_local
 from hdf5_pandas import h5
 
-import cfg_dataclasses
+from utils import cfg_dataclasses
 from utils.init import Ex_nothing_done, FakeContextIfOpen, LoggingStyleAdapter, set_field_if_no, call_with_valid_kwargs,\
     ExitStatus, GetMutex
 
@@ -1085,7 +1085,7 @@ def main(config: ConfigType) -> None:
     if cfg['out'].get('db_path') and not cfg['out']['db_path'].is_absolute():
         cfg['out']['db_path'] = Path(sys.argv[0]).parent / cfg['out']['db_path']
 
-    h5.out_init(cfg['in'], out)
+    h5.out_init(out, **cfg['in'])
 
     if not out['to_gpx']:  # default to output to gpx raw data and for averaged only if averaging is less than 1 hours
         out['to_gpx'] = [True]  # output 1st, other (will be set to None) depends on averaging
@@ -1109,8 +1109,9 @@ def main(config: ConfigType) -> None:
         # Loading data for each probe to temporary store cycle
         ######################################################
         for i1_tbl, (tbl, tbl_log, t_start, msg_start_origin, _) in h5.dispenser_and_names_gen(
-                cfg_in, out,
-                fun_gen=h5.names_gen,
+                h5.names_gen,
+                out,
+                **cfg_in,
                 processed_tables=False,
                 dt_max_hole=cfg['process']['dt_max_hole'],
                 dt_max_wait=cfg['process']['dt_max_wait']
@@ -1269,8 +1270,8 @@ def main(config: ConfigType) -> None:
 
 
         for i1_tbl, (tbl, tbl_log, bin, rolling_dt, b_to_gpx) in h5.dispenser_and_names_gen(
-                cfg_in, out,
-                fun_gen=h5.names_gen,
+                h5.names_gen,
+                out, **cfg_in,
                 processed_tables=True
                 # dt_max_hole=cfg['process']['dt_max_hole'],
                 # dt_max_wait=cfg['process']['dt_max_wait']

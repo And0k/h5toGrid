@@ -24,7 +24,7 @@ packages = [
 "third_party/descartes", "third_party/veusz", "third_party/mne", "third_party/wafo"
 ]
 
-[tool.pixi.project]
+[tool.pixi.workspace]
 channels = ["conda-forge"]
 platforms = ["win-64"]
 
@@ -38,18 +38,16 @@ absioras-utils = { path = "shared/utils", editable = true }
 absioras-hdf5_pandas = { path = "shared/hdf5_pandas", editable = true }
 absioras-hdf5_alt = { path = "shared/hdf5_alt", editable = true }
 absioras-veusz_helpers = { path = "shared/veusz_helpers", editable = true }
-absioras-third_party-descartes = { path = "third_party/descartes", editable = true } 
-absioras-third_party-veusz = { path = "third_party/veusz", editable = true } 
-absioras-third_party-mne = { path = "third_party/mne", editable = true } 
-absioras-third_party-wafo = { path = "third_party/wafo", editable = true } 
+absioras-third_party-descartes = { path = "third_party/descartes", editable = true }
+absioras-third_party-veusz = { path = "third_party/veusz", editable = true }
+absioras-third_party-mne = { path = "third_party/mne", editable = true }
+absioras-third_party-wafo = { path = "third_party/wafo", editable = true }
 
 
 # Зависимости сервисов как features
 [tool.pixi.feature.get_datasets]
 dependencies = { copernicusmarine = "*" }
 
-[tool.pixi.feature.dev]
-dependencies = { pytest = "*" }
 
 [tool.pixi.tasks]
 test = "pytest tests/"
@@ -57,7 +55,20 @@ test-all = "hatch run test:*"
 
 # Окружения
 [tool.pixi.environments]
-default = ["get_datasets", "dev"]
+default = ["get_datasets", "dev", "script"]
+
+[tool.pixi.feature.dev.dependencies]
+pytest = "*"
+
+[tool.pixi.feature.script.dependencies]
+jupyterlab = "*"
+jupyterlab-spellchecker = "*"
+nb_conda = "*"
+nbconvert = "*"
+sympy = "*"
+cvxpy = "*"
+pixi-kernel = "*"
+seaborn = "*"
 
 [tool.pixi.dependencies]
 antlr = "*"
@@ -86,15 +97,11 @@ h5py = "*"
 hdf5 = "*"
 hydra-core = "*"
 json2html = "*"
-jupyterlab = "*"
-jupyterlab-spellchecker = "*"
 lxml = "*"
 matplotlib = "*"
 mkl = "*"
 more-itertools = "*"
 motuclient = "*"
-nb_conda = "*"
-nbconvert = "*"
 netcdf4 = "*"
 numba = "*"
 numexpr = "*"
@@ -104,6 +111,7 @@ pillow = "*"
 polars = "*"
 progressbar2 = "*"
 py = "*"
+py7zr = "*"
 pyinstaller = "*"
 pyinstaller-hooks-contrib = "*"
 pynmea2 = "*"
@@ -121,20 +129,17 @@ re2 = "*"
 requests = "*"
 scikit-learn = "*"
 scipy = "*"
-seaborn = "*"
 selenium = "*"
 shapely = "*"
 snappy = "*"
 sqlite = "*"
 statsmodels = "*"
-sympy = "*"
 tabulate = "*"
 toolz = "*"
 tqdm = "*"
 urllib3 = "*"
 xarray = "*"
 webdriver-manager = "*"
-pixi-kernel = "*"
 astropy = "*"
 cfgrib = "*"
 

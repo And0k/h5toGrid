@@ -17,7 +17,6 @@ uo      eastward sea water velocity, m/s
 vo      northward sea water velocity, m/s
 """
 import netCDF4
-from netCDF4 import num2date
 import numpy as np
 from pathlib import Path
 import pandas as pd
@@ -32,7 +31,7 @@ def constant_factory(val):
         return val
     return default_val
 
-#######################################################################################################################
+##############################################################################################################
 # netCDF4 file
 file_path = \
 r'd:\WorkData\BalticSea\_other_data\_model\Copernicus\Sal_bin=1month\201016-bal-analysis-forecast-phy-monthlymeans.nc'
@@ -63,7 +62,9 @@ dims_list = t2m.get_dims()
 dims = {d.name: d.size for d in t2m.get_dims()}
 time_name, *expver_name, lat_name, lon_name = dims.keys()
 time_var = f.variables[time_name]
-times = num2date(time_var[:], time_var.units, only_use_cftime_datetimes=False, only_use_python_datetimes=True)
+times = netCDF4.num2date(
+    time_var[:], time_var.units, only_use_cftime_datetimes=False, only_use_python_datetimes=True
+)
 latitudes = f.variables[lat_name][:]
 longitudes = f.variables[lon_name][:]
 b_2d_to_txt = False
@@ -72,7 +73,9 @@ iso_surface_window = 1  # weighted mean between 2 nearest points
 
 def calc_iso_surface(v3d, v_isosurface, zi, interp_order=1, weight_power=1, dv_max=20) -> np.array:
     """
-    weighted average to compute the iso-surface
+    weighted average to compute the iso-surface.
+
+    See updated extended version in `scripts/t_chain2grd_isolilines.py`
     :param v3d:
     :param v_isosurface:
     :param zi: 1d array of z values corresponded to its indexes
@@ -161,16 +164,17 @@ elif method == 'one_file':              # METHOD 2
     # Write data as a table with 4+ columns: time, value0, value1... for each (latitude, longitude)
     filename = output_dir / f'{times[0]:%y%m%d_%H%M}{file_path.stem}.csv'
     print(f'Writing data in tabular form to {filename} (this may take some time)...')
-    times_grid, latitudes_grid, longitudes_grid = [
+    time_grid, latitude_grid, longitude_grid = [
         x.flatten() for x in np.meshgrid(times, latitudes, longitudes, indexing='ij')]
     df = pd.DataFrame({
-        'Time': times_grid,
-        'Lat': latitudes_grid,
-        'Lon': longitudes_grid,
-        **{n: variables_apply_coef[v_name](f.variables[v_name].flatten()) for
-           n, v_name in zip(var_short_names, variables)
-           }
-        })
+        "Time": time_grid,
+        "Lat": latitude_grid,
+        "Lon": longitude_grid,
+        **{
+            n: variables_apply_coef[v_name](f.variables[v_name].flatten())
+            for n, v_name in zip(var_short_names, variables)
+        },
+    })
     df.to_csv(filename, index=False)
     print('saved to', filename)
 elif method == 'file_for_each_coord':
@@ -193,8 +197,14 @@ elif method == 'file_for_each_coord':
             df = pd.DataFrame({'Time': times, **var_dict})
 
             filename = output_dir / f'{filename_part_time}{filename_part_source}(N{lat:.5g},E{lon:.5g}).tsv'
-            df.to_csv(filename, index=False, date_format='%Y-%m-%d %H:%M', float_format='%.5g',
-                     sep='\t', encoding="ascii")
+            df.to_csv(
+                filename,
+                index=False,
+                date_format="%Y-%m-%d %H:%M",
+                float_format="%.5g",
+                sep="\t",
+                encoding="ascii",
+            )
 
     print('saved to', filename)
-print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>")
+print(f"{pd.Timestamp.now():%Y-%m-%d %H:%M:%S} Ok>")

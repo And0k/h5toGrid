@@ -28,7 +28,8 @@ from hdf5_pandas.h5_dask_pandas import filter_global_minmax, filter_local
 import hdf5_pandas.csv_specific_proc
 from utils import time_corr as utils_time_corr
 
-import dask; dask.config.set(scheduler='synchronous')  # !!! for test
+import dask
+dask.config.set(scheduler='synchronous')  # !!! for debug
 
 if __name__ == '__main__':
     if False:  # True:  temporary for debug
@@ -36,7 +37,7 @@ if __name__ == '__main__':
 
         client = Client(
             processes=False)  # navigate to http://localhost:8787/status to see the diagnostic dashboard if you have Bokeh installed
-        # processes=False: avoide inter-worker communication for computations releases the GIL (numpy, da.array)  # without is error
+        # processes=False: avoid inter-worker communication for computations releases the GIL (numpy, da.array)  # without is error
     else:
         pass
 
@@ -151,7 +152,7 @@ to Pandas HDF5 store*.h5
         help='find string "<Separator>no_<col1>[,<col2>]..." in file name and set all values of col1[, col2] to NaN. Here <Separator> is one of -_()[, ')
 
     s = p.add_argument_group('program',
-        'program behaviour')
+        'program behavior')
     s.add('--return', default='<end>',  # nargs=1,
         choices=['<cfg_from_args>', '<gen_names_and_log>', '<end>'],
         help='<cfg_from_args>: returns cfg based on input args only and exit, <gen_names_and_log>: execute init_input_cols() and also returns fun_proc_loaded function... - see main()')

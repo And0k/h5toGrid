@@ -20,7 +20,7 @@ import pandas as pd
 # import vaex
 import pynmea2
 
-import cfg_dataclasses
+from utils import cfg_dataclasses
 
 from utils.init import standard_error_info, LoggingStyleAdapter, \
     call_with_valid_kwargs
@@ -105,7 +105,9 @@ def load_nmea(
     with pynmea2.NMEAFile(file.open(mode='r', encoding='ascii', errors='replace')) as _h_nmea:
         while True:  # to continue on error
             try:
-                for i_nmea, nmea_sentence in enumerate(_h_nmea):  # best method because with _h_nmea.readline() need to check for EOF, nmea_sentences = _h_nmea.read() fails when tries to read all at once
+                for i_nmea, nmea_sentence in enumerate(_h_nmea):
+                    # best method because with _h_nmea.readline() need to check for EOF,
+                    # nmea_sentences = _h_nmea.read() fails when tries to read all at once
                     # Begin row with new timestamp index (or append to existed if still no)
                     try:
                         if nmea_sentence.sentence_type in cfg['in']['skip_sentences']:
@@ -126,11 +128,15 @@ def load_nmea(
                             if b_time_parsed:
                                 if bad_date:
                                     if time_last is None:  # need other date source
-                                        date_in_str = input(f'Input data start date (in ISO format like {datetime.fromtimestamp(file.stat().st_mtime):%Y-%m-%d}) in file {file}:'
-                                        )  # todo: try recover from file name
+                                        date_in_str = input(
+                                            "Input data start date (in ISO format like "
+                                            f"{datetime.fromtimestamp(file.stat().st_mtime):%Y-%m-%d}) "
+                                            f"in file {file}:"
+                                        )   # todo: try recover from file name
                                         try:
-                                            time_last = datetime.combine(datetime.fromisoformat(date_in_str),
-                                                                         nmea_sentence.timestamp)
+                                            time_last = datetime.combine(
+                                                datetime.fromisoformat(date_in_str), nmea_sentence.timestamp
+                                            )
                                             lf.info('{:s} <- {} - using input date', str(nmea_sentence).encode(
                                                 enc, errors='replace').decode(), time_last.date())
                                         except ValueError as e:
@@ -338,7 +344,7 @@ def do(cfg: Mapping):
     :param cfg: OmegaConf configuration
     :return:
     """
-    h5.out_init(cfg['in'], cfg['out'])
+    h5.out_init(cfg['out'], **cfg['in'])
     # OmegaConf.update(cfg, "in", cfg.input, merge=False)  # error
     # to allow non primitive types (cfg.out['db']) and special words field names ('in'):
     #cfg = OmegaConf.to_container(cfg)
@@ -385,10 +391,9 @@ def do(cfg: Mapping):
 
     ## Main circle ############################################################
     try:
-        for i1_file, file in h5.dispenser_and_names_gen(cfg['in'], cfg['out'],
-                                                        b_close_at_end=False,
-                                                        check_have_new_data=False
-                                                        ):
+        for i1_file, file in h5.dispenser_and_names_gen(
+            cfg_out=cfg["out"], **cfg["in"], b_close_at_end=False, check_have_new_data=False
+        ):
             lf.info('{}. {}: ', i1_file, file.name)
             ## Loading data #############
             df = load_nmea(file, cfg['in']['cols'], time_prev)

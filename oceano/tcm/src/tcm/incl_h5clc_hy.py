@@ -38,11 +38,10 @@ import hydra
 # from utils.init import ini2dict
 # from scripts.incl_calibr import calibrate, calibrate_plot, coef2str
 # from other_filters import despike, rep2mean
-import cfg_dataclasses as cfg_d
+from utils import cfg_dataclasses as cfg_d
 from utils.init import Ex_nothing_done, call_with_valid_kwargs, set_field_if_no, this_prog_basename, LoggingStyleAdapter
 from hdf5_pandas import h5
-    h5.dispenser_and_names_gen
-from hdf5_pandas.h5_dask_pandas import h5_load_range_by_coord, h5.append_to, i_bursts_starts, \
+from hdf5_pandas.h5_dask_pandas import h5_load_range_by_coord, i_bursts_starts, \
     filter_global_minmax, filter_local, cull_empty_partitions, dd_to_csv
 from utils.filters import rep2mean
 from tcm.h5inclinometer_coef import rot_matrix_x, rotate_y

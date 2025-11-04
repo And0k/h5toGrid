@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 # import vaex
 
-import cfg_dataclasses
+from utils import cfg_dataclasses
 
 from utils.init import LoggingStyleAdapter, dir_create_if_need, FakeContextIfOpen, set_field_if_no
 
@@ -388,7 +388,7 @@ def cfg_by_hydra(config: ConfigType):
 
     cfg = cfg_dataclasses.main_init(config, cs_store_name)
     cfg = cfg_dataclasses.main_init_input_file(cfg, cs_store_name)
-    #h5.out_init(cfg['in'], cfg['out'])
+    #h5.out_init(cfg['out'], **cfg['in'])
     #cfg['out']['dt_from_utc'] = 0
     return
 

@@ -390,16 +390,17 @@ def veusz_load_hdf5(
     if grp_d_rename_funs is None:
         grp_d_rename_funs = {grp: lambda x, device_id: x for grp in grp_d}
 
-    try:
-        with h5py.File(file, "r") as h:
-            # Existed parameters in DB
-            existed_devs = {}
-            grp_dev = {}
-            i_ranges = {}
-            for i, device_id in enumerate(device_ids, start=1):
-                existed_devs[device_id] = {}
-                grp_dev[device_id] = {}
-                print(f"{i}. " if len(device_ids) > 1 else "", device_id, end=": ")
+
+    with h5py.File(file, "r") as h:
+        # Existed parameters in DB
+        existed_devs = {}
+        grp_dev = {}
+        i_ranges = {}
+        for i, device_id in enumerate(device_ids, start=1):
+            existed_devs[device_id] = {}
+            grp_dev[device_id] = {}
+            print(f"{i}. " if len(device_ids) > 1 else "", device_id, end=": ")
+            try:
                 for grp, t in grp_d.items():
                     cur_gr = f"/{device_id}{t}"
                     print(t, end=" ")
@@ -469,9 +470,9 @@ def veusz_load_hdf5(
 
                 time_raw_min = np.fmin(time_range_raw[0], time_raw_min)
                 time_raw_max = np.fmax(time_range_raw[-1], time_raw_max)
-    except Exception:
-        exception(f'Working with HDF5 file "{file}"')
-        raise
+            except Exception:
+                exception(f'Working with HDF5 file "{file}", {grp_dev[device_id]}')
+                raise
     time_range_raw = np.array([time_raw_min, time_raw_max], "M8[ns]")
     # if time_range was specified this will be for last device_id:
     time_range_out = time_range_raw.astype("M8[s]") + time_shift_s if any(time_range_raw) else []
@@ -679,24 +680,27 @@ def veusz_load_hdf5_tcm_raw(
 def veusz_load_hdf5_ctd_profile(
     file,
     time_range,
-    probe,
+    device=None,
     time_shift_s: int = 0,
     n_runs=1,
     params_d=None,
-    renames_no_prefix = {
+    renames_no_prefix={
         "table_log": {"index": "DateSt", "rows": "downcast_len"},
         "table": {"Turb": "Turb_nof", "Fluor": "ChlA_nof"},  # 'Pres': 'Pres_NoSep',
     },
-    prefix_d = {
+    prefix_d={
         "table_log": "_log_",
         "table": "_",
-    }
+    },
+    fun_custom=None,
 ) -> None:
     """
     Find integer index slice from specified time range and loads data needed to draw "Zabor".
     Intended to be executed in caller's vsz workspace
-    :param file = r'../200819_AI56.h5'
-    :param time_range: any 2-element sequence convertible to datetime64 array in displaying zone. For example ['2020-08-19T21:59:22', '2020-08-20T06:05:04']
+    :param file: hdf5 data file with data table and log table
+    :param time_range: any 2-element sequence convertible to datetime64 array in displaying zone. If 2nd
+    element is not finite, then searches row >= 1st time in table_log and get time_en at n_runs-th row after
+    found row. After we have 2 finite time values, the program searches indexes of rows in data table.
     :param time_shift_s: shift in seconds You'll add to loaded time to display data, here used to set input range correctly
     :param params_d: columns to load from each table. For example {
         "table_log": ["index", "DateEnd", "rows"]
@@ -705,6 +709,15 @@ def veusz_load_hdf5_ctd_profile(
     }
     :param renames_no_prefix:
     :param prefix_d:
+    :param fun_custom: in not None, then return result of executing this function instead exec Veusz commands.
+    Function receives:
+    - h: opened file handle,
+    - i_ranges = {
+        "table_log": [irow_log, irow_log + n_runs],
+        "table": [i_time_st, i_time_st + len_last_run]
+    },
+    - time_range_raw
+
     Usage: insert next rows into top of vsz (and delete old ImportFileHDF5...):
     # Next 8 rows will be replaced by the hard to edit code if You save the file in Veusz's GUI!
     ### Loading part of hdf5 data using time range ###
@@ -714,8 +727,6 @@ def veusz_load_hdf5_ctd_profile(
     >> exec(compile(time_range_selector_file.read_text(), time_range_selector_file, 'exec'))
     >> import_hdf5(['2020-08-19T21:59:22', '2020-08-20T05:04:00'], r'../200819_AI56.h5', 'CTD_Idronaut_OS316#494')
     """
-    # hdf5 data group name must be equal to dir name of current file?
-    device = device_dir.stem.split("(", 1)[0]
     # or '{type}_{model}#{id}'.format_map(probe).replace(' ', '_')
     grp_d = {
         "table": f"/{device}/table/",
@@ -773,57 +784,61 @@ def veusz_load_hdf5_ctd_profile(
             time_range_raw = np.int64(np.array(time_range, "M8[ns]") - np.timedelta64(time_shift_s, "s"))
             # if not limit:
             i_ranges = {
-                n: np.searchsorted(h[t]["index"], time_range_raw).tolist()
-                for n, t in grp_d.items()
+                grp: np.searchsorted(h[tbl_path]["index"], time_range_raw).tolist()
+                for grp, tbl_path in grp_d.items()
             }
-        for tbl in grp_d:
-            _ = params_d[tbl]
-            params_d[tbl] = list(tbl_cols_exist[tbl] if not _ else set(_) & tbl_cols_exist[tbl])
-        SetData("_log_Lats_st", h[grp_d["table_log"]]["Lat_st"])
-        SetData("_log_Lons_st", h[grp_d["table_log"]]["Lon_st"])
-        SetData(
-            "_log_t64s_st",
-            np.int64(np.array(h[grp_d["table_log"]]["index"], "M8[ns]").astype("M8[s]"))
-            + time_shift_s,
-        )
+
+        if fun_custom:
+            return fun_custom(h, i_ranges, grp_d, time_range_raw)
+        else:
+            for tbl in grp_d:
+                _ = params_d[tbl]
+                params_d[tbl] = list(tbl_cols_exist[tbl] if not _ else set(_) & tbl_cols_exist[tbl])
+            SetData("_log_Lats_st", h[grp_d["table_log"]]["Lat_st"])
+            SetData("_log_Lons_st", h[grp_d["table_log"]]["Lon_st"])
+            SetData(
+                "_log_t64s_st",
+                np.int64(np.array(h[grp_d["table_log"]]["index"], "M8[ns]").astype("M8[s]"))
+                + time_shift_s,
+            )
     print(f"corresponding data indices in {file}:", i_ranges)
+    if not fun_custom:
+        ImportFileHDF5(
+            str(file),
+            [f"{grp_d[t]}{p}" for t, pp in params_d.items() for p in pp] + ["/map"],
+            linked=True,
+            namemap={
+                f"{grp_d[t]}{p}": f"{prefix_d[t]}{p}"
+                for t, pp in params_d.items()
+                for p in pp
+            },
+            slices={
+                f"{grp_d[t]}{p}": (i_ranges[t] + [None],)
+                for t, pp in params_d.items()
+                for p in pp
+            },
+            renames={
+                f"{prefix_d[t]}{p}": f"{prefix_d[t]}{p_new}"
+                for t, remap in renames_no_prefix.items()
+                for p, p_new in remap.items()
+            },
+        )
 
-    ImportFileHDF5(
-        str(file),
-        [f"{grp_d[t]}{p}" for t, pp in params_d.items() for p in pp] + ["/map"],
-        linked=True,
-        namemap={
-            f"{grp_d[t]}{p}": f"{prefix_d[t]}{p}"
-            for t, pp in params_d.items()
-            for p in pp
-        },
-        slices={
-            f"{grp_d[t]}{p}": (i_ranges[t] + [None],)
-            for t, pp in params_d.items()
-            for p in pp
-        },
-        renames={
-            f"{prefix_d[t]}{p}": f"{prefix_d[t]}{p_new}"
-            for t, remap in renames_no_prefix.items()
-            for p, p_new in remap.items()
-        },
-    )
-
-    # Add tag "loaded"
-    for tbl, remap in renames_no_prefix.items():
-        cols_set = set(tbl_cols_exist[tbl])
-        remap_checked = remap.copy()
-        for p in remap.keys():
-            if p in cols_set:
-                params_d[tbl].remove(p)
-            else:
-                del remap_checked[p]
-        params_d[tbl].extend(remap_checked.values())
-    TagDatasets(
-        "loaded",
-        [f"{prefix_d[t]}{p}" for t, pp in params_d.items() for p in pp]
-        + ["_log_Lats_st", "_log_Lons_st", "_log_t64s_st", "_log_downcast_len"],
-    )
+        # Add tag "loaded"
+        for tbl, remap in renames_no_prefix.items():
+            cols_set = set(tbl_cols_exist[tbl])
+            remap_checked = remap.copy()
+            for p in remap.keys():
+                if p in cols_set:
+                    params_d[tbl].remove(p)
+                else:
+                    del remap_checked[p]
+            params_d[tbl].extend(remap_checked.values())
+        TagDatasets(
+            "loaded",
+            [f"{prefix_d[t]}{p}" for t, pp in params_d.items() for p in pp]
+            + ["_log_Lats_st", "_log_Lons_st", "_log_t64s_st", "_log_downcast_len"],
+        )
     return time_range
 
 
@@ -1450,7 +1465,7 @@ def veusz_load_csv_tcm_raw(
     )
     SetDataExpression("_t_ns__", "(time__ + 1230768000)*1E9", linked=True)
 
-    if Path(db).is_file():
+    if db and Path(db).is_file():
         ImportFileHDF5(
             db,
             [f"/{probe_id}/coef"],
@@ -1591,8 +1606,10 @@ def get_fun_load_end_ext(probe, db, parent=None, time_range=tuple(), time_shift=
     elif probe["type"] == "CTD":  # and probe['type'] == 'ADV'
         data_file_ext = ".txt"
         # re_n_runs = '(?P<n_runs>\d*)(?:run)s?'
+
+        # hdf5 data group name must be equal to dir name of current file?
         time_range_raw = veusz_load_hdf5_ctd_profile(
-            db, time_range, probe, time_shift, n_runs=1
+            db, time_range, device=device_dir.stem.split("(", 1)[0], time_shift=time_shift, n_runs=1
         )
         fun_load = (
             None
@@ -1644,8 +1661,8 @@ def get_fun_load_end_ext(probe, db, parent=None, time_range=tuple(), time_shift=
                     f"{{'id': '{_id}', 'type': I['{_type}'], 'model': '{_model}'}}")
                 """
     elif probe["type"] == "i":
-        def data_file_ext(parent, probe):
-            return parent / "@{type}_{model}{number:0>2}.txt".format_map(probe)
+        def data_file_ext(probe, name_prefix="", name_suffix=""):
+            return f"{name_prefix}@{{type}}_{{model}}{{number:0>2}}{name_suffix}.txt".format_map(probe)
         fun_load = lambda file: veusz_load_csv_tcm_raw(db, time_range, file, time_shift, probe)
     else:  # not known file type or inclinometer from db
         fun_load = None
@@ -2618,7 +2635,7 @@ if __name__ in ("__main__", "builtins"):
             db_stem = f'{db_stem}.raw'
             db = device_dir / "_raw" / f"{db_stem}.h5"
             b_db_ok = db.is_file()
-        else:
+        elif "_raw" not in parent.parts:
             # Try load best db for our case first
             dbs = []
             for sfx in [".proc", ".proc_Avg"] if len(probes["devices"]) > 1 else [".proc_Avg", ".proc"]:
@@ -2653,6 +2670,9 @@ if __name__ in ("__main__", "builtins"):
                 # todo: fail back to other db if current db loading will be failed
             if b_db_ok:
                 db_stem = db.stem
+        else:
+            db = None
+            b_db_ok = False
     else:
         # DB stem should be equal to the name of parent folder and DB file will be under _raw dir or
         # cruise_dir
@@ -2714,7 +2734,7 @@ if __name__ in ("__main__", "builtins"):
                 if isinstance(data_file_ext, str):
                     data_file = (data_dir / basename).with_suffix(data_file_ext)
                 else:
-                    data_file = data_file_ext(data_dir, probe)
+                    data_file = data_dir / data_file_ext(probe)
                 if not data_file.is_file():
                     if "@" in basename:
                         # _type should be in dir or in data file name
@@ -2731,9 +2751,12 @@ if __name__ in ("__main__", "builtins"):
                     data_file = ""
                     name_splitted = [basename, ""]
                     while len(name_splitted) > 1:
+                        name_prefix = re.match('([^+&.-]+)*', name_splitted[0]).group(1)
                         data_file = list(
                             data_dir.glob(
-                                f"{re.match('([^+&.-]+)*', name_splitted[0]).group(1)}*{_type}{data_file_ext}"
+                                f"{name_prefix}*{_type}{data_file_ext}"
+                                if isinstance(data_file_ext, str)
+                                else data_file_ext(probe, name_prefix=f"{name_prefix}*")
                             )
                         )
                         if any(data_file):
@@ -2747,14 +2770,41 @@ if __name__ in ("__main__", "builtins"):
                         name_splitted = name_splitted[0].rsplit("_", 1)
                     else:
                         # 1 data file with name started from digits and that includes needed type + ext
-                        _ = f"[0-9][0-9][0-9][0-9][0-9][0-9]*{_type}{data_file_ext}"
-                        data_files = list(data_dir.glob(_))
-                        for data_file in data_files:
-                            if basename > data_file.stem:  # ?
+                        def search_file(data_dir, _type, data_file_ext):
+                            # 1 data file with name that includes needed type + ext in priority order
+                            data_globs = (
+                                f"[0-9][0-9][0-9][0-9][0-9][0-9]*{_type}",  # started from digits
+                                f"@{_type}",  # checked/corrected for syntax errors
+                                f"{_type}",  # any other
+                            )
+                            data_files = []
+                            if isinstance(data_file_ext, str):
+                                for name_prefix in data_globs:
+                                    for p in data_dir.glob(f"{name_prefix}{data_file_ext}"):
+                                        data_files.append(p)
+                            else:  # (probe, name_prefix="", name_suffix="")
+                                pure_data_file_name = Path(data_file_ext(probe))
+                                name_suffix = "*"  # todo: get exact string form vsz name
+                                for name_prefix in data_globs:
+                                    for p in data_dir.glob(
+                                        f"{name_prefix}{pure_data_file_name.stem}"
+                                        f"{name_suffix}{pure_data_file_name.suffix}"
+                                    ):
+                                        data_files.append(p)
+                            return data_files
+                        data_file = None
+                        for _type in [_type, ""]:
+                            data_files = search_file(data_dir, _type, data_file_ext)
+                            max_len = 0
+                            for _ in data_files:
+                                if len(_.stem) > max_len:  # if basename > data_file.stem:  # ?
+                                    data_file = _
+                                    max_len = len(data_file.stem)
+                            if data_file:
                                 break
                         else:
                             raise FileNotFoundError(
-                                f"No files match {data_dir}/{_} found: {data_files}" if data_dir.is_dir()
+                                f"No files match {data_dir}/[0-9][0-9][0-9][0-9][0-9][0-9]*{_type}{data_file_ext} found: {data_files}" if data_dir.is_dir()
                                 else f"{data_dir} is not a directory!"
                             )
                 time_range_raw = fun_load(data_file)[0]

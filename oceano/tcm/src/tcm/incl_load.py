@@ -118,7 +118,7 @@ saves loading log in inclinometer\scripts\log\csv2h5_inclin_Kondrashov.log
     s.add('--split_period', default='1D',
           help='pandas offset string (5D, H, ...) to proc and output in separate blocks. If saves to csv then writes in parts of this length, but if no bin averaging (aggregate_period) only')
 
-    s = p.add_argument_group("program", "Program behaviour")
+    s = p.add_argument_group("program", "Program behavior")
     s.add('--step_start_int', default='1', choices=[str(i) for i in [1, 2, 3, 4, 40, 50]],
           help='step to start')
     s.add('--step_end_int', default='2', choices=['1', '2', '3', '4', '40'],

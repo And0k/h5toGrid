@@ -1,9 +1,13 @@
 [project]
-description = "Process data from Tilt Current Meter (TCM)"
+authors = [ {name = "Andrey Korzh", email = "ao.korzh@gmail.com"} ]
+description = "Console program to convert raw data files meaured by AB SIO RAS tilt current meters (TCM) to csv and hdf5 data files with physical units optionally with filtering/averaging"
+license = "MIT"
 name = "absioras-tcm"
 requires-python = ">= 3.11"
 version = "0.1.0"
-dependencies = []
+dependencies=[
+"wmm2020"
+]
 
 [project.optional-dependencies]
 test = ["pytest"]
@@ -12,11 +16,11 @@ test = ["pytest"]
 build-backend = "hatchling.build"
 requires = ["hatchling"]
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/tcm"]
+
 [tool.pixi.pypi-dependencies]
 # Подмодули автоматически доступны через workspace
-
-[tool.hatch.build.targets.wheel]
-packages = ["tcm"]
 
 [tool.hatch.envs.test]
 dependencies = ["pytest"]

@@ -158,7 +158,7 @@ def my_argparser(varargs=None):
     s.add('--max_incl_of_fit_deg_float',
           help='Finds point where g(x) = Vabs(inclination) became bend down and replaces after g with line so after max_incl_of_fit_deg {\\Delta}^{2}y ≥ 0 for x > max_incl_of_fit_deg')
 
-    s = p.add_argument_group("program", "Program behaviour")
+    s = p.add_argument_group("program", "Program behavior")
     s.add('--return', default='<end>', choices=['<return_cfg>', '<return_cfg_with_options>'],
           help='executes part of code and returns parameters after skipping of some code')
     s.add('--b_interact', default='False',

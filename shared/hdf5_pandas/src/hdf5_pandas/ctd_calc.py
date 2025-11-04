@@ -136,7 +136,7 @@ process it and save HDF5/CSV
         help="Format of date column in csv files. Can use float or string representations",
     )
 
-    s = p.add_argument_group("extract_runs", "program behaviour")
+    s = p.add_argument_group("extract_runs", "program behavior")
     s.add(
         "--cols_list",
         default="Pres",
@@ -162,7 +162,7 @@ process it and save HDF5/CSV
         help='List with items in  "key:value" format. Sets to NaN data of ``key`` columns if it is above ``value``',
     )
 
-    s = p.add_argument_group("program", "program behaviour")
+    s = p.add_argument_group("program", "program behavior")
     s.add(
         "--return",
         default="<end>",  # nargs=1,
@@ -606,7 +606,7 @@ def log_runs(
     :param df_raw: DataFrame of parameters (data)
     :param cfg: dict with fields:
     - extract_runs:
-    - in
+    - `in` dict
     -
     :param log: here result is saved in fields:
     - 'Date0', 'DateEnd', 'rows', 'rows_filtered', 'fileName', 'fileChangeTime', and df_raw column names
@@ -704,10 +704,10 @@ def get_runs_parameters(
     :param dt_from_utc:
     :param db:
     :param db_path:
-    :param add_tables_cols: {tables: cols}: tables names to add starting and ending data from corresponding
-    columns.
+    :param add_tables_cols: {table: cols}: tables names to add starting and ending data from corresponding
+    columns. Not adds '_en' fields for `cols` items that ends with '_st',
     Usually 1st element is 'navigation' table to find data absent in df_raw.
-    Note: tries to find only positive vals
+    Note: tries to find only positive vals (?)
     :param dt_check: sequence of tolerance values for each table or single value
     :return: log
     """
@@ -763,7 +763,7 @@ def get_runs_parameters(
             else:
                 b_all_st_only = False
             cols_add.append(col)
-        # todo: remove '_en' from output for cols_add_ cols that ends with '_st', allow funcs instead names
+        # todo: allow funcs in cols_add_ instead names
         time_points = log_update["_st"].index
         if not b_all_st_only:
             time_points = time_points.append(log_update["_en"].index)
@@ -1180,10 +1180,9 @@ def main(new_arg=None):
 
                     path_raw = PurePath(r.fileName)
                     cfg["out"]["log"].update(fileName=path_raw.name, fileChangeTime=r.fileChangeTime)
-                    # save current state
-                    cfg["in"]["file_stem"] = cfg["out"]["log"][
-                        "fileName"
-                    ]  # for exmple to can extract date in subprogram
+
+                    # Save current state (for exmple to can extract date in subprogram)
+                    cfg["in"]["file_stem"] = cfg["out"]["log"]["fileName"]
                     cfg["in"]["fileChangeTime"] = cfg["out"]["log"]["fileChangeTime"]
 
                     if cfg["in"]["b_incremental_update"]:

@@ -1,5 +1,6 @@
 """
 Warning: script not works correctly!
+Purpose: create virtual HDF5 dataset
 """
 
 from os import chdir as os_chdir, getcwd as os_getcwd

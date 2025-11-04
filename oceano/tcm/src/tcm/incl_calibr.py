@@ -87,7 +87,7 @@ def my_argparser():
     s.add('--out.db_path',
         help='hdf5 store file path where to write resulting coef. Writes to tables that names configured for input data (cfg[in].tables) in this file')
 
-    s = p.add_argument_group('program', 'program behaviour')
+    s = p.add_argument_group('program', 'program behavior')
     s.add('--return', default='<end>',  # nargs=1,
         choices=['<cfg_from_args>', '<gen_names_and_log>', '<end>'],
         help='<cfg_from_args>: returns cfg based on input args only and exit, <gen_names_and_log>: execute init_input_cols() and returns... - see main()')

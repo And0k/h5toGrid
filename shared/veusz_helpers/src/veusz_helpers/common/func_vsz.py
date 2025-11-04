@@ -532,14 +532,19 @@ def str_date_unit_with_suffix(t_range, str_zone, **kwargs):
 def str_dt(dt, lang=lang):
     """Time interval to readable string"""
     s = array(dt*1000000, 'M8[us]').item()
-    a = int16(s.timetuple()[1:6]) - [1, 1, 0, 0, 0]
+    a = int16(s.timetuple()[:6]) - [1970, 1, 1, 0, 0, 0]
     if ~any(a):
-        a = [0, 0, 0, 0, 0, round(s.microsecond * 1E-6, 3)]
-    out = ' '.join([f'{d}{w}' for d, w in zip(
-        a,
-        ['месяцев', 'дней', 'ч', 'мин', 'с', 'с'] if lang == 'ru' else
-        ['months', 'days', 'h', 'min', 's', 's']
-    ) if d])
+        a = [0, 0, 0, 0, 0, 0, round(s.microsecond * 1e-6, 3)]
+    out = " ".join([
+        f"{d}{w}"
+        for d, w in zip(
+            a,
+            ["лет", "месяцев", "дней", "ч", "мин", "с", "с"]
+            if lang == "ru"
+            else ["years", "months", "days", "h", "min", "s", "s"],
+        )
+        if d
+    ])
     return out.strip()
     # fDisp_read_dt(dt_var_name)', "f(f(''.join, [f'{d}{w}' for d,w in zip(
     #    f(lambda s: (f((lambda a: a if any(a) else [0,0,0,0,0,round(s.microsecond*1E-6, 3)]), int16(s.timetuple()[1:6]) - [1,1,0,0,0])), f(array(DATA(dt_var_name)*1E6, 'M8[us]').item)),

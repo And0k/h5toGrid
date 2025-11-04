@@ -141,7 +141,7 @@ def my_argparser():
     # s.add('--dt_point2run_max_minutes', #default=None,
     #     help='time interval to sinchronize points on map and table data (to search data marked as excluded on map i.e. runs which start time is in (t_start_good, t_start_good+dt_point2run_max). If None then select data in the range from current to the next point')
 
-    s = p.add_argument_group('program', 'program behaviour')
+    s = p.add_argument_group('program', 'program behavior')
     s.add('--veusz_path', default=u'C:\\Program Files\\Veusz' if platform == 'win32' else
     u'/home/korzh/.virtualenvs/veusz_experiments/lib/python3.6/site-packages/veusz-2.2.2-py3.6-linux-x86_64.egg/veusz',
           help='directory of Veusz')

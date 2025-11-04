@@ -96,7 +96,7 @@ def my_argparser():
         help="pandas offset strings as D, 5D, H, ... to divide track on segments",
     )
 
-    s = p.add_argument_group('program', 'Program behaviour')
+    s = p.add_argument_group('program', 'Program behavior')
     s.add_argument('--log', help='write log if path to existed file is specified')
 
     return p

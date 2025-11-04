@@ -2143,7 +2143,7 @@ def open_trying(db_path, change_name = False, **kwargs):
 
 
 def dispenser_and_names_gen(
-    fun_gen: names_gen,  # usually Callable[[Mapping[str, Any], Mapping[str, Any], Any], Iterator[Any]]
+    fun_gen=names_gen,  # usually Callable[[Mapping[str, Any], Mapping[str, Any], Any], Iterator[Any]]
     cfg_out: Optional[MutableMapping[str, Any]] = None,
     b_close_at_end: Optional[bool] = True,
     fun_update_cfg_out=None,
