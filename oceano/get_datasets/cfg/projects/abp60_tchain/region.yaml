@@ -1,9 +1,9 @@
 # @package projects.abp56_tchain
 
 # Configuration for CMEMS Region ABP56 (t-chain) project
-dir_suffix: "250415_ABP60@i,t-chain"
+dir_save: "250415_ABP60@i,t-chain"
 date_range: ["2025-04-26", "2025-05-29"]
-bbox: {lon_min: 20.59055, lon_max: , lat_min: 55.16547, lat_max: }, 
+bbox: {lon_min: 20.59055, lon_max: , lat_min: 55.16547, lat_max: },
 depth_min: 0.5
 depth_max: 45
 dataset_vars:

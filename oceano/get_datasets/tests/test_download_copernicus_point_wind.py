@@ -6,7 +6,7 @@ import logging
 import os
 import shutil # Added shutil import
 
-from download_copernicus_point_wind import main as download_point_wind_main
+from download_copernicus_point import main as download_point_wind_main
 
 # Configure logging for tests
 logging.basicConfig(level=logging.INFO)
@@ -52,12 +52,12 @@ def run_point_wind_test(project_name: str, setup_test_environment):
 
         # Assertions:
         assert test_history_file.exists()
-        from manager import DownloadHistoryManager
+        from .manager import DownloadHistoryManager
         history_manager = DownloadHistoryManager(test_history_file)
         history = history_manager.get_history()
         assert len(history) == len(cfg.copernicus.point_wind.points) # Expecting one entry per point in the config
 
-        expected_dir = Path(cfg.base.local_path) / cfg.copernicus.point_wind.dir_suffix
+        expected_dir = Path(cfg.base.local_path) / cfg.copernicus.point_wind.dir_save
 
         # Check if the download was skipped due to missing copernicusmarine library
         all_skipped = all(

@@ -1,0 +1,13 @@
+# @package projects.hydromap_of_month_avg
+
+dir_save: "hydromap_months"
+date_range: ["2019-01-01", "2023-12-01"]
+bbox:
+  lon_min: 11.9  # > minimum = 9.041542053222656
+  lon_max: 30.207401275634766 # maximum
+  lat_min: 53.9  # > minimum = 53.008296966552734
+  lat_max: 65.8909912109375  # maximum
+depth_min: 0.5016462206840515
+depth_max: 0.5016462206840515
+dataset_vars:
+  cmems_mod_bal_phy_my_P1M-m: ["bottomT", "so", "sob", "thetao"]

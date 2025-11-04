@@ -3,7 +3,7 @@
 # Configuration for CMEMS Region Mariculture 1 project
 copernicus:
   region:
-    dir_suffix: "150101_Mariculture_1"
+    dir_save: "150101_Mariculture_1"
     date_range: ["2015-01-01", "2025-03-23"]
     bbox: {lon_min: 19.611389, lon_max: 19.846389, lat_min: 55.133889, lat_max: 55.300833}
     depth_min: 0.5

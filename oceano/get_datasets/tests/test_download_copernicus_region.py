@@ -60,7 +60,7 @@ def run_region_test(project_name: str, setup_test_environment):
         history = history_manager.get_history()
         assert len(history) == 1 # Expecting one entry per project run
 
-        expected_dir = Path(cfg.base.local_path) / cfg.copernicus.region.dir_suffix
+        expected_dir = Path(cfg.base.local_path) / cfg.copernicus.region.dir_save
         assert expected_dir.is_dir()
         nc_files = list(expected_dir.glob("*.nc"))
         assert len(nc_files) > 0, f"No .nc files found in {expected_dir}"

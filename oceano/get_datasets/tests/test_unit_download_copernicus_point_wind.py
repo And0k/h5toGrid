@@ -8,13 +8,13 @@ import shutil
 from unittest.mock import patch, MagicMock
 
 # Temporarily add the scripts/downloading directory to the Python path
-# to allow importing download_copernicus_point_wind and utils
+# to allow importing download_copernicus_point and utils
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 sys.path.append(str(Path(__file__).parent.parent.parent / "downloading"))
 
-from download_copernicus_point_wind import download_extending_coords
-from manager import DownloadHistoryManager
+from download_copernicus_point import download_extending_coords
+from .manager import DownloadHistoryManager
 from utils import interp_to_point, safe_netcdf_atomic
 import xarray as _xr # Import xarray under a different alias for type hinting
 
@@ -89,7 +89,7 @@ def test_download_history_manager_load_history(setup_unit_test_environment):
     assert entry['lon'] == lon
 
 # Unit tests for download_extending_coords (mocking copernicusmarine)
-@patch('download_copernicus_point_wind.cm')
+@patch('download_copernicus_point.cm')
 def test_download_extending_coords_success(mock_cm, setup_unit_test_environment):
     test_base_path, _ = setup_unit_test_environment
 
@@ -112,7 +112,7 @@ def test_download_extending_coords_success(mock_cm, setup_unit_test_environment)
         assert download_options['variables'] == ["u", "v"]
         mock_cm.subset.assert_called_once()
 
-@patch('download_copernicus_point_wind.cm', None) # Simulate copernicusmarine not being available
+@patch('download_copernicus_point.cm', None) # Simulate copernicusmarine not being available
 def test_download_extending_coords_no_copernicusmarine(setup_unit_test_environment):
     test_base_path, _ = setup_unit_test_environment
 

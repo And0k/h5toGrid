@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, Tuple
 
 class DownloadHistoryManager:
     """
@@ -41,13 +41,18 @@ class DownloadHistoryManager:
                 f.write(json.dumps(serializable_entry) + '\n')
         print(f"Saved {len(self.history_entries)} history entries to {self.history_file}.")
 
-    def log_download(self, dir_save: Optional[Path], lat: Union[float, str], lon: Union[float, str], date_range: List[str], options: Optional[Dict[str, Any]] = None):
+    def log_download(
+        self,
+        dir_save: Optional[Path],
+        coords: List[Tuple[float, float]] = None,
+        date_range: List[str] = None,
+        options: Optional[Dict[str, Any]] = None,
+    ):
         """
         Logs a new download operation.
 
         :param dir_save: Directory where the data was saved.
-        :param lat: Latitude of the download point/region.
-        :param lon: Longitude of the download point/region.
+        :param coords: List of coordinate tuples [(lat, lon), ...] of the download point/region.
         :param date_range: List of two strings [start_date, end_date] for the download.
         :param options: Dictionary of additional options used for the download (e.g., dataset_id, variables).
         """
@@ -55,8 +60,7 @@ class DownloadHistoryManager:
         new_entry = {
             'run_date': run_date,
             'dir_save': str(dir_save) if dir_save else None,
-            'lat': lat,
-            'lon': lon,
+            'coords': coords,
             'date_range_start': date_range[0] if date_range else None,
             'date_range_end': date_range[1] if date_range else None,
             'options': options if options is not None else {}
@@ -99,8 +103,7 @@ if __name__ == "__main__":
     print("Logging first download...")
     history_manager.log_download(
         dir_save=Path(r"D:\WorkData\BalticSea\test_downloads\cmems_wind"),
-        lat=55.1,
-        lon=19.8,
+        coords=[(55.1, 19.8)],
         date_range=['2024-01-01', '2024-01-02'],
         options={'dataset_id': 'cmems_obs-wind_glo_phy_nrt_l4_0.125deg_PT1H', 'variables': ['eastward_wind']}
     )
@@ -109,8 +112,7 @@ if __name__ == "__main__":
     print("\nLogging second download...")
     history_manager.log_download(
         dir_save=Path(r"D:\WorkData\BalticSea\test_downloads\ncep_data"),
-        lat=54.5,
-        lon=20.0,
+        coords=[(54.5, 20.0)],
         date_range=['2023-10-01', '2023-10-05'],
         options={'dataset_id': 'NCEP_CFSv2', 'variables': ['U_GRD_L103', 'V_GRD_L103'], 'interpolation': 'nearest'}
     )
@@ -121,8 +123,8 @@ if __name__ == "__main__":
         print(entry)
 
     # Find specific downloads
-    print("\nFinding downloads for lat=55.1:")
-    for entry in history_manager.find_downloads(lat=55.1):
+    print("\nFinding downloads for coords containing (55.1, 19.8):")
+    for entry in history_manager.find_downloads(coords=[(55.1, 19.8)]):
         print(entry)
 
     print("\nFinding downloads for dir_save=D:\\WorkData\\BalticSea\\test_downloads\\ncep_data:")

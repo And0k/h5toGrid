@@ -1,93 +1,179 @@
 # Data Downloading Scripts
 
-This directory contains Python scripts designed for downloading various types of environmental data from different sources, including Copernicus Marine Service (CMEMS) and ECMWF ERA5 reanalysis.
+Scripts designed for downloading various types of environmental data from different sources, including Copernicus Marine Service (CMEMS) and ECMWF ERA5 reanalysis. The scripts utilize the Hydra configuration framework for flexible parameter management. The logging history and parameters of the download attempt (success or failure) is managed by `DownloadHistoryManager`.
 
-Note: some more structured and modular downloading scripts are in `with_manager` directory. That scripts utilize the Hydra configuration framework for flexible parameter management, they includes `DownloadHistoryManager` for managing the logging history and parameters of the download attempt (see `with_manager/README.md` for more details).
+The main functionality has been unified into a single `download_copernicus.py` script that can handle both point and region downloads based on configuration. It also supports GPX file input for multiple coordinate points.
 
-## Utility Functions in `utils.py`
+### Configuration Structure
 
-*   **`utils.py`**: This module provides a collection of core utility functions used by multiple downloading scripts. These include:
-    *   `safe_netcdf_atomic()`: Safely saves NetCDF files with atomic overwrite.
-    *   `extract_zip_to_named_dir()`: Extracts ZIP archives into a directory named after the archive.
-    *   `h5_format()`: Formats and adds metadata to HDF5/NetCDF files.
-    *   `grid_aligned_bbox()`: Generates ECMWF-style bounding boxes aligned to the ERA5 grid.
-    *   `is_angular()`: Checks if a variable is angular based on its units.
-    *   `interp_angle()`: Interpolates angular data (e.g., wind direction).
-    *   `interp_to_point()`: Interpolates gridded data to a specific geographical point.
-    *   `ReverseTxt`: A utility class for reading text files in reverse.
+Hydra allows you define your download tasks in dedicated YAML configuration files in the `cfg/` directory. The core idea is to separate general settings from project-specific ones:
 
+*   **`cfg/base.yaml`**: Contains general settings applicable across all downloading tasks, such as the base directory for saving downloaded data (`base.local_path`) and the path to the download history file (`base.history_file`).
+*   **`cfg/copernicus.yaml`**: Defines configurations specific to Copernicus Marine Service data downloads. It now includes a `defaults` section that allows composing project-specific configurations from the `projects/` subdirectory.
+*   **`cfg/projects/` Directory**: This is where you define individual download projects. Each project gets its own subdirectory (e.g., `cfg/projects/kulikovo/`, `cfg/projects/mariculture_1/`).
+    *   Within each project subdirectory, you create YAML files named after the type of download (e.g., `point_wind.yaml`, `region.yaml`). These files contain the specific parameters for that project and download type.
+    *   **Example Project Structure**:
+        ```
+        cfg/
+        ├── base.yaml
+        ├── copernicus.yaml
+        └── projects/
+            ├── kulikovo/
+            │   └── point_wind.yaml
+            ├── abp56/
+            │   └── point_wind.yaml
+            ├── mariculture_1/
+            │   └── region.yaml
+            └── ...
+        ```
+    *   **Content of Project YAMLs**: Each project YAML file should start with `# @package projects.<project_name>` to ensure its content is composed correctly under the `projects` key in the final configuration. The parameters within these files directly define the settings for the specific download type (e.g., `point_wind` or `region`).
+
+### Organizing Your Settings
+
+To define a new download task:
+1.  Create a new subdirectory under `cfg/projects/` for your project (e.g., `cfg/projects/my_new_project/`).
+2.  Inside your project directory, create a YAML file corresponding to the script you want to use (e.g., `point_wind.yaml` for `download_copernicus_point.py`, or `region.yaml` for `download_copernicus_region.py`).
+3.  Populate this YAML file with the necessary parameters for your download, following the structure defined in the respective script's `main` function. Remember to add `# @package projects.<your_project_name>` at the top of the file.
+
+## Running Scripts
+
+You specify which project configuration to load using command-line overrides.
+
+### Single Project Execution
+
+To run a script for a specific project, use the `projects=<project_name>/<config_type>` override with the unified script:
+
+    ```bash
+    pixi run python -m get_datasets.download_copernicus projects=abp56_tchain/point
+    ```
+
+*   **For point-based downl-oads** (formerly `download_copernicus_point.py`):
+    ```bash
+    python download_copernicus.py projects=kulikovo/point_wind
+    ```
+    or
+    ```bash
+    python download_copernicus.py projects=abp56/point_wind
+    ```
+
+*   **For region-based downloads** (formerly `download_copernicus_region.py`):
+    ```bash
+    python download_copernicus.py projects=mariculture_1/region
+    ```
+    (Replace `mariculture_1` with `mariculture_2`, `mariculture_3`, `abp56_tchain`, or `inflow` for other region projects.)
+
+### Multi-run Execution (for testing or batch processing)
+
+Hydra's multi-run feature allows you to run a script multiple times with different configurations. This is particularly useful for testing all defined projects or performing batch downloads.
+
+To run all `point_wind` projects:
+```bash
+python download_copernicus.py --multirun projects=kulikovo/point_wind,abp56/point_wind
+```
+
+To run all `region` projects:
+```bash
+python download_copernicus.py --multirun projects=mariculture_1/region,mariculture_2/region,mariculture_3/region,abp56_tchain/region,inflow/region
+```
+
+## Architecture Overview
+
+The downloading system is organized around a centralized configuration managed by Hydra, and a set of specialized Python scripts for each data source. Common utilities are consolidated to promote code reuse and maintainability.
+
+*   **`cfg/` Directory**: This directory holds all the YAML configuration files for the downloading scripts.
+    *   `base.yaml`: Contains general settings applicable across all downloading tasks.
+    *   `copernicus.yaml`: Defines general Copernicus-specific configurations and acts as a composer for project-specific configurations.
+    *   `projects/`: Contains subdirectories for each defined download project, with project-specific configuration files (e.g., `kulikovo/point_wind.yaml`).
+    *   `ncep.yaml`: Contains configurations for NCEP CFSv2 reanalysis data downloads.  (not used, todo: implement)
+    *   `ecmwf.yaml`: Stores configurations for ECMWF ERA5 data downloads.  (not used, todo: implement)
+
+
+
+*   **`manager.py`**: Manages the logging and retrieval of download history, ensuring that successful and failed download attempts are recorded.
+
+*   **Download Scripts**: Each script is responsible for interacting with a specific data source or performing a specific type of download. They leverage Hydra for configuration and the `utils.py` module for common data handling tasks.
 
 ## Scripts Description
 
-### `download_copernicus_points.py`
+### `download_copernicus_point.py`
 
-*   **Purpose**: Downloads CMEMS data for multiple predefined geographical points and datasets using the `copernicusmarine` API. This script is designed for batch downloading of point-specific time series data.
+*   **Purpose**: Downloads CMEMS wind data for a small region around a specified point and then interpolates the data to the exact point. This is useful for obtaining time series data at precise locations.
 *   **Workflow**:
-    1.  Loads dataset IDs, variables, and a list of target points from the Hydra configuration.
-    2.  Iterates through each dataset and each point.
-    3.  For each combination, it calls the `copernicusmarine.subset()` function to download data for the single point.
-    4.  Handles potential API errors (e.g., `requests.exceptions.JSONDecodeError`).
+    1.  Loads configuration from Hydra, including dataset ID, variables, and interpolation delta.
+    2.  Defines a bounding box around the target latitude and longitude using the `interpolation_delta`.
+    3.  Uses the `copernicusmarine` library to download the regional subset of data.
+    4.  Interpolates the downloaded gridded data to the exact target point using `utils.interp_to_point()`.
+    5.  Saves the interpolated data as a NetCDF file.
+    6.  Logs the download and interpolation process.
 *   **Execution**:
     ```bash
-    python scripts/downloading/download_copernicus_points.py
+    python download_copernicus_point.py projects=<project_name>/point_wind
     ```
-    Configuration parameters are loaded from `scripts/downloading/cfg/copernicus.yaml` under the `copernicus.point_wind` (for points and variables) and `copernicus.region` (for general settings like depth, compression) sections.
-*   **Expected Output**: Multiple NetCDF files, each containing data for a specific point and dataset, saved in the configured output directory.
+    (e.g., `projects=kulikovo/point_wind` or `projects=abp56/point_wind`)
+*   **Expected Output**: A NetCDF file containing interpolated wind data for the specified point in the designated output directory (e.g., `data/downloaded/CMEMS_Wind_Kulikovo/`), and history logs.
 
 
-### `download_ecmwf.py`
 
-*   **Purpose**: Downloads ERA5 reanalysis data from the ECMWF Climate Data Store (CDS) using the `cdsapi` library. It supports downloading various meteorological and wave parameters for a specified area and time range.
+### `download_copernicus_region.py`
+
+*   **Purpose**: Downloads CMEMS data for a specified geographical region using the `copernicusmarine` API. This script is ideal for retrieving gridded data over a larger area.
 *   **Workflow**:
-    1.  Loads configuration from Hydra, including dataset, variables, product types, and geographical/temporal settings.
-    2.  Determines the output directory and filename based on configuration.
-    3.  Checks for existing downloaded files to avoid re-downloading.
-    4.  Groups variables by their typical spatial resolution (e.g., 0.25x0.25 degrees for atmospheric, 0.5x0.5 degrees for wave data).
-    5.  Uses `cdsapi.Client` to retrieve data from the CDS, handling different resolutions and potential proxy settings.
-    6.  Extracts data from downloaded ZIP archives (if `download_format` is `zip`).
-    7.  Formats the downloaded NetCDF files using `utils.h5_format()`.
-    8.  Optionally converts NetCDF files to CSV using `netcdf2csv.py`.
-    9.  Interpolates the gridded data to a specific point using `utils.interp_to_point()`.
+    1.  Loads dataset IDs, variables, bounding box coordinates, date range, and depth parameters from the Hydra configuration.
+    2.  Calls the `copernicusmarine.subset()` function to download the regional data.
+    3.  Handles potential API errors.
 *   **Execution**:
     ```bash
-    python scripts/downloading/download_ecmwf.py
+    python download_copernicus_region.py projects=<project_name>/region
     ```
-    Configuration parameters are loaded from `scripts/downloading/cfg/ecmwf.yaml` and `base.yaml`.
-*   **Expected Output**: Downloaded NetCDF files (and optionally CSV files) in the specified output directory (e.g., `data/downloaded/ECMWF/`), containing ERA5 reanalysis data.
+    (e.g., `projects=mariculture_1/region` or `projects=inflow/region`)
+*   **Expected Output**: NetCDF files containing gridded data for the specified region, saved in the configured output directory.
 
-### `download_ncep.py`
+### `download_copernicus_ftp.py`
 
-*   **Purpose**: Downloads NCEP CFSv2 reanalysis wind data via OPeNDAP from the APDRC server. It can download data for a specific point or a region and handles time encoding for NetCDF saving.
+*   **Purpose**: Downloads Copernicus Marine Service (CMEMS) data via FTP. This script is suitable for retrieving large datasets or specific collections that are available through the CMEMS FTP service.
 *   **Workflow**:
-    1.  Loads configuration from Hydra, including the base OPeNDAP URL, variables, and geographical/temporal settings.
-    2.  Determines the output file path and checks for existing matching files.
-    3.  Constructs OPeNDAP URLs for the requested variables and date range.
-    4.  Uses `xarray.open_mfdataset()` with a `preprocess` function to subset data in time and space efficiently.
-    5.  Selects the nearest grid points (1 or 4) to the target location.
-    6.  Saves the processed dataset to a NetCDF file, handling time encoding to ensure compatibility.
-    7.  Optionally loads and joins split NCEP files from a local directory.
-    8.  Interpolates the data to a specific point using `utils.interp_to_point()`.
+    1.  Retrieves CMEMS credentials from Hydra configuration.
+    2.  Downloads index files from the CMEMS FTP server to identify available data.
+    3.  Reads and merges information from the index files.
+    4.  Filters the available data based on specified spatial (bounding box) and temporal (date range) criteria, and optionally by parameters.
+    5.  Downloads the selected NetCDF files from the FTP server.
 *   **Execution**:
     ```bash
-    python scripts/downloading/download_ncep.py
+    python download_copernicus_ftp.py
     ```
-    Configuration parameters are loaded from `scripts/downloading/cfg/ncep.yaml` and `base.yaml`.
-*   **Expected Output**: Downloaded and processed NetCDF files in the specified output directory (e.g., `data/downloaded/NCEP_CFSv2/`), containing NCEP CFSv2 wind reanalysis data.
+    Configuration parameters are loaded from `cfg/copernicus.yaml` under the `copernicus.ftp` section.
+*   **Expected Output**: Downloaded NetCDF files in the specified local directory (e.g., `data/downloaded/CMEMS_FTP_Data/`), and log entries in the download history file.
 
-### `netcdf2csv.py`
 
-*   **Purpose**: A standalone utility script to convert NetCDF files (specifically those downloaded from ECMWF) into CSV format. It supports different output methods based on how the data should be structured in the CSV.
-*   **Workflow**:
-    1.  Opens a NetCDF file using `netCDF4.Dataset`.
-    2.  Extracts time, latitude, longitude, and specified variables.
-    3.  Converts the data into a pandas DataFrame.
-    4.  Saves the DataFrame to a CSV file using one of three methods:
-        *   `file_for_each_time`: Creates a separate CSV file for each time step.
-        *   `one_file`: Creates a single CSV file with time, lat, lon, and all variable values.
-        *   `file_for_each_coord`: Creates a separate CSV file for each geographical coordinate, containing time series data for all variables at that point.
-*   **Execution**:
-    ```bash
-    python scripts/downloading/netcdf2csv.py --file_path <path_to_netcdf_file> [options]'
-    ```
-    This script is typically called internally by `download_ecmwf.py` but can be run independently.
-*   **Expected Output**: One or more CSV files containing the converted data, depending on the chosen method.
+## Utility Functions in `utils.py`
+
+Detailed descriptions of functions in `utils.py` in directory above are provided in the Readme in that dir.
+
+## Running Tests
+
+To run the tests for the downloading scripts, you can use pytest:
+
+```bash
+cd scripts/downloading/with_manager
+pytest test/
+```
+
+This will run all the tests in the `test/` directory. The tests will:
+
+1. Set up a clean test environment for each test function
+2. Run the download scripts with different project configurations
+3. Verify that the download history is correctly recorded
+4. Check that the expected NetCDF files are created
+
+You can also run individual test files:
+
+```bash
+pytest test/test_download_copernicus_point.py
+pytest test/test_download_copernicus_region.py
+```
+
+Or run a specific test function:
+
+```bash
+pytest test/test_download_copernicus_point.py::test_point_wind_kulikovo
+```

@@ -51,7 +51,7 @@ def main(cfg: DictConfig):
 
     # The specific project configuration is now composed by Hydra
     # and available directly under cfg.copernicus.region
-    dir_save = Path(cfg.base.local_path) / cfg.copernicus.region.dir_suffix
+    dir_save = Path(cfg.base.local_path) / cfg.copernicus.region.dir_save
     date_range = cfg.copernicus.region.date_range
     bbox = cfg.copernicus.region.bbox
     dataset_vars = cfg.copernicus.region.dataset_vars
@@ -96,8 +96,10 @@ def main(cfg: DictConfig):
                 l.info(f"Downloaded {dataset} to {p}")
                 history_manager.log_download(
                     dir_save=dir_save,
-                    lat=(bbox.lat_min + bbox.lat_max) / 2, # Representative latitude
-                    lon=(bbox.lon_min + bbox.lon_max) / 2, # Representative longitude
+                    coords=[
+                        (bbox.lat_min, bbox.lon_min),
+                        (bbox.lat_max, bbox.lon_max)
+                    ],
                     date_range=date_range,
                     options={**subset_params, 'bbox': OmegaConf.to_container(bbox), 'status': 'success'}
                 )
@@ -105,8 +107,10 @@ def main(cfg: DictConfig):
                 l.warning(f"Skipping CMEMS download for {dataset}: copernicusmarine library not available.")
                 history_manager.log_download(
                     dir_save=dir_save,
-                    lat=(bbox.lat_min + bbox.lat_max) / 2, # Representative latitude
-                    lon=(bbox.lon_min + bbox.lon_max) / 2, # Representative longitude
+                    coords=[
+                        (bbox.lat_min, bbox.lon_min),
+                        (bbox.lat_max, bbox.lon_max)
+                    ],
                     date_range=date_range,
                     options={**subset_params, 'bbox': OmegaConf.to_container(bbox), 'status': 'skipped', 'reason': 'copernicusmarine library not available'}
                 )
@@ -116,8 +120,10 @@ def main(cfg: DictConfig):
             l.error(f"JSONDecodeError during download for {dataset}: {e}")
             history_manager.log_download(
                 dir_save=dir_save,
-                lat=(bbox.lat_min + bbox.lat_max) / 2, # Representative latitude
-                lon=(bbox.lon_min + bbox.lon_max) / 2, # Representative longitude
+                coords=[
+                    (bbox.lat_min, bbox.lon_min),
+                    (bbox.lat_max, bbox.lon_max)
+                ],
                 date_range=date_range,
                 options={**subset_params, 'bbox': OmegaConf.to_container(bbox), 'status': 'failed', 'error': str(e)}
             )
@@ -125,8 +131,10 @@ def main(cfg: DictConfig):
             l.error(f"Error during download for {dataset}: {e}")
             history_manager.log_download(
                 dir_save=dir_save,
-                lat=(bbox.lat_min + bbox.lat_max) / 2, # Representative latitude
-                lon=(bbox.lon_min + bbox.lon_max) / 2, # Representative longitude
+                coords=[
+                    (bbox.lat_min, bbox.lon_min),
+                    (bbox.lat_max, bbox.lon_max)
+                ],
                 date_range=date_range,
                 options={**subset_params, 'bbox': OmegaConf.to_container(bbox), 'status': 'failed', 'error': str(e)}
             )

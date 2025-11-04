@@ -179,7 +179,7 @@ def download_copernicus_ftp_data(
     # For this task, we'll assume they are handled by the environment or a default.
 
     dataset_info = cfg.copernicus.ftp.dataset_info
-    targeted_bbox = cfg.copernicus.ftp.default_bbox
+    targeted_bbox = cfg.copernicus.ftp.bbox
     targeted_date_range_str = cfg.copernicus.ftp.default_date_range
     targeted_collection = cfg.copernicus.ftp.default_collection
     parameters_filter = list(cfg.copernicus.ftp.parameters_filter) if cfg.copernicus.ftp.parameters_filter else None
@@ -260,8 +260,10 @@ def main(cfg: DictConfig):
             if download_opts is not None: # Ensure download_opts is not None
                 history_manager.log_download(
                     dir_save=download_dir,
-                    lat=f"[{download_opts['targeted_bbox']['lat_min']}-{download_opts['targeted_bbox']['lat_max']}]",
-                    lon=f"[{download_opts['targeted_bbox']['lon_min']}-{download_opts['targeted_bbox']['lon_max']}]",
+                    coords=[
+                        (download_opts['targeted_bbox']['lat_min'], download_opts['targeted_bbox']['lon_min']),
+                        (download_opts['targeted_bbox']['lat_max'], download_opts['targeted_bbox']['lon_max'])
+                    ],
                     date_range=download_opts['targeted_date_range_str'],
                     options=download_opts
                 )
@@ -269,8 +271,7 @@ def main(cfg: DictConfig):
                 l.info("No data downloaded for the specified criteria (download_opts was None).")
                 history_manager.log_download(
                     dir_save=local_save_path,
-                    lat="N/A",
-                    lon="N/A",
+                    coords=[],
                     date_range=["N/A"],
                     options={'status': 'no_data_found'}
                 )
@@ -278,8 +279,7 @@ def main(cfg: DictConfig):
             l.info("No data downloaded for the specified criteria.")
             history_manager.log_download(
                 dir_save=local_save_path,
-                lat="N/A",
-                lon="N/A",
+                coords=[],
                 date_range=["N/A"],
                 options={'status': 'no_data_found'}
             )
@@ -287,8 +287,7 @@ def main(cfg: DictConfig):
         l.error(f"Failed to download Copernicus FTP data: {e}")
         history_manager.log_download(
             dir_save=local_save_path,
-            lat="N/A",
-            lon="N/A",
+            coords=[],
             date_range=["N/A"],
             options={'status': 'failed', 'error': str(e)}
         )

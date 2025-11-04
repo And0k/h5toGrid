@@ -1,7 +1,7 @@
 # @package projects.abp60_tchain
 
 # Configuration for CMEMS Wind ABP60 (t-chain)  project
-dir_suffix: "250415_ABP60@i,t-chain"
+dir_save: "250415_ABP60@i,t-chain"
 lat: 55.16547
 lon: 20.59055
 date_range: ["2025-04-26", "2025-05-29"]

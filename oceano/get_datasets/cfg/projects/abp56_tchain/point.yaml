@@ -1,0 +1,15 @@
+# @package projects.abp56_tchain
+
+# Configuration for CMEMS Point ABP56 (t-chain) project with GPX input
+dir_save: "240616_ABP56(t-chain)_points"
+date_range: ["2024-06-25", "2024-09-05"]
+points: []  # Will be populated from GPX file when gpx_path is provided
+gpx_path: "tests/test_data/points_85m_for_cmems.gpx"
+dataset_vars:
+  cmems_mod_bal_phy_anfc_PT1H-i: ["thetao", "so", "sob"]
+  cmems_mod_bal_bgc_anfc_P1D-m: ["o2", "o2b"]
+  # cmems_mod_bal_bgc_my_P1D-m: ["o2", "o2b"]  # not available for these dates yet: last date = 2023-12-31
+
+depth_min: 0.5016462206840515  # dataset minimum
+depth_max: 100
+interpolation_delta: 0  # Set 0.03 to be > ~2km (resolution of CMEMS datasets) to able to interpolate exactly

@@ -36,7 +36,7 @@ def extract_error_from_xml(xml_string):
 dir_save = (
 
     # r"D:\WorkData\BalticSea\CMEMS\150101_Mariculture\2024-12-01 - 2025-03-25"
-    # r"B:\WorkData\BalticSea\240625_ABP56-incl,t-chain\meteo\CMEMS"
+    # r"B:\WorkData\BalticSea\240616_ABP56@i,t-chain\meteo\CMEMS"
     # r"d:\workData\BalticSea\_other_data\_model\NEMO@CMEMS\section_z\231220_inflow\230901-240630_LatLon=(55.383,15.099)(time)"
 )
 
@@ -116,7 +116,7 @@ for i, (dataset, vars) in enumerate(dataset_vars.items(), start=1):
     }
     if vars == 'deptho':
         params["force_dataset_part"] = "bathy"
-        del params['start_datetime']
+        del params['start_datetime']  # depth not depends on time
         del params['end_datetime']
 
     for ip, (lat, lon) in enumerate(points, start=1):

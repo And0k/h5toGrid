@@ -18,6 +18,7 @@ from typing import (
     Union,
     TypeVar,
 )
+import xml.etree.ElementTree as ET
 import numpy as np
 import xarray as xr
 from zipfile import ZipFile
@@ -41,7 +42,7 @@ def safe_netcdf_atomic(ds, path: Path, format="NETCDF4_CLASSIC", engine="netcdf4
         tmp_path = tmp.name
         ds.to_netcdf(tmp_path, mode="w", format=format, engine=engine, **kwargs)
     os.replace(tmp_path, path)  # atomic overwrite, same disk only
-    os.remove(tmp_path)
+    # os.remove(tmp_path)  # replace removes
 
 def is_angular(var: xr.DataArray) -> bool:
     """
@@ -60,8 +61,16 @@ def interp_angle(da, new_coords, method="linear"):
     :param method: метод интерполяции
     :return: _description_
     """
-    assert all([da[var].attrs.get("units", "").lower().startswith("degree") for var in da.data_vars])
-    assert da.attrs.get("units", "").lower().startswith("degree"), "Input DataArray must have angular units (e.g., 'degrees')."
+    # Check if all variables in the dataset have angular units
+    for var in da.data_vars:
+        units = da[var].attrs.get("units", "").lower()
+        if not any(x in units for x in ["degree", "degrees_east", "degrees_north"]):
+            l.warning(f"Variable {var} does not have angular units ({units}), skipping angular interpolation")
+            return da  # Return the original data if not all variables are angular
+    # Only proceed if there are variables to interpolate and they are all angular
+    if len(da.data_vars) == 0:
+        # If no variables, return as is
+        return da
     # Преобразуем углы в радианы
     radians = np.deg2rad(da)
     # Представляем как комплексные числа на единичной окружности
@@ -79,7 +88,7 @@ def interp_angle(da, new_coords, method="linear"):
 
 def interp_to_point(path_loaded: str, lat: float, lon: float, backend="h5netcdf") -> None:
     """
-    Interpolate the data to the point (lat, lon) and save to "NETCDF4_CLASSIC" format file having same 
+    Interpolate the data to the point (lat, lon) and save to "NETCDF4_CLASSIC" format file having same
     NetCDF settings (supported subset) under same name in which old coordinates replaced to
     "-to_{new coordinates}"
     :param path_loaded: str or Path object of the original NetCDF file.
@@ -90,12 +99,12 @@ def interp_to_point(path_loaded: str, lat: float, lon: float, backend="h5netcdf"
     # check data
     def is_between(p, less, bigger):
         return (less < p) & (p < bigger)
-    
+
     # possible coordinate names
     coord_names_options = [["lat", "latitude"], ["lon", "longitude"]]
-    
+
     target_coords = [lat, lon]
-    
+
     new_coords: Dict[str, float] = {}
     with xr.open_dataset(path_loaded, engine=backend) as ds:
         # Creating dict with the actual coordinate names in the dataset
@@ -128,7 +137,7 @@ def interp_to_point(path_loaded: str, lat: float, lon: float, backend="h5netcdf"
 
     # Merge the results
     if not ds_to_merge:
-         raise ValueError("No variables found to interpolate or merge.")
+        raise ValueError("No variables found to interpolate or merge.")
     ds_interp = xr.merge(ds_to_merge)
 
     # Save
@@ -151,7 +160,7 @@ def interp_to_point(path_loaded: str, lat: float, lon: float, backend="h5netcdf"
     }
     # Attempt to save using NETCDF4_CLASSIC format with careful encoding
     try:
-      
+
         safe_netcdf_atomic(ds_interp, path_new, encoding=encoding)
         return path_new
     except ValueError as e:
@@ -185,6 +194,14 @@ def extract_zip_to_named_dir(zip_path: str | Path, target_dir=None, dry_run=Fals
 
 
 def h5_format(file: Union[str, Path, List[Union[str, Path]]], backend="h5netcdf", **meta: Mapping[str, Any]):
+    """
+    Format and add metadata to HDF5/NetCDF files. If input file is .grib file then writes to .nc file, if
+    input file is .nc, then overwrites input file
+
+    :param file: NetCDF or .grib file path or list of such files paths
+    :param **meta: {attribute_name: value} metadata to add to netcdf file (i.e. to dataset)
+    :param backend: _description_, defaults to "h5netcdf"
+    """
     files = [Path(file)] if isinstance(file, (Path, str)) else [Path(f) for f in file]
     done = False
     for file_path in files:
@@ -326,3 +343,49 @@ class ReverseTxt(IOBase):
             file.seek(here, os.SEEK_SET)
             self.current_position = file.tell()
             yield file.read(delta)
+
+
+def extract_coordinates_from_gpx(gpx_path: Path, waypoints_re: str = None) -> Optional[Dict[str, Dict[str, float]]]:
+    """Extract coordinates from a .gpx file.
+
+    Args:
+        gpx_path: Path to .gpx file
+        waypoints_re: Regular expression to filter waypoints by name
+
+    Returns:
+        Dict of {waypoint_name: {"lat": lat, "lon": lon}} or None if no coordinates found
+    """
+    l.info(f"Extracting coordinates from {gpx_path}")
+    # Define namespace
+    ns = {"gpx": "http://www.topografix.com/GPX/1/1"}
+
+    points = {}
+    try:
+        tree = ET.parse(gpx_path)
+        root = tree.getroot()
+
+        # Try to find waypoints first
+        waypoints = root.findall(".//gpx:wpt", ns)
+        for waypoint in waypoints:
+            # Get the name of the waypoint if it exists
+            name_elem = waypoint.find("gpx:name", ns)
+            waypoint_name = name_elem.text if name_elem is not None else f"waypoint_{len(points)}"
+
+            # If waypoints_re is provided, check if the waypoint name matches the pattern
+            if waypoints_re and not re.match(waypoints_re, waypoint_name):
+                continue
+            lat = float(waypoint.get("lat"))
+            lon = float(waypoint.get("lon"))
+            points[waypoint_name] = {"lat": lat, "lon": lon}
+            l.debug(f"Found coordinates in waypoint {waypoint_name}: lat={lat}, lon={lon}")
+
+        # Check if any coordinates were found
+        if not points:
+            l.warning(f"No waypoints found in {gpx_path} matching pattern {waypoints_re}")
+            return None
+
+        l.debug(f"Successfully read {len(points)} waypoints from {gpx_path}")
+        return points
+    except Exception as e:
+        l.error(f"Error reading {gpx_path}: {e}")
+        return None
