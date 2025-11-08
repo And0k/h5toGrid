@@ -31,10 +31,10 @@ from utils.init import standard_error_info
 
 # ##############################################################################
 startSectionN = 1  # 1 Debug: skipped sections!!!!
-db_path = r'd:\WorkData\BlackSea\220920\220920.h5'
+db_path = r'D:\Cruises\BlackSea\220920\220920.h5'
 
-# r'd:\WorkData\BlackSea\220620\220620.h5'
-# r'd:\WorkData\BlackSea\200909_Ashamba\200909_Ashamba.h5'
+# r'D:\Cruises\BlackSea\220620\220620.h5'
+# r'D:\Cruises\BlackSea\200909_Ashamba\200909_Ashamba.h5'
 params = [u'Temp', u'Sal', u'SigmaTh']  # , u'O2', u'pH', u'Eh', u'ChlA', u'Turb'
 pst = 5
 pen = 80

@@ -1,7 +1,7 @@
 """
 Renames files with specified extensions to format that can include 1st date extracted from specified text files
 Run example:
-python filerename2datadate.py d:\\WorkData\\BalticSea\\230507_ABP53\\CTD_SST_CTD90\\_raw\\*.tob {path}|*.SRD|*.vsz
+python filerename2datadate.py D:\\Cruises\\BalticSea\\230507_ABP53\\CTD_SST_CTD90\\_raw\\*.tob {path}|*.SRD|*.vsz
 
 Andrey Korzh, 23.05.2023
 """

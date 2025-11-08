@@ -14,7 +14,7 @@ from utils.grid2d_vsz import main as grid2d_vsz
 
 # ---------------------------------------------------------------------------------------------
 device = 'CTD_SST_48Mc#1253'
-path_cruise = Path(r'd:\workData\BlackSea\190914')
+path_cruise = Path(r'D:\Cruises\BlackSea\190914')
 path_db = path_cruise / path_cruise.with_suffix('.h5').name  # same name as dir
 device_veusz_prefix = 'ss_'
 go = True  # False #

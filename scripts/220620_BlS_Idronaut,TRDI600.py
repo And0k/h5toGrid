@@ -20,7 +20,7 @@ st.go = True   # False #
 st.start = 70   # 1 5 30 70 80 115
 st.end = 50    # 60 80 120
 
-path_cruise = Path(r'd:\WorkData\BlackSea\220620')
+path_cruise = Path(r'D:\Cruises\BlackSea\220620')
 path_db = (path_cruise / path_cruise.name).with_suffix('.h5')  # same name as dir
 
 # Stop before steps that need a manual prepare (70) i.e. set end < 70 at first

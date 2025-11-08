@@ -441,7 +441,7 @@ if __name__ == '__main__':
 
 # trash
 """
-with pd.HDFStore('d:\\WorkData\\BalticSea\\171003_ANS36\\171003Strahov_not_sorted.h5', mode='r') as store:
+with pd.HDFStore('D:\\Cruises\\BalticSea\\171003_ANS36\\171003Strahov_not_sorted.h5', mode='r') as store:
     print(repr(store.get_storer('/navigation/sectionsBaklan_d100_routes').table))
     print(repr(store['/navigation/sectionsBaklan_d100_routes'].index))
 

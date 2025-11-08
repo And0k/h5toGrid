@@ -56,7 +56,7 @@ if __name__ == "__main__":
         # r'd:\WorkData\BalticSea\_Pregolya,Lagoon\231208@i19,ip5,6\meteo', 54.64485, 21.07382, ['2023-10-01', '2023-12-01']
         # r'd:\WorkData\BalticSea\231121_ABP54\meteo\ECMWF', 55.00100, 20.29770, ['2023-11-01', '2023-12-15']
         # r'd:\WorkData\BalticSea\220505_D6\meteo\ECMWF', 55.3266, 20.5789, ['2022-05-01', '2022-05-31']
-        r"B:\WorkData\BalticSea\230825_Kulikovo@ADCP,ADV,i,tr\meteo\ECMWF",
+        r"D:\Cruises\BalticSea\230825_Kulikovo@ADCP,ADV,i,tr\meteo\ECMWF",
         54.99,
         20.3,
         ["2023-08-25", "2023-09-10"],

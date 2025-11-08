@@ -659,7 +659,10 @@ def create_interpolator(time: np.ndarray, y, Z, x_scaler, method="LinearND"):
     return nc_interpolator, meta
 
 
-def isort_points_in_circle(points: Sequence[Tuple[float, float]], f_istart_point=None, b_clockwise=True):
+def isort_points_in_circle(
+    points: Sequence[Tuple[float, float]], f_istart_point: Optional[Callable[[np.ndarray], int]] = None,
+    b_clockwise=True
+):
     """
     Sorts points to minimize path length using nearest-neighbor algorithm.
 
@@ -886,17 +889,17 @@ if __name__ == "__main__":
 
     # %% t-chain
 
-    path_cruise = Path(r"F:\WorkData\BalticSea\240616_ABP56@i,t-chain")
+    path_cruise = Path(r"D:\Cruises\BalticSea\240616_ABP56@i,t-chain")
     path_save = path_cruise / "_post_proc=o2_from_t"
 
     # t-chain  temperature time section
     path_section_t_chain = Path(
-        r"F:\WorkData\BalticSea\240616_ABP56@i,t-chain\t-chain\text_output.7z\text_output\240625@TCm1,2.csv"
+        r"D:\Cruises\BalticSea\240616_ABP56@i,t-chain\t-chain\text_output.7z\text_output\240625@TCm1,2.csv"
     )
 
     # CMEMS data directories (can be used to construct relative paths)
 
-    # cmems_root_dir = Path(r"f:\WorkData\BalticSea\CMEMS")
+    # cmems_root_dir = Path(r"D:\WorkData\CMEMS")
     # cmems_project_dir = cmems_root_dir / "240616_ABP56(t-chain)"
 
     # dir for pure CMEMS processing outputs (same name as parent to fast copy and publish)
@@ -905,10 +908,10 @@ if __name__ == "__main__":
 
     # CMEMS netCDF4 files with temperature time section
     dir_cmems_point_time_sections = Path(  # (project_dir.glob(path_cruise.name.split("@")[0]))
-        r"F:\WorkData\BalticSea\CMEMS\240616_ABP56(t-chain)\2024-06-25..09-05\(0.50-91.31m)points_of_~same_depth(so,sob,thetao;o2,o2b)@cmems_mod_bal"
+        r"D:\WorkData\CMEMS\240616_ABP56(t-chain)\2024-06-25..09-05\(0.50-91.31m)points_of_~same_depth(so,sob,thetao;o2,o2b)@cmems_mod_bal"
     )
     cmems_filename_glob = "phy_anfc_PT1H-i_thetao-so-sob_*"
-    # r"F:\WorkData\BalticSea\CMEMS\240616_ABP56(t-chain)\240616_ABP56(t-chain)\so,sob,thetao,V,wo(time,depth)\1_240625_0000_thetao.nc"
+    # r"D:\WorkData\CMEMS\240616_ABP56(t-chain)\240616_ABP56(t-chain)\so,sob,thetao,V,wo(time,depth)\1_240625_0000_thetao.nc"
 
 
     # Define constants for column names
@@ -967,11 +970,19 @@ if __name__ == "__main__":
     # Sort points
     path_cmems_point_time_sections = list(dir_cmems_point_time_sections.glob(cmems_filename_glob))
     points_lon_lat = [lat_lon_from_cmems_nc_filestem(p.stem)[::-1] for p in path_cmems_point_time_sections]
-    ipoints = isort_points_in_circle(points_lon_lat, b_clockwise=False)
+    ipoints = isort_points_in_circle(
+        points_lon_lat,
+        b_clockwise=False,
+        f_istart_point=lambda lonlat: np.argmin(np.linalg.norm(lonlat - [19.58, 54.74], axis=1)),
+    )
     path_cmems_point_time_sections = [path_cmems_point_time_sections[i] for i in ipoints]
 
     # Process time sections for all points
     for i1point, path_section in enumerate(path_cmems_point_time_sections, start=1):
+        # Skip untill new files
+        if i1point < 7:
+            continue
+
         # Open netCDF4 file
         time_nc, y_nc, z_nc, meta = nc_load(path_section, variables)
 

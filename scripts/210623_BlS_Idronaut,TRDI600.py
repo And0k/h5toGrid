@@ -21,7 +21,7 @@ st.go = True   # False #
 st.start = 80  # 1 5 30 70 80 115
 st.end = 290    # 60 80 120
 
-path_cruise = Path(r'd:\WorkData\BlackSea\210623')
+path_cruise = Path(r'D:\Cruises\BlackSea\210623')
 path_db = (path_cruise / path_cruise.name).with_suffix('.h5')  # same name as dir
 
 # Stop before steps that need a manual prepare (70) i.e. set end < 70 at first
@@ -34,9 +34,9 @@ if st(1, 'Save gpx navigation to DB'):
     # Save navigation to DB
     path_raw_pattern = str(path_cruise / r'_raw\{}\navigation\NMEA@ADCP\*000n.0*')
     for str_path_raw in (
-            [r'd:\WorkData\BlackSea\210623\_raw\210623\navigation\NMEA\210623bat.txt'] +
-            [r'd:\WorkData\BlackSea\210623\_raw\210623\navigation\NMEA_time_stamped\210623bat1.txt'] +
-            [r'd:\WorkData\BlackSea\210623\_raw\210624\navigation\NMEA_time_stamped\210624bat.txt'] +
+            [r'D:\Cruises\BlackSea\210623\_raw\210623\navigation\NMEA\210623bat.txt'] +
+            [r'D:\Cruises\BlackSea\210623\_raw\210623\navigation\NMEA_time_stamped\210623bat1.txt'] +
+            [r'D:\Cruises\BlackSea\210623\_raw\210624\navigation\NMEA_time_stamped\210624bat.txt'] +
             [path_raw_pattern.format(f) for f in raw_subdirs]
         ):
         cfg_d.main_call([
@@ -89,7 +89,7 @@ if st(10, f'Save {device} data to DB'):
     for folder in raw_subdirs:
         csv2h5([
             'cfg/csv_CTD_Idronaut.ini',
-                       # d:\WorkData\BlackSea\210623\_raw\211020\CTD_Idronaut\
+                       # D:\Cruises\BlackSea\210623\_raw\211020\CTD_Idronaut\
             '--path', str(path_cruise / fr'_raw\{folder}' / device / 'CAST*[0-9].txt'),
             '--table', f'{device}',
             '--dt_from_utc_hours', '3',  # '2' '0'
@@ -113,7 +113,7 @@ if st(11, f'Save {add_col} data to DB'):
     for folder in raw_subdirs:
         csv2h5([
             # 'cfg/csv_CTD_Idronaut.ini',
-                       # d:\WorkData\BlackSea\210623\_raw\211020\CTD_Idronaut\
+                       # D:\Cruises\BlackSea\210623\_raw\211020\CTD_Idronaut\
             '--db_path', str(path_db),
             '--path', str(path_cruise / fr'_raw\{folder}' / add_col / '*_data.txt'),
             '--table', f'{add_col}',

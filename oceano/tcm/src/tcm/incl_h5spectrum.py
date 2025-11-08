@@ -913,8 +913,8 @@ def main(new_arg=None, **kwargs):
         out_row += 1
 
         # if cfg_out['save_proc_tables']:
-        #     # ds_psd.to_netcdf('d:\\WorkData\\BlackSea\\190210\\190210incl_proc-psd_test.nc', format='NETCDF4_CLASSIC')
-        #     #f.to_hdf('d:\\WorkData\\BlackSea\\190210\\190210incl_test.psd.h5', 'psd', format='fixed')
+        #     # ds_psd.to_netcdf('D:\\Cruises\\BlackSea\\190210\\190210incl_proc-psd_test.nc', format='NETCDF4_CLASSIC')
+        #     #f.to_hdf('D:\\Cruises\\BlackSea\\190210\\190210incl_test.psd.h5', 'psd', format='fixed')
         #     # tables_have_write.append(tbl)
         #     try:
         #         h5.append_to(df_psd, tbl, cfg_out, msg='save (temporary)', print_ok=None)
@@ -1074,7 +1074,7 @@ def psd_calc_other_methods(df, prm: Mapping[str, Any]):
 #    cfg = {  # output configuration after loading csv:
 #        'in': {
 #            'db_path': r'd:\WorkData\BalticSea\181116inclinometer_Schuka\181116incl.h5',
-#                # r'd:\WorkData\BlackSea\190210\inclinometer_ABSIORAS\190210incl.h5',
+#                # r'D:\Cruises\BlackSea\190210\inclinometer_ABSIORAS\190210incl.h5',
 #            #
 #            'tables': ['incl.*'],
 #            'split_period': '2H',  # pandas offset string (D, 5D, h, ...)

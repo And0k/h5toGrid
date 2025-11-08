@@ -47,11 +47,11 @@ plt.ion()
 # Data paths
 # dir with raw data - to save our results above
 path_raw_adv = Path(
-    r"B:\WorkData\Cruises(older)\_KaraSea\220906_AMK89-1\ADV_Sontek\_raw,to_txt,vsz"
+    r"D:\Cruises_older\_KaraSea\220906_AMK89-1\ADV_Sontek\_raw,to_txt,vsz"
 )
 # previously prepared data - to load
 path_db = Path(
-    r"B:\WorkData\Cruises(older)\_KaraSea\220906_AMK89-1\ADV_Sontek\st7440A,7441A@ADV+TCM.h5"
+    r"D:\Cruises_older\_KaraSea\220906_AMK89-1\ADV_Sontek\st7440A,7441A@ADV+TCM.h5"
 )
 
 adv_str = "ADV"

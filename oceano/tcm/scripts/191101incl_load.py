@@ -71,7 +71,7 @@ d:\WorkData\BalticSea\191210_Pregolya,Lagoon-inclinometer
 d:\WorkData\_experiment\inclinometer\200117_tank[23,30,32]
 d:\workData\BalticSea\191119_Filino\inclinometer
 d:\workData\BalticSea\191108_Filino\inclinometer
-d:\WorkData\BlackSea\191029_Katsiveli\inclinometer
+D:\Cruises\BlackSea\191029_Katsiveli\inclinometer
 
 d:\WorkData\_experiment\inclinometer\191106_tank_ex1[1,13,14,16]
 d:\WorkData\BalticSea\190806_Yantarniy\inclinometer

@@ -463,10 +463,10 @@ if __name__ == "__main__":
     ## ADV configuration
 
     path_raw_adv = Path(
-        r"B:\WorkData\Cruises(older)\_KaraSea\220906_AMK89-1\ADV_Sontek\_raw,to_txt,vsz"
+        r"D:\Cruises_older\_KaraSea\220906_AMK89-1\ADV_Sontek\_raw,to_txt,vsz"
     )
     file_paths = list(path_raw_adv.glob("**/*.dat"))
-    # r"B:\WorkData\Cruises(older)\_KaraSea\220906_AMK89-1\ADV_Sontek\_raw,to_txt,vsz\7440A#D805,P=70m\7440A#D805.dat"
+    # r"D:\Cruises_older\_KaraSea\220906_AMK89-1\ADV_Sontek\_raw,to_txt,vsz\7440A#D805,P=70m\7440A#D805.dat"
 
     with Path(path_raw_adv.with_name("info_devices.json")).open(encoding="utf8") as f:
         device_info_adv = json.load(f)
@@ -486,7 +486,7 @@ if __name__ == "__main__":
         "in": {
             "USEtime": [["2022-09-10T10:26", "2022-09-14T07:57"]],
             "path": Path(
-                r"B:\WorkData\Cruises(older)\_KaraSea\220906_AMK89-1\inclinometer\220910.proc_noAvg.h5"
+                r"D:\Cruises_older\_KaraSea\220906_AMK89-1\inclinometer\220910.proc_noAvg.h5"
             ),
             "table": ["i_b21", "i_b22"] + ["i37", "i38"],  #
             "cols": ["u", "v"],

@@ -66,7 +66,7 @@ mid2tables = {v: k for k, v in tables2mid.items()}
 #         'anchor': '[44.56905, 37.97308]',
 #         },
 #     'out': {
-#         'path': Path(r'd:\WorkData\BlackSea\210408_trackers\210408trackers.h5'),
+#         'path': Path(r'D:\Cruises\BlackSea\210408_trackers\210408trackers.h5'),
 #         },
 #     'process':
 #         {
@@ -1306,7 +1306,7 @@ def call_example():
     # from hdf5_alt.h5tocsv import main_call as h5tocsv
     path_db = Path(
         r'd:/workData/BalticSea/210515_tracker/current@tr0/210515_1500tr0.h5'
-        # r'd:\WorkData\BlackSea\210408_trackers\tr0\210408trackers.h5'
+        # r'D:\Cruises\BlackSea\210408_trackers\tr0\210408trackers.h5'
         )
     device = ['tr0']  # 221912
     main_call([  # '='.join(k,v) for k,v in pairwise([   # ["2021-04-08T08:35:00", "2021-04-14T11:45:00"]'

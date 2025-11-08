@@ -1026,7 +1026,7 @@ def do_gen_ragnes():
     Update grids constructing new grid names from date str of time range
     """
     dir_in = Path(
-        r'd:\WorkData\BlackSea\220620\_subproduct\surfer'
+        r'D:\Cruises\BlackSea\220620\_subproduct\surfer'
         # r'd:\Downloads\_mail\Baranov\_subproduct\grids'
         # r'd:\workData\BalticSea\ADCP_Nortek_Signature#D-0452'
         # r'd:\workData\BalticSea\_other_data\_model\Copernicus\section_z\211030ABP48@CMEMS\211030ABP48V,so,thetao,sob,o2,o2b@CMEMS\V,so,thetao,sob,o2,o2b(lon,lat)_54.3583-56.0082,18.0138-21.0417'
@@ -1075,8 +1075,8 @@ def do_gen_from_files():
         # r'd:\workData\BalticSea\_other_data\_model\NEMO@CMEMS\section_z\231220_inflow\231220_inflow\(dist,depth)so,thetao,V,wo,o2'
         # r'd:\workData\BalticSea\_other_data\_model\NEMO@CMEMS\section_z\231220_inflow\231220_inflow'
         # r'\(dist,depth)bottomT,so,sob,thetao,V,wo,o2,o2b'
-        # r'd:\WorkData\BlackSea\220920\_subproduct\surfer'
-        # r'd:\WorkData\BlackSea\220620\_subproduct\surfer'
+        # r'D:\Cruises\BlackSea\220920\_subproduct\surfer'
+        # r'D:\Cruises\BlackSea\220620\_subproduct\surfer'
     )
 
     # string to get one file in group of replacement files

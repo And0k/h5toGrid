@@ -21,7 +21,7 @@ st.go = True   # False #
 st.start = 11   # 1 5 30 70 80 115
 st.end = 50    # 60 80 120
 
-path_cruise = Path(r'd:\WorkData\BlackSea\220920')
+path_cruise = Path(r'D:\Cruises\BlackSea\220920')
 path_db = (path_cruise / path_cruise.name).with_suffix('.h5')  # same name as dir
 
 # Stop before steps that need a manual prepare (70) i.e. set end < 70 at first
@@ -34,7 +34,7 @@ max_coord = 'Lat:44.5964, Lon:38.4'  # have slightly bigger spikes
 if st(1, 'Save GPX navigation to DB'):
     gpx2h5(['',
         '--db_path', str(path_db.with_suffix('.nav.h5')),
-        '--path', r'd:\WorkData\BlackSea\220920\navigation\combined(winriver)&edited\*.gpx',  # str(path_cruise / '_raw/navigation/*.gpx'),
+        '--path', r'D:\Cruises\BlackSea\220920\navigation\combined(winriver)&edited\*.gpx',  # str(path_cruise / '_raw/navigation/*.gpx'),
         '--tables_list', ',navigation,',  # skip waypoints
         '--table_prefix', r'',
         # '--min_date', '2019-07-17T14:00:00',
@@ -129,7 +129,7 @@ if st(11, f'Correct {add_col} files: recover time column'):
     import pandas as pd
     from more_itertools import grouper  # grouper(f.name, 2) = zip(f.name[::2], f.name[1::2])
     from operator import sub
-    zf = zipfile.ZipFile(r'd:\WorkData\BlackSea\220920\_raw.zip')
+    zf = zipfile.ZipFile(r'D:\Cruises\BlackSea\220920\_raw.zip')
     zp = zipfile.Path(zf.filename)
     for folder in raw_subdirs:
         zp.at = rf'_raw/{folder}/Chl-a/-/'
@@ -170,7 +170,7 @@ if st(12, f'Save {add_col} data to DB'):
     for folder in raw_subdirs:
         csv2h5([
             # 'cfg/csv_CTD_Idronaut.ini',
-                       # d:\WorkData\BlackSea\210623\_raw\211020\CTD_Idronaut\
+                       # D:\Cruises\BlackSea\210623\_raw\211020\CTD_Idronaut\
             '--db_path', str(path_db),
             '--path', str(path_cruise / fr'_raw' / folder / add_col / '2209*'),
             '--table', f'{add_col}',

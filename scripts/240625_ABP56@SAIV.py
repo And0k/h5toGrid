@@ -26,7 +26,7 @@ st.go = True   # False #
 st.start = 250   # 1 5 30 70 80 115 | 210 315
 st.end = 500   # 60 80 120
 
-path_cruise = Path(r'F:\WorkData\BalticSea\240616_ABP56@i,t-chain')
+path_cruise = Path(r'D:\Cruises\BalticSea\240616_ABP56@i,t-chain')
 path_db = (path_cruise / path_cruise / path_cruise.name.split("@", 1)[0]).with_suffix(".h5")
 
 min_coord = 'Lat:53, Lon:18.6'  # 10

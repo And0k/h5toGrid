@@ -74,7 +74,7 @@ if __name__ == "__main__":
     # Recreate the variables from my Veusz file.
     # - Constants
 
-    path_meteo = Path(r"B:\WorkData\BalticSea\230825_Kulikovo@ADCP,ADV,i,tr\meteo")
+    path_meteo = Path(r"D:\Cruises\BalticSea\230825_Kulikovo@ADCP,ADV,i,tr\meteo")
     files = {
         "CMEMS": path_meteo / (r"CMEMS\cmems_obs-wind_glo_phy_nrt_l4_0.125deg_PT1H_multi-vars-to_20.2997E_54.9896N_2023-08-20-2023-09-20.nc"),
         "ECMWF": path_meteo / r"ECMWF\area(54.75-55.0N,20.25-20.5E)\data_stream-oper_stepType-instant-to_20.3E_54.99N.nc",

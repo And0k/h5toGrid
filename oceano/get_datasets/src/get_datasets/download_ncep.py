@@ -940,7 +940,7 @@ if __name__ == "__main__":
     # - use_date_range - Last day will be included.
     # Old: If previous text data exist you can net [] to load from last loaded data to now
     project_output_dir_base, lat_st, lon_st, use_date_range = (
-        r"B:\WorkData\BalticSea\230825_Kulikovo@ADCP,ADV,i,tr\meteo",
+        r"D:\Cruises\BalticSea\230825_Kulikovo@ADCP,ADV,i,tr\meteo",
         54.99, 20.3, ["2023-08-25", "2023-09-10"],  # 54.9896, 20.29972
     )
 

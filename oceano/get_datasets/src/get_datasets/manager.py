@@ -127,6 +127,6 @@ if __name__ == "__main__":
     for entry in history_manager.find_downloads(coords=[(55.1, 19.8)]):
         print(entry)
 
-    print("\nFinding downloads for dir_save=D:\\WorkData\\BalticSea\\test_downloads\\ncep_data:")
+    print("\nFinding downloads for dir_save=D:\\Cruises\\BalticSea\\test_downloads\\ncep_data:")
     for entry in history_manager.find_downloads(dir_save=Path(r"D:\WorkData\BalticSea\test_downloads\ncep_data")):
         print(entry)
