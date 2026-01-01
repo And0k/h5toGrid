@@ -1,8 +1,12 @@
-
-import logging
+from datetime import timedelta
+from io import IOBase
 import math
 from pathlib import Path
+import netCDF4
+import numpy as np
+import os
 import re
+from tempfile import NamedTemporaryFile
 from typing import (
     Any,
     Callable,
@@ -18,17 +22,14 @@ from typing import (
     Union,
     TypeVar,
 )
-import xml.etree.ElementTree as ET
-import numpy as np
+from veusz_helpers.common import func_vsz as fv
 import xarray as xr
+import xml.etree.ElementTree as ET
 from zipfile import ZipFile
-from io import IOBase
-import os
-from tempfile import NamedTemporaryFile
 
+from utils.logging_config import setup_logging
 
-
-l = logging.getLogger(__name__)
+l = setup_logging(__name__)
 
 def safe_netcdf_atomic(ds, path: Path, format="NETCDF4_CLASSIC", engine="netcdf4", **kwargs) -> None:
     """Safely safe a NetCDF file using atomic overwrite.
@@ -86,7 +87,7 @@ def interp_angle(da, new_coords, method="linear"):
     return degrees
 
 
-def interp_to_point(path_loaded: str, lat: float, lon: float, backend="h5netcdf") -> None:
+def interp_to_point(path_loaded: str|Path, lat: float, lon: float, backend="h5netcdf") -> Path:
     """
     Interpolate the data to the point (lat, lon) and save to "NETCDF4_CLASSIC" format file having same
     NetCDF settings (supported subset) under same name in which old coordinates replaced to
@@ -389,3 +390,281 @@ def extract_coordinates_from_gpx(gpx_path: Path, waypoints_re: str = None) -> Op
     except Exception as e:
         l.error(f"Error reading {gpx_path}: {e}")
         return None
+
+
+## Function for other modules only
+
+def lat_lon_from_cmems_nc_filestem(stem):
+    """
+    Extract latitude and longitude from filename ending with coordinates like 19.15E_55.22N
+
+    Args:
+        filename (str): The filename to extract coordinates from
+
+    Returns:
+        tuple: (latitude, longitude) as floats, or None if no match found
+    """
+    pattern = r"([+-]?\d+\.\d+)([EW])_([+-]?\d+\.\d+)([NS])$"
+    match = re.search(pattern, stem)
+    if match:
+        lon_value = float(match.group(1))
+        lon_dir = match.group(2)
+        lat_value = float(match.group(3))
+        lat_dir = match.group(4)
+
+        # Convert to proper signed coordinates
+        longitude = lon_value if lon_dir == "E" else -lon_value
+        latitude = lat_value if lat_dir == "N" else -lat_value
+
+        return latitude, longitude
+
+    return None
+
+
+def nc_load(path_section: Path, variables):
+    f = netCDF4.Dataset(path_section)
+
+    # Extract dimensions from 1st variable
+    z_nc = f.variables[variables[0]]
+
+    # Get dimensions
+    dims_list = z_nc.get_dims()
+    dims = {d.name: d.size for d in dims_list}
+
+    z_nc = z_nc[:].filled(fill_value=np.nan)
+    if len(dims) > 2:
+        z_nc = z_nc.squeeze(axis=(-2, -1))
+
+    time_name, lat_name, lon_name = "time", "latitude", "longitude"
+    if time_name in dims:
+        if len(dims) > 2:  # 3D or 4D: time, [depth, ] latitude, longitude
+            time_name, *_, lat_name, lon_name = dims.keys()
+            if _:
+                if len(_) > 1:
+                    l.warning("Don't know what is extra dimensions in {_}, taking only 1st for y")
+                y_name = _[0]
+            # latitudes = f.variables[lat_name][:]
+            # longitudes = f.variables[lon_name][:]
+        else:
+            y_name = next(name for name in dims.keys() if name != time_name)
+    time_var = f.variables[time_name]
+    time_nc = (
+        netCDF4.num2date(
+            time_var[:], time_var.units, only_use_cftime_datetimes=False, only_use_python_datetimes=True
+        )
+        .filled(fill_value=np.datetime64("NaT"))
+        .astype("M8[s]")
+    )
+
+    y_nc = f.variables[y_name][:].data  # filled(fill_value=np.nan)
+
+    attrs = {var: {a: f.variables[var].getncattr(a) for a in f.variables[var].ncattrs()} for var in variables}
+
+    # Get meta (we can also get from file name which is like "phy_anfc_PT1H-i_thetao-so-sob_19.15E_55.22N.nc")
+    attrs.update({
+        abbr: round(f.variables[k][0].data.item(), 4) for abbr, k in [("lat", lat_name), ("lon", lon_name)]
+    })
+    return time_nc, y_nc, z_nc, attrs
+
+
+def create_dar(
+    data=None,
+    coords=None,
+    interp_dt: Union[None, np.timedelta64, timedelta] = None,
+    bin_dt=None,
+    bin_dz=None,
+    attrs={},
+):
+    """
+    Helper function to create NetCDF DataArray
+    :param data: if None then will be zeros for coords, which must be defined
+    :param coords: keys must be in order of data dimensions. If None then coordinates will be data integer indexes of each dimension
+    :param interp_dt:
+    :return: DataArray
+    """
+    if data is None:
+        data = np.zeros([len(v) for v in coords.values()])
+    else:
+        if coords is None:
+            coords = {c: np.arange(0, n) for c, n in zip("xyz", data.shape)}
+    # try:
+    #     # Add dimensions for single lat/lon
+    #     if (
+    #         not coords["lat"].data.shape
+    #         and not coords["lon"].data.shape
+    #         and data.ndim == len(coords) - 2
+    #     ):
+    #         # Calculate new shape: (original[0], original[1], 1, 1, rest...)
+    #         new_shape = data.shape[:2] + (1, 1) + data.shape[2:]
+    #         data = data.reshape(new_shape)
+    # except KeyError:
+    #     pass
+
+    try:
+        name = attrs.pop("name")
+    except KeyError:
+        name = None
+    dar = xr.DataArray(
+        data,
+        dims=[k for k, v in coords.items() if (not isinstance(v, xr.DataArray)) or v.data.shape],
+        coords=coords,
+        name=name,
+        attrs=attrs,
+    )
+
+    if interp_dt:
+        if isinstance(interp_dt, np.timedelta64):  # to timedelta:
+            interp_dt = interp_dt.astype("m8[s]").item()
+        dar = dar.resample(time=interp_dt).interpolate("linear")
+    if bin_dt or bin_dz:
+        if bin_dt:
+            if isinstance(bin_dt, np.timedelta64):  # to timedelta:
+                bin_dt = bin_dt.astype("m8[s]").item()
+            dar_out = dar.resample(time=bin_dt).mean()
+            # dim=['z', 'time'] .groupby_bins(bins, group='time', precision=15)
+        else:
+            dar_out = dar
+        if bin_dz:
+            dz = np.diff(coords["z"][:2]).item()
+            dz_bin = dz * (bin_dz + 1)
+            n_bins = len(coords["z"]) // bin_dz
+            bins = coords["z"][0] + np.cumsum([dz_bin] * n_bins) - dz_bin - dz / 2
+            # bins = coords['z'][::n_bins]
+            # bins = len(coords['z'])//bin_dz
+            # np.arange(coords['z'][0], coords['z'][-1] + bin_dz/2, bin_dz)
+            dar_out = dar_out.groupby_bins(bins=bins, group="z", restore_coord_dims=True).mean()
+            coord_z_new = np.float64([bin.mid for bin in dar_out["z_bins"].values])
+            # transpose back (why above have transposed data?)  # restore_coord_dims not works?
+            if dar_out.coords.keys() != dar.coords.keys():
+                # dar_out = dar_out.transpose()
+                dar_out = xr.DataArray(
+                    dar_out.data,
+                    dims=coords.keys(),
+                    coords={key: coord_z_new if key == "z" else dar_out.coords[key] for key in coords.keys()},
+                    name=name, attrs=attrs
+                )
+    else:
+        dar_out = dar
+
+    # Assigning encoding controls on-disk format:
+    dar_out["time"].encoding.update({
+        "units": "days since 1899-12-30 00:00:00",  # Excel's days, also used in Surfer
+        "calendar": "proleptic_gregorian",
+        "dtype": "float64",
+    })
+    return dar_out
+
+
+def save_nc_for_surfer(
+    time: np.ndarray,
+    y: np.ndarray,
+    out: Mapping[str, np.ndarray],
+    path_base: Path,
+    dt: Union[None, list, np.timedelta64],
+    dy=None,
+    not_interp_keys = {},  # todo: auto detect
+    stem_sfx="",
+    lat=None,
+    lon=None,
+    attrs={}
+):
+    """
+    Saves each `out` 2D item to separate NetCDF file
+    If "u" not in `out` but "Vabs" in `out` then gets u&v from Vabs&Vdir
+    :param time: datetime64[s]
+    :param y:
+    :param out:
+    :param path_base:
+    :param dt: if many then average and save file for each dt and dy
+    :param dz: -//-
+    """
+
+    b_have_v_dekart = "u" in out
+    try:
+        from dask import da
+        da_np = da if isinstance(out["u"] if b_have_v_dekart else next(iter(out.values())), da.Array) else np
+    except ImportError:
+        da_np = np
+
+    if "Vabs" in out and not b_have_v_dekart:
+        from tcm.incl_h5clc_hy import polar2dekart
+
+        out["v"], out["u"] = polar2dekart(out["Vabs"], out["Vdir"])
+        del out["Vabs"], out["Vdir"]
+        out["Vabs"] = out["Vdir"] = None  # to the end of ``out``
+
+
+    # Time for Surfer
+    # (will be calculated before saving of 1st 2d dataset and then assigned to all next datasets)
+    dt = dt if isinstance(dt, list) else [dt]
+    dy = dy if isinstance(dy, list) else [dy] * len(dt)
+    for i_used_dt, (dt, dy) in enumerate(zip(dt, dy)):
+        ds_saved = {}
+        # time_coord_converted = (
+        #     None  # we set value after creating of ds because dt and time should have same units
+        # )
+
+        str_dt = fv.str_dt(
+            dt.astype("m8[s]") if isinstance(dt, np.timedelta64) else np.timedelta64(dt, "s"),
+            lang="en"
+        )
+
+        def get_file_name(param):
+            return (
+            f"{path_base.name}_{param}_{f'dt={str_dt}' if str_dt else ''}{f',dz={dy}' if dy else ''}"
+            f"{stem_sfx}.nc"
+        )
+
+        coords_lat_lon = (
+            {
+                "latitude": xr.DataArray(lat, attrs={"standard_name": "latitude", "units": "degrees_north"}),
+                "longitude": xr.DataArray(lon, attrs={"standard_name": "longitude", "units": "degrees_east"}),
+            }
+            if lat is not None
+            else {}
+        )
+        coords = {
+            "z": y,
+            "time": ("time", time, {"standard_name": "time"}),
+            **coords_lat_lon,
+        }
+        for name, data in out.items():
+            if name == "Vabs":
+                data = da_np.sqrt(ds_saved["u"] ** 2 + ds_saved["v"] ** 2)
+                dt_cur = dz_cur = None  # do not interp/bin 2nd time
+                coords = ds_saved["u"].coords  # use interp/binned coord
+            elif name == "Vdir":  # must run after 'Vabs' in this cycle
+                data = da_np.degrees(da_np.arctan2(ds_saved["u"], ds_saved["v"])) % 360
+                # leave dt_cur and coords same as for Vabs
+            elif name in not_interp_keys:
+                dt_cur = dz_cur = None
+            else:
+                dt_cur = dt
+                dz_cur = dy
+            if len(data.shape) != 2:
+                continue
+            print(name, end=", ")  # **{("bin_dt" if i_used_dt > 0 else "interp_dt"): dt_cur}?
+            dar = create_dar(data, coords=coords, interp_dt=dt_cur, bin_dz=dz_cur, attrs=attrs.get(name, {}))
+            # .chunk({"x": 100, "y": 100, "time": -1})
+
+            # Save Vabs and Vdir only after interp/bining of u and v in create_xrds(). Skip saving u and v
+            if name in ("u", "v"):
+                ds_saved[name] = dar
+                continue
+            # Not need manually convert:
+            # if time_coord_converted is None:
+            #     # to Excel time
+            #     time_coord_converted = (dar.coords["time"] - np.datetime64("1899-12-30T00:00:00")).astype(
+            #         "M8[ns]"
+            #     ).values.astype("f8") / (24 * 3600e9)
+            # dar["time"] = time_coord_converted  # changes dar.coords['time']
+            xr.Dataset({name: dar}).to_netcdf(
+                path_base.parent / get_file_name(name),
+                mode="w",
+                format="NETCDF4_CLASSIC",
+            )
+
+        l.info(
+            f"Exported 2D datasets to {get_file_name('{param}')} "
+            f"files as NetCDF grids for param = {list(out.keys())}"
+        )

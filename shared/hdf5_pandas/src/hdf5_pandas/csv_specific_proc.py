@@ -231,8 +231,8 @@ def param_funs_closure(
                     params_closure = list(params_closure)
 
                     def fun_closure(x):
-                        return v_closure(*x[params_closure].T.values)
-
+                        return v_closure(*[v.values for k, v in x[params_closure].items()])
+                        # (*.T.values) will result in dtype info vanish if columns are of different dtype
                 return fun_closure
 
         elif fun_id == 'add':
@@ -595,17 +595,17 @@ def loaded_Baklan(
             series = a[name_out]
         elif name_out == 'GsumMinus1':
             # calculate GsumMinus1
-            dtype_Gx = cfg_in['dtype']['Gx_m\s^2']
-            dtype_Gxyz = np.dtype({'names': ['Gx_m\s^2', 'Gy_m\s^2', 'Gz_m\s^2'], 'formats': 3 * (dtype_Gx,)})
+            dtype_Gx = cfg_in['dtype'][r'Gx_m\s^2']
+            dtype_Gxyz = np.dtype({'names': [r'Gx_m\s^2', r'Gy_m\s^2', r'Gz_m\s^2'], 'formats': 3 * (dtype_Gx,)})
 
-            series = np.ndarray((len(a), 3), cfg_in['dtype']['Gx_m\s^2'], a,
-                                offset=cfg_in['dtype'].fields['Gx_m\s^2'][1],
+            series = np.ndarray((len(a), 3), cfg_in['dtype'][r'Gx_m\s^2'], a,
+                                offset=cfg_in['dtype'].fields[r'Gx_m\s^2'][1],
                                 strides=(a.strides[0], dtype_Gx.itemsize)
                                 ) if isinstance(a, np.ndarray) else a.loc[:, dtype_Gxyz.names].to_numpy(dtype=dtype_Gx)
-            # a.astype(dtype_Gxyz).view(dtype_Gx).reshape(-1, 3) #[['Gx_m\s^2', 'Gy_m\s^2', 'Gz_m\s^2']]
+            # a.astype(dtype_Gxyz).view(dtype_Gx).reshape(-1, 3) #[[r'Gx_m\s^2', r'Gy_m\s^2', r'Gz_m\s^2']]
 
             series = np.sqrt(
-                np.sum(np.square(series), 1)) / 9.8 - 1  # a[['Gx_m\s^2', 'Gy_m\s^2', 'Gz_m\s^2']]/9.8) is not supported
+                np.sum(np.square(series), 1)) / 9.8 - 1  # a[[r'Gx_m\s^2', r'Gy_m\s^2', r'Gz_m\s^2']]/9.8) is not supported
         else:
             continue
 
@@ -767,7 +767,7 @@ def loaded_chain_Baranov(a: Union[pd.DataFrame, np.ndarray],
     # todo: use dd.to_datime(a[['year', 'month', 'day', 'hower', 'minute', 'second']], ) instead
 
     if csv_specific_param:
-        lf.info(f'unknown key(s) in csv_specific_param')
+        lf.info('unknown key(s) in csv_specific_param')
 
     # Baranov format specified proc
     # Time calc: gets string for time in current zone
@@ -868,7 +868,7 @@ def loaded_tcm(
             lf.info(f'{key} is not specified in csv_specific_param (skipped)')
     except KeyError:
         if csv_specific_param is not None:
-            lf.warning(f'Unknown key(s) in csv_specific_param!')
+            lf.warning('Unknown key(s) in csv_specific_param!')
 
     return a.assign(Time=tim_index)
 
@@ -1232,8 +1232,8 @@ def correct_kondrashov_txt(
         file_in, file_out, dir_out,
         mod_file_name=lambda file_in: mod_name(file_in, add_prefix='@')[1],
         sub_str_list=[
-            b'^(?P<use>20\d{2}(,\d{1,2}){5}(,\-?\d{1,6}){6},\d{1,2}(\.\d{1,2})?,\-?\d{1,3}(\.\d{1,2})?).*',
-            b'^.+'],
+            br'^(?P<use>20\d{2}(,\d{1,2}){5}(,\-?\d{1,6}){6},\d{1,2}(\.\d{1,2})?,\-?\d{1,3}(\.\d{1,2})?).*',
+            br'^.+'],
         **kwargs
     )
 
@@ -1254,7 +1254,7 @@ def correct_baranov_txt(
         file_in, file_out, dir_out,
         mod_file_name=lambda file_in: mod_name(file_in, add_prefix='@')[1],
         sub_str_list=[
-            b'^\r?(?P<use>20\d{2}(\t\d{1,2}){5}(\t\d{5}){8}).*',
+            br'^\r?(?P<use>20\d{2}(\t\d{1,2}){5}(\t\d{5}){8}).*',
             b'^.+'],
         **kwargs
     )

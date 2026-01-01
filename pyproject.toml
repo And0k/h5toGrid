@@ -1,5 +1,6 @@
 [project]
 description = "Monorepo for oceanology projects"
+authors = [{name = "Andrey Korzh", email = "ao.korzh@gmail.com"}]
 name = "absioras"
 requires-python = ">= 3.11"
 version = "0.1.0"

@@ -1,4 +1,5 @@
 [project]
+authors = [ {name = "Andrey Korzh", email = "ao.korzh@gmail.com"} ]
 description = "Download reanalysis data"
 name = "absioras-get_datasets"
 requires-python = ">= 3.11"

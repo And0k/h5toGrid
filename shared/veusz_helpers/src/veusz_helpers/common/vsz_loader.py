@@ -713,7 +713,7 @@ def veusz_load_hdf5_ctd_profile(
     Function receives:
     - h: opened file handle,
     - i_ranges = {
-        "table_log": [irow_log, irow_log + n_runs],
+        "table_log": [log_i_st, log_i_st + n_runs],
         "table": [i_time_st, i_time_st + len_last_run]
     },
     - time_range_raw
@@ -737,44 +737,44 @@ def veusz_load_hdf5_ctd_profile(
 
     with h5py.File(file, "r") as h:
         tbl_cols_exist = {tbl: h[grp_d[tbl]].dtype.fields.keys() for tbl in params_d}
+        log_index = h[grp_d["table_log"]]["index"]
         if not np.isfinite(time_range[-1]):  # loading n runs
             time_range_raw0 = np.int64(np.array(time_range[0], "M8[ns]") - np.timedelta64(time_shift_s, "s"))
             # Better time accuracy is in log file:
-            irow_log = np.searchsorted(h[grp_d["table_log"]]["index"], time_range_raw0)
-            # Limit data to one run (to next start or data end):
-            i_ranges = {"table_log": [irow_log, irow_log + n_runs]}
-            # print(i_ranges)
+            log_i_st = np.searchsorted(log_index, time_range_raw0)
+
+            if log_i_st < log_index.size:
+                log_i_en = log_i_st + n_runs - 1
+                if log_i_en >= log_index.size:
+                    log_i_en = log_index.size - 1
+                    print("len(table_log) exceeded => get slice to last element")
+            else:
+                print("len(table_log) exceeded => get last element")
+                log_i_en = log_i_st = log_index.size - 1
+            i_ranges = {"table_log": [log_i_st, log_i_en + 1]}
+            time_range_raw = log_index[[log_i_st, log_i_en]]
             try:
                 # last time may be too far, so not used (to do: remove it):
-                time_range_raw = h[grp_d["table_log"]]["index"][i_ranges["table_log"]]
+
                 # print('Start to next start (raw time):', np.array(time_range_raw, 'M8[ns]'))
                 # i_ranges['table'] = np.searchsorted(h[grp_d['table']]['index'], time_range_raw).tolist()
-                if n_runs == 1:  # need search only one row
-                    time_st_better = h[grp_d["table_log"]]["index"][irow_log]
-                    i_log_last = irow_log
-                else:
-                    # last run log row
-                    i_log_last = irow_log + n_runs - 1
-                    irows_range_log = [irow_log, i_log_last]
-                    time_st_better = h[grp_d["table_log"]]["index"][irows_range_log]
+
                 # Start row of 1st run (and last if n_runs > 1):
-                i_time_st = np.searchsorted(h[grp_d["table"]]["index"], time_st_better)
+                i_time_st = np.searchsorted(
+                    h[grp_d["table"]]["index"],
+                    time_range_raw[0] if log_i_st == log_i_en else time_range_raw
+                )
                 # length of last run
                 len_last_run = (
-                    h[grp_d["table_log"]]["rows"][i_log_last]
-                    + h[grp_d["table_log"]]["rows_filtered"][i_log_last]
+                    h[grp_d["table_log"]]["rows"][log_i_en]
+                    + h[grp_d["table_log"]]["rows_filtered"][log_i_en]
                 )
-                # add it to start row of last run:
+                # add it to start row of last run (to next start or data end):
                 i_ranges["table"] = (i_time_st + [0, len_last_run]).tolist()
 
             except IndexError:
-                print("len(table_log) exceeded => set slice to last element")
-                time_range_raw = np.int64(
-                    [
-                        h[grp_d["table_log"]]["index"][i_ranges["table_log"][0]],
-                        h[grp_d["table"]]["index"][-1],
-                    ]
-                )
+                print("len(table) exceeded => set slice to last element")
+                time_range_raw = np.int64([log_index[log_i_st], h[grp_d["table"]]["index"][-1]])
                 i_ranges["table"] = [
                     np.searchsorted(h[grp_d["table"]]["index"], time_range_raw[0]),
                     None,
@@ -798,7 +798,7 @@ def veusz_load_hdf5_ctd_profile(
             SetData("_log_Lons_st", h[grp_d["table_log"]]["Lon_st"])
             SetData(
                 "_log_t64s_st",
-                np.int64(np.array(h[grp_d["table_log"]]["index"], "M8[ns]").astype("M8[s]"))
+                np.int64(np.array(log_index, "M8[ns]").astype("M8[s]"))
                 + time_shift_s,
             )
     print(f"corresponding data indices in {file}:", i_ranges)
@@ -1584,9 +1584,10 @@ def get_path_in_parents(dir: Path, file_name) -> Path:
             raise FileNotFoundError(file_name)
 
 
-def get_fun_load_end_ext(probe, db, parent=None, time_range=tuple(), time_shift=None, data_file_ext=None):
+def get_fun_load_end_ext(probe, db, parent=None, time_range=tuple(), time_shift_s=None, data_file_ext=None):
     """
-    veusz_load_hdf5_ctd_profile, veusz_load_csv_gmx500, veusz_load_csv_ecmwf?
+    Loading parameters and fuction: veusz_load_hdf5_ctd_profile, veusz_load_csv_gmx500, veusz_load_csv_ecmwf
+    :param probe: controlls selection process
     """
     b_allow_many_sources = False
     if probe["model"] == "GMX500":
@@ -1609,13 +1610,22 @@ def get_fun_load_end_ext(probe, db, parent=None, time_range=tuple(), time_shift=
 
         # hdf5 data group name must be equal to dir name of current file?
         time_range_raw = veusz_load_hdf5_ctd_profile(
-            db, time_range, device=device_dir.stem.split("(", 1)[0], time_shift=time_shift, n_runs=1
+            db,
+            time_range,
+            device="{type}_{model}{id}".format_map(probe),
+            time_shift_s=time_shift_s,
+            n_runs=1,
         )
-        fun_load = (
-            None
-            if parent.name == "profiles_vsz"
-            else (lambda x: [time_range_raw])
-        )
+
+        probe_data = {k: v.replace("_", " ") for k, v in probe.items()}
+        probe_data["id_expr"] = "'{}'.format_map(I)".format(probe_data["id"].replace("#", "{#}"))
+        if parent.name == "profiles_vsz":
+            fun_load = None
+            probe_data['st_expr'] = "'АБП64{}'.format(DATA('_log_fileName_st')[0].split('st')[-1].replace('_', r'\\underline{ }'))"
+        else:
+            fun_load = (lambda x: [time_range_raw])
+            probe_data["st_expr"] = ""
+
 
         # AddCustom('import', 'importlib', 'util')
         # AddCustom('import', 'itertools', 'dropwhile')
@@ -1639,15 +1649,14 @@ def get_fun_load_end_ext(probe, db, parent=None, time_range=tuple(), time_shift=
         #     "type('ClassI', (dict,), {'__getitem__': lambda self, key: self.get(key, key)})({n: LANG({'default': n, 'ru': u}) for n, u in v.en2ru.items()})")
         AddCustom(
             "definition",
-            "fDisp_date_u(ax, t_span_var, **kwargs)",
-            "v.str_date_unit_with_suffix([f(lambda l: l if l!='Auto' else t, SETTING(f'{ax}/{lim:s}')) for lim, t in zip(('min', 'max'), DATA(f'{t_span_var}'))], str_zone='UTC', lang=LANG({'default': 'en', 'ru': 'ru'}), **kwargs)",
+            "DISPinfo__",
+            "{{'id': {id_expr}, 'type': I['{type}'], 'model': '{model}', 'zone': 'UTC', 'st': {st_expr}}}".format_map(probe_data)
         )
+
         AddCustom(
             "definition",
-            "DISPinfo__",
-            "{{'id': '{id}', 'type': I['{type}'], 'model': '{model}'}}".format_map(
-                {k: v.replace("_", " ") for k, v in probe.items()}
-            ),
+            "fDisp_date_u(ax, t_span_var, **kwargs)",
+            "v.str_date_unit_with_suffix([f(lambda l: l if l!='Auto' else t, SETTING(f'{ax}/{lim:s}')) for lim, t in zip(('min', 'max'), DATA(f'{t_span_var}'))], str_zone=DISPinfo__['zone'], lang=LANG({'default': 'en', 'ru': 'ru'}), **kwargs)",
         )
         """ Old code
                 device_model = device.replace('_', ' ')
@@ -1663,7 +1672,7 @@ def get_fun_load_end_ext(probe, db, parent=None, time_range=tuple(), time_shift=
     elif probe["type"] == "i":
         def data_file_ext(probe, name_prefix="", name_suffix=""):
             return f"{name_prefix}@{{type}}_{{model}}{{number:0>2}}{name_suffix}.txt".format_map(probe)
-        fun_load = lambda file: veusz_load_csv_tcm_raw(db, time_range, file, time_shift, probe)
+        fun_load = lambda file: veusz_load_csv_tcm_raw(db, time_range, file, time_shift_s, probe)
     else:  # not known file type or inclinometer from db
         fun_load = None
     return fun_load, data_file_ext, b_allow_many_sources
@@ -2612,7 +2621,12 @@ if __name__ in ("__main__", "builtins"):
             }
         )
         if probe["id"] is None:
-            probe["id"] = ""
+            # correct to exact model and id we use to can construct exact table name from type+model+id later
+            if probe["model"] == "SST48":
+                probe["model"] = "SST_48Mc"
+                probe["id"] = "#1253"
+            else:
+                probe["id"] = ""
         probes["devices"] = {probe["id"]: probe}
 
     # DB file
@@ -2726,7 +2740,7 @@ if __name__ in ("__main__", "builtins"):
         b_allow_many_sources = False  # unique 1 source file allowed
         for pid, probe in probes["devices"].items():
             fun_load, data_file_ext, b_allow_many_sources = get_fun_load_end_ext(
-                probe, db, parent=parent, time_range=time_range, time_shift=cus.USE_timeShift_s
+                probe, db, parent=parent, time_range=time_range, time_shift_s=cus.USE_timeShift_s
             )
             if fun_load:
                 # Search data files
@@ -2846,7 +2860,7 @@ if __name__ in ("__main__", "builtins"):
             "d": None,
             "s": "",
             **probes["devices"][pid],
-            "model": " " + probes["devices"][pid]["model"].replace("_", " "),
+            "model": probes["devices"][pid]["model"].replace("_", " "),
         }
     AddCustom("definition", "pid", f"'{pid}'")
 

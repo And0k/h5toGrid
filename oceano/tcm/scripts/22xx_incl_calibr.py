@@ -15,7 +15,7 @@ drive_d = Path('D:/' if sys.platform == 'win32' else '/mnt/D')  # allows to run 
 scripts_path = drive_d.joinpath('Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))  # os.getcwd()
 
-import cfg_dataclasses as cfg_d
+import utils.cfg_dataclasses as cfg_d
 import tcm.incl_calibr_hy as incl_calibr_hy
 from tcm.h5inclinometer_coef import h5copy_coef
 from utils.init import st, path_on_drive_d, init_logging

@@ -5,8 +5,7 @@ Scripts designed for downloading various types of environmental data from differ
 The main functionality has been unified into a single `download_copernicus.py` script that can handle both point and region downloads based on configuration. It also supports GPX file input for multiple coordinate points.
 
 ### Configuration Structure
-
-Hydra allows you define your download tasks in dedicated YAML configuration files in the `cfg/` directory. The core idea is to separate general settings from project-specific ones:
+Hydra allows you define your download tasks in dedicated YAML configuration files in the external user configuration directory separating general settings from project-specific ones:
 
 *   **`cfg/base.yaml`**: Contains general settings applicable across all downloading tasks, such as the base directory for saving downloaded data (`base.local_path`) and the path to the download history file (`base.history_file`).
 *   **`cfg/copernicus.yaml`**: Defines configurations specific to Copernicus Marine Service data downloads. It now includes a `defaults` section that allows composing project-specific configurations from the `projects/` subdirectory.
@@ -28,6 +27,8 @@ Hydra allows you define your download tasks in dedicated YAML configuration file
         ```
     *   **Content of Project YAMLs**: Each project YAML file should start with `# @package projects.<project_name>` to ensure its content is composed correctly under the `projects` key in the final configuration. The parameters within these files directly define the settings for the specific download type (e.g., `point_wind` or `region`).
 
+The path to the external `cfg/` user configuration directory (currently `/oceano/get_datasets/cfg`) is defined in the package hydra configuration `/oceano/get_datasets/src/get_datasets/cfg/base.yaml
+
 ### Organizing Your Settings
 
 To define a new download task:
@@ -47,7 +48,7 @@ To run a script for a specific project, use the `projects=<project_name>/<config
     pixi run python -m get_datasets.download_copernicus projects=abp56_tchain/point
     ```
 
-*   **For point-based downl-oads** (formerly `download_copernicus_point.py`):
+*   **For point-based downloads** (formerly `download_copernicus_point.py`):
     ```bash
     python download_copernicus.py projects=kulikovo/point_wind
     ```

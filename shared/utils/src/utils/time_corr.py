@@ -6,14 +6,20 @@ import numpy as np
 import pandas as pd
 from time import sleep
 
-from utils.filters import find_sampling_frequency, longest_increasing_subsequence_i, rep2mean, repeated2increased, \
-    make_linear, make_linear_with_shifts, rep2mean_with_const_freq_ends
+from .filters import (
+    find_sampling_frequency,
+    longest_increasing_subsequence_i,
+    rep2mean,
+    repeated2increased,
+    make_linear,
+    make_linear_with_shifts,
+    rep2mean_with_const_freq_ends,
+)
 from utils.init import dir_create_if_need
 from utils.time import lf, datetime_fun, check_time_diff
-
 # from hdf5_pandas.h5_dask_pandas import filter_global_minmax
 
-
+fig_save_format_suffix: str = ".png"
 tim_min_save: pd.Timestamp     # can only decrease in time_corr(), set to pd.Timestamp('now', tz='UTC') before call
 tim_max_save: pd.Timestamp     # can only increase in time_corr(), set to pd.Timestamp(0, tz='UTC') before call
 def time_corr(
@@ -61,9 +67,14 @@ def time_corr(
             Hours_from_UTC = int(hours_from_utc_f)
             hours_from_utc_f -= Hours_from_UTC
             if abs(hours_from_utc_f) > 0.0001:
-                print('For string data can add only fixed number of hours! Adding', Hours_from_UTC / 3600, 'Hours')
-            tim = pd.to_datetime((date.astype(np.object) + '{:+03d}'.format(Hours_from_UTC)).astype('datetime64[ns]'),
-                                 utc=True)
+                print(
+                    "For string data can add only fixed number of hours! Adding",
+                    Hours_from_UTC / 3600,
+                    "Hours",
+                )
+            tim = pd.to_datetime(
+                (date.astype(np.object) + "{:+03d}".format(Hours_from_UTC)).astype("datetime64[ns]"), utc=True
+            )
         elif isinstance(date, pd.Index):
             tim = date
             tim -= dt_from_utc
@@ -92,14 +103,14 @@ def time_corr(
         lf.info('Time constant ({}) {:s}', abs(dt_from_utc),
                 'subtracted' if dt_from_utc > timedelta(0) else 'added')
     else:
-        if not isinstance(date.iat[0] if isinstance(date, pd.Series) else date[0], pd.Timestamp):  # isinstance(date, (pd.Series, np.datetime64))
+        if not isinstance(date.iat[0] if isinstance(date, pd.Series) else date[0], pd.Timestamp):
             date = date.astype('datetime64[ns]')
-        tim = pd.to_datetime(date, utc=True)  # .tz_localize('UTC')tz_convert(None)
+        tim = pd.to_datetime(date, utc=True)
 
+    # Determine data out of filtering range, skip processing if this is all data
     if cfg_min_date := cfg_in.get('min_date'):
         cfg_min_date = pd.Timestamp(cfg_min_date, tz=None if cfg_min_date.tzinfo else 'UTC')
 
-        # Skip processing if data is out of filtering range
         global tim_min_save, tim_max_save
         tim_min = tim.min(skipna=True)
         tim_max = tim.max(skipna=True)
@@ -109,24 +120,25 @@ def time_corr(
 
         # set time beyond limits to special values keeping it sorted for dask and mark out of range as good values
         if tim_max < cfg_min_date:
-            tim[:] = cfg_min_date - np.timedelta64(1, 'ns')  # pd.NaT                      # ns-resolution maximum year
+            tim[:] = cfg_min_date - np.timedelta64(1, 'ns')  # ns-resolution maximum year?
             return tim, np.ones_like(tim, dtype=bool)
 
         is_time_filt = False
+        if tim_min < cfg_min_date:
+            b_ok_in = (tim.values >= cfg_min_date.to_numpy())
+            is_time_filt = True
+
         if cfg_max_date := cfg_in.get('max_date'):
             cfg_max_date = pd.Timestamp(cfg_max_date, tz=None if cfg_max_date.tzinfo else 'UTC')
             if tim_min > cfg_max_date:
-                tim[:] = cfg_max_date + np.timedelta64(1, 'ns')  # pd.Timestamp('2262-01-01')  # ns-resolution maximum year
+                tim[:] = cfg_max_date + np.timedelta64(1, 'ns')
                 return tim, np.ones_like(tim, dtype=bool)
             if tim_max > cfg_max_date:
-                b_ok_in = (tim.values <= cfg_max_date.to_numpy())
-                is_time_filt = True
-        if tim_min < cfg_min_date:
-            if is_time_filt:
-                b_ok_in &= (tim.values >= cfg_min_date.to_numpy())
-            else:
-                b_ok_in = (tim.values >= cfg_min_date.to_numpy())
-                is_time_filt = True
+                if is_time_filt:
+                    b_ok_in &= (tim.values <= cfg_min_date.to_numpy())
+                else:
+                    b_ok_in = (tim.values <= cfg_max_date.to_numpy())
+                    is_time_filt = True
 
         if is_time_filt:
             it_se = np.flatnonzero(b_ok_in)[[0,-1]]
@@ -146,12 +158,15 @@ def time_corr(
         pass  # we already have numpy array
 
 
-    t = tim.to_numpy(np.int64)
+    t = tim.to_numpy(np.int64, copy=True)
     if process and tim.size > 1:
         # Check time resolution and increase if needed to avoid duplicates
+
+        # replace bad time by interpolation if allowed
         if n_bad_in and not cfg_in.get('b_keep_not_a_time'):
             t = np.int64(rep2mean(t, bOk=b_ok_in))
             b_ok_in[:] = True
+
         freq, n_same, n_decrease, i_different = find_sampling_frequency(t, precision=6, b_show=False)
         if freq:
             cfg_in['fs_last'] = freq  # fallback freq to get value for next files on fail
@@ -178,8 +193,9 @@ def time_corr(
         b_ok = None
         idel = None
         msg = ''
+
         if n_decrease > 0:
-            # Excude elements
+            # Exclude elements
 
             # if True:
             #     # try fast method
@@ -219,13 +235,16 @@ def time_corr(
             i_dec = np.flatnonzero(np.ediff1d(t_ok, to_end=True) < 0)
             n_decrease_remains = len(i_dec)
             if n_decrease_remains:
-                lf.warning('Decreased time among duplicates ({:d} times). Not trusting repeated values...',
-                          n_decrease_remains)
+                lf.warning(
+                    "Decreased time among duplicates ({:d} times). Not trusting repeated values...",
+                    n_decrease_remains,
+                )
                 b_ok = np.zeros_like(t, dtype=np.bool_)
                 b_ok[i_inc] = True
 
                 if process == 'delete_inversions':
-                    # selecting one of the two bad time values that lead to the bad diff element and mask these elements
+                    # selecting one of the two bad time values that lead to the bad diff element and mask
+                    # these elements
                     for s, e in i_dec + np.int32([0, 1]):
                         b_ok[t == (t_ok[e if b_ok[s] else s])] = False
                     if cfg_in.get('b_keep_not_a_time'):
@@ -234,8 +253,8 @@ def time_corr(
                         b_ok_in[~b_ok] = False
             else:  # Decreased time not in duplicates
                 i_dec = np.delete(i_different, np.searchsorted(i_different, i_inc))
-                assert np.alltrue(i_dec == i_different[~np.in1d(i_different, i_inc)])  # same results
-                # assert np.alltrue(i_dec == np.setdiff1d(i_different, i_inc[:-1]))  # same results
+                assert np.all(i_dec == i_different[~np.in1d(i_different, i_inc)])  # same results
+                # assert np.all(i_dec == np.setdiff1d(i_different, i_inc[:-1]))  # same results
                 if process == 'delete_inversions':
                     b_ok_in[np.flatnonzero(b_ok_in)[i_dec] if cfg_in.get('b_keep_not_a_time') else i_dec] = False
 
@@ -243,71 +262,96 @@ def time_corr(
 
             idel = np.flatnonzero(~b_ok)
             n_del = len(idel)
-            msg = f"Filtered time: {n_del}/{t.size} values " \
-                  f"{'masked' if process == 'delete_inversions' else 'will be interpolated'} (1st and last: " \
-                  f"{pd.to_datetime(t[idel[[0, -1]]], utc=True)})"
+            msg = (
+                f"Filtered time: {n_del}/{t.size} values "
+                f"{'masked' if process == 'delete_inversions' else 'will be interpolated'} (1st and last: "
+                f"{pd.to_datetime(t[idel[[0, -1]]], utc=True)})"
+            )
             if n_decrease:
                 lf.warning('decreased time ({}) was detected! {}', n_decrease, msg)
             else:
                 lf.warning(msg)
 
+        # Linearize time
 
         if n_same > 0 and cfg_in.get('fs') and not cfg_in.get('fs_old_method'):
-            # The most simple operation that should be done usually for CTD, but requires fs:
+            # The most simple operation that should be done usually for CTD, but requires ``fs``:
             if cfg_in.get('linearize_accuracy_s'):
                 t = make_linear_with_shifts(t, cfg_in['fs'], cfg_in['linearize_accuracy_s'])
             else:
                 t = repeated2increased(t, cfg_in['fs'], b_ok if n_decrease else None)  # if n_decrease then b_ok is calculated before
             tim = pd.to_datetime(t, utc=True)
         elif n_same > 0 or n_decrease > 0:
-            # message with original t
-
             # Replace t by linear increasing values using constant frequency excluding big holes
+
             if cfg_in.get('fs_old_method'):
                 lf.info('Flatten time interval using provided freq = {:f}Hz (determined: {:f})',
                         cfg_in.get('fs_old_method'), freq)
                 freq = cfg_in.get('fs_old_method')
             else:  # constant freq = filtered mean
-                lf.info('Flatten time interval using median* freq = {:f}Hz determined', freq)
+                lf.info('Flatten time interval using median* freq = {:f}Hz', freq)
             b_show = n_decrease > 0
             if freq <= 1:
                 # Skip: typically data resolution is sufficient for this frequency
-                lf.warning('Not flattening for frequency < 1')
+                lf.warning('Not flattening time due to frequency < 1')
             else:
-                # Increase time resolution by recalculating all values
-
+                # Increase time resolution by recalculating all values in parts between holes:
                 dt_interp_between = cfg_in.get('dt_interp_between', timedelta(seconds=1.5))
-                # interp to can use as pandas index even if any bad. Note: if ~b_ok at i_st_hole then interp. is bad
-                tim_before = pd.to_datetime(np.int64(rep2mean(t, bOk=b_ok)))
+
+                # Interpolate to can use as pandas index even if any was bad.
+                t_before = np.int64(rep2mean(t, bOk=b_ok))
+                # If ~b_ok would be in ``i_st_hole`` then interpolation is bad:
+
                 i_st_hole = make_linear(t, freq, dt_big_hole=dt_interp_between)  # changes t (and tim?)
-                # Check if we can use them
-                bbad = np.ones_like(t, dtype=np.bool_)
-                bbad[i_st_hole] = False
-                bbad[i_st_hole[1:] - 1] = False  # last data point before hole
-                bbad[bbad] = check_time_diff(
-                    t[bbad].view('M8[ns]'), tim_before[bbad],
-                    dt_warn=cfg_in.get('dt_max_interp_err', timedelta(seconds=1.5)),  # pd.Timedelta(minutes=2)
-                    msg='Time difference [{units}] in {n} points exceeds {dt_warn} after flattening:',
-                    max_msg_rows=20
-                )
-                # replace regions of big error with original data ignoring single values with big error
-                _ = bbad[:-1] & bbad[1:]  # repeated error mask
-                if _.any():
-                    bbad[:-1] = _
-                    bbad[1:] = _
-                    n_repeated = bbad.sum()
-                    b_ok = ~bbad
-                    b_show = True
-                    t[bbad] = tim_before.to_numpy(dtype=np.int64)[bbad]
+                # Cycle to replace make_linear() result with repeated2increased() and repeat check if need
+                for b_repeated in [False, True]:
+                    # Check if we can use them
+                    bbad = np.ones_like(t, dtype=np.bool_)
+                    bbad[i_st_hole] = False
+                    bbad[i_st_hole[1:] - 1] = False  # last data point before hole
+                    bbad[bbad] = check_time_diff(
+                        t[bbad].view('M8[ns]'), t_before[bbad].view('M8[ns]'),
+                        dt_warn=cfg_in.get('dt_max_interp_err', timedelta(seconds=1.5)),
+                        msg='Time difference [{units}] in {n} points exceeds {dt_warn} after flattening:',
+                        max_msg_rows=20
+                    )
+
+                    if bbad.any():
+                        # Replace big error regions with original data ignoring single values with big error:
+                        # partial revert of only adjacent elements with big error if it not produce inversions
+                        _ = bbad[:-1] & bbad[1:]  # repeated error mask
+                        if _.any():
+                            bbad[:-1] = _
+                            bbad[1:] = _
+                            t[bbad] = t_before[bbad]
+
                     dt = np.ediff1d(t, to_begin=1)
-                    if (dt < 0).any():
-                        t = tim_before.to_numpy(dtype=np.int64)
-                        lf.info("flattening frequency failed => keeping variable frequency")
+                    if (dt >= 0).all():
+                        if bbad.any():
+                            if _.any():
+                                n_repeated = bbad.sum()  # number of elements we revert
+                                lf.info(
+                                    f"There are {n_repeated} adjacent among them => "
+                                    "revert to original not constant frequency there"
+                                )
+                            else:
+                                lf.info("Isolated gaps remains only")
+                        b_ok = ~bbad
+                        b_show = True
+                        break
                     else:
-                        lf.info(f'There are {n_repeated} adjacent among them => '
-                                'revert to original not constant frequency there')
-                else:
-                    lf.info("Discarded isolated gaps")
+                        # Revert all
+                        t = t_before
+                        if b_repeated:  # Give up
+                            lf.info("flattening frequency failed => keeping variable frequency")
+                            b_show = False
+                        else:  # Not constant frequency => try other method that will
+                            lf.info("variable frequency detected: flattening frequency failed")
+                            t = repeated2increased(t, freq, b_ok if n_decrease else None)
+
+                            # updates shifts along but long as not checks frequency:
+                            # t = make_linear_with_shifts(t, freq, cfg_in["linearize_accuracy_s"])
+
             # Show what is done
             if b_show:
                 if b_ok is None:
@@ -319,7 +363,8 @@ def time_corr(
                     path_save_image,
                     msg
                 )
-        # Checking all is ok
+
+        # Checking that all is ok, interpolate repeated values if any.
 
         dt = np.ediff1d(t, to_begin=1)
         b_ok = dt > 0
@@ -341,26 +386,35 @@ def time_corr(
         b_same_prev = np.ediff1d(t, to_begin=1) == 0  # with set of first element as changing
         n_same = b_same_prev.sum()
 
+        msg = ", ".join(
+            f"{fault} time ({n} items)"
+            for (fault, n) in (
+                (("interp non-increased", n_same), ("out of range to NaN", n_bad_in))
+                if cfg_in.get("b_keep_not_a_time")
+                else (("non-increased", n_same), ("out of range", n_bad_in))
+            )
+            if n > 0
+        )
         if cfg_in.get('b_keep_not_a_time'):
             if n_same > 0:
-                lf.warning('non-increasing time ({:d} times) is detected! => interp ', n_same)
+                lf.warning("Processing: {:s}", msg)
         else:
             # prepare to interp all non-increased (including NaNs)
             if n_bad_in:
                 b_same_prev &= ~b_ok_in
-
-            msg = ', '.join(
-                f'{fault} time ({n} times)' for (n, fault) in ((n_same, 'non-increased'), (n_bad_in, 'NaN')) if n > 0
-                )
             if msg:
-                lf.warning('{:s} is detected! => interp ', msg)
+                lf.warning('Interpolating: {:s}', msg)
 
         if n_same > 0 or n_decrease > 0:
             # rep2mean(t, bOk=np.logical_not(b_same_prev if n_decrease==0 else (b_same_prev | b_decrease)))
             b_bad = b_same_prev if n_decrease == 0 else (b_same_prev | b_decrease)
+
+            # Interpolate
             t = rep2mean_with_const_freq_ends(t, ~b_bad, freq)
             dt = np.ediff1d(t, to_begin=1)
             b_ok = dt > 0
+
+
     else:  # not need to check / correct time
         b_ok = np.ones(tim.size, np.bool_)
     # make initial shape: paste NaNs back
@@ -400,8 +454,8 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
                             tim: Union[pd.Series, pd.Index, np.ndarray, None] = None,
                             tim_range: Optional[Tuple[Any, Any]] = None, path_save_image=None, msg='') -> None:
     """
-    # Used instead of plt that can hang (have UserWarning: Starting a Matplotlib GUI outside of the main thread will likely fail.)
-    To can export png the chromedriver must be placed to c:\Programs\_net\Selenium\chromedriver{chrome_version[:2]}.exe
+    Used instead of plt that can hang (have UserWarning: Starting a Matplotlib GUI outside of the main thread will likely fail.)
+
     On fail tries export html
     :param cfg_in:
     :param t: array of values to show their idel and b_ok parts, for example currently filtered part of tim, converted to array
@@ -417,8 +471,10 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
     from bokeh.io import export_png, export_svgs
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
-
-    save_format_suffix = '.png'
+    from selenium.common.exceptions import (
+        SessionNotCreatedException, WebDriverException, NoSuchDriverException
+    )
+    global fig_save_format_suffix
     # output figure name
     fig_name = '{:%y%m%d_%H%M}-{:%H%M}'.format(*(
         tim_range if (tim_range is not None and tim_range[0]) else
@@ -431,9 +487,12 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
             for p in ['path', 'text_path', 'file_cur']:
                 p_use = cfg_in.get(p)
                 if p_use:
+                    p_use = Path(p_use)
                     break
-            path_save_image = dir_create_if_need(Path(p_use).with_name(str(path_save_image)))
-        fig_name = (path_save_image / fig_name).with_suffix(save_format_suffix)
+            while not p_use.is_dir():
+                p_use = p_use.parent
+            path_save_image = dir_create_if_need(p_use / str(path_save_image))
+        fig_name = (path_save_image / fig_name).with_suffix(fig_save_format_suffix)
         if fig_name.is_file():
             # work have done before
             return
@@ -441,83 +500,182 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
     # prepare saving/exporting method
     if isinstance(fig_name, Path):
         lf.info('saving figure to {!s}', fig_name)
-        if save_format_suffix != '.html':
-            from selenium.common.exceptions import SessionNotCreatedException, WebDriverException, NoSuchDriverException
-
+        if fig_save_format_suffix != '.html':
             try:
-                # To png/svg
-                chrome_options = Options()
-                chrome_options.add_argument("--headless")
-                from selenium import webdriver
-
-                chrome_options.binary_location = r'C:\Program Files (x86)\Slimjet\Slimjet.exe'
-                # version = [get_version_via_com(p) for p in paths if p is not None][0]
-                chrome_version = '104'  # get_version_via_com(chrome_options.binary_location)  - not Chrome version
-
-                # (downdloaded from https://chromedriver.chromium.org/downloads)
-                # os.environ["webdriver.chrome.driver"] = chrome_driver_path  # seems not works
-                n_tries = range(2)
+                n_tries = range(3)
                 e = None
-                for k in n_tries:
-                    chrome_driver_path = rf'c:\Programs\_net\Selenium\chromedriver{chrome_version}.exe'
+                for i_try in n_tries:
                     try:
-                        web_driver = webdriver.Chrome(executable_path=chrome_driver_path, options=chrome_options)
-                    except WebDriverException as e:  # "chrome not reachable" - may be hung or a while
-                        try:
-                            # retrieve right current browser version from error message
-                            chrome_version = e.msg.split('Current browser version is ')[1].split('.')[0]
+                        if i_try == 0:
+                            import os
+                            from selenium.webdriver.edge.service import Service as EdgeService
+                            from webdriver_manager.microsoft import EdgeChromiumDriverManager
 
-                            continue
-                        except Exception as e:
-                            pass
+                            # Automatically download and set up the Edge WebDriver
+                            edge_service = EdgeService(EdgeChromiumDriverManager().install())
 
+                            # Disable SSL verification to ignore
+                            # outdated browser/driver versions, network restrictions,
+                            # or SSL certificate mismatches)
+                            edge_options = webdriver.edge.options.Options()
+                            edge_options.add_argument('--ignore-certificate-errors')
+                            # edge_options.add_argument("--disable-features=All")  # non-essential features but includes NetworkService, which may be needed
+                            # edge_options.add_argument("--disable-features=NetworkService")
+                            edge_options.add_argument("--disable-extensions")  # Disable extensions
+                            edge_options.add_argument("--disable-blink-features=AutomationControlled")  # Disable automation
+                            edge_options.add_argument("--no-sandbox")  # Disable sandboxing
+                            edge_options.add_argument("--disable-dev-shm-usage")  # Avoid /dev/shm usage
+                            edge_options.add_argument(
+                                "--disable-features=EdgeUserTopicOnUrlProtobuf"
+                            )  # Disable user topic modeling
+                            edge_options.add_argument("--disable-usb-device-detection")
+                            profile_dir = os.path.join(
+                                os.path.expanduser("~"), "AppData", "Local", "Temp",
+                                "edge-clean-profile-for-selenium"
+                            )
+                            os.makedirs(profile_dir, exist_ok=True)
+                            edge_options.add_argument(f"--user-data-dir={profile_dir}")
+
+                            # running the browser in headless mode might help issues related to rendering:
+                            # edge_options.add_argument("--headless")
+                            # edge_options.add_argument("--disable-gpu")
+                            # Create an instance of the Edge WebDriver
+                            web_driver = webdriver.Edge(service=edge_service, options=edge_options)
+                        elif i_try == 1:
+                            from webdriver_manager.core.os_manager import ChromeType
+                            # old version: webdriver_manager.core.utils
+                            from selenium.webdriver.chrome.service import Service as ChromeService
+                            ver = "111.0.5563.41"
+                            chrome_driver_path = os.path.join(
+                                os.path.expanduser("~"), "/.wdm/drivers/chromedriver/win32",
+                                ver, "chromedriver.exe"
+                            )
+                            try:
+                                *_, chrome_driver_path = list(Path(chrome_driver_path).parent.parent.glob('*'))
+                            except ValueError:  # not enough values to unpack (expected at least 1, got 0)
+                                raise FileNotFoundError(chrome_driver_path)
+                            # rf'C:\Programs\_net\browser_extensions\chromedriver\chromedriver{chrome_version}.exe'
+                            # Not works without getting ver
+                            options = webdriver.ChromeOptions()
+                            options.binary_location = r'C:\Program Files (x86)\Slimjet\slimjet.exe'
+                            service = ChromeService(executable_path=chrome_driver_path)
+                            try:
+                                web_driver = webdriver.Chrome(service=service, options=options)
+                            except SessionNotCreatedException as e:
+                                lf.exception('')
+                                import re
+                                from webdriver_manager.chrome import ChromeDriverManager
+                                from webdriver_manager.core.os_manager import PATTERN
+                                version = re.search(
+                                    rf'(?<=version is )[{PATTERN[ChromeType.CHROMIUM]}]*',
+                                    e.msg
+                                ).group()
+                                chrome_driver_path = ChromeDriverManager(version=version).install()
+                                service = ChromeService(executable_path=chrome_driver_path)
+                                # chrome_type=ChromeType.CHROMIUM
+                                web_driver = webdriver.Chrome(service=service, options=options)
+                        else:  # try old code
+                            # To png/svg
+                            options = webdriver.chrome.options.Options()
+                            options.add_argument("--headless")
+                            options.binary_location = r"C:\Program Files (x86)\Slimjet\Slimjet.exe"
+                            # version = [get_version_via_com(p) for p in paths if p is not None][0]
+                            # chrome_version = '104'
+                            # get_version_via_com(options.binary_location) gets not Chrome version
+
+                            # see chromium chrome://settings/help
+                            # (downloaded from https://chromedriver.chromium.org/downloads)
+                            # os.environ["webdriver.chrome.driver"] = chrome_driver_path  # seems not works
+
+                            # service = Service(executable_path='C:\Program Files\Chrome Driver\chromedriver.exe')
+                            # web_driver = webdriver.Chrome(service=service)
+                            try:
+                                web_driver = webdriver.Chrome(
+                                    executable_path=chrome_driver_path, options=options
+                                )
+                            except WebDriverException as e:
+                                # "chrome not reachable" - may be hung or a while
+                                try:
+                                    # retrieve right current browser version from error message
+                                    chrome_version = e.msg.split(
+                                        'Current browser version is '
+                                    )[1].split('.')[0]
+                                    continue
+                                except Exception as e:
+                                    pass
+                            except TypeError as e:
+                                print('old web_driver not works too')
+                                return
+                            # NoSuchDriverException: Message: Unable to obtain C:\Users\and0k\.wdm\drivers\chromedriver\win32\111.0.5563.41 using Selenium Manager; Message: Unable to obtain working Selenium Manager binary; C:\Users\and0k\conda\envs\py3.11h5togrid\Lib\site-packages\selenium\webdriver\common\windows\selenium-manager.exe
+                            # ; For documentation on this error, please visit: https://www.selenium.dev/documentation/webdriver/troubleshooting/errors/driver_location
+
+                        # web_driver = webdriver.Firefox()
+                        # from selenium.webdriver.firefox.service import Service as FirefoxService
+                        # from webdriver_manager.firefox import GeckoDriverManager
+                        # web_driver = webdriver.Firefox(service=FirefoxService(GeckoDriverManager().install()))
+                        break
+                    except WebDriverException as e:
+                        lf.exception('')
                         msg_trace = '\n==> '.join((s for s in e.args if isinstance(s, str)))
                         sleep(1)
-                        lf.error(f'{k}/{len(range(n_tries))}. {e.__class__}: {msg_trace}')
+                        lf.error(f'{i_try}/{len(range(n_tries))}. {e.__class__}: {msg_trace}')
                         web_driver = None
                     except ImportError:
                         lf.exception('Skipping of figure creating because there is no needed package...')
-
-            except SessionNotCreatedException:
-                lf.exception('Can not save png so will save html instead')
-                save_format_suffix = '.html'
+                    except NoSuchDriverException:
+                        pass
+                    except ValueError:
+                        lf.exception('Skipping of figure creating because of other error...')
+            except (SessionNotCreatedException, Exception):  # or put exact type of ConnectionError if can
+                lf.exception("Can not save png so trying save html instead (big)")
+                fig_save_format_suffix = ".html"
                 # todo: parse message to get Current browser version (or better method):
                 # selenium.common.exceptions.SessionNotCreatedException: Message: session not created: This version of ChromeDriver only supports Chrome version 94
                 # Current browser version is 104.0.5112.39 with binary path ...
 
+    if fig_save_format_suffix != '.html': # conditioned skip to not save fig of > 100Mb size
+        # Create a new plot with a datetime axis type
+        p = figure(width=1400, height=700, y_axis_type="datetime")
+        # old: plot_width=1400, plot_height=700  # plt.figure('Decreasing time corr')
+        p.title.text = 'Decreasing time corr'
+        # add renderers
+        if idel is not None:
+            p.scatter(
+                idel,
+                pd.to_datetime(t[idel], utc=True),
+                legend_label="deleting",
+                size=4,
+                color="magenta",
+                alpha=0.8,
+            )
+        p.line(np.arange(t.size), tim, legend_label='all', color='red', alpha=0.2)  # long!
+        if b_ok is not None:
+            p.line(
+                np.flatnonzero(b_ok),
+                pd.to_datetime(t[b_ok], utc=True),
+                legend_label='good', color='green', alpha=0.8
+            )  # long!
+        # NEW: customize by setting attributes
+        p.legend.location = "top_left"
+        p.grid.grid_line_alpha = 0
+        p.xaxis.axis_label = 'Counts'
+        p.yaxis.axis_label = 'Date'
+        p.ygrid.band_fill_color = "olive"
+        p.ygrid.band_fill_alpha = 0.1
+        # show(p)  # shows and saves the html fig of > 100Mb size
 
-        if save_format_suffix == '.html':
-            # To static HTML file: big size but with interactive zoom, datashader?
-            output_file(fig_name.with_suffix('.html'), title=msg)
-            # web_driver.get("http://www.python.org")  # for testing
-
-
-    # Create a new plot with a datetime axis type
-    p = figure(width=1400, height=700, y_axis_type="datetime")   # old: plot_width=1400, plot_height=700  # plt.figure('Decreasing time corr')
-    p.title.text = 'Decreasing time corr'
-
-    # add renderers
-    if idel is not None:
-        p.circle(idel, pd.to_datetime(t[idel], utc=True), legend_label='deleting', size=4, color='magenta', alpha=0.8)
-    p.line(np.arange(t.size), tim, legend_label='all', color='red', alpha=0.2)
-    if b_ok is not None:
-        p.line(np.flatnonzero(b_ok), pd.to_datetime(t[b_ok], utc=True), legend_label='good', color='green', alpha=0.8)
-
-
-    # NEW: customize by setting attributes
-    p.legend.location = "top_left"
-    p.grid.grid_line_alpha = 0
-    p.xaxis.axis_label = 'Counts'
-    p.yaxis.axis_label = 'Date'
-    p.ygrid.band_fill_color = "olive"
-    p.ygrid.band_fill_alpha = 0.1
-
-    # show(p)  # show the results
-
-    # export figure
-    if isinstance(fig_name, Path) and save_format_suffix != '.html':
-        try:
-            (export_png if save_format_suffix == '.png' else export_svgs)(
-                p, filename=fig_name.with_suffix(save_format_suffix), webdriver=web_driver)
-        except Exception as e:
-            lf.exception('Can not save figure of bad source time detected')
+        # export figure
+        if isinstance(fig_name, Path):
+            if fig_save_format_suffix != '.html':
+                try:
+                    (export_png if fig_save_format_suffix == '.png' else export_svgs)(   # long!
+                        p, filename=fig_name.with_suffix(fig_save_format_suffix), webdriver=web_driver)
+                    # export_svgs(p, filename=fig_name.with_suffix('.svg'), webdriver=web_driver)
+                    # output_file(fig_name.with_suffix('.html'), title=msg)
+                except Exception as e:
+                    lf.exception('Can not save figure of bad source time detected')
+                web_driver.quit()
+            else:
+                # To static HTML file: big size but with interactive zoom, datashader?
+                output_file(fig_name.with_suffix(fig_save_format_suffix), title=msg)
+                # web_driver.get("http://www.python.org")  # for testing

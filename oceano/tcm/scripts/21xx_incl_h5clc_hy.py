@@ -2,7 +2,7 @@ from pathlib import Path
 import sys
 from yaml import safe_dump as yaml_safe_dump
 
-import cfg_dataclasses as cfg_d
+import utils.cfg_dataclasses as cfg_d
 import tcm.incl_h5clc_hy as incl_h5clc_hy
 
 # raw data db - data that was converted from csv

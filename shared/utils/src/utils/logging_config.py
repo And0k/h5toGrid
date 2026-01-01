@@ -137,33 +137,36 @@ def get_formatter(name=True, funcName=True, datefmt=None, msecs=False):
 
 def setup_logging(
     name: str = __name__,
-    log_level: int = logging.INFO,
-    log_file_dir: Optional[Path] = None,
-    log_file_sfx: str = "meta_finder",
+    log_level: Optional[int] = None,
+    log_file_dir: Optional[Path] = "logs",
+    log_file_sfx: Optional[str] = None,
     console_level: int = logging.INFO,
     file_level: int = logging.INFO,
     console_format_args={"datefmt": "%H:%M:%S"},
-    file_format_args={}
+    file_format_args={},
 ) -> logging.Logger:
     """
     Set up centralized logging with consistent formatting and handlers.
 
     Args:
         name: Name for the logger (defaults to __name__)
-        log_level: Root logger level
-
-        log_file_dir: Directory for log files (defaults to current working directory / "meta")
-        log_file_sfx: log file name suffix
+        log_level: Root logger level. If None, will be set to min(console_level, file_level).
+        log_file_dir: Directory for log files (defaults to current working directory / "logs")
+        log_file_sfx: log file name suffix, if None, then it will be equal to `name`
         console_level: Log level for console output
         file_level: Log level for file output (defaults to INFO)
         console_format_args: arguments of get_formatter() to specify whether to include function name in
-        conslole log format, ...
+        console log format, ...
         file_format_args: same for file log format
     Returns:
         Configured logger instance
     """
     # Set the custom logger class as the default
     logging.setLoggerClass(CustomLogger)
+
+    # Automatically determine log_level if not provided
+    if log_level is None:
+        log_level = min(console_level, file_level)
 
     # Set up root logger
     root_logger = logging.getLogger()
@@ -179,26 +182,24 @@ def setup_logging(
     console_handler.setFormatter(get_formatter(**console_format_args))
 
     # Create file handler
-    if log_file_dir is None:
-        # Check if we're in test mode
-        import os
-        if os.environ.get('AB_SIO_RAS_TEST_MODE') == '1':
-            log_file_dir = Path("test_data") / "meta_temp" / "logs"
-        else:
-            log_file_dir = Path.cwd() / "meta"
-    log_file_dir.mkdir(exist_ok=True)
+    if log_file_dir is not None:
+        if not isinstance(log_file_dir, Path):
+            log_file_dir = Path(log_file_dir)
+        if not log_file_dir.is_absolute():
+            log_file_dir = Path.cwd() / log_file_dir
+        log_file_dir.mkdir(exist_ok=True)
 
-    timestamp = time.strftime("%y%m%d_%H%M")
-    log_file = log_file_dir / f"{timestamp}_{log_file_sfx}.log"
+        timestamp = time.strftime("%y%m%d_%H%M")
+        log_file = log_file_dir / f"{timestamp}_{log_file_sfx or name}.log"
 
-    # Create file handler with UTF-8 encoding to handle special characters properly
-    file_handler = logging.FileHandler(log_file, encoding='utf-8')
-    file_handler.setLevel(file_level)
-    file_handler.setFormatter(get_formatter(**file_format_args))
+        # Create file handler with UTF-8 encoding to handle special characters properly
+        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler.setLevel(file_level)
+        file_handler.setFormatter(get_formatter(**file_format_args))
 
-    # Add handlers to root logger
-    root_logger.addHandler(console_handler)
-    root_logger.addHandler(file_handler)
+        # Add handlers to root logger
+        root_logger.addHandler(console_handler)
+        root_logger.addHandler(file_handler)
 
     # Get the named logger
     logger = logging.getLogger(name)

@@ -19,7 +19,7 @@ try:
     import copernicusmarine as cm
 except ImportError:
     l.error("copernicusmarine library not found. Download functionalities will not be unavailable!")
-    cm = None # Set to None if import fails
+    cm = None
 
 def extract_error_from_xml(xml_string):
     # This function seems to be for debugging/logging XML errors,

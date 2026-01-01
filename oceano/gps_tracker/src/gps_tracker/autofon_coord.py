@@ -41,9 +41,16 @@ from utils.h5_to_gpx import save_to_gpx, gpx_save  # gpx_track_create
 from hdf5_pandas.h5_dask_pandas import df_to_csv  #, filter_global_minmax, filter_local
 from hdf5_pandas import h5
 
-import cfg_dataclasses
-from utils.init import Ex_nothing_done, FakeContextIfOpen, LoggingStyleAdapter, set_field_if_no, call_with_valid_kwargs,\
-    ExitStatus, GetMutex
+import utils.cfg_dataclasses as cfg_d
+from utils.init import (
+    Ex_nothing_done,
+    FakeContextIfOpen,
+    LoggingStyleAdapter,
+    set_field_if_no,
+    call_with_valid_kwargs,
+    ExitStatus,
+    GetMutex,
+)
 
 # from csv2h5_vaex import argparser_files, with_prog_config
 from hdf5_pandas import h5
@@ -645,7 +652,7 @@ class ConfigProcessAutofon:
 
 
 @dataclass
-class ConfigOutAutofon(cfg_dataclasses.ConfigOutSimple):
+class ConfigOutAutofon(cfg_d.ConfigOutSimple):
     # dt_bins_rolling: List[List[str]] = field(default_factory=lambda: [['2h', None], ['5min', None], ['10min', '1h']])
     # List[List[ or List[Optional[str] not supported so we split it:
     dt_bins: List[str] = field(default_factory=lambda: ['2h', '5min', '10min'])
@@ -654,20 +661,23 @@ class ConfigOutAutofon(cfg_dataclasses.ConfigOutSimple):
     to_gpx: List[bool] = field(default_factory=list)  # empty: means True for averaging bins <= 1h
 
 
-ConfigProgram = cfg_dataclasses.ConfigProgram
+ConfigProgram = cfg_d.ConfigProgram
 
 cs_store_name = Path(__file__).stem
-cs, ConfigType = cfg_dataclasses.hydra_cfg_store(
-    cs_store_name, {
-    'input': [ConfigInAutofon],  # Load the config "in_autofon" from the config group "input"
-    'out': [ConfigOutAutofon],  # Set as MISSING to require the user to specify a value on the command line.
-    #'filter': ['filter'],
-    'process': [ConfigProcessAutofon],  # 'process_autofon'
-    'program': [ConfigProgram],  # 'program'
-    # 'search_path': 'empty.yml' not works
+cs, ConfigType = cfg_d.hydra_cfg_store(
+    cs_store_name,
+    {
+        "input": [ConfigInAutofon],  # Load the config "in_autofon" from the config group "input"
+        "out": [
+            ConfigOutAutofon
+        ],  # Set as MISSING to require the user to specify a value on the command line.
+        #'filter': ['filter'],
+        "process": [ConfigProcessAutofon],  # 'process_autofon'
+        "program": [ConfigProgram],  # 'program'
+        # 'search_path': 'empty.yml' not works
     },
-    module=sys.modules[__name__]
-    )
+    module=sys.modules[__name__],
+)
 
 
 def dx_dy_dist_bearing(lon1, lat1, lon2, lat2):
@@ -1279,14 +1289,14 @@ def main(config: ConfigType) -> None:
         sys.exit(ExitStatus.failure)
 
     global cfg
-    cfg = cfg_dataclasses.main_init(config, cs_store_name)
+    cfg = cfg_d.main_init(config, cs_store_name)
     cfg_in = cfg.pop('input')
     cfg_in['cfgFile'] = cs_store_name
     cfg['in'] = cfg_in
     # back to string keys because can't suppress hydra str to int conversion:
     cfg['in']['alias'] = {str(k): v for k, v in cfg['in']['alias'].items()}
     # try:
-    #     cfg = hdf5_alt.cfg_dataclasses.main_init_input_file(cfg, cs_store_name, )
+    #     cfg = cfg_d.main_init_input_file(cfg, cs_store_name, )
     # except Ex_nothing_done:
     #     pass  # existed db is not mandatory
     # geod = pyproj.Geod(ellps='WGS84')

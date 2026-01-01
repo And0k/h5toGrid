@@ -32,8 +32,7 @@ import pandas as pd
 import hydra
 
 # import my scripts
-import cfg_dataclasses
-from cfg_dataclasses import hydra_cfg_store, ConfigInHdf5_Simple
+import utils.cfg_dataclasses as cfg_d
 
 from hdf5_pandas.csv2h5 import main as csv2h5
 from hdf5_pandas.csv_specific_proc import mod_name, rep_in_file, correct_txt #correct_kondrashov_txt, correct_baranov_txt
@@ -94,7 +93,7 @@ class ConfigOut:
 
 
 @dataclass
-class ConfigInHdf5InclCalibr(ConfigInHdf5_Simple):
+class ConfigInHdf5InclCalibr(cfg_d.ConfigInHdf5_Simple):
     """
     Same as ConfigInHdf5_Simple + specific (inclinometer calibration) data properties:
     channels: List: (, channel can be "magnetometer" or "M" for magnetometer and any else for accelerometer',
@@ -121,7 +120,7 @@ class ConfigInHdf5InclCalibr(ConfigInHdf5_Simple):
 
 
 cs_store_name = Path(__file__).stem
-cs, ConfigType = hydra_cfg_store(
+cs, ConfigType = cfg_d.hydra_cfg_store(
     cs_store_name,
     {
         'input': ['in_hdf5__incl_calibr'],  # Load the config ConfigInHdf5_InclCalibr from the config group "input"
@@ -192,12 +191,12 @@ def main(config: ConfigType) -> None:
 
     """
     global cfg
-    cfg = cfg_dataclasses.main_init(config, cs_store_name)
+    cfg = cfg_d.main_init(config, cs_store_name)
     cfg_in = cfg.pop('input')
     cfg_in['cfgFile'] = cs_store_name
     cfg['in'] = cfg_in
     # try:
-    #     cfg = hdf5_alt.cfg_dataclasses.main_init_input_file(cfg, cs_store_name, )
+    #     cfg = hdf5_alt.cfg_d.main_init_input_file(cfg, cs_store_name, )
     # except Ex_nothing_done:
     #     pass  # existed db is not mandatory
 
@@ -653,7 +652,7 @@ def call_example(call_by_user=True):
     path_db_in = Path(r'C:\Work\Python\AB_SIO_RAS\tcm\tcm\cfg\coef\190710incl.h5')
     path_db_out = Path(r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\_raw\201202.raw.h5')
     device = ['tr0']  # 221912
-    cfg_dataclasses.main_call([  # '='.join(k,v) for k,v in pairwise([   # ["2021-04-08T08:35:00", "2021-04-14T11:45:00"]'
+    cfg_d.main_call([  # '='.join(k,v) for k,v in pairwise([   # ["2021-04-08T08:35:00", "2021-04-14T11:45:00"]'
         'in.time_range=["2021-04-08T09:00:00", "now"]',   # UTC, max (will be loaded and updated what is absent)
         f'in.db_path="{path_db_in}"',
         #'input.dt_from_utc_hours=3',

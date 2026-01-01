@@ -580,25 +580,28 @@ def append_log(df: pd.DataFrame, tbl_name: str, cfg_out: Mapping[str, Any]) -> s
     - logfield_fileName_len: Optional int or dictionary specifying the maximum field length for string columns. The keys are column names and the values are the lengths.
     :return: Name of the log table to which the DataFrame was appended.
     """
-    str_field_len = cfg_out.get("logfield_fileName_len", {})
-    if str_field_len:
-        pass  # str_field_len = {'values': logfield_fileName_len}
-    else:
-        try:  #
-            m = cfg_out["db"].get_storer(tbl_name).table
-            strcolnames = m._strcolnames
-            str_field_len = {col: m.coldtypes[col].itemsize for col in strcolnames}
-        except:
-            pass
+    #  If db is opened in write mode use it else open (or todo: reopen in write mode)
+    db = cfg_out["db"]
+    with (nullcontext(db) if db else pd.HDFStore(db)) as db:
+        str_field_len = cfg_out.get("logfield_fileName_len", {})
+        if str_field_len:
+            pass  # str_field_len = {'values': logfield_fileName_len}
+        else:
+            try:  #
+                m = db.get_storer(tbl_name).table
+                strcolnames = m._strcolnames
+                str_field_len = {col: m.coldtypes[col].itemsize for col in strcolnames}
+            except:
+                pass
 
-    cfg_out["db"].append(
-        tbl_name,
-        df,
-        data_columns=True,
-        expectedrows=cfg_out.get("nfiles", 1),
-        index=False,
-        min_itemsize=str_field_len,
-    )
+        db.append(
+            tbl_name,
+            df,
+            data_columns=True,
+            expectedrows=cfg_out.get("nfiles", 1),
+            index=False,
+            min_itemsize=str_field_len,
+        )
     return tbl_name
 
 
@@ -2347,7 +2350,7 @@ def append_on_inconsistent_index(cfg_out, tbl_parent, df, df_append_fun, e, msg_
         tbl_parent = cfg_out["table"]
 
     error_info_list = [s for s in e.args if isinstance(s, str)]
-    msg = msg_func + " Error: " + e.__class__ + "\n==> ".join(error_info_list)
+    msg = f"{msg_func} Error: {e.__class__}" + "\n==> ".join(error_info_list)
     if not error_info_list:
         lf.error(msg)
         raise e

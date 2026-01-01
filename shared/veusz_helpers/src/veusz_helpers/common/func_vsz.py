@@ -43,7 +43,11 @@ def sl(x) -> slice:
     - if number of x elements > 3 takes 1st and last only. Todo: course the indexing to iterate through pairs: possible?
     - ravel x if elements < 2 dimensions
     """
-    args = [(None if isnan(i) else int(i)) for i in ravel(x)]
+    try:
+        x = ravel(x)
+    except ValueError:
+        pass  # setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions.
+    args = [(None if isnan(i) else int(i)) for i in x]
     try:
         return slice(*args)  # slice(*int32(ravel(x)))   # or lambda *x
     except TypeError:
@@ -83,11 +87,15 @@ en2ru = {
     "b.": "б.",
     "c.": "в.",
     "accelerometer": "акселерометр",
+    "accuracy": "погрешность",
     "after": "после",
+    "all": "все",
     "along": "вдоль",
     "and": "и",
     "anchor": "якорь",
+    "axis": "ось",
     "azimuth": "азимут",
+    "as per": "согласно",
     "at bot.": "у дна",  # not works, so any points are
     "at bottom": "у дна",
     "at": "на",
@@ -97,9 +105,11 @@ en2ru = {
     "avg": "уср",
     "band": "полоса",
     "band-pass": "полосовой",
+    "between": "между",
     "bin": "ячейка",
     "blow to": "куда дует",
     "blow from": "откуда дует",
+    "bot": "нижн",
     "bottom": "дно",
     "buoy": "буй",
     "by": "по",
@@ -114,9 +124,11 @@ en2ru = {
     "by weather station": "с метеостанции",
     "calibration": "градуировка",
     "central": "центральный",
+    "chain": "цепь",
     "cm": "см",
     "component": "составляющая",
     "concentration": "концентрация",
+    "conductivity": "электропроводность",
     "correspondingly": "соответственно",
     "corrected": "исправленный",
     "counts": "отсчеты",
@@ -130,7 +142,9 @@ en2ru = {
     "dev": "пр",
     "direction": "направление",
     "displacement": "смещение",
+    "dissolved": "растворенный",
     "downcast": "опускания",
+    "each": "каждого",
     "every": "каждые",
     "error": "ошибка",
     "for": "для",
@@ -149,6 +163,8 @@ en2ru = {
     "isolines": "изолинии",
     "isotherm": "изотерма",
     "its": "его",
+    "fit": "аппроксимация",
+    "fitted": "аппроксимированный",
     "flow to": "куда течет",
     "filter": "фильтр",
     "filtering": "фильтрация",
@@ -164,6 +180,7 @@ en2ru = {
     "m": "м",
     "magnitude": "абсолютное значение",
     "magnetometer": "магнитометр",
+    "manufacture": "производитель",
     "mean": "среднее",
     "measured": "измеренный",
     "measuredж": "измеренная",
@@ -171,6 +188,7 @@ en2ru = {
     "measured by inclinometersж": "измеренная инклинометрами",
     "measured by tilt current meterж": "измеренная инклинометром",
     "measured by tilt current metersж": "измеренная инклинометрами",
+    "measurement": "измерение",
     "mm": "мм",
     "mmol": "ммоль",
     "model": "модель",
@@ -184,9 +202,11 @@ en2ru = {
     "narrowband": "узкополосный",
     "no": "не",
     "no ": "без ",
+    "not": "не",
     "normalized": "нормированные",
     "north": "северный",
     "notation": "обозначение",
+    "of": "",
     "of current": "течения",
     "of current velocity": "скорости течения",
     "of isoline": "изолинии",
@@ -206,8 +226,10 @@ en2ru = {
     "past": "от",
     "perpendicular ": "перпендикулярно ",
     "point": "точка",
+    "polynom": "полином",
     "pos": "полож",
     "power spectrum density": "спектральная плотность мощности",
+    "probe": "датчик",
     "progressive vector diagram": "годограф",
     "pressure": "давление",
     "pressure force": "сила давления",
@@ -215,6 +237,9 @@ en2ru = {
     "reanalysis": "реанализ",
     "relative to": "относительно",
     "residual error": "остаточная погрешность",
+    "residual errors": "остаточные погрешности",
+    "resulting": "полученный",
+    "Root": "Корень",
     "run": "пуск",
     "s": "c",
     "salinity": "соленость",
@@ -224,13 +249,18 @@ en2ru = {
     # "sea bed": "дно моря",
     "sea depth": "глубина",
     "sedimentary trap": "седиментационная ловушка",
+    "selected": "выбранный",
     "sensor": "датчик",
     # "sea surface": "поверхность моря",
+    "Mean Square Error": "среднеквадратичная ошибка",
     "smoothed": "сглажено",
     "std": "CKO",
+    "shift": "сдвиг",
     "shore": "берег",
     "shoreward": "со стороны берега",
+    "source": "исходный",
     "speed": "скорость",
+    "spec": "из спецификации",
     "st": "ст",
     "temperature": "температура",
     "temperature sensor": "датчик температуры",
@@ -240,10 +270,15 @@ en2ru = {
     "tilt current meter": "инклинометрический измеритель",
     "time": "время",
     "time resolution": "временное разрешение",
+    "their": "их",
     "to the shore": "берегу",
+    "top": "верх",
     "total precipitation": "сумма осадков",
     "units": "ед.",
+    "upcast": "поднятия",
     "useful": "нужный",
+    "used": "использовался",
+    "used-": "исп.",
     "velocity": "скорость",
     "velocity magnitude": "модуль скорости",
     "vector components": "составляющие вектора",
@@ -293,12 +328,12 @@ class DictKeyIfNoVal(dict,):
             return key if b_translate else ''
         elif char0 == '_':
             return (
-                " ".join(self.get(k.replace("_", " "), k) for k in reversed(key[1:].split()))
+                " ".join(self.__getitem__(k) for k in reversed(key[1:].split()))  # get(k.replace("_", " "), k)?
                 if b_translate
-                else key.replace("_", " ")
+                else key[1:]   # key.replace("_", " ")?
             )
         elif char0.isupper():
-            out = self.get(key.lower())
+            out = self.__getitem__(key.lower())
             if out:
                 return c1(out)
 
@@ -327,20 +362,20 @@ class DictKeyIfNoVal(dict,):
                 i_remove += 1
 
             # English word cleaned
-            en_word = key[:i]
-            if not self:
-                return en_word
+            key = key[:i]  # en_word
+            if not b_translate:
+                return key
 
             # Translation
-            out = self.get(en_word)
-            # print(en_word, i, out, i_remove)
+            out = self.get(key)
+            # print(key, i, out, i_remove)
             if out is not None:
                 # Simple translation is successful
                 return f"{out[:(i_remove or None)]}{chars_add}"
 
-            if en_word[-1] == 's':
-                out = self.get(en_word[:-1])
-                # print(en_word, out, pl(out), i_remove)
+            if key[-1] == 's':
+                out = self.get(key[:-1])
+                # print(key, out, pl(out), i_remove)
                 return f"{pl(out)[:(i_remove or None)]}{chars_add}"
 
         elif char == "s":  # translate without last "s" then make plural
@@ -366,6 +401,8 @@ def plru(text):
     before, last = text[:-1], text[-1]
     match last:
         # last 1 chars dependance
+        case "к":
+            last = "ки"
         case "р":
             last = "ры"
         case "т":
@@ -417,7 +454,7 @@ def pl(text, lang=lang, add_s=True, split=False):  # , n
     - if True then for each word:
         - if lang is not "ru": adds "s" to each word of length > 1
         - else tries replace known Russian suffixes to plural
-    - else replaces "{s}" with "s", then if lang is "ru" replaces known Russian suffixes + "s" to plural
+    - else replaces "{s}" with "s", then if lang is "ru" replaces known Russian suffixes removing "s" to plural # to do: call plru() for each word ended with {s}
     Russian suffixes
     :return:
     """
@@ -524,6 +561,8 @@ def str_date_unit_with_suffix(t_range, str_zone, **kwargs):
             no_blank_at_end=str_zone,
             **kwargs
         )
+    if str_zone and ":" not in str_date_unit_result:
+        str_zone = ""
     return (
         f'{str_date_unit_result}{chr(92)*2 if higher else chr(8201)}'
         f'{"^" if str_date_unit_nl and str_zone else ""}{str_zone}{chr(92)*2*(higher - 1)}'
@@ -557,7 +596,7 @@ def day_sfx(d):
     return {1: 'st', 2: 'nd', 3: 'rd'}.get(d % 20, 'th') if lang != 'ru' else ''
 
 
-def str_time_range(st, en, date_format='%d.%m.%Y', str_zone=''):
+def str_time_range(st, en, date_format='%d.%m.%Y', time_format='%H:%M', str_zone=''):
     """
     Time range string without repeating not changed time units in date format
     :param st:
@@ -593,11 +632,14 @@ def str_time_range(st, en, date_format='%d.%m.%Y', str_zone=''):
                     else:
                         str_en_date = f'{str_en_date[slice(i_split + 1, None)]}'
                 break
-        str_en_date = f'{str_en_date}\u2009'
+        str_en_date = [str_en_date]
     else:
-        str_en_date = ''
-    return f'{str_st_date}\u2009{st:%H:%M}\u2009–\u2009{str_en_date}{en:%H:%M}{str_zone}'
-
+        str_en_date = []
+    st, en = [[f"{t:{time_format}}"] for t in (st, en)] if time_format else [[], []]
+    return "\u2009–\u2009".join([
+        "\u2009".join(d_t) for d_t in ([str_st_date] + st, str_en_date + en) if d_t
+    ]) + str_zone
+    # f'{str_st_date}\u2009{st:%H:%M}\u2009–\u2009{str_en_date}{en:%H:%M}{str_zone}'
 
 def str_deg_min(degfloat, strpattern="{:d}°\u2009{:0.4f}\'", *args):
     """equiv. old variant: strpattern % (trunc(degfloat), abs(degfloat - trunc(degfloat))*60)
@@ -839,7 +881,7 @@ def i_ranges(
         t_shift_s=0, t_units='ns'):
     """
     Find indexes of (useful) time ranges specified by t_ranges
-    :param t: raw datetime64[ns] array
+    :param t: raw datetime64[ns] array or veusz time (in this case you should add 1230768000 to t_shift_s)
     :param t_ranges: iterable of ranges (iterables of 2 values) or single values. Values may be:
     - datetime64[ns] time - to search its integer index in `t` or
     - integer index - to return such elements without changes or
@@ -1213,7 +1255,6 @@ def in_ranges(arr, fun, st_ends, where_no_fun_out=None):
             return fun(arr[slice(*se)], other=where_no_fun_out)
 
     return [fun_in(se) if operator.lt(*se) else where_no_fun_out for se in st_ends]
-
 
 
 def i_before(pres, pres_range, st_ends):
@@ -1700,6 +1741,79 @@ def zaborrunsselect(use_ranges, use_runs_in_used_range, runs_st, runs_lengths, d
     out = column_stack([idatasel_st, idatasel_en, idata_st, idata_en, j_use])
     #warning('zabor_runs_edges() result has shape %s: %s', repr(out.shape), repr(out))
     return out
+
+
+def loop_filt(p, i_st: int = 1) -> ndarray:
+    """
+    Remove loops from CTD profile using global accumulate from anchor.
+
+    Algorithm:
+    1. Downward pass (anchor to end): keeps points strictly greater than all previous
+    2. Upward pass (anchor to start): keeps points strictly less than all previous
+
+    Anchor point itself is included only if it passes monotonicity checks
+
+    :param p: sequence of depth values from CTD profile
+    :param i_st: anchor index to start monotonic selection
+    :return: Boolean mask indicating which points to keep (True = keep)
+
+    Examples:
+    >>> p = array([1, 2, 4, 3, 1, 5, 6, 7])
+    >>> p[loop_filt(p, 3)]  # doctest: +ELLIPSIS
+    Downward pass indexes: ...
+    ...
+    array([1, 2, 4, 5, 6, 7])
+    >>> p[loop_filt(p, 7)]  # doctest: +ELLIPSIS
+    Downward pass indexes: ...
+    ...
+    array([1, 5, 6, 7])
+
+    """
+
+    n = len(p)
+    mask = zeros(n, dtype=bool)
+    if i_st > 0:
+        # Downward pass: anchor to end
+        if i_st < n:
+            p_down = p[i_st - 1 :]
+            max_acc = maximum.accumulate(p_down)[:-1]
+            mask[i_st:] = p_down[1:] > max_acc
+            # debug(
+            #     "Downward pass indexes: %s,\np_down=%s\nmax_acc=%s\nmask[i_st:]=%s",
+            #     list(range(i_st, n)),
+            #     p_down,
+            #     max_acc,
+            #     mask[i_st:].astype(int).tolist(),
+            # )
+
+            i_down = flatnonzero(mask[i_st:])
+            p0down = p_down[i_down[0] + 1] if i_down.size else None
+        else:
+            p0down = None
+
+        # Upward pass: anchor to start
+        p_up = p[i_st::-1]
+        # If there is a selected point down, we limit the anchor to it
+        if p0down is not None:
+            p_up[0] = fmax(p_up[0], p0down)
+        min_acc = minimum.accumulate(p_up)[:-1]
+        mask[i_st - 1 :: -1] = p_up[1:] < min_acc
+        # debug(
+        #     "Upward pass indexes: %s, \np_up[::-1]=%s, \nmin_acc[::-1]=%s, \nmask[:i_st+1]=%s",
+        #     list(range(i_st)),
+        #     p_up[::-1],
+        #     min_acc[::-1],
+        #     mask[: i_st + 1].astype(int).tolist(),
+        # )
+    else:
+        # Downward pass: anchor to end
+        if i_st < n:
+            max_acc = maximum.accumulate(p)
+            mask[1:] = p[1:] > max_acc[:-1]
+            i_down = flatnonzero(mask)
+            mask[0] = p[0] < p[i_down[0]] if i_down.size else True
+
+    return mask
 
 
 # for correct bug in 2D expression definition (not works)
@@ -2295,6 +2409,8 @@ def sw_pden(s, t90, p, pr):
     return dens(s, ptmp(s, t90, p, pr), pr)
 
 
+# solubility bad functions (todo: correct or delete)
+
 def oxygen_solubility(t, S):
     """
     Alternative: O2sol or O2sol_SP_pt
@@ -2322,7 +2438,7 @@ def oxygen_solubility_scor(t, S, P=0, p_atm=1013.25):
     :param S: salinity (PSS-78)
     :param P: hydrostatic pressure in dBar (default: 0 dBar)
     :param p_atm: atmospheric (air) pressure in mBar (default: 1013.25 mBar)
-    :return: Oxygen solubility in µmol L-1
+    :return: Oxygen solubility in µmol/L
     Note: to convert to mg/L multiply to the molar weight of O2: 0.0319988 mg/µmol (31.9988 g/mol (CIAAW 2015))
 
     From Matlab function O2conc=O2stoO2c(O2sat,t,S,P,p_atm) of

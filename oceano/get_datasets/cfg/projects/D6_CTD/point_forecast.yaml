@@ -1,0 +1,13 @@
+# @package projects.abp56_tchain
+
+# Configuration for CMEMS Point ABP56 (t-chain) project with GPX input
+dir_save: "12..23_D6_CTD"
+date_range: ["2023-12-01", "2025-11-20"]  # From previous dataset end to today 
+points: [{lat: 55.3275, lon: 20.5755}]  # Will be populated from GPX file when gpx_path is provided
+# gpx_path: "D:/Cruises/BalticSea/240616_ABP56@i,t-chain/_post_proc=o2_from_t/points_85m_for_cmems_new.gpx"
+dataset_vars:
+  # cmems_mod_bal_phy_my_P1M-m: ["bottomT", "so", "sob", "thetao"]
+  cmems_mod_bal_phy_anfc_P1D-m: ["bottomT", "so", "sob", "thetao"]  #, "uo", "vo", "wo"
+depth_min: 0.5016462206840515  # dataset minimum [0.5016462206840515, 712.024658203125]
+depth_max: 32
+interpolation_delta: 0  # Set 0.03 to be > ~2km (resolution of CMEMS datasets) to able to interpolate

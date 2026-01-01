@@ -210,24 +210,24 @@ def extractRuns(P: Sequence, cfg_extract_runs: Mapping[str, Any]) -> Tuple[List[
     dP = np.ediff1d(P, to_end=-np.diff(P[-2:]))  # add opposite extremum to end
     bok = dP < 0  # direction is "down" (if negative pressure)
 
-    # Extremums + edges
+    # Extrema + edges
     bex = np.ediff1d(bok.view(np.int8), to_begin=True).view(np.bool_)
     pex = P[bex]
     iex = np.flatnonzero(bex)
     # n_ex= len(iex)
     bt = bok[bex]  # True if it is a top extremum
-    bl = ~bt  # bot (low) extremums
+    bl = ~bt  # bot (low) extrema
 
     # if __debug__ and cfg_extract_runs['path_image'].endswith('155551.png'):
     #     print('stop')
 
-    # Removing bad extremums
+    # Removing bad extremes
     n_ok = len(iex)
     if __debug__:
         fig = None
         b_plot_started = False
     while True:
-        # bbad - mask of candidates to remove from extremums
+        # bbad - mask of candidates to remove from extrema
         if min_samples:
             # length samples of each up/down interval:
             s = np.ediff1d(iex, to_end=0)
@@ -243,22 +243,21 @@ def extractRuns(P: Sequence, cfg_extract_runs: Mapping[str, Any]) -> Tuple[List[
             s = np.abs(np.ediff1d(pex, to_end=0))
             # find intervals with insufficient height:
             if np.size(min_dp) > 1:
-                bok |= s > min_dp[np.int64(bl)]  # down
+                bok &= s > min_dp[np.int64(bl)]  # down
             else:
-                bok |= s > min_dp
+                bok &= s > min_dp
 
         bok2 = np.zeros_like(bt)
 
-        # Terminal extremums:
-        bok2[bt] = (
-            np.ediff1d(pex[bt], to_end=1) < 0
-        )  # next highland lower, last is not terminal (not save low highland near end)
-        bok2[bl] = np.ediff1d(pex[bl], to_end=1) > 0  # next lowland higher, last is terminal
+        # Terminal extrema:
+        bok2[bt] = np.ediff1d(pex[bt], to_end=1) < 0    # next highland lower, last is not terminal
+                                                        # (not save low highland near end)
+        bok2[bl] = np.ediff1d(pex[bl], to_end=1) > 0    # next lowland higher, last is terminal
 
-        # Deleting extremums only if not terminal:
+        # Deleting extrema only if not terminal:
         bok |= bok2  # print(repr(np.vstack((bt, bok, bok2, iex, np.int64(pex))).T))
         bbad = ~bok
-        # Deleting not terminal opposite extremums near deleted extremums:
+        # Deleting not terminal opposite extrema near deleted extrema:
         # near:
         b_near = np.logical_or(np.hstack((False, bbad[:-1])), np.hstack((bbad[1:], False)))
         bbad |= np.logical_and(b_near, ~bok)
@@ -268,7 +267,7 @@ def extractRuns(P: Sequence, cfg_extract_runs: Mapping[str, Any]) -> Tuple[List[
         iex = iex[bok]
         if bt.size <= 1:
             print(
-                "no good extremums in run" + (": " + cfg_extract_runs["path_image"])
+                "no good extrema in run" + (": " + cfg_extract_runs["path_image"])
                 if "path_image" in cfg_extract_runs
                 else ""
             )
@@ -276,7 +275,7 @@ def extractRuns(P: Sequence, cfg_extract_runs: Mapping[str, Any]) -> Tuple[List[
         else:
             pex = pex[bok]
 
-            # Deleting smaller adjacent extremums of one type
+            # Deleting smaller adjacent extrema of one type
             bbad = np.ediff1d(bt.view(np.int8), to_begin=-1, to_end=-1) == 0  # False ... False
             isten = np.flatnonzero(np.ediff1d(bbad.view(np.int8))).reshape((-1, 2))
             isten[:, 1] += 1
@@ -324,16 +323,17 @@ def CTDrunsExtract(P: np.ndarray, dnT: np.ndarray, cfg_extract_runs: Dict[str, A
     :param P: Pressure/Depth
     :param dnT: Time
     :param cfg_extract_runs: settings dict with fields:
-      - dt_between_min or dt_hole_max: split runs where dt between adjacent samples bigger (dt_hole_max priority)
-      - min_dp
-      - min_samples
-      - b_do - if it is set to False interpret all data as one run
-      - b_keep_minmax_of_bad_files, optional - keep 1 min before max and max of separated parts of data where movements
-       insufficient to be runs
+    - dt_between_min or dt_hole_max: split runs where dt between adjacent samples bigger (dt_hole_max
+    priority)
+    - min_dp
+    - min_samples
+    - b_do - if it is set to False interpret all data as one run
+    - b_keep_minmax_of_bad_files, optional - keep 1 min before max and max of separated parts of data where
+    movements insufficient to be runs
     :return: iminmax: 2D numpy array np.int64([[minimums], [maximums]])
     """
-
-    if ("do" not in cfg_extract_runs) or cfg_extract_runs["b_do"]:  # not do only if b_do is set to False
+    # not do only if b_do is set to False
+    if ("do" not in cfg_extract_runs) or cfg_extract_runs["b_do"]:
         P = np.abs(rep2mean(P))
         if "dt_hole_max" not in cfg_extract_runs:
             cfg_extract_runs["dt_hole_max"] = cfg_extract_runs["dt_between_min"]
@@ -344,14 +344,14 @@ def CTDrunsExtract(P: np.ndarray, dnT: np.ndarray, cfg_extract_runs: Dict[str, A
         imax = []
         i_keep_bad_runs = []  #
         for ist, ien in zip(time_holes[:-1], time_holes[1:]):
-            islice = slice(ist, ien)
+            se = slice(ist, ien)
             if (ien - ist) < cfg_extract_runs["min_samples"]:
                 continue
 
-            if (P[islice].max() - P[islice].min()) < cfg_extract_runs["min_dp"]:
+            if (P[se].max() - P[se].min()) < cfg_extract_runs["min_dp"]:
                 if cfg_extract_runs.get("b_keep_minmax_of_bad_files"):
                     i_keep_bad_runs.append(len(imax))
-                    imax.append(P[islice].argmax())
+                    imax.append(P[se].argmax())
                     imin.append(P[ist : imax[-1]].argmin())
             else:
                 if "path_images" in cfg_extract_runs:
@@ -364,9 +364,9 @@ def CTDrunsExtract(P: np.ndarray, dnT: np.ndarray, cfg_extract_runs: Dict[str, A
                         )
                         + ".png"
                     )
-                [it, il] = extractRuns(-P[islice], cfg_extract_runs)
-                # Correct extractRuns func (mins and maxs must alternates):
-                # make 1st min be less than 1st max
+                [it, il] = extractRuns(-P[se], cfg_extract_runs)
+                # Correct `extractRuns` result for `min`s and `max`s be alternating,
+                # make 1st `min` be less than 1st `max`:
                 if it and il:
                     if il[0] < it[0]:
                         del il[0]
@@ -887,7 +887,9 @@ def add_ctd_params(df_in: MutableMapping[str, Sequence], cfg: Mapping[str, Any],
     ctd = df_in
     params_to_calc = set(cfg["out"]["data_columns"]).difference(ctd.columns)
 
-    ctd, params_to_calc = add_adcp_params(ctd, params_to_calc)  # shoud add (Ve,Vn)/(Vabs,Vdir) if needed
+    if "Depth" in ctd.columns:
+        # This sorts by "Depth" (need?)
+        ctd, params_to_calc = add_adcp_params(ctd, params_to_calc)  # shoud add (Ve,Vn)/(Vabs,Vdir) if needed
     if not any(params_to_calc):
         return ctd[cfg["out"]["data_columns"]]
 
@@ -1141,21 +1143,21 @@ def main(new_arg=None):
     func_before_cycle(cfg)  # prepare: usually assign data to cfg['for']
     if cfg["out"].get("path_csv"):
         dir_create_if_need(cfg["out"]["path_csv"])
-    # Load data Main circle #########################################
-    # Open input store and cycle through input table log records
-    iSt = 1
 
+    # #########################################
+    # Open input store to load data and cycle through input table log records
     df_log_old, cfg["out"]["db"], cfg["out"]["b_incremental_update"] = h5.temp_open(**cfg["out"])
     b_out_db_is_different = (
         cfg["out"]["db"] is not None and cfg["out"]["temp_db_path"] != cfg["in"]["db_path"]
     )
-    # Cycle for each table, for each row in log:
-    # for path_csv in gen_names_and_log(cfg['out'], df_log_old):
+    iSt = 1
     with FakeContextIfOpen(
         lambda f: pd.HDFStore(f, mode="r"),
         cfg["in"]["db_path"],
         None if b_out_db_is_different else cfg["out"]["db"],
     ) as cfg["in"]["db"]:  # not opens ['in']['db'] if already opened to write
+
+        # Cycle for each table
         for tbl in cfg["in"]["tables"]:
             if False:  # Show table info
                 nodes = sorted(cfg["out"]["db"].root.__members__)  # , key=number_key
@@ -1173,12 +1175,12 @@ def main(new_arg=None):
                         + f"{nRows} row"
                         + ("s:" if nRows > 1 else ":")
                     )
-
-                for ifile, r in enumerate(df_log.itertuples(), start=iSt):  # name=None
+                # Cycle for each row in log
+                for i_row, r in enumerate(df_log.itertuples(), start=iSt):  # name=None
                     print(".", end="")
                     sys_stdout.flush()
 
-                    path_raw = PurePath(r.fileName)
+                    path_raw = PurePath(r.fileName)  # row file name which is source of data we will load
                     cfg["out"]["log"].update(fileName=path_raw.name, fileChangeTime=r.fileChangeTime)
 
                     # Save current state (for exmple to can extract date in subprogram)
@@ -1193,7 +1195,7 @@ def main(new_arg=None):
                             continue
                         if b_stored_dups:
                             cfg["out"]["b_remove_duplicates"] = True
-                    print("{}. {}".format(ifile, path_raw.name), end=": ")
+                    print(f"{i_row}. {path_raw.name}", end=": ")
 
                     # Load data from tbl
                     qstr = h5.query_range_pattern_default.format(r.Index, r.DateEnd)
@@ -1237,7 +1239,7 @@ def main(new_arg=None):
 
                     # Copy to csv
                     if cfg["out"].get("path_csv"):
-                        fname = "{:%y%m%d_%H%M}-{:%d_%H%M}".format(r.Index, r.DateEnd) + file_names_add(ifile)
+                        fname = "{:%y%m%d_%H%M}-{:%d_%H%M}".format(r.Index, r.DateEnd) + file_names_add(i_row)
                         if "data_columns" not in cfg["out"]:
                             cfg["out"]["data_columns"] = slice(0, -1)  # all cols
                         df.to_csv(  # [cfg['out']['data_columns']]
@@ -1248,14 +1250,14 @@ def main(new_arg=None):
                         )  # to_string, line_terminator='\r\n'
 
                         # save last row
-                        if ifile == iSt:
-                            f_last = open(cfg["out"]["path_csv"] / "bot.txt", "a", newline="")
+                        if i_row == iSt:
+                            f_last = open(cfg["out"]["path_csv"] / "bot.csv", "a", newline="")
                         df.iloc[[-1], :].to_csv(  # [cfg['out']['data_columns']]
                             f_last,
                             date_format=cfg["out"]["text_date_format"],
                             float_format="%5.6g",
                             index_label="Time",
-                            header=(ifile == iSt),
+                            header=(i_row == iSt),
                         )
 
                     # Log to screen (if not prohibited explicitly)
@@ -1324,25 +1326,25 @@ if __name__ == "__main__":
 
 """ trash ##############################################
 
-timeit('max(P[islice])', number= 1000, globals=globals())
-timeit('P[islice].max()', number= 1000, globals=globals())
+timeit('max(P[se])', number= 1000, globals=globals())
+timeit('P[se].max()', number= 1000, globals=globals())
 
-iex = np.flatnonzero(np.diff(bbad))  # will be edges + extremums indices
+iex = np.flatnonzero(np.diff(bbad))  # will be edges + extrema indices
 if iex[0] != 0:
     iex = np.insert(iex, 0, 0)  # start edge added
 
 if iex[-1] != N:
-    bt = bbad[iex]  # top extremums (which starts to go "Down")
+    bt = bbad[iex]  # top extrema (which starts to go "Down")
     iex = np.append(iex, N)  # end edge added
 else:
-    bt = bbad[iex[:-1]]  # top extremums
+    bt = bbad[iex[:-1]]  # top extrema
 
-bl = ~bt  # bot extremums
+bl = ~bt  # bot extrema
 
-# Removing bad extremums
+# Removing bad extrema
 Nremoved = 0
 while True:
-    # bbad - mask of candidates to remove from extremums
+    # bbad - mask of candidates to remove from extrema
     if 'min_samples' in cfg_extract_runs and cfg_extract_runs['min_samples']:
         # length samples of each up/down interval:
         s = np.diff(iex)
@@ -1386,7 +1388,7 @@ while True:
         #     bbad2(iminIn([false, (diff(P(imin))<0)]))= false
         #     bbad2(imaxIn([false, (diff(P(imax))>0)]))= false
         #     bbad2(~bbad)= true
-        # Delete extremums only if not bok:
+        # Delete extrema only if not bok:
         bok = np.zeros_like(bt)
         bok[bt] = np.ediff1d(P[imin], to_end=-1) < 0  # continues up
         bok[bl] = np.ediff1d(P[imax], to_end=1) > 0  # continues down

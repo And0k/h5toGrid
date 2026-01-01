@@ -15,7 +15,7 @@ import re
 from datetime import datetime
 from os import chdir as os_chdir, getcwd as os_getcwd, environ as os_environ
 from pathlib import Path, PurePath
-from sys import platform as sys_platform, stdout as sys_stdout
+import sys
 from time import sleep
 from typing import Any, Callable, Dict, Iterator, Iterable, Optional, Tuple, Sequence, Union
 from itertools import dropwhile
@@ -52,7 +52,7 @@ else:
     lf = None  # will set in main()
 
 default_veusz_path = PurePath(
-    'C:\\Program Files\\Veusz' if sys_platform == 'win32' else '/home/korzh/.local/lib/python3.9/site-packages/veusz'  # try os_environ['PATH']?
+    'C:\\Program Files\\Veusz' if sys.platform == 'win32' else '/home/korzh/.local/lib/python3.9/site-packages/veusz'  # try os_environ['PATH']?
 )
 
 
@@ -271,7 +271,7 @@ def load_vsz_closure(
     #     #importlib.import_module('.embed', package=veusz_dir_name)
     #     sys_path.pop()
     #
-    #     sep = ';' if sys_platform == 'win32' else ':'
+    #     sep = ';' if sys.platform == 'win32' else ':'
     #     os_environ['PATH'] += sep + veusz_path
     #     return
     # not works:
@@ -279,7 +279,7 @@ def load_vsz_closure(
     # sys_path.append(os_path.dirname(cfg['program']['veusz_path']))
     os_environ['VSZ_PATH'] = vsz_path_env  # variable that can be accessed in vsz by ENVIRON()
     if veusz_path:
-        sep = ';' if sys_platform == 'win32' else ':'
+        sep = ';' if sys.platform == 'win32' else ':'
         # to find Veusz executable (Windows only):
         os_environ['PATH'] += f'{sep}{veusz_path}'
 
@@ -327,7 +327,7 @@ def load_vsz_closure(
             else:
                 lf.debug(f'creatig vsz: {vsz}')
                 title = f'{vsz} - was created'
-
+        sys_argv_prev = None
         if veusze is None:
             # Veusz embedded window construction
 
@@ -335,6 +335,7 @@ def load_vsz_closure(
             if __name__ != '__main__' and vsz:       # if this haven't done in main()
                 path_prev = os_getcwd()      # to recover
                 os_chdir(vsz.parent)   # allows veusze.Load(path) to work if _path_ is relative or relative paths is used in vsz
+                sys_argv_prev = sys.argv.copy()
             try:
                 veusze = veusz.Embedded(title, hidden=hidden)   # , hidden=True
             except ConnectionResetError:
@@ -400,6 +401,7 @@ def load_vsz_closure(
                         # Dangerous for unknown vsz! We allow 1 time at beginning of file to use for known vsz.
                         loc_exclude = locals().copy()
                         del loc_exclude['_veusze']
+                        sys.argv = ["veusz.exe", str(_vsz)]
                         loc = {
                             **_veusze.__dict__,
                             "argv": ["veusz.exe", str(_vsz)],
@@ -459,8 +461,8 @@ def load_vsz_closure(
                     veusze.Wipe()  # todo: delete/update only vsz changes
                 load_by_exec(vsz, veusze)
                 # SingletonTimeOut.run(partial(load_by_exec, vsz, veusze)), load_timeout_s)
-
-
+        if sys_argv_prev is not None:
+            sys.argv = sys_argv_prev
         if prefix is None:
             return veusze, None
         return veusze, veusz_data(veusze, prefix, suffix_prior)
@@ -654,7 +656,7 @@ def load_to_veusz(in_fulls: Iterable, cfg, veusze=None):
             lf.info('{:d}. {:s} -> {:s}, ', ifile, in_full.name, out_vsz_full.name)
         else:
             lf.info('{:d}. {:s}, ', ifile, in_full.name)
-        sys_stdout.flush()
+        sys.stdout.flush()
         log = {'out_name': out_name, 'out_vsz_full': out_vsz_full}
 
         if veusze:  # else  to do: try Wipe()

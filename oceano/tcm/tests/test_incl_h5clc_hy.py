@@ -1,5 +1,5 @@
 import pytest
-import cfg_dataclasses
+import utils.cfg_dataclasses as cfg_d
 
 from tcm.incl_h5clc_hy import *
 
@@ -79,21 +79,24 @@ def test_call_example_sp4(return_):
     sys_argv_save = sys.argv.copy()
     sys.argv = [__file__]  # config dir will be relative to this dir
 
-    df = cfg_dataclasses.main_call([
-        f'input.db_path="{db_path_in}"',
-        # '++filter.time_bad_intervals=[2021-06-02T13:49, now]', # todo
-        'input.tables=["incl.*"]',  # (','.join([f'"{d}"' for d in device]))
-        f'out.db_path="{db_path_in}proc.h5"',
-        # f'out.table=V_incl_bin{aggregate_period_s}s',
-        'out.b_del_temp_db=True',
-        'program.verbose=INFO',
-        'program.dask_scheduler=synchronous',
-        f'program.return_="{return_}"',
-        f"out.aggregate_period={','.join(f'{a}s' for a in aggregate_period_s)}",
-        '--multirun',
-        '--config-path=tests/hydra_cfg',
-        #'--config-dir=hydra_cfg'  # additional cfg dir
-        ], fun=main)
+    df = cfg_d.main_call(
+        [
+            f'input.db_path="{db_path_in}"',
+            # '++filter.time_bad_intervals=[2021-06-02T13:49, now]', # todo
+            'input.tables=["incl.*"]',  # (','.join([f'"{d}"' for d in device]))
+            f'out.db_path="{db_path_in}proc.h5"',
+            # f'out.table=V_incl_bin{aggregate_period_s}s',
+            "out.b_del_temp_db=True",
+            "program.verbose=INFO",
+            "program.dask_scheduler=synchronous",
+            f'program.return_="{return_}"',
+            f"out.aggregate_period={','.join(f'{a}s' for a in aggregate_period_s)}",
+            "--multirun",
+            "--config-path=tests/hydra_cfg",
+            #'--config-dir=hydra_cfg'  # additional cfg dir
+        ],
+        fun=main,
+    )
 
     if return_ == '<cfg_before_cycle>':
         cfg = df

@@ -10,42 +10,33 @@ import sys
 import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, Iterable, Mapping, Optional, List, Tuple
-from datetime import timedelta
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from itertools import zip_longest
 
 import omegaconf  #, OmegaConf DictConfig, MISSING, open_dict OmegaConf, DictConfig, MISSING, open_dict
 import hydra
-# from hydra.core.config_store import ConfigStore
 import numpy as np
 import pandas as pd
-# import vaex
 
-from utils import cfg_dataclasses
+from veusz_helpers.common import func_vsz as fv
 
+from utils import cfg_dataclasses as cfg_d
 from utils.init import LoggingStyleAdapter, dir_create_if_need, FakeContextIfOpen, set_field_if_no
-
 # from csv2h5_vaex import argparser_files, with_prog_config
-
 from hdf5_pandas import h5
 from hdf5_pandas.ctd_calc import get_runs_parameters, add_ctd_params
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
-VERSION = '0.0.1'
-
-# def cmdline_help_mod(version, info):
-#     'nmea2h5 version {}'.format(version) + info
-#
-# def version():
-#     """Show the version"""
-#     return 'version {0}'.format(VERSION)
+VERSION = '0.1.1'
 
 
 def rep_comma_sep_items(names: Iterable[str]) -> list[str]:
     """
-    Replaces names that contain ',' to one word from them splitting them by ','. Repeated names with ',' are replaced
-    with corresponded to name order word from that name. At that, treats word with length less than first (or previous
-    returned) word as abbreviation containing only last characters, so appends them from left with chars equal to that
-    in previous returned word.
+    Replaces names that contain ',' to one word from them splitting them by ','. Repeated names with ',' are
+    replaced with corresponded to name order word from that name. At that, treats word with length less than
+    first (or previous returned) word as abbreviation containing only last characters, so appends them from
+    left with chars equal to that in previous returned word.
     :param names: iterable of words
     :return:
     >>>  rep_comma_sep_items([
@@ -154,30 +145,33 @@ def dd_to_csv(
         ))
 
     if True:  # with ProgressBar():
-        d_out = d.round({'Vdir': 4, 'inclination': 4, 'Pressure': 3})
+        d_out = d.round({"Vdir": 4, "inclination": 4, "Pressure": 3})
         # if not cfg_out.get('b_all_to_one_col'):
         #     d_out.rename(columns=map_to_suffixed(d.columns, suffix))
         if callable(text_date_format):
-            arg_out = {'index': bool(text_columns) and 'Time' in text_columns,
-                       'columns': bool(text_columns) or d_out.columns.insert(0, 'Date')
-                       }
-            d_out['Date'] = text_date_format(d_out.index)
+            arg_out = {
+                "index": bool(text_columns) and "Time" in text_columns,
+                "columns": bool(text_columns) or d_out.columns.insert(0, "Date"),
+            }
+            d_out["Date"] = text_date_format(d_out.index)
         else:
-            arg_out = {'date_format': text_date_format,
-                       'columns': text_columns or None  # for write all columns if empty (replaces to None)
-                       }
+            arg_out = {
+                "date_format": text_date_format,
+                "columns": text_columns or None,  # for write all columns if empty (replaces to None)
+            }
         #
         # if progress is not None:
         #     progress(d_out)
-        d_out.to_csv(filename=filename,
-                     single_file=b_single_file,
-                     name_function=None if b_single_file else name_that_replaces_asterisk,  # 'epoch' not works
-                     float_format='%.5g',
-                     sep=sep,
-                     encoding="ascii",
-                     #compression='zip',
-                     **arg_out
-                     )
+        d_out.to_csv(
+            filename=filename,
+            single_file=b_single_file,
+            name_function=None if b_single_file else name_that_replaces_asterisk,  # 'epoch' not works
+            float_format="%.5g",
+            sep=sep,
+            encoding="ascii",
+            # compression='zip',
+            **arg_out,
+        )
 
 
 def h5_tables_gen(db_path, tables, tables_log, db=None) -> Iterator[Tuple[str, pd.HDFStore]]:
@@ -338,19 +332,25 @@ if False:
 # @dataclass hydra_conf(hydra.conf.HydraConf):
 #     run: field(default_factory=lambda: defaults)dir
 
+@dataclass
+class ConfigFilterCTDNew(cfg_d.ConfigFilterCTD):
+    loop_filter_use_start_depth: int = 3  # m
+
 hydra.output_subdir = 'cfg'
 # hydra.conf.HydraConf.output_subdir = 'cfg'
 # hydra.conf.HydraConf.run.dir = './outputs/${now:%Y-%m-%d}_${now:%H-%M-%S}'
 
 cs_store_name = Path(__file__).stem
-cs, ConfigType = cfg_dataclasses.hydra_cfg_store(
-    cs_store_name, {
-    'input': ['in_hdf5'],  # Load the config "in_hdf5" from the config group "input"
-    'out': ['out_csv'],  # Set as MISSING to require the user to specify a value on the command line.
-    'filter': ['filter_CTD'],
-    'program': ['program'],
-    # 'search_path': 'empty.yml' not works
-    })
+cs, ConfigType = cfg_d.hydra_cfg_store(
+    cs_store_name,
+    {
+        "input": ["in_hdf5"],  # Load the config "in_hdf5" from the config group "input"
+        "out": ["out_csv"],  # Set as MISSING to require the user to specify a value on the command line.
+        "filter": [ConfigFilterCTDNew],
+        "program": ["program"],
+        # 'search_path': 'empty.yml' not works
+    },
+)
 
 
 cfg = {}
@@ -386,8 +386,8 @@ def cfg_by_hydra(config: ConfigType):
     """
     global cfg
 
-    cfg = cfg_dataclasses.main_init(config, cs_store_name)
-    cfg = cfg_dataclasses.main_init_input_file(cfg, cs_store_name)
+    cfg = cfg_d.main_init(config, cs_store_name)
+    cfg = cfg_d.main_init_input_file(cfg, cs_store_name)
     #h5.out_init(cfg['out'], **cfg['in'])
     #cfg['out']['dt_from_utc'] = 0
     return
@@ -460,11 +460,26 @@ def main(**kwargs) -> None:
         else:
             raise(KeyError(f'Table {tbl} not found.'))
 
-        for i_log_row, log_row in enumerate(df_log.itertuples(), start=i_log_row_st):  #  h5.log_rows_gen(table_log=tbl_log, db=store, ):
+        for i_log_row, log_row in enumerate(df_log.itertuples(), start=i_log_row_st):
+            #  h5.log_rows_gen(table_log=tbl_log, db=store, ):
+
             # Load data chunk that log_row describes
             print('.', end='')
             qstr = qstr_trange_pattern.format(log_row.Index, log_row.DateEnd)
             df_raw = store.select(tbl, qstr)
+
+            if cfg["filter"]["loop_filter_use_start_depth"]:
+                # Loop filter
+                p = df_raw["Pres"].values
+                i_st = np.abs(p - cfg["filter"]["loop_filter_use_start_depth"]).argmin()
+                b_down = fv.loop_filt(p, i_st=i_st.item())
+                n_down = b_down.sum()
+                lf.info(
+                    "loop filter removed {:.2g}%, remains {} rows".format(
+                        100 * (b_down.size - n_down) / b_down.size, n_down
+                    )
+                )
+                df_raw = df_raw.loc[b_down, :]
 
             # Calculate CTD columns that are specified in cfg['out']['cols'] values
             ctd2csv(
@@ -474,7 +489,7 @@ def main(**kwargs) -> None:
 
         i_log_row_st += df_log.shape[0]
 
-    print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>", end=' ')
+    print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>", end=" ")
 
 
 def ctd2csv(
