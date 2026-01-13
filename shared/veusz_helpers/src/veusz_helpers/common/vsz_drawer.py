@@ -365,79 +365,134 @@ def label_xUnits_add(
 
 
 def scale_rows(
-    scale_height: dict, scale_i_graphs=axis_max["Vabs"] / v_to_graph_h, n_graphs=0, n_graphs_w=0
-):
+    scale_height: dict, scale_i_graphs: float = None, n_graphs: int = 0, n_graphs_w: int = 0
+) -> tuple:
     """
-    :param scale_height: distribute heights keeping total page height the same
-    :param scale_i_graphs: increase page height by make all v-graphs higher keeping their scale the same
-    :param n_graphs: number of graphs
-    :param n_graphs_w: number of pressure/wavegauge graphs, which get fixed scale = 1
-    :return:
-        graphs_height_sum: total sum of graphs heights
-        scale_height: updated scale_height dict. Depends on axis_max["Vabs"]/v_to_graph_h
-        scale_height_common: scale for rows of other parameters that unspecified in scale_height
-    :globals: graph_h_default, axis_max["Vabs"]/v_to_graph_h
+    Calculate scaling factors for graph heights while maintaining proper proportional relationships.
+
+    This function distributes graph heights across multiple rows where different graph types
+    follow different scaling rules:
+    - Pressure/wavegauge graphs (prefixed with '_p', '_w', '_W') maintain fixed scale = 1
+      (height = graph_h_default) regardless of other scaling parameters
+    - Velocity graphs (prefixed with '_i') are scaled according to scale_height values
+      multiplied by scale_i_graphs factor
+    - Other graphs specified in scale_height use those scaling factors directly (relative to
+      graph_h_default, independent of scale_i_graphs)
+    - Other graphs not specified in scale_height get scaled by scale_height_common
+
+    Parameters
+    ----------
+    scale_height : dict
+        Dictionary mapping graph identifiers to scaling factors. For velocity graphs ('_i' prefixed)
+        these values are multiplied by scale_i_graphs. For other graphs these values are used
+        directly as scaling factors relative to graph_h_default
+    scale_i_graphs : float, optional
+        Scaling factor for velocity graphs, applied to velocity graphs ('_i' prefixed) in addition to any
+        `scale_height` values specified for them
+        Default is `axis_max["Vabs"] / v_to_graph_h`
+    n_graphs : int, optional
+        Total number of graphs (rows) to be displayed
+    n_graphs_w : int, optional
+        Number of pressure/wavegauge graphs ('_p', '_w', '_W' prefixed) which maintain
+        fixed scale = 1 (height = graph_h_default)
+
+    Returns
+    -------
+    graphs_height_sum : float
+        Total sum of all graph heights before applying scale_height adjustments
+        (calculated as graph_h_default * (n_graphs_w + (n_graphs - n_graphs_w) * scale_i_graphs))
+    scale_height : dict
+        Updated scale_height dictionary with velocity graphs scaled by scale_i_graphs
+        and invalid graph IDs filtered out
+    scale_height_common : float
+        Scaling factor for graphs not specified in scale_height that ensures
+        proper proportional relationships are maintained between all graph types
+        (never returns None - returns graph_h_default when no scaling needed)
+
+    Notes
+    -----
+    The function ensures that:
+    - Pressure/wavegauge graphs maintain fixed height = graph_h_default
+    - Velocity graphs are scaled by both scale_height values and scale_i_graphs factor
+    - Other specified graphs use scale_height values directly (relative to graph_h_default)
+    - Other unspecified graphs use common scaling to maintain proper layout proportions
+    - Graph IDs not present in `ids_order` are filtered out with warning
+    - When scale_height is empty, scale_height_common defaults to graph_h_default
+
+    Globals
+    -------
+    graph_h_default : float
+        Default height for individual graph rows
+    axis_max["Vabs"] : float
+        Maximum absolute velocity value for scaling calculations
+    v_to_graph_h : float
+        Velocity to height scaling factor
+    ids_order : list
+        Ordered list of all graph identifiers that must be displayed
     """
-    # total height that is not depends of scale_height
-    graphs_height_sum = graph_h_default * (
-        (n_graphs - n_graphs_w) * scale_i_graphs + n_graphs_w
-    )
-    not_defined = set(scale_height.keys()).difference(ids_order)  # ids_i + ids_w
+
+    # Set default value for scale_i_graphs if not provided
+    if scale_i_graphs is None:
+        scale_i_graphs = axis_max["Vabs"] / v_to_graph_h
+
+    # Calculate total height that is not dependent on scale_height modifications
+    graphs_height_sum = graph_h_default * ((n_graphs - n_graphs_w) * scale_i_graphs + n_graphs_w)
+
+    # Filter out graph IDs that are not defined in ids_order
+    not_defined = set(scale_height.keys()).difference(ids_order)
     if not_defined:
         warning(f"Not defined graphs for scaling: {not_defined}!!! -> Ignoring")
         scale_height = {k: v for k, v in scale_height.items() if k not in not_defined}
-    if scale_height:
-        scale_height = {
-            pid: (v if pid.startswith(("_p", "_w", "_W")) else v * scale_i_graphs)
-            for pid, v in scale_height.items()
-        }
-        # Find common scale height that will compensate the change of specified ax_max_i = ax_scale_i*ax_max_prev to retain graph height
-        if n_graphs_w:
-            n_graphs_fixed = n_graphs_w - len(
-                [1 for pid in scale_height if pid.startswith("_w")]
-            )  # not change only default P graphs
-            # n_graphs_scale = n_graphs - n_graphs_fixed
-        else:
-            n_graphs_fixed = -len(
-                [1 for pid in scale_height if pid.startswith(("_p", "_w", "_W"))]
-            )  # to keep same proportion between not P graphs as on combined graph (with n_graphs_w)
-        # scale_height_common = (
-        # (n_graphs_scale - sum(scale_height.values())) /
-        # (n_graphs_scale - len(scale_height))
-        # )
 
-        # Derivation
-        # specified heights, cm: height_i = (1 if pid.startswith('_w') else axis_max["Vabs"]/v_to_graph_h)*scale_height[pid]*graph_h_default,
-        # not specified heights (not in scale_height), cm: height_j = (1 if g.startswith('_w') else other_height)*graph_h_default,
-        # Finding other_height from equitation: sum(height_i) + sum(height_j) = graphs_height_sum:
-        # In graph_h_default units: other_height we name scale_height_common
-        sum_height_i = sum(scale_height.values())
-        # sum(height_j) = (n_graphs_fixed + (n_graphs - len(scale_height) - n_graphs_fixed)*other_height)
-        # = graphs_height_sum - sum(height_i) =>
-        # scale_height_common = (graphs_height_sum/graph_h_default - sum_height_i - n_graphs_fixed)/(n_graphs - len(scale_height) - n_graphs_fixed)
-        n_scale_not_specified = (
-            n_graphs - len(scale_height) - n_graphs_fixed
-        )  # if ==0 then following is not defined but not used so we can set to any val:
-        scale_height_common = (
-            (graphs_height_sum / graph_h_default - sum_height_i - n_graphs_fixed)
-            / n_scale_not_specified
-            if n_scale_not_specified > 0
-            else graph_h_default
-        )
-        if not n_graphs_w:
-            # P graphs was not removed from scale_height before only to keep same proportion between not P graphs as on combined graph
-            scale_height = {
-                g: coef
-                for g, coef in scale_height.items()
-                if not g.startswith(("_p", "_w", "_W"))
-            }
-        print(
-            f"Scaling heights: {scale_height}, other: {scale_height_common:g}",
-            f"(Vabs) and fixed (not i): {n_graphs_fixed}" if n_graphs_w else "",
-        )
-        return graphs_height_sum, scale_height, scale_height_common
+    # Return early if no scaling is specified
+    if not scale_height:
+        return graphs_height_sum, {}, graph_h_default
+
+    # Apply scale_i_graphs to velocity graphs ('_i' prefixed) while keeping
+    # other graphs with their specified scale values
+    scale_height = {
+        pid: (v if pid.startswith(("_p", "_w", "_W")) else v * scale_i_graphs)
+        for pid, v in scale_height.items()
+    }
+
+    # Calculate number of fixed graphs that maintain scale = 1
+    if n_graphs_w:
+        # Count graphs that are pressure/wavegauge type but not specified in scale_height
+        n_graphs_fixed = n_graphs_w - len([
+            1 for pid in scale_height if pid.startswith("_w")
+        ])  # Only pressure/wavegauge graphs not in scale_height remain fixed
     else:
-        return graphs_height_sum, {}, None
+        # When no pressure/wavegauge graphs, count specified non-pressure/wavegauge graphs
+        # to maintain same proportion between non-pressure/wavegauge graphs as on combined graph
+        n_graphs_fixed = -len([1 for pid in scale_height if pid.startswith(("_p", "_w", "_W"))])
+
+    # Calculate the sum of specified heights from scale_height
+    sum_height_i = sum(scale_height.values())
+
+    # Calculate number of graphs that will use scale_height_common
+    n_scale_not_specified = n_graphs - len(scale_height) - n_graphs_fixed
+
+    # Calculate common scale factor for unspecified graphs
+    # This ensures the total height relationship is maintained
+    if n_scale_not_specified > 0:
+        scale_height_common = (
+            graphs_height_sum / graph_h_default - sum_height_i - n_graphs_fixed
+        ) / n_scale_not_specified
+    else:
+        # If no graphs will use common scaling, set to default value
+        scale_height_common = graph_h_default
+
+    # Remove pressure/wavegauge graphs from scale_height when n_graphs_w is 0
+    # (these were only kept for proportion calculation)
+    if not n_graphs_w:
+        scale_height = {g: coef for g, coef in scale_height.items() if not g.startswith(("_p", "_w", "_W"))}
+
+    print(
+        f"Scaling heights: {scale_height}, other: {scale_height_common:g}",
+        f"(Vabs) and fixed (not i): {n_graphs_fixed}" if n_graphs_w else "",
+    )
+
+    return graphs_height_sum, scale_height, scale_height_common
 
 
 def pg_vectors(graphs, scale_height=None):
@@ -1045,9 +1100,9 @@ def pg_1d(graphs, param="Vabs", zoom=False, i_show_legend=None, scale_height=Non
     grid_bottom = 0.8 if zoom else grid_bottomMargin  # cm
     graphs_height_sum, scale_height, scale_height_common = scale_rows(
         scale_height if (param[0] in "uvV" and param != "Vdir") else {},
-        axis_max["Vabs"] / v_to_graph_h if (param[0] in "uvV" and param != "Vdir") else 1,
-        len(graphs),
-        n_graphs_w,
+        scale_i_graphs=axis_max["Vabs"] / v_to_graph_h if (param[0] in "uvV" and param != "Vdir") else 1,
+        n_graphs=len(graphs),
+        n_graphs_w=n_graphs_w,
     )
     if scale_height:
         scale_heights = [
@@ -1269,8 +1324,8 @@ def pg_1d(graphs, param="Vabs", zoom=False, i_show_legend=None, scale_height=Non
                 # - simpler to not show ECMWF label at all if many graphs as we draw ECMWF only on 1st
             else:
                 units = ((
-                    ",{}%{{{{'{}[{{units}}]'}}}}% ".format(
-                        '\u2009' if len(param) < 5 else '\\',  # new line for long param. (+ formatted but ok)
+                    ",{}%{{{{{}['units']}}}}% ".format(
+                        '\u2009' if len(param) < 5 else r'\\',  # new line for long param.
                         'info_wind' if b_wind else 'info_incl'
                     )) if param[0] in "uvV" else ""
                 )
@@ -1681,53 +1736,57 @@ def pg_1d(graphs, param="Vabs", zoom=False, i_show_legend=None, scale_height=Non
                         Set("PlotLine/style", "dotted-fine")
                     To("..")
 
-        # Parameter averaged by binAB
-        if binAB in use_bins:
-            if binAB in use_bins:
-                for i, (p, p_clr) in enumerate(zip(params_cur, (binAB_color, "#ff44ff"))):
-                    add_xy(p, binAB, axis_name=y_axis_name)
-                    Set("PlotLine/color", p_clr)
-                    Set("MarkerLine/hide", False)
+        bin0name_cur = list(use_bins_w)[0] if pid.startswith("_w") else bin0name  # if main_param == 'P'
 
-                    if zoom:
-                        Set("PlotLine/width", "0.5pt")
-                        Set("MarkerLine/width", "1.5pt")
-                    elif need_p_ECMWF and pid.startswith(("_p", "_w")):
-                        if i == 0:
-                            To("..")
-                            # need_p_ECMWF = False
-                            Add("xy", name="p_ECMWF", autoadd=False)
-                            To("p_ECMWF")
-                            Set("xData", "time_Wind")
-                            Set(
-                                "yData",
-                                "f(lambda x: x - nanmean(x), sp[sl_(iu_Wind)])*1E-4",
-                            )
-                            Set(
-                                "key",
-                                "%{{f('{:%H:%M:%S}'.format, f(ndarray.item, array(diff(DATA('time_Wind')[1:3]), 'M8[s]')))[1:]}}%",
-                            )
-                            Set("xAxis", "x")
-                            Set("yAxis", "yP")
-                            Set("PlotLine/color", "magenta")
-                            Set("MarkerLine/hide", False)
-                    Set(
-                        "PlotLine/style",
-                        "dotted-fine" if disp_dtime_range_s > dt1d or zoom else "dash3",
-                    )
-                    To("..")
+        # Parameter averaged by binAB
+        for i, (p, p_clr) in enumerate(zip(params_cur, (binAB_color, "#ff44ff"))):
+            if binAB in use_bins and binAB != bin0name_cur:
+                add_xy(p, binAB, axis_name=y_axis_name)
+                Set("PlotLine/color", p_clr)
+                Set("MarkerLine/hide", False)
+                if zoom:
+                    Set("PlotLine/width", "0.5pt")
+                    Set("MarkerLine/width", "1.5pt")
+                b_have_draw = True
+            else:
+                b_have_draw = False
+
+            if i==0 and not zoom and need_p_ECMWF and pid.startswith(("_p", "_w")):
+                To("..")
+                # need_p_ECMWF = False
+                Add("xy", name="p_ECMWF", autoadd=False)
+                To("p_ECMWF")
+                Set("xData", "time_Wind")
+                Set(
+                    "yData",
+                    "f(lambda x: x - nanmean(x), sp[sl_(iu_Wind)])*1E-4",
+                )
+                Set(
+                    "key",
+                    "%{{f('{:%H:%M:%S}'.format, f(ndarray.item, array(diff(DATA('time_Wind')[1:3]), "
+                    "'M8[s]')))[1:]}}%",
+                )
+                Set("xAxis", "x")
+                Set("yAxis", "yP")
+                Set("PlotLine/color", "magenta")
+                Set("MarkerLine/hide", False)
+                b_have_draw = True
+
+            if b_have_draw:
+                Set(
+                    "PlotLine/style",
+                    "dotted-fine" if disp_dtime_range_s > dt1d or zoom else "dash3",
+                )
+                To("..")
 
         # Parameter averaged by dt
-        bin0use_cur = (
-            bin0use_w if pid.startswith("_w") else bin0name
-        )  # if main_param == 'P'
-        if bin0use_cur == "":  # minimum bin is needed
+        if bin0name_cur == "":  # minimum bin is needed
             for p, p_clr, p_clr_dot in zip(
                 params_cur,
-                clr_param_bins[bin0use_cur if pid != "_Wind" else pid] if len(params) > 1 else ["yellow"],
+                clr_param_bins[bin0name_cur if pid != "_Wind" else pid] if len(params) > 1 else ["yellow"],
                 clr_param_light_darker_dots
             ):
-                add_xy(p, bin0use_cur, axis_name=y_axis_name)
+                add_xy(p, bin0name_cur, axis_name=y_axis_name)
                 Set("marker", "none" if len(params) > 1 else "linehorz")  # marker can make all lines black
                 Set("markerSize", "0.01pt" if zoom else "0.1pt")
                 Set("MarkerLine/color", "#ffaa00")  # "color", "darkred"
@@ -1791,7 +1850,8 @@ def pg_1d(graphs, param="Vabs", zoom=False, i_show_legend=None, scale_height=Non
             Set("groupfill", 0.0)
             Set("BarFill/fills", [("solid", "#ffff7f", False)])
             Set("BarLine/lines", [("solid", "0.5pt", "#ffff00", False)])
-            Set("hide", cur_graph_width/(dtime_range_s/use_bins["binB_"]) <  0.1)  # hide if interval ~< 0.1cm
+            # hide if interval ~< 0.1cm:
+            Set("hide", cur_graph_width/(dtime_range_s/use_bins.get("binB_", 1e15)) <  0.1)
             To("..")
 
         if ii > 0:
@@ -3390,7 +3450,7 @@ SETTING('/_Vprogress/grid_diagram/map0/y_km/datascale')
     array(
         [
             [Progress_y_min],
-            [Progress_y_min + diff(Progress_x_lims) / SETTING("/_Vprogress/grid_diagram/map0/aspect")],
+            (Progress_y_min + diff(Progress_x_lims) / SETTING("/_Vprogress/grid_diagram/map0/aspect")),
         ]
     ),
     diff(Progress_x_lims) / SETTING("/_Vprogress/grid_diagram/map0/aspect"),
@@ -3611,14 +3671,15 @@ if __name__ in ("__main__", "builtins"):
         for clr_by in [""]:  # , 'abs', 'dir']:
             pg_progress(ids_order, clr_by=clr_by, aspect=progress_aspect, b_dt_big=b_dt_big)
 
+    if ids_i or device_wind:
+        pg_vectors(ids_order, scale_height=graphs_scale_height)
 
-    pg_vectors(ids_order, scale_height=graphs_scale_height)
-
-    for param in "Vabs u&v Vdir t".split():  # u-shore v-shore
+    for param in ["Vabs"] + (["u&v", "Vdir"] if ids_i or device_wind else []) + ["t"]:  # u-shore v-shore
         pg_1d(ids_order, param=param, scale_height=graphs_scale_height)
 
-    for param in "Vabs,dir u,v,t".split():  # u,v-shore
-        pg_2d(param)
+    if ids_i:
+        for param in "Vabs,dir u,v,t".split():  # u,v-shore
+            pg_2d(param)
 
-    for param in "Vabs u v".split():  # ' u-shore v-shore'
+    for param in ["Vabs"] + (["u", "v"] if ids_i or device_wind else []):  # ' u-shore v-shore'
             pg_1d(ids_order, param=param, scale_height=graphs_scale_height, zoom=True)

@@ -61,7 +61,7 @@ for t, ids_t, t_ranges in zip(
         )
 
 time_range = np.array(max_time_span_s_strings, "M8[s]")
-disp_dtime_range_s = int(np.ediff1d(time_range))
+disp_dtime_range_s = np.ediff1d(time_range).astype(int)
 if not disp_dtime_range_s.size:
     disp_dtime_range_s = nan
 print("Graph time interval, s:", disp_dtime_range_s)
@@ -227,7 +227,7 @@ str_pids = (  # """f'{si}{ki[int(ki.startswith("i")):]}'""" if b_one_point else 
 )  # .replace('i_p', 'ip')
 # nl = chr(92)
 
-st = lambda p: (
+st = (
     ""
     if b_one_point
     else "v.c1((f'{{st}}.{p}' if len(p) < 10 else f'{{{p}}}').format_map(I)).replace(' ', r'\\\\'), "
@@ -235,7 +235,7 @@ st = lambda p: (
 _ = "".join(
     [
         "{**{f'_{k}': ''.join([",
-        st(p),
+        st,
         # # show depth for all devices if any is not on bottom else show depth only for wave gauges:
         # ", f':\u2009{(b - bd):.0f}m'" if any(cus.DISPdevices_info[i[1:]][2] for i in (ids_i + ids_w) if i[1]=='i') else
         ""
@@ -255,16 +255,17 @@ if WidthGrade == WidthGrades["VeryNarrow"]:  # replace ":{small whitespace}" wit
 AddCustom("definition", "DISPdevice", _)
 
 colors = (
-    fv.colors_of_hue_range(len(ids_order), exclude_hue_start=210, exclude_hue_end=270)
+    fv.colors_of_hue_range(len(ids_order), exclude_range=[210, 270])
     if len(ids_order) > 1
     else ["black"]
 )
 clr_wind = "#00aaff"  # #5000df
 
-# Device names evaluate here and save to `DataText`
-# because text expressions for multiple coordinates are not supported
+
 def disp_devices_info_key(k, p, b, bd, s, *kw):
-    """_summary_
+    """
+    Device names to save `DataText` evaluated here
+    because text expressions for multiple coordinates are not supported
     :param k: pid
     :param p: station
     :param b: bottom
@@ -272,14 +273,6 @@ def disp_devices_info_key(k, p, b, bd, s, *kw):
     :param s: device sign
     :return: string for display graph
     """
-
-    # join signs with corresponding pids (also if they are grouped), removing "i"/"p" prefix from pids
-    str_pid = [
-        rf'{si}{ki[int(ki.startswith("i")):]}'
-        for ki, si in zip(
-            k.split("_"), ([""] if k.startswith("p") else s.split(","))
-        )
-    ]
     p_out = (
         "" if b_one_point
         else fv.c1((
@@ -289,13 +282,29 @@ def disp_devices_info_key(k, p, b, bd, s, *kw):
     )
     # .removeprefix("{st}.".format_map(fv.I))
     d_out = "" if b is None or b_one_depth_dev else rf"\\^{(b - bd):.0f}{fv.I['m']}"
-    return "".join(
-        (
+
+    if p_out or d_out:  # not use pid
+        str_pid = ""
+    else:  # use pid
+        #  # join signs with corresponding pids, removing "i"/"p" prefix from pids (even if they are grouped)
+        #  str_pid = [
+        #      rf'{si}{ki[int(ki.startswith("i")):]}'
+        #      for ki, si in zip(
+        #          k.split("_"), ([""] if k.startswith("p") else s.split(","))
+        #      )
+        #  ]
+        # str_pid = "^{{\color{{blue}}{{{}}}}}".format(",".join(str_pid))
+
+        # pids, removing "i"/"p" prefix (even if they are grouped)
+        str_pid = ",".join([ki[int(ki.startswith("i")):] for ki in k.split("_")])
+
+    return (
+        "".join((
             p_out,
             d_out,
             # ('' if b is None or b_one_depth_sea else f"{b:.0f}{fv.I['m']}"),
-            # "^{{\color{{blue}}{{{}}}}}".format(",".join(str_pid)),
-        )
+            str_pid,
+        ))
     )
 # \color{#0087cc}{\bold{st.34}}
 str_pids = [

@@ -2,17 +2,14 @@
 
 This tool selects data files, determines which data parts to load, and defines how to display them in Veusz based on file path/name and data files. When a user opens a .vsz file containing only commands that call vsz_loader.py, the loader takes control of the execution logic.
 
+## Usage
+
+1. Copy the 449-byte file `scripts\231229_2201@i91.vsz` to a directory containing your data (or in a subdirectory with special name - see Directory Navigation Keywords) that allows data discovery. Rename this file like `{yymmdd_HHMM}@{device_ids}.vsz` to enable the system to find data in known formats named according to known devices. 
+2. Open (run) your correctly named 449-byte .vsz file with Veusz (or for debugging: run vsz_loader.py with the full path as an argument).
+
 ## How It Works
 
 The system operates by parsing the .vsz filename to extract time range and device information. The vsz_loader.py module uses this information to locate and load appropriate data files (HDF5, CSV, NetCDF) with the correct time range and parameters. The data is then visualized using Veusz with the help of supporting modules like vsz_drawer.py, which creates graphs and plots.
-
-Key functions involved in the process:
-1. `get_info_from_filename()` - parses the filename to extract time range and device information
-2. `veusz_load_hdf5()` - loads HDF5 data into Veusz based on time range and device specifications
-3. `veusz_load_hdf5_ecmwf()` and `veusz_load_hdf5_cmems()` - specialized functions for loading meteorological data
-4. `prepare_draw_tcm()` - prepares processed TCM (inclinometer) data for drawing
-5. `load_info_json()` - loads device metadata from JSON configuration files
-6. `get_path_in_parents()` - searches for configuration files in parent directories
 
 ## Configuration
 
@@ -31,7 +28,7 @@ The system uses special directory names and structure patterns to determine data
 - **`meteo/ECMWF`**: Directories with these names are specifically searched for meteorological data files
 - **`processed` and `raw`**: These directory names may be used to distinguish between different processing states of data files
 
-### Directory Navigation Keywords in .vsz File Names
+### Directory Navigation Keywords "{..}vsz({parameters})"
 - **`vsz` prefix**: Indicates that data files for *.vsz files inside are on same level as the `vsz*` dir itself
 - **`..vsz` prefix**: Indicates the number of parent directory levels to navigate up when searching for data files (e.g., `..vsz` means to look one level up)
 - **`vsz({dir})` pattern**: Points to a sibling directory named `{dir}` where data files are located
@@ -39,28 +36,22 @@ The system uses special directory names and structure patterns to determine data
 
 ### Recommended Directory Structure
 
-The system works best with a structured directory layout:
+The system works best with a structured directory layout. Example:
 
 ```
 project_root/
-├── 230825_Kulikovo@ADCP,ADV,i,tr/          # Date and location data
-│   ├── raw/                                  # Raw data files
-│   ├── processed.h5                         # data file/database
-│   ├── inclinometer/                        # Inclinometer data (special keyword)
-│   │   ├── info_devices.json               # Device configuration
-│   │   └── vsz/                            # .vsz files per time range
-│   │       ├── 230830_0000-10_1200@windECMWF.vsz    # Load 10 days of wind searching its data in meteo/ECMWF
-│   │       └── 230830_0000@i91.vsz         # Load single day for inclinometer i91 from processed.h5
-│   ├── meteo/                               # Meteorological data (special keyword)
-│   │   └── ECMWF/                          # ECMWF NetCDF files
-│   │       └── area(54.75-55.0N,20.25-20.5E)/
-│   └── _raw/                                # Raw data directory (special keyword)
+└── 230825_Kulikovo@ADCP,ADV,i,tr/          # Date and location data
+    ├── raw/                                  # Raw data files directory (special keyword)
+    ├── processed.h5                         # data file/database
+    ├── inclinometer/                        # Inclinometer data (special keyword)
+    │   ├── info_devices.json               # Device configuration
+    │   └── vsz/                            # .vsz files per time range
+    │       ├── 230830_0000-10_1200@windECMWF.vsz    # Load 10 days of wind searching its data in meteo/ECMWF
+    │       └── 230830_0000@i91.vsz         # Load single day for inclinometer i91 from processed.h5
+    ├── meteo/                               # Meteorological data (special keyword)
+    │   └── ECMWF/                          # ECMWF NetCDF files
+    │       └── area(54.75-55.0N,20.25-20.5E)/
 ```
-
-## Usage
-
-Copy the 449-byte file `scripts\231229_2201@i91.vsz` to a directory containing your data or in a subdirectory that allows data discovery by renaming them like `{yymmdd_HHMM}@{device_ids}.vsz`. This enables the system to find data in known formats named according to known devices.
-Open (run) your correctly named 449-byte .vsz file with Veusz. For debugging: run vsz_loader.py with the full path as an argument to this file.
 
 ## .vsz File Naming Patterns & Device Parsing
 
@@ -82,6 +73,7 @@ The .vsz filename structure `{yymmdd_HHMM}@{device_ids}.vsz` enables automated d
   - Semicolon-separated groups: `i3,4,15,19,37,38;ib27-30,ip6.vsz` - separates different device groups
   - Range (numeric only) expansion: `27-30` → `["27", "28", "29", "30"]`
   - Parentheses support: `i(38,37,59,60,58)` → `i38,i37,i59,i60,i58`
+  `i(38,37);ip(5,6);ib(27,28)` - supports mixed prefixes with parentheses
 
 ## Key `vsz_loader` Functions
 
@@ -113,8 +105,7 @@ The .vsz filename structure `{yymmdd_HHMM}@{device_ids}.vsz` enables automated d
 
 The system supports various data formats and loading mechanisms:
 
-- **HDF5 files**: For various instruments (TCM, CTD, navigation)
-- **NetCDF files**: For meteorological data (ECMWF, CMEMS)
+- **HDF5 files**: For various instruments (TCM, CTD, navigation), includes some **NetCDF files**: For meteorological data (ECMWF, CMEMS)
 - **CSV files**: For specific instruments (GMX500)
 - **Configurable Visualization**: Uses vsz_drawer and vsz_drawer_cfg to create customizable plots and graphs
 
@@ -140,33 +131,10 @@ The system supports various data formats and loading mechanisms:
 
 10. **Decimation Logic**: The data decimation feature implementation may need review for correctness and performance.
 
-# vsz files naming rules
-
-## Data Filenames Pattern Support
-`{yymmdd_HHMM}@{Device Names}.vsz'
-
-### Device Names in vsz file name
-underscores after "i" or zeros before first other number are not considered significant:
-- `i_b27` → `ib27`
-- `i_p06` → `ip06`
-- `i_03` → `i03`
-- `i_p06` → `ip6`
-
-### Complex Patterns
-Semicolon-Separated Groups:
-- `i3,4,15,19,37,38;ib27-30,ip6.vsz` - separates different device groups
-
-Range (numeric only) Expansion:
-- `27-30` → `["27", "28", "29", "30"]`
-
-Parentheses Support:
-- `i(38,37,59,60,58)` → `i38,i37,i59,i60,i58`
-- `i_b(27,28,29,30)` → `i_b27,i_b28,i_b29,i_b30`
-- `i(38,37);ip(06);ib(27,28)` - supports mixed prefixes with parentheses
-
 # Format to load metadata (from files named `info_devices.json`)
 
-records format:
+(mostly used for inclinometers)
+
 ```json
 {
 № прибора: [
@@ -180,7 +148,7 @@ records format:
 ...
 }
 ```
-символ модификации-конструкции:
+символ модификации-конструкции инклинометра:
 o	⯯ – отрицательной плавучести (с наиболее широким диапазоном)
 o	⯭ – положительной плавучести, с широким диапазоном (с большим поплавком)
 o	⭡ – положительной плавучести, с узким диапазоном измеряемой скорости течения

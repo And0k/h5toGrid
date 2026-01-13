@@ -56,7 +56,7 @@ def sl(x) -> slice:
 
 # Conversion date from datetime64 to Veusz and back:
 dt64s2vsz = lambda dt64: float64(dt64) - 1230768000  # 1230768000=int32(datetime64('2009-01-01T00:00:00'))")
-vsz2dt64s = lambda t_vsz: array(int32(t_vsz) + 1230768000, 'M8[s]')
+vsz2dt64s = lambda t_vsz: array(int32(t_vsz) + 1230768000, 'M8[s]')  # to offset from 1970-01-01
 
 
 def try_(fun, *args, **kwargs):
@@ -333,7 +333,7 @@ class DictKeyIfNoVal(dict,):
                 else key[1:]   # key.replace("_", " ")?
             )
         elif char0.isupper():
-            out = self.__getitem__(key.lower())
+            out = self.get(key)
             if out:
                 return c1(out)
 

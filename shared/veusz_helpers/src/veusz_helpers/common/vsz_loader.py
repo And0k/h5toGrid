@@ -240,7 +240,7 @@ def get_info_from_filename(basename) -> Tuple[Optional[Tuple[Any]], Mapping[str,
                     device_type = device_type_cur.replace("incl", "i", 1)
             try:
                 # model if is not specified: if device type is specified then set to default 'i' else previous
-                model = re_parts.pop(f"model{i}") or ("i" if device_type_cur else model)
+                model = re_parts.pop(f"model{i}")  # or device_type_cur or model or "i"
             except KeyError:
                 pass
             pid = f"{model or device_type}{number:{'02d' if device_type in custom_device_types else 'd'}}"
@@ -284,7 +284,7 @@ def normalize_device_id(device_id: str) -> str:
 def search_time_range_indexes(index, time_range, raw_time_shift_s, raw_time_units="ns"):
     """
     :param index:
-    :param time_range:
+    :param time_range: [s] or convertible
     :param time_shift_s:
     :param raw_time_units: , defaults to "ns"
     :return: list
@@ -295,14 +295,16 @@ def search_time_range_indexes(index, time_range, raw_time_shift_s, raw_time_unit
             raw_search_add = index[-1]
         else:
             if raw_time_shift_s:
-                to_raw_time_units = np.timedelta64(1, raw_time_units).astype("m8[ns]").astype(int).item()
+                to_raw_time_units = 1/np.timedelta64(1, raw_time_units).astype("m8[s]").astype(int).item()
+                # ns?
                 raw_search_add = -to_raw_time_units*raw_time_shift_s
             else:
                 raw_search_add = 0
         if np.isfinite(time_range[-1]):
-            time_range_raw_search = np.array(time_range).astype(np.int64)
+            time_range_raw_search = np.array(time_range, f"M8[{raw_time_units}]").astype(np.int64)
             i_range = np.fmin(
-                np.searchsorted(index, time_range_raw_search + raw_search_add), len(index) - 1
+                np.searchsorted(index, time_range_raw_search + raw_search_add),
+                len(index) - 1,
             ).tolist()
         else:
             time_range_raw_search = np.array(time_range[0]).astype(np.int64)
@@ -317,15 +319,15 @@ def veusz_load_hdf5(
     file,
     device_ids: Sequence[str],
     grp_d: Optional[Mapping[str, str]] = None,
-    cols_namemap: Optional[
-        Mapping[str, Union[Mapping[str, str], Iterable[str]]]
-    ] = None,
+    cols_namemap: Optional[Mapping[str, Union[Mapping[str, str], Iterable[str]]]] = None,
     grp_d_rename_funs: Mapping[str, Callable[[str, str], str]] = None,
     time_range=tuple(),
     time_shift_s: int = 0,
-    b_load_to_veusz = True,
+    b_load_to_veusz=True,
     decimation: Optional[int] = None,
-) -> Tuple[Mapping[str, Any], Tuple[np.timedelta64, np.timedelta64], Mapping[str, list|np.ndarray]]:
+    prefix: Optional[str] = "",
+    suffix: Optional[str] = ""
+) -> Tuple[Mapping[str, Any], Tuple[np.timedelta64, np.timedelta64], Mapping[str, list | np.ndarray]]:
     """
     Finds integer index slice from specified time range and loads hdf5 data to Veusz.
     Intended to be executed in caller's vsz workspace
@@ -343,6 +345,8 @@ def veusz_load_hdf5(
     :param time_shift_s: shift in seconds You'll add to loaded time, here used to set input range correctly
     :param b_load_to_veusz:
     :param decimation:
+    :param prefix: "",
+    :param suffix: ""
     :return: (existed_devs, timerange, i_ranges):
     - existed_devs: dict with fields [device_id][grp]
     - timerange: time range [start, end] with account to time_shift_s that you'll add to loaded time in Veusz
@@ -509,13 +513,11 @@ def veusz_load_hdf5(
         }
         ImportFileHDF5(  # noqa: F821
             file,
-            (
-                list(namemap)
-                or [_ for device_id in device_ids for _ in grp_dev[device_id].values()]
-            ),
+            (list(namemap) or [_ for device_id in device_ids for _ in grp_dev[device_id].values()]),
             linked=True,
             namemap=namemap,
             slices=slices,
+            **{k: v for k, v in [("prefix", prefix), ("suffix", suffix)] if v},
         )
         # Add tag "loaded"
         TagDatasets(
@@ -536,7 +538,7 @@ def veusz_load_hdf5_tcm_raw(
     devices,
     time_range,
     time_shift_s: int = 0,
-    cruise_dir=None,
+    dev_dir=None,
     decimation: Optional[int] = None
 ):
     """
@@ -545,19 +547,20 @@ def veusz_load_hdf5_tcm_raw(
     :param file: data file
     :param time_range: any 2-element sequence convertible to datetime64 array in displaying zone. For example ['2020-08-19T21:59:22', '2020-08-20T06:05:04']
     :param time_shift_s: shift in seconds You'll add to loaded time to display data, here used to set input range correctly
-    :param cruise_dir:
+    :param dev_dir: use filtered db from this dir where coef. already applied
     :return:
     """
     # take 1st probe
     _ = iter(devices.items())
     pid, probe = next(_)
     _ = [(pid, probe)] + list(_)
-
+    p_type = probe["type"]
     device_ids = [
-        f"incl{pid[1:]}" if pid[0] == "i"
-        else f"incl_{pid}" if probe["type"] == "i"
-        else f"{probe['type']}_{pid}"
-        for pid, probe in _
+        f"incl{pid[1:]}"
+        if pid[0] == "i"
+        else "_".join(
+            (["incl"] if p_type == "i" else [p_type] if p_type and p_type[0] != pid[0] else []) + [pid]
+        ) for pid, probe in _
     ]
 
     grp_d = {
@@ -566,11 +569,12 @@ def veusz_load_hdf5_tcm_raw(
     }
     table_cols_to_slice_namemap_common = {  # common parameters which time slice is need to load
         "index": "t_ns",
-        "P_counts": "P_counts",
+        "P_counts": "_P_counts",
+        "P": "_P_counts",
         "Temp": "Temp",
         "Battery": "Battery",
     }
-    if probe["type"] == "w":
+    if p_type == "w":
         cols_namemap = {
             "coef": {
                 p: (f"coef_{p}__" if p[0].islower() else f"coef{p}__")
@@ -583,13 +587,13 @@ def veusz_load_hdf5_tcm_raw(
                     "pid",
                 )
             },
-            "talble": table_cols_to_slice_namemap_common,
+            "table": table_cols_to_slice_namemap_common,
         }
 
-        if cruise_dir:  # use filtered db where coef. already applied
-            file = cruise_dir / f"{cruise_dir.stem}.proc_noAvg.h5"
+        if dev_dir:
+            file = dev_dir / f"{dev_dir.stem}.proc_noAvg.h5"
             if not Path(file).is_file():  # try & except not works here (OSError)
-                file = cruise_dir.stem / f"{cruise_dir.stem}@w.proc_noAvg.h5"
+                file = dev_dir.stem / f"{dev_dir.stem}@w.proc_noAvg.h5"
 
             del grp_d["coef"]
             SetDataExpression("kP", "[1, 0]", linked=True)  # 1:1
@@ -617,7 +621,7 @@ def veusz_load_hdf5_tcm_raw(
 
     # prefixes and suffixes for columns of each grp_d group
     def f_table_cols_fmt(col, device_id):
-        return f"{col}" if col.endswith("counts") else f"_{col}__"
+        return col if col.endswith("counts") else f"_{col}__"
 
     grp_d_rename_funs = {"coef": "{}".format, "table": f_table_cols_fmt}
 
@@ -851,8 +855,8 @@ def veusz_load_hdf5_nav(
     """
     device_ids = ["navigation"]
     # grp_d = None
-    if cruise_dir:  # use filtered db where coef. already applied
-        file = cruise_dir / f"{(file or cruise_dir).stem}.h5"
+    if device_dir:  # use filtered db where coef. already applied
+        file = device_dir / f"{(file or device_dir).stem}.h5"
 
     # cols_namemap = {
     #     'table': {
@@ -973,7 +977,7 @@ def veusz_load_hdf5_ecmwf(
     like "../ECMWF/data_stream-oper_stepType-instant_20.31E_54.94N_2023-08-20-2023-09-20.nc"
     (.*) part should be constant for each of required files
     :param time_range: any 2-element sequence convertible to datetime64 array in displaying zone. For example ['2020-08-19T21:59:22', '2020-08-20T06:05:04']
-    :param time_shift_s: shift in seconds You'll add to loaded time to display data, here used to set input range correctly
+    :param time_shift_s: shift in seconds You'll add to loaded time to display data, here used to set input range correctly (usually you must set it equal to `cus.Wind_timeShift_s`)
     :return loaded time range in displaying zone
     Updates global `wind_mean_uv`
     """
@@ -985,19 +989,28 @@ def veusz_load_hdf5_ecmwf(
     m = re.match(
         fr"(?P<file_name_prefix>[^-]+){required_name_part}(?P<file_name_suffix>.*\.nc)", file.name
     )
-    prefix = m.group("file_name_prefix")
-    file_name_suffix = m.group("file_name_suffix")
-    files = [
-        f for f in file.parent.glob(
-            re.sub(  # regex to glob pattern:
-                r"\([^)]+\)",
-                "*",
-                f"{prefix}{required_name_part}{file_name_suffix}"
-            )
-        )
-    ]
 
-    index_name = "valid_time"
+    try:
+        prefix = m.group("file_name_prefix")
+        file_name_suffix = m.group("file_name_suffix")
+        files = [
+            f for f in file.parent.glob(
+                re.sub(  # regex to glob pattern:
+                    r"\([^)]+\)",
+                    "*",
+                    f"{prefix}{required_name_part}{file_name_suffix}"
+                )
+            )
+        ]
+        index_name = "valid_time"
+    except AttributeError:  # 'NoneType' object has no attribute 'group'
+        warning("trying to load all from one file (old style input)")
+        prefix = ""
+        files = [file]
+        file_name_prefix = file.name
+        file_name_suffix = ""
+        index_name = "time"
+
     files_params = {
         f"{prefix}-oper_stepType-instant": [
             "u10",
@@ -1039,8 +1052,6 @@ def veusz_load_hdf5_ecmwf(
             # "northward_wind_sdd": "v_cm_sdd",
         },
     }
-    t_shift_to_unix = 0  # 599616000 - 1230768000
-    time_raw_to_input = time_shift_s - t_shift_to_unix
 
     scalers = {}
     with h5py.File(file, "r") as h:
@@ -1053,6 +1064,20 @@ def veusz_load_hdf5_ecmwf(
                 continue
 
         index = h[index_name]
+        raw_time_units = index.attrs["units"].decode()
+        try:
+            time_scaler = scalers.pop(index_name)
+        except KeyError:
+            time_scaler = [1, 0]  # assume seconds from 1900-01-01
+
+        t_shift_to_unix = -np.datetime64(raw_time_units.split("since ", 1)[-1], "s").astype(int)
+        # old: 599616000 - 1230768000
+        time_scaler[1] += (time_shift_s - t_shift_to_unix)
+
+        if raw_time_units[0] == "h":
+            time_scaler[0] *= 3600
+            # time_scaler[1] *= 3600
+        # raw_time_units = "s"
 
         if False:
             if any(np.isfinite(time_range)):
@@ -1066,9 +1091,18 @@ def veusz_load_hdf5_ecmwf(
                 i_range = [0, -1]
 
         i_range = search_time_range_indexes(
-            index, time_range, time_raw_to_input, raw_time_units="s"
+            index,
+            time_range,
+            time_scaler[1],
+            raw_time_units=raw_time_units[0],  # "s" or "h"
         )
-        time_range = np.array(index[i_range] + time_raw_to_input, "M8[s]")
+        if np.diff(i_range) == 0:
+            i_range[1] += 1
+            if i_range[1] == index.size:
+                i_range[0] -= 1
+                i_range[1] -= 1
+
+        time_range = np.array(np.polyval(time_scaler, index[i_range]), "M8[s]")
 
 
         # For number of vector records <= 2 we will not draw in separate graphs, but display message?
@@ -1084,15 +1118,19 @@ def veusz_load_hdf5_ecmwf(
             print('wind_mean_uv =' , wind_mean_uv)
         except KeyError:
             print('"wind_mean_uv" not calculated as not found "u10" or "v10" in' , file.name)
+
     print(f"loading params from {len(files)} files: ", end='')
     for file in files:
-        file_name_prefix = file.name.removesuffix(file_name_suffix)
-        try:
-            params = files_params[file_name_prefix]
-            print(str(params), end=', ')
-        except KeyError as e:
-            print(f'Not known file prefix/suffix in "{file_name_prefix}", skipping file...')
-            continue
+        if file_name_suffix:
+            file_name_prefix = file.name.removesuffix(file_name_suffix)
+            try:
+                params = files_params[file_name_prefix]
+                print(str(params), end=', ')
+            except KeyError as e:
+                print(f'Not known file prefix/suffix in "{file_name_prefix}", skipping file...')
+                continue
+        else:
+            params = [p for params in files_params.values() for p in params]
         ImportFileHDF5(
             file,
             [grp],
@@ -1114,7 +1152,9 @@ def veusz_load_hdf5_ecmwf(
             suffix=var_suffix,  # "_EC"
             prefix=var_prefix
         )
+
     # Select time range and convert time to Veusz format with displaying time zone
+
     SetData2DExpression(
         "iu_Wind",
         (
@@ -1125,8 +1165,13 @@ def veusz_load_hdf5_ecmwf(
     )
     SetDataExpression(
         "time_Wind",
-        f"v.dt64s2vsz({var_prefix}{var_time}{var_suffix}"
-        "[sl_(iu_Wind if diff(iu_Wind) > 1 else iu_Wind + [0, 1])]) + Wind_timeShift_s",
+        "".join(
+            ["v.dt64s2vsz("]
+            + ([f"{t_shift_to_unix} + "] if t_shift_to_unix != 0 else [])
+            + ([f"{time_scaler[0]}*"] if time_scaler[0] != 1 else [])
+            + [var_prefix, var_time, var_suffix]
+            + ["[sl_(iu_Wind if diff(iu_Wind) > 1 else iu_Wind + [0, 1])]) + Wind_timeShift_s"]
+        ),
         linked=True,
     )
     # Convert NetCDF stored values to physical
@@ -1714,7 +1759,7 @@ def prepare_draw_tcm(
     device_dir,
     db_stem,
     cus,
-    use_bins = {"": 2, "bin_": 600, "bin2_": 3600},
+    use_bins = None,
     b_old_format_in_h5: bool = True,
 ):
     """
@@ -1752,9 +1797,9 @@ def prepare_draw_tcm(
         bin_burst_name,
         b_one_table,
     """
-    format_model_part = lambda model: "" if model == "i" else f"_{model}"
+    format_model_part = lambda model: "" if model in ["i", ""] else f"_{model}"
     if b_old_format_in_h5:
-        format_model_part_old = lambda model: "" if model == "i" else model
+        format_model_part_old = lambda model: "" if model in ["i", ""] else model
         ids_i_old = [  # f'_i{i}' for n in ''.split(',') if n '5,19,11,15'
                 "_{type}{_model}{number:02d}".format(**probe, _model=format_model_part_old(probe["model"]))
                 for pid, probe in probes["devices"].items() if pid
@@ -1840,6 +1885,8 @@ def prepare_draw_tcm(
 
     ## Define bin averaged data to load
 
+    if use_bins is None:
+        use_bins = {"": 2, "bin_": 600, "bin2_": 3600}
     # Use raw data sampling frequency if time range is small
     if any(np.isfinite(time_range)) and len(time_range) >= 2 and time_range[-1] is not NaT:
         dtime_range_s = np.diff(time_range).astype("m8[s]").astype(int).item()
@@ -1949,7 +1996,7 @@ def prepare_draw_tcm(
             print("TagDatasets Error: ", e)
 
     elif ids:
-        params = ["u", "v", "Temp"]
+        params = (["u", "v"] if ids_i else []) + ["Temp"]
         for is_binning, ub in groupby(use_bins.items(), lambda x: x[1] > 0):
             if is_binning:  # bin > 0
                 cols_name_map = {"index": "t_ns"}
@@ -1976,7 +2023,7 @@ def prepare_draw_tcm(
                     h5_group_to_bin_prefix = {
                         f"{pid.removeprefix('_')}bin{dt_s}s": (bin, pid)
                         for bin, dt_s in ub
-                        for pid in ids_i
+                        for pid in ids  # ids_i
                     }
                     top_groups = list(h5_group_to_bin_prefix.keys())
                     cols_name_map.update(
@@ -2012,11 +2059,11 @@ def prepare_draw_tcm(
 
                     return f"{prefix}{bin}{col}{sfx}"
                 db_for_bin = db
-            else:
+            else:  # no binning (bin = 0 means this): loading from *.proc_noAvg.h5 db
                 cols_name_map = {"index": "t_ns", **dict(zip(params, params))}
-                if ids_p:
+                if ids_p or ids_w:
                     cols_name_map["Pressure"] = "P"
-                top_groups = {pid.removeprefix("_") for pid in ids_i}
+                top_groups = {pid.removeprefix("_") for pid in ids}  # ids_i
 
                 def f_table_cols_fmt(col, device_id):
                     """Add prefixes / suffixes for columns of each grp_d group"""
@@ -2047,7 +2094,7 @@ def prepare_draw_tcm(
     if not any(np.isfinite(time_range)):
         time_range = time_range_raw
     elif len(time_range_raw) == 2:
-        time_range = np.where(np.isnat(time_range), time_range_raw)
+        time_range = np.where(np.isnat(time_range), time_range_raw, time_range)
 
     # Dataset that contains wind or useful for wave gauges P_a data
     if device_wind or ids_w or ids_p:
@@ -2085,7 +2132,15 @@ def prepare_draw_tcm(
 
                 files = list(_.glob(f"*{suffix}"))
                 if not files:
-                    files = [d for d in _.iterdir() if d.is_dir() and d.name.startswith("area(")]
+                    try:
+                        files = [d for d in _.iterdir() if d.is_dir() and d.name.startswith("area(")]
+                    except FileNotFoundError:
+                        if not _.is_dir():
+                            warning(
+                                "Can not load meteo "
+                                f"({_} is not a dir) required for {[device_wind] + ids_w + ids_p}"
+                            )
+                            time_range_raw_wind = [NaT, NaT]
                 for file in files:
                     for coord_pattern in coord_patterns:
                         try:
@@ -2223,10 +2278,11 @@ def prepare_draw_tcm(
                     if b_t_sfx_is_pid:
                         t_sfx = pid
                     if sfx_w:
-                        _w = "_w"
                         try:
+                            _w = ""
                             ip = ids_p.index(pid)
                         except ValueError:  # pid is not in list
+                            _w = "_w"
                             SetData2DExpression(
                                 f"iUseAuto{pid}",
                                 f"[flatnonzero(isfinite({bin0}P{pid}))[[0,-1]]]",
@@ -2235,9 +2291,14 @@ def prepare_draw_tcm(
                             SetData2DExpression(
                                 f"iu{pid}",
                                 f"v.min_range_2d(atleast_2d(v.i_positive(v.i_use(t_ns_w, USEtime{pid}, "
-                                "t_shift_s=USE_timeShift_s), t_ns_w.size)), iUseAuto{pid})",
+                                f"t_shift_s=USE_timeShift_s), t_ns_w.size)), iUseAuto{pid})",
                                 linked=True,
                             )
+                        SetDataExpression(
+                            f"mean_P{pid}",
+                            f"nanmean({bin_max_w}P{pid}[sl_({bin_max_w}iu{pid if _w else ids_ip[ip]})])",
+                            linked=True,
+                        )
                     else:
                         SetData2DExpression(
                             f"iUseAuto{pid}",
@@ -2270,15 +2331,10 @@ def prepare_draw_tcm(
 
                     if sfx_w:
                         try:
-                            ip = ids_p.index(pid)
                             _w = ""
+                            ip = ids_p.index(pid)
                         except ValueError:  # pid is not in list
                             _w = "_w"
-                        SetDataExpression(
-                            f"mean_P{pid}",
-                            f"nanmean({bin_max_w}P{pid}[sl_({bin_max_w}iu{pid if _w else ids_ip[ip]})])",
-                            linked=True,
-                        )
                     else:
                         _w = ""
                     # Suffix is used if we've loaded not combined bin0name data:
@@ -2326,21 +2382,21 @@ def prepare_draw_tcm(
                     linked=True,
                 )
     SetDataExpression(
-        f"time_span_i",
+        "time_span_i",
         "(lambda time_st, time_en: [min(time_st), max(time_en)])(*column_stack(({})))".format(
             "".join(f"time_span{pid}, " for pid in ids_i)
         ),
         linked=True,
     )
     SetDataExpression(
-        f"time_span_i_common",
+        "time_span_i_common",
         "(lambda time_st, time_en: [max(time_st), min(time_en)])(*column_stack(({})))".format(
             "".join(f"time_span{pid}, " for pid in ids_i)
         ),
         linked=True,
     )
     SetDataExpression(
-        f"disp_time_span",
+        "disp_time_span",
         "v.dt64s2vsz(array(DISPtime[0], 'M8[s]')) if len(DISPtime)>0 else time_span_i",
         linked=True,
     )
@@ -2597,7 +2653,16 @@ if __name__ in ("__main__", "builtins"):
         print(f"from device_dir ({device_dir}) as no info_devices.json found:")
         b_info_devices_json_found = False
 
-    cruise_dir = device_dir if device_dir.name[0].isdigit() else device_dir.parent
+    # dir where search this device and other devices/meteo dirs
+    cruise_dir = (
+        device_dir.parent
+        if not device_dir.name[0].isdigit()
+        else device_dir.parent.parent
+        if device_dir.parent.name.startswith(
+            ("inclinometer", "CTD", "meteo")  # and so on (add all used devices to exclude)
+        )
+        else device_dir
+    )
 
     # if any(probes["devices"]):
     #    # Probes have been determined from file name or parent dir - add common info to each probe?
@@ -2651,8 +2716,22 @@ if __name__ in ("__main__", "builtins"):
             b_db_ok = db.is_file()
         elif "_raw" not in parent.parts:
             # Try load best db for our case first
+
+            # Check whether we need raw data sampling frequency i.e. .proc_noAvg.h5 data: use_bins = {"": 0}
+            if any(np.isfinite(time_range)) and len(time_range) >= 2 and time_range[-1] is not NaT:
+                dtime_range_s = np.diff(time_range).astype("m8[s]").astype(int).item()
+                use_bins = {"": 0} if dtime_range_s <= 3600 else None  # < 1H  # may be need < 10min
+            else:
+                use_bins = None  # will be set to default in prepare_draw_tcm()
+
             dbs = []
-            for sfx in [".proc", ".proc_Avg"] if len(probes["devices"]) > 1 else [".proc_Avg", ".proc"]:
+            for sfx in (
+                [".proc_noAvg"]
+                if use_bins
+                else [".proc", ".proc_Avg"]
+                if len(probes["devices"]) > 1
+                else [".proc_Avg", ".proc"]
+            ):
                 _ = list(device_dir.glob(f"*{sfx}.h5"))
                 if not any(_):
                     continue
@@ -2689,8 +2768,8 @@ if __name__ in ("__main__", "builtins"):
             b_db_ok = False
     else:
         # DB stem should be equal to the name of parent folder and DB file will be under _raw dir or
-        # cruise_dir
-        db = (device_dir / "_raw" if b_use_db_raw else cruise_dir) / f"{db_stem}.h5"
+        # device_dir
+        db = device_dir / ("_raw" if b_use_db_raw else "") / f"{db_stem}.h5"
         b_db_ok = db.is_file()
 
     time_range_raw = []  # time range from raw data
@@ -2714,31 +2793,21 @@ if __name__ in ("__main__", "builtins"):
         # Parent folder encodes folder where get data `data_dir` relative to current dir `parent` if has "vsz"
         # - by ".." before "vsz" in its name: means the number of parent levels relative to vsz folder
         # - by "vsz({dir})" to point on sibling folder {dir}. "vsz" alone means that data in parent folder
-        if (
-            "vsz" in parent.name
-        ):  # get name with '.' that can be used in dir name to encode data_dir location
-            data_dir = parent.parent
-            # 1. Check/use "..vsz" parent dir encoding
-            _ = parent.name.split("..")
-            for p in _:
-                if p:  # no more ".."
-                    break  # need?
-                data_dir = data_dir.parent
-                print("<", end="")
-            if data_dir.name == "vsz":
-                print("<", end="")
-                data_dir = data_dir.parent
-            else:  # 2. Check/use vsz({dir}) relative dir encoding
-                # vsz(single argument without "=" or named argument `dir`)
-                m = re.match(r"_?vsz\(([^)=]+)\)", _[-1]) or re.match(r"_?vsz\(dir=([^,)=]+)", _[-1])
-                if m:
-                    data_dir = data_dir.with_name(m.group(1))  # if m else device_dir
+        if "vsz" in parent.name:
+            # 1. Check/use "..vsz" parent dir encoding: '..' used to encode data_dir location
+            _ = parent.name.rsplit("..", 1)[-1]
+            m = parent.name.count("..")
+            data_dir = parent.parents[m]
+            m = re.match(r"_?vsz\(([^)=]+)\)", _[-1]) or re.match(r"_?vsz\(dir=([^,)=]+)", _[-1])
+            if m:
+                data_dir = data_dir.with_name(m.group(1))  # if m else device_dir
         else:
             data_dir = device_dir
 
         ## Load known file types into Veusz if any in `probes["devices"]` (except TCM data, which proc. later)
+
         b_allow_many_sources = False  # unique 1 source file allowed
-        for pid, probe in probes["devices"].items():
+        for pid, probe in [] if b_device_is_tcm and b_db_ok and not b_use_db_raw else probes["devices"].items():
             fun_load, data_file_ext, b_allow_many_sources = get_fun_load_end_ext(
                 probe, db, parent=parent, time_range=time_range, time_shift_s=cus.USE_timeShift_s
             )
@@ -2914,16 +2983,17 @@ if __name__ in ("__main__", "builtins"):
             device_dir,
             db_stem,
             cus,
-            # use_bins = {'': 600, 'bin_': 3600, 'bin2_': 7200}  # 7200  # must be sorted
+            use_bins = use_bins  # {'': 600, 'bin_': 3600, 'bin2_': 7200}  # 7200  # must be sorted
         )
 
     else:
         # Gather used probe models. They are corresponds to specific raw drawer file names we will call.
         for pid, probe in probes["devices"].items():
             # i: inclinometer drawer, # p: pressure drawerg
-            if probe["model"] != "i" and probe["type"] == "i":
+            m = probe["model"]
+            if m != "i" and probe["type"] == "i":
                 models.add("i")
-            models.add(probe["model"])
+            models.add(m or probe["type"])
 
         if models:
             models = list(models)
@@ -2949,6 +3019,15 @@ if __name__ in ("__main__", "builtins"):
 
     if True:  # __name__ == "__main__":
         if models:
+            # Run pid drawers instead of model drower if exist
+            for pid, probe in probes["devices"].items():
+                _ = parent / f"~drawer@{pid}.vsz"
+                if _.is_file():
+                    print(f"Running {__name__} drawer specific to current pid {pid}...")
+                    m = probe["model"] or probe["type"]
+                    models.remove(m)
+                    exec(compile(_.read_text(encoding="utf-8"), _.name, "exec"))
+
             print(f"Running {__name__} drawer for models {models}...")
             # Execute local drawers for model part parameters
             def next_executable():
