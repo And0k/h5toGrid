@@ -2,6 +2,7 @@
 
 # Configuration for CMEMS Wind ABP60 (t-chain)  project
 dir_save: "250415_ABP60@i,t-chain"
-lat: 55.16547
-lon: 20.59055
-date_range: ["2025-04-26", "2025-05-29"]
+points: [{lat: 55.167121, lon: 20.587733}]
+date_range: ["2025-04-25", "2025-07-01"]
+dataset_vars:
+  "cmems_obs-wind_glo_phy_my_l4_0.125deg_PT1H": ["eastward_wind", "northward_wind"]

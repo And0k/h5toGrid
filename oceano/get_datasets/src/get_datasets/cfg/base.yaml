@@ -1,16 +1,16 @@
 # Base configuration for downloading scripts
 defaults:
   - _self_
-  - copernicus # Compose copernicus.yaml
-  - projects: null # Allow project-specific configurations to be composed
+  - copernicus  # Compose copernicus.yaml
+  - projects: null  # Allow project-specific configurations to be composed
   - override hydra/job_logging: colorlog
   - override hydra/hydra_logging: colorlog  
 hydra:
   searchpath:
   - file://C:/Work/Python/AB_SIO_RAS/h5toGrid/oceano/get_datasets/cfg
 base:
-  local_path: "outputs/get_datasets" # Base directory for downloaded data (we put it in hydra logs folder)
-  history_file: "outputs/get_datasets/download_history.json" # Path to download history file
-  interpolation_delta: null # Default delta for spatial interpolation (will use dataset-specific f allback)
+  local_path: "outputs/get_datasets"  # Base directory for downloaded data (we put it in hydra logs folder)
+  history_file: "outputs/get_datasets/download_history.json"  # Path to download history file
+  interpolation_delta: null  # Default delta for spatial interpolation (will use dataset-specific f allback)
   gpx_path: null
   gpx_waypoints_re: null

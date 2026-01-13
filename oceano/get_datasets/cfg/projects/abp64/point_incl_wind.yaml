@@ -1,0 +1,8 @@
+# @package projects.abp64
+
+# Configuration for CMEMS Wind ABP56 project
+dir_save: "CMEMS_Wind_ABP64@incl"
+points: [{lat: 55.853003, lon: 19.054372}] 
+date_range: ["2025-12-01", "2025-12-20"]  # cmems_obs-wind_glo_phy_my_l4_0.125deg_PT1H only till 2025-08-21 23:00:00+00:00  => use nrt
+dataset_vars:
+  "cmems_obs-wind_glo_phy_nrt_l4_0.125deg_PT1H": ["eastward_wind", "northward_wind"]

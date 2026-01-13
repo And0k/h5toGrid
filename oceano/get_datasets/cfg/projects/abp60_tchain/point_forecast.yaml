@@ -1,0 +1,11 @@
+# @package projects.abp61_tchain
+
+# Configuration for CMEMS Point ABP56 (t-chain) project with GPX input
+dir_save: "abp61_tchain"
+date_range: ["2025-07-01", "2025-12-01"]
+dataset_vars:
+  # cmems_mod_bal_phy_my_P1M-m: ["bottomT", "so", "sob", "thetao"]
+  cmems_mod_bal_phy_anfc_P1D-m: ["bottomT", "so", "sob", "thetao", "uo", "vo", "wo"]
+depth_min: 0.5016462206840515  # dataset minimum [0.5016462206840515, 712.024658203125]
+depth_max: 100
+interpolation_delta: 0  # Set 0.03 to be > ~2km (resolution of CMEMS datasets) to able to interpolate
