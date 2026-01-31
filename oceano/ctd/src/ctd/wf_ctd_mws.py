@@ -2,10 +2,10 @@ from os import chdir as os_chdir
 # from pathlib import Path
 import re
 import numpy as np
-import pandas as pd
+# import pandas as pd
 import gsw
 from itertools import takewhile
-# my funcs
+# My functions:
 from utils.init import st, glob_from_format_string
 from utils import veuszPropagate
 from hdf5_pandas.csv2h5 import main as csv2h5
@@ -26,59 +26,49 @@ max_coord = 'Lat:60.55, Lon:30.3'  # includes Gulf Of Finland
 cruise = re.match(r"(?P<year>\d\d)\d+_*(?P<vessel>\D+)(?P<num>\d+)", wf_cfg.path_cruise.stem).groupdict()
 
 # %% Save device data to DB
-device = "CTD_SST_48Mc#1253"
-devices = {device: {"abbr": "ss", "folder": "CTD_SST48", "gpx_symbol": "Triangle, Red"}}
+device = 'CTD_MWS12'  # '#3613'
+devices = {device: {'abbr': 'sm', 'folder': 'CTD_MWS12', 'gpx_symbol': 'Triangle, Green'}}
 ##########################################################################################################
 sub_dir_in = "Exported"  # 'txt'
 
 
-def proc(common_ctd_params_list, o2_fun=None, o2ppm_fun=None, st_base=10):
+def proc(common_ctd_params_list, st_base=400):
 
-    st_prefix = cruise["year"]
+    st_prefix = cruise["num"]  # cruise["year"]
     if st(st_base, f"Save {device} data to DB. Searching {st_prefix}*.csv files"):
-        from hdf5_pandas.csv_specific_proc import loaded_sst
+        from hdf5_pandas.csv_specific_proc import loaded_mws  # loaded_mws_with_coord
 
-        csv2h5(
-            [
-                "cfg/csv_CTD_SST.ini",
-                "--path", str(wf_cfg.path_cruise / devices[device]["folder"] / sub_dir_in / f"{st_prefix}*.csv"),
-                "--table", f"{device}",
-                #'--dt_from_utc_hours', '0', #'2'
-                "--header", "Date(text),Time(text),Pres,Temp,Cond,Sal,SIGMA,O2,O2ppm,SVel,Vbatt",
-                # IntD,IntD,Press,Temp,Cond,Salin,Sigma,sat,DO_mg,Sound,Vbatt ,
-                "--cols_not_save_list", "SIGMA,Vbatt,SVel",
-                # '--delimiter_chars', '\\ \\',  # ''\s+',
-                "--b_interact", "0",
-                #'--cols_not_save_list', 'N',
-                # '--on_bad_lines', 'warn'
-                #'--min_dict', 'O2:0, O2ppm:0',  # replace strange values
-            ]
-            + common_ctd_params_list,
-            **{  # device_params_dict
-                "in": {
-                    "fun_proc_loaded": loaded_sst,
-                    "csv_specific_param": {
-                        "Temp_fun": lambda x: np.polyval(  # 2025-11-21
-                            [-0.00010627, 1.003, -0.0099154],
-                            x,
-                        ),
-                        # "Cond_fun": lambda x: np.polyval(  # 2025-11-28 - not used (may be bad)
-                        #     [7.61387725e-06, -0.00061253472, 1.01855, -0.11019353], x
-                        # ),
-                        "Cond_fun": lambda x: np.polyval(
-                            [-7.57195308190065e-7, 3.80941696689889e-5, 1.0018619893672, -0.034845948296864], x
-                        ),  # 2022-10-18
-                        "Sal_fun": lambda Cond, Temp, Pres: gsw.SP_from_C(Cond, Temp, Pres),
-                        # coef from ABP64 Winkler data before or in the GoF
-                        "O2_fun": o2_fun,
-                        "O2ppm_fun": o2ppm_fun,
-                        # coef from ABP64 all Winkler data together - not to use
-                        # "O2_fun": lambda O2ppm, Sal, Temp, Pres: DO(0.44499 + 1.1976 * O2ppm, Sal, Temp, Pres),
-                        # "O2ppm_fun": lambda x: 0.44499 + 1.1976 * x,  # 2025-12-19 ABP64 intercal. to Winkler
-                        # 0.43915 + 1.1301 * x,  # 2025-12-08 ABP64 intercal. to Winkler
-                    },
-                }
-            },
+        csv2h5([
+            # 'cfg/csv_CTD_SST.ini',
+            '--skiprows_integer', '40',
+            '--path', str(wf_cfg.path_cruise / devices[device].get('folder', device) / sub_dir_in / f'{st_prefix}*.txt'),
+            # '--dt_from_utc_hours', '2',
+            '--header', 'Time(text),Bottle,Pres,Temp,Cond,Sal,SVel,Dens,SpCond,Comments',
+            '--cols_not_save_list', 'Bottle,SVel,Dens,SpCond,Comments',
+            # '--cols_save_list', 'Pres,Temp,Cond,Sal,Lat,Lon',
+            '--delimiter_chars', r'\t',  # ''\s+',
+            '--table', f'{device}',
+            '--b_interact', '0'
+            # '--on_bad_lines', 'warn',
+            ] + common_ctd_params_list,
+            **{'in': {
+                'fun_proc_loaded': loaded_mws,
+                "csv_specific_param": {
+                    'Temp_fun': lambda x: np.polyval([
+                        1.3981e-05,
+                        0.99941,
+                        0.0034588
+                    ], x),  # "2025-11-21"
+                    'Cond_fun': lambda x: np.polyval([
+                        -3.5332e-06,
+                        9.3412e-05,
+                        1.0033,
+                        0.026328
+                        ], x),  # "2025-11-24" relative to not cal SST48
+                    "Sal_fun": lambda Cond, Temp, Pres: gsw.SP_from_C(Cond, Temp, Pres),
+                },
+            }
+        },
         )
 
     if st(st_base + 10, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params'):
@@ -89,32 +79,14 @@ def proc(common_ctd_params_list, o2_fun=None, o2ppm_fun=None, st_base=10):
             "--db_path", str(wf_cfg.path_db),
             "--tables_list", f"{device}",
             #'--table_nav', '',       # uncomment if nav data only in CTD data file
-            "--min_samples", "500",  # 50 fs*depth/speed = 200: if fs = 10Hz for depth 20m
+            '--min_samples', '20',  # fs*depth/speed = 200: if fs = 10Hz for depth 20m
             "--min_dp", "10",  # 5
-            "--dt_between_min_minutes", "5",  # default 1s lead to split when communication with sonde lost
+            "--dt_between_min_minutes", "5",  # default 1s can lead to split when communication with sonde lost
             "--b_keep_minmax_of_bad_files", "True",  # (True helps get small runs if files was splitted on runs)
             # '--b_incremental_update', 'True', - not works. Delete previous table manually, and from ~not_sorted!
             # '--out.tables_list', '',
             "--b_interact", "0",
         ])
-
-
-    # Usually not needed step! #
-    b_update = True  # False:  #  # if False may not skip because can not delete same rows more than once
-    if False and st(
-        st_base + 15, "Values correction (updating DB)" if b_update else f"Deleting bad runs from DB"
-    ):
-        from h5_cor import main as h5_cor_main
-
-        h5_cor_main(wf_cfg.path_db, device)
-        if False:  # for debug:
-            from h5_cor import h5cor
-
-            h5cor(time_ranges, edges_sources, b_update=True, cfg_out=cfg_out, coef_for_interval=coef_for_interval)
-        st.go = (
-            False,
-            "Hey! logRuns table removed for correction! Recalculate bot/top parameters: set st.start = 20, comment this step and run!",
-        )
 
     if st(st_base + 20, f"Draw {device} data profiles"):  # False: #
         # Note: if vsz pattern uses map from *.h5, then be sure that it exists
@@ -132,7 +104,7 @@ def proc(common_ctd_params_list, o2_fun=None, o2ppm_fun=None, st_base=10):
         # from next row, so we rely on ~pattern_loader.vsz to do it. Even freq=16Hz to determine last time not helps:
         # '_{}s.vsz'.format(round(max(r['rows']/16, (r['DateEnd'] - r['Index'] + pd.Timedelta(300, "s")).total_seconds()))
 
-        # Copy files
+        # Copy vsz pattern to files with names with data time which defines station
         pattern_code = cfg_in["pattern_path"].read_bytes()  # encoding='utf-8'
         filename_st = None
         os_chdir(cfg_in["pattern_path"].parent)
@@ -151,9 +123,10 @@ def proc(common_ctd_params_list, o2_fun=None, o2ppm_fun=None, st_base=10):
             )
         else:
             start_file_index = 0
+
         veuszPropagate.main([
             "cfg/veuszPropagate.ini",
-            "--path",
+            "--path",  # |"??????_??????.vsz" _*s wf_cfg.path_db),
             str(cfg_in["pattern_path"].with_name(glob_from_format_string(format_string))),
             "--pattern_path",  # here used to auto get export dir only. must not be not existed file path
             f"{cfg_in['pattern_path']}_",
@@ -164,43 +137,20 @@ def proc(common_ctd_params_list, o2_fun=None, o2ppm_fun=None, st_base=10):
             # '--export_pages_int_list', '2,3', # 0  '--b_images_only', 'True'
             "--export_format",
             "svg",  # "png",
-            "--b_update_existed", "True",  # False is default todo: allow "delete_overlapped" time named files
-            "--b_interact", "0",
-            "--b_images_only", "True",  # mandatory
-            "--b_execute_vsz", "True",
-            "--start_file", str(start_file_index),
+            "--b_update_existed",
+            "True",  # False is default todo: allow "delete_overlapped" time named files
+            "--b_interact",
+            "0",
+            "--b_images_only",
+            "True",  # mandatory
+            "--b_execute_vsz",
+            "True",
+            "--start_file",
+            str(start_file_index),
             #'--min_time', cfg_in['min_time'].item().isoformat(),  # not works on filenames (no time data)
             #'--max_time', cfg_in['max_time'].item().isoformat(),
         ])
 
-    if False:
-        tbl = f"/{device}"
-        tbl_log = f"{tbl}/logRuns"
-        with pd.HDFStore(wf_cfg.path_db) as store:
-            #     store = pd.HDFStore(wf_cfg.path_db)
-            df_log = store[tbl_log]
-
-        # repeat if need:
-        irow_to = 130  # 85
-        h5.merge_two_runs(df_log, irow_to, irow_from=None)
-
-        # write back
-        with pd.HDFStore(wf_cfg.path_db.with_name("_not_sorted.h5")) as store_tmp:
-            try:
-                del store_tmp[tbl_log]
-            except KeyError:
-                pass
-            df_log.to_hdf(
-                store_tmp, tbl_log, append=True, data_columns=True, format="table", dropna=True, index=False
-            )
-        h5.move_tables({
-            "temp_db_path": wf_cfg.path_db.with_name("_not_sorted.h5"),
-            "db_path": wf_cfg.path_db,
-            "tables": [tbl_log],
-            "tables_log": [],
-            "addargs": ["--checkCSI", "--verbose"],
-        })
-        # Now run step 30 with veuszPropagate setting: '--b_update_existed', 'False' to save only modified vsz/images. After that delete old vsz and its images
 
     file_tracks = "CTD-sections=routes.gpx"
     gpx_names_funs_list = """
@@ -256,17 +206,17 @@ def proc(common_ctd_params_list, o2_fun=None, o2ppm_fun=None, st_base=10):
             "--table_sections", f"{device}/sectionsCTD_routes",  # navigation/
             "--subdir", "CTD-sections",
             "--begin_from_section_int", "4",  # '1',  # values <= 1 means no skip
-            "--data_columns_list", "Temp, Sal, SigmaTh, O2, O2ppm, soundV",
-            # 'Eh, pH',  todo: N^2 - need calc before
+            "--data_columns_list", "Temp, Sal, SigmaTh",  # soundV",
+            # todo: N^2 - need calc before
             "--max_depth", "150",  # '250',
             "--filter_depth_wavelet_level_int", "4",  # 4, 5, 5, 4, 6, 4, 4, 5
-            "--convexing_ctd_bot_edge_max", "95",  # Depth where we may not reach bot (40 set < bottom because it is harder to recover than delete?)
+            "--convexing_ctd_bot_edge_max", "40",  # Depth where we may not reach bot (40 set < bottom because it is harder to recover than delete?)
             # '--x_resolution', '0.2',
             # '--y_resolution', '5',
             "--depecho_add_float", "0",
             "--dt_search_nav_tolerance_seconds", "120",
             "--symbols_in_veusz_ctd_order_list",
-            "'Triangle, Green', 'Diamond, Blue', 'Triangle, Red', 'Square, Green'",
+            "'Triangle, Red', ",  #"'Triangle, Green', 'Diamond, Blue', 'Triangle, Red', 'Square, Green'",
             "--b_temp_on_its90", "True",  # modern probes
             "--blank_level_under_bot", "-220",
             "--b_reexport_images", "True"
@@ -283,18 +233,18 @@ def proc(common_ctd_params_list, o2_fun=None, o2ppm_fun=None, st_base=10):
             # '--min_dp', '9',
             # '--b_keep_minmax_of_bad_files', 'True',
             "--path_csv", str(wf_cfg.path_cruise / device / "txt_processed"),
-            "--data_columns_list", "Pres, Temp, Cond, Sal, O2, O2ppm, SA, sigma0, depth, soundV",  # , pH, Eh, Lat, Lon
+            "--data_columns_list", "Pres, Temp, Cond, Sal, Lat, Lon, SA, sigma0, depth, soundV",  # , pH, Eh, Lat, Lon
             "--b_incremental_update", "True",
             # todo: check it. If False need delete all previous result of ctd_calc() or set min_time > its last log time
-            "--out.tables_list", "None",
+            "--out.tables_list",  "None",
         ])
 
     if st(st_base + 105, "Export csv for Obninsk"):
         m = re.match(r"[\d_]*(?P<abbr_cruise>[^\d]*)(?P<i_cruise>.*)", wf_cfg.path_cruise.name)
         i_cruise = int(m.group("i_cruise"))
         text_file_name_add = f"E090005O2_{m.group('abbr_cruise')}_{i_cruise}_H10_"
-        gpx_names_fun_str = "\"df.fileName_st.str.rsplit('st', n=1).str[-1]\""  # .cat(prefix, how='left')
-        # gpx_names_fun_str ='"df.fileName_st.str.split(\'/\', n=1).str[-1]"'
+        # gpx_names_fun_str = "\"df.fileName_st.str.rsplit('st', n=1).str[-1]\""  # .cat(prefix, how='left')
+        gpx_names_fun_str ='"df.fileName_st.str.split(\'/\', n=1).str[-1]"'
         h5tocsv([
             f'input.db_path="{wf_cfg.path_db}"',
             f'input.tables=["{device}"]',
@@ -311,9 +261,11 @@ def proc(common_ctd_params_list, o2_fun=None, o2ppm_fun=None, st_base=10):
             "".join([
                 '+out.cols={rec_num: "@i + 1", identific: "@i_log + 1", station: "@df_log.station.iat[@i_log]", ',
                 ", ".join([
-                    p if ":" in p else f"{p}: {p}" for p in "Pres;Temp;Cond;Sal;O2;O2ppm;sigma0;soundV".split(";")
+                    p if ":" in p else f"{p}: {p}" for p in "Pres;Temp;Cond;Sal;sigma0;soundV".split(";")
                 ]),  # Temp:Temp90;SigmaT;SoundVel
                 "}",
             ]),
             'out.sep=";"',
         ])  # , out_col_station_fun=gpx_names_fun
+
+# %%

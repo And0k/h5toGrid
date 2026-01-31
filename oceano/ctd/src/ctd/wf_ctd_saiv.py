@@ -1,12 +1,12 @@
 from os import chdir as os_chdir
-from pathlib import Path
+# from pathlib import Path
 import re
 import numpy as np
-import pandas as pd
+# import pandas as pd
 import gsw
 from itertools import takewhile
-# my funcs
-from utils.init import st, pairwise
+# My functions:
+from utils.init import st, glob_from_format_string
 from utils import veuszPropagate
 from hdf5_pandas.csv2h5 import main as csv2h5
 from hdf5_pandas.gpx2h5 import main as gpx2h5
@@ -63,7 +63,7 @@ def proc(common_ctd_params_list, o2_fun=None, o2ppm_fun=None, st_base=200):
                         9.78404373e-01,
                         4.53552102e-01,
                         ], x), # "21.08.2024"
-                            "Sal_fun": lambda Cond, Temp, Pres: gsw.SP_from_C(Cond, Temp, Pres),
+                    "Sal_fun": lambda Cond, Temp, Pres: gsw.SP_from_C(Cond, Temp, Pres),
                             # # coef from ABP64 Winkler data before or in the GoF
                             # "O2_fun": o2_fun,
                             # "O2ppm_fun": o2ppm_fun
@@ -99,7 +99,8 @@ def proc(common_ctd_params_list, o2_fun=None, o2ppm_fun=None, st_base=200):
             # 'min_time': np.datetime64('2022-11-04T22:00:00'),
             # 'max_time': '2020-12-30T22:37:00',
         }
-        f_row2name = lambda r: "{:%y%m%d_%H%M%S}.vsz".format(r["Index"])
+        format_string = "{Index:%y%m%d_%H%M%S}St{fileName}.vsz"
+        f_row2name = lambda r: format_string.format_map(r)
         # It is possible to add exact interval to filename but time after probe is back on surface can be determined only
         # from next row, so we rely on ~pattern_loader.vsz to do it. Even freq=16Hz to determine last time not helps:
         # '_{}s.vsz'.format(round(max(r['rows']/16, (r['DateEnd'] - r['Index'] + pd.Timedelta(300, "s")).total_seconds()))
@@ -125,14 +126,17 @@ def proc(common_ctd_params_list, o2_fun=None, o2ppm_fun=None, st_base=200):
             start_file_index = 0
         veuszPropagate.main([
             "cfg/veuszPropagate.ini",
-            "--path", str(cfg_in["pattern_path"].with_name("??????_??????.vsz")),  # _*s wf_cfg.path_db),
-            "--pattern_path", f"{cfg_in['pattern_path']}_",  # here used to auto get export dir only. must not be not existed file path
+            "--path",  # |"??????_??????.vsz" _*s wf_cfg.path_db),
+            str(cfg_in["pattern_path"].with_name(glob_from_format_string(format_string))),
+            "--pattern_path",  # here used to auto get export dir only. must not be not existed file path
+            f"{cfg_in['pattern_path']}_",
             #'--table_log', f'/{device}/logRuns',
             #'--add_custom_list', f"{devices[device]['abbr']}_USE_time_search_runs",  # 'i3_USE_timeRange',
             # '--add_custom_expressions',
             # """'[["{log_row[Index]:%Y-%m-%dT%H:%M:%S}", "{log_row[DateEnd]:%Y-%m-%dT%H:%M:%S}"]]'""",
             # '--export_pages_int_list', '2,3', # 0  '--b_images_only', 'True'
-            "--export_format", "png",
+            "--export_format",
+            "svg",  # "png",
             "--b_update_existed", "True",  # False is default todo: allow "delete_overlapped" time named files
             "--b_interact", "0",
             "--b_images_only", "True",  # mandatory
