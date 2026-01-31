@@ -757,13 +757,17 @@ def get_runs_parameters(
         cols_need_st_only = []
         b_all_st_only = True
         for col in cols_add_:
+            # if not isinstance(col, str):
+            #     # todo: allow funcs in cols of add_tables_cols: {table: cols} instead just names
+            #     # to call them after loading when assinging to log: log[name] = func(col data)?
+            #     ...
             if col.endswith("_st"):  # need start only
                 col = col[: -len("_st")]
                 cols_need_st_only.append(col)
             else:
                 b_all_st_only = False
             cols_add.append(col)
-        # todo: allow funcs in cols_add_ instead names
+
         time_points = log_update["_st"].index
         if not b_all_st_only:
             time_points = time_points.append(log_update["_en"].index)
@@ -961,21 +965,29 @@ def add_nav_params(df: MutableMapping[str, Sequence], cfg: Mapping[str, Any]):
     # todo check/correct Course interpolation
     time_points = df.index
     tol = cfg["out"].get("dt_search_nav_tolerance", timedelta(minutes=2))
-
+    n_found = 0
     with FakeContextIfOpen(
         lambda f: pd.HDFStore(f, mode="r"), cfg["in"]["db_path"], cfg["in"]["db"]
     ) as store:
-        df_index_range, i0, i_queried = h5.coords(
-            store,
-            tbl_name,
-            time_points[np.ediff1d(time_points.view(np.int64), to_end=1) != 0],
-            (time_points[:: len(time_points) - 1] if len(time_points) > 1 else time_points[0])
-            + np.array([-tol, tol], "m8")
-            if tol
-            else None,
-            # query_range_pattern_default
-        )
+        for tol_use in [tol, tol*2]:
+            df_index_range, i0, i_queried = h5.coords(
+                store,
+                tbl_name,
+                time_points[np.ediff1d(time_points.view(np.int64), to_end=1) != 0],
+                (time_points[:: len(time_points) - 1] if len(time_points) > 1 else time_points[0])
+                + np.array([-tol_use, tol_use], "m8")
+                if tol_use
+                else None,
+                # query_range_pattern_default
+            )
+            n_found = df_index_range.size
+            if n_found:  # if n_found > 1 - better
+                break
+            else:
+                l.warning(f"{tbl_name} data not found! -> Decreasing tolearance ({tol}) x2 to try search again...")
+
         i_queried = inearestsorted_around(df_index_range, time_points) + i0
+
         df_nav = h5.sel_interpolate(
             i_queried, store, tbl_name, columns=cols_add, time_points=time_points, method="pchip"
         )  # 'linear' 'time'

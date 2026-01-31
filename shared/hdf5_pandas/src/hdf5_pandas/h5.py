@@ -316,20 +316,28 @@ def sel_interpolate(
     """
     lf.info("time interpolating...")
     df = store.select(tbl_name, where=i_queried, columns=columns)
+    df_len = df.shape[0]
     if not (isinstance(time_points, pd.DatetimeIndex) or isinstance(time_points, pd.Timestamp)):
         t = pd.DatetimeIndex(time_points, tz=df.index.tz)  # to_datetime(t).tz_localize(tzinfo)
-    else:
+    elif time_points.tzinfo != df.index.tzinfo:
         t = time_points.tz_localize(df.index.tzinfo)
+    else:
+        t = time_points
     # if not drop duplicates loc[t] will return many (all) rows having same index t, so we do it:
     new_index = df.index.union(t).drop_duplicates()
 
     # pd.Index(timezone_view(time_points, dt_from_utc=df.index.tzinfo._utcoffset))
     # except TypeError as e:  # if Cannot join tz-naive with tz-aware DatetimeIndex
     #     new_index = timezone_view(df.index, dt_from_utc=0) | pd.Index(timezone_view(time_points, dt_from_utc=0))
+    if df_len <= 1:
+        lf.warning(
+            f"Can not interpolate from {df_len} data using '{method}' method! filling with nearest!"
+        )
+        df_interp_s = df.reindex(new_index).bfill().ffill()
+    else:
+        df_interp_s = df.reindex(new_index).interpolate(method=method)
+        # why not works fill_value=new_index[[0,-1]]?
 
-    df_interp_s = df.reindex(new_index).interpolate(
-        method=method,
-    )  # why not works fill_value=new_index[[0,-1]]?
     df_interp = df_interp_s.loc[t, :]
     return df_interp
 
@@ -581,8 +589,9 @@ def append_log(df: pd.DataFrame, tbl_name: str, cfg_out: Mapping[str, Any]) -> s
     :return: Name of the log table to which the DataFrame was appended.
     """
     #  If db is opened in write mode use it else open (or todo: reopen in write mode)
-    db = cfg_out["db"]
-    with (nullcontext(db) if db else pd.HDFStore(db)) as db:
+    db_opened = cfg_out["db"]
+    is_opened = isinstance(db_opened, pd.HDFStore)
+    with nullcontext(db_opened) if is_opened else pd.HDFStore(db_opened) as db:
         str_field_len = cfg_out.get("logfield_fileName_len", {})
         if str_field_len:
             pass  # str_field_len = {'values': logfield_fileName_len}
@@ -1749,7 +1758,9 @@ def names_gen(cfg_out: Mapping[str, Any], paths, check_have_new_data=True, **kwa
 
         cfg_out["log"]["fileName"] = f"{pname.parent.name}/{pname.stem}"[
             -cfg_out.get("logfield_fileName_len", 255):]
-        cfg_out["log"]["fileChangeTime"] = datetime.fromtimestamp(pname.stat().st_mtime)
+        cfg_out["log"]["fileChangeTime"] = pd.Timestamp(
+            datetime.fromtimestamp(pname.stat().st_mtime), unit="s"
+        )
 
         try:
             yield pname  # Traceback error line pointing here is wrong
