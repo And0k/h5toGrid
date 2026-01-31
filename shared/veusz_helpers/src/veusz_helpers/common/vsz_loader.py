@@ -27,6 +27,8 @@ re_dt = r"(?P<dt>\d+\.?\d*)(?P<dt_u>[YMWDhms])(?:in)?"
 
 NaT = np.datetime64("NaT")
 
+cruise_dir = None
+
 class DumbMapping(dict):
     def __getitem__(self, key):
         return self.get(key, key)
@@ -690,7 +692,7 @@ def veusz_load_hdf5_ctd_profile(
     params_d=None,
     renames_no_prefix={
         "table_log": {"index": "DateSt", "rows": "downcast_len"},
-        "table": {"Turb": "Turb_nof", "Fluor": "ChlA_nof"},  # 'Pres': 'Pres_NoSep',
+        "table": {"O2": "O2sat", "Turb": "Turb_nof", "Fluor": "ChlA_nof"},  # 'Pres': 'Pres_NoSep',
     },
     prefix_d={
         "table_log": "_log_",
@@ -1661,12 +1663,29 @@ def get_fun_load_end_ext(probe, db, parent=None, time_range=tuple(), time_shift_
             time_shift_s=time_shift_s,
             n_runs=1,
         )
-
+        # Set dumb loading function (data already loaded) and prepare DISPinfo__ metadata
         probe_data = {k: v.replace("_", " ") for k, v in probe.items()}
         probe_data["id_expr"] = "'{}'.format_map(I)".format(probe_data["id"].replace("#", "{#}"))
         if parent.name == "profiles_vsz":
             fun_load = None
-            probe_data['st_expr'] = "'АБП64{}'.format(DATA('_log_fileName_st')[0].split('st')[-1].replace('_', r'\\underline{ }'))"
+            # todo: extract info from folder name
+            try:
+                cruise = re.match(
+                    r"(?P<year>\d\d)\d+_*(?P<vessel>\D+)(?P<num>\d+)", cruise_dir.stem
+                ).groupdict()
+            except:
+                cruise = {"vessel": "", "num": ""}
+            probe_data["st_expr"] = "".join([
+                "'{}{}'.format(",
+                "LANG({{'ru': '{}', 'default': '{}'}}), ".format(
+                    fv.translit_en_ru(cruise["vessel"]), cruise["vessel"]
+                ),
+                "(lambda st: st if len(st) > 4 and st.startswith('{num}') else f'{num}{{st}}')".format_map(
+                    cruise
+                ),
+                "(DATA('_log_fileName_st')[0].split('/')[-1].split('st')[-1]"
+                ").replace('_', r'\\underline{ }'))",
+            ])
         else:
             fun_load = (lambda x: [time_range_raw])
             probe_data["st_expr"] = ""
@@ -1782,6 +1801,7 @@ def prepare_draw_tcm(
     defaults to {"": 2, "bin_": 600, "bin2_": 3600} [s].
     You can exclude high resolution data to load/edit faster
     :param b_old_format_in_h5: , defaults to True
+    :globals: cruise_dir, ...
     :retrun: tuple:
         ids_i,
         ids_ip,
@@ -2630,13 +2650,6 @@ if __name__ in ("__main__", "builtins"):
                 time_range = [time_range[0], NaT]
     probes = {**probes_0, **probes}
 
-    b_use_db_raw = "_raw" in parent.parent.parts
-    if "txt" not in parent.name:
-        if "txt" in parent.parent.name:
-            b_use_db_raw = False
-    else:
-        b_use_db_raw = False
-
     # If `_raw` in parent path parts then start search from it, else if `vsz` or `txt` in parent then start
     # search from its parent
     device_dir = parent
@@ -2694,15 +2707,24 @@ if __name__ in ("__main__", "builtins"):
                 probe["id"] = ""
         probes["devices"] = {probe["id"]: probe}
 
-    # DB file
+    # get 1st pid & probe
+    pid, probe = next(iter(probes["devices"].items()))
+
+    # Check whether default DB file (*.h5) exist to load data from it
     try:
         db_stem = re.match(".*,db_stem=([^,)]+)", parent.name).group(1)
         print("db from dir name: {db_stem}")
     except Exception:
         db_stem = (device_dir if device_dir.name[0].isdigit() else device_dir.parent).name.split("@")[0]
 
-    # get 1st pid & probe
-    pid, probe = next(iter(probes["devices"].items()))
+    # Does it must be raw db (to search "*.raw.h5")?
+    b_use_db_raw = "_raw" in parent.parent.parts
+    if "txt" not in parent.name:
+        if "txt" in parent.parent.name:
+            b_use_db_raw = False
+    else:
+        b_use_db_raw = False
+
     b_device_is_tcm = (
         any(p for p in device_dir.parts if p.startswith("inclinometer"))
         or probe["type"] == "i"
@@ -2714,7 +2736,19 @@ if __name__ in ("__main__", "builtins"):
             db_stem = f'{db_stem}.raw'
             db = device_dir / "_raw" / f"{db_stem}.h5"
             b_db_ok = db.is_file()
-        elif "_raw" not in parent.parts:
+            if not b_db_ok:
+                raise (FileNotFoundError(f"{db} not found!"))
+            # Load raw TCM data in Veusz
+            existed_devs, time_range_raw, file, cols_namemap, grp_d_rename_funs, f_table_cols_fmt = (
+                veusz_load_hdf5_tcm_raw(
+                    db,
+                    probes["devices"],
+                    time_range,
+                    time_shift_s=cus.USE_timeShift_s,
+                    decimation=probes.get("decimation"),
+                )
+            )
+        elif "_raw" not in parent.parts:  #?
             # Try load best db for our case first
 
             # Check whether we need raw data sampling frequency i.e. .proc_noAvg.h5 data: use_bins = {"": 0}
@@ -2769,27 +2803,19 @@ if __name__ in ("__main__", "builtins"):
     else:
         # DB stem should be equal to the name of parent folder and DB file will be under _raw dir or
         # device_dir
-        db = device_dir / ("_raw" if b_use_db_raw else "") / f"{db_stem}.h5"
-        b_db_ok = db.is_file()
+        if parent.name != "profiles_vsz":
+            db = device_dir / ("_raw" if b_use_db_raw else "") / f"{db_stem}.h5"
+        else:  # Special folder name to draw profiles in device dir taking data from common cruise DB
+            db = cruise_dir / f"{db_stem}.h5"
 
-    time_range_raw = []  # time range from raw data
-    if b_use_db_raw:
+        b_db_ok = db.is_file()
         if not b_db_ok:
             raise (FileNotFoundError(f"{db} not found!"))
         print("Raw data DB found:", db)
         existed_devs = {}  # dict with existed data in db (fields [device_id][grp])
-        if b_device_is_tcm:
-            # Load raw TCM data in Veusz
-            existed_devs, time_range_raw, file, cols_namemap, grp_d_rename_funs, f_table_cols_fmt = (
-                veusz_load_hdf5_tcm_raw(
-                    db,
-                    probes["devices"],
-                    time_range,
-                    time_shift_s=cus.USE_timeShift_s,
-                    decimation=probes.get("decimation"),
-                )
-            )
-    else:
+        time_range_raw = []  # time range from raw data
+
+    if not b_use_db_raw:  # still need to load data
         # Parent folder encodes folder where get data `data_dir` relative to current dir `parent` if has "vsz"
         # - by ".." before "vsz" in its name: means the number of parent levels relative to vsz folder
         # - by "vsz({dir})" to point on sibling folder {dir}. "vsz" alone means that data in parent folder
@@ -2807,7 +2833,8 @@ if __name__ in ("__main__", "builtins"):
         ## Load known file types into Veusz if any in `probes["devices"]` (except TCM data, which proc. later)
 
         b_allow_many_sources = False  # unique 1 source file allowed
-        for pid, probe in [] if b_device_is_tcm and b_db_ok and not b_use_db_raw else probes["devices"].items():
+        for pid, probe in probes["devices"].items():
+            # [] if b_device_is_tcm and b_db_ok and not b_use_db_raw else?
             fun_load, data_file_ext, b_allow_many_sources = get_fun_load_end_ext(
                 probe, db, parent=parent, time_range=time_range, time_shift_s=cus.USE_timeShift_s
             )
@@ -2989,7 +3016,7 @@ if __name__ in ("__main__", "builtins"):
     else:
         # Gather used probe models. They are corresponds to specific raw drawer file names we will call.
         for pid, probe in probes["devices"].items():
-            # i: inclinometer drawer, # p: pressure drawerg
+            # i: inclinometer drawer, # p: pressure drawer
             m = probe["model"]
             if m != "i" and probe["type"] == "i":
                 models.add("i")
@@ -3016,7 +3043,7 @@ if __name__ in ("__main__", "builtins"):
                 setattr(cus, range_name, f"[{max_time_span_s_strings}]" if max_time_span_s_strings else [])
 
 
-
+    # Draw loaded data
     if True:  # __name__ == "__main__":
         if models:
             # Run pid drawers instead of model drower if exist
