@@ -1250,13 +1250,13 @@ def main(new_arg=None, **kwargs):
     :param new_arg: list of strings, command line arguments
     :kwargs: dicts of dicts (for each ini section): specified values overwrites ini values
     Note: if new_arg=='<cfg_from_args>' returns cfg but it will be None if argument
-     argv[1:] == '-h' or '-v' passed to this code
+    argv[1:] == '-h' or '-v' passed to this code
     argv[1] is cfgFile. It was used with cfg files:
         'csv2h5_nav_supervisor.ini'
         'csv2h5_IdrRedas.ini'
         'csv2h5_Idronaut.ini'
-
     :return:
+    todo: refactor to loading without dask like in tcm.csv_load.py with filtering before read_csv()
     todo: add freq attribute to data index in store
     """
 
