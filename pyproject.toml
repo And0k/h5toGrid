@@ -7,7 +7,7 @@ version = "0.1.0"
 dependencies = [
 "hydra-colorlog",
 "wmm2020"
-]
+, "ruamel-yaml>=0.19.1,<0.20"]
 
 [build-system]
 build-backend = "hatchling.build"
@@ -143,7 +143,10 @@ xarray = "*"
 webdriver-manager = "*"
 astropy = "*"
 cfgrib = "*"
+wavespectra = ">=4.4.2,<5"
+questionary = ">=2.1.1,<3"
 
 [tool.ruff]
 line-length = 110
+target-version = "py312"
 builtins = ["SetData", "SetData2D", "SetDataExpression", "SetData2DExpression", "SetData2DExpressionXYZ", "SetData2DXYFunc", "AddCustom", "DatasetPlugin", "TagDatasets", "Add", "To", "Set", "CreateHistogram", "FilterDatasets", "ImportFileCSV"]
