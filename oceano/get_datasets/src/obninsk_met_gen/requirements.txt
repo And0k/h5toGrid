@@ -1,0 +1,5 @@
+pandas>=2.0.0
+pyyaml>=6.0
+colorlog>=6.7.0
+questionary>=2.0.0
+numpy>=1.24.0

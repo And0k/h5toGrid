@@ -1,0 +1,507 @@
+# =============================================================================
+# MET File Generator Configuration
+# =============================================================================
+# Auto-updated by program when adding new data
+# Manual editing supported. Use only symbols supported in Windows-1251 encoding
+# =============================================================================
+
+# Format validation rules per VNIIGMI-MCD
+_format_rules:
+  FC:  # Numeric format
+    max_width: 15
+    max_decimals: 7
+    description: "Числовое поле с десятичной точкой"
+
+  AA:  # Text format
+    max_width: 255
+    description: "Текстовое поле"
+
+# Platform type codes from FODEN form (Table 2)
+# Коды типов наблюдательных платформ (из таблицы 2 ФОДЭН)
+_platform_types_foden:
+  "31": "Исследовательское судно"
+  "33": "Лодка"
+  "34": "Судно в фиксированной точке"
+  "41": "Заякоренный буй на поверхности моря"
+  "42": "Дрейфующий буй на поверхности моря"
+
+# Observation codes from FODEN form (Table 4)
+_observation_codes_foden:
+  # Метеорология
+  M01: "Аэрологические наблюдения"
+  M04: "Ледовые наблюдения"
+  M05: "Эпизодические стандартные измерения"
+  M06: "Стандартные измерения"
+
+  # Физическая гидрология
+  H09: "Классические океанографические станции"
+  H10: "Вертикальные профили (СТД/ЭТД)"
+  H11: "Подповерхностные измерения на ходу"
+  H12: "Механический батитермограф"
+  H13: "Обрывной батитермограф"
+  H16: "Прозрачность"
+  H17: "Оптические наблюдения"
+
+  # Химическая гидрология
+  H21: "Кислород"
+  H22: "Фосфаты"
+  H24: "Нитраты"
+  H26: "Силикаты"
+  H28: "pH"
+
+  # Загрязнение
+  P02: "Тяжелые металлы"
+  P03: "Остатки нефти"
+
+  # Геология
+  G02: "Захват"
+  G04: "Колонки мягкого дна"
+  G27: "Гравиметрия"
+  G28: "Магнетизм"
+
+  # Биология
+  B02: "Пигменты фитопланктона"
+  B54: "Определение биомассы"
+  B55: "Описание сообществ"
+
+# =============================================================================
+# Section 1: *[Общие характеристики]
+# =============================================================================
+# Ключи этого раздела напрямую соответствуют заголовкам MET-файла
+# При записи автоматически добавляются скобки: "[Наименование]" из ключа "Наименование"
+# Section names without "_" prefix match MET file headers per VNIIGMI-MCD requirements
+
+"Общие характеристики":
+  "Наименование":
+    _prompt: "Наименование комплекта данных"
+    _description: "Пример: Данные вертикального зондирования моря гидрофизическим
+      зондом, НИС \"Академик Петров\", рейс 53"
+    _default: "Данные вертикального зондирования моря {instrument_type} {instrument},
+      {cruise}"
+
+  "Содержание":
+    _description: "Развернутая характеристика содержания и назначения данных"
+    _default: "Данные гидрофизического зондирования моря для изучения термохалинной
+      структуры воды"
+
+  "Географический район":
+    "Океан":
+      _prompt: "Океан"
+      _options:
+        "Атлантический океан":
+          bounds: {lat_min: -90, lat_max: 90, lon_min: -80, lon_max: 20}
+          "Море":
+            "Балтийское море":
+              bounds: {lat_min: 53.0, lat_max: 66.0, lon_min: 10.0, lon_max: 
+                  30.5}
+              "Залив":
+                "Гданьский залив":
+                  bounds: {lat_min: 54.0, lat_max: 55.0, lon_min: 18.5, lon_max: 
+                      20.5}
+                "Вислинский залив":
+                  bounds: {lat_min: 54.3, lat_max: 54.5, lon_min: 19.4, lon_max: 
+                      20.0}
+                "Финский залив":
+                  bounds: {lat_min: 59.5, lat_max: 60.5, lon_min: 25.0, lon_max: 
+                      30.0}
+              "бассейн":
+                "Борнхольмский бассейн":
+                  bounds: {lat_min: 54.5, lat_max: 56.0, lon_min: 14.0, lon_max: 
+                      16.5}
+              "Пролив":
+                "пролив Скагеррак":
+                  bounds: {lat_min: 57.0, lat_max: 59.0, lon_min: 8.0, lon_max: 
+                      12.0}
+
+        "Северный Ледовитый":
+          bounds: {lat_min: 60, lat_max: 90, lon_min: -180, lon_max: 180}
+          "Море":
+            "Баренцево":
+              bounds: {lat_min: 66.0, lat_max: 82.0, lon_min: 16.0, lon_max: 
+                  68.0}
+            "Карское":
+              bounds: {lat_min: 65.0, lat_max: 82.0, lon_min: 52.0, lon_max: 
+                  100.0}
+
+        "Тихий океан":
+          bounds: {lat_min: -90, lat_max: 90, lon_min: 120, lon_max: -70}
+
+  "Форма представления данных":
+    _default: "Фактографическая – табличный текстовый формат"
+
+  "Дата начала":
+    _prompt: "Дата начала"
+    _description: "Формат: ДД-ММ-ГГГГ (автоопределяется из файлов)"
+
+  "Дата окончания":
+    _prompt: "Дата окончания"
+    _description: "Формат: ДД-ММ-ГГГГ (автоопределяется из файлов)"
+
+  "Временное разрешение":
+    _prompt: "Временное разрешение"
+    _description: "Распределенfvие данных во времени"
+    _options:
+    - "нерегулярные файлы с регулярным содержимым"
+    - "регулярные данные с интервалом 1 час"
+    - "неравномерное"
+
+  "Пространственное разрешение":
+    _prompt: "Пространственное разрешение"
+    _description: "Распределение данных по пространству"
+    _options:
+    - "данные по отдельным станциям"
+    - "регулярная сетка 1 градус"
+
+  "Упорядочение":
+    _prompt: "Упорядочение"
+    _description: "Пример: Данные упорядочены по возрастанию номера станции, времени
+      измерений"
+    _default: "Данные упорядочены по возрастанию номера станции, времени измерений"
+
+  "Элементы данных":
+    _description: "Полные наименования элементов, составляющих данные, точность, единицы
+      измерения и границы области допустимых значений"
+
+  "Словари":
+    _default: "Использован словарь параметров ЕСИМО"
+
+  "Файловая структура":
+    _description: "Файловый состав комплекта обмена"
+
+  "Источник":
+    _default: "{organization}, {cruise}"
+    _prompt: "Название экспедиции, тип и название наблюдательной платформы"
+    _description: 'Пример: ФГБУН «АО ИО РАН», НИС "Академик Борис Петров", рейс 64'
+
+  "Выходные реквизиты":
+    _default: "{organization}"
+    _description: "Организация-изготовитель комплекта данных"
+    "ФГБУН «АО ИО РАН»":
+      aliases: ["«АО ИО РАН»", "Федеральное государственное бюджетное учреждение науки
+          Атлантическое отделение Института океанологии им. П.П. Ширшова Российской
+          академии наук"]
+      _ФИО:
+        _description: "Фамилия Имя Отчество ответственного за подготовку комплекта
+          данных"
+      _email:
+        _description: "Email для связи"
+      _Телефон:
+        _description: "Телефон для связи"
+      _org_code: "090005"
+
+
+# =============================================================================
+# Section 2: *[Дополнительные сведения]
+# =============================================================================
+"Дополнительные сведения":
+  "Приборы":
+    _description: "Перечень приборов и устройств наблюдений, год выпуска, производитель"
+
+  "Методы обработки":
+    _prompt: "Методы обработки"
+    _description: "Пример: Соленость рассчитана согласно формуле UNESCO. Координаты
+      от GPS-приемника"
+    _default: |
+      Зависящие от электропроводности параметры (соленость, аномалия плотности, скорость звука) рассчитаны по
+      формулам TEOS-10 используя библиотеку python GSW после коррекции в результате калибровки в лаборатории
+      «АО ИО РАН». Координаты взяты на время начала зондирования от GPS-приемника
+
+  "Привязка":
+    _description: "Для данных в узлах сетки - координаты границ. Для станций - идентификаторы"
+
+  "Полнота":
+    _prompt: "Полнота"
+    _description: "Пример: 100%"
+    _default: "100%"
+
+  "Объем":
+    _description: "Объем данных в байтах и в подходящих структурных единицах (число
+      файлов, станций)"
+
+# =============================================================================
+# INSTRUMENTS
+# Hierarchy: _instruments -> _CTD -> specific device
+# Parameters: short English names as keys, aliases for lookup
+# =============================================================================
+# Example:
+#   Temp:
+#     aliases: ['Temper', 'Temperature', 'температура']
+#     #         ^short    ^other variants ^long (human-readable)
+# lookup usage:
+#   Column "temp" in CSV -> matches "Temp" key (case-insensitive)
+#   aliases[-1]: long human description for MET file
+
+_instruments:
+  _CTD:  # instrument_type
+    full_type_name: "гидрофизический зонд"
+    observation_code: "H10"
+    # Common parameter definitions (base library)
+    # Used for inheritance when instrument has this parameter
+    common_parameters:
+      Pres:
+        aliases: ['Pressure', 'давление', 'гидростатическое давление']
+        unit: дБар
+        range_default: 0..500
+        accuracy_default: ±0.1%
+      Temp:
+        aliases: ['Temperature', 'температура']
+        unit: °C
+        range_default: -2..36
+        accuracy_default: '0.005'
+      Cond:
+        aliases: ['Conductivity', 'электропроводность']
+        unit: мСм/см
+        range_default: 0..70
+        accuracy_default: '0.003'
+      Sal:
+        aliases: ['Salinity', 'соленость']
+        unit: ЕПС
+        range_default: 0..42
+        accuracy_default: '0.02'
+        calculation_note: "рассчитывается по электропроводности, температуре, давлению"
+      O2:
+        aliases: ['O2%', 'насыщение кислородом']
+        unit: '%'
+        range_default: 0..500
+        accuracy_default: '1'
+      O2ppm:
+        aliases: ['концентрация кислорода', 'содержание кислорода']
+        unit: мг/л
+        range_default: 0..50
+        accuracy_default: '0.1'
+      pH:
+        aliases: ['водородный показатель']
+        unit: ''
+        range_default: 0..14
+        accuracy_default: '0.01'
+      Eh:
+        aliases: ['eH', 'окислительно-восстановительный потенциал']
+        unit: мВ
+        range_default: -1000..1000
+        accuracy_default: '1'
+      CHL:
+        aliases: ['Fluor', 'хлорофилл', 'хлорофилл-а']
+        unit: мкг/л
+        range_default: 0..100
+        accuracy_default: '0.03'
+      Turbidity:
+        aliases: ['мутность']
+        unit: ЕМФ
+        range_default: 0..750
+        accuracy_default: < 2%
+      Transmittance:
+        aliases: ['прозрачность']
+        unit: '%'
+        range_default: 0..100
+        accuracy_default: '0.02'
+      SigmaT:
+        aliases: ['sigma0', 'sigmaT', 'sigma_t', 'аномалия плотности']
+        unit: кг/м^3
+        range_default: 0..35
+        accuracy_default: '0.25%'
+        calculation_note: "рассчитывается по температуре, солености и давлению"
+      SigmaTh:
+        aliases: ['sigma', 'SigmaTh', 'sigma_theta', 'аномалия потенциальной плотности']
+        unit: кг/м^3
+        range_default: 0..35
+        accuracy_default: '0.25%'
+        calculation_note: "рассчитывается по температуре, солености и давлению"
+      soundV:
+        aliases: ['скорость звука']
+        unit: м/с
+        range_default: 1400..1600
+        accuracy_default: '0.1'
+        calculation_note: "рассчитывается по формуле UNESCO"
+
+    # Specific instruments
+    # parameters: list of parameters THIS instrument has (others ignored!)
+    # Can override properties from common_parameters
+    "Sea&Sun Technology CTD 48M № 1253":
+      folder_patterns: ["SST48", "SST_48", "CTD48M", "CTD_48m"]
+      manufacturer: "Sea&Sun Technology, Германия"
+      parameters:
+        Pres:
+          range: 0..2000
+          accuracy: ±0.05%
+        Temp:
+          range: -2..36
+          accuracy: ±0.005
+        Cond:
+          accuracy: ±0.003
+        Sal:
+          accuracy: ±0.01
+    "Sea&Sun Technology CTD 90M № 81":
+      folder_patterns: ["SST90", "SST_90", "CTD90M", "CTD_90M", "SeaSun"]
+      manufacturer: "Sea&Sun Technology, Германия"
+      year: 2004
+      parameters:
+        Pres:
+          range: 0..500
+          accuracy: ±0.1%
+        Temp:
+          range: -2..32
+          accuracy: '0.005'
+        Cond:
+          accuracy: ±0.005
+        Sal:
+          accuracy: '0.02'
+        Sigma: {}  # Calculated, inherits from common
+        soundV: {}
+    "SAIV SD208 № 1735":
+      folder_patterns: ["SAIV", "SD208", "SAIV_SD208"]
+      manufacturer: "SAIV A/S, Норвегия"
+      parameters:
+        Pres:
+          range: 0..300
+          accuracy: ±0.25%
+        Temp:
+          range: -5..35
+          accuracy: ±0.003
+        Cond: {}
+        Sal:
+          accuracy: ±0.1
+        O2ppm: {}  # This instrument measures O2 in mg/l, not %
+        CHL: {}
+        Turbidity: {}
+    "YSI Castaway CTD № CC1945007":
+      folder_patterns: ["Castaway", "YSI_Castaway"]
+      manufacturer: "YSI Inc., США"
+      parameters:
+        Pres:
+          range: 0..300
+          accuracy: ±0.25%
+        Temp:
+          range: -5..35
+          accuracy: ±0.05
+        Sal:
+          accuracy: "±0.1"
+    "Hydro-bios MWS 12 Slimline № 3613":
+      folder_patterns: ["MWS12", "MWS_12"]
+      manufacturer: "Hydro-bios, Германия"
+      parameters:
+        Pres:
+          range: 0..3000
+          accuracy: ±0.1%
+        Temp:
+          range: -2..32
+          accuracy: ±0.005
+        Cond:
+          range: 0..65
+          accuracy: ±0.01
+
+_vessels:
+  # Научно-исследовательские суда
+  ABP:
+    name: '«Академик Борис Петров»'
+    type: "НИС"
+    organization: "ФГБУН «АО ИО РАН»"
+  AI:
+    name: '«Академик Иоффе»'
+    type: "НИС"
+  AMK:
+    name: '«Академик Мстислав Келдыш»'
+    type: "НИС"
+  ANS:
+    name: '«Академик Николай Страхов»'
+    type: "НИС"
+  ASV:
+    name: '«Академик Сергей Вавилов»'
+    type: "НИС"
+  PSH:
+    name: '«Профессор Штокман»'
+    type: "НИС"
+  Shelf:
+    name: '«Шельф»'
+    type: "НИС"
+  # Малые суда
+  Aquarius:
+    name: '"Аквариус"'
+    type: "яхта"
+  Lastochka:
+    name: '"Ласточка"'
+    type: "яхта"
+    organization: "ФГБУН «АО ИО РАН»"
+  Ikar:
+    name: '"Икар"'
+    type: "парусный катамаран"
+  Neman:
+    name: '"Неман"'
+    type: "моторный катер"
+  Verniy:
+    name: '"Верный"'
+    type: "моторный катер"
+  Brig:
+    name: '"Бриг"'
+    type: "моторная лодка"
+    organization: "ФГБУН «АО ИО РАН»"
+  Nord:
+    name: '"Норд-3"'
+    type: "тунобот"
+    organization: "ФГБУН «АО ИО РАН»"
+  K2143:
+    name: "бортовой номер K2143"
+    type: "тунобот"
+  MRTK_1073:
+    name: "бортовой номер 1073"
+    type: "малый рыболовный траулер с кормовым тралением"
+  MRTK_Asanoj:
+    name: '"Асаной"'
+    type: "малый рыболовный траулер с кормовым тралением"
+  MRTK_1129:
+    name: "бортовой номер 1129"
+    type: "малый рыболовный траулер с кормовым тралением"
+  MRTK_Kandava:
+    name: '"Кандава"'
+    type: "малый рыболовный траулер с кормовым тралением"
+# =============================================================================
+# Section 3: *[Структура файла данных]
+# =============================================================================
+"Структура файла данных":
+  "Таблица Признаки":
+    rec_num:
+      alternatives: ["rec_num", "Rec_num", "НОМЗАП"]
+      format: "FC(5)"
+      description: "Последовательный номер записи в файле"
+    identific:
+      alternatives: ["identific", "Identific", "ИДЕНТИФ"]
+      format: "FC(12)"
+      description: "Идентификатор станции/зондирования"
+    station:
+      alternatives: ["station", "Station", "НОМСТ"]
+      format: "AA(7)"
+      description: "Номер станции/зондирования"
+    latitude:
+      alternatives: ["Lat", "LAT", "ШИРОТА"]
+      format: "FC(9,7)"
+      description: "Широта, градусы"
+    longitude:
+      alternatives: ["Lon", "LONG", "ДОЛГОТА"]
+      format: "FC(9,7)"
+      description: "Долгота, градусы"
+    date_time:
+      alternatives: ["DATE", "Date", "ДАТА_ВРЕМЯ"]
+      format: "AA(19)"
+      description: "Дата начала зондирования"
+
+# History for quick selection with up/down arrows
+_history:
+  Общие характеристики:
+    Выходные реквизиты:
+      ФГБУН «АО ИО РАН»:
+        _email:
+        - andrey.korzh@atlantic.ocean.ru
+        - nana@nana
+        _Телефон:
+        - '+79005704553'
+        - '+2343'
+        _ФИО: Корж Андрей Олегович
+  Дополнительные сведения:
+    Методы обработки:
+    - Зависящие от электропроводности параметры (соленость, аномалия плотности, 
+      скорость звука) рассчитаны по формулам TEOS-10 используя библиотеку python
+      GSW после коррекции в результате калибровки в лаборатории «АО ИО РАН». 
+      Координаты взяты на время начала зондирования от GPS-приемника
+    - Зависящие от электропроводности параметры (соленость, аномалия плотности, 
+      скорость звука) рассчитаны по формулам TEOS-10 используя библиотеку python
+      GSW после коррекции в результате калибровки в лаборатории АО ИО РАН 
+      Координаты взяты на время начала зондирования от GPS-приемника
