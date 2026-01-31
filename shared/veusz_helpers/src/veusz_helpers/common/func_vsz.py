@@ -1,37 +1,41 @@
 """
 Note: Annotations not used as not supported in Veusz 3.2
 """
+
 import builtins
 import contextlib
-from numpy import *
+import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 from logging import info, warning, exception
 import operator
 from itertools import zip_longest
-from typing import Mapping  # Any, Callable, Union
+from typing import Any, Mapping, Optional, Callable
+from datetime import datetime
 from subprocess import check_output
-
 import sys
 from pathlib import Path
-
 from winreg import HKEY_CURRENT_USER, OpenKey, QueryValueEx
-with OpenKey(HKEY_CURRENT_USER, r"SOFTWARE\veusz.org\veusz") as _:
-    lang = 'ru' if QueryValueEx(_, "ui_english")[0] == 'False' else 'en'  # or ast.literal_eval
 
-# from importlib import util
-# from itertools import dropwhile
-# from functools import lru_cache
-# @lru_cache
-# def import_file(path, module_name):
-#     fpy = lambda p: (p / module_name).with_suffix('.py')
-#     file_py = fpy(next(dropwhile(lambda p: not fpy(p).is_file(), path.parents)))
-#     spec = util.spec_from_file_location(module_name, file_py)
-#     mod = util.module_from_spec(spec)
-#     spec.loader.exec_module(mod)
-#     warning(f'Loading {mod}')
-#     return mod
+with OpenKey(HKEY_CURRENT_USER, "SOFTWARE\\veusz.org\\veusz") as _:
+    lang = "ru" if QueryValueEx(_, "ui_english")[0] == "False" else "en"
+
+
+
+def f_safe(fun_get_var: Callable[[str], Any], *args, err_out=None, debug=False, **kwargs):
+    try:
+        return fun_get_var(*args, **kwargs)
+    except Exception as e:
+        if debug:
+            try:
+                arg_in = ", ".join(args)
+            except Exception:
+                arg_in = ""
+            exception(arg_in)
+        return err_out
+
 
 def fself(fun, a, *args):
-    # Useful when need multi line function that is not exist here and you don't want create one here
+    """Useful when need multi line function that is not exist here and you don't want create one here"""
     fun(a, *args)
     return a
 
@@ -44,31 +48,31 @@ def sl(x) -> slice:
     - ravel x if elements < 2 dimensions
     """
     try:
-        x = ravel(x)
+        x = np.ravel(x)
     except ValueError:
         pass  # setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions.
-    args = [(None if isnan(i) else int(i)) for i in x]
+    args = [None if np.isnan(i) else int(i) for i in x]
     try:
-        return slice(*args)  # slice(*int32(ravel(x)))   # or lambda *x
+        return slice(*args)
     except TypeError:
         return slice(args[0], args[-1])
 
 
 # Conversion date from datetime64 to Veusz and back:
-dt64s2vsz = lambda dt64: float64(dt64) - 1230768000  # 1230768000=int32(datetime64('2009-01-01T00:00:00'))")
-vsz2dt64s = lambda t_vsz: array(int32(t_vsz) + 1230768000, 'M8[s]')  # to offset from 1970-01-01
+dt64s2vsz = lambda dt64: np.float64(dt64) - 1230768000  # 1230768000=int32(datetime64('2009-01-01T00:00:00'))")
+vsz2dt64s = lambda t_vsz: np.array(np.int32(t_vsz) + 1230768000, "M8[s]")  # to offset from 1970-01-01
 
 
 def try_(fun, *args, **kwargs):
     try:
-        retutn(fun(*args, **kwargs))
-    except e:
+        return(fun(*args, **kwargs))
+    except Exception as e:
         warning(e)
 
 
 def c1(s):
     """Capitalize 1st letter only"""
-    return f'{s[0].upper()}{s[1:]}'
+    return f"{s[0].upper()}{s[1:]}"
 
 
 en2ru = {
@@ -246,12 +250,10 @@ en2ru = {
     "sampling": "съем данных",
     "sat": "нас",
     "seaward": "со стороны моря",
-    # "sea bed": "дно моря",
     "sea depth": "глубина",
     "sedimentary trap": "седиментационная ловушка",
     "selected": "выбранный",
     "sensor": "датчик",
-    # "sea surface": "поверхность моря",
     "Mean Square Error": "среднеквадратичная ошибка",
     "smoothed": "сглажено",
     "std": "CKO",
@@ -293,10 +295,9 @@ en2ru = {
     "wind speed": "скорость ветра",
     "with": "с",
 }
-# 'down':'вниз', 'up':'вверх'
 
 
-class DictKeyIfNoVal(dict,):
+class DictKeyIfNoVal(dict):
     """
     Class that returns:
     - key if key not in dict with exceptions below,
@@ -312,9 +313,9 @@ class DictKeyIfNoVal(dict,):
 
     from translation.
     """
-    def __getitem__(self, key):
 
-        b_translate = builtins.bool(self)  # if not self some clearing still may be needed
+    def __getitem__(self, key):
+        b_translate = builtins.bool(self)
         if b_translate:
             out = self.get(key)
             if out is not None:
@@ -325,12 +326,10 @@ class DictKeyIfNoVal(dict,):
         char0 = key[0]
         if 0x0400 <= ord(char0) <= 0x04FF:
             # if in range of Cyrillic characters then keep key as is if Ru else delete
-            return key if b_translate else ''
-        elif char0 == '_':
+            return key if b_translate else ""
+        elif char0 == "_":
             return (
-                " ".join(self.__getitem__(k) for k in reversed(key[1:].split()))  # get(k.replace("_", " "), k)?
-                if b_translate
-                else key[1:]   # key.replace("_", " ")?
+                " ".join((self.__getitem__(k) for k in reversed(key[1:].split()))) if b_translate else key[1:]
             )
         elif char0.isupper():
             out = self.get(key)
@@ -340,9 +339,9 @@ class DictKeyIfNoVal(dict,):
         # Check/replace last characters
         i = -1
         char = key[i]
-        if char == '_':  # replace in `self` last '_' with ' '
-            return '' if b_translate else key[:i] + ' '
-        elif char.isdigit() or char == 'ж':
+        if char == "_":  # replace in `self` last '_' with ' '
+            return "" if b_translate else key[:i] + " "
+        elif char.isdigit() or char == "ж":
             return key if b_translate else key[:-1]
         elif 0x0400 <= ord(char) <= 0x04FF:
             # if in range of Cyrillic characters then replace last characters with them if Ru
@@ -368,37 +367,28 @@ class DictKeyIfNoVal(dict,):
 
             # Translation
             out = self.get(key)
-            # print(key, i, out, i_remove)
             if out is not None:
                 # Simple translation is successful
-                return f"{out[:(i_remove or None)]}{chars_add}"
+                return f"{out[: i_remove or None]}{chars_add}"
 
-            if key[-1] == 's':
+            if key[-1] == "s":
                 out = self.get(key[:-1])
-                # print(key, out, pl(out), i_remove)
-                return f"{pl(out)[:(i_remove or None)]}{chars_add}"
-
+                return f"{pl(out)[: i_remove or None]}{chars_add}"
         elif char == "s":  # translate without last "s" then make plural
             out = self.get(key[:-1])
             if out:
                 return plru(out)
-
-            # if chars == 'ая':
-            #     en_word = key[:-2]
-            #     return f"{self.get(en_word, en_word)[:-2]}{chars}" if b_translate else en_word
-            # en_word = key[:-1]
-            # return f"{self.get(en_word, en_word)[:-1]}{char}" if b_translate else en_word
-
-        return key  # Fallback to Key
+        return key
 
 
-I = DictKeyIfNoVal(en2ru if lang == 'ru' else {})
+I = DictKeyIfNoVal(en2ru if lang == "ru" else {})
+
 
 def plru(text):
-    "Make russian word `text` to plural"
+    """Make russian word `text` to plural"""
     if len(text) <= 1:
         return text
-    before, last = text[:-1], text[-1]
+    before, last = (text[:-1], text[-1])
     match last:
         # last 1 chars dependance
         case "к":
@@ -419,7 +409,7 @@ def plru(text):
         #     last = "и"
         case _:
             # last 2 chars dependance
-            before, last = text[:-2], text[-2:]
+            before, last = (text[:-2], text[-2:])
             match last:
                 case "ая":
                     last = "ие"
@@ -435,7 +425,7 @@ def plru(text):
                     last = "ли"
                 case "на":
                     last = "ны"
-                    return f"{before}{last}".replace("на глубины", "на глубинах", 1)  # todo: find where used
+                    return f"{before}{last}".replace("на глубины", "на глубинах", 1)
                 case "ом":
                     last = "ами"
                 # case "ма":
@@ -445,7 +435,7 @@ def plru(text):
     return f"{before}{last}"
 
 
-def pl(text, lang=lang, add_s=True, split=False):  # , n
+def pl(text, lang=lang, add_s=True, split=False):
     """
     plural
     :param text:
@@ -458,40 +448,71 @@ def pl(text, lang=lang, add_s=True, split=False):  # , n
     Russian suffixes
     :return:
     """
-    is_ru = lang and lang != 'en'  # ru
+    is_ru = lang and lang != "en"
     if add_s:
         if is_ru:
-            text_out = ' '.join(plru(t) for t in text.split(split)) if split else plru(text)
+            text_out = " ".join((plru(t) for t in text.split(split))) if split else plru(text)
         else:
-            text_out = ' '.join(f'{t}s' for t in text.split(split)) if split else f'{text}s'
+            text_out = " ".join((f"{t}s" for t in text.split(split))) if split else f"{text}s"
     else:
-        text_out = text.format(s='s')
-        if is_ru:  # plural ru
+        text_out = text.format(s="s")
+        if is_ru:
             text_out = (
-                text_out.format_map(I).replace('иеs', 'ия').replace('ийs', 'ие').replace('льs', 'ли')
-                .replace('фs', 'фы').replace('цs', 'цы')
-                )
+                text_out.format_map(I)
+                .replace("иеs", "ия")
+                .replace("ийs", "ие")
+                .replace("льs", "ли")
+                .replace("фs", "фы")
+                .replace("цs", "цы")
+            )
     return text_out
 
 
-# Display label of recommended time Units (You need manually set axis properties in accordance to it)
+# functions useful to translate abbreviations
+
+_RU = "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя"
+_EN = "ABVGDEËŽZIJKLMNOPRSTUFHCČŠŜʺYʹÈÛÂabvgdeëžzijklmnoprstufhcčšŝʺyʹèûâ"
+_RU2EN, _EN2RU = (str.maketrans(*src_dst) for src_dst in ((_RU, _EN), (_EN, _RU)))
+
+
+def translit_ru_en(s: str) -> str:  # need?
+    return s.translate(_RU2EN)
+
+
+def translit_en_ru(s: str) -> str:
+    return s.translate(_EN2RU)
+
+
 def str_date_unit_fmt(dt, next_fmt, lang=lang):
-    return ([
-        ('мм:сс', ':%Y-%m-%d %H:00'),
-        ('Время', ':%Y-%m-%d'),
-        ('День, время', ':%Y-%m'),
-        ('День', ':%Y-%m'),
-        ('Месяц/день', ':%Y'),
-        ('Месяц', ':%Y')
-    ] if lang == 'ru' else [
-        ('MM:SS', ':%Y-%m-%d %H:00'),
-        ('Time', ':%Y-%m-%d'),
-        ('Day, time', ':%Y-%m'),
-        ('Day', ':%Y-%m'),
-        ('Month/day', ':%Y'),
-        ('Month', ':%Y')
-    ])[fmax(searchsorted(int32([70, 50*60, 240*60, 1200*60, 2.5*525600]), int(dt)//60) + next_fmt, 0)]  # min
-    # this comment may not be in sync: 70min, ~2D, 10D, 50D, 2.5*Y
+    """
+    Display label of recommended time Units (You need manually set axis properties in accordance to it)
+    :param dt: switching interval: 70min, ~2D, 10D, 50D, 2.5*Y  (this definition may not be in sync with code)
+    """
+    return (
+        [
+            ("мм:сс", ":%Y-%m-%d %H:00"),
+            ("Время", ":%Y-%m-%d"),
+            ("День, время", ":%Y-%m"),
+            ("День", ":%Y-%m"),
+            ("Месяц/день", ":%Y"),
+            ("Месяц", ":%Y"),
+        ]
+        if lang == "ru"
+        else [
+            ("MM:SS", ":%Y-%m-%d %H:00"),
+            ("Time", ":%Y-%m-%d"),
+            ("Day, time", ":%Y-%m"),
+            ("Day", ":%Y-%m"),
+            ("Month/day", ":%Y"),
+            ("Month", ":%Y"),
+        ]
+    )[
+        np.fmax(
+            np.searchsorted(np.int32([70, 50 * 60, 240 * 60, 1200 * 60, 2.5 * 525600]), int(dt) // 60)
+            + next_fmt,
+            0,
+        )
+    ]
 
 
 def str_date_unit(t_se_vsz, lang=lang, **kwargs):
@@ -500,36 +521,33 @@ def str_date_unit(t_se_vsz, lang=lang, **kwargs):
     - next_fmt:
     - lang: if 'ru' then русские else English unit names. Default: 'en'
     """
-    t_se = vsz2dt64s(array(t_se_vsz) + [1, -1]).tolist()
+    t_se = vsz2dt64s(np.array(t_se_vsz) + [1, -1]).tolist()
     # - adds 1s shifts is useful for unit intervals starting from round unit make it the same for start and end:
     # this then will be detected and kept only one
 
-    dt = int(diff(t_se_vsz))
-    unit, fmt = str_date_unit_fmt(dt, kwargs.get('next_fmt', 0), lang)
-    st, en = [f'{{{fmt}}}'.format(t) for t in t_se]
-    unit_minutes = unit.startswith(('MM', 'мм'))
+    dt = int(np.diff(t_se_vsz))
+    unit, fmt = str_date_unit_fmt(dt, kwargs.get("next_fmt", 0), lang)
+    st, en = [f"{{{fmt}}}".format(t) for t in t_se]
+    unit_minutes = unit.startswith(("MM", "мм"))
     if st == en or unit_minutes:
         s = st
     else:
         idiff = [i for i, (left, right) in enumerate(zip(st, en)) if left != right][0]
         s_diff = st[idiff:]
-        if '-' not in s_diff and ' ' not in s_diff:  # can remove part from en before isplit
-            isplit = st[:idiff].rfind(' ')
+        if "-" not in s_diff and " " not in s_diff:  # can remove part from en before isplit
+            isplit = st[:idiff].rfind(" ")
             if isplit != -1:
-                s = '\u2009–\u2009'.join((st, en[isplit+1:]))
+                s = "\u2009–\u2009".join((st, en[isplit + 1 :]))
             else:
-                isplit = st[:idiff].rfind('-')
-                if isplit != -1 and int(en[isplit+1:]) - int(st[isplit+1:]) == 1:
-                    s = ',\u2009'.join((st, en[isplit+1:]))
+                isplit = st[:idiff].rfind("-")
+                if isplit != -1 and int(en[isplit + 1 :]) - int(st[isplit + 1 :]) == 1:
+                    s = ",\u2009".join((st, en[isplit + 1 :]))
                 else:
-                    # s = '{st[:isplit]}{st[isplit:]}\u2009–\u2009{en[isplit:]}'
                     s = "\u2009–\u2009".join((st, en))
         else:
             s = "\u2009–\u2009".join((st, en))
-
-    # print("str_date_unit st, en:", st, en)
-    preposition = (' {past} ' if unit_minutes else ' {of_}').format_map(I)
-    return ''.join([unit, preposition, s])
+    preposition = (" {past} " if unit_minutes else " {of_}").format_map(I)
+    return "".join([unit, preposition, s])
 
 
 def str_date_unit_nl(*args, allow3rows=False, no_blank_at_end=False, **kwargs):
@@ -537,14 +555,13 @@ def str_date_unit_nl(*args, allow3rows=False, no_blank_at_end=False, **kwargs):
     Make label shorter for short graphs splitting row (with aligning digits by inserting ``blank``)
     """
     s = str_date_unit(*args, **kwargs)
-    blank = '\\color{transparent}{\u2009–}'
+    blank = "\\color{transparent}{\u2009–}"
     if "–" in s and allow3rows:
-        return s.replace("of", rf"of{blank}\\").replace("–\u2009", r"–\\") + (
+        return s.replace("of", f"of{blank}\\\\").replace("–\u2009", "–\\\\") + (
             "" if no_blank_at_end else blank
         )
     else:
-        return s.replace('2', r'\\2', 1)
-        # - instead of s.replace('of', r'of\\').replace('after', r'after\\').replace('после', r'после\\') ...
+        return s.replace("2", "\\\\2", 1)
 
 
 def str_date_unit_with_suffix(t_range, str_zone, **kwargs):
@@ -554,26 +571,22 @@ def str_date_unit_with_suffix(t_range, str_zone, **kwargs):
     lambda ax, t_span_var, **kwargs:
     str_date_unit_with_suffix([f(lambda l: l if l!='Auto' else t, SETTING(f'{ax}/{lim:s}')) for lim, t in zip(('min', 'max'), DATA(f'{t_span_var}'))], str_zone='UTC+02:00', lang=LANG({'default': 'en', 'ru': 'ru'}), **kwargs)
     """
-    b_nl = kwargs.pop('b_nl', False)
-    higher = kwargs.pop('higher', False)
-    str_date_unit_result=(str_date_unit_nl if b_nl else str_date_unit)(
-            t_range,
-            no_blank_at_end=str_zone,
-            **kwargs
-        )
+    b_nl = kwargs.pop("b_nl", False)
+    higher = kwargs.pop("higher", False)
+    str_date_unit_result = (str_date_unit_nl if b_nl else str_date_unit)(
+        t_range, no_blank_at_end=str_zone, **kwargs
+    )
     if str_zone and ":" not in str_date_unit_result:
         str_zone = ""
-    return (
-        f'{str_date_unit_result}{chr(92)*2 if higher else chr(8201)}'
-        f'{"^" if str_date_unit_nl and str_zone else ""}{str_zone}{chr(92)*2*(higher - 1)}'
-    )
+    return f"{str_date_unit_result}{(chr(92) * 2 if higher else chr(8201))}{('^' if str_date_unit_nl and str_zone else '')}{str_zone}{chr(92) * 2 * (higher - 1)}"
+
 
 def str_dt(dt, lang=lang):
     """Time interval to readable string"""
-    s = array(dt*1000000, 'M8[us]').item()
-    a = int16(s.timetuple()[:6]) - [1970, 1, 1, 0, 0, 0]
-    if ~any(a):
-        a = [0, 0, 0, 0, 0, 0, round(s.microsecond * 1e-6, 3)]
+    s = np.array(dt * 1000000, "M8[us]").item()
+    a = np.int16(s.timetuple()[:6]) - [1970, 1, 1, 0, 0, 0]
+    if ~np.any(a):
+        a = [0, 0, 0, 0, 0, 0, np.round(s.microsecond * 1e-06, 3)]
     out = " ".join([
         f"{d}{w}"
         for d, w in zip(
@@ -585,18 +598,13 @@ def str_dt(dt, lang=lang):
         if d
     ])
     return out.strip()
-    # fDisp_read_dt(dt_var_name)', "f(f(''.join, [f'{d}{w}' for d,w in zip(
-    #    f(lambda s: (f((lambda a: a if any(a) else [0,0,0,0,0,round(s.microsecond*1E-6, 3)]), int16(s.timetuple()[1:6]) - [1,1,0,0,0])), f(array(DATA(dt_var_name)*1E6, 'M8[us]').item)),
-    #    ['months ', 'days ', 'h ', 'min. ', 's' ,'s']
-    #    ) if d]).strip)
-
 
 
 def day_sfx(d):
-    return {1: 'st', 2: 'nd', 3: 'rd'}.get(d % 20, 'th') if lang != 'ru' else ''
+    return {1: "st", 2: "nd", 3: "rd"}.get(d % 20, "th") if lang != "ru" else ""
 
 
-def str_time_range(st, en, date_format='%d.%m.%Y', time_format='%H:%M', str_zone=''):
+def str_time_range(st: datetime, en, date_format="%d.%m.%Y", time_format="%H:%M", str_zone=""):
     """
     Time range string without repeating not changed time units in date format
     :param st:
@@ -605,51 +613,50 @@ def str_time_range(st, en, date_format='%d.%m.%Y', time_format='%H:%M', str_zone
     :param str_zone: time text suffix
     :return:
     """
-    str_st_date = f'{st:{date_format}}'
-    str_en_date = f'{en:{date_format}}'
-    if '{sfx}' in date_format:
-        str_st_date = str_st_date.replace('{sfx}', day_sfx(st.day))
-        str_en_date = str_en_date.replace('{sfx}', day_sfx(en.day))
-        if '%e' in date_format:
-            str_st_date = str_st_date.replace('. ', '.').replace('- ', '-').strip()
-            str_en_date = str_en_date.replace('. ', '.').replace('- ', '-').strip()
-        # day = str_st_date.split('{sfx}')[0].split('.')[-1].split('-')[-1].split('/')[-1].split(' ')[-1]
-
-    b_ddate = str_st_date != str_en_date    # Have different dates?
-    if b_ddate:                             # - Keep only different parts
-        i_split = 0                         # previous date part separator index
-        b_inc = '%d' == date_format[:2]     # date parts (units) in increased order
+    if not isinstance(st, datetime):
+        return ""
+    str_st_date = f"{st:{date_format}}"
+    str_en_date = f"{en:{date_format}}"
+    if "{sfx}" in date_format:
+        str_st_date = str_st_date.replace("{sfx}", day_sfx(st.day))
+        str_en_date = str_en_date.replace("{sfx}", day_sfx(en.day))
+        if "%e" in date_format:
+            str_st_date = str_st_date.replace(". ", ".").replace("- ", "-").strip()
+            str_en_date = str_en_date.replace(". ", ".").replace("- ", "-").strip()
+    b_ddate = str_st_date != str_en_date
+    if b_ddate:  # - Keep only different parts
+        i_split = 0  # previous date part separator index
+        b_inc = "%d" == date_format[:2]  # date parts (units) in increased order
         for i, (left, right) in enumerate(
-            zip(reversed(str_st_date), reversed(str_en_date)) if b_inc else
-            zip(str_st_date, str_en_date)
+            zip(reversed(str_st_date), reversed(str_en_date)) if b_inc else zip(str_st_date, str_en_date)
         ):
-            if left in '.- \\':
+            if left in ".- \\":
                 i_split = i
             elif left != right:
                 if i_split:
                     if b_inc:
-                        str_st_date = f'{str_st_date[slice(0, -i_split - 1)]}'
+                        str_st_date = f"{str_st_date[slice(0, -i_split - 1)]}"
                     else:
-                        str_en_date = f'{str_en_date[slice(i_split + 1, None)]}'
+                        str_en_date = f"{str_en_date[slice(i_split + 1, None)]}"
                 break
         str_en_date = [str_en_date]
     else:
         str_en_date = []
     st, en = [[f"{t:{time_format}}"] for t in (st, en)] if time_format else [[], []]
-    return "\u2009–\u2009".join([
-        "\u2009".join(d_t) for d_t in ([str_st_date] + st, str_en_date + en) if d_t
-    ]) + str_zone
-    # f'{str_st_date}\u2009{st:%H:%M}\u2009–\u2009{str_en_date}{en:%H:%M}{str_zone}'
-
-def str_deg_min(degfloat, strpattern="{:d}°\u2009{:0.4f}\'", *args):
-    """equiv. old variant: strpattern % (trunc(degfloat), abs(degfloat - trunc(degfloat))*60)
-    """
-    part_rem, part_trunc = modf(degfloat)
-    return strpattern.format(int(part_trunc), abs(part_rem)*60, *args)
+    return (
+        "\u2009–\u2009".join(["\u2009".join(d_t) for d_t in ([str_st_date] + st, str_en_date + en) if d_t])
+        + str_zone
+    )
 
 
-def str_deg_min_join(degfloat, strpattern="{:d}°\u2009{:0.4f}\'", add_strs='NE', joiner=', '):
-    return joiner.join(str_deg_min(d, strpattern, a) for d, a in zip(degfloat, add_strs))
+def str_deg_min(degfloat, strpattern="{:d}°\u2009{:0.4f}'", *args):
+    """equiv. old variant: strpattern % (trunc(degfloat), abs(degfloat - trunc(degfloat))*60)"""
+    part_rem, part_trunc = np.modf(degfloat)
+    return strpattern.format(int(part_trunc), np.abs(part_rem) * 60, *args)
+
+
+def str_deg_min_join(degfloat, strpattern="{:d}°\u2009{:0.4f}'", add_strs="NE", joiner=", "):
+    return joiner.join((str_deg_min(d, strpattern, a) for d, a in zip(degfloat, add_strs)))
 
 
 def row_jumps_if_small_dx(x, dx_min):
@@ -657,7 +664,7 @@ def row_jumps_if_small_dx(x, dx_min):
     Changes row if distance to previous element on row is too small:
     for preventing overlapping of many close graphical elements if they would be placed on one row
     """
-    p_prev = [-inf]*10  # can distribute to 10 rows maximum
+    p_prev = [-np.inf] * 10  # can distribute to 10 rows maximum
     x_row = []
     for p in x:
         for row in range(len(p_prev)):
@@ -667,93 +674,6 @@ def row_jumps_if_small_dx(x, dx_min):
                 break
     return x_row
 
-
-# def hsv_to_rgb(h, s, v):
-#     """
-#         Convert HSV values to RGB using manual calculations.
-#         :param h: Hue (0-360)
-#         :param s: Saturation (0-1)
-#         :param v: Value/Brightness (0-1)
-#         :return: RGB tuple
-#     """
-#     h %= 360
-#     # s = clip(s, 0, 1).item()
-#     # v = clip(v, 0, 1).item()
-#     if v > 1:
-#         v = 1
-#     elif v < 0:
-#         v = 0
-#     if s > 1:
-#         s = 1
-#     elif s <= 0:
-#         r = g = b = int(v * 255)
-#         return (r, g, b)
-
-#     c = v * s
-#     h_prime = h / 60
-#     x = c * (1 - abs(h_prime % 2 - 1))
-#     m = v - c
-
-#     if h_prime < 1:
-#         r, g, b = c, x, 0
-#     elif h_prime < 2:
-#         r, g, b = x, c, 0
-#     elif h_prime < 3:
-#         r, g, b = 0, c, x
-#     elif h_prime < 4:
-#         r, g, b = 0, x, c
-#     elif h_prime < 5:
-#         r, g, b = x, 0, c
-#     else:
-#         r, g, b = c, 0, x
-
-#     r = int((r + m) * 255)
-#     g = int((g + m) * 255)
-#     b = int((b + m) * 255)
-#     return (r, g, b)
-
-
-# def colors_of_hue_range(n: int, exclude_hue_start: int = 0, exclude_hue_end: int = 360):
-#     """
-#     Distribute hues evenly in the HSV color space while avoiding specified hue range
-#     and adjusting saturation and value for vividness and perceptual separation.
-#     :param n: number of colors to generate
-#     :param exclude_hue_start: start of excluded hue range (0-360)
-#     :param exclude_hue_end: end of excluded hue range (0-360)
-#     :return: list of hex color codes in "#RRGGBB" format
-
-#     Example: generate excluding blue (210-270 degrees) range:
-#     >>> colors_of_hue_range(n, exclude_hue_start=210, exclude_hue_end=270)
-
-#     """
-#     colors = []
-#     total_hue_range = 360
-#     excluded_range = (exclude_hue_end - exclude_hue_start) % total_hue_range
-#     available_hue_range = total_hue_range - excluded_range
-#     step = available_hue_range / n
-#     in_excluded_range = (
-#         (lambda angle: exclude_hue_end < angle < exclude_hue_start)
-#         if exclude_hue_start <= exclude_hue_end else
-#         (lambda angle: (angle > exclude_hue_start or angle <= exclude_hue_end))
-#     )
-#     for i in range(n):
-#         hue = i * step
-#         if in_excluded_range(hue):
-#             hue += excluded_range
-#             hue %= 360
-
-#         s = 1.0  # High saturation for vividness
-#         v = 0.4 + i * 0.4 / (n - 1)  # gradient in brightness for visual separation from 40% to 80%
-
-#         r, g, b = hsv_to_rgb(hue, s, v)
-#         hex_color = "#{:02x}{:02x}{:02x}".format(r, g, b)
-#         colors.append(hex_color)
-
-#     return colors
-
-
-
-# 30.06.2025
 
 def sum_of_scaled_gaussians(x, peaks=[60, 120], sigmas=[30, 30], scales=[1, 1, 1]):
     """
@@ -770,7 +690,7 @@ def sum_of_scaled_gaussians(x, peaks=[60, 120], sigmas=[30, 30], scales=[1, 1, 1
     """
     y = 0
     for mu, sigma, scale in zip_longest(peaks, sigmas, scales):
-        term = scale if mu is None else scale * exp(-0.5 * ((x - mu) / sigma) ** 2)
+        term = scale if mu is None else scale * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
         y += term
     # Нормализация
     y /= y.sum()
@@ -783,18 +703,14 @@ def hsv_to_rgb(hues, s=1.0, v=1.0):
     h = hues / 60.0
     c = v * s
     m = v - c
-    x = c * (1 - abs(h % 2 - 1))
+    x = c * (1 - np.abs(h % 2 - 1))
     z = 0
-    sector = floor(h).astype(int) % 6
-    choices = (
-        [c, x, z, z, x, c],
-        [x, c, c, x, z, z],
-        [z, z, x, c, c, x]
-    )
-    rgb = stack([choose(sector, ch) for ch in choices], axis=-1)
-    rgb += (m if isinstance(m, float) else m[:, None])
+    sector = np.floor(h).astype(int) % 6
+    choices = ([c, x, z, z, x, c], [x, c, c, x, z, z], [z, z, x, c, c, x])
+    rgb = np.stack([np.choose(sector, ch) for ch in choices], axis=-1)
+    rgb += m if isinstance(m, float) else m[:, None]
     rgb *= 255
-    return clip(rgb, 0, 255).astype(uint8)
+    return np.clip(rgb, 0, 255).astype(np.uint8)
 
 
 def colors_of_hue_range(n, exclude_range=[0, 0], s=1.0, v=1.0, weight=False, out_format="#rgb"):
@@ -817,14 +733,14 @@ def colors_of_hue_range(n, exclude_range=[0, 0], s=1.0, v=1.0, weight=False, out
     exclude_start, exclude_end = [lim % total_range for lim in exclude_range]
 
     # hues avoiding exclusion zone
-    n_generate = fmax(1000, n * 100) if weight else n
+    n_generate = np.fmax(1000, n * 100) if weight else n
     b_wrap_out = exclude_start <= exclude_end
     if b_wrap_out:
         hues_lin = (
-            linspace(exclude_end, exclude_start + total_range, n_generate, endpoint=False)
-        ) % total_range
+            np.linspace(exclude_end, exclude_start + total_range, n_generate, endpoint=False) % total_range
+        )
     else:
-        hues_lin = linspace(exclude_start, exclude_end, n_generate, endpoint=False)
+        hues_lin = np.linspace(exclude_start, exclude_end, n_generate, endpoint=False)
 
     if weight:
         # Apply perceptual adjustment
@@ -834,15 +750,15 @@ def colors_of_hue_range(n, exclude_range=[0, 0], s=1.0, v=1.0, weight=False, out
             # using sum of 2 gaussian distribution exp(-0.5 * ((x - mu) / sigma)**2):
             def weight(h):  # peaks=[60, 120]
                 return sum_of_scaled_gaussians(h, peaks=[50, 310], sigmas=[30, 20], scales=[1, 1, 1])
+
             # or (emphasizing 60°-120° range): Flattened peak around greens
             # weights = exp(-0.5 * ((hues_lin - 90) / 45) ** 4)
 
-
         weights = weight(hues_lin)
         # Select n hues
-        cdf = cumsum(weights)
-        sample_points = linspace(0, cdf[-1], n, endpoint=False)
-        indices_selected = searchsorted(cdf, sample_points)
+        cdf = np.cumsum(weights)
+        sample_points = np.linspace(0, cdf[-1], n, endpoint=False)
+        indices_selected = np.searchsorted(cdf, sample_points)
         hues = hues_lin[indices_selected]
     else:
         hues = hues_lin
@@ -863,22 +779,25 @@ def colors_of_hue_range(n, exclude_range=[0, 0], s=1.0, v=1.0, weight=False, out
 def dim_bug_cor(dim):
     """former BugDimCorr"""
     if len(dim) > 1:
-        d_edges = array(dim)[[0,-1]]
-        return d_edges + diff(d_edges) * array([0.25, -0.25])
+        d_edges = np.array(dim)[[0, -1]]
+        return d_edges + np.diff(d_edges) * np.array([0.25, -0.25])
     else:
-        warning('len(dim) < 1')
-        return dim + [-0.00000001, 0.00000001]
+        warning("len(dim) < 1")
+        return dim + [-1e-08, 1e-08]
 
 
 def i_positive(i, lim):
     """Return positive indices within the limit."""
-    ii = int64(i)
-    return where(ii < 0, lim + ii, ii)
+    ii = np.int64(i)
+    return np.where(ii < 0, lim + ii, ii)
 
 
 def i_ranges(
-        t, t_ranges,  # : Union[list[Union[list[Union[str,datetime64,int]], int]], ndarray]
-        t_shift_s=0, t_units='ns'):
+    t,
+    t_ranges,  # : Union[list[Union[list[Union[str, np.datetime64, int]], int]], np.ndarray]
+    t_shift_s=0,
+    t_units="ns",
+):
     """
     Find indexes of (useful) time ranges specified by t_ranges
     :param t: raw datetime64[ns] array or veusz time (in this case you should add 1230768000 to t_shift_s)
@@ -890,24 +809,29 @@ def i_ranges(
     :param t_units: units of t: can be 's', 'ns', ...
     return: list of 2-el. sequences ranges indexes
     """
-    if (builtins.any if isinstance(t_ranges, list) else any)(t_ranges):
-        t = int64(t)
+    if (builtins.any if isinstance(t_ranges, list) else np.any)(t_ranges):
+        t = np.int64(t)
     else:
         return [[0, t.size]]
 
     def to_two_elements(x):
-        return x if len(x) == 2 else [x, x+1] if len(x) == 1 else [0, t.size]
+        return x if len(x) == 2 else [x, x + 1] if len(x) == 1 else [0, t.size]
 
-    out = [to_two_elements([
-            i_or_t if isinstance(i_or_t, int) else
-            searchsorted(t, int64(array(i_or_t, f'datetime64[{t_units}]') - timedelta64(t_shift_s, 's')))
+    out = [
+        to_two_elements([
+            i_or_t
+            if isinstance(i_or_t, int)
+            else np.searchsorted(
+                t, np.int64(np.array(i_or_t, f"datetime64[{t_units}]") - np.timedelta64(t_shift_s, "s"))
+            )
             for i_or_t in time_iter
-        ]) for time_iter in t_ranges
+        ])
+        for time_iter in t_ranges
     ]
     return out
 
 
-def i_use(t, time_iter, t_shift_s=0, t_units='ns'):
+def i_use(t, time_iter, t_shift_s=0, t_units="ns"):
     """
     Same as i_ranges() but for t_ranges replaced with time_iter that can be 1D or 2D.
     :param t: raw datetime64[t_units] array or its directly converted to float64 version
@@ -917,39 +841,60 @@ def i_use(t, time_iter, t_shift_s=0, t_units='ns'):
     :param t_units:
     :return: 1D array of indexes of time_iter in t or [0, t.size]
     """
-    t = int64(t)
-    time_iter = time_iter[0] if len(shape(time_iter)) > 1 else time_iter
-    dtime_shift = timedelta64(t_shift_s, 's').astype(f'm8[{t_units}]')
+    t = np.int64(t)
+    time_iter = time_iter[0] if len(np.shape(time_iter)) > 1 else time_iter
+    dtime_shift = np.timedelta64(t_shift_s, "s").astype(f"m8[{t_units}]")
     out = [
-        i_positive(x, t.size) if isinstance(x, int) else t.size if x is None else
-        searchsorted(t, int64(array(x, f'M8[{t_units}]') - dtime_shift))
+        i_positive(x, t.size)
+        if isinstance(x, int)
+        else t.size
+        if x is None
+        else np.searchsorted(t, np.int64(np.array(x, f"M8[{t_units}]") - dtime_shift))
         for x in time_iter
     ]
     if len(out):
-        n_out = diff(out)
+        n_out = np.diff(out)
         if n_out <= 1:
-            warning("Souse time range: [{}] is completely out of user selected time range ({})!".format(
-                ', '.join(f'"{ti}"' for ti in array(
-                        t[[0, -1]] + int64(dtime_shift), f'M8[{t_units}]'
-                    ).astype('M8[s]')),
-                time_iter
-            ))
+            warning(
+                "Souse time range: [{}] is completely out of user selected time range ({})!".format(
+                    ", ".join(
+                        (
+                            f'"{ti}"'
+                            for ti in np.array(t[[0, -1]] + np.int64(dtime_shift), f"M8[{t_units}]").astype(
+                                "M8[s]"
+                            )
+                        )
+                    ),
+                    time_iter,
+                )
+            )
         return out
     else:
         return [0, t.size]
 
 
-def min_range(range1, range2, l=nan):
+def lim_range_min(range, min_range):
+    dat_min, dat_max = range
+    lim_min, lim_max = min_range
+    if dat_min < lim_min:
+        return [dat_min, dat_min - operator.sub(*min_range)]
+    elif dat_max > lim_max:
+        return [dat_max + operator.sub(*min_range), dat_max]
+    else:
+        return min_range
+
+
+def min_range(range1, range2, l=np.nan):
     """accounts for negative indexes"""
-    st, en = i_positive([take(range1, [0, -1]), take(range2, [0, -1])], l).T
-    return [transpose([max(st), min(en)])]
+    st, en = i_positive([np.take(range1, [0, -1]), np.take(range2, [0, -1])], l).T
+    return [np.transpose([np.max(st), np.min(en)])]
 
 
 def min_range_2d(*args):
     """The min_range_2d_no_check(se1, se2) replace. Still no check negative indexes"""
-    a_any = [a for a in args if any(a)]
+    a_any = [a for a in args if np.any(a)]
     if a_any:
-        return atleast_2d([nanmax([a[:, 0] for a in a_any]), nanmin([a[:, -1] for a in a_any])])
+        return np.atleast_2d([np.nanmax([a[:, 0] for a in a_any]), np.nanmin([a[:, -1] for a in a_any])])
     else:
         return [[]]
 
@@ -958,7 +903,7 @@ def max_range(range1, range2):
     """Maximum range from input ranges limits"""
     st1, en1 = range1
     st2, en2 = range2
-    return append(fmin(st1, st2), fmax(en1, en2))
+    return np.append(np.fmin(st1, st2), np.fmax(en1, en2))
 
 
 def ceil_log(x, div=2):
@@ -968,33 +913,32 @@ def ceil_log(x, div=2):
     >> ceil_log(x, 1) for x in [0.01, 0.013, 0.017, 0.2, 0.8, 1.2, 1.8, 2.2, 2.8, 11, 44]]
     ... [0.01, 0.02, 0.02, 0.2, 0.8, 2.0, 2.0, 3.0, 3.0, 20.0, 50.0]
     """
-    r = div * 10 ** -floor(log10(x))
-    return ceil(x * r) / r
+    r = div * 10 ** (-np.floor(np.log10(x)))
+    return np.ceil(x * r) / r
 
 
 def power_ceil(x):
-    return int32(floor(log10(x)))
+    return np.int32(np.floor(np.log10(x)))
 
 
-def round_ceil_signed(x, n:float = None):
+def round_ceil_signed(x, n: float = None):
     """n: if positive should be float (not numpy type like float32)"""
-    s = sign(x)
-    abs_x = absolute(x)
-    p = 10**-(power_ceil(abs_x) if n is None else n)
-    return s * ceil(abs_x * p) / p
+    s = np.sign(x)
+    abs_x = np.absolute(x)
+    p = 10 ** (-(power_ceil(abs_x) if n is None else n))
+    return s * np.ceil(abs_x * p) / p
 
 
 def shift_or_extend_lims(lim_in, x_in, e=None, scale=1):
-    """Shifts range to include x if can, else extend range
-    """
-    lim = float64(lim_in)
-    x = float64(x_in)
-    x_range = diff(x).item()
+    """Shifts range to include x if can, else extend range"""
+    lim = np.float64(lim_in)
+    x = np.float64(x_in)
+    x_range = np.diff(x).item()
     if x_range > 0:
         if e is None:
             # add 0.05 * x-range rounded to 1 decade
-            e = 10**(int(floor(log10(x_range))) - 1)/2
-        dl = max_range(lim, (x + [-e, e])*scale) - lim
+            e = 10 ** (int(np.floor(np.log10(x_range))) - 1) / 2
+        dl = max_range(lim, (x + [-e, e]) * scale) - lim
         lim_out = (
             max_range(lim + dl[0], x * scale)
             if dl[0]
@@ -1008,38 +952,39 @@ def shift_or_extend_lims(lim_in, x_in, e=None, scale=1):
 
 
 def min2nan(a, minLim):
-    return where(a < minLim, nan, a)
+    return np.where(a < minLim, np.nan, a)
 
 
 def max2nan(a, maxLim):
-    return where(a > maxLim, nan, a)
+    return np.where(a > maxLim, np.nan, a)
 
 
 def minmax2nan(a, minLim, maxLim):
-    return where((a < minLim) | (a > maxLim), nan, a)
+    return np.where((a < minLim) | (a > maxLim), np.nan, a)
 
 
 def movavg_1d(a, n):
-    if n>2 and size(a) >= n:
-        n_m2 = int32(n//2) + 1
-        n_p2 = int32((1 + n)//2)
-        cum_a = cumsum(a)
-        diff_width_n = cum_a[int32(n):] - cum_a[:-int32(n)]
-        return hstack((
-            cumsum(a[:n_m2])/arange(1, n_m2+1),
-            diff_width_n/n,
-            cumsum(a[:-n_p2:-1])[::-1]/arange(n_p2-1, 0, -1)
+    if n > 2 and np.size(a) >= n:
+        n_m2 = np.int32(n // 2) + 1
+        n_p2 = np.int32((1 + n) // 2)
+        cum_a = np.cumsum(a)
+        diff_width_n = cum_a[np.int32(n) :] - cum_a[: -np.int32(n)]
+        return np.hstack((
+            np.cumsum(a[:n_m2]) / np.arange(1, n_m2 + 1),
+            diff_width_n / n,
+            np.cumsum(a[:-n_p2:-1])[::-1] / np.arange(n_p2 - 1, 0, -1),
         ))
     elif n == 2:
-        return hstack((a[0], (a[1:]+a[:-1]) / 2.0))
+        return np.hstack((a[0], (a[1:] + a[:-1]) / 2.0))
     else:
         return a
 
-def moving_std(data: ndarray, window: int):
+
+def moving_std(data: np.ndarray, window: int):
 
     # Compute cumulative sums
-    cumsum1 = cumsum(data)
-    cumsum2 = cumsum(data**2)
+    cumsum1 = np.cumsum(data)
+    cumsum2 = np.cumsum(data**2)
 
     # Calculate sums over the moving window
     sum_window = cumsum1[window:] - cumsum1[:-window]
@@ -1047,17 +992,13 @@ def moving_std(data: ndarray, window: int):
 
     # Calculate means and variances
     mean_window = sum_window / window
-    var_window = (sum2_window / window) - (mean_window**2)
+    var_window = sum2_window / window - mean_window**2
 
     # Return the standard deviation
-    std_window = sqrt(var_window)
+    std_window = np.sqrt(var_window)
 
     # Use numpy.pad to pad edges with the first and last valid standard deviation
-    std_full = pad(
-        std_window,
-        (window - 1, len(data) - len(std_window) - (window - 1)),
-        mode='edge'
-    )
+    std_full = np.pad(std_window, (window - 1, len(data) - len(std_window) - (window - 1)), mode="edge")
     return std_full
 
     # moving_std = sqrt(convolve(data**2, ones(window), 'valid') / window -
@@ -1066,37 +1007,37 @@ def moving_std(data: ndarray, window: int):
 
 def rep2mean(x, b_ok=None, left=None, right=None):
     if b_ok is None:
-        b_ok = isfinite(x)
-        return interp(arange(len(x)), flatnonzero(b_ok), x[b_ok])
-    return interp(arange(len(x)), flatnonzero(b_ok), x[b_ok], left, right)
+        b_ok = np.isfinite(x)
+        return np.interp(np.arange(len(x)), np.flatnonzero(b_ok), x[b_ok])
+    return np.interp(np.arange(len(x)), np.flatnonzero(b_ok), x[b_ok], left, right)
 
 
 def rep2mean_dir2rad(x, b_ok):
-    # unwrap(),
-    return interp(arange(len(x)), flatnonzero(b_ok), radians(x[b_ok]), period=2*pi)
+    return np.interp(np.arange(len(x)), np.flatnonzero(b_ok), np.radians(x[b_ok]), period=2 * np.pi)
+
 
 def rep2prev(x, b_ok=None):
     if b_ok is None:
-        b_ok = isfinite(x)
-    ok = asarray(b_ok, dtype=int8)
-    i_before_nan = flatnonzero(diff(ok) < 0)
-    i_last_nan = flatnonzero(diff(ok) > 0)
+        b_ok = np.isfinite(x)
+    ok = np.asarray(b_ok, dtype=np.int8)
+    i_before_nan = np.flatnonzero(np.diff(ok) < 0)
+    i_last_nan = np.flatnonzero(np.diff(ok) > 0)
     if i_before_nan.size and i_last_nan.size:
         # Prepare closed NaN regions to have equal values on edges:
         # delete edges for which opposite edge is open end delete them
-        if isnan(x[0]):  # 1st NaNs have no finite value before
+        if np.isnan(x[0]):  # 1st NaNs have no finite value before
             del i_before_nan[0]
         if i_before_nan.size:  # last NaNs have no finite value after
-            if isnan(x[-1]):
+            if np.isnan(x[-1]):
                 del i_last_nan[0]
             out = x.copy()
             out[i_last_nan] = out[i_before_nan]
             b_ok[i_last_nan] = True
-    out = interp(arange(len(x)), flatnonzero(b_ok), out[b_ok])
+    out = np.interp(np.arange(len(x)), np.flatnonzero(b_ok), out[b_ok])
     return out
 
 
-#@njit
+# @njit
 def b1spike(a, max_spike=0):
     """
     Single spike detection
@@ -1105,46 +1046,47 @@ def b1spike(a, max_spike=0):
     :param max_spike:
     :return: boolean array of where is spike in a
     """
-    b_single_spike_1 = lambda bad_u, bad_d: logical_or(
-        logical_and(append(bad_d, True), append(True, bad_u)),  # spike to down
-        logical_and(append(bad_u, True), append(True, bad_d)))  # spike up
-    diff_x = diff(a)
+    b_single_spike_1 = lambda bad_u, bad_d: np.logical_or(
+        np.logical_and(np.append(bad_d, True), np.append(True, bad_u)),  # spike to down
+        np.logical_and(np.append(bad_u, True), np.append(True, bad_d)),
+    )  # spike up
+    diff_x = np.diff(a)
     return b_single_spike_1(diff_x < -max_spike, diff_x > max_spike)
 
 
-def bin_avg(a: ndarray, edges, st=0):
+def bin_avg(a: np.ndarray, edges, st=0):
     """
     Bin average of ``a[st:after_last]`` inside edges where ``after_last = int(edges[-1])`` - index of the end of the last interval
     :param a: numpy ndarray
     :param edges: ``a`` indexes relative to ``st`` to calculate mean(a) between
     :param st: ``edges`` origin in ``a`` indexes
     """
-    edges_int = int32(edges)
-    starts, after_last = array_split(edges_int, [-1])
-    return (add.reduceat(
-        a[st:after_last.item()], (starts - st) if st else starts
-    ) / ediff1d(edges_int))[:, None if a.ndim > 1 else ...]
+    edges_int = np.int32(edges)
+    starts, after_last = np.array_split(edges_int, [-1])
+    return (
+        np.add.reduceat(a[st : after_last.item()], starts - st if st else starts) / np.ediff1d(edges_int)
+    )[:, None if a.ndim > 1 else ...]
 
 
-def bin_std(a: ndarray, edges: ndarray, st=0):
+def bin_std(a: np.ndarray, edges: np.ndarray, st=0):
     """
     Bin average of ``a[st:after_last]`` inside edges where ``after_last = int(edges[-1])`` - index of the end of the last interval
     :param a: numpy ndarray
     :param edges: ``a`` indexes relative to ``st`` to calculate mean(a) between
     :param st: ``edges`` origin in ``a`` indexes
     """
-    edges_int = int32(edges)
-    starts, after_last = array_split(edges_int, [-1])
+    edges_int = np.int32(edges)
+    starts, after_last = np.array_split(edges_int, [-1])
 
     # Calculate sums over intervals
-    sum_bin = add.reduceat(a[st : after_last.item()], (starts - st) if st else starts)
-    sum_sq = add.reduceat(a[st : after_last.item()] ** 2, (starts - st) if st else starts)
+    sum_bin = np.add.reduceat(a[st : after_last.item()], starts - st if st else starts)
+    sum_sq = np.add.reduceat(a[st : after_last.item()] ** 2, starts - st if st else starts)
 
-    n = ediff1d(edges_int)  # bin length
+    n = np.ediff1d(edges_int)  # bin length
     variance = (sum_sq - sum_bin**2 / n) / n
 
     # Return the standard deviation
-    return sqrt(variance)[:, None if a.ndim > 1 else ...]
+    return np.sqrt(variance)[:, None if a.ndim > 1 else ...]
 
 
 def bool2ranges(b_ok, min_range, min_range_bad=None, pressure=None):
@@ -1157,33 +1099,32 @@ def bool2ranges(b_ok, min_range, min_range_bad=None, pressure=None):
     :param min_range_bad: min number of elements in intervals where b_ok is False
     :return:
     """
-    d_ok = diff(b_ok, prepend=False, append=False)
-    edges = flatnonzero(d_ok != 0)
-    n_rows = diff(edges)
+    d_ok = np.diff(b_ok, prepend=False, append=False)
+    edges = np.flatnonzero(d_ok != 0)
+    n_rows = np.diff(edges)
     # Delete too short bad data intervals
     if pressure is None:
         b_del_bad_interval = n_rows[1::2] < (min_range_bad or min_range)
     else:
-        dp = abs(diff(pressure[edges]))
-        b_del_bad_interval = (n_rows[1::2] + dp[1::2]) < (min_range_bad or min_range)
+        dp = np.abs(np.diff(pressure[edges]))
+        b_del_bad_interval = n_rows[1::2] + dp[1::2] < (min_range_bad or min_range)
     if b_del_bad_interval.any():
-        edges = edges[hstack((True, ~repeat(b_del_bad_interval, 2), True))]
-        n_rows = diff(edges)
+        edges = edges[np.hstack((True, ~np.repeat(b_del_bad_interval, 2), True))]
+        n_rows = np.diff(edges)
     # Delete too short good data intervals
     if pressure is None:
         b_del_good_interval = n_rows[::2] < min_range
     else:
-        dp = abs(diff(pressure[edges]))
-        b_del_good_interval = (n_rows[::2] - dp[::2]) < min_range
+        dp = np.abs(np.diff(pressure[edges]))
+        b_del_good_interval = n_rows[::2] - dp[::2] < min_range
     if b_del_good_interval.any():
-        edges = edges[~repeat(b_del_good_interval, 2)]
-
+        edges = edges[~np.repeat(b_del_good_interval, 2)]
     return edges
 
 
 def ranges2bool(st_en, length):
-    a = zeros(length, bool_)
-    for se in int32(st_en):
+    a = np.zeros(length, np.bool_)
+    for se in np.int32(st_en):
         a[slice(*se)] = True
     return a
 
@@ -1196,21 +1137,20 @@ def put_nans(x, st_ends):
     """
     xc = x.copy()
     for se in st_ends:
-        xc[..., slice(*se)] = nan
+        xc[..., slice(*se)] = np.nan
     return xc
 
 
 def put_in_nans(x, st_ends, x_len=None):
     if x_len is None:
         x_len = x.shape[1]
-    elif x_len != x.shape[1] or st_ends[0,0] != 0:
-        xc = empty((x.shape[0], x_len)) + nan()
-        xc[..., st_ends[0, 0]:x_len] = x
+    elif x_len != x.shape[1] or st_ends[0, 0] != 0:
+        xc = np.empty((x.shape[0], x_len)) + np.nan()
+        xc[..., st_ends[0, 0] : x_len] = x
     else:
         xc = x.copy()
-
     for se in zip([0] + st_ends[:, 1].tolist(), st_ends[:, 0].tolist() + [x_len]):
-        xc[..., slice(*se)] = nan
+        xc[..., slice(*se)] = np.nan
     return xc
 
 
@@ -1236,21 +1176,22 @@ def in_ranges(arr, fun, st_ends, where_no_fun_out=None):
     # index of max dens in pres_range before imin_ddens
     v.in_ranges(dens, nanargmax, st_ends)
     """
-
     if where_no_fun_out is None:
-        where_no_fun_out = nan
+        where_no_fun_out = np.nan
 
         def fun_in(se):
             return fun(arr[slice(*se)])
 
-    elif hasattr(where_no_fun_out, '__len__'):
+    elif hasattr(where_no_fun_out, "__len__"):
+
         def fun_in(se, other):
             return fun(arr[slice(*se)], other=other)
 
-        return int32([
+        return np.int32([
             fun_in(se, other) if operator.lt(*se) else other for se, other in zip(st_ends, where_no_fun_out)
-            ])
+        ])
     else:
+
         def fun_in(se):
             return fun(arr[slice(*se)], other=where_no_fun_out)
 
@@ -1265,21 +1206,24 @@ def i_before(pres, pres_range, st_ends):
     :param st_ends:
     :return:
     """
-
-    p_inv = -flip(pres)
-    st_ends_inv = pres.size - fliplr(st_ends)
-    i_st = pres.size - (flip(in_ranges(
-        p_inv,
-        lambda d, other: searchsorted(d, d[0] + pres_range),
-        st_ends_inv,
-        where_no_fun_out=pres.size
-    )) + st_ends_inv[:, 0])
+    p_inv = -np.flip(pres)
+    st_ends_inv = pres.size - np.fliplr(st_ends)
+    i_st = pres.size - (
+        np.flip(
+            in_ranges(
+                p_inv,
+                lambda d, other: np.searchsorted(d, d[0] + pres_range),
+                st_ends_inv,
+                where_no_fun_out=pres.size,
+            )
+        )
+        + st_ends_inv[:, 0]
+    )
     return i_st
 
 
-
 def bad_bot_by_diff(
-        x: ndarray, fun, i_en, i_st=None, p_range=None, p: ndarray = None, speed: ndarray = 1
+    x: np.ndarray, fun, i_en, i_st=None, p_range=None, p: np.ndarray = None, speed: np.ndarray = 1
 ):
     """
     Identify and replace "bad" data segments in `x` based on a detection function `fun`,
@@ -1294,8 +1238,8 @@ def bad_bot_by_diff(
     x : ndarray
         The signal array to filter (e.g., sensor readings).
     fun : Callable[[ndarray], ndarray]
-        A function that takes a segment of `ediff1d(x, to_begin=0)/speed` and returns a boolean mask or indices
-        indicating positions of "bad" data.
+        A function that takes a segment of `ediff1d(x, to_begin=0)/speed` and returns a boolean mask or
+        indices indicating positions of "bad" data.
     i_en : ndarray
         End indices of intervals to analyze. Must be 1D.
     i_st : Optional[Union[int, ndarray]], default None
@@ -1317,28 +1261,15 @@ def bad_bot_by_diff(
     Original lambda call:
     (lambda st_ends: st_ends[:,0] + int32([searchsorted(_Pres[slice(*se)], p_max - 2) for se, p_max in zip(st_ends, fd2_Pmax)])(int32(column_stack((d04_ist_en[:,0], fd1_iPmax))) )
     """
-
     have_p = p is not None
-
-    # # Build initial start-end intervals
-    # if i_st is None:
-    #     # Default: start at first finite point in p (if available), else 0
-    #     # Then use i_en[:-1] + 1 as preceding ends
-    #     first_finite = flatnonzero(isfinite(p))[0] if have_p else 0
-    #     st_ends = append(first_finite, i_en[:-1] + 1)
-    # elif hasattr(i_st, "__len__"):
-    #     st_ends = asarray(i_st, dtype=int32)
-    # else:
-    #     # i_st is a scalar offset
-    #     st_ends = i_en[:-1] + i_st
-    #     st_ends = append(i_st, st_ends)  # prepend single value
-
-    st_ends = int32(column_stack((
-        i_st if hasattr(i_st, '__len__') else append(
-            flatnonzero(isfinite(p))[0] if have_p else 0,
-            i_en[:-1] + (1 if i_st is None else i_st)
+    st_ends = np.int32(
+        np.column_stack((
+            i_st
+            if hasattr(i_st, "__len__")
+            else np.append(
+                np.flatnonzero(np.isfinite(p))[0] if have_p else 0, i_en[:-1] + (1 if i_st is None else i_st)
             ),
-        i_en
+            i_en,
         ))
     )
 
@@ -1348,16 +1279,16 @@ def bad_bot_by_diff(
 
     # Search fun() points and replace starting search points with them
     st_ends[:, 0] += in_ranges(
-        ediff1d(x, to_begin=0) / speed,  # diff(x)/speed[:-1]
-        lambda xr, other: at_or_other(flatnonzero(fun(xr)), 0, other=other),
+        np.ediff1d(x, to_begin=0) / speed,
+        lambda xr, other: at_or_other(np.flatnonzero(fun(xr)), 0, other=other),
         st_ends,
-        where_no_fun_out=x.size,  # something > diff(st_ends)
+        where_no_fun_out=x.size,
     )
     return put_nans(x, st_ends)
 
 
 def bad_top_by_diff(
-        x: ndarray, fun, i_en, i_st=None, p_range=None, p: ndarray = None, speed: ndarray = 1
+    x: np.ndarray, fun, i_en, i_st=None, p_range=None, p: np.ndarray = None, speed: np.ndarray = 1
 ):
     """
     :param x: _description_
@@ -1368,28 +1299,164 @@ def bad_top_by_diff(
     :param p_range: _description_, defaults to None
     :param p: _description_, defaults to None
     :param speed: _description_, defaults to 1
-    """
+    Example:
     # v.bad_bot_by_diff(CTD_Sal_f, lambda x: (x<-0.1)| (x>5), CTDends, i_st=CTDstarts, p_range=1, p=CTD_Pres, speed=CTDspeedDown_MA)
     # lambda x: (x<-0.001)|(x>0.01)
+    """
     x_len = x.size
-    return flip(bad_bot_by_diff(
-        flip(x),
-        fun,
-        i_en=x_len - i_st,
-        i_st=x_len - i_en,
-        p_range=p_range,
-        p=-flip(p) if p is not None else None,
-        speed=-flip(speed) if speed is not None else None,
-    ))
+    return np.flip(
+        bad_bot_by_diff(
+            np.flip(x),
+            fun,
+            i_en=x_len - i_st,
+            i_st=x_len - i_en,
+            p_range=p_range,
+            p=-np.flip(p) if p is not None else None,
+            speed=-np.flip(speed) if speed is not None else None,
+        )
+    )
 
 
-# 2 old functions:
+def loop_filt(p, i_st: int = 1) -> np.ndarray:
+    """
+    Remove loops from CTD profile using global accumulate from anchor.
+
+    Algorithm:
+    1. Downward pass (anchor to end): keeps points strictly greater than all previous
+    2. Upward pass (anchor to start): keeps points strictly less than all previous
+
+    Anchor point itself is included only if it passes monotonicity checks
+
+    :param p: sequence of depth values from CTD profile
+    :param i_st: anchor index to start monotonic selection
+    :return: Boolean mask indicating which points to keep (True = keep)
+
+    Examples:
+    >>> p = array([1, 2, 4, 3, 1, 5, 6, 7])
+    >>> p[loop_filt(p, 3)]  # doctest: +ELLIPSIS
+    Downward pass indexes: ...
+    ...
+    array([1, 2, 4, 5, 6, 7])
+    >>> p[loop_filt(p, 7)]  # doctest: +ELLIPSIS
+    Downward pass indexes: ...
+    ...
+    array([1, 5, 6, 7])
+
+    """
+    n = len(p)
+    mask = np.zeros(n, dtype=np.bool)
+    if i_st > 0:
+        # Downward pass: anchor to end
+        if i_st < n:
+            p_down = p[i_st - 1 :]
+            max_acc = np.maximum.accumulate(p_down)[:-1]
+            mask[i_st:] = p_down[1:] > max_acc
+            i_down = np.flatnonzero(mask[i_st:])
+            p0down = p_down[i_down[0] + 1] if i_down.size else None
+        else:
+            p0down = None
+
+        # Upward pass: anchor to start
+        p_up = p[i_st::-1]
+        # If there is a selected point down, we limit the anchor to it
+        if p0down is not None:
+            p_up[0] = np.fmax(p_up[0], p0down)
+        min_acc = np.minimum.accumulate(p_up)[:-1]
+        mask[i_st - 1 :: -1] = p_up[1:] < min_acc
+    elif i_st < n:
+        # Downward pass: anchor to end
+        max_acc = np.maximum.accumulate(p)
+        mask[1:] = p[1:] > max_acc[:-1]
+        i_down = np.flatnonzero(mask)
+        mask[0] = p[0] < p[i_down[0]] if i_down.size else True
+    return mask
+
+
+def filt_ctd_surface(
+    c: np.ndarray,
+    pres: np.ndarray,
+    *,
+    dt: Optional[float] = None,
+    max_depth: float = 3.0,
+    win: int = 7,
+    k_mad: float = 5.0,
+    k_d: float = 8.0,
+) -> np.ndarray:
+    """
+    Boolean quality mask for removing air-bubble-contaminated salinity - **not tested**
+    (or conductivity) measurements near the surface.
+
+
+    :param max_depth: only samples with pres[i] ≤ max_depth are eligible for rejection.
+    :param pres: pressure, used also to remove any data acquired before the (last) minimum pressure, i.e.
+     good[i] = False for all i < argmin(pres)
+
+    :param c: parameter to filter - use conductivity (preferred) if available else use salinity
+    :param win: odd window to filter `c` by calculating local robust reference (level) for each eligible
+    index i with a full window:
+        median(c)_i = median{c_j | j ∈ [i−h, i+h]} - rolling median,
+        MAD(c)_i = median{|c_j − median(c)_i| | j ∈ [i−h, i+h]} - rolling MAD,
+        where h = (win−1)/2
+        i = 0..N−1 index the samples.
+
+    Reject sample if it satisfies either:
+    1. Level-based spike condition (asymmetric):
+    A sample i is considered contaminated if
+        c_i < median(c)_i − k_mad · MAD(c)_i
+    Only negative deviations are tested, reflecting the physical signature of air bubbles (conductivity loss).
+
+    2. Dynamic spike (derivative) condition (if dt is provided):
+        v_i < median(v)_i − k_d · MAD(v)_i,
+    where
+        v_i = (c_i − c_{i−1}) / dt - discrete time derivative
+        median and MAD of v computed using the same rolling window
+    This detects sharp negative transitions even for wide spikes.
+
+    Notes
+    -----
+    - No assumption is made about monotonic pressure, cast direction, or existence of a continuous downcast.
+    - No explicit wet/dry pressure threshold is used.
+    - Spike length is not constrained: both short and long air events are rejected purely by robust statistics.
+    """
+    n = c.size
+    good = np.ones(n, dtype=np.bool)
+    i0 = int(np.argmin(pres))
+    good[:i0] = False
+    good &= pres <= max_depth
+    if win % 2 == 0:
+        raise ValueError("win must be odd")
+    h = win // 2
+    good[:h] = False
+    good[-h:] = False
+    xw = sliding_window_view(c, win)
+    med = np.median(xw, axis=1)
+    mad = np.median(np.abs(xw - med[:, None]), axis=1)
+    mad[mad == 0] = np.nan
+    idx = np.arange(h, n - h)
+    level_spike = c[idx] < med - k_mad * mad
+    if dt is not None:
+        dxdt = np.diff(c, prepend=c[0]) / dt
+        dw = sliding_window_view(dxdt, win)
+        dmed = np.median(dw, axis=1)
+        dmad = np.median(np.abs(dw - dmed[:, None]), axis=1)
+        dmad[dmad == 0] = np.nan
+        deriv_spike = dxdt[idx] < dmed - k_d * dmad
+    else:
+        deriv_spike = np.zeros_like(level_spike)
+    bad = level_spike | deriv_spike
+    good[idx[bad]] = False
+    return good
+
+
 def f_iBadBefore(arr, fun_bad, i_en, to_end=50):
     """
     to_end: int32
     """
-    st_ends = int32(column_stack((i_en - to_end, i_en)))
-    return int32([at_or_other(flatnonzero(fun_bad(arr[slice(*se)])), 0, to_end) for se in st_ends]) - to_end
+    st_ends = np.int32(np.column_stack((i_en - to_end, i_en)))
+    return (
+        np.int32([at_or_other(np.flatnonzero(fun_bad(arr[slice(*se)])), 0, to_end) for se in st_ends])
+        - to_end
+    )
 
 
 def bad_bot_by_diff_old(x, fun_bad, i_en=None, speed=1):
@@ -1399,14 +1466,16 @@ def bad_bot_by_diff_old(x, fun_bad, i_en=None, speed=1):
     fPutNans(x, f_iBadBefore(diff(x)/speed[:-1], funBad, i_en, 50), i_en)
     where f_iBadBefore(arr,funBad,i_en,to_end) = int32([append(flatnonzero(funBad(arr[int32(En-to_end):int32(En)])), to_end)[0] for En in i_en]) - to_end
     """
-    return put_nans(x, f_iBadBefore(diff(x)/speed[:-1], fun_bad, i_en), i_en)
+    return put_nans(x, f_iBadBefore(np.diff(x) / speed[:-1], fun_bad, i_en), i_en)
 
 
 def grid(z, y, grid_y, st, en, reverse: builtins.bool = False):
-    return transpose([
-        (interp(grid_y, y[s:e], z[s:e], nan, nan) if any(z[s:e]) else nan + grid_y) for s, e in
-        (zip(int32(st)[::-1], int32(en)[::-1]) if reverse else zip(int32(st), int32(en)))
-        ])
+    return np.transpose([
+        np.interp(grid_y, y[s:e], z[s:e], np.nan, np.nan) if np.any(z[s:e]) else np.nan + grid_y
+        for s, e in (
+            zip(np.int32(st)[::-1], np.int32(en)[::-1]) if reverse else zip(np.int32(st), np.int32(en))
+        )
+    ])
 
 
 def i_whole_time(time, dt, dt_shift: int = 0):
@@ -1417,13 +1486,11 @@ def i_whole_time(time, dt, dt_shift: int = 0):
     :return: time array converted to dt units shifted on dt_shift
     """
     if not isinstance(dt, str):
-        unit_sym, unit_dt = (
-            ('s', 1), ('m', 60), ('h', 3600), ('D', 24*3600)
-        )[searchsorted([60, 3600, 24*3600], dt)]
-        dt = f'{fmax(dt // unit_dt, 1)}{unit_sym}'
-
-    return array(int64(time + dt_shift), 'M8[s]').astype(f'M8[{dt}]')
-    #??? why earlier: array(array((time + dt_shift) // max(dt // unit_dt, 1), 'M8[s]'), f'M8[{unit_sym}]')
+        unit_sym, unit_dt = (("s", 1), ("m", 60), ("h", 3600), ("D", 24 * 3600))[
+            np.searchsorted([60, 3600, 24 * 3600], dt)
+        ]
+        dt = f"{np.fmax(dt // unit_dt, 1)}{unit_sym}"
+    return np.array(np.int64(time + dt_shift), "M8[s]").astype(f"M8[{dt}]")
 
 
 def i_whole_time_intervals(time, dt, dt_shift=0, dt_burst=0):
@@ -1437,14 +1504,13 @@ def i_whole_time_intervals(time, dt, dt_shift=0, dt_burst=0):
     :param dt_burst: if not 0 then allow smaller 1st interval: makes it > dt_burst/2
     :return:
     """
-    # Coarse resolution to dt and then find positions where it changes
-    ind = flatnonzero(diff(int8(i_whole_time(time, dt, dt_shift)))) + 1  # whole time indexes
+    ind = np.flatnonzero(np.diff(np.int8(i_whole_time(time, dt, dt_shift)))) + 1
     try:
         _slice = slice(
-            ( 1 if 2*subtract(*time[[ind[0],   0]]) < (dt_burst or dt) else 0        ),
-            (-1 if 2*subtract(*time[[-1, ind[-1]]]) <  dt              else len(time))
+            1 if 2 * np.subtract(*time[[ind[0], 0]]) < (dt_burst or dt) else 0,
+            -1 if 2 * np.subtract(*time[[-1, ind[-1]]]) < dt else len(time),
         )
-        return hstack([0, ind[_slice], len(time) - 1])
+        return np.hstack([0, ind[_slice], len(time) - 1])
     except IndexError:
         return 0
 
@@ -1457,24 +1523,13 @@ def stretch_time(t, packet_st):
     :param packet_st: Sequence of packets starts time
     return: stretched time array
     """
-    o = copy(t)
-    inds_found_st = searchsorted(t, packet_st)
+    o = np.copy(t)
+    inds_found_st = np.searchsorted(t, packet_st)
     inds_found_en = inds_found_st[1:] + 1
     inds_found_en[-1] = t.size
-
     for ind_s, ind_e, *se in zip(inds_found_st[:-1], inds_found_en, packet_st[:-1], packet_st[1:]):
-        o[arange(ind_s, ind_e, dtype=int32)] = linspace(*se, ind_e - ind_s)
+        o[np.arange(ind_s, ind_e, dtype=np.int32)] = np.linspace(*se, ind_e - ind_s)
     return o
-
-# old version
-# def stretch_time(t, packet_st):
-#     o = copy(t)
-#     for se in zip(packet_st, append(packet_st[1:], t[-1])):
-#         ind = searchsorted(t, se)
-#         if ind[-1] < t.size:
-#             ind[-1] += 1
-#         o[arange(*ind, dtype=int32)] = linspace(*se, diff(ind).item())
-#     return o
 
 
 def i_closest(a, values):
@@ -1483,46 +1538,40 @@ def i_closest(a, values):
     values: should be sorted
     https://stackoverflow.com/a/46184652/2028147
     """
-
     # get insert positions
-    idxs = searchsorted(a, values, side="left")
+    idxs = np.searchsorted(a, values, side="left")
 
     # find indexes where previous index is closer
-    prev_idx_is_less = (idxs == len(a)) | (fabs(values - a[maximum(idxs-1, 0)]) < fabs(values - a[minimum(idxs, len(a)-1)]))
+    prev_idx_is_less = (idxs == len(a)) | (
+        np.fabs(values - a[np.maximum(idxs - 1, 0)]) < np.fabs(values - a[np.minimum(idxs, len(a) - 1)])
+    )
     idxs[prev_idx_is_less] -= 1
-
     return idxs
 
 
 def rose_table(v_abs, v_dir, rose_bins, nsectors=32):
-    sector = 360./nsectors
-    angles = arange(-sector / 2, 360. + sector, sector, dtype=float)
-    t = histogram2d(x=v_abs, y=v_dir%360, bins=[rose_bins, angles], normed=False)[0]
-    t2 = column_stack((nansum(t[:, [0,-1]], axis=1), t[:, 1:-1]))
-    info(t)
-    return flipud(cumsum(flipud(t2*100/nansum(t2)), axis=0))
-    # AddCustom('definition', 'f_rose_table(v_abs, v_dir)', 'f(lambda t2: flipud(cumsum(flipud(t2*100/nansum(t2)), axis=0)), f(lambda t: column_stack((nansum(t[:, [0,-1]], axis=1), t[:, 1:-1])), histogram2d(x=v_abs, y=(v_dir + (0 if Rose_blow_to else 180))%360, bins=[Rose_bins, f(lambda angle: arange(-angle / 2, 360. + angle, angle, dtype=float), 360./Rose_nsector)], normed=False)[0]))')
+    sector = 360.0 / nsectors
+    angles = np.arange(-sector / 2, 360.0 + sector, sector, dtype=float)
+    t = np.histogram2d(x=v_abs, y=v_dir % 360, bins=[rose_bins, angles], normed=False)[0]
+    t2 = np.column_stack((np.nansum(t[:, [0, -1]], axis=1), t[:, 1:-1]))
+    np.info(t)
+    return np.flipud(np.cumsum(np.flipud(t2 * 100 / np.nansum(t2)), axis=0))
 
 
-# for inclinometers
+# For inclinometers
+
 
 def rotate(r_from, r_to):
     """
     Rotation matrix to rotate 1st vector to second
     """
-    if all(r_from == r_to):
-        return eye(3)
-
-    a = ravel(r_from)
-    b = ravel(r_to)
-
-    c = cross(a, b)
-    scc_cross_ab = float64([
-        [0, -c[2], c[1]],
-        [c[2], 0, -c[0]],
-        [-c[1], c[0], 0]
-    ])
-    return eye(3) + scc_cross_ab + linalg.matrix_power(scc_cross_ab, 2) * (1 - a @ b) / sum(c**2)
+    if np.all(r_from == r_to):
+        return np.eye(3)
+    a = np.ravel(r_from)
+    b = np.ravel(r_to)
+    c = np.cross(a, b)
+    scc_cross_ab = np.float64([[0, -c[2], c[1]], [c[2], 0, -c[0]], [-c[1], c[0], 0]])
+    return np.eye(3) + scc_cross_ab + np.linalg.matrix_power(scc_cross_ab, 2) * (1 - a @ b) / np.sum(c**2)
 
 
 def mag_dec(lat, lon, time_iso, depth=0):
@@ -1533,10 +1582,11 @@ def mag_dec(lat, lon, time_iso, depth=0):
     :param time_iso: # like '2020-09-20'
     :param depth: in km (negative below sea surface)
     """
-    run_commands = f'c:/Users/and0k/conda/Scripts/activate.bat py3.10x64h5togrid && python -c "from datetime import datetime; import wmm2020 as wmm; year_fraction = lambda date: (lambda start: date.year + float(date.toordinal() - start) / (datetime(date.year + 1, 1, 1).toordinal() - start))(datetime(date.year, 1, 1).toordinal()); mag = wmm.wmm({lat}, {lon}, {depth}, year_fraction(datetime.fromisoformat(\'{time_iso}\'))); print(mag.decl.item(0))"'
+    run_commands = f'''c:/Users/and0k/conda/Scripts/activate.bat py3.10x64h5togrid && python -c "from datetime import datetime; import wmm2020 as wmm; year_fraction = lambda date: (lambda start: date.year + float(date.toordinal() - start) / (datetime(date.year + 1, 1, 1).toordinal() - start))(datetime(date.year, 1, 1).toordinal()); mag = wmm.wmm({lat}, {lon}, {depth}, year_fraction(datetime.fromisoformat('{time_iso}'))); print(mag.decl.item(0))"'''
     decl_str = check_output(
-        f'c:/Users/and0k/conda/Scripts/activate.bat py3.10x64h5togrid && {run_commands}',
-        shell=True, text=True
+        f"c:/Users/and0k/conda/Scripts/activate.bat py3.10x64h5togrid && {run_commands}",
+        shell=True,
+        text=True,
     )
     return float(decl_str)
 
@@ -1549,11 +1599,11 @@ def wrap_dir(x, disp_central_dir=180):
 
 def wrap_dir_unwrap180(x, disp_central_dir, pass_over):
     s = wrap_dir(x, disp_central_dir)
-    bs = abs(s - disp_central_dir) < 180 - pass_over
-    return where(
-        (abs(interp(arange(len(s)), flatnonzero(bs), s[bs]) - s) > 90) & ~bs,  # , period=360
-        where(s < disp_central_dir, s + 360, s - 360),
-        s
+    bs = np.abs(s - disp_central_dir) < 180 - pass_over
+    return np.where(
+        (np.abs(np.interp(np.arange(len(s)), np.flatnonzero(bs), s[bs]) - s) > 90) & ~bs,  # , period=360
+        np.where(s < disp_central_dir, s + 360, s - 360),
+        s,
     )
 
 
@@ -1571,86 +1621,84 @@ def norm_field(raw3d, coef_a2d, coef_c, raw3d_helps_recover=None):
     if coef_c.ndim < 2:
         coef_c = coef_c.reshape(-1, 1)
     # Apply coefs
-    s = dot(coef_a2d, raw3d - coef_c)
+    s = np.dot(coef_a2d, raw3d - coef_c)
 
     # If gain for some channel is zero
-    i_ch_bad = flatnonzero(
-        coef_a2d.diagonal() == 0
-    )  # diagonal elements: coef_a2d[[0, 1, 2], [0, 1, 2]]
+    i_ch_bad = np.flatnonzero(coef_a2d.diagonal() == 0)
     if i_ch_bad.size:
         # Recover channel
         i_ch_ok = [i for i in range(3) if i != i_ch_bad]
-        s[i_ch_bad] = square(1 - (s[i_ch_ok] ** 2).sum(axis=0))
+        s[i_ch_bad] = np.square(1 - (s[i_ch_ok] ** 2).sum(axis=0))
         if (s[i_ch_bad].imag != 0).any():
             s[i_ch_bad] = s[i_ch_bad].real
 
         # Sign of recovering channel
         if raw3d_helps_recover is not None:
-            s[i_ch_bad] *= sign(raw3d_helps_recover[i_ch_bad])
+            s[i_ch_bad] *= np.sign(raw3d_helps_recover[i_ch_bad])
             return s
 
         # Select sign in inverse gradient points so that we minimise changes of gradient
-        s_dif = ediff1d(s[i_ch_bad], to_begin=0)
+        s_dif = np.ediff1d(s[i_ch_bad], to_begin=0)
         # where gradient reverse
-        b_reversed = s_dif < 0  # signal decreases
-        b_reversed &= append(
-            ~b_reversed[1:], False
-        )  # and signal increases in next point
+        b_reversed = s_dif < 0
+        b_reversed &= np.append(~b_reversed[1:], False)
         # Keep reversed where diff(s_dif) of inverted signal will be less than of not inverted (where gradient reversed)
         # diff of reversed signal (after b_reversed points)
-        _ = s[i_ch_bad, b_reversed] + s[i_ch_bad, roll(b_reversed, 1)]
+        _ = s[i_ch_bad, b_reversed] + s[i_ch_bad, np.roll(b_reversed, 1)]
         # diff in point before gradient reverse:
-        s_dif_prev = s_dif[roll(b_reversed, -1)]
+        s_dif_prev = s_dif[np.roll(b_reversed, -1)]
         # select sign of signal with minimum change of |gradient|
-        b_reversed[b_reversed] = abs(s_dif_prev - _) < abs(
-            s_dif_prev - s_dif[b_reversed]
-        )
+        b_reversed[b_reversed] = np.abs(s_dif_prev - _) < np.abs(s_dif_prev - s_dif[b_reversed])
 
         # Consequently invert signal in b_reversed points
-        s_rev_sign = zeros_like(s_dif)
+        s_rev_sign = np.zeros_like(s_dif)
         s_rev_sign[0] = 1
-        n_reversed = sum(b_reversed)
-        s_rev_sign[b_reversed] = tile([-2, 2], int(ceil(n_reversed / 2)))[:n_reversed]
-        s_rev_sign = cumsum(s_rev_sign)
+        n_reversed = np.sum(b_reversed)
+        s_rev_sign[b_reversed] = np.tile([-2, 2], int(np.ceil(n_reversed / 2)))[:n_reversed]
+        s_rev_sign = np.cumsum(s_rev_sign)
         s[i_ch_bad] = s_rev_sign * s[i_ch_bad]
     return s
 
 
-def xy_or_y(x, y, use_x_if=lambda x: bool(x), f_xy=operator.add):
+def xy_or_y(x, y, use_x_if=lambda x: np.bool(x), f_xy=operator.add):
     return f_xy(x, y) if (use_x_if(x) if callable(use_x_if) else use_x_if) else y
 
-def xy_or_x(x, y, use_y_if=lambda y: bool(y), f_xy=operator.add):
+
+def xy_or_x(x, y, use_y_if=lambda y: np.bool(y), f_xy=operator.add):
     return f_xy(x, y) if (use_y_if(y) if callable(use_y_if) else use_y_if) else x
 
-def xy_sel(x, y, use_x_if=lambda x: bool(x), use_y_if=lambda y: bool(y), f_xy=operator.add, nothing=""):
-    use_x = (use_x_if(x) if callable(use_x_if) else use_x_if)
-    use_y = (use_y_if(y) if callable(use_y_if) else use_y_if)
+
+def xy_sel(x, y, use_x_if=lambda x: np.bool(x), use_y_if=lambda y: np.bool(y), f_xy=operator.add, nothing=""):
+    use_x = use_x_if(x) if callable(use_x_if) else use_x_if
+    use_y = use_y_if(y) if callable(use_y_if) else use_y_if
     if use_x:
         return f_xy(x, y) if use_y else x
     else:
         return y if use_y else nothing
 
+
 # For CTD "zabor"
 
-def cor_where_run_p(arr, dict_i_p, inds, pres, fun=(lambda x: nan)):
+
+def cor_where_run_p(arr, dict_i_p, inds, pres, fun=lambda x: np.nan):
     """
-    Applies fun() to parts of arr' copy and returns it. Part is found for each ``dict_i_p`` item
-    which key equal to ``inds`` and ``pres`` between its values.
-    arr: parameter to change by apply fun on its parts (one part per run)
-    dict_i_p: {run#: [minP, maxP], ...} - run number, its min and max pressure where apply fun
-    inds: array (of arr size) which each element assigned to run number it belongs
-    pres: pressure
-    fun: function to apply, default: set elements to nan
+    Apply function to array elements within specified pressure ranges for each run.
+
+    Parameters:
+    - arr: input array to modify
+    - dict_i_p: {run#: [min_pressure, max_pressure]}
+    - inds: array assigning each element of `arr` to a run number
+    - pres: pressure values
+    - fun: function to apply (default: set to nan)
     """
     ac = arr.copy()
     for i, (p_st, p_en) in dict_i_p.items():
         b = (inds == i) & (p_st < pres) & (pres < p_en)
         ac[b] = fun(arr[b])
-        # putmask(ac, b , fun(arr[b])) is bad if some NaNs!
     return ac
 
 
-def where_run_p(arr, dict_i_p, inds, pres, fun=nanmean, val_for_fun_of_empty=None):
+def where_run_p(arr, dict_i_p, inds, pres, fun=np.nanmean, val_for_fun_of_empty=None):
     """Same args as for cor_where_run_p()"""
     ac = []
     for i, (p_st, p_en) in dict_i_p.items():
@@ -1694,30 +1742,26 @@ def zaborrunsselect(use_ranges, use_runs_in_used_range, runs_st, runs_lengths, d
      use_ranges, use_runs_in_used_range, runs_st, runs_lengths, data_indexes, time_shift_s = [
         USEranges__], USEruns_in_used_range, (l0index,), (l0rows + l0rows_filtered,), (t,), TimeShiftedFromUTC_s
     """
-
     # Runs' time ranges and indexes from log tables
     n_st_i = []
     for i, (r_st, r_n, tranges) in enumerate(zip(runs_st, runs_lengths, use_ranges)):
-        i_log_use = i_ranges(r_st, tranges, time_shift_s - 10, t_units='ns')
+        i_log_use = i_ranges(r_st, tranges, time_shift_s - 10, t_units="ns")
         # next start:
-        # r_next = r_st[sl(int32(i_log_use) + 1)]
-        n_st_i.append([
-            r_n[sl(i_log_use)],
-            r_st[sl(i_log_use)],
-            # r_next if i_log_use[-1][-1] < len(r_st) else append(r_next, r_n[-1]),
-            full(ediff1d(i_log_use).item(), i)
-        ])
+        n_st_i.append([r_n[sl(i_log_use)], r_st[sl(i_log_use)], np.full(np.ediff1d(i_log_use).item(), i)])
 
     # device index, run' start time, run' end time, run' up end time (= next run start):
-    n_st_j = vstack(n_st_i)
+    n_st_j = np.vstack(n_st_i)
     # sort by run start time
-    j_sort = argsort(n_st_j[1, :])
+    j_sort = np.argsort(n_st_j[1, :])
 
     # List of selected runs
     i_runs = [
-        i for se in use_runs_in_used_range for i in (
-            [se] if isinstance(se, int) else
-            range(*[(n_st_j.shape[1] if j is None else (j + n_st_j.shape[1]) if j < 0 else j) for j in se])
+        i
+        for se in use_runs_in_used_range
+        for i in (
+            [se]
+            if isinstance(se, int)
+            else range(*[n_st_j.shape[1] if j is None else j + n_st_j.shape[1] if j < 0 else j for j in se])
         )
     ]
     # same effect expression: sum([[se] if isinstance(se, int) else
@@ -1729,111 +1773,45 @@ def zaborrunsselect(use_ranges, use_runs_in_used_range, runs_st, runs_lengths, d
 
     # Data runs indexes
     # - in raw data
-    idata_st = hstack([searchsorted(data_indexes[int(j.item(0))], starts) for starts, j in (
-        hsplit(n_st_j_use[1:, :], flatnonzero(diff(j_use)) + 1)
-    )])  # if i > 0 else n_st_j_use[1:, :].T
+    idata_st = np.hstack([
+        np.searchsorted(data_indexes[int(j.item(0))], starts)
+        for starts, j in np.hsplit(n_st_j_use[1:, :], np.flatnonzero(np.diff(j_use)) + 1)
+    ])  # if i > 0 else n_st_j_use[1:, :].T
     idata_en = idata_st + n_st_j_use[0, :]
 
     # - in selected runs we will combine (except 1st = 0)
-    idatasel_en = cumsum(n_st_j_use[0, :])
-    idatasel_st = append(0, idatasel_en[:-1])
-
-    out = column_stack([idatasel_st, idatasel_en, idata_st, idata_en, j_use])
-    #warning('zabor_runs_edges() result has shape %s: %s', repr(out.shape), repr(out))
+    idatasel_en = np.cumsum(n_st_j_use[0, :])
+    idatasel_st = np.append(0, idatasel_en[:-1])
+    out = np.column_stack([idatasel_st, idatasel_en, idata_st, idata_en, j_use])
+    # warning('zabor_runs_edges() result has shape %s: %s', repr(out.shape), repr(out))
     return out
 
 
-def loop_filt(p, i_st: int = 1) -> ndarray:
-    """
-    Remove loops from CTD profile using global accumulate from anchor.
-
-    Algorithm:
-    1. Downward pass (anchor to end): keeps points strictly greater than all previous
-    2. Upward pass (anchor to start): keeps points strictly less than all previous
-
-    Anchor point itself is included only if it passes monotonicity checks
-
-    :param p: sequence of depth values from CTD profile
-    :param i_st: anchor index to start monotonic selection
-    :return: Boolean mask indicating which points to keep (True = keep)
-
-    Examples:
-    >>> p = array([1, 2, 4, 3, 1, 5, 6, 7])
-    >>> p[loop_filt(p, 3)]  # doctest: +ELLIPSIS
-    Downward pass indexes: ...
-    ...
-    array([1, 2, 4, 5, 6, 7])
-    >>> p[loop_filt(p, 7)]  # doctest: +ELLIPSIS
-    Downward pass indexes: ...
-    ...
-    array([1, 5, 6, 7])
-
-    """
-
-    n = len(p)
-    mask = zeros(n, dtype=bool)
-    if i_st > 0:
-        # Downward pass: anchor to end
-        if i_st < n:
-            p_down = p[i_st - 1 :]
-            max_acc = maximum.accumulate(p_down)[:-1]
-            mask[i_st:] = p_down[1:] > max_acc
-            # debug(
-            #     "Downward pass indexes: %s,\np_down=%s\nmax_acc=%s\nmask[i_st:]=%s",
-            #     list(range(i_st, n)),
-            #     p_down,
-            #     max_acc,
-            #     mask[i_st:].astype(int).tolist(),
-            # )
-
-            i_down = flatnonzero(mask[i_st:])
-            p0down = p_down[i_down[0] + 1] if i_down.size else None
-        else:
-            p0down = None
-
-        # Upward pass: anchor to start
-        p_up = p[i_st::-1]
-        # If there is a selected point down, we limit the anchor to it
-        if p0down is not None:
-            p_up[0] = fmax(p_up[0], p0down)
-        min_acc = minimum.accumulate(p_up)[:-1]
-        mask[i_st - 1 :: -1] = p_up[1:] < min_acc
-        # debug(
-        #     "Upward pass indexes: %s, \np_up[::-1]=%s, \nmin_acc[::-1]=%s, \nmask[:i_st+1]=%s",
-        #     list(range(i_st)),
-        #     p_up[::-1],
-        #     min_acc[::-1],
-        #     mask[: i_st + 1].astype(int).tolist(),
-        # )
-    else:
-        # Downward pass: anchor to end
-        if i_st < n:
-            max_acc = maximum.accumulate(p)
-            mask[1:] = p[1:] > max_acc[:-1]
-            i_down = flatnonzero(mask)
-            mask[0] = p[0] < p[i_down[0]] if i_down.size else True
-
-    return mask
-
-
-# for correct bug in 2D expression definition (not works)
-
 def _DS_(bit, part):
-    """ failed correction of Veusz bug of dimension query
+    """failed correction of Veusz bug of dimension query
     bit, part will be 'rose_table' 'data'
     """
+
     def f_out(*args):
         return
         # return 2D array cause fatal error:
         # globals()[bit](*args)
         # array([[0]])
         # [[]]
+
     return f_out
 
 
 def load_cash(
-    vars, dtypes=('M8[s]',), index='Time_UTC', file='~cash.csv', usecols=None, delimiter='\t',
-    fun_out=lambda index, loaded_index, loaded: atleast_2d(loaded[isin(int32(loaded_index), int32(index))].view('f8'))
+    vars,
+    dtypes=("M8[s]",),
+    index="Time_UTC",
+    file="~cash.csv",
+    usecols=None,
+    delimiter="\t",
+    fun_out=lambda index, loaded_index, loaded: np.atleast_2d(
+        loaded[np.isin(np.int32(loaded_index), np.int32(index))].view("f8")
+    ),
 ):
     """
 
@@ -1847,26 +1825,80 @@ def load_cash(
     """
     try:
         index_col, index_val = next(iter(index.items())) if isinstance(index, Mapping) else (index, None)
-        n_formats_skipped = (len(vars) - len(dtypes))
+        n_formats_skipped = len(vars) - len(dtypes)
         if n_formats_skipped:
-            dtypes = tuple(dtypes) + ('f8',) * n_formats_skipped
-        data_exist = loadtxt(
-            file, skiprows=1, usecols=usecols, delimiter=delimiter,
-            dtype=dtype({
-                'names': tuple(vars), 'formats': ['f8' if dtyp.startswith('M') else dtyp for dtyp in dtypes]
+            dtypes = tuple(dtypes) + ("f8",) * n_formats_skipped
+        data_exist = np.loadtxt(
+            file,
+            skiprows=1,
+            usecols=usecols,
+            delimiter=delimiter,
+            dtype=np.dtype({
+                "names": tuple(vars),
+                "formats": ["f8" if dtyp.startswith("M") else dtyp for dtyp in dtypes],
             }),
-            converters={i: (lambda x: dt64s2vsz(datetime64(x, 's'))) for i, dtyp in enumerate(dtypes) if dtyp.startswith('M')}
+            converters={
+                i: lambda x: dt64s2vsz(np.datetime64(x, "s"))
+                for i, dtyp in enumerate(dtypes)
+                if dtyp.startswith("M")
+            },
         )
-        # index_icol = tuple(vars).index(index_col)
-        # print(index_val)
-        # print(data_exist[index_col])
-        # print(data_exist)
     except:
-        exception('Error in load_cash(%s))!', file)
+        exception("Error in load_cash(%s))!", file)
         return
     if index_val is None:
         return data_exist
     return fun_out(index_val, data_exist[index_col], data_exist)
+
+
+def parse_toon(toon_text):
+    """
+        Parse TOON format text into structured Python data.
+
+        Args:
+            toon_text: String containing TOON format data
+
+        Returns:
+            dict: Parsed data with column definitions and record arrays
+        Note: the function is for this subformat:
+    toon_data = '''@cols = {site,H,z,mod,lat,lon,t0,t1,bdt,bt}
+    i10[1]@cols: "",,,?,58.1716,10.76,2017-06-19T15:00,2017-06-21T05:35,240,1800
+    i11[1]@cols: "",,,A,59.0032,11.4201,2018-07-02T09:15,2018-07-03T18:40,300,1800
+    i20[3]@cols: "",,,?,55.3083,15.6383,2017-06-25T08:00,2017-06-26T15:05,240,1800
+    "",,,?,55.2152,17.0235,2017-06-28T11:33,2017-07-01T11:05,240,1800
+    "",,,?,54.9910,18.1042,2017-07-03T10:20,2017-07-05T09:50,240'''
+    """
+    import re
+    lines = toon_text.strip().split("\n")
+
+    # Extract column definition
+    cols_match = re.match("@cols\\s*=\\s*\\{([^}]+)\\}", lines[0])
+    cols = [c.strip() for c in cols_match.group(1).split(",")]
+
+    # Parse data records
+    records = {}
+    current_id = None
+    current_data = []
+    for line in lines[1:]:
+        line = line.strip()
+        if not line:
+            continue
+
+        # Check for record ID
+        id_match = re.match("(\\w+)\\[\\d+\\]@cols:", line)
+        if id_match:
+            if current_id:
+                records[current_id] = np.array(current_data, dtype=object)
+            current_id = id_match.group(1)
+            current_data = []
+            line = line[id_match.end() :].strip()
+
+        # Parse CSV row
+        values = [v.strip().strip('"') or None for v in line.split(",")]
+        current_data.append(values[: len(cols)])
+    if current_id:
+        records[current_id] = np.array(current_data, dtype=object)
+    return {"columns": cols, "records": records}
 
 
 def fmt_3_digits_after_dot(x):
@@ -1882,36 +1914,29 @@ def format_2d_array(data, formatters=()):
     Function to format a 2D numpy array with a list of formatter functions
     data: numpy array or list of columns to write
     """
-    b_array = isinstance(data, ndarray)
-    # Set/check the number of formatters is same as the number of columns
+    b_array = isinstance(data, np.ndarray)
     n_elements = (
-        (
-            (data.shape[1] if data.ndim > 1 else 1) if data.dtype.names is None else len(data.dtype.names)
-        )
-        if b_array else len(data)
+        ((data.shape[1] if data.ndim > 1 else 1) if data.dtype.names is None else len(data.dtype.names))
+        if b_array
+        else len(data)
     )
     if len(formatters) < n_elements:
         formatters = list(formatters)
         formatters += [fmt_3_digits_after_dot] * (n_elements - len(formatters))
     elif len(formatters) != n_elements:
         raise ValueError("Number of formatters must be <= number of columns.")
-
     formatted_data = []
     prev_formatter = None
     # Apply each formatter to its corresponding column
     for i, formatter in enumerate(formatters):
         # Vectorized application of the formatter
         if prev_formatter != formatter:
-            vec_formatter = vectorize(
-                f"{{:{formatter}}}".format
-                if isinstance(formatter, str)
-                else formatter
+            vec_formatter = np.vectorize(
+                f"{{:{formatter}}}".format if isinstance(formatter, str) else formatter
             )
-
         formatted_data.append(vec_formatter(data[:, i] if b_array else data[i]))
         prev_formatter = formatter
-
-    return array(formatted_data).T
+    return np.array(formatted_data).T
 
 
 def save2text(
@@ -1923,7 +1948,7 @@ def save2text(
     file_sfx="_out.tsv",
     skip_if_exist=True,
     fun_get=lambda x: x,  # : Callable[[Any], Any]
-    fun_before_compare=int32,
+    fun_before_compare=np.int32,
 ):
     """
     Save data to a text file.
@@ -1952,25 +1977,25 @@ def save2text(
     Example
     save2text(
         ('bin2_P__','bin2_Vabs__','bin2_Vdir__'),
-        'bin2_t0st__', '\t',
+        'bin2_t0st__', '	',
         lambda x: (warning(x), DATA(x))[1]
     )
     """
-
     if file is None:
         parent, basename = (lambda p: (p.parent, p.name))(Path(sys.argv[1]))
-        file = parent / (basename.rsplit('.')[0] + file_sfx)
+        file = parent / (basename.rsplit(".")[0] + file_sfx)
     else:
         file = Path(file)
     data_exist = False
 
-    n_formats_skipped = (len(vars) - len(dtypes))
+    n_formats_skipped = len(vars) - len(dtypes)
     if n_formats_skipped:
-        dtypes = tuple(dtypes) + ('f8',)*n_formats_skipped
+        dtypes = tuple(dtypes) + ("f8",) * n_formats_skipped
+
     def from_vsz(v, fmt):
         return vsz2dt64s(fun_get(v)) if fmt.startswith("M") else fun_get(v)
 
-    warning(f'Saving {vars} to {file}...')
+    warning(f"Saving {vars} to {file}...")
     if skip_if_exist:
         if isinstance(skip_if_exist, builtins.bool):
             if file.is_file():
@@ -1989,32 +2014,31 @@ def save2text(
                     with contextlib.suppress(TypeError):  # may already have `var_name` right
                         var_name = vars[skip_if_exist]
                 data_new = fun_get(var_name)
-                # 2. data loaded earlier
-                if data_exist == 'loadtxt':
+                if data_exist == "loadtxt":
                     var_icol = tuple(vars).index(skip_if_exist)
                     dtyp_col = dtypes[var_icol]
-                    data_exist = loadtxt(
+                    data_exist = np.loadtxt(
                         file, skiprows=1, dtype=dtyp_col, usecols=[var_icol], delimiter=delimiter
                     )
-                    if dtyp_col.startswith('M'):
+                    if dtyp_col.startswith("M"):
                         data_exist = dt64s2vsz(data_exist)
                 elif data_exist is None:
-                    data_exist = fun_get(f'~{var_name}{file_stem}')
-
+                    data_exist = fun_get(f"~{var_name}{file_stem}")
                 data_new_cmp = fun_before_compare(data_new)
                 data_exist_cmp = fun_before_compare(data_exist)
-                b_new = ~isin(data_new_cmp, data_exist_cmp, assume_unique=True)
-                if not b_new.any():  # , kind='table' is not supported yet
-                    return -2  # data exist
+                b_new = ~np.isin(data_new_cmp, data_exist_cmp, assume_unique=True)
+                if not b_new.any():
+                    return -2
                 else:
-                    warning(f'{data_new}->{data_new_cmp}: not in {data_exist}->{data_exist_cmp}! Saving%s...',
-                    '' if b_new.all() else f' {flatnonzero(b_new)} items'
+                    warning(
+                        f"{data_new}->{data_new_cmp}: not in {data_exist}->{data_exist_cmp}! Saving%s...",
+                        "" if b_new.all() else f" {np.flatnonzero(b_new)} items",
                     )
             except Exception:
                 data_exist = False
-                exception('Error in save2text(%s))!', file.name)
-                warning(f'~{var_name}{file_stem}: {data_exist}')
-                warning(f'column_name: {fun_get(var_name)}')
+                exception("Error in save2text(%s))!", file.name)
+                warning(f"~{var_name}{file_stem}: {data_exist}")
+                warning(f"column_name: {fun_get(var_name)}")
                 return
     # from numpy.core.records import fromarrays
     warning(f"dtypes={dtypes}, type: {type(dtypes)}")
@@ -2027,45 +2051,29 @@ def save2text(
         else vars
     )
     el_size = next(iter(vars_vals)).size
-    #if len(v) for v in val_arr):
-    #else:
-    #    warning([])
     try:
         # 2. broadcast scalars
-        val_arr = [
-            repeat(v, el_size) if isscalar(v) else v
-            for v, fmt in zip(vars_vals, dtypes)
-        ]
+        val_arr = [np.repeat(v, el_size) if np.isscalar(v) else v for v, fmt in zip(vars_vals, dtypes)]
         # data_records = fromarrays(val_arr, dtype=dtype({'names': tuple(vars), 'formats': dtypes}))
-        n_formats_skipped = (len(vars) - len(formats))
+        n_formats_skipped = len(vars) - len(formats)
         if len(formats) < len(dtypes):
             formats = list(formats) + [
                 fmt_3_digits_after_dot if dtyp.startswith("f") else "s"
                 for dtyp in dtypes[-n_formats_skipped:]
             ]
-
-
-
-        with file.open(mode= 'a' if skip_if_exist else 'w') as f:
+        with file.open(mode="a" if skip_if_exist else "w") as f:
             if data_exist is False:
-                savetxt(f, atleast_2d(list(vars)), '%s', delimiter=delimiter)
-            # savetxt(f, data_records, fmt=formats, delimiter=delimiter)  # delimiter.join(formats)
+                np.savetxt(f, np.atleast_2d(list(vars)), "%s", delimiter=delimiter)
             str_array = format_2d_array(val_arr, formatters=formats)
             warning(f"formats: {formats},\narray: {str_array}\n")
-            savetxt(
-                f,
-                str_array,
-                fmt="%s",
-                delimiter=delimiter,
-            )
-        warning("File %s: %s", 'saved' if data_exist is False else 'appended', file)
-        # print("File %s: %s" % ('saved' if data_exist is False else 'appended', file))
+            np.savetxt(f, str_array, fmt="%s", delimiter=delimiter)
+        warning("File %s: %s", "saved" if data_exist is False else "appended", file)
     except Exception:
-        exception('Error in save2text(%s)!', file.name)
-        warning(f'Creating record array from: {val_arr} and saving is failed!\nTypes: {dtypes}')
-        warning(f'{fun_get}(vars={vars}) gives: {[fun_get(n) for n in vars_vals]}')
+        exception("Error in save2text(%s)!", file.name)
+        warning(f"Creating record array from: {val_arr} and saving is failed!\nTypes: {dtypes}")
+        warning(f"{fun_get}(vars={vars}) gives: {[fun_get(n) for n in vars_vals]}")
         return
-    return str_array.shape[1]  # rows written
+    return str_array.shape[1]
 
 
 def nc_var_scale_offcet(file_nc, var_path: str):
@@ -2080,7 +2088,7 @@ def nc_var_scale_offcet(file_nc, var_path: str):
         var = f[var_path]
         scale = var.attrs.get("scale_factor")
         offset = var.attrs.get("add_offset")
-    return scale, offset
+    return (scale, offset)
 
 
 def dx_dy_dist_bearing(lon1, lat1, lon2, lat2):
@@ -2096,29 +2104,28 @@ def dx_dy_dist_bearing(lon1, lat1, lon2, lat2):
      - dist: m, distance between points
      - bearing: degrees, in the range ``[-180, 180]``
     """
-    lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
+    lon1, lat1, lon2, lat2 = map(np.radians, [lon1, lat1, lon2, lat2])
     dlon = lon2 - lon1
     dlat = lat2 - lat1
-
-    R = 6371000  # radius of the earth in m
-    klon = cos((lat2 + lat1) / 2)
+    # radius of the earth in m
+    R = 6371000
+    klon = np.cos((lat2 + lat1) / 2)
     dx = R * klon * dlon
     dy = R * dlat
-
-    d = hypot(dx, dy)
-    # angle = arctan2(dlat, dlon)
-    angle = arctan2(dx, dy)  # or use atan2[(sin Δλ ⋅ cos φ₂), (cos φ₁ ⋅ sin φ₂ − sin φ₁ ⋅ cos φ₂ ⋅ cos Δλ)] from https://www.omnicalculator.com/other/azimuth
-
-    return column_stack((dx, dy, d, degrees(angle)))
+    d = np.hypot(dx, dy)
+    angle = np.arctan2(dx, dy)
+    # or use atan2[(sin Δλ ⋅ cos φ₂), (cos φ₁ ⋅ sin φ₂ − sin φ₁ ⋅ cos φ₂ ⋅ cos Δλ)] from https://www.omnicalculator.com/other/azimuth
+    return np.column_stack((dx, dy, d, np.degrees(angle)))
 
 
 def skewness(data):
     n = len(data)
-    mean_ = mean(data)
-    std_ = std(data, ddof=1)  # Set ddof=1 for sample standard deviation
-    third_moment = ((data - mean_)**3).sum() / n
-    out = third_moment / (std_**3)
+    mean_ = np.mean(data)
+    std_ = np.std(data, ddof=1)  # Set ddof=1 for sample standard deviation
+    third_moment = ((data - mean_) ** 3).sum() / n
+    out = third_moment / std_**3
     return out
+
 
 def kurtosis(data):
     """
@@ -2126,19 +2133,18 @@ def kurtosis(data):
     If you want the Fisher kurtosis (which would be three for a normal distribution), you can simply remove the - 3
     """
     n = len(data)
-    mean_ = mean(data)
-    std_ = std(data, ddof=1)
-    fourth_moment = ((data - mean_)**4).sum() / n
-    out = fourth_moment / (std_**4) - 3  # Subtract 3 for excess kurtosis
+    mean_ = np.mean(data)
+    std_ = np.std(data, ddof=1)
+    fourth_moment = ((data - mean_) ** 4).sum() / n
+    out = fourth_moment / std_**4 - 3  # Subtract 3 for excess kurtosis
     return out
-
 
 
 ### Functions copied from https://pypi.org/project/seawater/3.3/ to calculate potential density (sw_pden()) ###
 ###############################################################################################################
 
-T68conv = lambda t90: t90*1.00024
-T90conv = lambda t68: t68/1.00024
+T68conv = lambda t90: t90 * 1.00024
+T90conv = lambda t68: t68 / 1.00024
 
 
 def ptmp(s, t, p, pr=0):
@@ -2219,26 +2225,26 @@ def ptmp(s, t, p, pr=0):
                        99-06-25. Lindsay Pender, Fixed transpose of row vectors.
                        03-12-12. Lindsay Pender, Converted to ITS-90.
         """
-
         T68 = T68conv(t)
-
-        a = [3.5803e-5, 8.5258e-6, -6.836e-8, 6.6228e-10]
-        b = [1.8932e-6, -4.2393e-8]
-        c = [1.8741e-8, -6.7795e-10, 8.733e-12, -5.4481e-14]
+        a = [3.5803e-05, 8.5258e-06, -6.836e-08, 6.6228e-10]
+        b = [1.8932e-06, -4.2393e-08]
+        c = [1.8741e-08, -6.7795e-10, 8.733e-12, -5.4481e-14]
         d = [-1.1351e-10, 2.7759e-12]
         e = [-4.6206e-13, 1.8676e-14, -2.1687e-16]
-        return (a[0] + (a[1] + (a[2] + a[3] * T68) * T68) * T68 +
-                (b[0] + b[1] * T68) * (s - 35) +
-                ((c[0] + (c[1] + (c[2] + c[3] * T68) * T68) * T68) +
-                 (d[0] + d[1] * T68) * (s - 35)) * p +
-                (e[0] + (e[1] + e[2] * T68) * T68) * p * p)
+        return (
+            a[0]
+            + (a[1] + (a[2] + a[3] * T68) * T68) * T68
+            + (b[0] + b[1] * T68) * (s - 35)
+            + (c[0] + (c[1] + (c[2] + c[3] * T68) * T68) * T68 + (d[0] + d[1] * T68) * (s - 35)) * p
+            + (e[0] + (e[1] + e[2] * T68) * T68) * p * p
+        )
 
     # Theta1.
     del_P = pr - p
     del_th = del_P * adtg(s, t, p)
     th = T68conv(t) + 0.5 * del_th
     q = del_th
-    sqrt2 = sqrt(2)
+    sqrt2 = np.sqrt(2)
 
     # Theta2.
     del_th = del_P * adtg(s, T90conv(th), p + 0.5 * del_P)
@@ -2298,22 +2304,20 @@ def dens0(s, t):
     T68 = T68conv(t)
 
     def smow():
-        """Density of Standard Mean Ocean Water (Pure Water) using EOS 1980.
-        """
-        a = (999.842594, 6.793952e-2, -9.095290e-3, 1.001685e-4, -1.120083e-6,
-             6.536332e-9)
-        return (a[0] + (a[1] + (a[2] + (a[3] + (a[4] + a[5] * T68) * T68) * T68) *
-                T68) * T68)
-
-
+        """Density of Standard Mean Ocean Water (Pure Water) using EOS 1980."""
+        a = (999.842594, 0.06793952, -0.00909529, 0.0001001685, -1.120083e-06, 6.536332e-09)
+        return a[0] + (a[1] + (a[2] + (a[3] + (a[4] + a[5] * T68) * T68) * T68) * T68) * T68
 
     # UNESCO 1983 Eqn.(13) p17.
-    b = (8.24493e-1, -4.0899e-3, 7.6438e-5, -8.2467e-7, 5.3875e-9)
-    c = (-5.72466e-3, 1.0227e-4, -1.6546e-6)
-    d = 4.8314e-4
-    return (smow() + (b[0] + (b[1] + (b[2] + (b[3] + b[4] * T68) * T68) *
-            T68) * T68) * s + (c[0] + (c[1] + c[2] * T68) * T68) * s *
-            sqrt(s) + d * s ** 2)
+    b = (0.824493, -0.0040899, 7.6438e-05, -8.2467e-07, 5.3875e-09)
+    c = (-0.00572466, 0.00010227, -1.6546e-06)
+    d = 0.00048314
+    return (
+        smow()
+        + (b[0] + (b[1] + (b[2] + (b[3] + b[4] * T68) * T68) * T68) * T68) * s
+        + (c[0] + (c[1] + c[2] * T68) * T68) * s * np.sqrt(s)
+        + d * s**2
+    )
 
 
 def dens(s, t, p):
@@ -2368,48 +2372,47 @@ def dens(s, t, p):
         # Compute compression terms.
         p = p / 10.0  # Convert from db to atmospheric pressure units.
 
-
         # Pure water terms of the secant bulk modulus at atmos pressure.
         # UNESCO Eqn 19 p 18.
-        # h0 = -0.1194975
-        h = [3.239908, 1.43713e-3, 1.16092e-4, -5.77905e-7]
+        h = [3.239908, 0.00143713, 0.000116092, -5.77905e-07]
         AW = h[0] + (h[1] + (h[2] + h[3] * T68) * T68) * T68
 
-        # k0 = 3.47718e-5
-        k = [8.50935e-5, -6.12293e-6, 5.2787e-8]
-        BW = k[0] + (k[1] + k[2] * T68) * T68
 
-        # e0 = -1930.06
-        e = [19652.21, 148.4206, -2.327105, 1.360477e-2, -5.155288e-5]
+        k = [8.50935e-05, -6.12293e-06, 5.2787e-08]
+        BW = k[0] + (k[1] + k[2] * T68) * T68
+        e = [19652.21, 148.4206, -2.327105, 0.01360477, -5.155288e-05]
         KW = e[0] + (e[1] + (e[2] + (e[3] + e[4] * T68) * T68) * T68) * T68
 
         # Sea water terms of secant bulk modulus at atmos. pressure.
-        j0 = 1.91075e-4
-        i = [2.2838e-3, -1.0981e-5, -1.6078e-6]
-        sqrt_s = sqrt(s)
+        j0 = 0.000191075
+        i = [0.0022838, -1.0981e-05, -1.6078e-06]
+        sqrt_s = np.sqrt(s)
         A = AW + (i[0] + (i[1] + i[2] * T68) * T68 + j0 * sqrt_s) * s
-
-        m = [-9.9348e-7, 2.0816e-8, 9.1697e-10]
+        m = [-9.9348e-07, 2.0816e-08, 9.1697e-10]
         B = BW + (m[0] + (m[1] + m[2] * T68) * T68) * s  # Eqn 18.
-
-        f = [54.6746, -0.603459, 1.09987e-2, -6.1670e-5]
-        g = [7.944e-2, 1.6483e-2, -5.3009e-4]
-        K0 = (KW + (f[0] + (f[1] + (f[2] + f[3] * T68) * T68) * T68 +
-                    (g[0] + (g[1] + g[2] * T68) * T68) * sqrt_s) * s)  # Eqn 16.
+        f = [54.6746, -0.603459, 0.0109987, -6.167e-05]
+        g = [0.07944, 0.016483, -0.00053009]
+        K0 = (
+            KW
+            + (f[0] + (f[1] + (f[2] + f[3] * T68) * T68) * T68 + (g[0] + (g[1] + g[2] * T68) * T68) * sqrt_s)
+            * s
+        )  # Eqn 16.
         return K0 + (A + B * p) * p  # Eqn 15.`
 
     # UNESCO 1983. Eqn..7  p.15.
     densP0 = dens0(s, t)
     K = seck(s, p)
-    p = p / 10.  # Convert from db to atm pressure units.
+    p = p / 10.0  # Convert from db to atm pressure units.
     return densP0 / (1 - p / K)
 
 
 def sw_pden(s, t90, p, pr):
     return dens(s, ptmp(s, t90, p, pr), pr)
 
+### Experiments ###
 
-# solubility bad functions (todo: correct or delete)
+# Solubility bad functions (todo: correct or delete)
+
 
 def oxygen_solubility(t, S):
     """
@@ -2422,10 +2425,9 @@ def oxygen_solubility(t, S):
     """
     a = [3.88767, -0.256847, 4.94457, 4.0501, 3.22014, 2.00907]
     b = [-0.00817083, -0.010341, -0.00737614, -0.00624523]
-    c0 = -0.000000488682
-
-    Ts = log((298.15 - t) / (273.15 + t))
-    oxsol = exp(polyval(a, Ts) + S * polyval(b, Ts) + c0 * S**2)
+    c0 = -4.88682e-07
+    Ts = np.log((298.15 - t) / (273.15 + t))
+    oxsol = np.exp(np.polyval(a, Ts) + S * np.polyval(b, Ts) + c0 * S**2)
     return oxsol
 
 
@@ -2453,18 +2455,19 @@ def oxygen_solubility_scor(t, S, P=0, p_atm=1013.25):
     # Scaled temperature
     t_k = t + 273.15
     # for use in TCorr and SCorr
-    t_sca = log((298.15 - t) / t_k)
+    t_sca = np.log((298.15 - t) / t_k)
 
     # Saturated water vapor in mBar
-    pH2Osat = 1013.25 * (exp(24.4543-(67.4509*(100 / t_k))-(4.8489*log((t_k / 100)))-0.000544 * S))
+    pH2Osat = 1013.25 * np.exp(24.4543 - 67.4509 * (100 / t_k) - 4.8489 * np.log(t_k / 100) - 0.000544 * S)
 
     # Temperature correction part from Garcia and Gordon (1992), Benson and Krause (1984) refit mL(STP) L-1; and conversion from mL(STP) L-1 to umol L-1
-    TCorr   = 44.6596 * exp(polyval([3.88767 , -0.256847, 4.94457, 4.0501, 3.22014, 2.00907], t_sca))
+    TCorr = 44.6596 * np.exp(np.polyval([3.88767, -0.256847, 4.94457, 4.0501, 3.22014, 2.00907], t_sca))
     # Salinity correction part from Garcia and Gordon (1992), Benson and Krause (1984) refit ml(STP) L-1
-    Scorr   = exp(S * polyval([-8.17083e-3, -1.03410e-2, -7.37614e-3, -6.24523e-3], t_sca) - 4.88682e-7 * S ** 2)
+    Scorr = np.exp(
+        S * np.polyval([-0.00817083, -0.010341, -0.00737614, -0.00624523], t_sca) - 4.88682e-07 * S**2
+    )
     # Molar volume of O2 in m3 mol-1 Pa dBar-1 (Enns et al. 1965)
-    Vm      = 0.317
+    Vm = 0.317
     # Universal gas constant in J mol-1 K-1
-    R       = 8.314
-
-    return 100 * (TCorr * Scorr) * (p_atm - pH2Osat) / (1013.25 - pH2Osat) / exp(Vm * P / (R * t_k))
+    R = 8.314
+    return 100 * (TCorr * Scorr) * (p_atm - pH2Osat) / (1013.25 - pH2Osat) / np.exp(Vm * P / (R * t_k))
