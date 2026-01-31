@@ -60,8 +60,8 @@ if st(1, 'Save gpx navigation to DB'):
 
 
 ##############################################################################################################
-device = 'CTD_SST_MWS#3613'
-devices[device] = {'abbr': 'sm', 'folder': 'CTD_SST_MWS#3613', 'gpx_symbol': 'Triangle, Green'}
+device = 'CTD_MWS12#3613'
+devices[device] = {'abbr': 'sm', 'folder': 'CTD_MWS12#3613', 'gpx_symbol': 'Triangle, Green'}
 ##############################################################################################################
 
 common_ctd_params_list = [
@@ -72,7 +72,7 @@ common_ctd_params_list = [
 if st(10, f'Save {device} data to DB'):
     # Time [hh:mm:ss]	Bottle []	Pressure [dbar]	Temperature [░C]	Conductivity [mS/cm]	Salinity [PSU]	Sound Vel. [m/s]	Density [kg/m│]	Spec. Cond. [mS/cm]	Latitude	Longitude	UTC	Comments  [Index]
     # 14:22:48	0	-0.4	-1.870	-0.002	0.000	1392.76	999.68	-0.004	54░32'24.02'' N	19░39'7.75'' E	2023-12-09 14:22:47
-    from hdf5_pandas.csv_specific_proc import loaded_sst_mws_with_coord
+    from hdf5_pandas.csv_specific_proc import loaded_mws_with_coord
     #  todo: check why incremental_update not works
     #  todo: remove "Error" lines from files before loading
     csv2h5([
@@ -89,7 +89,7 @@ if st(10, f'Save {device} data to DB'):
         # '--on_bad_lines', 'warn',
         ] + common_ctd_params_list,
         **{'in': {
-            'fun_proc_loaded': loaded_sst_mws_with_coord,
+            'fun_proc_loaded': loaded_mws_with_coord,
             'csv_specific_param': {
                 'Temp_fun': lambda x: np.polyval([
                     - 1.49640674355499e-8, 2.73759658836018e-6, -8.36587113499398e-5, 1.0006301100888,

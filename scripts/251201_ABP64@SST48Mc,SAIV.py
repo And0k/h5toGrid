@@ -14,10 +14,10 @@ import gsw
 from utils.init import st
 from hdf5_pandas.csv2h5 import main as csv2h5
 from hdf5_pandas.gpx2h5 import main as gpx2h5
-from ctd import wf_cfg, wf_ctd_sst48mc, wf_ctd_saiv
+from ctd import wf_cfg, wf_ctd_sst48mc, wf_ctd_saiv, wf_ctd_mws
 
-st_base = 200             # 10: SST, 200: SAIV
-st.start = st_base + 105  # 10: Extract runs; 20: Draw profiles; 100, 105: Export csv
+st_base = 400             # 10: SST, 200: SAIV
+st.start = st_base + 100  # |+ 0, 10: Extract runs; 20: Draw profiles; 100, 105: Export csv
 st.end = st_base + 105   # 300  # st.start
 st.go = True  # False?
 
@@ -113,6 +113,7 @@ if any(st(s, 'SST48') for s in list(range(st_base, st_base+190, 5))):
         st_base=st_base
     )
 
+
 st_base = 200
 if any(st(s, 'SAIV') for s in list(range(st_base, st_base+200, 5))):
     common_ctd_params_list = [
@@ -136,6 +137,34 @@ if any(st(s, 'SAIV') for s in list(range(st_base, st_base+200, 5))):
         # o2_fun=lambda O2ppm, Sal, Temp, Pres, Time: DO(do_polyval_time_saiv(O2ppm, Time), Sal, Temp, Pres),
         # o2ppm_fun=lambda O2ppm, Time: do_polyval_time_saiv(O2ppm, Time),
         st_base=st_base
+    )
+
+
+st_base = 400
+if any(st(s, "MWS") for s in list(range(st_base, st_base + 200, 5))):
+    common_ctd_params_list = [
+        "--db_path",
+        str(wf_cfg.path_db),
+        "--min_dict",
+        "Sal:0.1",
+    ]
+
+    # def do_polyval_time_saiv(x, t):
+    #     # Coef from ABP64 Winkler data obtained from and for:
+    #     # - data before GoF, use also for data after GoF
+    #     poly_noGoF = [1.1133, 0.51236]
+    #     # - data in GoF (2025-12-11T00:00:00 - 2025-12-17T00:00:00)
+    #     poly_GoF = [1.2154, 1.1213]
+
+    #     b_GoF = b_between(t, *np.array(["2025-12-11T00:00:00", "2025-12-17T00:00:00"], "M8[s]"))
+
+    #     return np.polyval(poly_GoF if b_GoF else poly_noGoF, x)
+
+    wf_ctd_mws.proc(
+        common_ctd_params_list,
+        # o2_fun=lambda O2ppm, Sal, Temp, Pres, Time: DO(do_polyval_time_saiv(O2ppm, Time), Sal, Temp, Pres),
+        # o2ppm_fun=lambda O2ppm, Time: do_polyval_time_saiv(O2ppm, Time),
+        st_base=st_base,
     )
 
 ##############################################################################################################

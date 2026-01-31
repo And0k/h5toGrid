@@ -383,7 +383,7 @@ def loaded_sst(
     return a.assign(Time=date)
 
 @meta_out_fields(keys_del={'Time', 'Lat', 'Lon'}, add_before={'Time': 'M8[ns]'}, add_after={'Lat': 'f8', 'Lon': 'f8'})
-def loaded_sst_mws_with_coord(
+def loaded_mws_with_coord(
         a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
         csv_specific_param: Optional[Mapping[str, Any]] = None,
         # cols_out: Union[slice, Sequence[Any]] = slice(None)
@@ -410,7 +410,7 @@ def loaded_sst_mws_with_coord(
 
 
 @meta_out_fields(keys_del={'Time'}, add_before={'Time': 'M8[ns]'})
-def loaded_sst_mws(
+def loaded_mws(
         a: Union[pd.DataFrame, np.ndarray], cfg_in: Mapping[str, Any],
         csv_specific_param: Optional[Mapping[str, Any]] = None,
         # cols_out: Union[slice, Sequence[Any]] = slice(None)
@@ -442,12 +442,16 @@ def loaded_sst_mws(
         lf.warning('Not found correct "%Y-%m-%d" date in line: {:s}', line)
         date = pd.to_datetime(input('correct date in "%Y-%m-%d" format'))
 
-    if not isinstance(a['Time'][0], bytes):
+    tim = a['Time'][0]  # take 1st element to check type
+    if isinstance(tim, bytes):
+        tim = a['Time'].str.decode('utf-8', errors='replace')
+    elif isinstance(tim, str):
+        tim = a['Time']
+    else:
         lf.warning('Second pass?')
         return a
-    else:
-        tim = pd.to_datetime(a['Time'].str.decode('utf-8', errors='replace'), format='%H:%M:%S') - pd.Timestamp('1900-01-01')  # default date '1900-01-01' found experimentally!
-
+    # default date '1900-01-01' found experimentally(!):
+    tim = pd.to_datetime(tim, format='%H:%M:%S') - pd.Timestamp('1900-01-01')
     date += tim
     a['Time'] = pd.NaT  # also changes column's type
     a.loc[:, 'Time'] = day_jumps_correction(cfg_in, date.to_numpy())
@@ -726,17 +730,24 @@ def day_jumps_correction(cfg_in: Mapping[str, Any], t: Union[np.ndarray, pd.Date
         #     plt.plot(t, color='r', alpha=0.5)  # ; plt.show()
         for bjU, jSt, jEn in zip(bjumpU[::2], jumps[:-1:2], jumps[1::2]):  # apply_day_shifting
             t_datetime = (
-                datetime.fromtimestamp(t[jSt].astype(datetime) * 1e-9, timezone.utc) if isinstance(t, np.ndarray) else
-                t[jSt]
+                datetime.fromtimestamp(t[jSt].astype(datetime) * 1e-9, timezone.utc)
+                if isinstance(t, np.ndarray)
+                else t[jSt]
             )
             if bjU:
                 t[jSt:jEn] -= dT_day_jump
-                print('Date correction to {:%d.%m.%y}UTC: day jumps up was '
-                      'detected in [{}:{}] rows'.format(t_datetime, jSt, jEn))
+                print(
+                    "Date correction to {:%d.%m.%y}UTC: day jumps up was detected in [{}:{}] rows".format(
+                        t_datetime, jSt, jEn
+                    )
+                )
             else:
                 t[jSt:jEn] += dT_day_jump
-                print('Date correction to {:%d.%m.%y}UTC: day jumps down was '
-                      'detected in [{}:{}] rows'.format(t_datetime, jSt, jEn))
+                print(
+                    "Date correction to {:%d.%m.%y}UTC: day jumps down was detected in [{}:{}] rows".format(
+                        t_datetime, jSt, jEn
+                    )
+                )
         # if __debug__:
         #     plt.plot(t)  # ; plt.show()
         plot_bad_time_in_thread(cfg_in, t, np.ones_like(t, np.bool_), None, t_orig,
@@ -746,9 +757,11 @@ def day_jumps_correction(cfg_in: Mapping[str, Any], t: Union[np.ndarray, pd.Date
 
 # ----------------------------------------------------------------------
 #@meta_out_fields(keys_del={'yyyy', 'mm', 'dd', 'HH', 'MM', 'SS'}, add_before={'Time': 'M8[ns]'})) - not need if only date returns
-def loaded_chain_Baranov(a: Union[pd.DataFrame, np.ndarray],
-                              cfg_in: Optional[Mapping[str, Any]] = None,
-                              csv_specific_param: Optional[Mapping[str, Any]] = None) -> pd.DatetimeIndex:
+def loaded_chain_Baranov(
+    a: Union[pd.DataFrame, np.ndarray],
+    cfg_in: Optional[Mapping[str, Any]] = None,
+    csv_specific_param: Optional[Mapping[str, Any]] = None,
+) -> pd.DatetimeIndex:
     """
     Specified prep&proc of data from program "Supervisor":
     - Time calc: gets time in current zone

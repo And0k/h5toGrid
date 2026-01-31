@@ -184,7 +184,6 @@ def _psd_from_mt_adaptive(
     ):
     r"""
     Use iterative procedure to compute the PSD from tapered spectra.
-
     .. note:: Modified from NiTime.
 
     Parameters
@@ -398,7 +397,7 @@ def h5_velocity_by_intervals_gen(
         - 'time_intervals_start' - manually specified intervals starts
 
     :param cfg_out: dict with fields:
-        - see h5_names_gen(cfg_in, cfg_out) requirements
+        - see h5.names_gen(cfg_in, cfg_out) requirements
     :return:
     """
 
@@ -828,8 +827,6 @@ def main(new_arg=None, **kwargs):
         # interpolate to regular grid
         df, bads = df_interp(df, fs = prm["fs"], cols=cols)
         del bads  # todo: use
-
-
         len_data_cur = df.shape[0]
         if tbl_prev != tbl:
             itbl += 1
@@ -902,7 +899,10 @@ def main(new_arg=None, **kwargs):
                 nc_tbl.variables[var_name][out_row, :] = call_with_valid_kwargs(
                     psd_mt, df[var_name], **prm
                 )[0, :]
-            if time_good_min.to_numpy() > df.index[0].to_numpy():  # to_numpy('<M8[ns]') get values to avoid tz-naive/aware comparing restrictions
+
+            # Update overall min and max
+            if time_good_min.to_numpy() > df.index[0].to_numpy():
+                # to_numpy('<M8[ns]') get values to avoid tz-naive/aware comparing restrictions
                 time_good_min = df.index[0]
             if time_good_max.to_numpy() < df.index[-1].to_numpy():
                 time_good_max = df.index[-1]
