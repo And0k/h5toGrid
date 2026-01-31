@@ -17,11 +17,12 @@ import configparser
 import logging
 import re
 from pathlib import Path, PurePath
-from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional, Iterable, Iterator, BinaryIO, Sequence, TextIO, TypeVar, Tuple, Union
+from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional, Iterable, Iterator, BinaryIO, Sequence, TextIO, TypeVar, Tuple, Union, Pattern, Final
 from inspect import currentframe
 import io
-from functools import wraps
+from functools import wraps, lru_cache
 from dataclasses import dataclass
+from string import Formatter as StringFormatter
 
 if sys.platform == "win32":
     from win32event import CreateMutex
@@ -117,8 +118,9 @@ writeable = lambda f: os_access(f, os_W_OK)
 l = {}
 
 
-def dir_walker(root, fileMask='*', bGoodFile=lambda fname, mask: fnmatch(fname, mask),
-               bGoodDir=lambda fname: True):
+def dir_walker(
+    root, fileMask="*", bGoodFile=lambda fname, mask: fnmatch(fname, mask), bGoodDir=lambda fname: True
+):
     """
 
     :param root: upper dir to start search files
@@ -145,9 +147,9 @@ def dir_walker(root, fileMask='*', bGoodFile=lambda fname, mask: fnmatch(fname, 
 
 
 # Used in next two functions
-bGood_NameEdge = lambda name, namesBadAtEdge: \
-    all([name[-len(notUse):] != notUse and name[:len(notUse)] != notUse \
-         for notUse in namesBadAtEdge])
+bGood_NameEdge = lambda name, namesBadAtEdge: all([
+    name[-len(notUse) :] != notUse and name[: len(notUse)] != notUse for notUse in namesBadAtEdge
+])
 
 
 def bGood_dir(dirName, namesBadAtEdge):
@@ -310,8 +312,9 @@ def getDirBaseOut(mask_in_path, raw_dir_words: Optional[Sequence[str]]=None, rep
         return str(out_path), cruise, device
 
 
-def cfgfile2dict(arg_source: Union[Mapping[str, Any], str, PurePath, None] = None
-                 ) -> Tuple[Union[Dict, configparser.RawConfigParser], Union[str, PurePath], str]:
+def cfgfile2dict(
+    arg_source: Union[Mapping[str, Any], str, PurePath, None] = None,
+) -> Tuple[Union[Dict, configparser.RawConfigParser], Union[str, PurePath], str]:
     """
     Loads config to dict or passes dict though
     :param arg_source: one of:
@@ -1042,9 +1045,9 @@ def my_argparser_common_part(varargs, version='?'):  # description, version='?',
         p.add_argument_group = with_alias_to_add_argument(p.add_argument_group)
 
     p.add(
-        'cfgFile',  # is_config_file=True,
-         help='configuration file path(s). Command line parameters will overwrites parameters specified inside it'
-        )
+        "cfgFile",  # is_config_file=True,
+        help="configuration file path(s). Command line parameters will overwrites parameters specified inside it",
+    )
     p.add('--version', '-v', action='version', version=
     '%(prog)s version {version} - (c) 2022 Andrey Korzh <ao.korzh@gmail.com>.')
 
@@ -1066,6 +1069,176 @@ def my_argparser_common_part(varargs, version='?'):  # description, version='?',
     #     help='verbosity of messages in log file')
 
     return p
+
+
+def glob_from_format_string_v1(format_string: str) -> str:
+    """
+    Convert a Python format string with named placeholders to a glob pattern.
+
+    :param format_string: Format string with named placeholders like {key:spec}
+    :return: Glob pattern with wildcards replacing format placeholders
+    """
+    # Pattern to match format specifiers: {name[:format_spec]}
+    format_pattern: Final[Pattern[str]] = re.compile(r"\{(?P<name>\w+)(?:\:(?P<format>[^}]*))?\}")
+
+    def _replace_match(match: re.Match[str]) -> str:
+        format_spec: str | None = match.group("format")
+        if format_spec is None:
+            return "*"
+        # Convert common format specs to appropriate glob patterns
+        if "%y%m%d_%H%M%S" in format_spec or "%Y%m%d_%H%M%S" in format_spec:
+            # Date-time format: matches exactly 15 characters (yy+mm+dd+HH+MM+SS+2 underscores)
+            return "[0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9]"
+        elif "d" in format_spec or "f" in format_spec:
+            # Numeric formats
+            return "[0-9]*"
+        else:
+            # Default wildcard for other format specs
+            return "*"
+
+    return format_pattern.sub(_replace_match, format_string)
+
+
+class FormatSpecifierParser:
+    """General-purpose format specifier parser leveraging string.Formatter."""
+
+    # Format codes mappings
+    DATETIME_FORMAT_CODES: Dict[str, str] = {
+        "Y": r"[0-9]{4}",  # 4-digit year
+        "y": r"[0-9]{2}",  # 2-digit year
+        "m": r"[0-1][0-9]",  # month (01-12)
+        "d": r"[0-3][0-9]",  # day (01-31)
+        "H": r"[0-2][0-9]",  # hour (00-23)
+        "M": r"[0-5][0-9]",  # minute (00-59)
+        "S": r"[0-5][0-9]",  # second (00-59)
+        "f": r"[0-9]{6}",  # microsecond
+    }
+
+    NUMERIC_FORMAT_CODES: Dict[str, str] = {
+        "d": r"[+-]?[0-9]+",  # integer
+        "i": r"[+-]?[0-9]+",  # integer
+        "o": r"[0-7]+",  # octal
+        "x": r"[0-9a-fA-F]+",  # hex lowercase
+        "X": r"[0-9A-F]+",  # hex uppercase
+        "e": r"[+-]?[0-9]+\.[0-9]+[eE][+-]?[0-9]+",  # scientific notation
+        "E": r"[+-]?[0-9]+\.[0-9]+[eE][+-]?[0-9]+",  # scientific notation
+        "f": r"[+-]?[0-9]+\.[0-9]+",  # fixed point
+        "F": r"[+-]?[0-9]+\.[0-9]+",  # fixed point
+        "g": r"[+-]?[0-9]+\.?[0-9]*",  # general format
+        "G": r"[+-]?[0-9]+\.?[0-9]*",  # general format
+        "n": r"[+-]?[0-9,]+",  # locale-aware number
+        "c": r".",  # character
+    }
+
+    @classmethod
+    @lru_cache(maxsize=128)
+    def parse_format_string(cls, format_str: str) -> str:
+        """
+        Convert format string to regex pattern by parsing individual format specifier elements.
+        :param format_str: Format string like '%y%m%d_%H%M%S' or '{:>10}'
+        :return: Equivalent regex/glob pattern with character classes
+        """
+        formatter = StringFormatter()  # breaks down format strings
+        try:
+            # Parse the format string into its components
+            parsed_parts = list(formatter.parse(format_str))
+            result_parts = []
+
+            for literal_text, field_name, format_spec, conversion in parsed_parts:
+                # Add escaped literal text
+                if literal_text:
+                    result_parts.append(re.escape(literal_text))
+
+                # Handle field components if present
+                if field_name is not None:
+                    # Process format specification
+                    if format_spec:
+                        if format_spec.startswith("%"):
+                            # DateTime format - parse individual % codes
+                            result_parts.append(cls._parse_datetime_format(format_spec))
+                        else:
+                            # Other format specs
+                            result_parts.append(cls._convert_format_spec(format_spec))
+                    else:
+                        # No format spec - generic placeholder
+                        result_parts.append(".*")
+
+            return "".join(result_parts)
+
+        except ValueError:
+            # Fallback for malformed format strings
+            return cls._fallback_parse(format_str)
+
+    @classmethod
+    def _parse_datetime_format(cls, format_str: str) -> str:
+        """Parse datetime format strings starting with %."""
+        parts = format_str.split("%")[1:]  # Skip empty first element
+        result_parts = []
+
+        for part in parts:
+            if len(part) == 0:
+                continue
+            code: str = part[0]
+            literal_chars: str = part[1:]  # Any literal chars following the code
+
+            if code in cls.DATETIME_FORMAT_CODES:
+                result_parts.append(cls.DATETIME_FORMAT_CODES[code])
+            else:
+                result_parts.append(re.escape(f"%{code}"))  # Unknown codes as literals
+
+            if literal_chars:
+                result_parts.append(re.escape(literal_chars))
+
+        return "".join(result_parts)
+
+    @classmethod
+    def _convert_format_spec(cls, format_spec: str) -> str:
+        """Convert Python format specification to regex pattern."""
+        # Simple approach for common cases
+        if format_spec.endswith(("d", "f", "e", "g")):
+            last_char = format_spec[-1]
+            if last_char in cls.NUMERIC_FORMAT_CODES:
+                return cls.NUMERIC_FORMAT_CODES[last_char]
+        return r".*"  # Generic fallback
+
+    @classmethod
+    def _fallback_parse(cls, format_str: str) -> str:
+        """Fallback parsing for unhandled cases."""
+        return re.escape(format_str).replace(r"\*", ".*")
+
+
+def glob_from_format_string(format_string: str) -> str:
+    """
+    Convert format string to glob pattern using string.Formatter for robust parsing.
+
+    :param format_string: Format string with named placeholders like {key:spec}
+    :return: Glob pattern with wildcards replacing format placeholders
+
+    # Example
+    pattern: Final[str] = "{Index:%y%m%d_%H%M%S}St{fileName}.vsz"
+    glob_pattern: str = format_string_to_glob_universal(pattern)
+    print(glob_pattern)  # Will handle datetime formats precisely
+    """
+    formatter = StringFormatter()
+    result_parts = []
+
+    for literal_text, field_name, format_spec, conversion in formatter.parse(format_string):
+        # Add escaped literal text
+        if literal_text:
+            result_parts.append(re.escape(literal_text))
+
+        # Handle field placeholders
+        if field_name is not None:
+            if format_spec:
+                try:
+                    converted_spec = FormatSpecifierParser.parse_format_string(format_spec)
+                    result_parts.append(converted_spec)
+                except Exception:
+                    result_parts.append("*")  # Fallback wildcard
+            else:
+                result_parts.append("*")  # Simple wildcard for no format spec
+
+    return "".join(result_parts)
 
 
 def pathAndMask(path: str, filemask=None, ext=None):
