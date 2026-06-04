@@ -209,15 +209,22 @@ def get_store_and_print_table(file_or_handle, strProbe):
     # return store
 
 
-def find_tables(store: pd.HDFStore, pattern_tables: str, parent_name=None) -> List[str]:
+def find_tables(store: pd.HDFStore, pattern_tables: str|List[str], parent_name=None) -> List[str]:
     """
     Get list of tables in hdf5 store node
     :param store: pandas hdf5 store
-    :param pattern_tables: str, substring to search paths or regex if with '*'
+    :param pattern_tables: str, substring to search paths or regex if with '*', may be wrapped in list/tuple container
     :param parent_name: str, substring to search parent paths or regex if with '*'
     :return: list of paths
     For example: w05* finds all tables started from w0
     """
+    if (
+        not isinstance(pattern_tables, str)
+        and len(pattern_tables) == 1
+        and isinstance(pattern_tables[0], str)
+    ):
+        pattern_tables = pattern_tables[0]
+
     if parent_name is None:
         if "/" in pattern_tables:
             parent_name, pattern_tables = pattern_tables.rsplit("/", 1)
@@ -540,11 +547,11 @@ def load_ranges(
     store: pd.HDFStore, table: str, t_intervals=None, query_range_pattern=query_range_pattern_default
 ) -> pd.DataFrame:
     """
-    Load data
+    Query multiple ranges data at once
     :param t_intervals: an even sequence of datetimes or strings convertible to index type values. Each pair
     defines edges of data that will be concatenated. 1st and last must be min and max values in sequence.
     :param table:
-    :return:
+    :return: dataframe that contains data of all queried ranges
     """
 
     n = len(t_intervals) if t_intervals is not None else 0
@@ -2299,7 +2306,9 @@ def q_intervals_indexes_gen(
 
     for t_interval_start in t_intervals_start:
         # load_interval
-        start_end = q_interval2coord(db_path, table, [t_prev_interval_start.isoformat(), t_interval_start.isoformat()])
+        start_end = q_interval2coord(
+            db_path, table, [t_prev_interval_start.isoformat(), t_interval_start.isoformat()]
+        )
         if len(start_end):
             if i_range is not None:  # skip intervals that not in index range
                 start_end = minInterval([start_end], [i_range], start_end[-1])[0]

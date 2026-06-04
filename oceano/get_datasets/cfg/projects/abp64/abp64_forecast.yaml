@@ -1,0 +1,13 @@
+# @package projects.abp64_tchain
+
+# Configuration for CMEMS Point
+dataset_vars:
+  # cmems_mod_bal_bgc_anfc_P1D-m: ["o2", "o2b"]  # data actually is bad
+  # cmems_mod_bal_bgc_my_P1D-m: ["o2", "o2b"]  # not available for these dates yet: last date = 2023-12-31
+  cmems_mod_bal_phy_anfc_PT1H-i: ["thetao", "so", "sob"]
+date_range: ['2025-12-01', '2026-05-05']
+depth_max: 100
+depth_min: 0.5016462206840515  # dataset minimum
+dir_save: "abp64"
+points: [{lat: 55.495842, lon: 20.075380}]
+interpolation_delta: 0  # Set 0.03 to be > ~2km (resolution of CMEMS datasets) to able to interpolate

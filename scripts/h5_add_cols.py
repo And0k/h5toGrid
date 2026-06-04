@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 Created on 20.04.2021
-Purpose: change columns order of PyTables hdf5 file
-@author: Korzh
+Purpose: combine tables data from two PyTables HDF5 files
+@author: Andrey Korzh <ao.korzh@gmail.com>
 """
 import sys
 from pathlib import Path
@@ -21,7 +21,7 @@ store_out = Path(r'd:\workData\BalticSea\201202_BalticSpit\inclinometer\processe
 tables = [f'V_incl_bin{bin}' for bin in (2, 600, 1800, 7200)]
 b_childs_to_log_rows = True
 
-# save to temp store
+# Save joined `sr` and `sw` HDF5 stores data to temporary store `st` 
 tables_written = set()
 store_out_temp = store_out.with_suffix('.noindex.h5')
 with pd.HDFStore(store_in, 'r') as sr, pd.HDFStore(store_out, 'r') as sw, pd.HDFStore(store_out_temp, 'w') as st:

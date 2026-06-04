@@ -180,7 +180,7 @@ if __name__ == "__main__":
             },
         }
         print(
-            f"Request area:", data_request["area"], "time range:", use_date_range
+            "Request area:", data_request["area"], "time range:", use_date_range
         )
         # l.info(f"")
 

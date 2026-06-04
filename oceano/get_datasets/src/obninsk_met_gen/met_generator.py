@@ -3,6 +3,7 @@
 MET File Generator for Marine Expedition Data
 
 Creates *.met description files per VNIIGMI-MCD methodological guidelines.
+Note: saving new instruments to met_config.yaml feature broken
 
 REQUIREMENTS:
 - met_config.yaml in same directory
@@ -21,19 +22,12 @@ import pandas as pd
 from ruamel.yaml import YAML
 from colorlog import ColoredFormatter
 import questionary
-from questionary import Style
+
+import quest_mod as qm
 
 CONFIG_FILE = Path(__file__).with_name("met_config.yaml")
+HISTORY_FILE = Path(__file__).with_name("history.yaml")
 logger = None
-
-CUSTOM_STYLE = Style([
-    ("qmark", "fg:#673ab7 bold"),
-    ("question", "bold"),
-    ("answer", "fg:#2196f3 bold"),
-    ("pointer", "fg:#673ab7 bold"),
-    ("highlighted", "fg:#673ab7 bold"),
-    ("selected", "fg:#2196f3"),
-])
 
 
 def ask(questionary_func, **kwargs):
@@ -45,17 +39,17 @@ def ask(questionary_func, **kwargs):
         **kwargs: arguments to pass to questionary function
 
     Returns:
-        Result of questionary.ask()
+        Result of questionary.unsafe_ask(): does't catch keyboard interrupt
     """
     # Set default style if not provided
     if "style" not in kwargs:
-        kwargs["style"] = CUSTOM_STYLE
+        kwargs["style"] = qm.CUSTOM_STYLE
 
-    return questionary_func(**kwargs).ask()
+    return questionary_func(**kwargs).unsafe_ask()
 
 
-def setup_logging(log_file: Path) -> None:
-    """Setup colored logging to console and file."""
+def setup_logging_console_only() -> None:
+    """Setup console logging only (before data directory is known)."""
     global logger
     logger = logging.getLogger("METGenerator")
     logger.setLevel(logging.DEBUG)
@@ -70,25 +64,43 @@ def setup_logging(log_file: Path) -> None:
         log_colors={"DEBUG": "cyan", "INFO": "green", "WARNING": "yellow", "ERROR": "red"},
     )
     console_handler.setFormatter(console_formatter)
+    logger.addHandler(console_handler)
 
+
+def add_file_handler(log_file: Path) -> None:
+    """Add file handler to existing logger."""
+    global logger
     file_handler = logging.FileHandler(log_file, encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
     file_formatter = logging.Formatter(
         "%(asctime)s - %(levelname)-8s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
     )
     file_handler.setFormatter(file_formatter)
-
-    logger.addHandler(console_handler)
     logger.addHandler(file_handler)
+    logger.info(f"Log file: {log_file}")
+
+
+def get_log_directory() -> Path:
+    """Get log directory in user's home folder."""
+    home = Path.home()
+    log_dir = home / ".met_generator" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir
+
+
+def setup_logging(log_file: Path) -> None:
+    """Setup colored logging to console and file (legacy function for compatibility)."""
+    setup_logging_console_only()
+    add_file_handler(log_file)
 
 
 def clean_input(text: str) -> str:
     """Clean user input."""
-    if not text:
+    if not (text and isinstance(text, str)):
         return text
     text = text.strip()
-    text = re.sub(r"\s+", " ", text)
-    return text.strip(".,;: ")
+    text = re.sub(r"\s+", " ", text)  # single whitespace separator
+    return text.strip(".,;: ")  # remove redundant or wrong symbols
 
 
 def validate_cp1251(text: str) -> Tuple[bool, str]:
@@ -111,39 +123,79 @@ def is_calculated_parameter(param_info: Dict) -> bool:
     return calc_note.lower().startswith("рассчитывается")
 
 
+def in_key_or_aliases(col: str, field_key: str, field_data: Dict) -> bool:
+    """
+    Check if column name case-insensitive matches field key or is in its alternatives.
+
+    Args:
+        col: Column name to check
+        field_key: Field key to match against
+        field_data: Field data dictionary containing 'alternatives' key
+
+    Returns:
+        True if column matches field key or any alternative, False otherwise
+    """
+    return (col_lower := col.lower()) == field_key.lower() or (
+        (alts := field_data.get("aliases")) and any(col_lower == alt.lower() for alt in alts))
+
+
 class ConfigManager:
     """Configuration manager with structure-based access."""
 
     def __init__(self, config_path: Path):
         self.config_path = config_path
+        self.history_path = HISTORY_FILE
 
         self.yaml = YAML()
         self.yaml.preserve_quotes = True
         self.yaml.default_flow_style = False
+
+        # Initialize configuration structure
         self.dict = self._load_config()
-        self._modified = False
+        self.dict.setdefault("_modified", False)
+
+        # Initialize full history file structure
+        self._history_file_dict = self._load_config(self.history_path)
+        self._history_file_dict.setdefault("_modified", False)
+
+        # Shortcut to the history of MCD-relative inputs
+        self._history_dict = self._history_file_dict.get("_history", {})
+
         self._undo_stack = []  # For undo support
 
-    def _load_config(self) -> Dict:
-        """Load YAML configuration."""
-        if not self.config_path.exists():
-            logger.error(f"Config not found: {self.config_path}")
-            raise FileNotFoundError(f"Required: {self.config_path}")
+    def _load_config(self, file_path: Optional[Path] = None) -> Dict:
+        """Load YAML configuration from specified file or default config_path."""
+        path = file_path if file_path is not None else self.config_path
+        if not path.exists():
+            logger.debug(f"Config not found: {path}, creating empty dict")
+            return {}
 
-        logger.debug(f"Loading config from {self.config_path}")
-        with open(self.config_path, "r", encoding="utf-8") as f:
+        logger.debug(f"Loading config from {path}")
+        with open(path, "r", encoding="utf-8") as f:
             return self.yaml.load(f)
 
-    def save_config(self):
-        """Save configuration with comments preserved."""
-        if not self._modified:
+    def save_config(self, path: Path, dict_to_save: Optional[Dict] = None):
+        """
+        Save configuration with comments preserved to specified file, updates _modified timestamp
+        """
+        # Check if we need to save by checking dict_to_save["_modified"]
+        if not dict_to_save.get("_modified", False):
             return
 
-        logger.info("Saving updated configuration")
-        with open(self.config_path, "w", encoding="utf-8") as f:
-            self.yaml.dump(self.dict, f)
+        logger.info(f"Saving updated configuration to {path}")
+        with open(path, "w", encoding="utf-8") as f:
+            self.yaml.dump(dict_to_save, f)
 
-        self._modified = False
+        # Update _modified with current timestamp in ISO format
+        dict_to_save["_modified"] = datetime.now().isoformat()
+
+    def save_configs(self):
+        """Save main config and history config with input path history."""
+        self.save_config(self.config_path, self.dict)
+
+        # Merge history dict into full file structure
+        self._history_file_dict["_history"] = self._history_dict
+        self.save_config(self.history_path, self._history_file_dict)
 
     def get(self, parts: str|List[str], default: Any = None) -> Any:
         """Get value by dot-separated path or already splitted path parts"""
@@ -183,7 +235,7 @@ class ConfigManager:
         """
         Get instrument parameters with inheritance.
 
-        Returns parameters listed in instrument's 'parameters' with its
+        Returns parameters listed in instrument's `parameters` with its
         properties inherited from common_parameters + instrument overrides.
         Also includes calculated parameters from common_parameters if present in data.
 
@@ -226,21 +278,13 @@ class ConfigManager:
 
         # Include calculated parameters from common_parameters if present in data
         if data_columns:
-            data_columns_lower = [c.lower() for c in data_columns]
             for param_key, param_info in common_params.items():
                 # Skip if already included or not calculated
                 if param_key in result or not is_calculated_parameter(param_info):
                     continue
 
-                # Check if parameter is in data columns
-                found = False
-                if param_key.lower() in data_columns_lower:
-                    found = True
-                else:
-                    for alias in param_info.get("aliases", []):
-                        if alias.lower() in data_columns_lower:
-                            found = True
-                            break
+                # Check if parameter is in data columns using _in_alternatives()
+                found = any(in_key_or_aliases(col, param_key, param_info) for col in data_columns)
 
                 if found:
                     # Start with common definition
@@ -433,62 +477,163 @@ class ConfigManager:
                             return {"instrument_type": type_key, "instrument_id": inst_key, "instrument_info": inst_data}
         return None
 
+    def add_to_history(
+        self, *parts: str, value: Any, max_history=100000, history_section: Optional[Dict] = None
+    ):
+        """
+        Add value to history with hierarchical structure of any depth.
 
-    def add_to_history(self, *parts: str, value: Any):
-        """Add value to history with hierarchical structure of any depth"""
+        Args:
+            *parts: Path parts for history location
+            value: Value to add to history
+            max_history: Maximum number of items to keep
+            history_section: Dictionary to store history in (default: self._history_dict).
+                Use self._history_file_dict for top-level keys like "input_path_history"
+        """
         if isinstance(value, str):
             value = clean_input(value)
+            # Check Windows-1251 compatibility
+            valid, error = validate_cp1251(value)  # todo auto replace bad symbols
+            if not valid:
+                logger.warning(f"Detected bad encoding (will replace on save): {error}")
+        elif isinstance(value, list):
+            # Clean and validate all strings in list
+            cleaned_list = []
+            for item in value:
+                if isinstance(item, str):
+                    cleaned = clean_input(item)
+                    valid, error = validate_cp1251(cleaned)
+                    if not valid:
+                        logger.warning(f"Bad encoding in list item: {error}")
+                    cleaned_list.append(cleaned)
+                else:
+                    cleaned_list.append(item)
+            value = cleaned_list
 
-        # Check Windows-1251 compatibility
-        valid, error = validate_cp1251(value)  # todo auto replace bad symbols
-        if not valid:
-            logger.warning(f"Detected bad encoding (will be replaced on saving): {error}")
+        # Use provided history_section or default to _history_dict
+        if history_section is None:
+            section = self._history_dict                # MCD history shortcut
+            history_section = self._history_file_dict   # to set file's _modified flag which is on top level
+        else:
+            section = history_section
 
-        # Store for undo
-        if "_history" not in self.dict:
-            self.dict["_history"] = {}
-        section = self.dict["_history"]
+        # Navigate to target location
         for i, part in enumerate(parts, start=1):
-            if isinstance(section, list):
-                if i == len(parts):
-                    try:
-                        index = section.index[value]
-                    except IndexError:
-                        pass
+            if i == len(parts):
+                # At final level - store value
+                if part not in section:
+                    # First value for this field
+                    section[part] = [value] if max_history > 1 else value
+                    history_section["_modified"] = True
+                else:
+                    current = section[part]
+
+                    # Convert to list if needed
+                    if not isinstance(current, list):
+                        current = [current]
+
+                    # Check for duplicates
+                    if self._is_duplicate(value, current):
+                        # Move to front if not already there
+                        index = self._find_duplicate_index(value, current)
+                        if index > 0:
+                            current.insert(0, current.pop(index))
+                            section[part] = current
+                            history_section["_modified"] = True
                     else:
-                        if index == 0:
-                            break
-                        else:
-                            del section[index]  # remove from old position
-                    # store current value on the top of current history items level
-                    section.insert(0, value)
-                    self._modified = True
-                    break
-                try:
-                    index = section.index[part]
-                except IndexError:
-                    section.append({part: {}})
-                    index = -1
+                        # Add new value at front
+                        current.insert(0, value)
 
-                section = section[index]
+                        # Limit history size
+                        if len(current) > max_history:
+                            current = current[:max_history]
+
+                        section[part] = current
+                        history_section["_modified"] = True
             else:
-                if i == len(parts):
-                    try:
-                        if section[part] == value:
-                            break
-                    except KeyError:  # store current value
-                        section[part] = value
-                    else:  # store current and previous values
-                        section[part] = [value, section[part]]
-                    self._modified = True
-                    break
-            if not (section and section.get(part)):
-                section[part] = {}
-            section = section[part]
+                # Navigate deeper
+                if part not in section:
+                    section[part] = {}
+                section = section[part]
 
-    def get_history(self, *parts: Sequence[str]) -> None|str|List[str|List[str]]:
-        """Get history for field."""
-        return self.get(["_history"] + list(parts))
+    @classmethod
+    def _is_duplicate(cls, value: Any, history_list: list) -> bool:
+        """
+        Check if value already exists in history.
+
+        Handles:
+        - Strings: exact match
+        - Lists: same items (order-independent)
+        - Dicts: same keys/values
+        """
+        if isinstance(value, str):
+            return value in history_list
+
+        elif isinstance(value, list):
+            value_set = set(value) if all(isinstance(x, str) for x in value) else None
+
+            for item in history_list:
+                if isinstance(item, list):
+                    if value_set:
+                        item_set = set(item) if all(isinstance(x, str) for x in item) else None
+                        if item_set and value_set == item_set:
+                            return True
+                    elif value == item:  # Exact match including order
+                        return True
+
+        elif isinstance(value, dict):
+            return value in history_list
+
+        return False
+
+    @classmethod
+    def _find_duplicate_index(cls, value: Any, history_list: list) -> int:
+        """Find index of duplicate value in history."""
+        if isinstance(value, str):
+            try:
+                return history_list.index(value)
+            except ValueError:
+                return -1
+
+        elif isinstance(value, list):
+            value_set = set(value) if all(isinstance(x, str) for x in value) else None
+
+            for i, item in enumerate(history_list):
+                if isinstance(item, list):
+                    if value_set:
+                        item_set = set(item) if all(isinstance(x, str) for x in item) else None
+                        if item_set and value_set == item_set:
+                            return i
+                    elif value == item:
+                        return i
+        return -1
+
+
+    def get_history(self, *parts: str) -> list:
+        """
+        Get history for field.
+
+        Args:
+            *parts: Path to history location
+
+        Returns:
+            List of historical values (empty list if none)
+        """
+        section = self._history_dict
+        for part in parts:
+            if isinstance(section, dict) and part in section:
+                section = section[part]
+            else:
+                return []
+
+        # Return as list
+        if isinstance(section, list):
+            return section
+        elif section:
+            return [section]
+        else:
+            return []
+
 
     def add_instrument(self, instrument_type: str, instrument_id: str, instrument_info: Dict):
         """Add new instrument to config."""
@@ -502,8 +647,12 @@ class ConfigManager:
             return
 
         self.dict["_instruments"][type_key][instrument_id] = instrument_info
-        self._modified = True
+        self.dict["_modified"] = True
         logger.info(f"Added instrument: {instrument_id}")
+
+    def get_input_path_history(self) -> List[str]:
+        """Get history of input data directory paths."""
+        return self._history_file_dict.get("input_path_history", [])
 
 
 class DataAnalyzer:
@@ -752,16 +901,16 @@ def calculate_coordinate_bounds(lats: List[float], lons: List[float]) -> str:
     return f"{to_dgmm(lat_min, True)};{to_dgmm(lat_max, True)};{to_dgmm(lon_min, False)};{to_dgmm(lon_max, False)}"
 
 
-class InteractiveQuestionnaire:
-    """Interactive data collection."""
+class Questionnaire:
+    """Base questionnaire class for config-based prompts (no data dependency)."""
 
-    def __init__(self, config: ConfigManager, analyzer: DataAnalyzer):
+    def __init__(self, config: ConfigManager):
         self.config = config
-        self.analyzer = analyzer
 
     def _ask_with_prompt(self, *parts: str, default: str = "", **format_kwargs) -> str:
         """
         Ask question with description and history support.
+        If default is list uses advanced list editor else simple select and edit
 
         Args:
             parts: Configuration path
@@ -776,7 +925,8 @@ class InteractiveQuestionnaire:
             parts = path.split(".")
         else:
             path = parts
-        field = parts[-1].removeprefix("_")
+        field = parts[-1]
+        field = field[1:] if field.startswith("_") else f"[{field}]"
         field_config = self.config.get(parts)
         if not field_config:
             logger.debug(f"No configuration to display question for {path}")
@@ -794,7 +944,7 @@ class InteractiveQuestionnaire:
             else:
                 try:
                     desc = field_config["_description"]
-                    print(f"\n💡 {field}: {desc}")
+                    print(f"\n💡 {field}. {desc}")
                 except KeyError:
                     print(f"\n💡 {field}")
 
@@ -808,23 +958,81 @@ class InteractiveQuestionnaire:
                 logger.debug(f"Format error for {path}: {e}")
 
         history = self.config.get_history(*parts)
-        if history:
-            if isinstance(history, str):
-                history = [history]
-            result = ask(
-                questionary.autocomplete,
-                message=prompt_text + ":",
-                choices=history,
-                default=default or (history[0] if history else ""),
+
+        # Switch dialog interface if field is a list-type
+        if isinstance(default, list):
+            # Use advanced list editor
+            result = qm.select_and_edit_list(
+                prompt_text, list_variants=history, generated_list=default, erase_intermediate=True
             )
         else:
-            result = ask(questionary.text, message=prompt_text + ":", default=default)
+            # Simple select + edit for single values
+            if history:
+                if isinstance(history, str):
+                    history = [history]
+
+                # Ensure all history items are strings, not complex objects
+                string_history = []
+                for item in history:
+                    if isinstance(item, str):
+                        string_history.append(item)
+                    elif isinstance(item, dict):
+                        # If it's a dict, add its keys as choices
+                        string_history.extend(list(item.keys()))
+                    else:
+                        # Convert other types to string
+                        string_history.append(str(item))
+                new_item_prefix = "➕"
+                edit_default = f"{new_item_prefix} Ввести новое"
+                result = qm.select_then_edit(
+                    prompt_text,
+                    choices=string_history + [edit_default],
+                    default=default or "",
+                    new_item_marker_prefix=new_item_prefix,
+                )
+                if result == edit_default:
+                    result = ask(questionary.text, message=prompt_text + ":", default=default)
+            else:
+                result = ask(questionary.text, message=prompt_text + ":", default=default)
 
         result = clean_input(result) if result else default
         if result and result != default:
             self.config.add_to_history(*parts, value=result)
 
         return result
+
+    def _get_field(self, *parts: Sequence[str], **format_kwargs) -> str:
+        """
+        Get field value with default and history.
+
+        Args:
+            parts: Configuration path parts
+            **format_kwargs: Additional named parameters for formatting prompt_text and default
+
+        Returns:
+            User input or default value
+        """
+        return self._ask_with_prompt(
+            *parts, default=self.config.get(list(parts) + ["_default"], ""), **format_kwargs
+        )
+
+    def _select_option(self, section: str, field: str) -> str:
+        """Select from options."""
+        field_config = self.config.get(f"{section}.{field}")
+        options = field_config.get("_options", [])
+        prompt = field_config.get("_prompt", field)
+
+        return ask(questionary.select, message=prompt + ":", choices=options)
+
+
+class DataQuestionnaire:
+    """Interactive data collection with analyzer dependency."""
+
+    def __init__(self, config: ConfigManager, analyzer: DataAnalyzer, questionnaire: Questionnaire):
+        self.config = config
+        self.analyzer = analyzer
+        self.questionnaire = questionnaire  # Composition, not inheritance
+
 
     def collect_metadata(
         self, parsed_info: Dict, pos_df: pd.DataFrame, all_files: List[Path], output_filename: str
@@ -922,17 +1130,11 @@ class InteractiveQuestionnaire:
         Returns:
             User input or default value
         """
-        return self._ask_with_prompt(
-            *parts, default=self.config.get(list(parts) + ["_default"], ""), **format_kwargs
-        )
+        return self.questionnaire._get_field(*parts, **format_kwargs)
 
     def _select_option(self, section: str, field: str) -> str:
         """Select from options."""
-        field_config = self.config.get(f"{section}.{field}")
-        options = field_config.get("_options", [])
-        prompt = field_config.get("_prompt", field)
-
-        return ask(questionary.select, message=prompt + ":", choices=options)
+        return self.questionnaire._select_option(section, field)
 
     def _add_new_instrument(
         self, instrument: str, instrument_type: str = "", show_selection: bool = True, **kwargs
@@ -1070,18 +1272,17 @@ class InteractiveQuestionnaire:
         if ordered_columns is None:
             ordered_columns = self.analyzer.get_all_columns_ordered(files)
 
-        id_cols = {
-            "rec_num",
-            "Rec_num",
-            "НОМЗАП",
-            "identific",
-            "Identific",
-            "ИДЕНТИФ",
-            "station",
-            "Station",
-            "НОМСТ",
-        }
-        param_columns = [c for c in ordered_columns if c not in id_cols]
+        # Get ID columns from config file
+        pos_fields = self.config.get("Структура файла данных.Таблица Признаки", {})
+
+        # Filter out columns that match POS fields (including aliases)
+        param_columns = []
+        for col in ordered_columns:
+            for field_key, field_data in pos_fields.items():
+                if in_key_or_aliases(col, field_key, field_data):
+                    break
+            else:
+                param_columns.append(col)
 
         params = {}
         if instrument_info:
@@ -1104,23 +1305,19 @@ class InteractiveQuestionnaire:
             else:
                 elements.append(f"{col} (параметр не описан)")
 
-        print("\n" + "=" * 80)
-        print("ЭЛЕМЕНТЫ ДАННЫХ")
-        print("=" * 80)
-        print("Требование ВНИИГМИ-МЦД: описываем ТОЛЬКО параметры из файлов данных.")
-        print("\nСгенерированные описания для найденных параметров:")
+        print(
+            "[Элементы данных]: описания параметров из файлов данных. Примите или отредактируйте сгенерированные описания"
+        )
         print("-" * 80)
         for i, (col, elem) in enumerate(zip(param_columns, elements), 1):
             print(f"{i}. {col}: {elem}")
         print("-" * 80)
 
-        edited_text = ask(
-            questionary.text,
-            message="Отредактируйте описания (разделяйте точкой с запятой):",
-            default="; ".join(elements),
+        edited_elements = self.questionnaire._ask_with_prompt(
+            "Общие характеристики", "Элементы данных", default=elements
         )
-
-        edited_elements = [e.strip() for e in edited_text.split(";") if e.strip()]
+        if edited_elements is None:
+            edited_elements = elements  # Fallback
 
         # Validate all columns described
         described = set()
@@ -1251,8 +1448,10 @@ class InteractiveQuestionnaire:
 
         # Get 1st organization info from hierarchical structure if not provided
         if not organization:
-            organization = self._ask_with_prompt(*parts)
-            if output_reqs := self.config.get(parts):
+            user_org = self.questionnaire._ask_with_prompt(*parts)
+            if user_org:
+                organization = user_org
+            elif (output_reqs := self.config.get(parts)):
                 org_keys = [k for k in output_reqs.keys() if not k.startswith("_")]
                 if org_keys:
                     organization = org_keys[0]
@@ -1261,9 +1460,9 @@ class InteractiveQuestionnaire:
         org_manufacturer = self._get_field(*parts, organization=organization)
         parts += [organization]
         # Get structure under the organization
-        fio = self._ask_with_prompt(*parts, "_ФИО")
-        email = self._ask_with_prompt(*parts, "_email")
-        phone = self._ask_with_prompt(*parts, "_Телефон")
+        fio = self.questionnaire._ask_with_prompt(*parts, "_ФИО")
+        email = self.questionnaire._ask_with_prompt(*parts, "_email")
+        phone = self.questionnaire._ask_with_prompt(*parts, "_Телефон")
 
         today = datetime.now().strftime("%d.%m.%Y")
         return f"{org_manufacturer}, {fio}, {phone}, {email}, {today}"
@@ -1329,10 +1528,9 @@ class InteractiveQuestionnaire:
 
         for col in pos_df.columns:
             detected_format = self.analyzer.detect_format(pos_df[col])
-
             desc = col
             for field_key, field_data in pos_fields.items():
-                if col in field_data.get("alternatives", []):
+                if in_key_or_aliases(col, field_key, field_data):
                     desc = field_data["description"]
                     break
 
@@ -1376,7 +1574,7 @@ class InteractiveQuestionnaire:
 
             # Try POS fields first
             for field_key, field_data in pos_fields.items():
-                if col in field_data.get("alternatives", []):
+                if in_key_or_aliases(col, field_key, field_data):
                     desc = field_data["description"]
                     break
             else:
@@ -1524,8 +1722,50 @@ class METFileGenerator:
         logger.info(f"MET file written: {output_path}")
 
 
+def prompt_input_path(questionnaire: Questionnaire) -> Optional[str]:
+    """
+    Prompt user for input data directory path with history support.
+
+    Args:
+        questionnaire: Questionnaire instance for prompting
+
+    Returns:
+        Input path string or None if cancelled
+    """
+    history = questionnaire.config.get_input_path_history()
+    field_config = questionnaire.config.get("_input_path_history")
+
+    prompt_text = "Путь к данным"
+    description = "Каталог с файлами данных (*POS.csv и другие CSV файлы)"
+
+    if field_config:
+        prompt_text = field_config.get("_prompt", prompt_text)
+        description = field_config.get("_description", description)
+
+    if description:
+        print(f"\n💡 {description}")
+
+    if history:
+        if isinstance(history, str):
+            history = [history]
+        new_item_prefix = "➕"
+        edit_default = f"{new_item_prefix} Ввести новый путь"
+        result = qm.select_then_edit(
+            prompt_text,
+            choices=history + [edit_default],
+            default="",
+            new_item_marker_prefix=new_item_prefix,
+        )
+        if result == edit_default:
+            result = ask(questionary.text, message=prompt_text + ":", default="")
+    else:
+        result = ask(questionary.text, message=prompt_text + ":", default="")
+
+    return clean_input(result) if result else None
+
+
 def main():
-    """Main entry point with graceful exit."""
+    """Main entry point with graceful exit and history preservation."""
     global logger, ask
 
     parser = argparse.ArgumentParser(description="Генератор MET файлов для морских экспедиционных данных")
@@ -1537,62 +1777,30 @@ def main():
 
     print("\n" + "=" * 80)
     print("Генератор MET файлов")
-    print("=" * 80 + "\n")
+    print("=" * 80)
 
     # Redefine ask() function for auto-yes mode
     if args.yes:
+        ask = qm.ask_auto_answer
 
-        def ask(questionary_func, **kwargs):
-            """
-            Auto-yes wrapper that mimics questionary UI with Enter key press.
+    # Initialize console-only logging early
+    setup_logging_console_only()
 
-            Args:
-                questionary_func: questionary function (text, select, confirm, etc.)
-                **kwargs: arguments to pass to questionary function
-
-            Returns:
-                Default value as if Enter was pressed
-            """
-            # Set default style if not provided
-            if "style" not in kwargs:
-                kwargs["style"] = CUSTOM_STYLE
-
-            # Get the message and default value
-            message = kwargs.get("message", "")
-            default = kwargs.get("default", "")
-
-            # For select/confirm, get first choice or boolean default
-            if questionary_func == questionary.select:
-                choices = kwargs.get("choices", [])
-                default = choices[0] if choices else ""
-            elif questionary_func == questionary.confirm:
-                default = kwargs.get("default", False)
-                default_str = "Y/n" if default else "y/N"
-            elif questionary_func == questionary.checkbox:
-                default = ""
-            elif questionary_func == questionary.path:
-                default = "."
-
-            # Print exactly like Questionary does (using hardcoded ANSI codes)
-            if questionary_func == questionary.confirm:
-                print(f"\u001b[38;5;98;1m\u001b[0m? {message}\u001b[1m\u001b[0m [{default_str}]\u001b[0m")
-            else:
-                print(f"\u001b[38;5;98;1m\u001b[0m? {message}\u001b[1m\u001b[0m [{default}]\u001b[0m")
-
-            return default
+    # Initialize config manager early to access history
+    config = ConfigManager(CONFIG_FILE)
+    questionnaire = Questionnaire(config)
 
     # Get data directory from command line or interactive prompt
     if args.data_dir_str:
         data_dir_str = args.data_dir_str
     else:
-        data_dir_str = ask(questionary.path, message="Путь к данным:", only_directories=True)
-
+        data_dir_str = prompt_input_path(questionnaire)
         if not data_dir_str:
             return
 
     data_dir = Path(data_dir_str)
 
-    # If path is not a dir, try to use its parent directory
+    # Validate path
     if not data_dir.is_dir():
         data_dir = data_dir.parent
         print(f"Input is not a dir, trying parent: {data_dir}")
@@ -1601,19 +1809,27 @@ def main():
         print("Ошибка: каталог не найден")
         return
 
+    # Add valid path to history with duplicate checking
+    config.add_to_history(
+        "input_path_history",
+        value=str(data_dir.resolve()),
+        history_section=config._history_file_dict,
+    )
+
+    # Now we know the data directory, set up file logging
+    log_dir = get_log_directory()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = data_dir / f"met_generation_{timestamp}.log"
-    setup_logging(log_file)
+    log_file = log_dir / f"met_generation_{timestamp}.log"
+    add_file_handler(log_file)
 
     logger.info("=" * 80)
     logger.info(f"Directory: {data_dir}")
     logger.info("=" * 80)
 
     try:
-        config = ConfigManager(CONFIG_FILE)
-
+        # Initialize data-dependent components
         analyzer = DataAnalyzer(config)
-        questionnaire = InteractiveQuestionnaire(config, analyzer)
+        data_questionnaire = DataQuestionnaire(config, analyzer, questionnaire)
         generator = METFileGenerator(config)
 
         pos_files = list(data_dir.glob("*POS.csv"))
@@ -1652,7 +1868,7 @@ def main():
                 )
             )
             # 2. Show selection dialog with option to add new instrument
-            parsed_info = questionnaire._add_new_instrument(**parsed_info, show_selection=True)
+            parsed_info = data_questionnaire._add_new_instrument(**parsed_info, show_selection=True)
 
         parsed_info.setdefault("vessel_code", "VESSEL")
         parsed_info.setdefault("cruise_number", "XX")
@@ -1673,16 +1889,13 @@ def main():
                 return
 
         # Collect metadata
-        parsed_info = questionnaire.collect_metadata(parsed_info, pos_df, all_files, output_filename)
+        parsed_info = data_questionnaire.collect_metadata(parsed_info, pos_df, all_files, output_filename)
 
         # Generate content
         met_content = generator.dict_to_met_content(parsed_info)
 
         # Write
         generator.write_met_file(output_path, met_content)
-
-        # Save config
-        config.save_config()
 
         logger.info("=" * 80)
         logger.info("Completed successfully!")
@@ -1693,6 +1906,7 @@ def main():
         print(f"  Логи: {log_file}\n")
 
     except KeyboardInterrupt:
+        # Handle user interruption
         logger.warning("Interrupted by user")
         print("\n\n")
 
@@ -1703,7 +1917,6 @@ def main():
         )
 
         if choice == "Сохранить и выйти":
-            config.save_config()
             print("[OK] Данные сохранены\n")
         elif choice == "Не сохранять и выйти":
             print("[CANCEL] Данные не сохранены\n")
@@ -1715,6 +1928,10 @@ def main():
         logger.exception("Fatal error")
         print(f"\n[ERROR] Ошибка: {e}\n")
         raise
+
+    finally:
+        # Always save history (even on errors)
+        config.save_configs()
 
 
 if __name__ == "__main__":

@@ -1,21 +1,4 @@
 #!/usr/bin/python3.7+
-"""
-Convert NetCDF data that was downloaded by download_copernicus.py to csv or grd
-Input file can be, for example, loaded from dataset-bal-analysis-forecast-phy-monthlymeans dataset and have variables:
-uo,vo,mlotst,so,sob
-
-NAME    STANDARD NAME       UNITS
-bottomT sea water potential temperature at sea floor, degrees C
-mlotst  ocean mixed layer thickness defined by sigma theta, m
-siconc  sea ice area fraction   1
-sithick sea ice thickness, m
-sla     sea surface height above sea level, m
-so      sea water salinity * 0.001
-sob     sea water salinity at sea floor * 0.001
-thetao  sea water potential temperature, degree Celsius
-uo      eastward sea water velocity, m/s
-vo      northward sea water velocity, m/s
-"""
 from collections import defaultdict
 from datetime import datetime
 import re

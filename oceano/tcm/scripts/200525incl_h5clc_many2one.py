@@ -13,7 +13,7 @@ drive_d = Path('D:/' if sys.platform == 'win32' else '/mnt/D')  # allows to run 
 scripts_path = drive_d.joinpath('Work/_Python3/And0K/h5toGrid/scripts')
 sys.path.append(str(Path(scripts_path).parent.resolve()))  # os.getcwd()
 import tcm.incl_h5clc as incl_h5clc
-import tcm.incl_h5spectrum as incl_h5spectrum
+import tcm.spectr_clc as spectr_clc
 from utils import veuszPropagate
 from utils.init import path_on_drive_d, init_logging, open_csv_or_archive_of_them, st
 

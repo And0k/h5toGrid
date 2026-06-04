@@ -359,17 +359,21 @@ def cfgfile2dict(
                     on it unless this parser is used
                 """
                 try:
-                    from ruamel.yaml import safe_load as yaml_safe_load
+                    from ruamel.yaml import YAML
+                    yaml = YAML(typ='safe', pure=True)
                 except ImportError:
                     try:
                         from yaml import safe_load as yaml_safe_load
+                        def _load_yaml(f):
+                            return yaml_safe_load(f.read())
+                        yaml = type('YAML', (), {'load': _load_yaml})
                     except ImportError:
                         raise ImportError(
                             "Could not import yaml or ruamel.yaml. It can be installed by running any of combinations:"
                             "pip/conda install PyYAML/ruamel.yaml")
                 try:
                     with open(arg_source, encoding='utf-8') as f:
-                        config = yaml_safe_load(f.read())
+                        config = yaml.load(f)
                 except FileNotFoundError:  # path is not constist of less than 1 level of new subdirs
                     print('Ini file "{}" dir not found, continue...'.format(arg_source))
                     config = {}
@@ -1894,15 +1898,17 @@ def init_logging(logger='', log_file=None, level_file='INFO', level_console=None
     return l
 
 
-def name_output_and_log(out_path=None,
-                        writeMode=None,
-                        filemask=None,
-                        min_size_to_overwrite=None,
-                        logging=logging,
-                        f_rep_filemask=lambda f: f,
-                        bInteract=False,
-                        log='log.log',
-                        verbose=None):
+def name_output_and_log(
+    out_path=None,
+    writeMode=None,
+    filemask=None,
+    min_size_to_overwrite=None,
+    logging=logging,
+    f_rep_filemask=lambda f: f,
+    bInteract=False,
+    log="log.log",
+    verbose=None,
+):
     """
     path and splits it to fields
     'path', 'filemask', 'ext'
@@ -1963,10 +1969,12 @@ class FakeContextIfOpen:
     # see better contextlib.nullcontext
     """
 
-    def __init__(self,
-                 fn_open_file: Optional[Callable[[Any], Any]] = None,
-                 file: Optional[Any] = None,
-                 opened_file_object = None):
+    def __init__(
+        self,
+        fn_open_file: Optional[Callable[[Any], Any]] = None,
+        file: Optional[Any] = None,
+        opened_file_object=None,
+    ):
         """
         :param fn_open_file: if bool(fn_open_file) is False then context manager will do nothing on exit
         :param file:         if not str or PurePath then context manager will do nothing on exit
@@ -2063,9 +2071,10 @@ def open_csv_or_archive_of_them(filename: Union[PurePath, Iterable[Union[Path, s
                 # decrease the operations number as we are working with big files
                 io.DEFAULT_BUFFER_SIZE = max(io.DEFAULT_BUFFER_SIZE, 8192 * 16)
                 import tempfile, psutil
-                rarfile.HACK_SIZE_LIMIT = max(20_000_000,
-                                              psutil.disk_usage(Path(tempfile.gettempdir()).drive).free - 1_000_000_000
-                                              )
+
+                rarfile.HACK_SIZE_LIMIT = max(
+                    20_000_000, psutil.disk_usage(Path(tempfile.gettempdir()).drive).free - 1_000_000_000
+                )
             except Exception as e:
                 l.warning('%s: can not update settings to increase peformance', standard_error_info(e))
             read_mode = 'r'  # RarFile need opening in mode 'r' (but it opens in binary_mode)
@@ -2099,9 +2108,7 @@ def open_csv_or_archive_of_them(filename: Union[PurePath, Iterable[Union[Path, s
                 yield f
 
 
-def path_on_drive_d(path_str: str = '/mnt/D',
-                    drive_win32: str = 'D:',
-                    drive_linux: str = '/mnt/D'):
+def path_on_drive_d(path_str: str = "/mnt/D", drive_win32: str = "D:", drive_linux: str = "/mnt/D"):
     """convert path location on my drive to current system (Linux / Windows)"""
     if path_str is None:
         return None
@@ -2179,9 +2186,22 @@ def call_with_valid_kwargs(func: Callable[[Any], Any], *args, **kwargs):
     :Return: The result of calling func with valid arguments extracted from kwargs.
     How it works:
     It first finds the intersection of the keys in kwargs and the expected arguments of func.
-    It then calls func, with positional arguments *args and only those key-value pairs from kwargs that are
-    valid arguments for func.
+    It then calls func, with positional arguments *args and only those key-value pairs from kwargs that
+    are valid arguments for func.
     Inspired by https://stackoverflow.com/a/9433836
+
+    # check better method:
+    # Automatically determine valid keys from function signature
+    # This eliminates the need to manually maintain the valid_keys set
+    import inspect
+    fun_sig = inspect.signature(fun)
+    fun.valid_keys = {
+        name for name, param in fun_sig.parameters.items()
+        if param.kind not in (param.VAR_POSITIONAL, param.VAR_KEYWORD)
+    }
+    # Add 'param' which is computed in the function and can be passed via kwargs
+    fun.valid_keys.add('param')
+
     """
     valid_keys = kwargs.keys() & func.__code__.co_varnames[len(args) : func.__code__.co_argcount]
     return func(*args, **{k: kwargs[k] for k in valid_keys})

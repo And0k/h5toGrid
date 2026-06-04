@@ -565,7 +565,7 @@ def main(new_arg=None, **kwargs):
 
 
     if st(3, 'Calculate spectrograms'):  # Can be done at any time after step 1
-        import tcm.incl_h5spectrum as incl_h5spectrum
+        import tcm.spectr_clc as spectr_clc
 
         min_Pressure = 0.5
 
@@ -612,7 +612,7 @@ def main(new_arg=None, **kwargs):
                 ]
 
 
-        incl_h5spectrum.main(args)
+        spectr_clc.main(args)
 
 
     if st(4, 'Draw in Veusz'):

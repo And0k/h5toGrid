@@ -9,7 +9,7 @@ from contextlib import contextmanager
 # my
 import plot
 import sys_path_tcm
-from tcm.incl_h5spectrum import h5_velocity_by_intervals_gen, df_interp, init_psd_nc_file
+from tcm.spectr_clc import h5_velocity_by_intervals_gen, df_interp, init_psd_nc_file
 from tcm.utils2init import standard_error_info
 
 if __debug__:

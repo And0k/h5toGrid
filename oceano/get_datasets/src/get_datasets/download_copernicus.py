@@ -10,7 +10,7 @@ from omegaconf import DictConfig, OmegaConf
 
 # sys.path.append(str(Path(__file__).parent.parent.parent / "downloading"))
 
-from get_datasets import utils
+from get_datasets import d_utils
 from get_datasets.manager import DownloadHistoryManager
 
 l = logging.getLogger(__name__)
@@ -51,19 +51,17 @@ def extract_error_from_xml(xml_string):
 
 def get_interpolation_delta(base_delta, dataset_id, lat, lon):
     """Calculate interpolation delta based on dataset resolution and base delta"""
-    if base_delta is not None and base_delta != "null":
+    if base_delta and base_delta != "null":
         return base_delta
 
     # Use dataset-specific resolution fallbacks
-    match dataset_id:
-        case s if "cmems_obs-wind_glo_phy_my_l4_0.25deg" in s:
-            return 0.25  # 0.25° for 0.25° dataset
-        case s if "cmems_obs-wind_glo_phy_my_l4_0.125deg" in s:
-            return 0.125  # 0.125° for 0.125° dataset
-        case s if "cmems_mod_bal_phy_anfc" in s or "cmems" in s:
-            return 0.03 # for 2 km: > 2/111 ≈ 0.018°
-        case _:
-            return 0.25  # default 0.25°
+    if "cmems_obs-wind_glo_phy_my_l4_0.25deg" in dataset_id:
+        return 0.25  # 0.25° for 0.25° dataset
+    if "cmems_obs-wind_glo_phy_my_l4_0.125deg" in dataset_id:
+        return 0.125  # 0.125° for 0.125° dataset
+    if "cmems_mod_bal_phy_anfc" in dataset_id or "cmems" in dataset_id:
+        return 0.03 # for 2 km: > 2/111 ≈ 0.018°
+    return 0.25  # default 0.25°
 
 
 @hydra.main(config_path="cfg", config_name="base", version_base=None)
@@ -80,7 +78,7 @@ def main(cfg: DictConfig):
         l.info(f"Projects config content: {projects_config}")
         l.info(f"Projects keys: {list(projects_config.keys()) if hasattr(projects_config, 'keys') else 'No keys method'}")
 
-    if projects_config and hasattr(projects_config, 'keys') and len(list(projects_config.keys())) > 0:
+    if projects_config and hasattr(projects_config, 'keys') and projects_config.keys():
         # Use the first project config if available
         project_name = next(iter(projects_config.keys()))
         config_section = projects_config[project_name]
@@ -121,9 +119,9 @@ def main(cfg: DictConfig):
         if not gpx_file_path.exists():
             # Try relative to the project root (oceano/get_datasets)
             gpx_file_path = Path(__file__).parent.parent / gpx_path  # oceano/get_datasets level
-        points_from_gpx = utils.extract_coordinates_from_gpx(gpx_file_path, gpx_waypoints_re)
+        points_from_gpx = d_utils.extract_coordinates_from_gpx(gpx_file_path, gpx_waypoints_re)
         if points_from_gpx:
-            points += list(points_from_gpx.values())
+            points.extend(points_from_gpx.values())
     if not points:
         try:
             bbox = config_section.bbox
@@ -157,8 +155,7 @@ def main(cfg: DictConfig):
             download_options.pop("minimum_depth", None)
             download_options.pop("maximum_depth", None)
         else:
-            download_options["minimum_depth"] = min_depth
-            download_options["maximum_depth"] = max_depth
+            download_options.update({"minimum_depth": min_depth, "maximum_depth": max_depth})
 
         for i1_p, point in enumerate(points if points else [None], start=1):
             if point: # Download the extended region data
@@ -186,7 +183,13 @@ def main(cfg: DictConfig):
             # Create a separate copy of download_options for logging to avoid polluting the main options
             logging_messages = {}
             try:
-                result = cm.subset(**download_options)
+                while True:
+                    try:
+                        result = cm.subset(**download_options)
+                        break
+                    except cm.core_functions.credentials_utils.InvalidUsernameOrPassword:
+                        cm.login()
+
                 # Handle the response - it returns a ResponseSubset object
                 if hasattr(result, 'file_path'):
                     file_path = Path(result.file_path)
@@ -216,7 +219,7 @@ def main(cfg: DictConfig):
                 paths.append(path_loaded)
                 if point:  # Interpolate to the exact point
                     try:
-                        path_interp = utils.interp_to_point(path_loaded, point['lat'], point['lon'])
+                        path_interp = d_utils.interp_to_point(path_loaded, point['lat'], point['lon'])
                         l.info(f"Interpolated data saved to: {path_interp}")
                     except AssertionError as e:
                         msg = {

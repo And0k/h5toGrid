@@ -154,12 +154,12 @@ def intervals_from_period(
     datetime_range: Optional[np.ndarray] = None,
     min_date: Optional[pd.Timestamp] = None,
     max_date: Optional[pd.Timestamp] = None,
-    period: Optional[str] = '999D',
+    period: Optional[Union[str, pd.Timedelta, np.timedelta64]] = '999D',
     **kwargs
 ) -> Tuple[pd.Timestamp, pd.DatetimeIndex]:
     """
     Divide datetime_range on intervals of period, normalizes starts[1:] if period>1D and returns them in tuple's 2nd element
-    :param period: pandas offset string 'D' (Y, D, 5D, H, ...) if None such field must be in cfg_in
+    :param period: pandas offset string 'D' (Y, D, 5D, H, ...) or pd.Timedelta or np.timedelta64. If None such field must be in cfg_in
     :param datetime_range: list of 2 elements, use something like np.array(['0', '9999'], 'datetime64[s]') for all data.
     If not provided 'min_date' and 'max_date' will be used
     :param min_date, max_date: used if datetime_range is None. If neither provided then use range from 2000/01/01 to now
@@ -178,7 +178,8 @@ def intervals_from_period(
         datetime_range = [start, t_interval_last]
 
     if period:
-        period_timedelta = to_offset(period)  # pd_period_to_timedelta(
+        # Convert period to timedelta if it's a string, otherwise use as-is
+        period_timedelta = pd.Timedelta(to_offset(period)) if isinstance(period, str) else pd.Timedelta(period)
 
         # Set next start on the end of day if interval is bigger than day
         if period_timedelta >= pd.Timedelta(1, 'D'):
@@ -194,7 +195,7 @@ def intervals_from_period(
             ends = pd.date_range(
                 start=start_next,
                 end=max(datetime_range[-1], start_next + period_timedelta),
-                freq=period)
+                freq=period_timedelta)
             # make last start bigger than datetime_range[-1]
             if ends[-1] < datetime_range[-1]:
                 ends = ends.append(pd.DatetimeIndex(datetime_range[-1:]))

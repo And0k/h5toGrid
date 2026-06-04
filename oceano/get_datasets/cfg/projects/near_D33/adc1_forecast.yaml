@@ -1,0 +1,12 @@
+# @package projects.near_D33
+
+# Configuration for CMEMS Point ABP61 (t-chain) project
+dir_save: "near_D33"
+date_range: ["2026-01-01", "2026-03-31"]
+points: [{lat: 55.492222, lon: 20.092222}, {lat: 55.522889, lon: 20.131611}]
+dataset_vars:
+  # cmems_mod_bal_phy_my_P1M-m: ["bottomT", "so", "sob", "thetao"]
+  cmems_mod_bal_phy_anfc_P1D-m: ["bottomT", "so", "sob", "thetao", "uo", "vo", "wo"]
+depth_min: 0.5016462206840515  # dataset minimum [0.5016462206840515, 712.024658203125]
+depth_max: 100
+interpolation_delta: 0  # Set 0.03 to be > ~2km (resolution of CMEMS datasets) to able to interpolate

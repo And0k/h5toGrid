@@ -139,6 +139,7 @@ en2ru = {
     "current": "течение",
     "current rose": "роза течений",
     "current velocity": "скорость течения",
+    "current direction": "направление течения",
     "dBar": "дБар",
     "data": "данные",
     "depth": "глубина",
@@ -182,7 +183,8 @@ en2ru = {
     "longitude": "долгота",
     "lowest": "нижн.",
     "m": "м",
-    "magnitude": "абсолютное значение",
+    "magnitude": "модуль",
+    "magnitude1": "абсолютное значение",
     "magnetometer": "магнитометр",
     "manufacture": "производитель",
     "mean": "среднее",
@@ -244,6 +246,7 @@ en2ru = {
     "residual errors": "остаточные погрешности",
     "resulting": "полученный",
     "Root": "Корень",
+    "raw": "исходные",
     "run": "пуск",
     "s": "c",
     "salinity": "соленость",
@@ -283,6 +286,7 @@ en2ru = {
     "used-": "исп.",
     "velocity": "скорость",
     "velocity magnitude": "модуль скорости",
+    "vectors": "вектора",
     "vector components": "составляющие вектора",
     "vector projections": "проекции вектора",
     "zeroing": "калибровка нуля",
@@ -581,9 +585,12 @@ def str_date_unit_with_suffix(t_range, str_zone, **kwargs):
     return f"{str_date_unit_result}{(chr(92) * 2 if higher else chr(8201))}{('^' if str_date_unit_nl and str_zone else '')}{str_zone}{chr(92) * 2 * (higher - 1)}"
 
 
-def str_dt(dt, lang=lang):
-    """Time interval to readable string"""
-    s = np.array(dt * 1000000, "M8[us]").item()
+def str_dt(dt_s: float, lang=lang):
+    """
+    Time interval to readable string
+    :param dt_s: time, s
+    """
+    s = np.array(int(dt_s * 1000000), "M8[us]").item()
     a = np.int16(s.timetuple()[:6]) - [1970, 1, 1, 0, 0, 0]
     if ~np.any(a):
         a = [0, 0, 0, 0, 0, 0, np.round(s.microsecond * 1e-06, 3)]
@@ -604,13 +611,23 @@ def day_sfx(d):
     return {1: "st", 2: "nd", 3: "rd"}.get(d % 20, "th") if lang != "ru" else ""
 
 
-def str_time_range(st: datetime, en, date_format="%d.%m.%Y", time_format="%H:%M", str_zone=""):
+def str_time_range(
+    st: datetime,
+    en: datetime,
+    date_format: str = "%d.%m.%Y",
+    time_format: str = "%H:%M",
+    str_zone: str = "",
+    sep: str = "\u2009",
+    sep_interval: str = "\u2009–\u2009",
+):
     """
     Time range string without repeating not changed time units in date format
     :param st:
     :param en:
     :param date_format:  After %d there may be {sfx} that will be replaced to appropriate day suffix
     :param str_zone: time text suffix
+    :param sep: output white space separator between date and time: default - unicode "\u2009" (short space)
+    :param sep_interval: separator between 1st and last datetime
     :return:
     """
     if not isinstance(st, datetime):
@@ -644,8 +661,7 @@ def str_time_range(st: datetime, en, date_format="%d.%m.%Y", time_format="%H:%M"
         str_en_date = []
     st, en = [[f"{t:{time_format}}"] for t in (st, en)] if time_format else [[], []]
     return (
-        "\u2009–\u2009".join(["\u2009".join(d_t) for d_t in ([str_st_date] + st, str_en_date + en) if d_t])
-        + str_zone
+        sep_interval.join([sep.join(d_t) for d_t in ([str_st_date] + st, str_en_date + en) if d_t]) + str_zone
     )
 
 
@@ -1929,12 +1945,25 @@ def format_2d_array(data, formatters=()):
     prev_formatter = None
     # Apply each formatter to its corresponding column
     for i, formatter in enumerate(formatters):
-        # Vectorized application of the formatter
+        data_cur = data[:, i] if b_array else data[i]
+        # application of the formatter
         if prev_formatter != formatter:
-            vec_formatter = np.vectorize(
-                f"{{:{formatter}}}".format if isinstance(formatter, str) else formatter
+            if isinstance(formatter, str):
+                formatter = f"{{:{formatter}}}".format
+                if isinstance(data_cur[0], np.datetime64):
+                    fmatter = formatter
+                    formatter = lambda el: fmatter(el.item())
+        try:
+            formatted_data.append([formatter(el) for el in data_cur])
+        except Exception:
+            raise ValueError(
+                "Error apply formatting to {} at col{}: {}!".format(
+                    data_cur,
+                    i,
+                    f"{formatter}.format" if isinstance(formatter, str) else formatter
+                )
             )
-        formatted_data.append(vec_formatter(data[:, i] if b_array else data[i]))
+
         prev_formatter = formatter
     return np.array(formatted_data).T
 
@@ -1954,12 +1983,11 @@ def save2text(
     Save data to a text file.
 
     :param vars: variables to save. Must be of type for which `list(vars)` returns Sequnce[str] of var names
-    - Mapping[str, Any]: column names to data values
-    - Sequnce[str]: values will be obtained with `fun_get()` of each var
-    :param dtypes: data types for the `vars`. If their number is less than `vars` then remained are float64.
+    - Mapping[str, Any]: column names to data values. Ensure the values are of correct types
+    - Sequence[str]: values will be obtained with `fun_get()` of each var - useful if csv headers matches existed names
+    :param dtypes: input data types for the `vars`. If their number is less than `vars` then remained are float64.
     Default: empty tuple. Use any numpy array types: "M8[s]", "f8'...
-    :param formats: format specifiers for the `vars` - standard ("f", "s", ...) or custom formatting
-        functions.
+    :param formats: output format specifiers for the `vars` - standard ("f", "s", ...) or custom formatting functions.
     :param delimiter: delimiter for the output file.
     :param file: file path to save the data. Default: `sys.argv[1]` with suffix replaced with `file_sfx`
     :param file_sfx: will be appended to basename to get output file name if `file` is `None`
@@ -1995,10 +2023,10 @@ def save2text(
     def from_vsz(v, fmt):
         return vsz2dt64s(fun_get(v)) if fmt.startswith("M") else fun_get(v)
 
-    warning(f"Saving {vars} to {file}...")
     if skip_if_exist:
         if isinstance(skip_if_exist, builtins.bool):
             if file.is_file():
+                info(f"skipping saving to existed file {file}...")
                 return -1  # file exist
         elif file.is_file():
             file_stem = file.stem
@@ -2040,8 +2068,7 @@ def save2text(
                 warning(f"~{var_name}{file_stem}: {data_exist}")
                 warning(f"column_name: {fun_get(var_name)}")
                 return
-    # from numpy.core.records import fromarrays
-    warning(f"dtypes={dtypes}, type: {type(dtypes)}")
+    warning(f"Saving {vars} to {file}:\ndtypes={dtypes}, type: {type(dtypes)}")
     # 1 get values
     vars_vals = (
         vars.values()
@@ -2054,7 +2081,6 @@ def save2text(
     try:
         # 2. broadcast scalars
         val_arr = [np.repeat(v, el_size) if np.isscalar(v) else v for v, fmt in zip(vars_vals, dtypes)]
-        # data_records = fromarrays(val_arr, dtype=dtype({'names': tuple(vars), 'formats': dtypes}))
         n_formats_skipped = len(vars) - len(formats)
         if len(formats) < len(dtypes):
             formats = list(formats) + [
@@ -2065,9 +2091,9 @@ def save2text(
             if data_exist is False:
                 np.savetxt(f, np.atleast_2d(list(vars)), "%s", delimiter=delimiter)
             str_array = format_2d_array(val_arr, formatters=formats)
-            warning(f"formats: {formats},\narray: {str_array}\n")
+            warning(f"formats: {formats},\narray(str): {str_array}\n")
             np.savetxt(f, str_array, fmt="%s", delimiter=delimiter)
-        warning("File %s: %s", "saved" if data_exist is False else "appended", file)
+        warning("File %s: %s", "saved" if data_exist is False else "appended", str(file))
     except Exception:
         exception("Error in save2text(%s)!", file.name)
         warning(f"Creating record array from: {val_arr} and saving is failed!\nTypes: {dtypes}")

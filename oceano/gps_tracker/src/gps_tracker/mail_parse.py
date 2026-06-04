@@ -81,7 +81,7 @@ def spot_from_gmail(device_number: Union[str, int], time_start: datetime, by_tim
                     before=time_end
                 )
             )
-            
+
             out += data
             time_start += by_time_range
         return out
@@ -285,4 +285,4 @@ if True:  # if __name__ == '__main__':
                                     time_start=datetime.fromisoformat('2021-06-04T15:49:07+00:00')
                                     )
 
-        body = 'The Position alert for 4 (0-3125300) has been triggered: \r\n\r\nTime           : 6/4/2021 9:49:24 PM \r\nAsset          : 4 (0-3125300) \r\nLat/Lng        : 54.624180, 19.760560 \r\nAddress        : Kaliningrad, Russia \r\nAltitude       : -4.0 m \r\nSpeed          : 0.0 kph \r\nLink           : https://maps.findmespot.com/Track?showPositionId=6b5d34eb-6dc5-eb11-80fc-90b11c455a5d&from=2021-06-03+21%3a49%3a24Z&to=2021-06-05+21%3a49%3a24Z&showAssetId=474518 \r\n\r\nEvents\r\n - Unlimited Track \r\n\r\n--\r\nTo unsubscribe from this alert, please use this link:\nhttps://maps.findmespot.com/alerts/unsubscribe?id=17060&email=ao.korzh%40gmail.com&signature=%242a%2408%24CesN8ynWzYIHJDBuUczsw.hpN9teppzuYuH5DOLYxoq7%2FA3qde2QG\n\n\n'
+        body = 'The Position alert for 4 (0-3125300) has been triggered: \r\n\r\nTime           : 6/4/2021 9:49:24 PM \r\nAsset          : 4 (0-3125300) \r\nLat/Lng        : 54.624180, 19.760560 \r\nAddress        : Kaliningrad, Russia \r\nAltitude       : -4.0 m \r\nSpeed          : 0.0 kph \r\nLink           : https://maps.findmespot.com/Track?showPositionId=6b5d34eb-6dc5-eb11-80fc-90b11c455a5d&from=2021-06-03+21%3a49%3a24Z&to=2021-06-05+21%3a49%3a24Z&showAssetId=474518 \r\n\r\nEvents\r\n - Unlimited Track \r\n\r\n--\r\nTo unsubscribe from this alert, please use this link:\nhttps://maps.findmespot.com/alerts/unsubscribe?id=17060&email=...\n\n\n'

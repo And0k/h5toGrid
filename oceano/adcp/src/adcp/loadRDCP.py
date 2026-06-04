@@ -56,8 +56,7 @@ def load_rdcp_aux(file_in, path_out=None, delimiter='\t', modifier=None, filter=
     :return:
     """
     file_in = Path(file_in)
-    if not path_out:
-        path_out = file_in.with_name(f'{file_in.stem}_out').with_suffix(file_in.suffix)
+    path_out = path_out if path_out else file_in.with_name(f'{file_in.stem}_out').with_suffix(file_in.suffix)
     with open(file_in, 'rb') as f:
         header = f.readline()
         # gsw_z_from_p()
@@ -74,15 +73,9 @@ def load_rdcp_aux(file_in, path_out=None, delimiter='\t', modifier=None, filter=
 
     if modifier:
         a1d['P_dBar'] = a1d['P_dBar'] / 10 - 11.1
-    if filter:
-        p_min = 0
-        p_max = 15
-        b_good = (p_min < a1d['P_dBar']) & (a1d['P_dBar'] < p_max)
-    else:
-        b_good = slice(None)
+    b_good = ((0 < a1d['P_dBar']) & (a1d['P_dBar'] < 15)) if filter else slice(None)
 
-    b_excel_time = True
-    if b_excel_time:
+    if b_excel_time := True:
         excel_dates_offset_s = np.int64(np.datetime64(datetime(1899, 12, 30), 's'))
         dtype['formats'][0] = 'f8'
         a1d_float_time = (np.int64(a1d['Time'].astype('M8[s]')) - excel_dates_offset_s) / (24 * 3600)  # days, Excel time
@@ -98,10 +91,9 @@ def load_rdcp_aux(file_in, path_out=None, delimiter='\t', modifier=None, filter=
                )
 
     # Save lines for Surfer
-    p_max_show = 20
     save_shape(
         path_out.with_name(f'{file_in.stem}_P'),
-        to_polygon(a1d_float_time[b_good], a1d['P_dBar'][b_good], p_max_show),
+        to_polygon(a1d_float_time[b_good], a1d['P_dBar'][b_good], 20),
         'BNA'
         )
     np.savetxt(path_out.with_name(f'{file_in.stem}_P').with_suffix('.txt'), a1d[['Time', 'P_dBar']][b_good],
@@ -127,12 +119,10 @@ def load_rdcp_profile(file_in, path_out=None, delimiter='\t', modifier=None, fil
 
     with open(file_in) as f:
         # Find the distance from the instrument to the center of the cells from line 1 in file.
-        line1 = f.readline()
-        z = np.float64(line1.split('\t')[1:])
+        z = np.float64(f.readline().split('\t')[1:])
 
         # Read column headers and determine the number of columns from line 2 in file.
-        line2 = f.readline()
-        column_headers = line2.split('\t')[1:]  # skip 1s that is Time
+        column_headers = f.readline().split('\t')[1:]  # skip 1s that is Time
         n_columns = len(column_headers)
 
         # Read the rest of the file into a pandas DataFrame.
@@ -140,8 +130,7 @@ def load_rdcp_profile(file_in, path_out=None, delimiter='\t', modifier=None, fil
 
     # Organize the data in a pandas DataFrame
     # Account of selectd cells to export (modified 19.10.2017)
-    cell_number_in_str_st = len('Direction_')
-    icells = np.int32([c[cell_number_in_str_st:] for i, c in enumerate(column_headers) if c.startswith('Direction_')])
+    icells = np.int32([c[len('Direction_'):] for c in column_headers if c.startswith('Direction_')])
     z = z[icells - 1]
     n_cells = icells.size
 
@@ -168,10 +157,7 @@ def load_rdcp_profile(file_in, path_out=None, delimiter='\t', modifier=None, fil
     else:
         time = (data.loc[:, 0] * 3600 * 24 - 62167305600).to_numpy('M8[s]').astype('M8[ns]')
 
-    dt_all = np.diff(time)
-    dt = np.median(dt_all)
-    if all(dt_all == dt):
-        dt = None  # not need interp
+    dt = None if all((dt_all := np.diff(time)) == (dt := np.median(dt_all))) else dt
 
 
     n_parameters = n_columns // len(z)
@@ -190,11 +176,9 @@ def load_rdcp_profile(file_in, path_out=None, delimiter='\t', modifier=None, fil
     }
     for i in range(n_parameters):
         col_name = column_headers[i].split('_')[0]
-        try:
-            col_name = rename[col_name]
-        except KeyError:
+        out[col_name] = data[i, :, :] if col_name not in rename else rename[col_name]
+        if col_name not in rename:
             print(f'Not known column name: {col_name}')
-        out[col_name] = data[i, :, :]
 
     out['Vabs'] = out['Vabs']/100
     #     name = column_headers[i][:-2].replace(' ', '_').replace('.', '').replace('1', 'a1')
@@ -206,7 +190,7 @@ def load_rdcp_profile(file_in, path_out=None, delimiter='\t', modifier=None, fil
         time=time,
         z=z,
         out=out,
-        path_base=(path_out if path_out else file_in).with_name('RDCP_2d'),
+        path_base=(path_out or file_in).with_name('RDCP_2d'),
         dt=[dt] + np.array([30, 120, 360], 'm8[m]').tolist(),  # optimal minimum, and more averaged grids
         dz=[None]*3 + [2]
     )
@@ -249,19 +233,15 @@ def repInFile(nameFull, cfg, result):  # result is previous or with ['nameNavFul
             strDate = '_'.join(m.group(1, 2))
         DateFromName = datetime.strptime(strDate[:11], '%y%m%d_%H%M%S') + cfg['TimeAdd']
     else:
-        if 'Date' in result.keys():
-            warnings.warn('NOT FOUND DATE IN FILE NAME! USE TIME OF PREVIOUS FILE!')
-        else:
-            warnings.warn('NOT FOUND DATE IN FILE NAME! USE CURRENT TIME!')
-            result['Date'] = datetime.now()
+        warnings.warn('NOT FOUND DATE IN FILE NAME! USE TIME OF PREVIOUS FILE!' if 'Date' in result else 'NOT FOUND DATE IN FILE NAME! USE CURRENT TIME!')
+        result['Date'] = result.get('Date', datetime.now())
     with open(nameFull, 'r+b', encoding='utf-8') as f:  # , open(os_path.join(nameD, nameFull[]), 'r') as f:
         file_content = f.read()
-        if 'fixed_manetic_declination' in cfg['Geomag'].keys():
+        if 'fixed_manetic_declination' in cfg['Geomag']:
             result['mag'] = cfg['Geomag']['fixed_manetic_declination']
         else:
-            if 'fixed_lon' in cfg['Geomag'].keys():
-                result['Lat'] = cfg['Geomag']['fixed_lat']
-                result['Lon'] = cfg['Geomag']['fixed_lon']
+            if 'fixed_lon' in cfg['Geomag']:
+                result.update({'Lat': cfg['Geomag']['fixed_lat'], 'Lon': cfg['Geomag']['fixed_lon']})
             else:
                 if not bTimeInName:
                     # 1.1 Get more accurate time from source file for veusz if exist
@@ -271,13 +251,11 @@ def repInFile(nameFull, cfg, result):  # result is previous or with ['nameNavFul
                         nameDatFE = m.group(1)
                         nameDatFull = os_path.join(nameD, nameDatFE)
                         # b) Get date from source binary file modification stamp:
-                        if 'path' in cfg['bin files'].keys():
-                            nameBinFull = os_path.join(cfg['bin files']['path'], nameDatFE)
-                        elif 'path_source' in cfg['bin files'].keys():
-                            ix = indOf1stDiff(cfg['bin files']['path_source'], nameD)
-                            nameBinFull = os_path.join(cfg['bin files']['path_source'] + nameD[ix:], nameDatFE)
-                        else:
-                            nameBinFull = os_path.join(nameD, nameDatFE)
+                        nameBinFull = (
+                            os_path.join(cfg['bin files']['path'], nameDatFE) if 'path' in cfg['bin files'] else
+                            os_path.join(cfg['bin files']['path_source'] + nameD[indOf1stDiff(cfg['bin files']['path_source'], nameD):], nameDatFE) if 'path_source' in cfg['bin files'] else
+                            os_path.join(nameD, nameDatFE)
+                        )
                         nameBinFull = nameBinFull[:-len(cfg['dat files']['ext'])] + cfg['bin files']['ext']
                         # nameBinFull, bOk= re.subn(cfg['dat files']['ext'] + '$',
                         # cfg['bin files']['ext'], nameDatFull)
@@ -292,11 +270,8 @@ def repInFile(nameFull, cfg, result):  # result is previous or with ['nameNavFul
                             warnings.warn(' no source bin! ')
 
                     if timeStart is None:
-                        if 'Date' in result.keys():
-                            warnings.warn('NOT FOUND DATE from bin time stamp! USE TIME OF PREVIOUS FILE!')
-                        else:
-                            warnings.warn('NOT FOUND DATE from bin time stamp! USE CURRENT TIME!')
-                            result['Date'] = datetime.now()
+                        warnings.warn('NOT FOUND DATE from bin time stamp! USE TIME OF PREVIOUS FILE!' if 'Date' in result else 'NOT FOUND DATE from bin time stamp! USE CURRENT TIME!')
+                        result['Date'] = result.get('Date', datetime.now())
                 else:
                     result['Date'] = DateFromName
                 # 2. Search name of nav data file:
@@ -314,8 +289,7 @@ def repInFile(nameFull, cfg, result):  # result is previous or with ['nameNavFul
                 elif ix <= 0:
                     warnings.warn('first time in nav > data time')
                 else:
-                    result['Lat'] = result['nav1D']['Lat'][ix]
-                    result['Lon'] = result['nav1D']['Lon'][ix]
+                    result.update({'Lat': result['nav1D']['Lat'][ix], 'Lon': result['nav1D']['Lon'][ix]})
 
             # 4. Get MagneticDeclination value
             result['mag'] = round(
@@ -381,14 +355,14 @@ def old_repInFile_for_vszs():
             result = {'nameNavFull': None,
                       'nav1D': None}
             if True:  # try:
-                if 'log' in cfg['program'].keys():
+                if 'log' in cfg['program']:
                     if not ('\\' in cfg['program']['log'] or \
                             r'/' in cfg['program']['log']):
                         cfg['program']['log'] = os_path.join(os_path.dirname(sys.argv[0]),
                                                              cfg['program']['log'])
                     f = open(cfg['program']['log'], 'a+', encoding='cp1251')
                     f.writelines(datetime.now().strftime('\n\n%d.%m.%Y %H:%M:%S> processed '
-                                                         + str(nFiles) + ' file' + 's:' if nFiles > 1 else ':'))
+                                                         + str(nFiles) + ' files:' if nFiles > 1 else ':'))
                 for nameFull in paths:
                     nameFE = os_path.basename(nameFull)
                     print(nameFE, end=': ')
@@ -396,7 +370,7 @@ def old_repInFile_for_vszs():
                     result = repInFile(nameFull, cfg, result)
                     strLog = '\t{Lat}\t{Lon}\t{Date:%d.%m.%Y %H:%M:%S}\t{strOldVal}->\t{mag}'.format(**result)
                     print(strLog)
-                    if 'log' in cfg['program'].keys():
+                    if 'log' in cfg['program']:
                         f.writelines('\n' + nameFE + '\t' + strLog)
             try:
                 print('ok')

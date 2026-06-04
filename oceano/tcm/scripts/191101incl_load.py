@@ -39,7 +39,7 @@ from hdf5_pandas.csv_specific_proc import correct_kondrashov_txt, rep_in_file, c
 from hdf5_pandas import h5
 from tcm.h5inclinometer_coef import h5copy_coef
 import tcm.incl_h5clc as incl_h5clc
-import tcm.incl_h5spectrum as incl_h5spectrum
+import tcm.spectr_clc as spectr_clc
 from utils import veuszPropagate
 from utils.time import pd_period_to_timedelta
 from utils.init import path_on_drive_d, init_logging, open_csv_or_archive_of_them, st
@@ -368,7 +368,7 @@ if st(3):  # Can be done at any time after step 1
                 "--fmax", "1.05",
             ]
 
-    incl_h5spectrum.main(args)
+    spectr_clc.main(args)
 
 
 

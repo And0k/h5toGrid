@@ -72,7 +72,7 @@ def h5_load_range_by_coord(
         ddpart_size = -np.subtract(*range_coordinates)
         if not ddpart_size:
             return dd.from_array(
-                np.zeros(0, dtype=[('name', 'O'), ('index', 'M8')]))  # DataFrame({},'NoData', {}, [])  # None
+                np.zeros(0, dtype=[('name', 'O'), ('index', 'M8[s]')]))  # DataFrame({},'NoData', {}, [])  # None
         # if ddpart_size < chunksize:
         #     chunksize = ddpart_size  # !? needed to not load more data than need
         # else:
@@ -157,15 +157,18 @@ def i_bursts_starts_dd(tim, dt_between_blocks: Optional[np.timedelta64] = None):
 
 
 # @+node:korzh.20180520212556.1: *4* i_bursts_starts
-def i_bursts_starts(tim, dt_between_blocks: Optional[np.timedelta64] = None) -> Tuple[np.array, int, np.timedelta64]:
+def i_bursts_starts(
+    tim, dt_detect_bursts: Optional[np.timedelta64] = None
+) -> Tuple[np.array, int, np.timedelta64]:
     """
-    Starts of bursts in datafreame's index and mean burst size by calculating difference between each index value
+    Starts of bursts in datafreame's index and mean burst size by calculating difference between each index
+    value
     :param: tim, pd.datetimeIndex
-    :param: dt_between_blocks, pd.Timedelta or None or np.inf - minimum time between blocks.
-            Must be greater than delta time within block
-            If None then auto find: greater than min of two first intervals + 1s
-            If np.inf returns (array(0), len(tim))
-    return (i_burst, mean_burst_size, max_hole) where:
+    :param: dt_detect_bursts, pd.Timedelta or `None` or `np.inf` - minimum time between blocks.
+    Must be greater than delta time within block
+    - If `None`: assign it to `min of two first intervals + 1s`
+    - If `np.inf`: the function return `(array(0), len(tim))`
+    :return: (i_burst, mean_burst_size, max_hole) where:
     - i_burst: indexes of starts of bursts, with first element is 0 (points to start of data)
     - mean_burst_size: mean burst size
     - max_hole: max time distance between bursts found
@@ -177,7 +180,7 @@ def i_bursts_starts(tim, dt_between_blocks: Optional[np.timedelta64] = None) -> 
     ... tim = pd.concat((tim[st:en] for st,en in ix.T)).index
     ... i_bursts_starts(tim)
     (array([  0, 100, 200, 300, 400, 500, 600, 700, 800, 900]), 100.0)
-    # same from i_bursts_starts(tim, dt_between_blocks=pd.Timedelta(minutes=2))
+    # same from i_bursts_starts(tim, dt_detect_bursts=pd.Timedelta(minutes=2))
     """
     dt_zero = np.timedelta64(0)
     max_hole = dt_zero
@@ -192,26 +195,33 @@ def i_bursts_starts(tim, dt_between_blocks: Optional[np.timedelta64] = None) -> 
     # Checking time is increasing
 
     if np.any(dtime <= dt_zero):
-        lf.warning('Not increased time detected ({:d}+{:d}, first at {:d})!',
-                  np.sum(dtime < dt_zero), np.sum(dtime == dt_zero), np.flatnonzero(dtime <= dt_zero)[0])
-    # Checking dt_between_blocks
-    if dt_between_blocks is None:
-        # Auto find it: greater interval than min of two first + constant. Constant = 1s i.e. possible worst time
-        # resolution. If bad resolution then 1st or 2nd interval can be zero and without constant we will search everything
-        dt_between_blocks = dtime[:2].min() + np.timedelta64(1, 's')
-    elif isinstance(dt_between_blocks, pd.Timedelta):
-        dt_between_blocks = dt_between_blocks.to_timedelta64()
-    elif dt_between_blocks is np.inf:
+        lf.warning(
+            "Not increased time detected ({:d}+{:d}, first at {:d})!",
+            np.sum(dtime < dt_zero),
+            np.sum(dtime == dt_zero),
+            np.flatnonzero(dtime <= dt_zero)[0],
+        )
+    # Checking dt_detect_bursts
+    if dt_detect_bursts is None:
+        # Auto find it: greater interval than min of two first + constant. Constant = 1s i.e. possible worst
+        # time resolution.
+        # (If bad resolution then first intervals can be zero and without constant we would search everything)
+        dt_detect_bursts = dtime[:2].min() + np.timedelta64(1, 's')
+    elif isinstance(dt_detect_bursts, pd.Timedelta):
+        dt_detect_bursts = dt_detect_bursts.to_timedelta64()
+    elif dt_detect_bursts is np.inf:
         return np.int32([0]), len(tim), max_hole
 
     # Indexes of burst starts
-    i_burst = np.flatnonzero(dtime > dt_between_blocks)
+    i_burst = np.flatnonzero(dtime > dt_detect_bursts)
 
     # Calculate mean_block_size
     if i_burst.size:
-        if i_burst.size > 1:  # amount of data is sufficient to not include edge (likely part of burst) in statistics
+        if i_burst.size > 1:
+            # Amount of data is sufficient to not include edge (likely part of burst) in statistics
             mean_burst_size = np.mean(np.diff(i_burst))
-        elif len(i_burst) == 1:  # select biggest of two burst parts we only have
+        elif len(i_burst) == 1:
+            # Select biggest of two burst parts we only have
             i_burst_st = i_burst[0] + 1
             mean_burst_size = max(i_burst_st, len(tim) - i_burst_st)
 
@@ -337,7 +347,7 @@ def filter_global_minmax(
     - keys: max_`col`, min_`col`, where `col` must be in ``a`` (case-insensitive) to filter lower/upper values of `col`.
     To filter by index the `col` part must be equal "date".
     - values: are float or ifs str repr - to compare with col/index values
-    :return: dask bool array of good rows (or array if tim is not dask and only tim is filtered)
+    :return: dask or pandas dataframe with only good rows
     """
     if cfg_filter is None:
         return a

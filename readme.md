@@ -1,4 +1,4 @@
-This repository contains as good files as bunch of garbage. Mainly the code here is used to convert format of <a href="https://en.wikipedia.org/wiki/CTD_(instrument)">CTD</a> data and <a href="https://jor.ocean.ru/index.php/jor/article/download/369/153">inclinometer</a> data.
+This repository contains as useful files as bunch of garbage. Mainly the code here is used to convert format of <a href="https://en.wikipedia.org/wiki/CTD_(instrument)">CTD</a> data and <a href="https://jor.ocean.ru/index.php/jor/article/download/369/153">inclinometer</a> data.
 
 ## Requirements
 After having many problems with pip/pipenv on windows I use conda for now. [There](env/py3.11h5togrid.yml) is my [Conda environment file](https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#id16) `env/py3.11h5togrid.yml`. To install environment with Python 11 with latest versions of all needed packages use:

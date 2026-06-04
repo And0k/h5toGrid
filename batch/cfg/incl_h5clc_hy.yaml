@@ -1,0 +1,9 @@
+defaults:
+  hydra.job_logging.formatters.colorlog.format='%(cyan)s%(asctime)s %(blue)s%(funcName)10s%(cyan)s: %(log_color)s%(message)s%(reset)s\t'
+  - base_incl_h5clc_hy
+  #- override probes/inclinometers
+  - _self_  # just to prevent warning  
+
+
+#probes:  
+  #probes10:

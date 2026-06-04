@@ -18,7 +18,7 @@ from hdf5_pandas import h5
 from vsz_loader import veusz_load_hdf5_ctd_profile
 from utils.logging_config import setup_logging
 from veusz_helpers.common import func_vsz as fv
-from get_datasets import utils as ds_utils
+from get_datasets import d_utils as ds_utils
 
 l = setup_logging(__name__, console_format_args={"name": False, "funcName": False, "datefmt": "%H:%M:%S"})
 

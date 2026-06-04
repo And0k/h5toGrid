@@ -396,7 +396,9 @@ def loading(
         path_raw_local: Union[str, Path],
         time_interval: List[pd.Timestamp],
         dt_from_utc: timedelta,
-        alias
+        alias,
+        key=None,
+        pwd=None
 ) -> pd.DataFrame:
     """
     Loads Autofon/Spot data from xlsx or Autofon server.
@@ -481,8 +483,8 @@ def loading(
         tim_last_coord = pd.Timestamp.now(tz='utc')
     else:
         mid = tables2mid[table]
-        url = 'http://176.9.114.139:9002/jsonapi'
-        key_pwd = 'key=d7f1c7a5e53f48a5b1cb0cf2247d93b6&pwd=ao.korzh@yandex.ru'
+        url = 'http://{url}/jsonapi'.format_map(kwargs)
+        key_pwd = 'key={key}&pwd={pwd}'.format_map(kwargs)
 
         # Request and display last info
         try:
@@ -1399,7 +1401,7 @@ def main(config: ConfigType) -> None:
 
     # Temporary to result store
     if any(h5.unzip_if_need(out['tables_written'])):
-        # todo: same for raw imput h5-data if from different sourcev
+        # todo: same for raw input h5-data if from different sourcev
         # cfg_in.get('time_last'):
         try:
             if out.get('db_is_bad'):
@@ -1697,7 +1699,7 @@ def call_example():
     # conda activate py3.7x64h5togrid && D: && cd C:\Work\Python\AB_SIO_RAS\h5toGrid && python -m hdf5_alt.autofon_coord.call_example()
 
 # r = requests.post(
-#     'http://176.9.114.139/jsonapi/?key=5cee5887daa94dff88e51dc9bd6d16a2&pwd=0887219675',  # &a0ghzybxtr
+#     'http://{url}/jsonapi/?key={key}&pwd={pwd}'.format_map(kwargs),
 #     json={'mid': 'ao', **time_interval})
 
 # print()

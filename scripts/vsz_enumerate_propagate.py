@@ -3,18 +3,13 @@ from os import chdir as os_chdir
 from pathlib import Path
 import re
 import numpy as np
-
-drive_d = 'D:' if sys.platform == 'win32' else '/mnt/D'  # to run on my Linux/Windows systems both
-scripts_path = Path(drive_d + '/Work/_Python3/And0K/h5toGrid/scripts')
-sys.path.append(str(Path(scripts_path).parent.resolve()))
 from itertools import takewhile
 # my funcs
+# drive_d = 'D:' if sys.platform == 'win32' else '/mnt/D'  # to run on my Linux/Windows systems both
+# scripts_path = Path(drive_d + '/Work/_Python3/And0K/h5toGrid/scripts')
+# sys.path.append(str(Path(scripts_path).parent.resolve()))
 from utils import veuszPropagate
-
-# from hdf5_pandas.csv_specific_proc import loaded_corr
-
 from hdf5_pandas import h5
-
 
 path_cruise = Path(
     r'd:\WorkData\BalticSea\230825_Kulikovo@ADCP,ADV,i,tr\ADV_Vector\txt,vsz\vsz(range=10min)'
@@ -28,10 +23,6 @@ cfg_in = {
     # 'min_time': np.datetime64('2022-12-21T10:02:00'),
     # 'max_time': '2020-12-30T22:37:00',
     }
-f_row2name = lambda r: '{:%y%m%d_%H%M%S}.vsz'.format(r['Index'])
-# It is possible to add an exact interval to the filename but the time after probe is back on surface can be determined
-# only from next row, so we rely on ~pattern_loader.vsz to do it. Even freq=16Hz to determine last time not helps:
-# '_{}s.vsz'.format(round(max(r['rows']/16, (r['DateEnd'] - r['Index'] + pd.Timedelta(300, "s")).total_seconds()))
 
 if False:  # Copy pattern
     pattern_code = cfg_in['pattern_path'].read_bytes()  # encoding='utf-8'
@@ -45,6 +36,8 @@ if False:  # Copy pattern
         if filename_st is None:
             filename_st = filename
     # cfg_in['min_time'] not works on filenames, so we convert it to 'start_file_index'
+    
+f_row2name = lambda r: '{:%y%m%d_%H%M%S}.vsz'.format(r['Index'])    
 if 'min_time' in cfg_in:
     del cfg_in['min_time']  # del to count fro 0:
     start_file_index = len(list(takewhile(lambda x: x < filename_st, h5.log_names_gen(cfg_in, f_row2name))))

@@ -16,7 +16,7 @@ class TestDownloadCopernicus:
 
     def test_extract_coordinates_from_gpx(self):
         """Test the GPX coordinate extraction function"""
-        from get_datasets.utils import extract_coordinates_from_gpx
+        from get_datasets.d_utils import extract_coordinates_from_gpx
 
         # Use the test GPX file that should exist
         gpx_path = Path("tests/test_data/points_85m_for_cmems.gpx")

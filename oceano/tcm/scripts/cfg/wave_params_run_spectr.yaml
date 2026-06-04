@@ -1,0 +1,26 @@
+# Configuration file for spectr_clc.main() called from wave_params_run.py
+# This is a minimal config to calculate spectrograms for wave gauges
+
+in:
+  db_path: ""  # Will be overridden by command line
+  tables_list: "w.*"  # Wave gauge tables
+  chunksize_int: 50000
+  min_date: "2019-01-01T00:00:00"
+  min_Pressure: "-1e15"
+
+out:
+  db_path: ""  # Will be overridden by command line
+  table: "psd"
+  split_period: "1H"  # 1-hour intervals
+
+proc:
+  overlap_float: 0.5  # 50% overlap
+  dt_interval_minutes: 30  # 30 minutes (50% of 1 hour)
+  fmin_float: 0.04  # Minimum frequency in Hz
+  fmax_float: 0.5  # Maximum frequency in Hz
+  calc_version: "trigonometric(incl)"
+
+program:
+  return: "<end>"
+  b_interact: 0  # Non-interactive mode
+  verbose: "INFO"

@@ -5,6 +5,7 @@ from logging import warning
 import func_vsz as fv
 from enum import IntEnum
 import builtins
+from dataclasses import dataclass
 
 # Common functions
 # ################
@@ -37,8 +38,11 @@ if False:
 # Old used ranges (insert [] expression in double quotes):
 # ['2023-04-23T08:00', '2023-05-25T14:00']
 
-AddCustom("definition", "DISPtime", f"[{max_time_span_s_strings}]  # graph auto range")
-
+AddCustom(
+    "definition",
+    "DISPtime",
+    f"[{np.datetime_as_string(disp_time_range).tolist()}]  # graph auto range",
+)
 for t, ids_t, t_ranges in zip(
     "iw",
     (ids_i, ids_w),
@@ -60,8 +64,7 @@ for t, ids_t, t_ranges in zip(
             else "DISPtime",
         )
 
-time_range = np.array(max_time_span_s_strings, "M8[s]")
-disp_dtime_range_s = np.ediff1d(time_range).astype(int)
+disp_dtime_range_s = np.ediff1d(disp_time_range).astype(int)
 if not disp_dtime_range_s.size:
     disp_dtime_range_s = nan
 print("Graph time interval, s:", disp_dtime_range_s)
@@ -70,23 +73,30 @@ imax_time_unit_char = len(
     list(
         takewhile(
             lambda x: x <= 0,
-            [b - a for a, b in zip(*[t.timetuple() for t in time_range.tolist()])],
+            [b - a for a, b in zip(*[t.timetuple() for t in disp_time_range.tolist()])],
         )
     )
 )  # (0: y, 1: m, 2: d, 3: H, 4: M, 5: S)
 
 # Widgets parts sizes [cm]
 
-grid_horMargins_sum = 2.4  # cm |3
-grid_bottomMargin = 1.7  # cm
-graph_width_standard = 28 - grid_horMargins_sum  # 25.6 cm
-graph_width_scale = 1
+@dataclass
+class CfgPlot:
+    grid_horMargins_sum: float = 2.4    # cm |3, sum of horizontal margins
+    grid_bottomMargin: float = 1.7      # cm, bottom margin
+    graph_width_standard: float = 0.0   # computed in __post_init__
+    graph_width_scale: float = 1        # Width of each graph: constant or proportional to ``max_time_span_s_strings``
+    graph_width: float = 0.0           # computed in __post_init__
 
-# Graph width: constant or proportional to ``max_time_span_s_strings``
-graph_width = np.fmax(graph_width_standard, graph_width_scale * 4e-06 * disp_dtime_range_s).item()
-graph_width_scale = graph_width / disp_dtime_range_s
-if graph_width != graph_width_standard:
-    print(f"Graph width = {graph_width}, scale = {graph_width_scale} cm/s")
+    def __post_init__(self):
+        # Graph width: constant or proportional to ``max_time_span_s_strings``
+        self.graph_width_standard = 28 - self.grid_horMargins_sum  # 25.6 cm
+        self.graph_width = np.fmax(self.graph_width_standard, self.graph_width_scale * 4e-06 * disp_dtime_range_s).item()
+        self.graph_width_scale = self.graph_width / disp_dtime_range_s
+
+cfg_plot = CfgPlot()
+if cfg_plot.graph_width != cfg_plot.graph_width_standard:
+    print(f"Graph width = {cfg_plot.graph_width}, scale = {cfg_plot.graph_width_scale} cm/s")
 
 
 class WidthGrades(IntEnum):  # , boundary=CONFORM - handled by _missing_()
@@ -108,13 +118,13 @@ class WidthGrades(IntEnum):  # , boundary=CONFORM - handled by _missing_()
     def eq(self, val):
         return self.__class__[val] == self.value
 
-WidthGrade = WidthGrades(graph_width)
+WidthGrade = WidthGrades(cfg_plot.graph_width)
 if WidthGrade == WidthGrades["VeryNarrow"]:
     print(f"Too narrow for full titles (< {WidthGrade.value}cm)")
 elif WidthGrade == WidthGrades["Narrow"]:
     print(f"Slightly narrow for full titles (< {WidthGrade.value}cm)")
 
-# disp_dtime_range_s < np.int32(np.timedelta64(int(graph_width_scale*24), 'D').astype('m8[s]'))
+# disp_dtime_range_s < np.int32(np.timedelta64(int(cfg_plot.graph_width_scale*24), 'D').astype('m8[s]'))
 # disp_dtime_range_s < np.int32(np.timedelta64(60, 'D').astype('m8[s]'))
 
 # Scaling graphs height / vector size parameters
@@ -347,7 +357,7 @@ cus.DISPscale_vec = 4  # | DISPscale_vec_val 8
 AddCustom(
     "definition",
     "DISPscale_page_vectors",
-    f"DISPscale_vec/{graph_width:g}  # can not calculate by Veusz gui this: float(SETTING('/_vectors/width')[:-2]) - float(SETTING('/_vectors/grid1/leftMargin')[:-2]) - Veusz not updates this value on loading",
+    f"DISPscale_vec/{cfg_plot.graph_width:g}  # can not calculate by Veusz gui this: float(SETTING('/_vectors/width')[:-2]) - float(SETTING('/_vectors/grid1/leftMargin')[:-2]) - Veusz not updates this value on loading",
 )
 AddCustom(
     "definition", "WINDscale_page_vectors", "DISPscale_page_vectors * 0.1/DISPscale_vec"
@@ -480,6 +490,177 @@ if ids_i or ids_w:
             f"{'[sl_(iu_i_min)]' if bin_use_2d == '' else ''} for i in DISPdevices_info])",
             linked=True,
         )
+
+
+
+
+## Prepare progressive diagrams
+
+# SetDataExpression('disp_scale_page_vectors', "DISPscale_vec/(float(SETTING('/vectors/width')[:-2]) - float(SETTING('/vectors/grid/leftMargin')[:-2]))", linked=True)
+
+lim_str = None
+
+#
+if b_draw_progressive_vector:
+    # AddCustom('definition', 'shift_or_extend_lims',
+    #     'lambda lim, x, e=append(-5, 5), scale=1: f((lambda dl: v.max_range(lim + dl[0], x*scale) if dl[0]
+    # else v.max_range(lim + dl[1], x*scale) if dl[1] else lim), v.max_range(lim, (x + e)*scale) - lim)'
+    # )
+
+    SetDataExpression(
+        "disp_months",
+        "v.dt64s2vsz(array(arange(*array(DISPtime[0], 'M8[M]') + [0, 1], timedelta64(1, 'M'), dtype='M8[M]'), 'M8[s]'))",
+        linked=True,
+    )
+    DatasetPlugin(
+        "NumbersToText",
+        {"ds_in": "disp_months", "ds_out": "disp_months_txt", "format": "%VDb "},
+    )
+    SetDataExpression(
+        "leg_v_progress",
+        "around(Disp_leg_v*float64([0, 0.5, 1, 1.5, 2]), 2)",
+        linked=True,
+    )
+    if device_wind:
+        SetDataExpression(
+            "leg_v_progress_Wind",
+            "around(Wind_leg_v*float64([0, 0.5, 1, 1.5, 2]), 2)",
+            linked=True,
+        )
+
+    have_data_for_pg_progress = (
+        set()
+    )  # individual probes data/settings that will be set in pg_progress(graphs, ...)
+
+    # Progressive vector in 3d variables
+
+    # depths for each device (positive)
+    SetDataExpression(
+        "z_i",
+        "[nan if b is None else b - bd for i, (p, b, bd, *args) in DISPdevices_info.items()]",
+        linked=True,
+    )
+
+    bin_use_2d = (
+        "bin_" if "bin_" in use_bins else list(use_bins)[-1]
+    )  # 'bin_' or max_bin. 'bin2_' if pid == '_Wind'
+    if b_one_table:
+        for u in "uv":
+            SetData2DExpression(
+                f"{bin_use_2d}{u}_cum2d",
+                f"column_stack((zeros(len(DISPdevices_info)), cumsum({bin_use_2d}{u}_2d, axis=1)*"
+                f"{bin_use_2d[:-1]}))",
+                linked=True,
+            )
+        SetDataExpression(
+            "bin_t0st_i",
+            "v.dt64s2vsz(1E-9*bin_t_ns[sl_({bin_use_2d}iu_cmn{pid})]) + USE_timeShift_s  "
+            "# Veusz 3.6.2 bug: can not use lambda as it blind to arguments",  # lambda:
+            # ("(lambda d: array([min(d), max(d)]))(hstack("
+            # "[DATA(f'bin_t_ns_{i}')[DATA(f'bin_iu_{i}')[[0, -1]]] for i in DISPdevices_info]))")
+            linked=True,
+        )
+
+        for key, op in [("", ""), ("_nx", "/2")]:
+            SetDataExpression(
+                f"disp_bin_i{key}",
+                "v.i_whole_time_intervals(bin_t0st_i, ediff1d(bin_t0st_i[[0,-1]]).item()/"
+                f"Progress_lbl_dt{op})[1:-1] if isinstance(Progress_lbl_dt, (int, float)) else "
+                "flatnonzero(diff(int8(array(bin_t0st_i[:-1]+1230768000, 'M8[s]')"
+                ".astype(f'M8[{{{}}}]')))) + 1".format(
+                    # todo: adjust to be equal to no op output in 1/op points
+                    "str(int(float(Progress_lbl_dt[:-1]){op})) + Progress_lbl_dt[-1]" if op else
+                    "Progress_lbl_dt"
+                ),
+                linked=True,
+            )
+            # i_whole_time(time, dt, dt_shift: int = 0)
+            # array(int64(time + dt_shift), "M8[s]").astype(f"M8[{dt}]")
+
+    else:
+        pass  # todo for each pid
+
+    t0sfx = "" if use_bins[bin0name] else (ids_w+ids_i)[0]
+    if b_draw_progressive_vector_3d:  # todo support when b_one_table=False
+        SetDataExpression(
+            "disp_pgs3d_lines_i",
+            (
+                "v.i_whole_time_intervals("
+                f"1E-9*t_ns + USE_timeShift_s, 1E-9*asscalar(diff(t_ns{t0sfx}[[0,-1]])/Progress_lbl_dt))"
+                "[1:-1] if isinstance(Progress_lbl_dt, (int, float)) else flatnonzero(diff( "
+                f"int8(array(1E-9*t_ns{t0sfx}[:-1] + USE_timeShift_s, 'M8[s]').astype("
+                f"f'M8[{{Disp_pgs3d_lines_vert_dt_str}}]')) )) + 1"
+            ),
+            linked=True,
+        )
+
+    if b_draw_progressive_zabor:
+        for u in "uv":
+            if bin_use_2d:  # else already created
+                SetData2DExpression(
+                    f"{u}_2d",
+                    f"zeros_like(Dim_DataP_i[0,0]) + array([DATA(f'{u}_{{i}}')[sl_({bin_use_2d}iu_cmn{pid})] "
+                    "for i in DISPdevices_info])",
+                    linked=True,
+                )
+            SetData2DExpression(
+                f"{u}_cum2d",
+                (
+                    "column_stack((zeros(len(DISPdevices_info)), cumsum(apply_along_axis("
+                    f"lambda x: v.rep2mean(x, isfinite(x)), 1, {u}_2d), axis=1)*dt))"
+                ),
+                linked=True,
+            )
+
+        SetDataExpression(
+            "zb_i_en",
+            f"searchsorted(t_ns{t0sfx}[int(zb_i_st[0]):], "
+            "(float64(timedelta64(timedelta64(1, Zabor_range_dt), 's')) - USE_timeShift_s)*1E9)",
+            linked=True,
+        )
+        SetDataExpression(
+            "zb_i_st",
+            f"flatnonzero(diff(int8(array(append(1E-9*t_ns{t0sfx}[0] - dt, 1E-9*t_ns{t0sfx}) + "
+            "USE_timeShift_s, 'M8[s]').astype(f'M8[{Zabor_st_dt}]'))))",
+            linked=True,
+        )
+        SetData2DExpression(
+            "zb_shift_2d",
+            "column_stack([i+zeros((u_2d.shape[0], r+2)) for i, r in enumerate(int32(zb_i_en - zb_i_st).T)])*Zabor_shift",
+            linked=True,
+        )
+        for u in "uv":
+            SetData2DExpression(
+                f"zb2d_{u}_cum",
+                (
+                    f"hstack([column_stack([zeros({u}_2d.shape[0]), cumsum({u}_2d[:, slice(*se)], axis=1),"
+                    " nan+z_i])*dt for se in int32([zb_i_st, zb_i_en]).T])"
+                ),
+                linked=True,
+            )
+        SetData2DExpression(
+            "zb_label_i",
+            (
+                f"column_stack([flatnonzero(diff(int8(array(1E-9*t_ns{t0sfx}[slice(*se)] + "
+                "USE_timeShift_s, 'M8[s]').astype("
+                "f'M8[{Zabor_label_dt}]')))) for se in int32([zb_i_st, zb_i_en]).T])"
+            ),
+            linked=True,
+        )
+        if device_wind:
+            SetDataExpression(
+                "zb_i_wind_en",
+                "searchsorted(time_Wind, time_Wind[int32(zb_i_wind_st)] + float64(timedelta64(timedelta64(1, Zabor_range_dt), 's')))",
+                linked=True,
+            )
+            SetDataExpression(
+                "zb_i_wind_st",
+                "flatnonzero(diff(int8(array(append(time_Wind[0] - dt_Wind, time_Wind), 'M8[s]').astype(f'M8[{Zabor_st_dt}]'))))",
+                linked=True,
+            )
+
+
+
 
 
 

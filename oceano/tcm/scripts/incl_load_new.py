@@ -40,7 +40,7 @@ from hdf5_pandas.h5_dask_pandas import h5q_interval2coord
 from tcm.h5inclinometer_coef import h5copy_coef, dict_matrices_for_h5
 
 import tcm.incl_h5clc as incl_h5clc
-import tcm.incl_h5spectrum as incl_h5spectrum
+import tcm.spectr_clc as spectr_clc
 from utils import veuszPropagate
 from utils.time import intervals_from_period # pd_period_to_timedelta
 from utils.init import open_csv_or_archive_of_them, st
@@ -513,7 +513,7 @@ def main(config: ConfigType) -> None:
                 '--fmax', '1.05'
                 ]
 
-        incl_h5spectrum.main(args)
+        spectr_clc.main(args)
 
     # Draw in Veusz
     if st(4):

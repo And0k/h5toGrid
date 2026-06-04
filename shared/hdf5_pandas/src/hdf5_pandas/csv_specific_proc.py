@@ -14,7 +14,7 @@ import pandas as pd
 #     from matplotlib import pyplot as plt
 from pathlib import Path, PurePath
 from utils.init import set_field_if_no, FakeContextIfOpen, standard_error_info, dir_create_if_need, my_logging
-from functools import partial, wraps
+from functools import wraps
 
 from utils.time import matlab2datetime64ns, date_from_filename
 from utils.time_corr import plot_bad_time_in_thread
@@ -71,7 +71,6 @@ def chars_array_to_datetimeindex(
         if date.dtype != dtype:
             date = date.astype(dtype)
     except Exception as e:
-        b_new_method = False
         print('to_datetime not works', standard_error_info(e))
         raise e
     return pd.DatetimeIndex(date)

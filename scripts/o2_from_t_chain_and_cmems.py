@@ -12,7 +12,7 @@ from scipy.interpolate import LinearNDInterpolator, CloughTocher2DInterpolator  
 from sklearn.preprocessing import MinMaxScaler
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
 from operator import sub
-from get_datasets import utils as ds_utils
+from get_datasets import d_utils as ds_utils
 from utils.logging_config import setup_logging
 
 logger = setup_logging(__name__, console_format_args={"name": False, "datefmt": "%H:%M:%S"})

@@ -1019,7 +1019,7 @@ def filt_data_dd(a, dt_between_bursts=None, dt_hole_warning: Optional[np.timedel
     if True:  # try:
         # determine indexes of bursts starts
         tim = a.index.compute()  # History: MemoryError((6, 12275998), dtype('float64'))
-        i_burst, mean_burst_size, max_hole = i_bursts_starts(tim, dt_between_blocks=dt_between_bursts)
+        i_burst, mean_burst_size, max_hole = i_bursts_starts(tim, dt_detect_bursts=dt_between_bursts)
 
         # filter
 
@@ -1033,7 +1033,7 @@ def filt_data_dd(a, dt_between_bursts=None, dt_hole_warning: Optional[np.timedel
         # decrease interval based on ini date settings and filtering and recalc bursts
         a = filter_global_minmax(a, cfg_filter=cfg_filter)
         tim = a.index.compute()  # History: MemoryError((6, 10868966), dtype('float64'))
-        i_burst, mean_burst_size, max_hole = i_bursts_starts(tim, dt_between_blocks=dt_between_bursts)
+        i_burst, mean_burst_size, max_hole = i_bursts_starts(tim, dt_detect_bursts=dt_between_bursts)
         # or use this and check dup? shift?:
         # i_good = np.search_sorted(tim, a.index.compute())
         # i_burst = np.search_sorted(i_good, i_burst)
@@ -1106,7 +1106,7 @@ def h5_names_gen(cfg_out, tables, db_path, **kwargs
 
     with pd.HDFStore(db_path, mode='r') as store:
         if len(tables) == 1:
-            cfg_out['tables_found'] = h5.find_tables(store, tables[0])
+            tables = cfg_out["tables_found"] = h5.find_tables(store, tables[0])
 
         if db_path.stem.endswith('proc_noAvg'):
             # Loading already processed data
@@ -1424,7 +1424,7 @@ def main(new_arg=None, **kwargs):
     cfg['out']['tables_written'] = set()
     for itbl, tbl, coefs, d in gen_subconfigs(cfg['out'], fun_gen=h5_names_gen, **cfg['in']):
         d = filter_local(d, cfg['filter'], ignore_absent={'h_minus_1', 'g_minus_1'})  # d[['Mx','My','Mz']] = d[['Mx','My','Mz']].mask(lambda x: x>=4096)
-        probe_number = int(re.findall('\d+', tbl)[0])
+        probe_number = int(re.findall(r'\d+', tbl)[0])
 
         if not cfg['in']['db_path'].stem.endswith('proc_noAvg'):
             # Zeroing

@@ -11,7 +11,6 @@ Updated: 15:07.2019
 """
 
 import logging
-from collections import OrderedDict
 from datetime import datetime, timedelta
 from os import path as os_path
 from sys import stdout as sys_stdout
@@ -57,7 +56,7 @@ def my_argparser():
     - add here common options for different inputs
     - add help strings for them
     :return p: configargparse object of parameters
-    All p argumets are of type str (default for add_argument...), because of
+    All p arguments are of type str (default for add_argument...), because of
     custom postprocessing based of args names in ini2dict
     """
 
@@ -116,7 +115,7 @@ process it and save HDF5/CSV
     s.add("--lon_float", help="Longitude used to calc SA if no such data column")
 
     s = p.add_argument_group("out", "all about output files")
-    info_default_path = "[in] path from *.ini"
+    # info_default_path = "[in] path from *.ini"
     s.add("--out.db_path", help="hdf5 store file path")
     s.add(
         "--out.tables_list",
@@ -225,7 +224,7 @@ def extractRuns(P: Sequence, cfg_extract_runs: Mapping[str, Any]) -> Tuple[List[
     n_ok = len(iex)
     if __debug__:
         fig = None
-        b_plot_started = False
+        # b_plot_started = False
     while True:
         # bbad - mask of candidates to remove from extrema
         if min_samples:
@@ -277,11 +276,11 @@ def extractRuns(P: Sequence, cfg_extract_runs: Mapping[str, Any]) -> Tuple[List[
 
             # Deleting smaller adjacent extrema of one type
             bbad = np.ediff1d(bt.view(np.int8), to_begin=-1, to_end=-1) == 0  # False ... False
-            isten = np.flatnonzero(np.ediff1d(bbad.view(np.int8))).reshape((-1, 2))
-            isten[:, 1] += 1
-            ist = isten[:, 0]
-            maxmin = lambda a, bmax: np.argmax(a) if bmax else np.argmin(a)
-            iok = [st + maxmin(pex[slice(*sten)], b) for st, sten, b in zip(ist, isten, bt[ist])]
+            ist_en = np.flatnonzero(np.ediff1d(bbad.view(np.int8))).reshape((-1, 2))
+            ist_en[:, 1] += 1
+            ist = ist_en[:, 0]
+            max_min = lambda a, bmax: np.argmax(a) if bmax else np.argmin(a)
+            iok = [st + max_min(pex[slice(*st_en)], b) for st, st_en, b in zip(ist, ist_en, bt[ist])]
             bbad = bbad[:-1] | bbad[1:]
             bbad[iok] = False  # print(repr(np.vstack((bt, bbad, pex)).T))
 
@@ -297,7 +296,7 @@ def extractRuns(P: Sequence, cfg_extract_runs: Mapping[str, Any]) -> Tuple[List[
             if __debug__:  # result should be logged:
                 if fig == None:
                     fig = plt.figure(111)
-                    b_plot_started = True
+                    # b_plot_started = True
                 plt.cla()  # plt.hold(False) get AttributeError on TkAgg backend
                 plt.plot(P, color="c", alpha=0.5)  # '.',
                 # plt.hold(True)
@@ -435,7 +434,7 @@ def process_brown(df_raw, cfg: Mapping[str, Any]):
     # todo: use signs. For now our data haven't negative values and it is noise if signs!=0. Check: df_raw.signs[df_raw.signs!=0]
     """
     Val = {}
-    if b"Pres" in cfg["for"]["k_names"] and not "Pres" in df_raw.columns:
+    if b"Pres" in cfg["for"]["k_names"] and "Pres" not in df_raw.columns:
         df_raw = df_raw.rename(columns={"P": "Pres"})
 
     for nameb in np.intersect1d(np.array(df_raw.columns, "S10"), cfg["for"]["k_names"]):
@@ -1306,7 +1305,8 @@ def main(new_arg=None):
         except Exception as e:
             l.exception("The end. There are error ")
 
-            import traceback, code
+            import traceback
+            import code
             from sys import exc_info as sys_exc_info
 
             tb = sys_exc_info()[2]  # type, value,
@@ -1322,6 +1322,7 @@ def main(new_arg=None):
                 flog.close()
             if cfg["out"]["db"].is_open:
                 print("Wait store is closing...")
+                from time import sleep
                 sleep(2)
 
             failed_storages = h5.move_tables(cfg["out"])

@@ -25,13 +25,16 @@ class SafeStringFormatter(logging.Formatter):
                 # If there's an encoding error, replace problematic characters
                 return msg.encode('utf-8', errors='replace').decode('utf-8')
         else:
-            # For non-string objects, convert to string safely
-            try:
-                str_repr = str(msg)
-                str_repr.encode('utf-8')
-                return str_repr
-            except UnicodeEncodeError:
-                return repr(msg).encode('utf-8', errors='replace').decode('utf-8')
+            # For non-string objects, return as is
+            return msg
+
+            # #  convert to string safely
+            # try:
+            #     str_repr = str(msg)
+            #     str_repr.encode('utf-8')
+            #     return str_repr
+            # except UnicodeEncodeError:
+            #     return repr(msg).encode('utf-8', errors='replace').decode('utf-8')
 
     def format(self, record):
         # Sanitize the message to handle problematic characters

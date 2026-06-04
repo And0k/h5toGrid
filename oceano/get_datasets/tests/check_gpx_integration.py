@@ -14,7 +14,7 @@ def test_gpx_integration():
     try:
         # Import the required modules
         from get_datasets.download_copernicus import main
-        from get_datasets.utils import extract_coordinates_from_gpx
+        from get_datasets.d_utils import extract_coordinates_from_gpx
 
         # Load the configuration
         with initialize(config_path='cfg', version_base=None):

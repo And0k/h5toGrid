@@ -69,8 +69,8 @@ class ConfigIn_InclProc(cfg_d.ConfigInHdf5_Simple):
     tables: List[str] = field(default_factory=lambda: ['incl.*'])  # table names in hdf5 store to get data. Uses regexp if only one table name
     db_paths: Optional[List[str]] = None
 
-    min_date: Optional[str] = None  # imput data time range minimum
-    max_date: Optional[str] = None  # imput data time range maximum
+    min_date: Optional[str] = None  # input data time range minimum
+    max_date: Optional[str] = None  # input data time range maximum
     time_range: Optional[List[str]] = None
     # cruise directories to search in in.db_path to set path of out.db_path under it if out.db_path is not absolute:
     raw_dir_words_list: Optional[List[str]] = field(
@@ -1095,7 +1095,7 @@ def filt_data_dd(a, dt_between_bursts=None, dt_hole_warning: Optional[np.timedel
         # decrease interval based on ini date settings and filtering and recalculate bursts
         a = filter_global_minmax(a, cfg_filter=cfg_filter)
         tim = a.index.compute()  # History: MemoryError((6, 10868966), dtype('float64'))
-        i_burst, mean_burst_size, max_hole = i_bursts_starts(tim, dt_between_blocks=dt_between_bursts)
+        i_burst, mean_burst_size, max_hole = i_bursts_starts(tim, dt_detect_bursts=dt_between_bursts)
         # or use this and check dup? shift?:
         # i_good = np.search_sorted(tim, a.index.compute())
         # i_burst = np.search_sorted(i_good, i_burst)
