@@ -23,21 +23,13 @@ import statsmodels.api as sm
 
 
 import func_vsz as fv
-# import sys
-# from importlib import import_module
-# # Absolute path to the directory containing the module.
-# module_dir = r"C:\Work\Python\AB_SIO_RAS\Veusz_plugins"
-# module_name = 'func_vsz'
-# sys.path.append(module_dir)     # Add the module's directory to sys.path.
-# fv = import_module(module_name)  # Import the module using its name.
-# sys.path.remove(module_dir)     # to avoid conflicts with future imports.
 
 # # from runpy import run_path
 # # fv = type("Namespace", (object,), run_path(
-# #     r"C:\Work\Python\AB_SIO_RAS\Veusz_plugins\func_vsz.py"
+# #     r"C:/Work/Python/AB_SIO_RAS/h5toGrid/shared/veusz_helpers/func_vsz.py"
 # #     ))()
 
-pd.pandas.set_option("display.max_columns", None)  # for better debug display
+pd.set_option("display.max_columns", None)  # for better debug display
 
 # functions to load data from CSV and HDF5 files
 

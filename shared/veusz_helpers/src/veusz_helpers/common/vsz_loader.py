@@ -7,32 +7,27 @@ Before digits and after units may be any characters that will not be used here (
 Date units: years 'Y', months 'M', weeks 'W', and days 'D',
 time units: hours 'h', minutes 'm', seconds 's'
 """
-import json
-from logging import info, warning, exception
+import logging
 from itertools import dropwhile
 from functools import partial
 import sys
 from pathlib import Path
 
-from typing import Any, Callable, Iterable, Mapping, Optional, Tuple, Sequence, Union
+from typing import Callable, Iterable, Optional
 from time import strptime
-from datetime import datetime
-from calendar import monthrange
 import numpy as np
 import re
-import h5py
 import importlib.util
+import metadata
 import vsz_add_data  # namespace will be updated in runtime by definitions of Veusz functions
 import func_vsz as fv
 
-
-re_dt = r"(?P<dt>\d+\.?\d*)(?P<dt_u>[YMWDhms])(?:in)?"
-
+l = logging.getLogger(__name__)
 NaT = np.datetime64("NaT")
-
 cruise_dir = None
-
 wind_mean_uv = None  # todo: collect all statistics into one var
+sfx_db = [".h5", ".nc"]
+
 
 def exec_module_into_globals(name: str, g: dict) -> None:
     """
@@ -110,188 +105,6 @@ class Custom:
 cus = Custom()
 
 
-def add_months(t: np.timedelta64, months: int):
-    """Add months to a numpy.datetime64[s] object."""
-    # Convert numpy datetime64 to a datetime object
-    ts = t.item()
-    year, month, day, *time_part, _, _, _ = ts.timetuple()
-    # Add months handling year overflow
-    year, month = divmod(year * 12 + month + months - 1, 12)
-    month += 1  # Month is 1-based
-    day = min(day, monthrange(year, month)[1])  # Handle month day overflow
-
-    # Construct new datetime with the new year, month, day
-    new_dt = datetime(year, month, day, *time_part)
-
-    # Convert back to numpy datetime64
-    return np.datetime64(new_dt.strftime("%Y-%m-%dT%H:%M:%S"))
-
-
-def get_info_from_filename(basename) -> Tuple[Optional[Tuple[Any]], Mapping[str, Any]]:
-    """
-    :param basename: vsz file base name - string to get interval [s] of data to load.
-    After units may be any characters that will not be used here
-    {t_start or dt_to_last}{dt}[@{type}{model}{number}], where:
-    - t_start: start date and time,
-    - dt_to_last: time interval to last db data to find t_start.
-    - dt: time interval to overwrite ``dt`` argument,
-    - {type}{model}{number} - optional device info for allowed devices
-    (for example, "wind" is not allowed: You need remove it before call)
-    Date units are years ('Y'), months ('M'), weeks ('W'), and days ('D'), while the time units are hours ('h'), minutes ('m'), seconds ('s')
-    :return: (time_range, out_info) where out_info dict of info extracted from basename, without info about
-    time_range
-    Prints '"{basename}" -> {time_range}, {out_info}'
-    Example
-    If dt = '5min' then converts:
-    - If dt = '5min':  200917_2000i03.vsz -> (['2020-09-17T20:00:00', '2020-09-17T20:05:00'], 'incl03')
-    - If last data in db was at '2020-09-17T20:20:00'
-    3h_to_last_tr0 -> (['2020-09-17T20:15:00', '2020-09-17T20:20:00'], 'tr0')
-    """
-    print(f'"{basename}"', end=" ")
-    max_devices_idx = 9  # allow comma separated list of this + 1 number of devices
-    re_time = r"(?P<yy>\d\d)(?P<mm>\d\d)(?P<dd>\d\d)[_T]?(?P<HH>\d\d)?(?P<MM>\d\d)?(?P<SS>\d\d)?"
-    d = r"\d"  # digits
-    custom_device_types = ('i', 'w', 'tr')  # our devices which pids will have zero prefix if `number` < 2
-    def re_model_and_number(i: int):
-        """
-        Regex to get `model` and `number`
-        Must ends with number except for last device where allowed any [a-zA-Z_-] chars
-        optionally ending with numbers (for `number`)
-        Regex field `is_type_mod` for last (used only if one) device just denotes that user wants the type and model be used togather
-        """
-        return (
-            f"(?P<model{i}>"
-            f"[DBdbp]?)(?P<number{i}>{d}[{d}-]*{d}|{d})"
-            if i < max_devices_idx
-            else f"(?P<is_type_mod>-?)(?P<model{i}>[a-zA-Z_-]*)(?P<number{i}>{d}[{d}-]*{d}|{d}*)"
-        )
-
-    re_exp = (
-        r"(?:"
-        r"(?:{time}|(?P<dt_to_last>\d+(?:h|s))_to_last)?"
-        r"(?:(?:\.\.|-){time_end})?(?:[_,]?(?:dt=)?{dt})?"
-        r")?(?:[,_]?d(?P<decimation>\d+))?(?:[,_ -]*(?P<descr>[^@\d][^@]*))?(?:@{pids})?\.vsz"
-    ).format(
-        time=re_time,  # end time have same parts but optional and with new names:
-        time_end=re_time.replace(">", "e>").replace(")(", ")?(").replace(")[", ")?["),
-        dt=re_dt,
-        pids="".join(  # some allowed types&models are switches under "Load text file(s) in Veusz" below
-            rf'?:{"?," if i else ""}?((?P<type{i}>i(ncl)?|w|tr|ADV|ECMWF|CMEMS|)_?{re_model_and_number(i)})'
-            for i in range(max_devices_idx + 1)
-        ),
-    )
-    re_parts = re.match(re_exp, basename)
-    if re_parts is not None:
-        re_parts = re_parts.groupdict()
-    if re_parts is None:
-        raise (NameError(f'File name: "{basename}" not matches regex "{re_exp}"'))
-    elif re_parts["dt_to_last"]:
-        t_start = np.timedelta64(-1, re_parts["dt_to_last"])
-    elif re_parts["dd"]:
-        for re_time_part in ["SS", "MM", "HH"]:
-            if not re_parts[re_time_part]:
-                re_parts[re_time_part] = "00"
-        t_start = np.datetime64("20{yy}-{mm}-{dd}T{HH}:{MM}:{SS}".format_map(re_parts))
-    else:
-        t_start = None
-
-    if t_start:
-        if re_parts["dt"]:
-            # Overwrite time_range
-            if "." in re_parts["dt"]:
-                re_parts["dt"], _ = re_parts["dt"].split(".", 1)
-                dt = np.timedelta64(_, re_parts["dt_u"]).astype("m8[s]") / 10 ** len(_)
-            else:
-                dt = 0
-            dt += np.timedelta64(re_parts["dt"], re_parts["dt_u"])
-            time_range = [
-                t_start,
-                add_months(t_start, dt.astype("m8[M]").astype(int))
-                if dt.dtype.str[-1] in ["Y", "M", "W"]
-                else t_start + dt.astype("m8[s]"),
-            ]
-        elif re_parts["yye"]:
-            # Parse end date
-            n_add_months = 0
-            if re_parts["dde"] is None:
-                # Some date parts skipped in basename and regex returned them shifted to variables of bigger
-                # time scale. => Shift back, replacing skipped with corresponding parts of start date
-                if (
-                    re_parts["mme"] is None
-                ):  # shift on 2 vars: (yye) mme dde -> yye mme (dde)
-                    re_parts["mme"], re_parts["dde"] = re_parts["mm"], re_parts["yye"]
-                    if re_parts["dde"] < re_parts["dd"]:  # need to increase mme by 1
-                        n_add_months = 1
-                else:  # shift on 1 var: (yye) [mme] dde -> yye (mme) [dde]
-                    re_parts["mme"], re_parts["dde"] = re_parts["yye"], re_parts["mme"]
-                    if re_parts["mme"] < re_parts["mm"]:  # need to increase yye by 1
-                        n_add_months = 12
-                re_parts["yye"] = re_parts["yy"]
-            # replace skipped end time parts in basename with '00'
-            if re_parts["SSe"] is None:
-                re_parts["SSe"] = "00"
-            if re_parts["MMe"] is None:
-                re_parts["MMe"] = "00"
-            if re_parts["HHe"] is None:
-                re_parts["HHe"] = "00"
-            t_end = np.datetime64(
-                "20{yye}-{mme}-{dde}T{HHe}:{MMe}:{SSe}".format_map(re_parts)
-            )
-            if n_add_months:
-                t_end = add_months(t_end, n_add_months)
-            time_range = [t_start, t_end]
-        else:
-            time_range = [t_start, t_start]
-    else:
-        time_range = []
-
-    devices = {}
-    model = None
-    device_type = None
-    for i in range(max_devices_idx + 1):
-        number = re_parts.pop(f"number{i}")
-        if not number:
-            device_type_cur = re_parts.pop(f"type{i}")
-            model = re_parts.pop(f"model{i}")
-            continue
-        if "-" in number:
-            st, en = number.split("-")
-            numbers = range(int(st), int(en) + 1)
-        else:
-            numbers = [number]
-        for number in numbers:
-            number = int(number)
-            try:
-                device_type_cur = re_parts.pop(f"type{i}")
-            except KeyError:
-                pass
-            else:
-                if device_type_cur:
-                    device_type = device_type_cur.replace("incl", "i", 1)
-            try:
-                # model if is not specified: if device type is specified then set to default 'i' else previous
-                model = re_parts.pop(f"model{i}")  # or device_type_cur or model or "i"
-            except KeyError:
-                pass
-            pid = f"{model or device_type}{number:{'02d' if device_type in custom_device_types else 'd'}}"
-            devices[pid] = {"type": device_type, "model": model, "number": number}
-    out_info = {
-        "devices": devices or {
-            device_type_cur: {
-                "type": device_type_cur,
-                "model": model or device_type_cur,
-                "number": number,
-            }
-        },
-        "descr": re_parts["descr"],
-        "is_type_mod": bool(re_parts["is_type_mod"])
-    }
-    if re_parts["decimation"]:
-        out_info["decimation"] = int(re_parts["decimation"])
-    print("-> ", time_range, out_info, end="")
-    return time_range, out_info
-
-
 def normalize_device_id(device_id: str) -> str:
     """
     Normalize a device ID by removing all underscores before numeric part and leading zeros from the numeric
@@ -311,107 +124,11 @@ def normalize_device_id(device_id: str) -> str:
         return "{letters}{number}".format_map(groups)
 
 
-
 def zone_to_seconds_offset(zone: str):
     hours = zone.removeprefix("UTC")
     if not hours:
         return 0
     return strptime(f'{hours[0]}{f"{hours[1:]:>02s}":<04s}', "%z").tm_gmtoff
-
-
-def load_file_meta(path_in: Path) -> dict:
-    with path_in.open(encoding="utf8") as f:
-        if path_in.suffix == ".yaml":
-            from yaml import safe_load
-            content = safe_load(f.read())
-            return {
-                device_id: [
-                    # Nested dict structure with station_id keys -> convert to single list compatible with single interval device
-                    # todo: use dicts as from _meta_array_to_dict() instead of arrays instantly, to not loss data as in code below:
-                    seq[0]
-                    if all(s == seq[0] for s in seq)
-                    else min(seq)
-                    if col == "time_st"
-                    else max(seq)
-                    if col == "time_en"
-                    else np.mean(seq)
-                    if col in ["lat", "lon"]
-                    else ",".join(str(s) for s in seq)
-                    for col, seq in zip(
-                        ["p", "b", "bd", "s", "lat", "lon", "time_st", "time_en", "burst_dt", "bursts_t"],
-                        zip(*meta.values()),
-                    )
-                ]
-                if isinstance(meta, dict)
-                # Single interval device (list/tuple) - convert to nested dict with key "0"
-                else meta
-                for device_id, meta in content.items()
-            }
-        else:
-            return json.load(f)
-
-
-def _meta_array_to_dict(
-    p, b, bd, s, lat=None, lon=None, time_st="", time_en="", burst_dt=None, bursts_t=None
-):
-    return dict(
-        zip(
-            "pbdscrtT",
-            [
-                p.format_map(fv.I),
-                b,
-                None if None in (b, bd) else round(b - bd, 1),
-                s,
-            ]
-            + ([(lat, lon)] if lat else [])
-            + ([(time_st, time_en)] if time_st else [])
-            + ([burst_dt, bursts_t] if bursts_t else []),
-        )
-    )
-
-
-def extract_devices_info(meta: dict, devices: Sequence[str]) -> dict:
-    """
-    Load device information from a JSON file and map it to the provided probes.
-    :param probes: A dictionary containing probe information, including a "devices" key with a list of device IDs.
-    :param device_dir: The directory where the info_devices.json file is located.
-    :return: A dictionary mapping device IDs to their respective information.
-    """
-    device_info = {}
-    pid_array = None
-    for pid_cur in devices:
-        try:
-            pid_array = meta[pid_cur]
-        except KeyError:
-            if not pid_cur or pid_cur[0] == "i":
-                continue
-            try:
-                pid_array = meta[f"i{pid_cur}"]
-                    # pid_cur = piid if piid[1].isdigit() else piid[1:]
-            except KeyError:
-                continue
-        device_info[pid_cur] = _meta_array_to_dict(*pid_array)
-    return device_info
-
-
-def get_path_in_parents(dir: Path, *file_names, target_is_dir=False) -> Path:
-    """
-    Determine the device directory where the `file_name` file is located searching in parent dirs
-    :param dir: starting child directory path
-    :param file_names: list of file names to search and return 1st found file
-    :return: path of existing file
-    raises FileNotFoundError if not found
-    """
-    while True:
-        for file_name in file_names:
-            file = dir / file_name
-            if file.is_dir() if target_is_dir else file.is_file():
-                return file
-        dir_parent = dir.parent
-        if dir != dir_parent:
-            dir = dir_parent
-        else:
-            raise FileNotFoundError(str(file_names))
 
 
 def get_fun_load_end_ext(probe, db, parent=None, time_range=tuple(), time_shift_s=None, data_file_ext=None):
@@ -520,14 +237,15 @@ def get_fun_load_end_ext(probe, db, parent=None, time_range=tuple(), time_shift_
                     f"{{'id': '{_id}', 'type': I['{_type}'], 'model': '{_model}'}}")
                 """
     elif probe["type"] == "i":
-        def data_file_ext(probe, name_prefix="", name_suffix=""):
-            return f"{name_prefix}@{{type}}_{{model}}{{number:0>2}}{name_suffix}.txt".format_map(probe)
+        # def data_file_ext(probe, name_prefix="", name_suffix=""):
+        #     return f"{name_prefix}@{{type}}_{{model}}{{number:0>2}}{name_suffix}.txt".format_map(probe)
+        data_file_ext = ".txt"
         fun_load = partial(
             vsz_add_data.veusz_load_csv_tcm_raw,
             db=db,
             time_range=time_range,
             time_shift_s=time_shift_s,
-            probe=probe,
+            probe_info=probe,
         )
     else:  # not known file type or inclinometer from db
         fun_load = None
@@ -567,7 +285,11 @@ if __name__ in ("__main__", "builtins"):
     if __name__ == "__main__":
         import os
         from utils.veuszPropagate import load_vsz_closure
-        parent, basename = (lambda p: (p.parent, p.name))(Path(sys.argv[1]))
+        try:
+            parent, basename = (lambda p: (p.parent, p.name))(Path(sys.argv[1]))
+        except IndexError as e:
+            raise IndexError("Path of vsz file as command line argument is required")
+
         ## This should be done in runner to search "drawer" locally or in PYTHONPATH environment var settings
         sys.path[:0] = [str(parent)] + os.environ.get("PYTHONPATH", "").split(os.pathsep)
         load_vsz = load_vsz_closure(
@@ -587,6 +309,8 @@ if __name__ in ("__main__", "builtins"):
     vsz_add_data.ImportFileCSV = ImportFileCSV
     vsz_add_data.ImportFileHDF5 = ImportFileHDF5
     vsz_add_data.TagDatasets = TagDatasets
+    vsz_add_data.ImportString2D = ImportString2D
+    vsz_add_data.ImportString = ImportString
 
     AddCustom("import", "logging", "warning")  # type: ignore
     AddCustom("import", "pathlib", "Path")  # type: ignore
@@ -630,6 +354,7 @@ if __name__ in ("__main__", "builtins"):
             parent.name.lstrip(".")
             .removeprefix("vsz(")
             .removeprefix("vsz")
+            .replace("txt", "", 1)
             .replace("range", "dt", 1)
             .replace(")", "")
             .replace("__", "_")
@@ -637,7 +362,7 @@ if __name__ in ("__main__", "builtins"):
         ich_start_device = fake_in_stem.find("@")
         b_dir_have_device = ich_start_device != -1
         b_dir_have_date = fake_in_stem[:6].isdigit()
-        time_range_0, probes_0 = get_info_from_filename(
+        time_range_0, probes_0 = metadata.get_info_from_filename(
             "{}{}{}.vsz".format(  # Add date to folder name if not present to match regex fields next to date
                 "" if b_dir_have_date else np.datetime64("now").item().strftime("%y%m%d"),
                 (
@@ -646,7 +371,7 @@ if __name__ in ("__main__", "builtins"):
                 )
                 if b_dir_have_device
                 else fake_in_stem,
-                "" if b_dir_have_device else "@i0",
+                ""  # if b_dir_have_device else "@i0",
             )
         )
         if not b_dir_have_device:
@@ -666,7 +391,7 @@ if __name__ in ("__main__", "builtins"):
         time_range, probes = time_range_0, {"devices": {}}
     else:
         print("Extracting time range, device from file name", end=" ")
-        time_range, probes = get_info_from_filename(basename=basename)
+        time_range, probes = metadata.get_info_from_filename(basename=basename)
         if not any(np.isfinite(time_range)):  # set to value from folder / default
             # warning(f'File name: "{basename}" not matches regex "{re_exp}"')
             time_range = time_range_0  # if any(time_range_0) else [time_start, time_start+np.timedelta64(3600 * 3, 's')]
@@ -696,7 +421,7 @@ if __name__ in ("__main__", "builtins"):
             device_dir = device_dir.parent
     files_meta_possible = ["info_devices.yaml", "info_devices.json"]
     try:
-        file_meta = get_path_in_parents(device_dir, *files_meta_possible)
+        file_meta = metadata.get_path_in_parents(device_dir, *files_meta_possible)
         device_dir = file_meta.parent
         print(f"from device_dir ({device_dir}) as {file_meta.name} found")
     except FileNotFoundError:
@@ -747,36 +472,38 @@ if __name__ in ("__main__", "builtins"):
     # get 1st pid & probe
     pid, probe = next(iter(probes["devices"].items()))
 
+
     #################################################################
     # Check whether default DB file (*.h5) exist to load data from it
     #################################################################
+
     try:  # DB specified in dir name?
         db_stem = re.match(".*,db_stem=([^,)]+)", parent.name).group(1)
         print(f"DB from dir name: {db_stem}")
     except Exception:
         db_stem = (device_dir if device_dir.name[0].isdigit() else device_dir.parent).name.split("@")[0]
 
-    # Does it must be raw DB? (search "*.raw.h5")
+    # Does it must be raw DB? - search "*.raw.h5" or skip if parent (up to 2 levels) folder contain "txt"
     b_use_db_raw = "_raw" in parent.parent.parts
-    if "txt" not in parent.name:
-        if "txt" in parent.parent.name:
-            b_use_db_raw = False
-    else:
+    if "txt" in parent.name or "txt" in parent.parent.name:
         b_use_db_raw = False
 
     b_device_is_tcm = (
         any(p for p in device_dir.parts if p.startswith("inclinometer"))
         or probe["type"] == "i"
     )
+    time_range_raw = []  # time range from raw data
     if b_device_is_tcm:
         # DB stem should not contain "_" (but dir can)
         db_stem = db_stem.split('_', maxsplit=1)[0]
         if b_use_db_raw:
             db_stem = f'{db_stem}.raw'
-            db = device_dir / "_raw" / f"{db_stem}.h5"
-            b_db_ok = db.is_file()
-            if not b_db_ok:
-                raise (FileNotFoundError(f"{db} not found!"))
+            for sfx in sfx_db:
+                db = device_dir / "_raw" / f"{db_stem}{sfx}"
+                if (b_db_ok := db.is_file()):
+                    break
+            else:
+                raise (FileNotFoundError(f"{db.stem}{"|".join(sfx_db)} not found!"))
             # Load raw TCM data in Veusz
             existed_devs, time_range_raw, file, cols_namemap, grp_d_rename_funs, f_table_cols_fmt = (
                 vsz_add_data.veusz_load_hdf5_tcm_raw(
@@ -825,7 +552,7 @@ if __name__ in ("__main__", "builtins"):
                             dbs = dbs_check_1st
                             _ = len(dbs)
                         if _ > 1:
-                            warning(
+                            l.warning(
                                 f"No {db_stem}.proc.h5 or {db_stem}.proc_Avg.h5 found, other variants number "
                                 f"with this suffixes > 1 ({_}): {dbs}. Selecting 1st"
                             )
@@ -851,7 +578,6 @@ if __name__ in ("__main__", "builtins"):
         if b_db_ok:
             print("Raw data DB found:", db)
             existed_devs = {}  # dict with existed data in db (fields [device_id][grp])
-            time_range_raw = []  # time range from raw data
         elif not device_wind:
             raise (FileNotFoundError(f"{db} not found!"))
         # else we will search for DBs specilly for device_wind
@@ -871,7 +597,7 @@ if __name__ in ("__main__", "builtins"):
         else:
             data_dir = device_dir
 
-        ## Load known file types into Veusz if any in `probes["devices"]` (except TCM data, which proc. later)
+        ## Load known file types into Veusz if any in `probes["devices"]` (except TCM DB, which proc. later)
 
         b_allow_many_sources = False  # unique 1 source file allowed
         for pid, probe in probes["devices"].items():
@@ -921,6 +647,7 @@ if __name__ in ("__main__", "builtins"):
                         name_splitted = name_splitted[0].rsplit("_", 1)
                     else:
                         # 1 data file with name started from digits and that includes needed type + ext
+
                         def search_file(data_dir, _type, data_file_ext):
                             # 1 data file with name that includes needed type + ext in priority order
                             data_globs = (
@@ -943,6 +670,7 @@ if __name__ in ("__main__", "builtins"):
                                     ):
                                         data_files.append(p)
                             return data_files
+
                         data_file = None
                         for _type in [_type, ""]:
                             data_files = search_file(data_dir, _type, data_file_ext)
@@ -977,8 +705,8 @@ if __name__ in ("__main__", "builtins"):
             list(probes["devices"]),
             end=": ",
         )
-        meta_arrays = load_file_meta(file_meta)
-        _ = extract_devices_info(meta_arrays, probes["devices"])
+        meta_arrays = metadata.load_file_meta(file_meta)
+        _ = metadata.extract_devices_info(meta_arrays, probes["devices"])
         if _:
             device_info.update(_)
             cus.DISPdevice_info = device_info
@@ -990,7 +718,7 @@ if __name__ in ("__main__", "builtins"):
     else:
         meta_arrays = None
         if b_db_ok:
-            print(f'No "{file_meta.name}" file')
+            print(f'No {'|'.join(files_meta_possible)} files found')
             try:
                 point_name = (
                     re.match(r"[\d_]*([^_@]*)", device_dir.stem).group(1)
@@ -1019,10 +747,9 @@ if __name__ in ("__main__", "builtins"):
     logs_txt_prefix = "intervals_selected"
     log_txt = None
     for p in parent.glob(f"{logs_txt_prefix}*.txt"):
-        sfx = p.stem[len(logs_txt_prefix) + 1 :]
-        if not sfx:
+        if not (sfx := p.stem[len(logs_txt_prefix) + 1 :]):
+            # Save but continue to search until 1st file found with `sfx` that matches `probe` to overwrite
             log_txt = p
-            # continue search sfx
         elif pid == sfx or "{type}{model}{number}".format_map(probe) == normalize_device_id(sfx):
             log_txt = p
             break
@@ -1105,6 +832,11 @@ if __name__ in ("__main__", "builtins"):
         if models:
             models = list(models)
             models.sort()
+            try:  # draw i 1st (as i-drawer was already developed we include only additional function in next)
+                models.remove("i")
+                models = ["i"] + models
+            except ValueError:
+                pass  # other models only
             if probes["is_type_mod"]:
                 models[0]= '-'.join([probe["type"], models[0]])
 
@@ -1135,7 +867,7 @@ if __name__ in ("__main__", "builtins"):
                 setattr(
                     cus,
                     range_name,
-                    f"[{np.datetime_as_string(t).tolist()}]" if t is not None else [],
+                    f"[{np.datetime_as_string(t).tolist()}]" if isinstance(t, np.ndarray) else [],
                 )
 
 
@@ -1152,16 +884,18 @@ if __name__ in ("__main__", "builtins"):
                     exec(compile(_.read_text(encoding="utf-8"), _.name, "exec"))
 
             print(f"Running {__name__} drawer for models {models}...")
-            # Execute local drawers for model part parameters
-            def next_executable():
-                for model in models:  # i: inclinometer drawer, # p: pressure drawer
-                    print("Drawer", f'"{model}"')
-                    yield f"~drawer@{model}.vsz"
 
-            for _ in next_executable():
-                if not _:
-                    break
-                exec(compile((parent / _).read_text(encoding="utf-8"), _, "exec"))
+            # Execute local drawers for model part parameters
+            for model in models:  # i: inclinometer drawer, # p: pressure drawer
+                for f in parent.glob(f"~drawer@{model}*.vsz"):
+                    print("Drawer", f'"{model}": "{f.name}"')
+                    for i_try in range(3):
+                        try:
+                            exec(compile(f.read_text(encoding="utf-8"), f.name, "exec"))
+                        except ConnectionResetError as e:
+                            l.exception("Trying again because of weird error!")
+                        else:
+                            break
 
         else:
             # run default py-drawer (where same Custom Definitions as for models above are specified)

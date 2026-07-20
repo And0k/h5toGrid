@@ -249,7 +249,7 @@ def load_vsz_closure(
     load_timeout_s: Optional[int] = 120,
     b_execute_vsz: bool = False,
     hidden=False,
-    vsz_path_env=r"C:\Work\Python\AB_SIO_RAS\Veusz_plugins\func_vsz.py",
+    vsz_path_env=r"C:/Work/Python/AB_SIO_RAS/h5toGrid/shared/veusz_helpers/func_vsz.py",
 ) -> Callable[
     [Union[str, PurePath], Optional[str], Optional[str], Optional[str]], Tuple[Any, Optional[Dict[str, Any]]]
 ]:

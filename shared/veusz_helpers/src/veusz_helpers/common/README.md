@@ -1,19 +1,19 @@
 # Veusz plugins: pattern loader
 
-This tool selects data files, determines which data parts to load, and defines how to display them in Veusz based on file path/name and data files. When a user opens a .vsz file containing only commands that call vsz_loader.py, the loader takes control of the execution logic.
+This tool selects data files, determines which data parts to load, and defines how to display them in Veusz based on file path/name and data files. When a user opens a .vsz file containing only commands that call `vsz_loader.py`, the loader takes control of the execution logic.
 
 ## Usage
 
-1. Copy the 449-byte file `scripts\231229_2201@i91.vsz` to a directory containing your data (or in a subdirectory with special name - see Directory Navigation Keywords) that allows data discovery. Rename this file like `{yymmdd_HHMM}@{device_ids}.vsz` to enable the system to find data in known formats named according to known devices. 
-2. Open (run) your correctly named 449-byte .vsz file with Veusz (or for debugging: run vsz_loader.py with the full path as an argument).
+1. Copy the 449-byte file `scripts\231229_2201@i91.vsz` to a directory containing your data (or in a subdirectory with special name - see Directory Navigation Keywords) that allows data discovery. Rename this file like `{yymmdd_HHMM}@{device_ids}.vsz` to enable the system to find data in known formats named according to known devices.
+2. Open (run) your correctly named 449-byte .vsz file with Veusz (or for debugging: run `vsz_loader.py` with the full path as an argument).
 
 ## How It Works
 
-The system operates by parsing the .vsz filename to extract time range and device information. The vsz_loader.py module uses this information to locate and load appropriate data files (HDF5, CSV, NetCDF) with the correct time range and parameters. The data is then visualized using Veusz with the help of supporting modules like vsz_drawer.py, which creates graphs and plots.
+The system operates by parsing the .vsz filename to extract time range and device information. The `vsz_loader.py` module uses this information to locate and load appropriate data files (HDF5, CSV, NetCDF) with the correct time range and parameters. The data is then visualized using Veusz with the help of supporting modules like `vsz_drawer.py`, which creates graphs and plots.
 
 ## Configuration
 
-Users can overwrite vsz_loader.py, or the modules it uses (like vsz_drawer_cfg.py for configuration and vsz_drawer.py for visualization) to achieve specific program behavior in different directories.
+Users can overwrite `vsz_loader.py`, or the modules it uses (like `vsz_drawer_cfg.py` for configuration and `vsz_drawer.py` for visualization) to achieve specific program behavior in different directories.
 
 ## Directory Structure and Special Keywords
 

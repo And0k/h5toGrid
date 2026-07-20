@@ -1,0 +1,28 @@
+# Main Hydra config for the xr-native processing pipeline.
+#
+# Location: {data_dir}/cfg_proc/config.yaml
+# This file is loaded by Hydra via --config-dir injection (argparse layer).
+# Per-file overrides live in cfg_proc/run/*.yaml (each with @package _global_).
+#
+# No `run` in defaults — it's specified via CLI:
+#   run=glob(*)        — multirun sweep over all run YAMLs
+#   run=@i_01          — single specific run YAML
+#   run=@i_01,@i_02    — multiple specific run YAMLs
+
+defaults:
+  - input: base
+  - out: base
+  - filter: base
+  - program: base
+  # override Hydra's built-in defaults (job_logging: default, hydra_logging: default)
+  # which come from hydra.conf HydraConf and are already in the virtual defaults tree.
+  - override hydra/job_logging: colorlog
+  - override hydra/hydra_logging: colorlog
+  - _self_
+
+hydra:
+  run:
+    dir: ./cfg_proc/log/${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: ./cfg_proc/log
+    subdir: ${now:%Y-%m-%d_%H-%M-%S}-${hydra.job.num}

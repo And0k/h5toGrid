@@ -10,13 +10,13 @@ import xarray as xr
 import sys
 
 drive_d = 'D:' if sys.platform == 'win32' else '/mnt/D'  # to run on my Linux/Windows systems both
-for path in ['/Work/_Python3/And0K/Veusz_plugins', '/Work/_Python3/And0K/tcm']:
+for path in ['/Work/_Python3/And0K/veusz_helpers', '/Work/_Python3/And0K/tcm']:
     scripts_path = Path(drive_d + path)
     sys.path.append(str(Path(scripts_path).parent.resolve()))
 try:
     import func_vsz as fv
 except ImportError:  # old path:
-    from Veusz_plugins import func_vsz as fv
+    from veusz_helpers import func_vsz as fv
 from tcm.incl_h5clc_hy import polar2dekart
 
 

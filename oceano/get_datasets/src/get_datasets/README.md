@@ -92,7 +92,7 @@ The downloading system is organized around a centralized configuration managed b
 
 *   **`manager.py`**: Manages the logging and retrieval of download history, ensuring that successful and failed download attempts are recorded.
 
-*   **Download Scripts**: Each script is responsible for interacting with a specific data source or performing a specific type of download. They leverage Hydra for configuration and the `utils.py` module for common data handling tasks.
+*   **Download Scripts**: Each script is responsible for interacting with a specific data source or performing a specific type of download. They leverage Hydra for configuration and the `d_utils.py` module for common data handling tasks.
 
 ## Scripts Description
 
@@ -103,7 +103,7 @@ The downloading system is organized around a centralized configuration managed b
     1.  Loads configuration from Hydra, including dataset ID, variables, and interpolation delta.
     2.  Defines a bounding box around the target latitude and longitude using the `interpolation_delta`.
     3.  Uses the `copernicusmarine` library to download the regional subset of data.
-    4.  Interpolates the downloaded gridded data to the exact target point using `utils.interp_to_point()`.
+    4.  Interpolates the downloaded gridded data to the exact target point using `d_utils.interp_to_point()`.
     5.  Saves the interpolated data as a NetCDF file.
     6.  Logs the download and interpolation process.
 *   **Execution**:
@@ -146,9 +146,9 @@ The downloading system is organized around a centralized configuration managed b
 *   **Expected Output**: Downloaded NetCDF files in the specified local directory (e.g., `data/downloaded/CMEMS_FTP_Data/`), and log entries in the download history file.
 
 
-## Utility Functions in `utils.py`
+## Utility Functions in `d_utils.py`
 
-Detailed descriptions of functions in `utils.py` in directory above are provided in the Readme in that dir.
+Detailed descriptions of functions in `d_utils.py` in directory above are provided in the Readme in that dir.
 
 ## Running Tests
 

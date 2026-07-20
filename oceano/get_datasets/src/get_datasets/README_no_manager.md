@@ -4,9 +4,9 @@ This directory contains Python scripts designed for downloading various types of
 
 Note: some more structured and modular downloading scripts are in `with_manager` directory. That scripts utilize the Hydra configuration framework for flexible parameter management, they includes `DownloadHistoryManager` for managing the logging history and parameters of the download attempt (see `with_manager/README.md` for more details).
 
-## Utility Functions in `utils.py`
+## Utility Functions in `d_utils.py`
 
-*   **`utils.py`**: This module provides a collection of core utility functions used by multiple downloading scripts. These include:
+*   **`d_utils.py`**: This module provides a collection of core utility functions used by multiple downloading scripts. These include:
     *   `safe_netcdf_atomic()`: Safely saves NetCDF files with atomic overwrite.
     *   `extract_zip_to_named_dir()`: Extracts ZIP archives into a directory named after the archive.
     *   `h5_format()`: Formats and adds metadata to HDF5/NetCDF files.
@@ -45,9 +45,9 @@ Note: some more structured and modular downloading scripts are in `with_manager`
     4.  Groups variables by their typical spatial resolution (e.g., 0.25x0.25 degrees for atmospheric, 0.5x0.5 degrees for wave data).
     5.  Uses `cdsapi.Client` to retrieve data from the CDS, handling different resolutions and potential proxy settings.
     6.  Extracts data from downloaded ZIP archives (if `download_format` is `zip`).
-    7.  Formats the downloaded NetCDF files using `utils.h5_format()`.
+    7.  Formats the downloaded NetCDF files using `d_utils.h5_format()`.
     8.  Optionally converts NetCDF files to CSV using `netcdf2csv.py`.
-    9.  Interpolates the gridded data to a specific point using `utils.interp_to_point()`.
+    9.  Interpolates the gridded data to a specific point using `d_utils.interp_to_point()`.
 *   **Execution**:
     ```bash
     python scripts/downloading/download_ecmwf.py
@@ -66,7 +66,7 @@ Note: some more structured and modular downloading scripts are in `with_manager`
     5.  Selects the nearest grid points (1 or 4) to the target location.
     6.  Saves the processed dataset to a NetCDF file, handling time encoding to ensure compatibility.
     7.  Optionally loads and joins split NCEP files from a local directory.
-    8.  Interpolates the data to a specific point using `utils.interp_to_point()`.
+    8.  Interpolates the data to a specific point using `d_utils.interp_to_point()`.
 *   **Execution**:
     ```bash
     python scripts/downloading/download_ncep.py

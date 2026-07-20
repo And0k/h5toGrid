@@ -5,14 +5,10 @@ name = "absioras"
 requires-python = ">= 3.11"
 version = "0.1.0"
 dependencies = [
-"hydra-colorlog",
-"wmm2020",
+"hydra-colorlog>=1.2",
 "ruamel-yaml>=0.19.1"
 ]
 
-[build-system]
-build-backend = "hatchling.build"
-requires = ["hatchling"]
 
 [tool.hatch.workspace]
 members = [
@@ -22,130 +18,224 @@ members = [
 
 [tool.hatch.build.targets.wheel]
 packages = [
-"oceano/adcp", "oceano/gps_tracker", "oceano/tcm", "oceano/ctd", "oceano/get_datasets", "shared/utils", "shared/hdf5_pandas", "shared/hdf5_alt",
-"third_party/descartes", "third_party/veusz", "third_party/mne", "third_party/wafo"
+"oceano/adcp",
+"oceano/gps_tracker",
+"oceano/tcm",
+"oceano/ctd",
+"oceano/get_datasets",
+"oceano/meta_finder",
+"shared/utils",
+"shared/hdf5_pandas",
+"shared/hdf5_alt",
+"shared/veusz_helpers",
+"third_party/descartes",
+"third_party/veusz",
+"third_party/mne",
+"third_party/wafo"
 ]
 
-[tool.pixi.workspace]
-channels = ["conda-forge"]
-platforms = ["win-64"]
 
-[tool.pixi.pypi-dependencies]
-absioras-adcp  = { path = "oceano/adcp", editable = true }
-absioras-gps_tracker  = { path = "oceano/gps_tracker", editable = true }
-absioras-tcm  = { path = "oceano/tcm", editable = true }
-absioras-ctd  = { path = "oceano/ctd", editable = true }
-absioras-get_datasets  = { path = "oceano/get_datasets", editable = true }
-absioras-utils = { path = "shared/utils", editable = true }
-absioras-hdf5_pandas = { path = "shared/hdf5_pandas", editable = true }
-absioras-hdf5_alt = { path = "shared/hdf5_alt", editable = true }
-absioras-veusz_helpers = { path = "shared/veusz_helpers", editable = true }
-absioras-third_party-descartes = { path = "third_party/descartes", editable = true }
-absioras-third_party-veusz = { path = "third_party/veusz", editable = true }
-absioras-third_party-mne = { path = "third_party/mne", editable = true }
-absioras-third_party-wafo = { path = "third_party/wafo", editable = true }
+# workspace-level common dependencies kept minimal to avoid forcing heavy native libs
+[tool.pixi.dependencies]
+python = ">=3.11"
+numpy = ">=1.24"
+pandas = ">=2.1"
+"hydra-core" = ">=1.3"
+"hydra-colorlog" = ">=1.2"
+"ruamel.yaml" = ">=0.18"
+pywin32 = ">=306"
+tqdm = ">=4.65"
+pytest = ">=9.1.1,<10"
 
+# Feature groups that opt-in heavy native or binary-optimized packages
+[tool.pixi.feature.bin-optim.dependencies]
+libblas = { version = "*", build = "*openblas*" }
+libcblas = { version = "*", build = "*openblas*" }
+liblapack = { version = "*", build = "*openblas*" }
+h5py = ">=3.8"
+netcdf4 = ">=1.6"
+numba = "*"
+flox = ">=0.11.2,<0.12"
+numbagg = ">=0.9.4,<0.10"
+scipy = ">=1.11"
+xarray = ">=2026.7.0,<2027"
+matplotlib = ">=3.2"
+
+
+[tool.pixi.feature.noh5.dependencies]
+# "No HDF5 native libs, minimal binary footprint for standalone CLI builds"
+# Prevent runtime dispatch bug - removed `mkl = "*"` and added openblas:
+libblas = { version = "*", build = "*openblas*" }
+libcblas = { version = "*", build = "*openblas*" }
+liblapack = { version = "*", build = "*openblas*" }
+pyinstaller = "*"
+pyinstaller-hooks-contrib = "*"
+
+[tool.pixi.feature.test.dependencies]
+pytest = "*"
+pytest-arraydiff = "*"
+pytest-cov = "*"
+pytest-mock = ">=3.15.1,<4"
+
+[tool.pixi.feature.test.pypi-dependencies]
+absioras-tcm = { path = "oceano/tcm", editable = true }
+
+[tool.pixi.feature.legacy.dependencies]
+dask = "*"
+dask-funk = "*"
+async-timeout = "*"
+bokeh = "*"
+webdriver-manager = "*"
+selenium = "*"
+# bqplot = "*"
+
+[tool.pixi.feature.experimental.dependencies]
+attrs = "*"
+cvxpy = "*"
+clize = "*"
+frictionless = "*"
+geopandas = "*"
+# cachey = "*"
 
 # Зависимости сервисов как features
-[tool.pixi.feature.get_datasets]
-dependencies = { copernicusmarine = "*" }
+[tool.pixi.feature.get_datasets.dependencies]
+copernicusmarine = "*"
+questionary = ">=2.1.1"
+cdsapi = "*"
+ftputil = "*"
+cfgrib = "*"
+json2html = "*"
+requests = "*"
+urllib3 = "*"
+google-api-python-client = "*"
+google-auth-oauthlib = "*"
+# motuclient = "*"
+# openssl = "*"
 
+[tool.pixi.feature.get_datasets.pypi-dependencies]
+absioras-get_datasets = { path = "oceano/get_datasets", editable = true }
 
-[tool.pixi.tasks]
-test = "pytest tests/"
-test-all = "hatch run test:*"
+[tool.pixi.feature.manage.pypi-dependencies]
+absioras-meta_finder = { path = "oceano/meta_finder", editable = true }
 
-# Окружения
-[tool.pixi.environments]
-default = ["get_datasets", "dev", "script"]
+[tool.pixi.feature.arc.dependencies]
+libarchive = ">=3.8.6,<4"
+python-libarchive-c = ">=5.3,<6"
+# rarfile = "*"
+# py7zr = "*"
 
-[tool.pixi.feature.dev.dependencies]
-pytest = "*"
+[tool.pixi.feature.tcm.dependencies]
+"dask-core" = ">=2024.4"
+xarray = ">=2026.7.0,<2027"
 
-[tool.pixi.feature.script.dependencies]
+[tool.pixi.feature.tcm.pypi-dependencies]
+absioras-tcm = { path = "oceano/tcm", editable = true }
+pygeomag = ">=1.1.0,<2"
+
+[tool.pixi.feature.notebook.dependencies]
 jupyterlab = "*"
 jupyterlab-spellchecker = "*"
 nb_conda = "*"
 nbconvert = "*"
 sympy = "*"
-cvxpy = "*"
 pixi-kernel = "*"
 seaborn = "*"
+matplotlib = ">=3.2"
 
-[tool.pixi.dependencies]
-antlr = "*"
-attrs = "*"
-blosc = "*"
-bokeh = "*"
-bqplot = "*"
-cachey = "*"
-cdsapi = "*"
+[tool.pixi.feature.ocean.dependencies]
+# blosc = "*"
+# snappy = "*"
+# colorlog = "*"
+# pillow = "*"
 chardet = "*"
-clize = "*"
-colorama = "*"
-colorlog = "*"
-dask = "*"
-dask-funk = "*"
 dtale = "*"
-frictionless = "*"
-ftputil = "*"
 gdal = "*"
-geopandas = "*"
-google-api-python-client = "*"
-google-auth-oauthlib = "*"
 gpxpy = "*"
 gsw = "*"
-h5py = "*"
+h5py = ">=3.8"
 hdf5 = "*"
 hydra-core = "*"
-json2html = "*"
 lxml = "*"
-matplotlib = "*"
+matplotlib = ">=3.2"
 more-itertools = "*"
-motuclient = "*"
-netcdf4 = "*"
+netcdf4 = ">=1.6"
 numpy = "<2.4"
 numba = "*"
 numexpr = "*"
-openssl = "*"
 pandas = "*"
-pillow = "*"
-polars = "*"
 progressbar2 = "*"
 py = "*"
-py7zr = "*"
 pyinstaller = "*"
 pyinstaller-hooks-contrib = "*"
 pynmea2 = "*"
 pyproj = "*"
 pyodbc = "*"
 pyqt = "*"
-pytables = "*"
-pytest = "*"
-pytest-arraydiff = "*"
+pytables = ">=3.8"
 pywavelets = "*"
 pywin32 = "*"
 qt = "*"
-rarfile = "*"
 re2 = "*"
-requests = "*"
 scikit-learn = "*"
-scipy = "*"
-selenium = "*"
+scipy = ">=1.11"
 shapely = "*"
-snappy = "*"
 sqlite = "*"
 statsmodels = "*"
 tabulate = "*"
 toolz = "*"
 tqdm = "*"
-urllib3 = "*"
-xarray = "*"
-webdriver-manager = "*"
+xarray = ">=2026.7.0,<2027"
 astropy = "*"
-cfgrib = "*"
 wavespectra = ">=4.4.2"
-questionary = ">=2.1.1"
+
+[tool.pixi.feature.ocean.pypi-dependencies]
+absioras-utils = { path = "shared/utils", editable = true }
+absioras-hdf5_pandas = { path = "shared/hdf5_pandas", editable = true }
+absioras-veusz_helpers = { path = "shared/veusz_helpers", editable = true }
+absioras-hdf5_alt = { path = "shared/hdf5_alt", editable = true }
+absioras-ctd = { path = "oceano/ctd", editable = true }
+absioras-meta_finder = { path = "oceano/meta_finder", editable = true }
+absioras-gps_tracker = { path = "oceano/gps_tracker", editable = true }
+absioras-adcp = { path = "oceano/adcp", editable = true }
+absioras-third_party-descartes = { path = "third_party/descartes", editable = true }
+absioras-third_party-veusz = { path = "third_party/veusz", editable = true }
+absioras-third_party-mne = { path = "third_party/mne", editable = true }
+absioras-third_party-wafo = { path = "third_party/wafo", editable = true }
+
+
+# Environments
+[tool.pixi.environments]
+dev = {features = [
+    "ocean", "tcm", "notebook", "arc", "get_datasets", "legacy", "test"
+    ], solve-group = "default" }
+tcm = { features = ["tcm"], solve-group = "default" }
+default = { features = ["ocean", "notebook", "arc", "get_datasets"], solve-group = "default" }
+# legacy = { features = ["ocean", "notebook", "legacy"], solve-group = "default" }
+exp= { features = ["experimental"], solve-group = "default" }
+manage = { features = ["arc", "manage"], solve-group = "default" }
+noh5 = { features = ["noh5"], solve-group = "noh5" }
+noh5-tcm = { features = ["noh5", "tcm"], solve-group = "noh5" }
+bin-optim-tcm = { features = ["noh5", "bin-optim", "tcm", "test"], solve-group = "noh5" }
+
+[tool.pixi.tasks]
+test = "pytest tests/"
+test-all = "hatch run test:*"
+start = "python oceano/tcm/scripts/tcm_clc.py"
+
+[tool.pixi.tasks.build-tcm-clc-txt]
+cmd = "python oceano/tcm/scripts/build/build_tcm_clc_txt.py"
+env = { BUILD_MODE = "manual" }
+
+[tool.pixi.tasks.build-tcm-clc-txt-auto]
+cmd = "python oceano/tcm/scripts/build/build_tcm_clc_txt.py"
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["win-64"]
 
 [tool.ruff]
 line-length = 110

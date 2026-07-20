@@ -982,9 +982,8 @@ def close(cfg_out: Mapping[str, Any]) -> None:
         code.interact(local=ns)
     finally:
         try:
-            if cfg_out["db"] is None:
-                return
-            cfg_out["db"].close()
+            if cfg_out["db"] is not None:
+                cfg_out["db"].close()
         except HDF5ExtError:
             lf.exception(f"Error closing: {cfg_out['db']}")
         if cfg_out["db"].is_open:
@@ -994,7 +993,7 @@ def close(cfg_out: Mapping[str, Any]) -> None:
                 cfg_out["db_is_bad"] = True  # failed closing
 
         cfg_out["db"] = None
-        return
+    return
 
 
 def sort_pack(

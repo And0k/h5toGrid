@@ -36,7 +36,7 @@ from utils.logging_config import setup_logging
 
 from utils.filters import inearestsorted
 from utils.time import datetime_fun, check_time_diff
-from veusz_helpers.common.vsz_loader import get_path_in_parents
+from metadata import get_path_in_parents
 
 l = setup_logging(__name__, console_format_args={"name": False, "funcName": False, "datefmt": "%H:%M:%S"})
 

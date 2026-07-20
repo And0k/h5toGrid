@@ -17,8 +17,7 @@ except ImportError:
     print("!pip install netCDF4", "required")
     import netCDF4
 
-from utils import interp_to_point
-
+from get_datasets import d_utils
 xr_backend = "h5netcdf"  # not for NCEP data
 
 
@@ -320,7 +319,13 @@ def convert_time_to_seconds_since_epoch(ds: xr.Dataset, epoch: str = "1970-01-01
     epoch_dt = pd.to_datetime(epoch)
 
     # Calculate the time difference in seconds as a floating-point number
-    time_diff_seconds = (ds["time"].to_numpy().astype("datetime64[ns]") - np.datetime64(epoch_dt)).astype(
+    time_np = ds["time"].to_numpy()
+    try:
+        time_ns = time_np.astype("datetime64[ns]")
+    except (TypeError, ValueError):
+        # tz-aware object array — route through pandas
+        time_ns = pd.DatetimeIndex(time_np).tz_localize(None).to_numpy(dtype="datetime64[ns]")
+    time_diff_seconds = (time_ns - np.datetime64(epoch_dt)).astype(
         np.float64
     ) / 1e9
 
@@ -1004,5 +1009,5 @@ if __name__ == "__main__":
         # saving with correct format
         ds, out_file_path = load_and_join_ncep_local(ncep_path)
 
-        path_interp = interp_to_point(out_file_path, lat_st, lon_st)
+        path_interp = d_utils.interp_to_point(out_file_path, lat_st, lon_st)
         print(path_interp, "saved")
