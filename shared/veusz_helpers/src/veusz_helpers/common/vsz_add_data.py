@@ -8,7 +8,7 @@ Date units: years 'Y', months 'M', weeks 'W', and days 'D',
 time units: hours 'h', minutes 'm', seconds 's'
 """
 
-from logging import info, warning, exception
+import logging
 # from itertools import groupby, dropwhile
 # import sys
 from pathlib import Path
@@ -19,13 +19,37 @@ import numpy as np
 import re
 import h5py
 
+import metadata
 import func_vsz as fv
+
+l = logging.getLogger(__name__)
 
 NaT = np.datetime64("NaT")
 
 class DumbMapping(dict):
     def __getitem__(self, key):
         return self.get(key, key)
+
+
+def bool2ranges(b_ok, min_range, min_range_bad=None):
+    """
+    Get changing edges ignoring short intervals between
+    :param b_ok:
+    :param min_range:     min number of elements in intervals where b_ok is True
+    :param min_range_bad: min number of elements in intervals where b_ok is False
+    :return:
+    """
+    d_ok = np.diff(b_ok, prepend=False, append=False)
+    edges = np.flatnonzero(d_ok != 0)
+    n_rows = np.diff(edges)
+    b_del_bad_interval = n_rows[1::2] < (min_range_bad or min_range)
+    if b_del_bad_interval.any():  # delete starts and ends of too short no data intervals
+        edges = edges[np.hstack((True, ~np.repeat(b_del_bad_interval, 2), True))]
+        n_rows = np.diff(edges)
+    b_del_good_interval = n_rows[::2] < min_range
+    if b_del_good_interval.any():  # delete starts and ends of too short data intervals
+        edges = edges[~np.repeat(b_del_good_interval, 2)]
+    return edges
 
 
 def search_time_range_indexes(index, time_range, raw_time_shift_s, raw_time_units="ns"):
@@ -60,6 +84,111 @@ def search_time_range_indexes(index, time_range, raw_time_shift_s, raw_time_unit
         i_range = [0, -1]
     return i_range
 
+
+def pcid_from_parts(type: str = "i", model: str = None, number: str | int = None, b_raw=False, **kwargs):
+    """
+    Get Probe Column ID name (PCID)
+    :param type: probe type ('i' for inclinometers)
+    :param b_raw: return PCID for raw data tables
+    :return: pcid string:
+    if type=model="i", then set model="", then place "_" between type and model only if both not in ("i", "")
+    """
+    if type == "i":
+        if model:
+            if model == "i":
+                model = ""  # not repeat "i"
+                _ = ""
+            else:
+                _ = "_"
+        else:
+            _ = ""
+    elif type == "" and model == "i":
+        type, model = model, type
+        _ = ""
+    else:
+        _ = "_"
+    if b_raw and type == "i":
+        type = "incl"
+    return f"{type}{_}{model}{number:0>2}"
+
+
+def _config_text_header_dtype(text_type, file_path=None) -> dict[str, Any]:
+    try:
+        from tcm import csv_load
+        return csv_load.config_text_header_dtype(text_type, file_path)
+    except ImportError as e:
+        l.warning(f"{e} -> Using freezed version of TCM column definition. May be not up to date")
+
+    if text_type is None:
+        return {}
+    known = ("i", "p", "b", "d", "w")
+    if text_type.lower() not in known:
+        raise TypeError(f"Probe model {text_type} not recognized! Known: {known}")
+    b_default_type = text_type in ("i", "", "b")
+    cfg_for_type = {
+        "header": "yyyy(text),mm(text),dd(text),HH(text),MM(text),SS(text),Ax,Ay,Az,Mx,My,Mz"
+        + (",Battery,Temp" if b_default_type else ",P_counts,Temp,Battery"),
+        "dtype": "|S4 |S2 |S2 |S2 |S2 |S2 i2 i2 i2 i2 i2 i2 f8 f8".split()
+        + ([] if b_default_type else ["f8"]),
+    }
+    return cfg_for_type
+
+
+def load_tcm_config(path_in: Path) -> dict:
+    if path_in.suffix != ".yaml":
+        path_in = path_in.with_suffix(".yaml")
+        # raise ValueError(f"The configuration must be *.yaml file, got {path_in}")
+
+    with path_in.open(encoding="utf8") as f:
+
+        from yaml import safe_load
+
+        content = safe_load(f.read())
+        return content
+
+        {
+                device_id: [
+                    # Nested dict structure with station_id keys -> convert to single list compatible with
+                    # single interval device
+                    # todo: use dicts as from _meta_array_to_dict() instead of arrays
+                    # instantly, to not loss data as in code below:
+                    seq[0]
+                    if all(s == seq[0] for s in seq)
+                    else min(seq)
+                    if col == "time_st"
+                    else max(seq)
+                    if col == "time_en"
+                    else np.mean(seq)
+                    if col in ["lat", "lon"]
+                    else ",".join(str(s) for s in seq)
+                    for col, seq in zip(
+                        ["p", "b", "bd", "s", "lat", "lon", "time_st", "time_en", "burst_dt", "bursts_t"],
+                        zip(*meta.values()),
+                    )
+                ]
+                if isinstance(meta, dict)
+                # Single interval device (list/tuple) - convert to nested dict with key "0"
+                else meta
+                for device_id, meta in content.items()
+            }
+
+
+def _cf_to_dt_ns(raw: np.ndarray, units: Union[str, bytes] = "seconds since 1970-01-01", int=False) -> np.ndarray:
+    """float64 seconds OR legacy int64 ns → datetime64[ns] (for h5py read).
+
+    Backward-compatible: inspects dtype to handle both CF-float64 and
+    legacy-int64 formats.  For float64, parses the epoch date from *units*
+    (e.g. ``"seconds since 1970-01-01"``).  When *units* is empty the
+    legacy-1970 path is used.  Accepts ``bytes`` (from h5py attrs).
+    """
+    if isinstance(units, bytes):
+        units = units.decode()
+    if raw.dtype.kind == "f":  # Float path — seconds since 1970 (NetCDF format)
+        epoch_ns = np.datetime64(units.removeprefix("seconds since "), "ns").astype(np.int64) if units else 0
+        out_int = (((raw[:] if any(raw.shape) else raw) * 1e9).astype(np.int64) + epoch_ns)
+    else:  # Legacy int64 path — nanoseconds since 1970 (h5py format)
+        out_int = raw.astype(np.int64)
+    return out_int if int else out_int.astype("datetime64[ns]")
 
 def veusz_load_hdf5(
     file,
@@ -123,8 +252,14 @@ def veusz_load_hdf5(
         time_range = []
     time_raw_min = np.iinfo(np.int64).max  # not NaT because all our *_raw* data are int64
     time_raw_max = 0
-    if grp_d is None:
-        grp_d = {"table": "/table/"}
+    if file.suffix == ".h5":
+        if grp_d is None:
+            grp_d = {"table": "/table/"}
+        time_var_name = "index"
+    else:
+        if grp_d is None:
+            grp_d = {"table": "/"}
+        time_var_name = "time"
 
     # set default mappings where skipped
     if cols_namemap is None:
@@ -177,22 +312,24 @@ def veusz_load_hdf5(
                         continue
 
                 print(end=", " if i < len(device_ids) else ". ")
-                index = h[grp_dev[device_id]["table"]]["index"]
+                index = _cf_to_dt_ns(h[grp_dev[device_id]["table"]][time_var_name], int=True)
                 # todo: check this to replace code below:
                 # i_ranges[device_id] = search_time_range_indexes(index, time_range, time_shift_s)
                 if any(np.isfinite(time_range)):
                     time_range_raw_cur = np.int64(time_range) + (
                         index[-1] if have_timedelta else -1e9 * time_shift_s
                     )
+
                     i_ranges[device_id] = np.searchsorted(index, time_range_raw_cur).tolist()
                     try:
                         time_range_raw = index[i_ranges[device_id]]
-                    except IndexError:
+                    except (IndexError, TypeError):  # `TypeError: Indexing elements must be in increasing
+                    # order` in addition and before IndexError if both indexes not increasing and above limit
                         _ = min(i_ranges[device_id][-1], len(index) - 1)
                         if _ <= i_ranges[device_id][0]:
                             raise IndexError(
                                 "Required time range {} is after the data range {}".format(
-                                    time_range, np.array(index[[0, -1]], "M8[ns]").astype("M8[s]")
+                                    time_range, _cf_to_dt_ns(index[[0, -1]])
                                 )
                             )
                         try:
@@ -200,7 +337,7 @@ def veusz_load_hdf5(
                         except IndexError:
                             raise IndexError(
                                 "Required time range: {}, data range: {}".format(
-                                    time_range, np.array(index[[0, -1]], "M8[ns]").astype("M8[s]")
+                                    time_range, _cf_to_dt_ns(index[[0, -1]])
                                 )
                             )
                 else:
@@ -210,9 +347,9 @@ def veusz_load_hdf5(
                 time_raw_min = np.fmin(time_range_raw[0], time_raw_min)
                 time_raw_max = np.fmax(time_range_raw[-1], time_raw_max)
             except Exception:
-                exception(f'Working with HDF5 file "{file}", {grp_dev[device_id]}')
+                l.exception(f'Working with HDF5 file "{file}", {grp_dev[device_id]}')
                 raise
-    time_range_raw = np.array([time_raw_min, time_raw_max], "M8[ns]")
+    time_range_raw = _cf_to_dt_ns(np.array([time_raw_min, time_raw_max]))
     # if time_range was specified this will be for last device_id:
     time_range_out = time_range_raw.astype("M8[s]") + time_shift_s if any(time_range_raw) else []
     if any(time_range_out):
@@ -295,10 +432,10 @@ def veusz_load_hdf5_tcm_raw(
 
     grp_d = {
         "coef": "/coef/",
-        "table": "/table/",
+        "table": ("/table/" if file.suffix == ".h5" else "/"),
     }
     table_cols_to_slice_namemap_common = {  # common parameters which time slice is need to load
-        "index": "t_ns",
+        **({"index": "t_ns"} if file.suffix == ".h5" else {"time": "t_s"}),
         "P_counts": "_P_counts",
         "P": "_P_counts",
         "Temp": "Temp",
@@ -348,6 +485,7 @@ def veusz_load_hdf5_tcm_raw(
         }
         if "p" in probe["model"]:
             cols_namemap["coef"]["P_t"] = "P_t"
+            cols_namemap["table"]["TempP"] = "TempP"
 
     # prefixes and suffixes for columns of each grp_d group
     def f_table_cols_fmt(col, device_id):
@@ -397,6 +535,11 @@ def veusz_load_hdf5_tcm_raw(
             except KeyError as e:  # not all possible coef must exists
                 print("KeyError:", e, "Skipping TagDatasets and continue...")
 
+    # Add time which should be used by all functions used for ~drawer@i.vsz as veusz_load_csv_tcm_raw give it
+    if file.suffix != ".h5":  # .nc
+        SetDataExpression("_t_ns__", "1E9*_t_s__", linked=True)
+    SetDataExpression("time__", "v.dt64s2vsz(1E-9*_t_ns__[v.sl(iu__)]) + USE_timeShift_s", linked=True)
+
     return (
         existed_devs,
         time_range,
@@ -405,6 +548,184 @@ def veusz_load_hdf5_tcm_raw(
         grp_d_rename_funs,
         f_table_cols_fmt,
     )  #
+
+
+def veusz_load_csv_tcm_raw(
+    file,
+    db,
+    time_range,
+    time_shift_s=0,
+    probe_info: Optional[dict] = None,
+    fun_get_time_ranges: Optional[Callable[[Tuple[np.ndarray]], np.ndarray]] = None,
+    # ImportFileCSV kwargs:
+    rowsignore=3,  # same as default `skiprows` in tcm.csv_load
+    encoding="ascii",
+    headermode="none",
+    skipwhitespace=True,
+    **kwargs,  # other
+):
+    """
+    Loads TCM data from text *.csv file (example below is for p-model, but may be other models):
+    Inkl P01
+    Y,M,D,H,M,S,Ax,Ay,Az,Mx,My,Mz,ADC,T,Bat
+    2023,4,25,12,24,11,160,-2576,-13808,-111,62,547,1849841,21.63,5.42
+    :param db: path to hdf5 data with coefs
+    :param time_range: Not implemented: any 2-element sequence convertible to datetime64 array in displaying zone. For example ['2020-08-19T21:59:22', '2020-08-20T06:05:04']
+    :param file: text file to load data
+    :param time_shift_s: Not implemented: shift in seconds You'll add to loaded time to display data, here used to set input range correctly
+
+    :return: (time_range_raw, time, a1d, icol):
+    - time_range_raw: time range of raw data
+    """
+
+    if any(np.isfinite(time_range)) or fun_get_time_ranges:
+        # Need limiting of data loading to Veusz
+        if fun_get_time_ranges:
+            raise NotImplementedError("Limiting of data loading to Veusz")  # todo
+            # a1d = np.genfromtxt(file, usecols=list(range(n_start_cols)) + i_cols, **kwargs)
+            # time = np.datetime64("%02.0f-%02.0f-%02.0f" % tuple(a1d[0, icols_date_reorder]), "s") + np.array(
+            #     (np.append(0, np.cumsum(np.diff(a1d[:, idd]) != 0) * 24) + a1d[:, iHH]) * 3600
+            #     + a1d[:, iMM] * 60
+            #     + a1d[:, iSS],
+            #     "m8[s]",
+            # )
+            # if any(np.isfinite(time_range)):
+            #     iu = np.searchsorted(time, time_range).tolist()
+            #     time = time[slice(*iu)]
+            #     a1d = a1d[slice(*iu), n_start_cols:]
+            # else:
+            #     a1d = a1d[:, n_start_cols:]
+
+            # b_ok = fun_get_time_ranges(
+            #     *a1d[:, [icol[col] for col in fun_get_time_ranges.__code__.co_varnames]].T
+            # )
+            # edges = bool2ranges(b_ok, min_range, min_range_del)
+            # try:
+            #     time_ranges = time[edges]
+            # except IndexError:
+            #     time_ranges = np.append(time[edges[edges < time.size]], time[-1] + np.timedelta64(1, "s"))
+
+            # print(
+            #     f"Time ranges of data found:",
+            #     ", ".join([f"{st} - {en}" for st, en in zip(time_ranges[::2], time_ranges[1::2])]),
+            # )
+            # time_range_raw = time_ranges[[0, -1]]
+        else:
+            time_ranges = []
+    else:
+        time_ranges = []
+
+    # Determine probe type and get configuration
+
+    if probe_info:
+        probe_type = probe_info.get("type", "i")
+        probe_model = probe_info.get("model", probe_type)
+        # raw data historical naming
+        probe_id = pcid_from_parts(**probe_info, b_raw=True)
+    else:
+        # Default probe type if not specified
+        probe_model = "i"
+        probe_id = "i00"
+
+    ## Get text header and dtype configuration based on probe type
+    config = _config_text_header_dtype(probe_model[0] if probe_model else probe_type, file)
+
+    ## Determine column mappings based on probe type
+    cols = config.get("header", "").split(",")
+
+    # Create renames mapping based on the header configuration
+
+    ## Map date/time columns (keep one letter and add prefix to get ['_y', '_m', '_d', '_H', '_M', '_S'])
+    len_date_cols = 6
+    renames = {
+        f"col{i}": f"_{date_col[0]}".removesuffix("(text)")
+        for i, date_col in enumerate(cols[:len_date_cols], start=1)
+    }
+
+    ## Map data columns
+    data_col_mapping = {
+        "Ax": "Ax_counts",
+        "Ay": "Ay_counts",
+        "Az": "Az_counts",
+        "Mx": "Mx_counts",
+        "My": "My_counts",
+        "Mz": "Mz_counts",
+        # 'Battery': 'Battery',
+        "Temp": "_Temp__",
+        # 'P_counts': 'P_counts'
+    }
+
+    ## Process remaining columns based on header
+    renames.update({
+        f"col{i}": data_col_mapping.get(field, field)
+        for i, field in enumerate(cols[len_date_cols:], start=len_date_cols + 1)
+    })
+
+    # Get data to Veusz allowing to save vsz without copying data
+    ImportFileCSV(
+        file,  # f"@i_{probe_n:>03}.TXT"
+        renames=renames,
+        rowsignore=rowsignore,
+        encoding=encoding,
+        headermode=headermode,
+        skipwhitespace=skipwhitespace,
+        linked=True,
+        **kwargs,
+    )
+
+    # Convertion variables to that used with hdf5 drawers
+    SetDataExpression(
+        "time__",
+        "(lambda x: v.rep2mean(x, ediff1d(x, to_end=0)!=0))(fdate([_y, _m, _d]) + 3600*_H + 60*_M + _S) + "
+        "USE_timeShift_s",
+        linked=True,
+    )
+    SetDataExpression("_t_ns__", "(time__ + 1230768000)*1E9", linked=True)
+
+    if db and Path(db).is_file():
+        ImportFileHDF5(
+            db,
+            [f"/{probe_id}/coef"],
+            linked=True,
+            namemap={
+                f"/{probe_id}/coef/G/A": "Ag0",
+                f"/{probe_id}/coef/G/C": "Cg",
+                f"/{probe_id}/coef/H/A": "Ah0",
+                f"/{probe_id}/coef/H/C": "Ch",
+                f"/{probe_id}/coef/H/azimuth_shift_deg": "azimuth_shift_deg",
+                f"/{probe_id}/coef/Vabs0": "coefs_Vabs0",
+            },
+        )
+    else:
+        # Load coefficients from hydra yaml configuration
+        dir_raw = metadata.get_path_in_parents(file, "_raw", target_is_dir=True)
+        dir_cfgs = dir_raw / "cfg_proc" / "defaults"
+        cfgs_existed, cfgs = metadata.select_cfgs(
+            dir_cfgs=dir_cfgs, incl_type_nums={pcid_from_parts(**probe_info, b_raw=False).lower()}
+        )
+        if cfgs:
+            print(f"=== Using {len(cfgs)}/{len(cfgs_existed)} user configurations in {dir_cfgs}")
+            content = load_tcm_config(dir_cfgs / next(iter(cfgs.values())))
+            renames = {"Ag": "Ag0", "Ah": "Ah0", "kVabs": "coefs_Vabs(numeric)"}
+            if not "azimuth_shift_deg" in content["input"]["coefs"]:
+                content["input"]["coefs"]["azimuth_shift_deg(numeric)"] = [180]
+            for k, v in content["input"]["coefs"].items():
+                try:
+                    k = renames[k]
+                except KeyError:
+                    pass
+                if isinstance(v, list):
+                    if isinstance(v[0], list):
+                        ImportString2D(
+                            k,
+                            "xrange 0.0 3.0\nyrange 0.0 3.0\n" +
+                            "\n".join(" ".join(str(item) for item in v0) for v0 in v)
+                        )
+                    else:
+                        ImportString(f'{k}(numeric)', "\n".join(str(item) for item in v))
+
+
+    return (time_ranges,)
 
 
 def veusz_load_hdf5_ctd_profile(
@@ -714,7 +1035,7 @@ def veusz_load_hdf5_ecmwf(file, time_range, time_shift_s: int = 0, load_map=Fals
         ]
         index_name = "valid_time"
     except AttributeError:  # 'NoneType' object has no attribute 'group'
-        warning("trying to load all from one file (old style input)")
+        l.warning("trying to load all from one file (old style input)")
         prefix = ""
         files = [file]
         file_name_prefix = file.name
@@ -1109,7 +1430,7 @@ def veusz_load_meteo(
                     files = [d for d in _.iterdir() if d.is_dir() and d.name.startswith("area(")]
                 except FileNotFoundError:
                     if not _.is_dir():
-                        warning(f"Can not load meteo ({_} is not a dir) required for {[dev_wind]} {msg_for}")
+                        l.warning(f"Can not load meteo ({_} is not a dir) required for {[dev_wind]} {msg_for}")
 
             for file in files:
                 for coord_pattern in coord_patterns:
@@ -1237,210 +1558,3 @@ def veusz_load_meteo(
         )
 
     return dev_wind, time_range_raw_wind,wind_mean_uv
-
-
-def pcid_from_parts(type: str = "i", model: str = None, number: str | int = None, b_raw=False, **kwargs):
-    """
-    Get Probe Column ID name (PCID)
-    :param type: probe type ('i' for inclinometers)
-    :param b_raw: return PCID for raw data tables
-    :return: pcid string:
-    if type=model="i", then set model="", then place "_" between type and model only if both not in ("i", "")
-    """
-    if type == "i":
-        if model:
-            if model == "i":
-                model = ""  # not repeat "i"
-                _ = ""
-            else:
-                _ = "_"
-        else:
-            _ = ""
-    elif type == "" and model == "i":
-        type, model = model, type
-        _ = ""
-    else:
-        _ = "_"
-    if b_raw and type == "i":
-        type = "incl"
-    return f"{type}{_}{model}{number:0>2}"
-
-
-def _config_text_header_dtype(text_type) -> dict[str, Any]:
-    if text_type is None:
-        return {}
-    if text_type not in ("i", "p", "b", "d", "w"):
-        raise TypeError("Probe model not recognized!")
-    b_default_type = text_type in ("i", "", "b")
-    cfg_for_type = {
-        "header": "yyyy(text),mm(text),dd(text),HH(text),MM(text),SS(text),Ax,Ay,Az,Mx,My,Mz"
-        + (",Battery,Temp" if b_default_type else ",P_counts,Temp,Battery"),
-        "dtype": "|S4 |S2 |S2 |S2 |S2 |S2 i2 i2 i2 i2 i2 i2 f8 f8".split()
-        + ([] if b_default_type else ["f8"]),
-    }
-    return cfg_for_type
-
-
-def veusz_load_csv_tcm_raw(
-    file,
-    db,
-    time_range,
-    time_shift_s=0,
-    probe_info: Optional[dict] = None,
-    fun_get_time_ranges: Optional[Callable[[Tuple[np.ndarray]], np.ndarray]] = None,
-    **kwargs,
-):
-    """
-    Loads TCM data from text *.csv file (example below is for p-model, but may be other models):
-    Inkl P01
-    Y,M,D,H,M,S,Ax,Ay,Az,Mx,My,Mz,ADC,T,Bat
-    2023,4,25,12,24,11,160,-2576,-13808,-111,62,547,1849841,21.63,5.42
-    :param db: path to hdf5 data with coefs
-    :param time_range: Not implemented: any 2-element sequence convertible to datetime64 array in displaying zone. For example ['2020-08-19T21:59:22', '2020-08-20T06:05:04']
-    :param file: text file to load data
-    :param time_shift_s: Not implemented: shift in seconds You'll add to loaded time to display data, here used to set input range correctly
-
-    :return: (time_range_raw, time, a1d, icol):
-    - time_range_raw: time range of raw data
-    """
-
-    if any(np.isfinite(time_range)) or fun_get_time_ranges:
-        # Need limiting of data loading to Veusz
-        if fun_get_time_ranges:
-            raise NotImplementedError("Limiting of data loading to Veusz")  # todo
-            # a1d = np.genfromtxt(file, usecols=list(range(n_start_cols)) + i_cols, **kwargs)
-            # time = np.datetime64("%02.0f-%02.0f-%02.0f" % tuple(a1d[0, icols_date_reorder]), "s") + np.array(
-            #     (np.append(0, np.cumsum(np.diff(a1d[:, idd]) != 0) * 24) + a1d[:, iHH]) * 3600
-            #     + a1d[:, iMM] * 60
-            #     + a1d[:, iSS],
-            #     "m8[s]",
-            # )
-            # if any(np.isfinite(time_range)):
-            #     iu = np.searchsorted(time, time_range).tolist()
-            #     time = time[slice(*iu)]
-            #     a1d = a1d[slice(*iu), n_start_cols:]
-            # else:
-            #     a1d = a1d[:, n_start_cols:]
-
-            # b_ok = fun_get_time_ranges(
-            #     *a1d[:, [icol[col] for col in fun_get_time_ranges.__code__.co_varnames]].T
-            # )
-            # edges = bool2ranges(b_ok, min_range, min_range_del)
-            # try:
-            #     time_ranges = time[edges]
-            # except IndexError:
-            #     time_ranges = np.append(time[edges[edges < time.size]], time[-1] + np.timedelta64(1, "s"))
-
-            # print(
-            #     f"Time ranges of data found:",
-            #     ", ".join([f"{st} - {en}" for st, en in zip(time_ranges[::2], time_ranges[1::2])]),
-            # )
-            # time_range_raw = time_ranges[[0, -1]]
-        else:
-            time_ranges = []
-    else:
-        time_ranges = []
-
-    # Determine probe type and get configuration
-
-    if probe_info:
-        probe_type = probe_info.get("type", "i")
-        probe_model = probe_info.get("model", probe_type)
-        # raw data historical naming
-        probe_id = pcid_from_parts(**probe_info, b_raw=True)
-    else:
-        # Default probe type if not specified
-        probe_model = "i"
-        probe_id = "i00"
-
-    ## Get text header and dtype configuration based on probe type
-    config = _config_text_header_dtype(probe_model[0] if probe_model else None)
-
-    ## Determine column mappings based on probe type
-    cols = config.get("header", "").split(",")
-
-    # Create renames mapping based on the header configuration
-
-    ## Map date/time columns (keep one letter and add prefix to get ['_y', '_m', '_d', '_H', '_M', '_S'])
-    len_date_cols = 6
-    renames = {
-        f"col{i}": f"_{date_col[0]}".removesuffix("(text)")
-        for i, date_col in enumerate(cols[:len_date_cols], start=1)
-    }
-
-    ## Map data columns
-    data_col_mapping = {
-        "Ax": "Ax_counts",
-        "Ay": "Ay_counts",
-        "Az": "Az_counts",
-        "Mx": "Mx_counts",
-        "My": "My_counts",
-        "Mz": "Mz_counts",
-        # 'Battery': 'Battery',
-        "Temp": "_Temp__",
-        # 'P_counts': 'P_counts'
-    }
-
-    ## Process remaining columns based on header
-    renames.update({
-        f"col{i}": data_col_mapping.get(field, field)
-        for i, field in enumerate(cols[len_date_cols:], start=len_date_cols + 1)
-    })
-
-    # Get data to Veusz allowing to save vsz without copying data
-    ImportFileCSV(
-        file,  # f"@i_{probe_n:>03}.TXT"
-        encoding="ascii",
-        headermode="none",
-        linked=True,
-        renames=renames,
-        rowsignore=2,
-        skipwhitespace=True,
-    )
-
-    # Convertion variables to that used with hdf5 drawers
-    SetDataExpression(
-        "time__",
-        "(lambda x: v.rep2mean(x, ediff1d(x, to_end=0)!=0))(fdate([_y, _m, _d]) + 3600*_H+ 60*_M + _S) + "
-        "USE_timeShift_s",
-        linked=True,
-    )
-    SetDataExpression("_t_ns__", "(time__ + 1230768000)*1E9", linked=True)
-
-    if db and Path(db).is_file():
-        ImportFileHDF5(
-            db,
-            [f"/{probe_id}/coef"],
-            linked=True,
-            namemap={
-                f"/{probe_id}/coef/G/A": "Ag0",
-                f"/{probe_id}/coef/G/C": "Cg",
-                f"/{probe_id}/coef/H/A": "Ah0",
-                f"/{probe_id}/coef/H/C": "Ch",
-                f"/{probe_id}/coef/H/azimuth_shift_deg": "azimuth_shift_deg",
-                f"/{probe_id}/coef/Vabs0": "coefs_Vabs0",
-            },
-        )
-
-    return (time_ranges,)
-
-
-def bool2ranges(b_ok, min_range, min_range_bad=None):
-    """
-    Get changing edges ignoring short intervals between
-    :param b_ok:
-    :param min_range:     min number of elements in intervals where b_ok is True
-    :param min_range_bad: min number of elements in intervals where b_ok is False
-    :return:
-    """
-    d_ok = np.diff(b_ok, prepend=False, append=False)
-    edges = np.flatnonzero(d_ok != 0)
-    n_rows = np.diff(edges)
-    b_del_bad_interval = n_rows[1::2] < (min_range_bad or min_range)
-    if b_del_bad_interval.any():  # delete starts and ends of too short no data intervals
-        edges = edges[np.hstack((True, ~np.repeat(b_del_bad_interval, 2), True))]
-        n_rows = np.diff(edges)
-    b_del_good_interval = n_rows[::2] < min_range
-    if b_del_good_interval.any():  # delete starts and ends of too short data intervals
-        edges = edges[~np.repeat(b_del_good_interval, 2)]
-    return edges

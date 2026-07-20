@@ -3,13 +3,25 @@ authors = [ {name = "Andrey Korzh", email = "ao.korzh@gmail.com"} ]
 description = "Console program to convert raw data files meaured by AB SIO RAS tilt current meters (TCM) to csv and hdf5 data files with physical units optionally with filtering/averaging"
 license = "MIT"
 name = "absioras-tcm"
-requires-python = ">= 3.11"
 version = "0.1.0"
-dependencies=[
-"wmm2020"
+requires-python = ">=3.11"
+dependencies = [
+"hydra-colorlog>=1.2",
+"ruamel-yaml>=0.19.1"
 ]
 
 [project.optional-dependencies]
+full = [
+  "h5py",
+  "netcdf4",
+  "numba",
+  "scipy",
+  "matplotlib"
+]
+noh5 = [
+  "pyinstaller",
+  "pyinstaller-hooks-contrib"
+]
 test = ["pytest"]
 
 [build-system]
@@ -22,11 +34,21 @@ packages = ["src/tcm"]
 [tool.pixi.pypi-dependencies]
 # Подмодули автоматически доступны через workspace
 
+
 [tool.hatch.envs.test]
 dependencies = ["pytest"]
 
-[tool.hatch.envs.test.scripts]
-test = "pytest tests/"
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "xr: tests for the xarray pipeline (tests/_xr/)",
+    "calibration: tests for calibration math (tests/_calibration/)",
+    "comparison: cross-pipeline validation",
+]
 
 [tool.ruff]
 line-length = 110
+target-version = "py312"
+builtins = ["SetData", "SetData2D", "SetDataExpression", "SetData2DExpressionXYZ", "SetData2DXYFunc", "AddCustom", "DatasetPlugin", "TagDatasets", "Add", "To", "Set", "CreateHistogram", "FilterDatasets", "ImportFileCSV"]

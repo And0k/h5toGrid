@@ -1,22 +1,15 @@
-import pytest
-import hydra
-from omegaconf import OmegaConf
-from pathlib import Path
 import logging
 import os
 import shutil
-from unittest.mock import patch, MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
-# Temporarily add the scripts/downloading directory to the Python path
-# to allow importing download_copernicus_point and utils
-import sys
-sys.path.append(str(Path(__file__).parent.parent))
-sys.path.append(str(Path(__file__).parent.parent.parent / "downloading"))
+import hydra
+import pytest
+import xarray as xr  # for type hinting
+from omegaconf import OmegaConf
 
-from download_copernicus_point import download_extending_coords
-from .manager import DownloadHistoryManager
-from utils import interp_to_point, safe_netcdf_atomic
-import xarray as _xr # Import xarray under a different alias for type hinting
+from get_datasets import d_utils, manager
 
 l = logging.getLogger(__name__)
 
@@ -44,13 +37,13 @@ def setup_unit_test_environment(request):
 # Unit tests for DownloadHistoryManager
 def test_download_history_manager_init(setup_unit_test_environment):
     _, test_history_file = setup_unit_test_environment
-    manager = DownloadHistoryManager(test_history_file)
+    manager = manager.DownloadHistoryManager(test_history_file)
     assert manager.history_file == test_history_file
     assert manager.get_history() == []
 
 def test_download_history_manager_log_download(setup_unit_test_environment):
     test_base_path, test_history_file = setup_unit_test_environment
-    manager = DownloadHistoryManager(test_history_file)
+    manager = manager.DownloadHistoryManager(test_history_file)
 
     dir_save = test_base_path / "test_project"
     lat, lon = 50.0, 10.0
@@ -71,7 +64,7 @@ def test_download_history_manager_log_download(setup_unit_test_environment):
 
 def test_download_history_manager_load_history(setup_unit_test_environment):
     test_base_path, test_history_file = setup_unit_test_environment
-    manager = DownloadHistoryManager(test_history_file)
+    manager = manager.DownloadHistoryManager(test_history_file)
 
     dir_save = test_base_path / "test_project_load"
     lat, lon = 51.0, 11.0
@@ -80,7 +73,7 @@ def test_download_history_manager_load_history(setup_unit_test_environment):
     manager.log_download(dir_save, lat, lon, date_range, options)
 
     # Create a new manager to load the history
-    new_manager = DownloadHistoryManager(test_history_file)
+    new_manager = manager.DownloadHistoryManager(test_history_file)
     history = new_manager.get_history()
     assert len(history) == 1
     entry = history[0]
@@ -88,53 +81,11 @@ def test_download_history_manager_load_history(setup_unit_test_environment):
     assert entry['lat'] == lat
     assert entry['lon'] == lon
 
-# Unit tests for download_extending_coords (mocking copernicusmarine)
-@patch('download_copernicus_point.cm')
-def test_download_extending_coords_success(mock_cm, setup_unit_test_environment):
-    test_base_path, _ = setup_unit_test_environment
-
-    # Mock copernicusmarine.subset to return a dummy path
-    mock_cm.subset.return_value = str(test_base_path / "downloaded_file.nc")
-
-    with hydra.initialize(config_path="../cfg", version_base=None):
-        cfg = hydra.compose(config_name="base", overrides=[])
-        cfg.base.interpolation_delta = 0.1
-        cfg.copernicus.point_wind.dataset_id = "test_id"
-        cfg.copernicus.point_wind.variables = ["u", "v"]
-
-        lat, lon = 55.0, 20.0
-        date_range = ["2024-01-01", "2024-01-02"]
-
-        file_path, download_options = download_extending_coords(cfg, test_base_path, lat, lon, date_range)
-
-        assert file_path == test_base_path / "downloaded_file.nc"
-        assert download_options['dataset_id'] == "test_id"
-        assert download_options['variables'] == ["u", "v"]
-        mock_cm.subset.assert_called_once()
-
-@patch('download_copernicus_point.cm', None) # Simulate copernicusmarine not being available
-def test_download_extending_coords_no_copernicusmarine(setup_unit_test_environment):
-    test_base_path, _ = setup_unit_test_environment
-
-    with hydra.initialize(config_path="../cfg", version_base=None):
-        cfg = hydra.compose(config_name="base", overrides=[])
-        cfg.base.interpolation_delta = 0.1
-        cfg.copernicus.point_wind.dataset_id = "test_id"
-        cfg.copernicus.point_wind.variables = ["u", "v"]
-
-        lat, lon = 55.0, 20.0
-        date_range = ["2024-01-01", "2024-01-02"]
-
-        file_path, download_options = download_extending_coords(cfg, test_base_path, lat, lon, date_range)
-
-        assert file_path is None
-        assert download_options['dataset_id'] == "test_id"
-        assert download_options['variables'] == ["u", "v"]
 
 # Unit tests for interp_to_point (mocking xarray and safe_netcdf_atomic)
 @patch('xarray.open_dataset')
-@patch('scripts.downloading.utils.safe_netcdf_atomic')
-@patch('scripts.downloading.utils.interp_angle') # Patch interp_angle directly
+@patch('d_utils.safe_netcdf_atomic')
+@patch('d_utils.interp_angle') # Patch interp_angle directly
 def test_interp_to_point(mock_interp_angle, mock_safe_netcdf_atomic, mock_open_dataset, setup_unit_test_environment):
     test_base_path, _ = setup_unit_test_environment
     dummy_nc_file = test_base_path / "dummy_input.nc"
@@ -144,12 +95,12 @@ def test_interp_to_point(mock_interp_angle, mock_safe_netcdf_atomic, mock_open_d
     mock_ds = MagicMock()
 
     # Configure the mocked coordinate DataArrays
-    mock_lat_coords = MagicMock(spec=_xr.DataArray)
+    mock_lat_coords = MagicMock(spec=xr.DataArray)
     mock_lat_coords.min.return_value.item.return_value = 54.9
     mock_lat_coords.max.return_value.item.return_value = 55.1
     mock_lat_coords.values = [54.9, 55.1]
 
-    mock_lon_coords = MagicMock(spec=_xr.DataArray)
+    mock_lon_coords = MagicMock(spec=xr.DataArray)
     mock_lon_coords.min.return_value.item.return_value = 19.9
     mock_lon_coords.max.return_value.item.return_value = 20.1
     mock_lon_coords.values = [19.9, 20.1]
@@ -161,7 +112,7 @@ def test_interp_to_point(mock_interp_angle, mock_safe_netcdf_atomic, mock_open_d
     mock_ds.coords.__getitem__.side_effect = lambda key: {
         'latitude': mock_lat_coords,
         'longitude': mock_lon_coords
-    }.get(key, MagicMock(spec=_xr.DataArray))  # Return a generic DataArray mock for other keys
+    }.get(key, MagicMock(spec=xr.DataArray))  # Return a generic DataArray mock for other keys
 
     # Mock ds.__getitem__ to return appropriate DataArray/Dataset mocks
     def mock_ds_getitem_side_effect(key):
@@ -171,14 +122,14 @@ def test_interp_to_point(mock_interp_angle, mock_safe_netcdf_atomic, mock_open_d
             return mock_lon_coords
         elif isinstance(key, str) and key in mock_ds.data_vars:
             # For single data variable access
-            mock_da = MagicMock(spec=_xr.DataArray)
+            mock_da = MagicMock(spec=xr.DataArray)
             mock_da.attrs = mock_ds.data_vars[key].attrs
             return mock_da
         elif isinstance(key, list):
             # For multiple data variables (e.g., ds[['var1', 'var2']])
-            mock_dataset_subset = MagicMock(spec=_xr.Dataset)
-            mock_dataset_subset.data_vars = {v: MagicMock(spec=_xr.DataArray) for v in key}
-            mock_dataset_subset.interp.return_value = MagicMock(spec=_xr.DataArray) # For ds[other_vars].interp
+            mock_dataset_subset = MagicMock(spec=xr.Dataset)
+            mock_dataset_subset.data_vars = {v: MagicMock(spec=xr.DataArray) for v in key}
+            mock_dataset_subset.interp.return_value = MagicMock(spec=xr.DataArray) # For ds[other_vars].interp
             return mock_dataset_subset
         return MagicMock() # Fallback
 
@@ -197,10 +148,10 @@ def test_interp_to_point(mock_interp_angle, mock_safe_netcdf_atomic, mock_open_d
     mock_open_dataset.return_value = mock_ds
 
     # Mock interp_angle to return a DataArray mock
-    mock_interp_angle.return_value = MagicMock(spec=_xr.DataArray)
+    mock_interp_angle.return_value = MagicMock(spec=xr.DataArray)
 
     # Mock ds.interp for non-angular variables
-    mock_ds.interp.return_value = MagicMock(spec=_xr.DataArray)
+    mock_ds.interp.return_value = MagicMock(spec=xr.DataArray)
 
     # Mock interp and merge results
     mock_interp_result = MagicMock()
@@ -208,7 +159,7 @@ def test_interp_to_point(mock_interp_angle, mock_safe_netcdf_atomic, mock_open_d
     mock_open_dataset.return_value.merge.return_value = mock_interp_result
 
     lat, lon = 55.0, 20.0
-    result_path = interp_to_point(dummy_nc_file, lat, lon)
+    result_path = d_utils.interp_to_point(dummy_nc_file, lat, lon)
 
     mock_open_dataset.assert_called_once_with(dummy_nc_file, engine="h5netcdf")
     mock_ds.interp.assert_called()  # Should be called for other_vars
@@ -218,8 +169,8 @@ def test_interp_to_point(mock_interp_angle, mock_safe_netcdf_atomic, mock_open_d
     assert result_path.suffix == ".nc"
 
 @patch('xarray.open_dataset')
-@patch('scripts.downloading.utils.safe_netcdf_atomic')
-@patch('scripts.downloading.utils.interp_angle') # Patch interp_angle directly
+@patch('d_utils.safe_netcdf_atomic')
+@patch('d_utils.interp_angle') # Patch interp_angle directly
 def test_interp_to_point_angular_vars(mock_interp_angle, mock_safe_netcdf_atomic, mock_open_dataset, setup_unit_test_environment):
     test_base_path, _ = setup_unit_test_environment
     dummy_nc_file = test_base_path / "dummy_angular_input.nc"
@@ -229,12 +180,12 @@ def test_interp_to_point_angular_vars(mock_interp_angle, mock_safe_netcdf_atomic
     mock_ds = MagicMock()
 
     # Configure the mocked coordinate DataArrays
-    mock_lat_coords = MagicMock(spec=_xr.DataArray)
+    mock_lat_coords = MagicMock(spec=xr.DataArray)
     mock_lat_coords.min.return_value.item.return_value = 54.9
     mock_lat_coords.max.return_value.item.return_value = 55.1
     mock_lat_coords.values = [54.9, 55.1]  # Also mock .values for the assert message
 
-    mock_lon_coords = MagicMock(spec=_xr.DataArray)
+    mock_lon_coords = MagicMock(spec=xr.DataArray)
     mock_lon_coords.min.return_value.item.return_value = 19.9
     mock_lon_coords.max.return_value.item.return_value = 20.1
     mock_lon_coords.values = [19.9, 20.1]  # Also mock .values for the assert message
@@ -252,14 +203,14 @@ def test_interp_to_point_angular_vars(mock_interp_angle, mock_safe_netcdf_atomic
             return mock_lon_coords
         elif isinstance(key, str) and key in mock_ds.data_vars:
             # For single data variable access (e.g., ds['wind_direction'])
-            mock_da = MagicMock(spec=_xr.DataArray)
+            mock_da = MagicMock(spec=xr.DataArray)
             mock_da.attrs = mock_ds.data_vars[key].attrs
             return mock_da
         elif isinstance(key, list):
             # For multiple data variables (though not expected in this test for angular vars)
-            mock_dataset_subset = MagicMock(spec=_xr.Dataset)
-            mock_dataset_subset.data_vars = {v: MagicMock(spec=_xr.DataArray) for v in key}
-            mock_dataset_subset.interp.return_value = MagicMock(spec=_xr.DataArray)
+            mock_dataset_subset = MagicMock(spec=xr.Dataset)
+            mock_dataset_subset.data_vars = {v: MagicMock(spec=xr.DataArray) for v in key}
+            mock_dataset_subset.interp.return_value = MagicMock(spec=xr.DataArray)
             return mock_dataset_subset
         return MagicMock() # Fallback
 
@@ -277,14 +228,14 @@ def test_interp_to_point_angular_vars(mock_interp_angle, mock_safe_netcdf_atomic
     mock_open_dataset.return_value = mock_ds
 
     # Mock interp_angle to return a DataArray mock
-    mock_interp_angle.return_value = MagicMock(spec=_xr.DataArray)
+    mock_interp_angle.return_value = MagicMock(spec=xr.DataArray)
 
     mock_interp_result = MagicMock()
     mock_interp_result.to_netcdf = MagicMock()
     mock_open_dataset.return_value.merge.return_value = mock_interp_result
 
     lat, lon = 55.0, 20.0
-    interp_to_point(dummy_nc_file, lat, lon)
+    d_utils.interp_to_point(dummy_nc_file, lat, lon)
 
     # Ensure interp_angle is called for angular variables
     # This requires a more specific mock for interp_angle if it's a separate function

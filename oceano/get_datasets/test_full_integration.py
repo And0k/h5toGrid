@@ -3,17 +3,18 @@
 
 import os
 from pathlib import Path
-from unittest.mock import patch, MagicMock
-from hydra import initialize, compose
+from unittest.mock import MagicMock, patch
+
+from hydra import compose, initialize
+from hydra.core.global_hydra import GlobalHydra
+
+from get_datasets import download_copernicus
+
+
 def test_full_integration():
     """Test full integration with the yaml configuration - run actual download"""
     print("Testing full integration with the yaml configuration - running actual download...")
-
     try:
-        # Import the required modules
-        from get_datasets.download_copernicus import main
-        from hydra.core.global_hydra import GlobalHydra
-
         # Clear any existing Hydra instance
         GlobalHydra.instance().clear()
 
@@ -30,7 +31,7 @@ def test_full_integration():
 
             # Run the main function
             try:
-                main(cfg)
+                download_copernicus.main(cfg)
                 print("\n[SUCCESS] download_copernicus.py ran successfully!")
 
                 # Check if files were downloaded to the expected directory

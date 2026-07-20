@@ -1,3 +1,7 @@
+"""
+Test downloading of wind data at point
+"""
+
 import pytest
 import hydra
 from omegaconf import OmegaConf
@@ -6,7 +10,7 @@ import logging
 import os
 import shutil # Added shutil import
 
-from download_copernicus_point import main as download_point_wind_main
+from get_datasets import download_copernicus
 
 # Configure logging for tests
 logging.basicConfig(level=logging.INFO)
@@ -48,7 +52,7 @@ def run_point_wind_test(project_name: str, setup_test_environment):
 
         l.info(f"Testing with config for project '{project_name}':\n{OmegaConf.to_yaml(cfg)}")
 
-        download_point_wind_main(cfg)
+        download_copernicus.main(cfg)
 
         # Assertions:
         assert test_history_file.exists()

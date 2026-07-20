@@ -479,12 +479,12 @@ def bad_bot_filter(
     import sys
 
     drive_d = "D:" if sys.platform == "win32" else "/mnt/D"  # to run on my Linux/Windows systems both
-    scripts_path = Path(drive_d + "/Work/_Python3/And0K/Veusz_plugins")
+    scripts_path = Path(drive_d + "Work/Python/AB_SIO_RAS/h5toGrid/shared/veusz_helpers")
     sys.path.append(str(Path(scripts_path).parent.resolve()))
     try:
         import func_vsz as v
     except ImportError:  # old path:
-        from Veusz_plugins import func_vsz as v
+        from veusz_helpers import func_vsz as v
 
     def bad_bot_by_diff(
         pres: np.ndarray,
@@ -500,7 +500,8 @@ def bad_bot_filter(
         """
         Exclude data from near bottom of runs
 
-        Functionality is copied from C:/Work/Python/AB_SIO_RAS/Veusz_plugins, which used in zabor.vsz files:
+        Functionality is copied from C:/Work/Python/AB_SIO_RAS/h5toGrid/shared/veusz_helpers, which used in
+        zabor.vsz files:
         ```
         bad_bot_by_diff(x, fun, i_en, i_st=None, dp_en=None, p=None, speed=1)
         CTD_SigmaTh_fbot = v.bad_bot_by_diff(
@@ -1024,10 +1025,13 @@ def add_adcp_params(df: MutableMapping[str, Sequence], params_to_calc: Sequence[
         import sys
 
         drive_d = "D:" if sys.platform == "win32" else "/mnt/D"  # to run on my Linux/Windows systems both
-        for path in ["/Work/_Python3/And0K/Veusz_plugins", "/Work/_Python3/And0K/tcm/tcm"]:
+        for path in [
+            "/Work/Python/AB_SIO_RAS/h5toGrid/shared/veusz_helpers",
+            "/Work/_Python3/And0K/tcm/tcm",
+        ]:
             scripts_path = Path(drive_d + path)
             sys.path.append(str(Path(scripts_path).parent.resolve()))
-        # from Veusz_plugins import func_vsz as v
+        # from veusz_helpers import func_vsz as v
         from tcm.tcm.incl_h5clc_hy import polar2dekart
 
         df[["v", "u"]] = pd.concat(polar2dekart(df["Vabs"], df["Vdir"]), axis=1)

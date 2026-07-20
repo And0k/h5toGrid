@@ -6,6 +6,7 @@ import builtins
 import contextlib
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
+from numpy.typing import NDArray
 from logging import info, warning, exception
 import operator
 from itertools import zip_longest
@@ -512,7 +513,7 @@ def str_date_unit_fmt(dt, next_fmt, lang=lang):
         ]
     )[
         np.fmax(
-            np.searchsorted(np.int32([70, 50 * 60, 240 * 60, 1200 * 60, 2.5 * 525600]), int(dt) // 60)
+            np.searchsorted(np.int32([70, 50 * 60, 240 * 60, 1200 * 60, 2.5 * 525600]), dt // 60)
             + next_fmt,
             0,
         )
@@ -529,7 +530,7 @@ def str_date_unit(t_se_vsz, lang=lang, **kwargs):
     # - adds 1s shifts is useful for unit intervals starting from round unit make it the same for start and end:
     # this then will be detected and kept only one
 
-    dt = int(np.diff(t_se_vsz))
+    dt = -operator.sub(*t_se_vsz)
     unit, fmt = str_date_unit_fmt(dt, kwargs.get("next_fmt", 0), lang)
     st, en = [f"{{{fmt}}}".format(t) for t in t_se]
     unit_minutes = unit.startswith(("MM", "мм"))
@@ -582,18 +583,52 @@ def str_date_unit_with_suffix(t_range, str_zone, **kwargs):
     )
     if str_zone and ":" not in str_date_unit_result:
         str_zone = ""
-    return f"{str_date_unit_result}{(chr(92) * 2 if higher else chr(8201))}{('^' if str_date_unit_nl and str_zone else '')}{str_zone}{chr(92) * 2 * (higher - 1)}"
+    return (
+        f"{str_date_unit_result}{(chr(92) * 2 if higher else chr(8201))}"
+        f"{('^' if str_date_unit_nl and str_zone else '')}{str_zone}{chr(92) * 2 * (higher - 1)}"
+    )
 
 
-def str_dt(dt_s: float, lang=lang):
+def decompose_duration(dt_s: float | int) -> tuple[int, int, int, int, int, int, int]:
+    """
+    Decompose scalar seconds into chronological tuple:
+    (years, months, days, hours, minutes, seconds, microseconds).
+
+    Employs cascading `divmod` for O(1) zero-allocation projection.
+    Resolves month/year ambiguity via Gregorian mean constants.
+    """
+
+    # Gregorian mean invariants
+    _Y = 365.2425       # Mean year in days
+    _M = _Y / 12        # Mean month in days
+
+    total_us = int(round(dt_s * 1_000_000))
+
+    s, us = divmod(total_us, 1_000_000)
+    m, s = divmod(s, 60)
+    h, m = divmod(m, 60)
+    d, h = divmod(h, 24)
+
+    y, d = divmod(d, _Y)
+    mo, d = divmod(d, _M)
+
+    return [int(y), int(mo), int(d), h, m, s, us]
+
+
+def str_dt(dt_s: int | float | NDArray, lang=lang):
     """
     Time interval to readable string
     :param dt_s: time, s
     """
-    s = np.array(int(dt_s * 1000000), "M8[us]").item()
-    a = np.int16(s.timetuple()[:6]) - [1970, 1, 1, 0, 0, 0]
-    if ~np.any(a):
-        a = [0, 0, 0, 0, 0, 0, np.round(s.microsecond * 1e-06, 3)]
+    a = decompose_duration(dt_s.item() if hasattr(dt_s, "item") else dt_s)
+    # np.array(np.int64(dt_s * 1000000), "M8[us]").item()
+    # a = np.int16(s.timetuple()[:6]) - [1970, 1, 1, 0, 0, 0]
+    # if ~np.any(a):
+    #     a = [0, 0, 0, 0, 0, 0, np.round(s.microsecond * 1e-06, 3)]
+    if any(round_to_s:=a[:6]):
+        a = round_to_s
+    else:
+        a[6] *= 1e-06  # to s
     out = " ".join([
         f"{d}{w}"
         for d, w in zip(
@@ -796,7 +831,7 @@ def dim_bug_cor(dim):
     """former BugDimCorr"""
     if len(dim) > 1:
         d_edges = np.array(dim)[[0, -1]]
-        return d_edges + np.diff(d_edges) * np.array([0.25, -0.25])
+        return d_edges - operator.sub(*d_edges) * np.array([0.25, -0.25])
     else:
         warning("len(dim) < 1")
         return dim + [-1e-08, 1e-08]
@@ -869,7 +904,7 @@ def i_use(t, time_iter, t_shift_s=0, t_units="ns"):
         for x in time_iter
     ]
     if len(out):
-        n_out = np.diff(out)
+        n_out = -operator.sub(*out)
         if n_out <= 1:
             warning(
                 "Souse time range: [{}] is completely out of user selected time range ({})!".format(
@@ -949,7 +984,7 @@ def shift_or_extend_lims(lim_in, x_in, e=None, scale=1):
     """Shifts range to include x if can, else extend range"""
     lim = np.float64(lim_in)
     x = np.float64(x_in)
-    x_range = np.diff(x).item()
+    x_range = -operator.sub(*x).item()
     if x_range > 0:
         if e is None:
             # add 0.05 * x-range rounded to 1 decade
@@ -1598,7 +1633,7 @@ def mag_dec(lat, lon, time_iso, depth=0):
     :param time_iso: # like '2020-09-20'
     :param depth: in km (negative below sea surface)
     """
-    run_commands = f'''c:/Users/and0k/conda/Scripts/activate.bat py3.10x64h5togrid && python -c "from datetime import datetime; import wmm2020 as wmm; year_fraction = lambda date: (lambda start: date.year + float(date.toordinal() - start) / (datetime(date.year + 1, 1, 1).toordinal() - start))(datetime(date.year, 1, 1).toordinal()); mag = wmm.wmm({lat}, {lon}, {depth}, year_fraction(datetime.fromisoformat('{time_iso}'))); print(mag.decl.item(0))"'''
+    run_commands = f'''c:/Users/and0k/conda/Scripts/activate.bat py3.10x64h5togrid && python -c "from datetime import datetime; import wmm2020 as wmm; _year_fraction = lambda date: (lambda start: date.year + float(date.toordinal() - start) / (datetime(date.year + 1, 1, 1).toordinal() - start))(datetime(date.year, 1, 1).toordinal()); mag = wmm.wmm({lat}, {lon}, {depth}, _year_fraction(datetime.fromisoformat('{time_iso}'))); print(mag.decl.item(0))"'''
     decl_str = check_output(
         f"c:/Users/and0k/conda/Scripts/activate.bat py3.10x64h5togrid && {run_commands}",
         shell=True,

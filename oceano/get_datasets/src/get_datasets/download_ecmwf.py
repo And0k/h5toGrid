@@ -7,22 +7,20 @@ https://confluence.ecmwf.int/display/CKB/ERA5%3A+data+documentation
 - download_copernicus.py
 """
 import logging
-from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
-from typing import Tuple, List, Dict
-import pandas as pd
+from pathlib import Path
+from typing import Dict, List, Tuple
 
 import cdsapi
-import urllib3
+import pandas as pd
 import requests
+import urllib3
 
 try:  # allow run from parent dir
-    from scripts.downloading.netcdf2csv import main as netcdf2csv
-    import scripts.downloading.utils
+    from get_datasets import d_utils, netcdf2csv
 except ImportError:  # run from current dir
-    from netcdf2csv import main as netcdf2csv
-    import utils
+    import d_utils, netcdf2csv
 
 l = logging.getLogger(__name__)
 
@@ -81,7 +79,7 @@ if __name__ == "__main__":
 
     if not use_date_range:
         # Get interval from last data timestamp we have to now
-        with utils.ReverseTxt(
+        with d_utils.ReverseTxt(
                 '',
             # r'd:\WorkData\BalticSea\230423inclinometer_Zelenogradsk\meteo\230423wind@ECMWF-ERA5(N54.953,E20.445).tsv',
             # r'd:\workData\BalticSea\201202_BalticSpit_inclinometer\wind\200901wind@ECMWF-ERA5(N54.615,E19.841).tsv',
@@ -104,7 +102,7 @@ if __name__ == "__main__":
     dir_name = "".join([
         file_date_prefix,
         "" if "ECMWF" in dir_save.name else "wind@ECMWF-ERA5_",
-        "area({2}-{0}N,{1}-{3}E)".format(*utils.grid_aligned_bbox(lat_st, lon_st)),
+        "area({2}-{0}N,{1}-{3}E)".format(*d_utils.grid_aligned_bbox(lat_st, lon_st)),
     ])
 
 
@@ -174,7 +172,7 @@ if __name__ == "__main__":
                 "time": [f"{i:02d}:00" for i in range(24)],  # 1D resolution if comment
                 "date": [f"{fd}" for fd in days_period_idx],
                 # "grid": [0.25, 0.25],  # force grid?
-                "area": utils.grid_aligned_bbox(lat_st, lon_st),
+                "area": d_utils.grid_aligned_bbox(lat_st, lon_st),
                 "data_format": data_format,
                 "download_format": download_format,
             },
@@ -193,7 +191,7 @@ if __name__ == "__main__":
 
             for (res_lat, res_lon), vars_in_group in groups.items():
                 add_sfx = "_res=({res_lat:g}, {res_lon:g})" if res_lat != res_lon else "_res={res_lat:g}"
-                data_request["area"] = utils.grid_aligned_bbox(lat_st, lon_st, res_lat, res_lon)
+                data_request["area"] = d_utils.grid_aligned_bbox(lat_st, lon_st, res_lat, res_lon)
                 c.retrieve(
                     dataset,
                     data_request, path_dest.with_name(
@@ -202,24 +200,24 @@ if __name__ == "__main__":
                 )
 
     if not any(p for p in existed_files if p.suffix != ".zip"):
-        utils.extract_zip_to_named_dir(path_zip, target_dir=dir_save / dir_name)
+        d_utils.extract_zip_to_named_dir(path_zip, target_dir=dir_save / dir_name)
 
     files_loaded = [
         f
         for f in (dir_save / dir_name).glob("*.grib" if data_format == "grib" else "data_stream*.nc")
         if "-to_" not in f.stem
     ]
-    utils.h5_format(
+    d_utils.h5_format(
         files_loaded, **{"requested_latitude": lat_st, "requested_longitude": lon_st}, backend=None
     )
     try:
-        netcdf2csv(list((dir_save / dir_name).glob("*.nc")), variables=variables)
+        netcdf2csv.main(list((dir_save / dir_name).glob("*.nc")), variables=variables)
         print(f"Data extracted and converted to csv. You can delete {path_zip.name} now")
     except NotImplementedError:
         pass
 
     for f in files_loaded:
-        path_interp = utils.interp_to_point(f, lat_st, lon_st, backend=None)
+        path_interp = d_utils.interp_to_point(f, lat_st, lon_st, backend=None)
         print(path_interp, "saved")
 
     # except Exception as e:  # Hard to debug with
@@ -228,6 +226,7 @@ if __name__ == "__main__":
 print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>")
 
 import sys
+
 sys.exit()
 #%% Errors
 # InsecureRequestWarning: Unverified HTTPS request is being made to host 'cds.climate.copernicus.eu'
