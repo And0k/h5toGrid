@@ -8,8 +8,8 @@ import pytest
 from omegaconf import DictConfig
 
 from tcm.config import ConfigIn_InclProc, Return
-from tcm.incl_calc.coefs import get_coefs
-from tcm.processing import get_coefs_from_cfg, process_inmemory, run_processing
+from tcm.incl_calc.coefs import get_coefs, get_coefs_from_cfg
+from tcm.processing import process_inmemory, run_processing
 
 _GET_COEFS_PATCH = "tcm.incl_calc.coefs.get_coefs"
 

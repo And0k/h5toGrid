@@ -8,22 +8,75 @@
 from __future__ import annotations
 
 import contextlib
+import re
 from datetime import datetime, timedelta, timezone
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Mapping, Optional
+
 import numpy as np
 import xarray as xr
 from omegaconf import DictConfig, OmegaConf
 from tqdm.dask import TqdmCallback
-from tcm import _constants, config, config_yaml, cli, format, paths, utils2init
+
+
+
+
+from tcm import _constants, cli, config_yaml, format, paths, utils2init
+from tcm._xr import coefs as xr_coefs
+from tcm._xr import dataset, physical, storage
+from tcm._xr import io as xr_io
 from tcm.config import Return
-from tcm._xr import coefs as xr_coefs, dataset, io as xr_io, physical, storage
+from tcm.incl_calc.coefs import get_coefs_from_cfg
+try:
+    from tcm_gui import progress_bridge
+except ImportError:
+
+    class DumbChain:
+        """Attributes as no-op callables"""
+
+        __slots__ = ()
+
+        def __getattr__(self, _):
+            return self
+
+        def __call__(self, *_, **_kw):
+            return None
+
+    progress_bridge = DumbChain()  # fallback (GUI not installed)
 
 lf = utils2init.LoggingStyleAdapter(__name__)
 
-
 # Extensions that carry their own coefs (no text-file config discovery).
 _EXT_BINARY = _constants._EXT_NC | _constants._EXT_HDF5
+
+
+# ── Upper-bar stage ticks (one tick per stage boundary) ─────────────────
+# ``Stage`` labels the per-probe phases; the upper bar advances within each
+# probe as stages start.  Each probe occupies 100 units of the upper-bar
+# scale; active stages share it evenly (NC only when ``use_h5_get() is True``,
+# TSV only when ``text_path`` set).  Bottom bar (dask TqdmCallback) covers
+# substages continuously within a stage.
+
+
+class Stage(StrEnum):
+    """Per-probe phase labels (value = upper-bar description text)."""
+    LOAD  = "load"   # xr_io.load_raw / _load_batch
+    COEFS = "coefs"  # prepare_coefs + save
+    PROC  = "proc"   # physical.process (calc + binning)
+    NC    = "NC"     # store_processed_incremental (per bin), use_h5 only
+    TSV   = "TSV"    # xr_io.ds_to_csv (per bin), text_path only
+
+
+_probe_base = {"v": 0}    # set per probe by process_loading_yaml
+_probe_total = {"v": 0}   # set once by process_loading_yaml (n_cfgs × 100)
+
+
+def _stage(label: str, frac: int) -> None:
+    """Tick the upper bar: ``set(base + frac, probe_total, label)``."""
+    if rt := progress_bridge.get_runtime():
+        rt.progress_overall.set(_probe_base["v"] + frac, _probe_total["v"], label)
+
 
 # ---------------------------------------------------------------------------
 # Config helpers — deduplicate repeated cfg.out access patterns
@@ -160,7 +213,7 @@ def _resolve_use_h5(cfg: DictConfig) -> None:
         _constants.use_h5_set(False)
 
 
-def run(cfg: DictConfig) -> None:
+def run(cfg: DictConfig) -> dict[str, dict[str, Any]] | None:
     """Discover (text), generate configs, process — the canonical pipeline entry point.
 
     Accepts a Hydra-composed :class:`DictConfig` (from ``@hydra.main``).
@@ -181,6 +234,10 @@ def run(cfg: DictConfig) -> None:
     to pass an explicit per-probe YAML override if needed.
 
     :param cfg: Hydra-composed top-level configuration (from ``@hydra.main``).
+    :returns: ``{input_path_str: cfg1_dict}`` from :func:`config_yaml.save_config_to_yaml`
+        when ``program.return_ == Return.CFG_FROM_ARGS``; ``None`` otherwise.
+        Each ``cfg1_dict`` is the **full** per-probe config (all fields, not just
+        non-defaults) — unlike YAMLs on disk which strip defaults.
     """
 
     path_in = cfg.input.path
@@ -223,51 +280,47 @@ def run(cfg: DictConfig) -> None:
 
     cli.safe_cfg_dir(dir_cfgs)
 
-    # Step 1: generate missing configs via gen_metadata (single discovery source)
+    # ── yaml_path filter: ANY non‑None skips config generation ──────────
+    yaml_path = OmegaConf.select(cfg, "input.yaml_path", default=None)
+
     cfgs_existed = config_yaml.get_existed_cfgs(dir_cfgs)
-    stale = config_yaml.find_stale_cfgs(cfgs_existed, dir_cfgs)
 
-    # Check for source files that have no config yet (lightweight: just directory scan).
-    # Runs for wildcard (all new files) and for specific IDs (only when requested IDs
-    # lack configs but source data may exist) — avoids a false "no configs" error.
-    regenerate = bool(stale) or not cfgs_existed
-    if not regenerate:
-        try:
-            from tcm import csv_load
-            discovered = csv_load.search_csv_files(path_in)
-            # discovered keys are (model, number) tuples; cfgs_existed keys are pcid strings
-            disc_pcids = {format.pcid_from_parts(model=m, number=n) for m, n in discovered}
-            cfg_pcids = set(cfgs_existed)
-            new_pcids = disc_pcids - cfg_pcids
-            if new_pcids and (
-                pcids_requested == {format.PROBE_WILDCARD} or pcids_requested & new_pcids
-            ):
-                lf.info("Source files without configs: {} — will generate", new_pcids)
-                regenerate = True
-        except (FileNotFoundError, OSError):
-            pass  # discovery fails → skip regeneration check
-    if regenerate:
-        if stale:
-            reason = f"regenerating {len(stale)} stale config(s): {', '.join(stale)}"
-        elif not cfgs_existed:
-            reason = "no configs exist — generating from scratch"
-        else:
-            reason = "new source files found"
-        lf.info("Config generation: {}", reason)
-        config_yaml.save_config_to_yaml(cfg, [path_in])
-        cfgs_existed = config_yaml.get_existed_cfgs(dir_cfgs)
-
-    # Sync time_ranges from info_devices metadata into run YAMLs lacking them.
-    # Idempotent: configs with existing input.time_ranges are skipped inside.
-    # dev_dir = dir_raw.parent (cruise folder) is where info_devices.yaml lives.
-    config_yaml.sync_yamls_devmeta_and_hydra(dir_raw.parent, dir_cfgs, cfgs_existed)
-
-    # Warn about orphan configs (configs whose source files no longer exist).
-    # Re-check after regeneration — only report pcids that are STILL stale.
-    # Collect stale stems so we can exclude them from cfgs_to_run below.
-    still_stale: dict[str, list[str]] = {}
-    if stale:
-        still_stale = config_yaml.find_stale_cfgs(cfgs_existed, dir_cfgs)
+    if yaml_path is None:
+        # Step 1: generate missing configs via gen_metadata (single discovery source)
+        stale = config_yaml.find_stale_cfgs(cfgs_existed, dir_cfgs)
+        # Check for source files that have no config yet (lightweight: just directory scan).
+        # Runs for wildcard (all new files) and for specific IDs (only when requested IDs
+        # lack configs but source data may exist) — avoids a false "no configs" error.
+        regenerate = bool(stale) or not cfgs_existed
+        if not regenerate:
+            try:
+                from tcm import csv_load
+                discovered = csv_load.search_csv_files(path_in)
+                disc_pcids = {format.pcid_from_parts(model=m, number=n) for m, n in discovered}
+                cfg_pcids = set(cfgs_existed)
+                new_pcids = disc_pcids - cfg_pcids
+                if new_pcids and (
+                    pcids_requested == {format.PROBE_WILDCARD} or pcids_requested & new_pcids
+                ):
+                    lf.info("Source files without configs: {} — will generate", new_pcids)
+                    regenerate = True
+            except (FileNotFoundError, OSError):
+                pass  # discovery fails → skip regeneration check
+        if regenerate:
+            if stale:
+                reason = f"regenerating {len(stale)} stale config(s): {', '.join(stale)}"
+            elif not cfgs_existed:
+                reason = "no configs exist — generating from scratch"
+            else:
+                reason = "new source files found"
+            lf.info("Config generation: {}", reason)
+            config_yaml.save_config_to_yaml(cfg, [path_in])
+            cfgs_existed = config_yaml.get_existed_cfgs(dir_cfgs)
+        # Sync time_ranges from info_devices metadata into run YAMLs lacking them.
+        # Idempotent: configs with existing input.time_ranges are skipped inside.
+        config_yaml.sync_yamls_devmeta_and_hydra(dir_raw.parent, dir_cfgs, cfgs_existed)
+        # Warn about orphan configs after regeneration
+        still_stale = config_yaml.find_stale_cfgs(cfgs_existed, dir_cfgs) if stale else {}
         if still_stale:
             stale_pcids = set(still_stale)
             ignored = (
@@ -277,7 +330,6 @@ def run(cfg: DictConfig) -> None:
             actionable = stale_pcids - ignored
             parts = []
             if actionable:
-                # Show the actual stale YAML filenames so the user knows which to delete
                 stale_details = "; ".join(
                     f"{pcid}: {', '.join(f'{s}.yaml' for s in stems)}"
                     for pcid, stems in still_stale.items()
@@ -290,6 +342,9 @@ def run(cfg: DictConfig) -> None:
                 "Orphan configs (input.path points to not existing file): {} — ignored!",
                 "; ".join(parts),
             )
+    else:
+        stale = {}
+        still_stale = {}
 
     # Step 2: resolve which configs to run
     if pcids_requested == {format.PROBE_WILDCARD}:
@@ -311,21 +366,58 @@ def run(cfg: DictConfig) -> None:
         }
         cfgs_to_run = {pcid: stems for pcid, stems in cfgs_to_run.items() if stems}
 
-    # If composition only configured — skip data loading and processing.
-    # main_init returns early (no ini2dict), but run_processing would continue
-    # loading data and computing coefs from data — so we must stop here.
-    if (return_ := cfg["program"]["return_"]) == Return.CFG_FROM_ARGS:
-        lf.info(
-            "return_={} — configs generated/verified, skipping processing. Probes available: {}",
-            Return.CFG_FROM_ARGS,
-            list(cfgs_existed),
-        )
-        return
+    # ── Filter by yaml_path pattern (YAML stem match) ──────────────────
+    from tcm.csv_load import _pattern_to_regex as _ptr
+
+    if yaml_path:
+        _yp_re = re.compile(_ptr(yaml_path), re.IGNORECASE)
+        cfgs_to_run = {
+            pcid: [
+                s for s in stems
+                if _yp_re.fullmatch(s) or _yp_re.fullmatch(f"{s}.yaml")
+            ]
+            for pcid, stems in cfgs_to_run.items()
+        }
+        cfgs_to_run = {k: v for k, v in cfgs_to_run.items() if v}
+        lf.debug("yaml_path filter '{}' → {} probes", yaml_path, len(cfgs_to_run))
+
+    # ── Filter by input.path pattern (match against YAML's input.path) ─
+    # Skipped only when path_in is a directory (default discovery mode).
+    # When path_in is a concrete file OR a glob/regex, only YAMLs whose
+    # stored input.path filename matches the pattern are kept.
+    # Uses ruamel YAML (config_yaml._ry) to avoid collision with OmegaConf.load
+    # mocks in process_loading_yaml.
+    if not path_in.is_dir():
+        _ip_re = re.compile(_ptr(path_in.name), re.IGNORECASE)
+        _ry = config_yaml._ry(write=False)
+        filtered = {}
+        for pcid, stems in cfgs_to_run.items():
+            matched = []
+            for s in stems:
+                try:
+                    y = _ry.load((dir_cfgs / f"{s}.yaml").open(encoding="utf-8"))
+                    ip = (y or {}).get("input", {}).get("path", "")
+                    if ip and _ip_re.fullmatch(Path(ip).name):
+                        matched.append(s)
+                except Exception:
+                    continue
+            if matched:
+                filtered[pcid] = matched
+        if filtered != cfgs_to_run:
+            lf.debug(
+                "input.path filter '{}' → {} probes (was {})",
+                path_in.name, len(filtered), len(cfgs_to_run),
+            )
+            cfgs_to_run = filtered
 
     # Step 3: process each config
-    processed_pcids, failed_pcids, last_cfg = cli.process_loading_yaml(
+    # Early-exit (CFG_FROM_ARGS): run_processing returns DictConfig before data load.
+    processed_pcids, failed_pcids, last_cfg, collected = cli.process_loading_yaml(
         run_processing, base_cfg=cfg, dir_cfgs=dir_cfgs, cfgs=cfgs_to_run, n_cfgs_existed=len(cfgs_existed)
     )
+
+    if cfg["program"]["return_"] == Return.CFG_FROM_ARGS:
+        return (processed_pcids, failed_pcids, last_cfg, collected)
 
     # Combined output: merge distinct probes with probe dimension (legacy parity).
     # Deduplicate preserving order (multiple stems for the same pcid do not constitute multiple probes).
@@ -361,13 +453,14 @@ def run(cfg: DictConfig) -> None:
     if (return_ := OmegaConf.select(cfg, "program.return_", default=None)) and return_ != Return.END:
         parts.append(f"return_={return_}")
     lf.info("Done — {}", " | ".join(parts) if parts else "nothing processed")
+    return (processed_pcids, failed_pcids, last_cfg, collected)
 
 
 # ---------------------------------------------------------------------------
 # Single-file processing
 # ---------------------------------------------------------------------------
 
-def run_processing(cfg: DictConfig) -> None:
+def run_processing(cfg: DictConfig):
     """Process one run YAML — single file or batch.
 
     Derives probe identity from ``input.path`` filename (text CSV) or, for
@@ -376,6 +469,9 @@ def run_processing(cfg: DictConfig) -> None:
     Resolves coefs: ``coefs_path`` → ``input.coefs`` (highest priority).
     Resolves output paths via :class:`paths.PathLayout`.
     Streams chunks, applies physical conversion + binning, persists (NC + CSV).
+
+    Returns the merged ``DictConfig`` for early-exit modes; ``None`` for
+    normal processing.
     """
     src_path = Path(cfg.input.path)
     if src_path.suffix.lower() in _EXT_BINARY and (tables := list(cfg.input.tables or [])):
@@ -393,21 +489,30 @@ def run_processing(cfg: DictConfig) -> None:
         pcid = format.to_pcid_from_name(format.stem_to_pcid(src_path.stem))
         tbl = format.pcid_to_raw_name(pcid)
 
-    # # Resolve cfg.input → plain dict, run sugar merge + M expansion for all formats
-    # cfg_in = OmegaConf.to_container(cfg.input, resolve=True)
-    # # Sugar: min_date/max_date → time_ranges (merge into source-of-truth)
-    # utils2init.update_cfg_time_ranges(
-    #     cfg_in,
-    #     min_date=cfg_in.pop("min_date", None),
-    #     max_date=cfg_in.pop("max_date", None),
-    # )
-    # # Sugar: M shorthand → Mx/My/Mz in min/max drop dicts (expand in-place)
-    # from tcm.cli import sugar_expand_m
-    # cli.sugar_expand_m(cfg_in)
-
     lf.debug("Loading data for {}...", pcid)
     cfg = cli.main_init(cfg, program_name="TCM processing")
+    # Early-exit: main_init returns DictConfig before ini2dict; propagate upstream.
+    if not isinstance(cfg, dict):
+        return cfg
+    # Set per-config base for granular stage ticks (injected by process_loading_yaml).
+    if (si := cfg.get("_stem_idx")) and (nc := cfg.get("_n_cfgs")):
+        _probe_base["v"] = (si - 1) * 100
+        _probe_total["v"] = nc * 100
     cfg_in = cfg["input"]  # already type-converted plain dict after main_init
+
+    # Active stage plan for upper-bar ticks (NC only if use_h5 True; TSV if text_path).
+    # Each active stage gets an equal slice of the 100-unit per-probe scale.
+    _dt_bins_list = _dt_bins(cfg["out"])
+    _n_bins = len(_dt_bins_list)
+    _has_nc = _constants.use_h5_get() is True
+    _has_tsv = bool(cfg["out"].get("text_path"))
+    _stages = [Stage.LOAD, Stage.COEFS, Stage.PROC]
+    _stages += [Stage.NC] * _n_bins if _has_nc else []
+    _stages += [Stage.TSV] * _n_bins if _has_tsv else []
+    _n_active = len(_stages)
+
+    def _frac(i: int) -> int:  # boundary i of N active stages → 0..100
+        return round(i * 100 / _n_active)
 
     # Batch mode (cfg.files exists): iterate and concatenate
     if cfg.get("files"):
@@ -419,6 +524,7 @@ def run_processing(cfg: DictConfig) -> None:
             text_type=pcid[:1] if pcid else "i",
             cfg_in=cfg_in,
         )
+    _stage(f"{pcid} {Stage.LOAD}", _frac(1))  # load done → tick 1
 
     # Coefs: coefs_path (file) → input.coefs (run YAML override wins)
     coefs = get_coefs_from_cfg(cfg_in, pcid)
@@ -426,7 +532,7 @@ def run_processing(cfg: DictConfig) -> None:
         coefs = {**coefs, **{k: v for k, v in coefs_from_file.items() if v is not None}}
         lf.debug("Merged coefs from data file: {} extra keys", len(coefs_from_file))
 
-    # ── Phase 1b: HDF5 auto-migrate (extract coefs from legacy .raw.h5 if .raw.nc absent)
+    # ── Phase 1b: extract coefs from .raw.h5 if .raw.nc absent (legacy HDF5 auto-migrate)
     if (raw_nc_path := cfg["out"].get("raw_db_path")) and _constants.use_h5_get() is True:
         raw_nc_path = Path(raw_nc_path)
         if not raw_nc_path.exists():
@@ -449,6 +555,7 @@ def run_processing(cfg: DictConfig) -> None:
     )
     if msg:
         lf.debug("Coefs prepared: {}", msg)
+    _stage(f"{pcid} {Stage.COEFS}", _frac(2))  # coefs done → tick 2
 
     # ── Phase 3: Save coefs
     # Two triggers: (a) coefs changed (zeroing/azimuth), (b) raw NC being created for the first time.
@@ -548,7 +655,18 @@ def run_processing(cfg: DictConfig) -> None:
         "Processing {} (bins: {})...", pcid,
         ", ".join(str(int(b.total_seconds())) for b in _dt_bins(cfg["out"])),
     )
-    _process_and_persist(ds_raw, coefs_merged, cfg, pcid, coef_zeroing_matrix=coef_zeroing_matrix)
+    # ── stage ticks closure for _process_and_persist (PROC, NC×n_bins, TSV×n_bins)
+    _tick_idx = {"v": 2}  # already ticked LOAD(1), COEFS(2)
+
+    def _tick(stage: Stage, bin_i: int = 0, n_bin: int = 1) -> None:
+        _tick_idx["v"] += 1
+        label = f"{pcid} {stage}" + (f" {bin_i+1}/{n_bin}" if n_bin > 1 else "")
+        _stage(label, _frac(_tick_idx["v"]))
+
+    _process_and_persist(
+        ds_raw, coefs_merged, cfg, pcid,
+        coef_zeroing_matrix=coef_zeroing_matrix, tick=_tick, has_nc=_has_nc, has_tsv=_has_tsv,
+    )
 
 
 def _load_batch(
@@ -581,11 +699,14 @@ def _load_batch(
 
 def _process_and_persist(
     ds_raw,
-    coefs: dict,
-    cfg: dict,
+    coefs: Mapping[str, Any],
+    cfg: Mapping[str, Mapping[str, Any]],
     pcid: str,
     *,
     coef_zeroing_matrix: "np.ndarray | None" = None,
+    tick: "Callable[[Stage, int, int], None] | None" = None,
+    has_nc: bool = False,
+    has_tsv: bool = False,
 ) -> None:
     """Apply physical conversion + binning, persist results.
 
@@ -637,6 +758,8 @@ def _process_and_persist(
             else timedelta(seconds=int(v or 2))
         ),
     )
+    if tick:
+        tick(Stage.PROC)  # process done
 
     text_path = cfg_out.get("text_path")
     dt_min_save = _dt_min_save(cfg_out)
@@ -647,7 +770,7 @@ def _process_and_persist(
     noavg_path, avg_path = _output_nc_paths(cfg_out)
     return_ = cfg["program"]["return_"]
 
-    for ds_out, dt_bin in zip(results, dt_bins):
+    for _bin_i, (ds_out, dt_bin) in enumerate(zip(results, dt_bins)):
         if ds_out is None:
             continue
         # Battery only meaningful in raw.nc — drop from all processed outputs
@@ -660,12 +783,17 @@ def _process_and_persist(
         # .compute() inside to_netcdf) — gives task-level progress per bin.
         _is_dask = any(ds_out[v].chunks is not None for v in ds_out.data_vars)
         _nc_label = f"bin{bin_s}s" if bin_s else "noAvg"
-        _nc_ctx = (
-            TqdmCallback(desc=f"[{pcid}] {_nc_label} NC write", leave=False)
+        if tick and has_nc:
+            tick(Stage.NC, _bin_i, len(dt_bins))  # NC stage start for this bin
+        with (
+            TqdmCallback(
+                desc=f"[{pcid}] {_nc_label} NC write",
+                leave=False,
+                **({"tqdm_class": _tc} if (_tc := progress_bridge.get_tqdm_class()) else {}),
+            )
             if _is_dask
             else contextlib.nullcontext()
-        )
-        with _nc_ctx:
+        ):
             if bin_s == 0 and noavg_path:
                 # no-avg → /{pcid}/ group in *.proc_noAvg.nc (incremental skip + run-params sig)
                 storage.store_processed_incremental(
@@ -705,6 +833,8 @@ def _process_and_persist(
                 if not cfg_out.get("b_overwrite_text", True) and csv_out.exists():
                     lf.info("TSV exists, b_overwrite_text=False — skipping {}", csv_out.name)
                 else:
+                    if tick and has_tsv:
+                        tick(Stage.TSV, _bin_i, len(dt_bins))  # TSV stage start for this bin
                     xr_io.ds_to_csv(
                         ds_out,
                         csv_out,
@@ -829,48 +959,6 @@ def _merge_groups_to_combined(
         ds.close()
     storage.store_processed(combined, nc_path, group=combined_group.strip("/"), mode="a")
     lf.info("Combined {} to {} (probe dim with {} probes)", label, nc_path.name, len(groups_to_merge))
-
-
-# ---------------------------------------------------------------------------
-# Coefficient resolution
-# ---------------------------------------------------------------------------
-
-
-def get_coefs_from_cfg(cfg_in: dict, pcid: str) -> dict:
-    """Resolve coefficients: ``coefs_path`` file → ``input.coefs`` override.
-
-    Builds a ``coefs_paths`` fallback chain (mirroring :func:`cur_cfg`):
-    explicit ``coefs_path`` from YAML → class-default HDF5 path.
-    Delegates merge logic to :func:`incl_calc.coefs.get_coefs`, which also
-    converts YAML list values to numpy arrays.
-
-    :param cfg_in: ``cfg.input`` as a plain dict.
-    :param pcid: probe column ID (e.g. ``"i_01"``).
-    :return: merged coefficients dict with array values as numpy ndarrays.
-    """
-    from tcm.incl_calc.coefs import get_coefs
-
-    # Build coefs_paths with yaml_export fallback (mirrors legacy cur_cfg):
-    # explicit coefs_path → class-default HDF5 file → sibling ``yaml_export/`` dir.
-    # The yaml_export dir is added silently so the no_h5 (``dist/tcm_clc_txt``)
-    # environment falls back to YAML exports without an explicit user override.
-    # Preserve raw *cp* (Path or str) verbatim so caller's identity is intact;
-    # ``load_coefs`` accepts both via its own ``Path()`` coercion.
-    coefs_paths: list = []
-    if cp := cfg_in.get("coefs_path"):
-        coefs_paths.append(cp)
-    if (default_cp := config.ConfigIn_InclProc.coefs_path):
-        if default_cp not in coefs_paths:
-            coefs_paths.append(default_cp)
-        if (yaml_dir := Path(default_cp).parent / "yaml_export") not in coefs_paths:
-            coefs_paths.append(yaml_dir)
-
-    coefs_ovr = cfg_in.get("coefs") or None
-    tbl = format.pcid_to_raw_name(pcid)
-    result = get_coefs(coefs_paths, tbl, coefs_ovr=coefs_ovr)
-    _n_ovr = len(coefs_ovr) if coefs_ovr else 0
-    lf.debug("Coefs for {}: paths={}, {} override keys", pcid, coefs_paths, _n_ovr)
-    return result
 
 
 # ---------------------------------------------------------------------------

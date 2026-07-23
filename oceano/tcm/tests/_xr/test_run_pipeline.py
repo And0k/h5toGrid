@@ -120,7 +120,10 @@ class TestRunPipeline:
 
         run_dir.mkdir(parents=True)
         for stem in ("@i_01", "@i_02"):
-            (run_dir / f"{stem}.yaml").write_text("input:\n  path: dummy\n")
+            yaml_stem = stem.rsplit("@", 1)[-1]
+            (run_dir / f"{stem}.yaml").write_text(
+                f"input:\n  path: {raw_dir / f'{yaml_stem}.txt'}\n"
+            )
 
         processing.run(cfg)
         assert mock_proc.call_count == 2
@@ -136,8 +139,11 @@ class TestRunPipeline:
         raw_dir = project_dir / _constants.RAW_DIR_NAME
         run_dir = raw_dir / "cfg_proc" / "run"
         run_dir.mkdir(parents=True)
-        (run_dir / "@i_01.yaml").write_text("input:\n  path: dummy\n")
-        (run_dir / "@i_02.yaml").write_text("input:\n  path: dummy\n")
+        for stem in ("@i_01", "@i_02"):
+            yaml_stem = stem.rsplit("@", 1)[-1]
+            (run_dir / f"{stem}.yaml").write_text(
+                f"input:\n  path: {raw_dir / f'{yaml_stem}.txt'}\n"
+            )
         _mock_config_yaml(mocker, existed={"i01": ["@i_01"], "i02": ["@i_02"]})
 
         def _load_matching_stem(yaml_path):
@@ -237,6 +243,74 @@ class TestRunPipeline:
         # Only the real config is processed; ghost is skipped
         assert mock_proc.call_count == 1
         assert "skipping" in caplog.text.lower()
+
+    @pytest.mark.parametrize(
+        ("filter_kind", "pattern", "expected"),
+        [
+            # input.path regex — matches resolved filenames i_01.txt, i_02.txt
+            pytest.param("input.path", r"i_(01|02).txt", 2, id="input.path-regex"),
+            # input.path glob — extension dot unescaped triggers glob mode
+            pytest.param("input.path", "*_01.txt", 1, id="input.path-glob"),
+            # input.yaml_path regex — matches stems @i_01, @i_02
+            pytest.param("yaml_path", r"@i_(01|02)", 2, id="yaml_path-regex"),
+            # input.yaml_path regex with .yaml suffix — matches stems via stem+".yaml"
+            pytest.param("yaml_path", r"@i_(01|02).yaml", 2, id="yaml_path-regex-yaml"),
+            # input.yaml_path glob — starts with * (invalid regex → glob mode)
+            pytest.param("yaml_path", "*_01", 1, id="yaml_path-glob"),
+            # input.yaml_path glob with .yaml suffix
+            pytest.param("yaml_path", "*_01.yaml", 1, id="yaml_path-glob-yaml"),
+        ],
+    )
+    def test_filter_by_pattern(self, project_dir, mocker, filter_kind, pattern, expected):
+        """Regex/glob patterns in input.path or input.yaml_path filter correctly.
+
+        Creates 3 YAMLs (i01, i02, i03) and verifies that only those matching
+        the pattern are processed.  YAMLs store resolved absolute paths (never
+        the user's CLI pattern).  The filter matches the CLI pattern against
+        each YAML's resolved input.path filename (or stem for yaml_path).
+        """
+        raw_dir = project_dir / _constants.RAW_DIR_NAME
+        run_dir = raw_dir / "cfg_proc" / "run"
+        run_dir.mkdir(parents=True)
+
+        existed: dict[str, list[str]] = {}
+        for i in (1, 2, 3):
+            stem = f"@i_{i:02d}"
+            yaml_stem = stem.split("@", 1)[-1]  # "i_01", "i_02", "i_03"
+            (run_dir / f"{stem}.yaml").write_text(
+                f"input:\n  path: {raw_dir / f'{yaml_stem}.txt'}\n"
+            )
+            existed.setdefault(f"i{i:02d}", []).append(stem)
+
+        _mock_config_yaml(mocker, existed=existed)
+
+        input_cfg: dict = {"path": str(raw_dir / "*i*.txt"), "ids": None}
+        if filter_kind == "input.path":
+            input_cfg["path"] = str(raw_dir / pattern)
+        else:
+            input_cfg["yaml_path"] = pattern
+
+        cfg = DictConfig({
+            "input": input_cfg,
+            "out": {"dt_bins": [0], "dir": str(project_dir / "out")},
+            "filter": {},
+            "program": {"return_": Return.END, "verbose": "INFO"},
+        })
+
+        def _load_stem(yaml_path):
+            s = Path(yaml_path).stem.rsplit("@", 1)[-1]
+            return DictConfig({
+                "input": {"path": str(raw_dir / f"{s}.txt")},
+                "out": {"dt_bins": [0]},
+                "filter": {},
+            })
+        mocker.patch("tcm.processing.OmegaConf.load", side_effect=_load_stem)
+        mock_proc = mocker.patch("tcm.processing.run_processing")
+
+        processing.run(cfg)
+        assert mock_proc.call_count == expected, (
+            f"{filter_kind}={pattern!r}: expected {expected} calls, got {mock_proc.call_count}"
+        )
 
 
 # ---------------------------------------------------------------------------

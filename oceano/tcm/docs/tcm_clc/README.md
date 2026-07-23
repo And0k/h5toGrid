@@ -26,9 +26,16 @@ python -m scripts.tcm_clc "_raw" \
 
 The first positional argument is a **path to scan**: directory, glob, or regex.
 A plain directory scans for `i*.txt` (case-insensitive default); wildcards like
-`*i*.txt` use glob rules; escaped dots like `i.\\.txt` trigger regex interpretation
+`*i*.txt` use glob rules; escaped dots like `i.\\.txt`, alternation with `|`,
+or patterns wrapped in `(...)` trigger regex interpretation
 (see ``_pattern_to_regex`` in `docs/tcm_clc/how_it_works.md`).
 The name `_raw` is just a convention — your data can live anywhere.
+
+> **Regex quoting**: any regex pattern (containing `|`, `(`, `)`, `\`, `[`, …)
+> **must** be quoted — these characters are shell metacharacters and will break
+> the command or silently alter the pattern otherwise.  Glob patterns with
+> commas are auto-reassembled, but shell metacharacters cannot be recovered.
+> Example: ``python -m scripts.tcm_clc "(i|v)_chain.txt"``
 
 ### Common workflows
 

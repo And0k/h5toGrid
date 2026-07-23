@@ -5,7 +5,7 @@
 ```
 scripts/tcm_clc.py          ← thin CLI entry point (@hydra.main)
 tcm/
-    cli.py                  ← parse_data_path, _build_hydra_argv, _prepare_overrides, safe_cfg_dir, main_fun, call_in_raw_dir, process_loading_yaml
+    cli.py                  ← parse_data_path, _build_hydra_argv, _prepare_overrides, safe_cfg_dir, hydra_main, call_in_raw_dir, process_loading_yaml
     processing.py           ← run() orchestrator, run_processing(), _combine_probes()
     config.py               ← Hydra structured config dataclasses + ConfigStore registration
     config_yaml.py          ← gen_metadata(), save_config_to_yaml(), stale detection
@@ -99,6 +99,15 @@ python scripts/tcm_clc.py "_raw/*i*.txt"
 python scripts/tcm_clc.py "_raw/*i*.txt" input.ids=[i01,i_p02]
 python scripts/tcm_clc.py "_raw/*i*.txt" out.text_path=./results filter.corr_time_mode=false
 
+# Filter by data file (non-directory input.path → matches YAML's input.path)
+python scripts/tcm_clc.py "_raw/@i01.TXT"
+
+# Filter by YAML stem pattern (skip generation, use existing configs only)
+python scripts/tcm_clc.py "_raw" input.yaml_path="*@i_p5*"
+
+# Dry-run: list matching configs without processing
+python scripts/tcm_clc.py "_raw" input.yaml_path="*" program.return_=<cfg_from_args>
+
 # Drop-on-shortcut: Windows passes the raw path as sys.argv[1].
 # Commas, backslashes, quotes in the path are handled automatically —
 # input.path is injected directly into DictConfig via OmegaConf merge,
@@ -122,11 +131,16 @@ cli.call_in_raw_dir(
 2. `paths.find_dir_raw_absolute(path_in)` → `data_dir`
 3. `os.chdir(data_dir)` — all relative paths resolve against data directory
 4. Build `sys.argv` for Hydra via `_build_hydra_argv(data_dir)`: only `--config-dir <data_dir>/cfg_proc` (if exists) — targets Hydra's **argparse** layer which natively handles commas, backslashes, colons, parentheses, brackets, braces, equals signs, and other ANTLR special characters. ``input.path`` is injected via ``_prepare_overrides()`` into the overrides dict, then merged into ``DictConfig`` by :func:`hydra_main` — the path string **never passes through Hydra's ANTLR override parser**.
-5. `main_fun(processing.run, config_name="config")` — if no dict overrides, uses `@hydra.main(config_name="config", config_path=pkg://tcm.cfg.cfg_proc)` to compose the full `Config`
+5. `hydra_main(processing.run, config_name="config")` — if no dict overrides, uses `@hydra.main(config_name="config", config_path=pkg://tcm.cfg.cfg_proc)` to compose the full `Config`
    (logging, run.dir, resolvers all active). If dict overrides are provided, composes defaults first via `@hydra.main`, then merges overrides on top via `OmegaConf.merge`.
-6. `processing.run(cfg)` — canonical orchestrator: discover → generate configs → process.
+6. `processing.run(cfg)` — canonical orchestrator: discover → generate configs → filter → process.
    For binary inputs this step **branches**: calls ``run_processing`` directly per table,
    skipping the text-only config discovery/generation/sync chain.
+   When ``input.yaml_path`` is set, config generation is **skipped** and only existing
+   YAMLs matching the stem pattern are processed. When ``input.path`` is not a directory,
+   it acts as a filter: each YAML's stored **resolved** ``input.path`` (always an absolute
+   path to a concrete file, never a glob/regex) is matched against the CLI ``input.path``
+   pattern. Combined with ``program.return_=<cfg_from_args>``, this enables dry-run listing.
 
 ### Log output
 
@@ -150,6 +164,12 @@ Key conventions:
 - **Stale config** detection logs per-stem details at DEBUG; the caller (`processing.run`) logs the summary set at WARNING
 - **FileNotFoundError** in `process_loading_yaml` is caught separately with context about likely stale config
 
+**Do not call `logging.basicConfig`** — `@hydra.main` applies `logging.config.dictConfig`
+from `cfg_proc/hydra/job_logging/colorlog.yaml` before any task function runs, so any
+manual `basicConfig` is overwritten.  Callers using `cli.call_in_raw_dir` inherit the
+same Hydra-configured logging (console: `colorlog` formatter with colored `funcName|message`;
+file: `simple` formatter with `asctime|name|levelname|message`)
+
 ### Why `@hydra.main` and not Compose API
 
 The pipeline uses `@hydra.main` (not `initialize_config_module` + `hydra.compose`)
@@ -165,11 +185,14 @@ Hydra runtime environment. The following features require `@hydra.main`:
 - **Validation**: MISSING-field checks and type validation happen at
   composition time inside `@hydra.main`, not in bare `compose()`
 
-### Dict overrides via `main_fun()`
+### Dict overrides via `hydra_main()`
 
-`main_fun()` supports passing a hierarchical dict as `overrides` that layers
+`hydra_main()` supports passing a hierarchical dict as `overrides` that layers
 **on top of** Hydra-composed defaults. This is used by calibration and other
 entry points that need to inject config programmatically (not via CLI).
+`call_in_raw_dir()` delegates to `hydra_main()` and propagates the task
+function's return value (stashed in `cli._result` since `@hydra.main`
+doesn't propagate returns).
 
 When `overrides` is provided:
 1. `@hydra.main` composes defaults normally (ConfigStore + `sys.argv`)
@@ -218,10 +241,10 @@ runtime for any entry point (calibration, etc.):
 1. Resolves `data_dir` from `input.path` (in kwargs or `sys.argv`)
 2. `os.chdir(data_dir)` + injects `--config-dir <data_dir>/cfg_proc`
    (if exists) — targets Hydra's argparse layer (natively handles special chars)
-3. Collects non-`main_fun` kwargs as override dicts
+3. Collects non-`hydra_main` kwargs as override dicts
 4. Optionally loads a per-probe YAML via `yaml_path=` (merged as base;
    explicit kwargs win on top)
-5. Calls `main_fun(fun, overrides=...)`
+5. Calls `hydra_main(fun, overrides=...)`
 
 ```python
 cli.call_in_raw_dir(
@@ -277,8 +300,10 @@ The decision table for pattern interpretation is in
 `config_reference.md` (§Pattern interpretation). Implementation:
 
 1. Tries `re.compile(name)` — on failure → glob via `_glob_to_regex()`
-2. On success, checks if the last dot before extension is escaped (`\.`)
-3. If not escaped → still glob. The "extension dot" is `name.rfind('.')`;
+2. On success, checks for explicit regex markers: `|` in the pattern or
+   the whole name wrapped in `(...)` → regex
+3. Otherwise, checks if the last dot before extension is escaped (`\.`)
+4. If not escaped → still glob. The "extension dot" is `name.rfind('.')`;
    if `name[pos-1] != '\\'` → glob
 
 Directory shortcut: `path_in.is_dir()` → `_DIR_DEFAULT_REGEX` (`i.*\.txt`,
@@ -420,6 +445,11 @@ After config generation, `processing.run()` calls
 to push `time_ranges` from `info_devices.yaml/.json` into any run YAML that
 lacks them. Idempotent: configs with existing `input.time_ranges` are skipped.
 Missing metadata file is handled EAFP (logged at DEBUG, returns cleanly).
+Malformed YAML (e.g. tab characters) in `info_devices.yaml` is caught at two
+levels: `metadata.load_file_meta` catches `yaml.YAMLError` (logged WARNING
+with traceback, returns `{}`), and `sync_yamls_devmeta_and_hydra` has a
+broad `except Exception` guard that skips time_ranges sync on any
+unexpected error instead of crashing the pipeline.
 
 The sync function logs at INFO per probe:
 ```
@@ -475,8 +505,8 @@ part of the per-text-file config sweep.
 
 **Text inputs (CSV/TXT)**: the full discovery pipeline runs as below.
 
-1. **Config generation** (idempotent): ``config_yaml.save_config_to_yaml(cfg, ...)``
-   is called when:
+1. **Config generation** (idempotent, **skipped when ``input.yaml_path`` is set**):
+   ``config_yaml.save_config_to_yaml(cfg, ...)`` is called when:
    - Stale configs exist (source file deleted), OR
    - No configs exist, OR
    - New source files are found that have no config yet — detected via
@@ -484,18 +514,27 @@ part of the per-text-file config sweep.
      ``input.ids`` (when requested IDs lack configs but source data may exist).
    After generation, orphan configs (no matching source file) produce a
    **warning only** — configs are never auto-deleted.
-2. **Device-metadata sync**: `sync_yamls_devmeta_and_hydra(dir_raw.parent, dir_cfgs, cfgs_existed)`
+2. **Device-metadata sync** (**skipped when ``input.yaml_path`` is set**):
+   `sync_yamls_devmeta_and_hydra(dir_raw.parent, dir_cfgs, cfgs_existed)`
    pushes `time_ranges` from `info_devices.yaml` into run YAMLs that lack them.
 3. **Resolve which configs to process** (by `input.ids` or all).
    When specific IDs are requested and some have no config after discovery
    (source data truly absent), ``ValueError`` is raised — the error is now
    justified because config generation was already attempted in step 1.
-4. `cli.process_loading_yaml(run_processing, base_cfg=cfg, dir_cfgs=..., cfgs=..., n_cfgs_existed=...)`
+4. **Filter by ``input.yaml_path``** (when set): match YAML stems against the
+   pattern using ``csv_load._pattern_to_regex()`` — only matching stems are kept.
+5. **Filter by ``input.path``** (when not a directory): the CLI ``input.path`` may be
+   a glob/regex pattern; each YAML's stored ``input.path`` is always a **resolved
+   absolute path** to a concrete file.  The filter matches the CLI pattern against
+   the YAML's resolved ``input.path`` filename using ``csv_load._pattern_to_regex()``.
+   Re‑running with a different CLI pattern limits processing to YAMLs whose resolved
+   paths match.  Both filters use AND logic when both are set.
+6. `cli.process_loading_yaml(run_processing, base_cfg=cfg, dir_cfgs=..., cfgs=..., n_cfgs_existed=...)`
    — loads each YAML, merges on top of `cfg`, validates stem match, calls `run_processing(cfg_dc)`.
    Returns `(processed_pcids, failed_pcids, last_cfg)`.
-5. Combined output: `_combine_probes()` merges per-probe groups with `probe`
+7. Combined output: `_combine_probes()` merges per-probe groups with `probe`
    dim (if >1 probe)
-6. Terminal log: `"Done — {n_ok} probes: {pcids} ok | {n_skipped} skipped ({pcids}) | {n_failed} failed ({pcids})"`
+8. Terminal log: `"Done — {n_ok} probes: {pcids} ok | {n_skipped} skipped ({pcids}) | {n_failed} failed ({pcids})"`
    Counting is by **distinct probe** (not by YAML attempts): a probe that fails
    on one YAML but succeeds on another is considered successful.
 
@@ -1059,12 +1098,10 @@ see [h5py-only file I/O](#h5py-only-file-io).
 - `g0xyz` unset, `Rz` non-identity → returns `(Rz, "")`.
 - Both unset or `Rz` identity → returns `(None, "")`.
 
-**Shape fix** (2026-07): `g0xyz` from YAML arrives as flat `(3,)` array but
+`g0xyz` from YAML arrives as flat `(3,)` array but
 `to_unit_vector` expects `(3, N)`. The fix reshapes to `(3, 1)` before the call.
 Without this, numpy broadcasting silently produces `(3, 3)` and the subsequent
 `np.cross` in `rotate()` fails with "incompatible dimensions".
-
-No `dask.dataframe` dependency — uses `xr.sel` + numpy.
 
 ## File name parsing
 

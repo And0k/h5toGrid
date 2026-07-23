@@ -21,5 +21,3 @@ conda env create --force --file py3.10x64h5togrid.yml
 ### Дополнительные настройки
 
 Для работы с rar-архивами путь к unrar.exe должен содержатся в системной переменной `PATH` (или добавьте его в код пакета определив `rarfile.UNRAR_TOOL`)
-
-Для возможности расчета магнитного склонения используется библиотека [wmm2020](https://github.com/space-physics/wmm2020), для работы которой в Windows необходима установка и содержание в переменной `PATH` пути к исполняемым файлам [cmake](https://cmake.org/) и компилятору С++, но не Microsoft Visual C++, например, [mingw-w64](https://sourceforge.net/projects/mingw-w64)

@@ -19,6 +19,7 @@ Legacy types (``ConfigMultiIn_InclProc``, ``ConfigOutSimple``, etc.) live in
 ``_dask_legacy/cfg_compat.py``.
 """
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, Dict, List, Optional
 
@@ -33,11 +34,12 @@ from tcm._constants import RAW_DIR_NAME  # noqa: F401 — re-export
 # ---------------------------------------------------------------------------
 
 
-class Return:
+class Return(StrEnum):
     """``program.return_`` constants — controls how far ``run_processing`` runs.
 
     Each value stops after a progressively later phase.  Downstream code
     compares against these constants instead of bare string literals.
+    Inherits from :class:`str` so ``Return.END == "<end>"`` is ``True``.
     """
 
     CFG_FROM_ARGS = "<cfg_from_args>"    # config composition only (no I/O)
@@ -47,10 +49,6 @@ class Return:
     SAVED_NOAVG = "<saved_noavg>"        # no-avg processed output, stop
     SAVED_ALL = "<saved_all>"            # all binned NC writes, stop
     END = "<end>"                        # full pipeline (default)
-
-    # Ordered subsets for phase-stopping checks (each is a superset of prev).
-    # UNTIL_COEFS = frozenset({CFG_FROM_ARGS, GEN_NAMES_AND_LOG, SAVED_COEFS})
-    # UNTIL_RAW = UNTIL_COEFS | {SAVED_RAW}
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +109,7 @@ class ConfigIn_InclProc:
     path: Optional[str] = None
     tables: List[str] = field(default_factory=lambda: ['incl*'])
     ids: Optional[List[str]] = None
+    yaml_path: Optional[str] = None      # filter run YAMLs by stem pattern (glob/regex); ANY non‑None skips config generation
     prefix: Optional[str] = 'I*[_0]'
     text_type: Optional[str] = None
     text_line_regex: Optional[str] = None

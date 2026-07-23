@@ -19,11 +19,10 @@ import tcm._xr.coefs as _coefs_mod
 from tcm._xr.coefs import (
     get_coef_zeroing_matrix,
     load_coefs_from_nc,
-    prep_cfg_for_probe,
     save_coefs_to_nc,
 )
 from tcm.config import ConfigIn_InclProc
-from tcm.config_yaml import update_coefs_in_run_yaml
+from tcm.config_yaml import prep_cfg_for_probe, update_coefs_in_run_yaml
 from tcm.incl_calc.coefs import get_coefs, load_coefs
 
 def _stub_get_coefs(paths, tbl, coefs_ovr=None):
@@ -38,7 +37,7 @@ _GET_COEFS_TARGET = "tcm.incl_calc.coefs.get_coefs"
 # Helper assertions for parametrized get_coefs call checks
 # --------------------------------------------------------------------------- #
 def _assert_tbl_arg(call) -> None:
-    assert call.args[1] == "incl_01"
+    assert call.kwargs["tbl"] == "incl_01"
 
 
 def _assert_class_default_in_paths(call) -> None:

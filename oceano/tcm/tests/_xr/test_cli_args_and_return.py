@@ -131,7 +131,13 @@ class TestReturnCfgFromArgs:
     """
 
     def test_no_run_processing_called(self, _raw_with_csv, monkeypatch, mocker):
-        """With <cfg_from_args>, run_processing must NOT be called."""
+        """With <cfg_from_args>, run_processing is called but returns early (after main_init).
+
+        Previously run_processing was never called — the CFG_FROM_ARGS early return
+        in run() bypassed process_loading_yaml entirely.  Now process_loading_yaml
+        runs, calling run_processing which returns the DictConfig after main_init
+        (no data load, no coefs computation).  The collected configs feed the GUI scan flow.
+        """
         project_dir, raw_dir = _raw_with_csv
         monkeypatch.chdir(project_dir)
         monkeypatch.setattr(
@@ -145,9 +151,16 @@ class TestReturnCfgFromArgs:
         )
 
         mock_proc = mocker.patch("tcm.processing.run_processing")
-        cli.call_in_raw_dir(processing.run)
+        result = cli.call_in_raw_dir(processing.run)
 
-        mock_proc.assert_not_called()
+        mock_proc.assert_called_once()
+        # result is a 4-tuple: (processed_pcids, failed_pcids, last_cfg, collected)
+        assert result is not None
+        assert len(result) == 4
+        collected = result[3]
+        assert len(collected) == 1  # one probe
+        stem, yp, cfg_dc = collected[0]
+        assert "@i_01" in stem
 
     def test_preserves_existing_user_edited_config(self, _raw_with_csv, monkeypatch, mocker):
         """<cfg_from_args> does NOT overwrite a healthy existing config.

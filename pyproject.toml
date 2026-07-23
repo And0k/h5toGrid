@@ -233,6 +233,9 @@ cmd = "python oceano/tcm/scripts/build/build_tcm_clc_txt.py"
 build-backend = "hatchling.build"
 requires = ["hatchling"]
 
+[dependency-groups]
+bin-optim = ["tksheet>=7.6.0,<8"]
+
 [tool.pixi.workspace]
 channels = ["conda-forge"]
 platforms = ["win-64"]

@@ -88,7 +88,10 @@ def _pattern_to_regex(name: str) -> str:
 
     - **Glob** if either: (a) *name* is not a valid regex, or (b) it is a
       valid regex but the dot before the file extension is **not** escaped
-      (no ``\\`` immediately before that dot).
+      (no ``\\`` immediately before that dot) **and** no explicit regex
+      markers are present (see below).
+    - **Regex** if the compiled pattern contains ``|`` alternation or is
+      wrapped in a parenthesised group ``(...)``.
     - **Regex** otherwise (valid regex + extension dot escaped).
 
     Glob conversion delegates to :func:`_glob_to_regex`.  The extension dot
@@ -99,9 +102,14 @@ def _pattern_to_regex(name: str) -> str:
     try:
         re.compile(name)
     except re.error:
-        return _glob_to_regex(name)  # Not valid regex → glob
+        return _glob_to_regex(name) # Not valid regex → glob
 
-    # Valid regex — check if the extension dot is escaped
+    # Valid regex — check for explicit regex markers after successful compile
+    if '|' in name or (name.startswith('(') and name.endswith(')')):
+        # Alternation or parenthesised group → regex
+        return name
+
+    # No explicit regex markers — check if the extension dot is escaped
     # Find last dot followed by extension (no further dots)
     dot_pos = name.rfind('.')
     if dot_pos > 0 and name[dot_pos - 1] != '\\':
@@ -330,9 +338,9 @@ def csv_process(
     if nbad_time := b_ok.size - b_ok.sum().item():
         bad_times = time_cor[~(b_ok | np.isnat(time_cor))]
         lf.info(
-            "Values ({:d}) outside range: {}",
-            nbad_time,
-            _compress_times(bad_times, limit=10)
+            "outside time range {:.1%} filtered out: {:s}",
+            nbad_time/b_ok.size,
+            _compress_times(bad_times, limit=10),
         )
 
 

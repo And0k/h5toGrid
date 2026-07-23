@@ -15,6 +15,10 @@ from typing import Dict, Sequence
 
 import numpy as np
 
+from tcm import utils2init
+
+lf = utils2init.LoggingStyleAdapter(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -93,12 +97,20 @@ def load_file_meta(path_in: Path) -> dict:
 
     YAML files may use nested dicts per station-id — these are collapsed
     into a single flat list per device (first/last/min/max aggregation).
+
+    :returns: metadata dict, or empty dict on parse/read error (logged as warning).
     """
     with path_in.open(encoding="utf8") as f:
         if path_in.suffix == ".yaml":
-            from yaml import safe_load
+            from yaml import YAMLError, safe_load
 
-            content = safe_load(f.read())
+            try:
+                content = safe_load(f.read())
+            except YAMLError:
+                lf.warning("Failed to parse {} — returning empty metadata", path_in, exc_info=True)
+                return {}
+            if not content:
+                return {}
             return {
                 device_id: [
                     seq[0]

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping, Optional
+from typing import Any, Mapping
 
 from tcm import _constants
 from tcm._constants import _h5py
@@ -25,8 +25,6 @@ from tcm._constants import _h5py
 import numpy as np
 import pandas as pd
 import xarray as xr
-
-from tcm import format, incl_calc
 from tcm._xr import filters as filters_xr
 from tcm.utils2init import LoggingStyleAdapter
 from tcm.calibration import orientation, calibrate
@@ -208,71 +206,9 @@ def load_coefs_from_nc(nc_path: Path, tbl: str) -> dict[str, Any] | None:
     return coefs_dict
 
 
-def prep_cfg_for_probe(
-    pcid: str,
-    cfg_in_for_probes: Mapping[str, Any],
-    cfg_in_common: Mapping[str, Any],
-    cfg: Mapping[str, Any],
-    path_csv: Optional[Path] = None,
-) -> MutableMapping[str, Any]:
-    """Build probe-specific config with coefficients.
-
-    Replaces ``legacy.incl_calc.coefs.prep_cfg_for_probe`` for the
-    xr-native pipeline.  Does **not** import ``dask.dataframe``.
-
-    Differences from legacy ``cur_cfg``:
-    - No HDF5 raw-DB-as-coefs-source logic (handled separately).
-    - coefs_paths chain: explicit ``coefs_path`` → class default only.
-
-    :param pcid: Probe output Column ID (e.g. ``"i_01"``).
-    :param cfg_in_for_probes: per-probe overrides keyed by pcid.
-    :param cfg_in_common: input config common to all probes.
-    :param cfg: top-level config dict (``cfg["input"]``, ``cfg["out"]``, ``cfg["filter"]``).
-    :param path_csv: if set, overrides ``cfg1["input"]["path"]`` with the corrected CSV path.
-    :return: ``cfg1`` dict with keys ``input``, ``out``, ``filter``, and loaded coefs.
-    """
-    from tcm.config import ConfigIn_InclProc
-
-    cfg1: MutableMapping[str, Any] = {
-        "input": {**cfg_in_common.copy(), **cfg_in_for_probes.get(pcid, {})},
-        "out": dict(cfg["out"]),
-        "filter": dict(cfg["filter"]),
-    }
-
-    # Build coefs_paths: explicit coefs_path → class default → yaml_export dir.
-    # The yaml_export fallback lets ``dist/tcm_clc_txt`` packaging (without the
-    # bundled ``calibration.h5`` file) load coefs silently from exported YAMLs.
-    coefs_paths: list = []
-    if cp := cfg1["input"].get("coefs_path"):
-        coefs_paths.append(cp)
-    if (default_cp := ConfigIn_InclProc.coefs_path) and default_cp not in coefs_paths:
-        coefs_paths.append(default_cp)
-    if default_cp is not None:
-        yaml_dir = Path(default_cp).parent / "yaml_export"
-        if yaml_dir not in coefs_paths:
-            coefs_paths.append(yaml_dir)
-
-    tbl = format.pcid_to_raw_name(pcid)
-    cfg1["input"]["coefs"] = incl_calc.coefs.get_coefs(
-        coefs_paths, tbl, coefs_ovr=cfg1["input"].get("coefs") or None,
-    )
-    lf.info("Coefs for {}: paths={}, date={}", pcid, coefs_paths, cfg1["input"]["coefs"].get("date", "N/A"))
-
-    # Override path with corrected CSV path if provided
-    if path_csv is not None:
-        cfg1["input"]["path"] = path_csv
-
-    # Expand glob "incl*" to the concrete raw table name for this probe
-    if cfg1["input"].get("tables") and cfg1["input"]["tables"][0] == "incl*":
-        cfg1["input"]["tables"] = [format.pcid_to_raw_name(pcid)]
-
-    return cfg1
-
-
 # ---------------------------------------------------------------------------
-# Coefs preparation (xr-native) — replaces legacy coef_prepare
+# Coefs preparation
 # ---------------------------------------------------------------------------
-
 
 def coef_zeroing_rotation_from_data(
     ds_raw: xr.Dataset,

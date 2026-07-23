@@ -49,6 +49,7 @@ from tcm.utils2init import (
 
 lf = LoggingStyleAdapter(__name__)
 
+
 # Default glob pattern (Windows-first: uppercase I).
 _TCM_DEFAULT_GLOB_PATTERN = "*I*.txt"
 DEFAULT_GLOB = f"{config.RAW_DIR_NAME}/{_TCM_DEFAULT_GLOB_PATTERN}"
@@ -113,14 +114,19 @@ def safe_cfg_dir(path: Path) -> Path:
 
 
 
+_result: Any = None  # stores fun(cfg) return — @hydra.main doesn't propagate it
+
+
 def hydra_main(
     fun,
     config_name: str = "config",
     config_path: str = _constants.BUNDLED_CFG_PKG,
     version_base: str = "1.3",
     overrides: Optional[Mapping[str, Any]] = None,
-):
-    """Dispatch *fun* via Hydra with optional dict *overrides* on top of defaults.
+    *,
+    exit_on_error: bool = True,
+) -> Any:
+    """Dispatch *fun* via Hydra, return its result (``@hydra.main`` swallows returns).
 
     Two code paths:
 
@@ -130,41 +136,53 @@ def hydra_main(
       a wrapper deep-merges the hierarchical *overrides* dict on top before
       calling *fun*.  CLI ``sys.argv`` overrides still apply (below the dict).
 
+    The decorated function's return value is stored in :data:`_result` and
+    returned to the caller — ``@hydra.main`` itself discards return values.
+
     :param fun: task function accepting one ``DictConfig`` argument.
     :param overrides: hierarchical dict to merge on top of composed defaults.
+    :returns: whatever *fun* returned (``None`` if it returned nothing).
     """
+    global _result
+    _result = None  # reset before each dispatch
+
     # Force Hydra to re-raise original exceptions instead of swallowing them
     # with sys.exit(1). Without this, ``except BaseException`` below catches
     # only a bare ``SystemExit`` and the real traceback is lost.
     os.environ.setdefault("HYDRA_FULL_ERROR", "1")
-    try:
+
+    @wraps(fun)
+    def _store(cfg: DictConfig):
+        """Run *fun*, stashing its return in :data:`_result`."""
+        global _result
         if overrides:
-            @wraps(fun)
-            def _wrapper(cfg: DictConfig):
-                # Strip struct (ConfigStore schema) then merge overrides on top.
-                base = OmegaConf.create(OmegaConf.to_container(cfg, resolve=False))
-                merged = OmegaConf.merge(base, overrides)
-                return fun(merged)
-            m_fun = hydra.main(
-                config_name=config_name, config_path=config_path, version_base=version_base
-            )(_wrapper)
+            base = OmegaConf.create(OmegaConf.to_container(cfg, resolve=False))
+            merged = OmegaConf.merge(base, overrides)
+            _result = fun(merged)
         else:
-            m_fun = hydra.main(
-                config_name=config_name, config_path=config_path, version_base=version_base
-            )(fun)
-        return m_fun()
+            _result = fun(cfg)
+        return _result
+
+    try:
+        m_fun = hydra.main(
+            config_name=config_name, config_path=config_path, version_base=version_base
+        )(_store)
+        m_fun()
+        return _result
     except BaseException:
         lf.exception("Error. Exiting the entire process")
-        sys.exit(1)
+        if exit_on_error:
+            sys.exit(1)
+        raise
 
 
 
 
 
 
-# Kwargs accepted by :func:`main_fun` (excluding ``fun``) — everything else
+# Kwargs accepted by :func:`hydra_main` (excluding ``fun``) — everything else
 # is treated as an override dict to merge on top of composed defaults.
-_MAIN_FUN_PARAMS = {"config_name", "config_path", "version_base", "overrides"}
+_HYDRA_MAIN_PARAMS = {"config_name", "config_path", "version_base", "overrides", "exit_on_error"}
 
 def _build_hydra_argv(data_dir: Path) -> list[str]:
     """Build Hydra argv overrides — only ``--config-dir`` (argparse layer).
@@ -193,7 +211,7 @@ def _prepare_overrides(path_in: Path, overrides: dict) -> dict:
     )
 
 
-def call_in_raw_dir(fun, yaml_path: Optional[Path] = None, **kwargs) -> None:
+def call_in_raw_dir(fun, yaml_path: Optional[Path] = None, **kwargs) -> Any:
     """Bootstrap CLI → Hydra runtime for a processing entry point.
 
     1. Parses the raw-data path from ``sys.argv``: 1st non-flag, non-``key=value``
@@ -206,11 +224,11 @@ def call_in_raw_dir(fun, yaml_path: Optional[Path] = None, **kwargs) -> None:
        Injects ``--config-dir`` into ``sys.argv`` via
        :func:`_build_hydra_argv` (argparse layer — natively handles ALL
        ANTLR special characters in paths).
-    4. Calls *fun* via :func:`main_fun`.
+    4. Calls *fun* via :func:`hydra_main`.
 
-    Any keyword argument whose name is **not** a :func:`main_fun` parameter
+    Any keyword argument whose name is **not** a :func:`hydra_main` parameter
     (``config_name``, ``config_path``, ``version_base``, ``overrides``) is
-    collected into an *overrides* dict and passed to :func:`main_fun` as
+    collected into an *overrides* dict and passed to :func:`hydra_main` as
     hierarchical config overrides that layer **on top of** Hydra-composed
     defaults — preserving all ConfigStore defaults for unspecified groups.
 
@@ -221,22 +239,36 @@ def call_in_raw_dir(fun, yaml_path: Optional[Path] = None, **kwargs) -> None:
             Loaded via :func:`OmegaConf.load` and used as the **base** for
             dict overrides — explicit ``**kwargs`` win over YAML values.
         **kwargs: ``config_name``, ``config_path``, etc. forwarded to
-            :func:`main_fun`; remaining keys (e.g. ``input={...}``) are
+            :func:`hydra_main`; remaining keys (e.g. ``input={...}``) are
             treated as config-group overrides.
+
+    Returns:
+        Whatever *fun* returned (``None`` if it didn't return anything).
+        ``@hydra.main`` doesn't propagate return values, so :func:`hydra_main`
+        stashes the result in :data:`_result` and returns it here.
 
     Note:
         ConfigStore registration (structured-group dataclasses) must happen
         before ``@hydra.main`` resolves — for the processing pipeline,
         ``tcm.config`` (imported above) does this at module level.
     """
-    # Separate main_fun params from override dicts.
-    main_fun_kwargs: Dict[str, Any] = {}
+    # Separate hydra_main params from override dicts.
+    hydra_main_kwargs: Dict[str, Any] = {}
     overrides: Dict[str, Any] = {}
     for k, v in kwargs.items():
-        if k in _MAIN_FUN_PARAMS:
-            main_fun_kwargs[k] = v
+        if k in _HYDRA_MAIN_PARAMS:
+            hydra_main_kwargs[k] = v
         else:
             overrides[k] = v
+
+    # When overrides dict is provided, extract input.path from it for
+    # _prepare_overrides injection.  Remove from hydra_main_kwargs to avoid
+    # duplicate 'overrides' in the final call.
+    if "overrides" in hydra_main_kwargs:
+        overrides = OmegaConf.to_container(
+            OmegaConf.merge(OmegaConf.create(overrides), hydra_main_kwargs.pop("overrides")),
+            resolve=True,
+        )
 
     # Load per-probe YAML as base; explicit kwargs merge on top via OmegaConf.
     if yaml_path is not None:
@@ -248,17 +280,19 @@ def call_in_raw_dir(fun, yaml_path: Optional[Path] = None, **kwargs) -> None:
 
     # Extract input.path: from overrides dict or from sys.argv.
     try:
-        path_in = overrides["input"]["path"]
+        path_in = Path(overrides["input"]["path"])
     except KeyError:
         try:
-            path_in = main_fun_kwargs["overrides"]["input"]["path"]
+            path_in = Path(hydra_main_kwargs["overrides"]["input"]["path"])
         except (KeyError, AttributeError, TypeError):
             path_in, remaining_argv = parse_data_path(sys.argv)
             path_in = path_in.resolve() if not path_in.is_absolute() else path_in
         else:
-            remaining_argv = sys.argv
+            # overrides dict provided path — keep sys.argv as-is (Worker
+            # sets it to [script] + hydra_args before each call).
+            remaining_argv = list(sys.argv)
     else:
-        remaining_argv = sys.argv
+        remaining_argv = list(sys.argv)
 
     # Resolve the nearest `_raw/` ancestor (always returns a valid dir).
     data_dir = paths.find_dir_raw_absolute(path_in)
@@ -273,7 +307,7 @@ def call_in_raw_dir(fun, yaml_path: Optional[Path] = None, **kwargs) -> None:
     os.chdir(data_dir)
 
     sys.argv = remaining_argv
-    hydra_main(fun, overrides=overrides or None, **main_fun_kwargs)
+    return hydra_main(fun, overrides=overrides or None, **hydra_main_kwargs)
 
 
 def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs_existed):
@@ -290,11 +324,13 @@ def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs
     :param dir_cfgs: absolute path to the directory of run YAML.
     :param cfgs: map of pcid to its config stem from `dir_cfgs` dir
     :param n_cfgs_existed: number of existed configs for logging
-    :return: processed_pcids, failed_pcids, last_cfg
+    :return: processed_pcids, failed_pcids, last_cfg, collected
+        where ``collected`` is ``[(stem, yaml_path_str, result), ...]``
     """
     processed_pcids: list[str] = []
     failed_pcids: list[str] = []
     last_cfg: DictConfig | None = None
+    collected: list[tuple[str, str, Any]] = []
     if cfgs:
         n_cfgs = sum(len(s) for s in cfgs.values())
         n_probes = len(cfgs)
@@ -333,10 +369,15 @@ def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs
                     continue
 
                 lf.info('[{}/{}] probe {} (from "{}")', stem_idx, n_cfgs, pcid, yaml_path.name)
+                OmegaConf.update(cfg_dc, "_stem_idx", stem_idx, force_add=True)
+                OmegaConf.update(cfg_dc, "_n_cfgs", n_cfgs, force_add=True)
                 try:
-                    process_fun(cfg_dc)
+                    result = process_fun(cfg_dc)
                     processed_pcids.append(pcid)
                     last_cfg = cfg_dc
+                    if result is not None:
+                        # CFG_FROM_ARGS (scan): result=DictConfig — no data processed
+                        collected.append((stem, str(yaml_path), result))
                 except FileNotFoundError as e:
                     lf.warning(
                         "[{}/{}] {}: source file missing ({}). Delete stale YAML",
@@ -348,7 +389,7 @@ def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs
                     failed_pcids.append(pcid)
     else:
         lf.info("No configs to run (available: {}, requested: {})", n_cfgs_existed, len(cfgs))
-    return processed_pcids, failed_pcids, last_cfg
+    return processed_pcids, failed_pcids, last_cfg, collected
 
 
 def sugar_expand_m(cfg_dict: dict[str, Any]) -> None:

@@ -83,9 +83,9 @@ class TestIntegrationDiscovery:
     def test_gen_metadata_discovers_probes(self, raw_dir, monkeypatch, n_probes, expected_pcids):
 
         _patch_discovery(monkeypatch, raw_dir, n_probes)
-        # Patch on the coefs object that config_yaml imported (module-level import)
         monkeypatch.setattr(
-            cfg_mod.coefs, "prep_cfg_for_probe",
+            cfg_mod,
+            "prep_cfg_for_probe",
             lambda pcid, *a, **kw: {"input": {"path": raw_dir / f"{pcid}.txt"}, "out": {}, "filter": {}},
         )
 
@@ -98,7 +98,7 @@ class TestIntegrationDiscovery:
 
         _patch_discovery(monkeypatch, raw_dir, 1)
         monkeypatch.setattr(
-            cfg_mod.coefs, "prep_cfg_for_probe",
+            cfg_mod, "prep_cfg_for_probe",
             lambda pcid, *a, **kw: {"input": {"path": raw_dir / f"{pcid}.txt"}, "out": {}, "filter": {}},
         )
 

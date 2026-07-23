@@ -4,11 +4,11 @@ Saves, loads, and validates per-file YAML configs in ``cfg_proc/run/``.
 """
 from datetime import datetime
 from pathlib import Path, PurePath
-from typing import Any, Dict, Iterator, Mapping, MutableMapping, Sequence, Tuple
+from typing import Any, Dict, Iterator, Mapping, MutableMapping, Sequence, Tuple, Optional
 from omegaconf import OmegaConf
 from itertools import chain
 from tcm import _constants, config, csv_load, format, metadata, paths, to_omegaconf, utils2init
-from tcm._xr import coefs
+from tcm.incl_calc.coefs import get_coefs_from_cfg
 
 lf = utils2init.LoggingStyleAdapter(__name__)
 
@@ -96,6 +96,13 @@ def sync_yamls_devmeta_and_hydra(dev_dir, dir_cfgs, cfgs: Dict[str, list[str]]):
     except FileNotFoundError:
         lf.debug("No info_devices.yaml/.json in {} — skipping time_ranges sync", dev_dir)
         return
+    except Exception:
+        lf.warning(
+            'Failed to load or parse "info_devices" metadata from {} — skipping time_ranges sync',
+            dev_dir,
+            exc_info=True,
+        )
+        return
 
     ry = _ry()
 
@@ -165,18 +172,15 @@ def _discover_tables(path: Path, table_pattern: str) -> list[str]:
     Patterns use glob semantics (same as text-file search in
     :func:`csv_load.search_csv_files`): ``*`` matches any characters,
     ``?`` matches one character, literal dots are escaped.
-    For example ``incl*`` matches both ``incl.05`` (HDF5) and ``incl_p05`` (NC).
+    Example: ``incl*`` matches both ``incl.05`` and ``incl_p05``.
 
-    For HDF5, uses ``pd.HDFStore.keys()``; for NC, uses ``h5py`` group
-    iteration.  Returns bare group names (no leading ``/``).  Raises
-    :exc:`ImportError` when the needed backend is not installed.
+    Returns: bare group names (no leading ``/``).
+    Raises :exc:`ImportError` when the needed backend is not installed.
     """
     import re
-
     from tcm.csv_load import _glob_to_regex
 
     re_pattern = re.compile(_glob_to_regex(table_pattern))
-
     suffix = path.suffix.lower()
     if suffix in _constants.hdf5_suffixes:
         if not _constants.TABLES_AVAILABLE:
@@ -190,6 +194,49 @@ def _discover_tables(path: Path, table_pattern: str) -> list[str]:
         with _constants._h5py.File(path, "r") as f:
             return [k for k in f.keys() if re_pattern.fullmatch(k)]
     return []
+
+
+def prep_cfg_for_probe(
+    pcid: str,
+    cfg_in_for_probes: Mapping[str, Any],
+    cfg_in_common: Mapping[str, Any],
+    cfg: Mapping[str, Any],
+    path_csv: Optional[Path] = None,
+) -> MutableMapping[str, Any]:
+    """Build probe-specific config with coefficients.
+
+    Differences from legacy ``cur_cfg = legacy.incl_calc.coefs.prep_cfg_for_probe``:
+    - No HDF5 raw-DB-as-coefs-source logic (handled separately).
+    - coefs_paths chain: explicit ``coefs_path`` → class default only.
+
+    :param pcid: Probe output Column ID (e.g. ``"i_01"``).
+    :param cfg_in_for_probes: per-probe overrides keyed by pcid.
+    :param cfg_in_common: input config common to all probes.
+    :param cfg: top-level config dict (``cfg["input"]``, ``cfg["out"]``, ``cfg["filter"]``).
+    :param path_csv: if set, overrides ``cfg1["input"]["path"]`` with the corrected CSV path.
+    :return: ``cfg1`` dict with keys ``input``, ``out``, ``filter``, and loaded coefs.
+    """
+
+    cfg_in = {**cfg_in_common.copy(), **cfg_in_for_probes.get(pcid, {})}
+
+    # Build coefs_paths: explicit coefs_path → class default → yaml_export dir.
+    # The yaml_export fallback lets ``dist/tcm_clc_txt`` packaging (without the
+    # bundled ``calibration.h5`` file) load coefs silently from exported YAMLs.
+    cfg_in["coefs"] = get_coefs_from_cfg(cfg_in, pcid)
+
+    # Override path with corrected CSV path if provided
+    if path_csv is not None:
+        cfg_in["path"] = path_csv
+
+    # Expand glob "incl*" to the concrete raw table name for this probe
+    if cfg_in.get("tables") and cfg_in["tables"][0] == "incl*":
+        cfg_in["tables"] = [format.pcid_to_raw_name(pcid)]
+
+    return {
+        "input": cfg_in,
+        "out": dict(cfg["out"]),
+        "filter": dict(cfg["filter"]),
+    }
 
 
 def gen_metadata(
@@ -243,7 +290,7 @@ def gen_metadata(
         for tbl in discovered:
             try:
                 pcid = format.to_pcid_from_name(tbl)
-                cfg1 = coefs.prep_cfg_for_probe(pcid, cfg_in_for_probes, cfg_in_common, cfg)
+                cfg1 = prep_cfg_for_probe(pcid, cfg_in_for_probes, cfg_in_common, cfg)
                 cfg1["input"]["tables"] = [tbl]
                 cfg1["out"]["dt_bins"] = cfg["out"].get("dt_bins", [0, 2, 600, 3600, 7200])
                 for del_field in [
@@ -281,7 +328,7 @@ def gen_metadata(
     ):
         try:
             # Configuration with coefficients for current input pcid
-            cfg1 = coefs.prep_cfg_for_probe(pcid, cfg_in_for_probes, cfg_in_common, cfg, path_csv=path_csv)
+            cfg1 = prep_cfg_for_probe(pcid, cfg_in_for_probes, cfg_in_common, cfg, path_csv=path_csv)
             if df_raw_edges is not None:
                 cfg1["input"]["time_ranges"] = [dt.isoformat() for dt in df_raw_edges.index]
 

@@ -10,8 +10,10 @@ Every run YAML starts with `# @package _global_` so Hydra merges it into the top
 
 | Field | Type | Default | Required | Purpose |
 |-------|------|---------|----------|---------|
-| `path` | `str` | — | **Yes** | File path, glob, or regex pattern. Interpreted as glob or regex automatically (see [Pattern interpretation](#pattern-interpretation)). **Auto‑generated** in per-probe YAMLs; points to corrected file when available. |
+| `path` | `str` | — | **Yes** | File path, glob, or regex pattern (CLI input). Interpreted as glob or regex automatically (see [Pattern interpretation](#pattern-interpretation)). **Inside per‑probe YAMLs** this field always stores the **resolved absolute path** to the concrete data file — never the user's glob/regex. When the CLI value is not a directory, it acts as a **filter**: only YAMLs whose stored resolved `input.path` filename matches the CLI pattern are processed. Re‑running with a different CLI pattern limits processing to YAMLs whose resolved paths match. |
 | `tables` | `List[str]` | `['incl.*']` | No | HDF5 table names (regex allowed). For CSV, set to the raw table name derived from pcid. |
+| `ids` | `List[str]` | `None` | No | Restrict processing to specific probe IDs (e.g. `[i01, i_p02]`). |
+| `yaml_path` | `str` | `None` | No | **Filter + skip-generation**: glob/regex pattern matched against run YAML stems in `cfg_proc/run/`. Accepts both bare stems (`@i_01`) and full filenames (`@i_01.yaml`). When set (any non‑`None` value), **config generation is skipped entirely** — only existing YAMLs matching the pattern are processed. `"*"` matches all. See [Config filtering](#config-filtering). |
 | `prefix` | `str` | `'I*[_0]'` | No | Filename prefix for CSV discovery. |
 | `text_type` | `str` | `None` | No | Column layout variant: `i`, `p`, `b`, `d`, `w`. Auto‑derived from filename model. See [Text type → column layout](#text-type--column-layout). |
 | `text_line_regex` | `str` | `None` | No | Override regex for raw text correction. |
@@ -45,6 +47,7 @@ Every run YAML starts with `# @package _global_` so Hydra merges it into the top
 |-----------|------|---------------|-----------------|
 | Invalid regex (compilation fails) | glob | `*[0bdp]*.txt` | `.*?[0bdp].*?\.txt` |
 | Valid regex, extension dot **unescaped** | glob | `file?.txt` | `file.\.txt` |
+| Valid regex with `|` or `(...)` wrapper | regex | `(a\|b).txt` | `(a\|b).txt` |
 | Valid regex, extension dot **escaped** (`\.`) | regex | `i.*\.txt` | `i.*\.txt` |
 | `path` is a directory | default regex `i.*\.txt` | `_raw/` | `i.*\.txt` |
 
@@ -57,6 +60,35 @@ independently — `@?i.*\.txt` and `i.*\.txt` produce identical results because 
 `@` prefix is stripped before pattern matching.
 
 See `how_it_works.md` (§Discovery) for the implementation in `csv_load._pattern_to_regex()`.
+
+### Config filtering
+
+Two parameters control which run YAMLs are processed, both using the same
+glob/regex auto-detection as `input.path` discovery.  The key distinction:
+**CLI values** may be patterns; **YAML stored values** are always resolved
+absolute paths to concrete data files.
+
+| Parameter | Source | Filters against | When set | Config generation |
+|-----------|--------|-----------------|----------|-------------------|
+| `input.path` (not directory) | CLI pattern (glob/regex/concrete) | YAML's resolved `input.path` **filename** | After generation, only YAMLs whose resolved path filename matches are kept | **Runs normally** — generates configs for source files matching the pattern |
+| `input.yaml_path` | CLI pattern (glob/regex) | YAML **filename stem** or **full name** (matches both `stem` and `stem.yaml`) | Only existing YAMLs whose stem matches are processed | **Skipped entirely** — no new configs are created |
+
+When both are set, both filters apply (AND logic): a config must match both
+`input.path` and `yaml_path` to be included.
+
+**Dry-run**: combine with `program.return_=<cfg_from_args>` to list matching
+configs without processing any data:
+
+```bash
+# List all configs (no generation, no processing)
+python scripts/tcm_clc.py "_raw" input.yaml_path="*" program.return_=<cfg_from_args>
+
+# List configs matching a data file pattern (generation runs, then filter)
+python scripts/tcm_clc.py "_raw/@i_p5*.TXT" program.return_=<cfg_from_args>
+
+# List configs matching a YAML stem pattern (no generation)
+python scripts/tcm_clc.py "_raw" input.yaml_path="*@i_p5*" program.return_=<cfg_from_args>
+```
 
 ## `input.coefs` — Calibration coefficients
 

@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 from omegaconf import OmegaConf
 
-from tcm import _constants, config, to_omegaconf, utils2init
+from tcm import _constants, config, format, to_omegaconf, utils2init
 from tcm._xr import coefs as _xr_coefs
 
 lf = utils2init.LoggingStyleAdapter(__name__)
@@ -188,6 +188,15 @@ def load_coefs(store, tbl: str):
 def get_coefs(
     coefs_paths: Sequence, tbl: str, coefs_ovr: Optional[Mapping[str, Any]] = None
 ) -> Dict[str, Any]:
+    """
+    merge logic + converts YAML list values to numpy arrays.
+
+    :param coefs_paths: _description_
+    :param tbl: _description_
+    :param coefs_ovr: _description_, defaults to None
+    :raises ValueError: _description_
+    :return: _description_
+    """
 
     # Normalize dataclass → dict (coefs_ovr may come from config.ConfigInCoefs_InclProc)
     if is_dataclass(coefs_ovr) and not isinstance(coefs_ovr, type):
@@ -264,7 +273,12 @@ def get_coefs(
                 }
             )
             if _new_from_file:
-                lf.debug("Loaded {} new coefs from {}: {}", len(_new_from_file), coefs_load_src, sorted(_new_from_file))
+                lf.debug(
+                    "Loaded {} new coefs from {}: {}",
+                    len(_new_from_file),
+                    coefs_load_src,
+                    sorted(_new_from_file),
+                )
             else:
                 lf.debug("All coefs from {} already in overrides", coefs_load_src)
             coefs_load_dates = coefs_load.get("dates", coefs_ovr_dates)
@@ -282,7 +296,9 @@ def get_coefs(
 
     if coefs_load:
         coefs_load = {
-            k: np.asarray(v, dtype=np.float64) if (isinstance(v, list) and v is not None and k != "dates") else v
+            k: np.asarray(v, dtype=np.float64)
+            if (isinstance(v, list) and v is not None and k != "dates")
+            else v
             for k, v in coefs_load.items()
         }
 
@@ -294,19 +310,6 @@ def get_coefs(
     if out_dates:
         coefs_load["date"] = max(out_dates)
     return coefs_load
-
-
-def get_coefs_from_cfg(cfg_in, pcid: str) -> Dict[str, Any]:
-    """
-    Simplified wrapper: load coefs from config only (no HDF5 paths).
-    All coefficients must be defined in cfg_in['coefs'] (YAML config).
-    """
-    coefs_ovr = cfg_in.get("coefs", {})
-    return get_coefs(
-        coefs_paths=[],
-        tbl=format.pcid_to_raw_name(pcid),
-        coefs_ovr=coefs_ovr,
-    )
 
 
 def coefs_format_for_h5(coef: Mapping[str, Any], pcid: str = None, date: Optional[str] = None):
@@ -344,6 +347,38 @@ def coefs_format_for_h5(coef: Mapping[str, Any], pcid: str = None, date: Optiona
     }
 
 
-# ---------------------------------------------------------------------------
-# Probe-level config builders (moved from _dask_legacy/processing.py)
-# ---------------------------------------------------------------------------
+def get_coefs_from_cfg(cfg_in: dict, pcid: str) -> dict:
+    """Resolve coefficients: ``coefs_path`` file → ``input.coefs`` override.
+    1. Build a ``coefs_paths`` fallback chain:
+    explicit ``coefs_path`` from YAML → class-default HDF5 path → sibling "yaml_export/" dir.
+    2. merge logic + converts YAML list values to numpy arrays
+
+    The "yaml_export/" dir should have same coefficients as in default HDF5 path to be used silently in the
+    environments without hdf5 support
+
+    :param cfg_in: ``cfg.input`` as a plain dict.
+    :param pcid: probe column ID (e.g. ``"i_01"``).
+    :return: merged coefficients dict with array values as numpy ndarrays.
+    """
+    coefs_paths: list = []
+    if cp := cfg_in.get("coefs_path"):
+        coefs_paths.append(cp)
+    if (cp_default := config.ConfigIn_InclProc.coefs_path) and cp_default not in coefs_paths:
+        coefs_paths.append(cp_default)
+        if (yaml_dir := Path(cp_default).parent / "yaml_export") not in coefs_paths:
+            coefs_paths.append(yaml_dir)
+    coefs_ovr = cfg_in.get("coefs") or None
+    cfg_in_coefs = get_coefs(
+        coefs_paths,
+        tbl=format.pcid_to_raw_name(pcid),
+        coefs_ovr=coefs_ovr,
+    )
+    date_str = (coefs_ovr or {}).get("date", "N/A")
+    lf.info(
+        "Coefs for {}: paths={}, date={}, {} override keys",
+        pcid,
+        coefs_paths,
+        date_str,
+        len(coefs_ovr) if coefs_ovr else 0,
+    )
+    return cfg_in_coefs

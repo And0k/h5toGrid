@@ -3,7 +3,6 @@ from .coefs import (
     coefs_format_for_h5,
     get_coef_azimuth_shift,
     get_coefs,
-    get_coefs_from_cfg,
     load_coefs,
     mag_dec
 )
