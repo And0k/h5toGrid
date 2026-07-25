@@ -6,7 +6,7 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 from tcm import _constants
-from tcm.cli import DEFAULT_GLOB, parse_data_path
+from tcm.cli import parse_data_path
 from tcm.config_yaml import has_run_yamls
 
 
@@ -18,19 +18,25 @@ class TestParseDataPath:
         ("argv", "expected_posix", "expected_remaining_len"),
         [
             pytest.param(["prog", "_raw/*i*.txt", "--multirun", "run=glob(*)"], "_raw/*i*.txt", 3, id="positional-first"),
-            pytest.param(["prog", "--multirun", "run=glob(*)"], "_raw/*I*.txt", 3, id="default-glob"),
             pytest.param(["prog", "some/path", "program.return_=generate"], "some/path", 2, id="with-override"),
         ],
     )
     def test_parse_data_path(self, argv, expected_posix, expected_remaining_len):
         path_in, remaining = parse_data_path(argv)
+        assert path_in is not None
         assert PurePosixPath(expected_posix) == PurePosixPath(path_in.as_posix())
         assert remaining[0] == argv[0]
         assert len(remaining) == expected_remaining_len
 
-    def test_no_positional_uses_default(self):
+    def test_no_positional_returns_none(self):
+        """No positional arg → path_in is None (caller applies DEFAULT_GLOB if needed)."""
+        path_in, remaining = parse_data_path(["prog", "--multirun", "run=glob(*)"])
+        assert path_in is None
+        assert len(remaining) == 3
+
+    def test_no_positional_with_key_value_returns_none(self):
         path_in, remaining = parse_data_path(["prog", "key=val", "--flag"])
-        assert PurePosixPath(DEFAULT_GLOB) == PurePosixPath(path_in.as_posix())
+        assert path_in is None
         assert len(remaining) == 3
 
     @pytest.mark.parametrize(

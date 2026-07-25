@@ -555,25 +555,17 @@ class TestStoreProcessedIncremental:
 class TestNcGroupRoundTrip:
     """_write_dataset_to_nc_group / _read_nc_group_as_dataset round-trip."""
 
-    def test_basic_roundtrip(self, tmp_path):
-        """Write then read back via h5py preserves data."""
+    def test_basic_roundtrip_and_dtype(self, tmp_path):
+        """Write then read back via h5py preserves data; time is datetime64[ns]."""
         ds = _make_ds(50)
         nc_path = tmp_path / "test.nc"
         _write_dataset_to_nc_group(ds, nc_path, "test_grp")
         with h5py.File(nc_path, "r") as f:
             result = _read_nc_group_as_dataset(f, "test_grp")
         assert result.sizes["time"] == 50
+        assert result["time"].dtype == np.dtype("datetime64[ns]")
         np.testing.assert_allclose(result["Ax"].values, ds["Ax"].values)
         np.testing.assert_array_equal(result["time"].values, ds["time"].values)
-
-    def test_time_is_datetime64_after_read(self, tmp_path):
-        """Time coordinate read back is datetime64[ns] (not int64)."""
-        ds = _make_ds(10)
-        nc_path = tmp_path / "test.nc"
-        _write_dataset_to_nc_group(ds, nc_path, "g")
-        with h5py.File(nc_path, "r") as f:
-            result = _read_nc_group_as_dataset(f, "g")
-        assert result["time"].dtype == np.dtype("datetime64[ns]")
 
     def test_string_vars(self, tmp_path):
         """String data variables survive round-trip."""

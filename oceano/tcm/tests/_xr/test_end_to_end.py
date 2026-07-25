@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from pathlib import Path
-from tempfile import mkdtemp
 
 import numpy as np
 import pytest
@@ -31,8 +29,7 @@ def _make_sensor_data(n: int = 10, tilt_deg: float = 10.0, heading_deg: float = 
 class TestEndToEnd:
     def test_full_sensor_data(self, sensor_ds, identity_coefs, tmp_path):
         """sensor_ds → run(dt=0) → netCDF roundtrip."""
-        tmpdir = Path(mkdtemp())
-        nc_path = tmpdir / "output.nc"
+        nc_path = tmp_path / "output.nc"
 
         results = run(
             sensor_ds,
@@ -51,10 +48,9 @@ class TestEndToEnd:
 
         # netCDF file exists and roundtrips
         assert nc_path.exists()
-        loaded = xr.open_dataset(nc_path)
-        for var in ds.data_vars:
-            np.testing.assert_allclose(
-                loaded[var].values, ds[var].values, atol=1e-10,
-                err_msg=f"Roundtrip mismatch for '{var}'",
-            )
-        loaded.close()
+        with xr.open_dataset(nc_path) as loaded:
+            for var in ds.data_vars:
+                np.testing.assert_allclose(
+                    loaded[var].values, ds[var].values, atol=1e-10,
+                    err_msg=f"Roundtrip mismatch for '{var}'",
+                )

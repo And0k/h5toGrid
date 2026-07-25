@@ -10,10 +10,12 @@ thread.  No custom CLI parsing — Hydra handles all config keys natively via
 |------|---------|
 | `app.py` | Tk root, layout §1–5, 300 ms polling, argv prefill |
 | `worker.py` | Background thread: `call_in_raw_dir` for Scan and Run |
-| `coef_sheet.py` | tksheet treeview for per-config coefficient editing |
+| `coef_sheet.py` | tksheet treeview: type-aware widgets (checkbox/dropdown/align), node + metadata bg; row-geometry-free styling via `_row_map()` |
+| `_cell_spec.py` | Hydra dataclass → ``CellSpec`` (bool/enum/text/number/date) for cell rendering |
 | `progress_bridge.py` | `GuiTqdm` (tqdm replacement) + module-level runtime injection |
-| `log_bridge.py` | `QueueHandler` (consecutive dedup) → `ScrolledText` drain |
-| `runtime.py` | Shared state: queues, `ProgressState`, `PauseGate` |
+| `log_bridge.py` | `install()` once at App startup → root logger captures GUI-thread AND worker logs → `QueueHandler` (consecutive dedup + emit-time text freeze) → `ScrolledText` drain |
+| `_rtf_clipboard.py` | `Ctrl+C` on log → RTF + plain text on clipboard (colors preserved) |
+| `runtime.py` | Shared state: queues, `ProgressState`, `PauseGate`, persistent `queue_handler` reference |
 
 ## Data flow
 
@@ -67,19 +69,68 @@ Click Run while processing → PauseGate
 | Decision | Why |
 |---|---|
 | `hydra_main` in thread, not Compose API | logging, resolvers, runtime state require `@hydra.main` |
-| QueueHandler inside `_wrap(fun)` | Hydra `dictConfig` resets handlers; inject after |
+| `QueueHandler` installed once at App startup; re-attached in `_wrap` after Hydra `dictConfig` | Hydra's ``logging.config.dictConfig`` replaces **all** root handlers with ``[console, file]`` each worker task, removing the ``QueueHandler`` from root.  ``_wrap.wrapped`` (running *after* dictConfig) re-adds it so both worker-thread and GUI-main-thread logs (e.g. ``_reload_coefs`` triggered by treeview interaction) reach the ScrolledText.  ``reset_dedup()`` per task prevents the first record of a new task from being swallowed as a "duplicate" of the previous task's tail |
 | `_runtime` is module-level, not `threading.local` | `TqdmCallback` creates `GuiTqdm` in dask worker threads |
 | `return_="<cfg_from_args>"` for Scan | pipeline does discovery + gen_metadata, returns configs without processing |
 | `input.yaml_path` for Run | documented regex filter, skip discovery, only selected configs |
 | `_run` uses minimal `sys.argv` | YAML files are sole config source; `original_argv` overrides not re-applied |
 | `PauseGate` in log + tqdm, not pipeline | pipeline code untouched; pause on next tick |
-| `_COEF_SHAPES` dict in coef_sheet | single source for tree structure; `None` → empty cells by shape |
-| `meta_date_cols` explicit, not `_is_date` | metadata dates override alignment; `_is_date` only in edit validation |
-| dirty tracking via `_snap` tuple in ConfigSheet | snapshot `(coefs, dates, path)` after load; `is_dirty` compares current vs snap |
+| `_COEF_SHAPES` dict in coef_sheet | single source for tree dimension; `None` → empty cells by shape |
+| `meta_date_cols` explicitly, not `_is_date` | metadata dates override alignment; `_is_date` only in edit validation |
+| `_meta[iid]["path"]` — dotted Hydra path | `_ins()` computes `parent_path + "." + text`; array children override with explicit correct paths (e.g. `input.coefs.Ag[0]`, not doubled `input.coefs.Ag.Ag[0]`) |
+| `_meta[iid]["parent"]` backlink | set in `_ins()` from `parent_iid`; enables `_node_at_default` recursive walk |
+| **Two-row system** — internal vs display | `_row_map()` → **internal** rows (all items, even collapsed) for cell-API calls ;  `_walk_visible()` → **display** rows (collapsed items compressed out) for event decoding |
+| `_row_map()` → `get_row_from_iid` / fallback walk | When `get_row_from_iid` fails, walks ALL items (depth-first) — used for API calls that don't know about collapse |
+| `_walk_visible()` → visible-only DFS | `sh.get_children` with `_meta["open"]` check; collapsed subtrees yield no rows; used by `_iid_at_row` + `_apply_styles` node-fg updates |
+| open-state bookkeeping ; `_item_hook` wraps `sh.item()` | tksheet 7.6's getter doesn't expose `"open"` key; every `open_` set call (ours + tksheet arrow toggles) is recorded in `_meta[iid]["open"]` |
+| `_iid_at_row(r)` = visible-only lookup | `next(islice(_walk_visible(), r, r+1))` — O(1) seek via `itertools.islice`; ignores collapsed children |
+| gray foreground for default values | `_apply_default_fg()` → `_default_for_cell(iid,m,j)` → `_CFG_DEFAULTS` via `_default_for_path`; works for ALL config sections (input, out, filter, program), not just coefs |
+| `_default_for_cell` rejects dict results | non-leaf paths (e.g. `"input"`) return `_NO_DEFAULT`; `input`-type cells append `.path` to resolve the input.path field |
+| `_fg_default` — theme foreground color | resolved once from `TFrame` foreground via `_resolve_bg`; applied explicitly (never `fg=None`, which is a per-key merge no-op in tksheet 7.x) |
+| **Blue node labels** → subtree unchanged | `_node_at_default(id)` recurs: every leaf value matches its config dataclass default; `_BLUE_FG = "#0055CC"` on index canvas |
+| `_on_end_edit` → cascade toggle | Gray/clear fg per cell **+** walk ancestral tree labels (blue/standard); `_fg_default` used for clear side (not `fg=None`) |
+| dirty tracking via `_data_snapshot` | `tuple(tuple(str(val) for val in row) for row in sheet)` covers ALL editable cells (not just coefs); `is_dirty` compares current vs snap |
 | `"*"` on tab title (300 ms poll) | visual feedback for unsaved edits; removed by `mark_clean()` after write |
 | `_write_coefs` skips clean tabs | avoids redundant timestamped backups identical to existing YAML |
 | `_clear_log` on scan/run start | prevents cross-operation message accumulation in ScrolledText |
-| `QueueHandler` consecutive dedup | drops records with identical `(funcName, message)` in a row |
+| `QueueHandler` consecutive dedup | drops equivalent records (same msg at same call site), registered by `funcName+msg` key.  **freezes** the rendered text onto the `LogRecord` (`rec.msg = text; rec.args = ()`) at emit time so deferred `drain`-time `getMessage()` cannot be corrupted by the mutable `Message` reused across log calls in `LoggingStyleAdapter`.  Mirrors Hydra's `job_logging/colorlog` formatter, which renders `record.getMessage()` once synchronously. |
+| `Ctrl+C` → RTF + plain on clipboard | `_rtf_clipboard.copy_rich` serializes tag-colored `ScrolledText`; pywin32 absent → plain fallback |
+| `config.Config` + `config.Return` passed to `load()` | structured-config root + `StrEnum` for `program.return_` dropdown |
+| `_cell_spec_for` → bool/enum/text/number | walks dataclass tree via `_spec_for_path`; `bool` → checkbox, `Enum` → dropdown, `str`/`Path` → left-align |
+| node column bg = header bg | `highlight_cells(canvas="index")` in `_apply_styles`; same `#F0F0F0` as header |
+| metadata row bg up to last date cell | all cells from col 0 through last `meta_date_cols` entry share the bg |
+| ordering `_apply_open()` → `_row_map()` → `_apply_styles()` → `_apply_default_fg()` | invariant: build tree → set open states → compute row map → apply styles → gray defaults → redraw |
+| `date` independent of `max_col` | coefs parent has `max_col=0`; styling in dedicated section before `max_col` loop |
+
+## Type-aware cell rendering (full mode)
+
+When `Shift` is held at startup, `ConfigSheet.load()` receives the full
+`Config` dataclass as `config_root`.  Each cell's type is resolved via
+`_cell_spec._spec_for_path(config_root, path, Return)`:
+
+| CellSpec.kind | Rendering | Example fields |
+|---|---|---|
+| `"bool"` | tksheet checkbox | `program.b_interact`, `out.b_incremental_update` |
+| `"enum"` | tksheet dropdown | `program.return_` (7 `Return` values) |
+| `"text"` | left-aligned | `input.path`, `out.text_path`, `program.log` |
+| `"number"` | right-aligned (default) | `input.azimuth_add`, coefs matrices |
+| `"date"` | right-aligned | `datetime` fields |
+
+The `path` stored in `_meta[iid]["path"]` is the dotted Hydra path (e.g.
+`"program.return_"`, `"out.dt_bins"`).  Resolution walks the dataclass
+tree using `dataclasses.fields` + `get_type_hints(include_extras=True)`.
+`Annotated`, `Optional`, and `Union` are unwrapped by `_cell_spec._unwrap`.
+
+## Rich-text clipboard (Ctrl+C)
+
+`Ctrl+C` on the log `ScrolledText` calls `copy_rich` from
+[`_rtf_clipboard.py`](`_rtf_clipboard.py`), which walks all tag boundaries,
+maps each tag's `foreground` to an 8-bit RGB via `winfo_rgb`, and emits a
+single `{\cfN …}` segment per slice into an RTF `\\colortbl`.
+Both `CF_UNICODETEXT` (plain, fallback target) and `CF_RTF` are placed on the
+clipboard so Word / Outlook keep colors while plain-text targets degrade
+gracefully.  When `pywin32` is unavailable, falls back to
+`widget.clipboard_append(plain)`.
 
 ## Pipeline patches (minimal)
 

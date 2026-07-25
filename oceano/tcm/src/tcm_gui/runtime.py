@@ -1,5 +1,6 @@
 """Shared state: queues, progress snapshots, pause gate."""
 from __future__ import annotations
+
 import threading
 from dataclasses import dataclass, field
 from queue import Queue
@@ -47,3 +48,7 @@ class Runtime:
     progress_overall: ProgressState = field(default_factory=ProgressState)
     progress_stage:   ProgressState = field(default_factory=ProgressState)
     pause_gate:       PauseGate     = field(default_factory=PauseGate)
+    # QueueHandler installed once at GUI startup on the root logger so log
+    # records from GUI callbacks (main thread) AND worker tasks (background
+    # thread) both reach the ScrolledText.  Worker resets dedup state per task.
+    queue_handler: QueueHandler | None = field(default=None, repr=False)  # noqa: F821

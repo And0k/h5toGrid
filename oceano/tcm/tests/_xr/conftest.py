@@ -31,6 +31,8 @@ def _auto_use_h5_set():
     _constants.use_h5_set(True if _constants.H5_AVAILABLE else None)
     yield
     _constants.use_h5_set(None)  # reset to unresolved
+    import gc
+    gc.collect()  # force HDF5 C-object cleanup while handles are still valid
 
 
 # --------------------------------------------------------------------------- #

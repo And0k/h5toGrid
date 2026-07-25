@@ -55,7 +55,7 @@ _TCM_DEFAULT_GLOB_PATTERN = "*I*.txt"
 DEFAULT_GLOB = f"{config.RAW_DIR_NAME}/{_TCM_DEFAULT_GLOB_PATTERN}"
 
 
-def parse_data_path(argv: list[str]) -> tuple[Path, list[str]]:
+def parse_data_path(argv: list[str]) -> tuple[Optional[Path], list[str]]:
     """Extract first positional arg (data path) from ``argv``, handling commas.
 
     Positional = non-flag, non-``key=value`` argument.  Consecutive positional
@@ -66,8 +66,10 @@ def parse_data_path(argv: list[str]) -> tuple[Path, list[str]]:
 
     :param argv: ``sys.argv``-style list (includes script name at index 0).
     :returns: ``(path_in, remaining_argv)`` where ``remaining_argv`` has the
-        consumed positional span stripped.  Falls back to :data:`DEFAULT_GLOB`
-        when no non-flag, non-``key=value`` argument is found.
+        consumed positional span stripped.  Returns ``None`` for *path_in*
+        when no non-flag, non-``key=value`` argument is found — callers
+        that need a concrete path should apply :data:`DEFAULT_GLOB` as
+        fallback (see :func:`call_in_raw_dir`).
     """
     remaining = list(argv)
 
@@ -81,7 +83,7 @@ def parse_data_path(argv: list[str]) -> tuple[Path, list[str]]:
         segments.append(arg)
 
     if not segments:
-        return Path(DEFAULT_GLOB), remaining  # No positional found — use default
+        return None, remaining  # No positional found — caller applies fallback
 
     # Remove consumed segments from remaining argv
     for seg in segments:
@@ -286,6 +288,8 @@ def call_in_raw_dir(fun, yaml_path: Optional[Path] = None, **kwargs) -> Any:
             path_in = Path(hydra_main_kwargs["overrides"]["input"]["path"])
         except (KeyError, AttributeError, TypeError):
             path_in, remaining_argv = parse_data_path(sys.argv)
+            if path_in is None:
+                path_in = Path(DEFAULT_GLOB)  # CLI fallback when no positional arg
             path_in = path_in.resolve() if not path_in.is_absolute() else path_in
         else:
             # overrides dict provided path — keep sys.argv as-is (Worker

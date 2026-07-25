@@ -58,16 +58,11 @@ class TestStoreRaw:
 
 @pytest.mark.xr
 class TestStoreProcessed:
-    def test_write_mode(self, tmp_path):
-        """mode='w' creates a new file."""
-        path = tmp_path / "proc.nc"
-        store_processed(_sample_ds(), path, mode="w")
-        assert path.exists()
-
-    def test_append_mode(self, tmp_path):
-        """mode='a' appends variables to existing file."""
+    def test_write_and_append_mode(self, tmp_path):
+        """mode='w' creates file; mode='a' appends variables."""
         path = tmp_path / "proc.nc"
         store_processed(_sample_ds().drop_vars("Ay"), path, mode="w")
+        assert path.exists()
         store_processed(_sample_ds().drop_vars("Ax"), path, mode="a")
         with xr.open_dataset(path) as loaded:
             assert "Ax" in loaded and "Ay" in loaded
@@ -196,7 +191,7 @@ class TestEnsureDimScales:
             assert loaded.sizes["time"] == 30
             assert set(loaded.data_vars) == {"Ax", "Ay"}
     def test_open_without_chunks(self, tmp_path):
-        """Basic open returns Dataset."""
+        """Basic open returns Dataset with expected vars."""
         path = tmp_path / "proc.nc"
         store_processed(_sample_ds(), path)
         with xr.open_dataset(path) as loaded:
@@ -237,20 +232,14 @@ class TestIncrementalSkip:
 class TestStoreProcessedGrouped:
     """store_processed with group= writes per-probe groups."""
 
-    def test_write_to_group(self, tmp_path):
-        """Writing with group= stores data in NC4 group."""
-        path = tmp_path / "proc.nc"
-        store_processed(_sample_ds(), path, group="i_01", mode="w")
-        with xr.open_dataset(path, group="i_01", engine="netcdf4") as loaded:
-            assert set(loaded.data_vars) == {"Ax", "Ay"}
-
-    def test_multiple_groups_in_one_file(self, tmp_path):
-        """Two probes can share one file via groups."""
+    def test_write_to_group_and_multiple_groups(self, tmp_path):
+        """Writing with group= stores data in NC4 group; two probes can share one file."""
         path = tmp_path / "proc.nc"
         store_processed(_sample_ds(10), path, group="i_01", mode="w")
         store_processed(_sample_ds(20), path, group="i_02", mode="a")
         with xr.open_dataset(path, group="i_01", engine="netcdf4") as g1, \
              xr.open_dataset(path, group="i_02", engine="netcdf4") as g2:
+            assert set(g1.data_vars) == {"Ax", "Ay"}
             assert g1.sizes["time"] == 10
             assert g2.sizes["time"] == 20
 
@@ -504,22 +493,18 @@ class TestStoreWithTzAwareDatetime:
             np.testing.assert_array_equal(loaded["Ax"].values, ds["Ax"].values)
 
     def test_store_processed_tz_utc(self, tmp_path):
-        """store_processed succeeds with UTC-aware time."""
-        ds = _sample_ds_tz_utc()
-        path = tmp_path / "proc_tz.nc"
-        store_processed(ds, path)
-        assert path.exists()
-        with xr.open_dataset(path) as loaded:
-            np.testing.assert_array_equal(loaded["Ax"].values, ds["Ax"].values)
-
-    def test_store_processed_group_tz_utc(self, tmp_path):
-        """store_processed with group= succeeds with UTC-aware time."""
-        ds = _sample_ds_tz_utc()
-        path = tmp_path / "proc_grp_tz.nc"
-        store_processed(ds, path, group="i_01", mode="w")
-        assert path.exists()
-        with xr.open_dataset(path, group="i_01", engine="netcdf4") as loaded:
-            np.testing.assert_array_equal(loaded["Ax"].values, ds["Ax"].values)
+        """store_processed + group= succeed with UTC-aware time."""
+        ds_root = _sample_ds_tz_utc()
+        ds_grp = _sample_ds_tz_utc()
+        path_root = tmp_path / "proc_tz.nc"
+        path_grp = tmp_path / "proc_grp_tz.nc"
+        store_processed(ds_root, path_root)
+        store_processed(ds_grp, path_grp, group="i_01", mode="w")
+        assert path_root.exists() and path_grp.exists()
+        with xr.open_dataset(path_root) as loaded:
+            np.testing.assert_array_equal(loaded["Ax"].values, ds_root["Ax"].values)
+        with xr.open_dataset(path_grp, group="i_01", engine="netcdf4") as loaded:
+            np.testing.assert_array_equal(loaded["Ax"].values, ds_grp["Ax"].values)
 
     def test_roundtrip_tz_utc_preserves_data(self, tmp_path):
         """Write-read roundtrip with tz-aware input preserves variable values."""

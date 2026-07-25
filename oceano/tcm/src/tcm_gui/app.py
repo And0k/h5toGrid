@@ -14,8 +14,10 @@ from omegaconf import OmegaConf
 
 from tcm import cli, config, config_yaml, format, incl_calc
 
+from ._browse_button import BrowseButtonManager
+from ._rtf_clipboard import copy_rich
 from .coef_sheet import ConfigSheet
-from .log_bridge import FUNC_COLOR, TAG_COLORS, drain
+from .log_bridge import FUNC_COLOR, TAG_COLORS, drain, install
 from .runtime import Runtime
 from .worker import Worker
 
@@ -24,10 +26,11 @@ def _default_cfg() -> dict:
     """Return a plain dict with all ``config.ConfigIn_InclProc`` defaults wrapped as ``input`` section."""
     return {"input": OmegaConf.to_container(OmegaConf.structured(config.ConfigIn_InclProc()), resolve=True)}
 
+
 def _shift_at_startup() -> bool:
     try:
         return bool(ctypes.windll.user32.GetAsyncKeyState(0x10) & 0x8000)
-    except Exception:
+    except (AttributeError, OSError):
         return False
 
 
@@ -39,6 +42,13 @@ class App:
         self.root.title("TCM")
         self.root.geometry("1100x800")
         self.rt = Runtime()
+        # Install the QueueHandler on the root logger once, for the lifetime
+        # of the app, so log calls from the GUI main thread (e.g.
+        # ``_reload_coefs`` triggered by treeview/cell interactions) reach
+        # ``rt.log_queue`` → ScrolledText.  Worker's ``_wrap.wrapped``
+        # re-attaches it after Hydra's ``dictConfig`` replaces root handlers,
+        # so worker-thread logs also reach the queue.
+        self.rt.queue_handler = install(self.rt.log_queue, self.rt.pause_gate)
         self.wk = Worker(self.rt)
         self._pages: dict[str, ConfigSheet] = {}
         self._yaml_paths: dict[str, Path] = {}
@@ -57,9 +67,11 @@ class App:
 
         self._build()
         self._add_page("(default)", _default_cfg())
-        # Prefill path entry from CLI args (same extraction as call_in_raw_dir)
+        # Prefill path entry from CLI args — only when user explicitly provided one.
+        # parse_data_path returns None when no positional arg is found (e.g.
+        # ``python -m tcm_gui`` without a data path), so the GUI starts empty.
         path_in, _ = cli.parse_data_path(self._original_argv)
-        if path_in:
+        if path_in is not None:
             self._path_var.set(str(path_in))
             self.root.after(100, self._scan)
         self._poll()
@@ -105,6 +117,7 @@ class App:
         for lvl, clr in TAG_COLORS.items():
             self._log.tag_configure(lvl, foreground=clr)
         self._log.tag_configure("func", foreground=FUNC_COLOR)
+        self._log.bind("<Control-c>", lambda _: (copy_rich(self._log), "break")[1])
 
         # §5 Status bar
         f4 = ttk.Frame(r)
@@ -126,14 +139,12 @@ class App:
             except tk.TclError:
                 pass  # кнопка уничтожена
 
-
     def _mk_browse(self, parent, cmd) -> ttk.Button:
         """Единая фабрика Browse-кнопок: регистрация + текст по Shift."""
         b = ttk.Button(parent, text="Files…" if self._shift_held else "Dir…")
         self._browse_btns.append(b)
         b.bind("<Button-1>", lambda e: cmd())
         return b
-
 
     def _on_browse_input(self) -> None:
         if self._shift_held:
@@ -144,7 +155,6 @@ class App:
             if d := filedialog.askdirectory(title="Data directory"):
                 self._path_var.set(d)
                 self._scan()
-
 
     def _browse_input(self, files: bool = False) -> None:
         if files:
@@ -170,7 +180,6 @@ class App:
             names.append(f"{stem}[.]{ext}" if dot else name)
         return f"{parent.as_posix()}/({'|'.join(names)})"
 
-
     def _scan(self) -> None:
         if self._path_var.get().strip():
             self._clear_log()
@@ -182,56 +191,26 @@ class App:
         frame = ttk.Frame(self.nb)
         self.nb.add(frame, text=stem)
         self._tab_of[stem] = frame
-        # §2.1 coefs_path
-        fcp = ttk.Frame(frame)
-        fcp.pack(fill="x", padx=2, pady=2)
-        fcp.columnconfigure(0, weight=1)
-        cp_var = tk.StringVar(value=cfg.get("input", {}).get("coefs_path", ""))
-        cpe = ttk.Entry(fcp, textvariable=cp_var)
-        cpe.grid(row=0, column=0, sticky="ew")
-        cpe.bind("<Return>", lambda ev: self._reload_coefs(stem, cp_var))
-        cpe.bind("<FocusOut>", lambda _: self._reload_coefs(stem, cp_var))
-        self._mk_browse(fcp, lambda: self._on_browse_coefs(stem, cp_var)) \
-            .grid(row=0, column=1, padx=(4, 0))
 
-        # §2.2 tksheet
         cs = ConfigSheet(frame)
         cs.sh.pack(fill="both", expand=True, padx=2, pady=2)
-        cs.load(cfg, full=self._full_mode)
+        cs._mgr = BrowseButtonManager(
+            cs.sh,
+            on_path_changed=lambda path: self._set_coefs_and_reload(stem, path),
+        )
+        cs.load(cfg, full=self._full_mode, config_root=config.Config, return_enum=config.Return)
         self._pages[stem] = cs
 
-    def _on_browse_coefs(self, stem: str, cp_var: tk.StringVar) -> None:
-        if self._shift_held:
-            if paths := filedialog.askopenfilenames(
-                title="Coefficient files", filetypes=[("Coefs", "*.h5 *.nc *.yaml *.yml"), ("All", "*.*")]
-            ):
-                cp_var.set(",".join(paths))
-        else:
-            if d := filedialog.askdirectory(title="Coefficients directory"):
-                cp_var.set(d)
-        self._reload_coefs(stem, cp_var)
-
-    def _browse_coefs(self, stem: str, cp_var: tk.StringVar, files: bool) -> None:
-        if files:
-            if paths := filedialog.askopenfilenames(
-                    title="Coefficient files",
-                    filetypes=[("Coefs", "*.h5 *.nc *.yaml *.yml"), ("All", "*.*")]
-            ):
-                cp_var.set(",".join(paths))
-        else:
-            if d := filedialog.askdirectory(title="Coefficients directory"):
-                cp_var.set(d)
-        self._reload_coefs(stem, cp_var)
-
-
-    def _reload_coefs(self, stem: str, cp_var: tk.StringVar) -> None:
+    def _set_coefs_and_reload(self, stem: str, coefs_path: str) -> None:
+        """Called from ConfigSheet when ``input.coefs_path`` cell changes."""
         cs = self._pages.get(stem)
-        if not cs or not (p := cp_var.get().strip()):
+        if not cs or not coefs_path.strip():
             return
         tbl = format.pcid_to_raw_name(format.stem_to_pcid(stem))
-        cfg = cs._cfg
-        cfg.setdefault("input", {})["coefs"] = incl_calc.coefs.get_coefs(p.split(","), tbl)
-        cs.load(cfg, full=self._full_mode)
+        coefs = incl_calc.coefs.get_coefs(coefs_path.split(","), tbl)
+        cs._cfg.setdefault("input", {})["coefs"] = coefs
+        cs._cfg.setdefault("input", {})["coefs_path"] = coefs_path
+        cs.load(cs._cfg, full=self._full_mode, config_root=config.Config, return_enum=config.Return)
 
     # ── §3 Run / Pause / Resume ─────────────────────────────────────
 
@@ -289,12 +268,11 @@ class App:
                 self.nb.tab(frame, text=desired)
 
     def _poll_logs(self) -> None:
-        at_bottom = self._log.yview()[1] > 0.99   # до вставки
+        at_bottom = self._log.yview()[1] > 0.99  # до вставки
         self._log.config(state="normal")
         if drain(self.rt.log_queue, self._log) and at_bottom:
-            self._log.see("end")                   # только если был внизу
+            self._log.see("end")  # только если был внизу
         self._log.config(state="disabled")
-
 
     def _poll_progress(self) -> None:
         cur, tot, desc = self.rt.progress_stage.snapshot()
@@ -332,8 +310,16 @@ class App:
         self._yaml_paths.clear()
         self._tab_of.clear()
         for stem, yp, cfg_dc in result[3]:
+            cfg = OmegaConf.to_container(cfg_dc, resolve=True)
+            # Strip the technical ``CFG_FROM_ARGS`` sentinel injected by
+            # ``worker._scan`` for early-exit — it is not a user config value.
+            # Restore the real default so the dropdown shows the value that
+            # ``processing.run`` will actually use when the user clicks Run.
+            prog = cfg.get("program")
+            if prog and prog.get("return_") == config.Return.CFG_FROM_ARGS:
+                prog["return_"] = str(config.Return.END)
             self._yaml_paths[stem] = Path(yp)
-            self._add_page(stem, OmegaConf.to_container(cfg_dc, resolve=True))
+            self._add_page(stem, cfg)
 
     def _on_run_done(self, result) -> None:
         self._run_btn.config(text="Run")

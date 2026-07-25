@@ -1,14 +1,12 @@
 """Tests for _xr/io.py — CSV round-trip and edge cases."""
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
 
-from tcm._xr.io import ds_to_csv, load_csv_as_ds
+from tcm._xr.io import ds_to_csv
 
 
 def _sample_ds(n: int = 10, *, with_multiindex_probe: bool = False) -> xr.Dataset:
@@ -59,30 +57,23 @@ class TestDsToCsv:
 class TestLoadRaw:
     """``load_raw`` auto-detects format by extension and returns ``(ds, coefs)``."""
 
-    def test_load_nc_root(self, tmp_path):
-        """Load a root-group NC file (no table)."""
+    def test_load_nc_root_and_group(self, tmp_path):
+        """Load root-group and grouped NC files."""
+        from tcm._xr.io import load_raw
+
         ds_src = _sample_ds(5)
         nc_path = tmp_path / "test.raw.nc"
         ds_src.to_netcdf(nc_path)
+        ds_src.to_netcdf(nc_path, group="incl63", mode="a")
 
-        from tcm._xr.io import load_raw
+        # Root group
         ds, coefs = load_raw(nc_path)
-        assert ds is not None
-        assert "Ax" in ds.data_vars
-        assert len(ds["time"]) == 5
-        # Root-group NC has no /{tbl}/coef/ → coefs is None
-        assert coefs is None
+        assert ds is not None and "Ax" in ds.data_vars and len(ds["time"]) == 5
+        assert coefs is None  # root-group NC has no /{tbl}/coef/
 
-    def test_load_nc_with_group(self, tmp_path):
-        """Load a grouped NC file (tbl='incl63')."""
-        ds_src = _sample_ds(5)
-        nc_path = tmp_path / "test.raw.nc"
-        ds_src.to_netcdf(nc_path, group="incl63")
-
-        from tcm._xr.io import load_raw
-        ds, coefs = load_raw(nc_path, tbl="incl63")
-        assert ds is not None
-        assert "Ax" in ds.data_vars
+        # Named group
+        ds2, _coefs2 = load_raw(nc_path, tbl="incl63")
+        assert ds2 is not None and "Ax" in ds2.data_vars
 
     def test_nonexistent_returns_none(self, tmp_path):
         """Non-existent path → (None, None)."""

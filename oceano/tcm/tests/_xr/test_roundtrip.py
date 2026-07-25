@@ -36,8 +36,8 @@ def _make_ds(n: int = 50, freq: str = "100ms") -> xr.Dataset:
 class TestH5pyWriterRoundtrip:
     """Verify _write_dataset_to_nc_group preserves all values exactly."""
 
-    def test_time_roundtrip(self, tmp_path):
-        """Time values survive h5py write → xr.open_dataset read."""
+    def test_time_and_data_roundtrip(self, tmp_path):
+        """Time values and data variables survive h5py write → xr.open_dataset read."""
         ds = _make_ds()
         nc_path = tmp_path / "test.nc"
         _write_dataset_to_nc_group(ds, nc_path, "tbl")
@@ -50,14 +50,6 @@ class TestH5pyWriterRoundtrip:
             assert ds2.time.dtype == ds.time.dtype, (
                 f"Time dtype changed: {ds.time.dtype} -> {ds2.time.dtype}"
             )
-
-    def test_data_roundtrip(self, tmp_path):
-        """All data variables survive h5py write → xr.open_dataset read."""
-        ds = _make_ds()
-        nc_path = tmp_path / "test.nc"
-        _write_dataset_to_nc_group(ds, nc_path, "tbl")
-
-        with xr.open_dataset(nc_path, group="tbl", engine="netcdf4") as ds2:
             for name in ds.data_vars:
                 np.testing.assert_array_almost_equal(
                     ds2[name].values, ds[name].values,

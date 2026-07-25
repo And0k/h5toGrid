@@ -30,6 +30,7 @@ Enter.  The tool discovers run YAMLs in `cfg_proc/run/` and creates one tab
 
 Each tab shows a treeview with the config's parameters:
 - **`input.path`** — data file path
+- **`input.coefs_path`** — calibration coefficients source file (HDF5 or YAML)
 - **`input.time_ranges`** — time window for this deployment
 - **`input.coefs`** — calibration coefficients (Ag, Cg, Ah, Ch, Rz, kVabs, P, etc.)
 
@@ -67,8 +68,8 @@ Pause freezes both logging and dask task progress at the next checkpoint.
 
 ## Coefficient reload
 
-Edit the **`coefs_path`** entry at the top of each tab to load coefficients
-from a different file (HDF5 or YAML).  Press Enter or click Browse to reload.
+Edit the **`coefs_path`** row under `input` to load coefficients from a
+different file (HDF5 or YAML).  Press Enter or click Browse to reload.
 
 ## CLI reference
 

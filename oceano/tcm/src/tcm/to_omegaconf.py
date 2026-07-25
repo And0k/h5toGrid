@@ -11,7 +11,7 @@ import sys
 from dataclasses import Field, fields, is_dataclass, MISSING
 from datetime import date as datetime_date
 from datetime import datetime, timedelta
-from typing import Annotated, Any, Dict, Mapping, Optional, Union, get_args, get_origin, get_type_hints
+from typing import Annotated, Any, Dict, Mapping, Optional, Tuple, Union, get_args, get_origin, get_type_hints
 from collections import abc
 
 from omegaconf import DictConfig, ListConfig
@@ -95,7 +95,7 @@ def get_field_default(fld: Field):
             return None
 
 
-def to_omegaconf_compatible_type(value, field_type, default_value=None):
+def to_omegaconf_compatible_type(value, field_type, default_value=None) -> None | int | float | str | bool | list | dict:
     """Convert *value* to an OmegaConf-compatible type matching *field_type*.
 
     Handles Optional, dataclass, Annotated, collection, numpy, datetime, and
@@ -158,7 +158,7 @@ def to_omegaconf_compatible_type(value, field_type, default_value=None):
     return str(value)
 
 
-def to_omegaconf_merge_compatible(unstructured: Mapping[str, Any], schema) -> Dict[str, Any]:
+def to_omegaconf_merge_compatible(unstructured: Mapping[str, Any], schema) -> Tuple[Dict[str, Any], list]:
     """Convert *unstructured* dict to OmegaConf-merge-compatible form against *schema*.
 
     Excludes ``None`` fields (keeps ``None`` elements in lists) and fields

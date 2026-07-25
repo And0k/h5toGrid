@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
-from queue import Queue
+from queue import Empty, Queue
 
 import pytest
 from omegaconf import OmegaConf
@@ -926,3 +926,323 @@ class TestQueueHandlerDedup:
         h.emit(self._make_record("func_b", "hello"))
 
         assert q.qsize() == 2, f"expected 2 records, got {q.qsize()}"
+
+
+# --------------------------------------------------------------------------- #
+# Regression: LoggingStyleAdapter shares one mutable Message instance across
+# log calls; QueueHandler must freeze the rendered text onto the record so
+# deferred drain-time getMessage() returns the message that was actually
+# logged at emit time, not whatever the shared Message was last mutated to.
+# Without this freeze, every record from a given logger would render as the
+# *last* message that logger produced (see how_gui_works.md → log_bridge).
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.xr
+class TestQueueHandlerFreezeMutableMessage:
+    """QueueHandler.emit freezes the rendered text onto the LogRecord.
+
+    :class:`tcm.utils2init.LoggingStyleAdapter` calls ``logger._log(level,
+    self.message, ())`` — i.e. it passes the same ``Message`` instance to
+    every log call and mutates its ``fmt``/``args`` in place.  By the time
+    :func:`tcm_gui.log_bridge.drain` runs (later, on the GUI poll thread)
+    ``record.msg`` would still point at that shared, by-then-mutated object,
+    so ``record.getMessage()`` would return the *latest* rendered text rather
+    than the one captured at emit time → every record from that logger
+    collapses to the last message → appearance of duplicate log lines.
+
+    Hydra's ``job_logging/colorlog`` formatter sidesteps this by rendering
+    ``record.getMessage()`` once synchronously inside ``Formatter.format``.
+    ``QueueHandler`` mirrors that contract by freezing the rendered text back
+    onto the record (``record.msg = text; record.args = ()``).
+    """
+
+    def test_subsequent_records_render_orig_text_not_mutated(self):
+        """Two consecutive log calls on one adapter → drain shows each original text."""
+        from tcm import utils2init
+        from tcm_gui.log_bridge import QueueHandler
+        from tcm_gui.runtime import PauseGate
+
+        q: Queue = Queue()
+        gate = PauseGate()
+        h = QueueHandler(q, gate)
+        h.setLevel(logging.DEBUG)
+        root = logging.getLogger()
+        root.addHandler(h)
+        root.setLevel(logging.DEBUG)
+        try:
+            lf = utils2init.LoggingStyleAdapter("test_freeze_message")
+
+            def func_alpha():
+                lf.info("alpha message {}", 1)
+
+            def func_beta():
+                lf.info("beta message {}", 2)
+
+            func_alpha()
+            func_beta()
+
+            records: list[logging.LogRecord] = []
+            while True:
+                try:
+                    records.append(q.get_nowait())
+                except Empty:
+                    break
+        finally:
+            root.removeHandler(h)
+
+        assert len(records) == 2, f"expected 2 records, got {len(records)}"
+        # Drain later — by then the shared Message's fmt/args are mutated to
+        # "beta message {}".format(2).  Without emit-time freeze, BOTH records
+        # would render as "beta message 2".
+        drained = [(r.funcName, r.getMessage()) for r in records]
+        assert drained == [
+            ("func_alpha", "alpha message 1"),
+            ("func_beta", "beta message 2"),
+        ], f"text not frozen on record: drained={drained!r}"
+
+    def test_consecutive_same_text_still_dedups_after_freeze(self):
+        """Freeze preserves the consecutive-dedup invariant from TestQueueHandlerDedup."""
+        from tcm import utils2init
+        from tcm_gui.log_bridge import QueueHandler
+        from tcm_gui.runtime import PauseGate
+
+        q: Queue = Queue()
+        gate = PauseGate()
+        h = QueueHandler(q, gate)
+        h.setLevel(logging.DEBUG)
+        root = logging.getLogger()
+        root.addHandler(h)
+        root.setLevel(logging.DEBUG)
+        try:
+            lf = utils2init.LoggingStyleAdapter("test_freeze_dup")
+
+            def func_same():
+                lf.debug("repeated same")
+
+            func_same()
+            func_same()  # consecutive identical → dedup should drop this one
+            func_same()
+
+            records: list[logging.LogRecord] = []
+            while True:
+                try:
+                    records.append(q.get_nowait())
+                except Empty:
+                    break
+        finally:
+            root.removeHandler(h)
+
+        assert len(records) == 1, f"expected 1 record (consecutive dedup), got {len(records)}"
+        assert records[0].getMessage() == "repeated same", (
+            f"deduped record text wrong: {records[0].getMessage()!r}"
+        )
+
+
+@pytest.mark.xr
+class TestQueueHandlerPersistsAcrossTasks:
+    """GUI-thread log calls reach the queue via the single persistent QueueHandler.
+
+    Regression: previously the QueueHandler was installed *inside* the worker
+    wrap (per-task) and removed afterwards, so log calls from GUI callbacks
+    (e.g. ``_reload_coefs`` triggered by treeview interaction) silently went
+    to the Stream/File handlers but never to the ScrolledText.  With the
+    handler installed once at App startup, log records from the *main* thread
+    — not just the worker thread — also reach ``log_queue``.  This test
+    simulates that scenario without a worker thread: install once, log from
+    the current thread, assert the record is queued.
+    """
+
+    def test_main_thread_logs_reach_queue_without_worker(self):
+        from tcm import utils2init
+        from tcm_gui.log_bridge import install
+        from tcm_gui.runtime import PauseGate
+
+        q: Queue = Queue()
+        gate = PauseGate()
+        h = install(q, gate)
+        h.setLevel(logging.DEBUG)
+        root = logging.getLogger()
+        root.setLevel(logging.DEBUG)
+        try:
+            lf = utils2init.LoggingStyleAdapter("test_main_thread_reach")
+            lf.error("coef table not found for {}", "incl_67")
+            lf.warning("user edited coefs path")
+        finally:
+            root.removeHandler(h)
+
+        records: list[logging.LogRecord] = []
+        while True:
+            try:
+                records.append(q.get_nowait())
+            except Empty:
+                break
+        # Two distinct messages → both enqueued (no dedup since func/text differ)
+        texts = [r.getMessage() for r in records]
+        assert "coef table not found for incl_67" in texts, (
+            f"GUI-thread error log missing from queue; got {texts!r}"
+        )
+        assert "user edited coefs path" in texts, (
+            f"GUI-thread warning log missing from queue; got {texts!r}"
+        )
+
+    def test_reset_dedup_allows_first_record_of_new_task(self):
+        """reset_dedup() clears _last_key so the new task's first record is not swallowed.
+
+        Scenario: same caller frame (identical funcName) emits the same message
+        twice in a row.  Without reset, the second would be dropped as a
+        consecutive duplicate.  After explicit :meth:`reset_dedup`, it is
+        enqueued — modelling the boundary between two worker tasks where the
+        trailing record of task A and leading record of task B happen to
+        match: the GUI should still show both.
+        """
+        from tcm_gui.log_bridge import QueueHandler
+        from tcm_gui.runtime import PauseGate
+
+        def _emit_boundary(q: Queue, gate: PauseGate, *, reset: bool) -> int:
+            """Install a handler, optionally reset dedup, emit once, return enq count."""
+            q.queue.clear()  # fresh queue for each sub-test
+            h = QueueHandler(q, gate)
+            root = logging.getLogger()
+            root.addHandler(h)
+            root.setLevel(logging.DEBUG)
+            try:
+                # First emit seeds _last_key
+                logging.getLogger("probe").info("boundary marker")
+                if reset:
+                    h.reset_dedup()
+                # Second emit — identical (funcName='test_…? no — caller frame is
+                # _emit_boundary, so funcName='_emit_boundary' both times)
+                logging.getLogger("probe").info("boundary marker")
+            finally:
+                root.removeHandler(h)
+            return q.qsize()
+
+        # Without reset: the second identical record would be dropped as a dup → 1 record.
+        n_no_reset = _emit_boundary(Queue(), PauseGate(), reset=False)
+        assert n_no_reset == 1, (
+            f"without reset_dedup the consecutive identical record must be dropped; got {n_no_reset}"
+        )
+        # With reset: the second record is enqueued → 2 records total.
+        n_with_reset = _emit_boundary(Queue(), PauseGate(), reset=True)
+        assert n_with_reset == 2, (
+            f"after reset_dedup the boundary record must enqueue; got {n_with_reset}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# RTF clipboard: _esc and build_rtf produce valid RTF with color table
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.xr
+class TestRtfClipboard:
+    """_esc and build_rtf produce well-formed RTF for colored ScrolledText."""
+
+    @pytest.fixture(scope="class")
+    @classmethod
+    def _tk_root(cls):
+        """One root per class — `tk.Tk()` N times in one process exhausts Tcl's
+        `tcl_findLibrary` lookup on Windows pixi."""
+        import tkinter as tk
+
+        root = tk.Tk()
+        root.withdraw()
+        yield root
+        root.destroy()
+
+    @pytest.fixture()
+    def _tk_text(self, _tk_root):
+        """Fresh Text widget on the shared root; tag configs declared once
+        and inherited cheaply across the class."""
+        import tkinter as tk
+
+        w = tk.Text(_tk_root, font=("Consolas", 11))
+        w.tag_configure("err", foreground="red")
+        w.tag_configure("info", foreground="#0070A0")
+        yield w
+        w.destroy()
+
+    @pytest.mark.parametrize(
+        ("input_s", "expected"),
+        [
+            pytest.param("hello world", "hello world", id="ascii-passthrough"),
+            pytest.param("test 123", "test 123", id="ascii-digits"),
+            pytest.param("a{b}c", "a\\{b\\}c", id="braces"),
+            pytest.param("a\\b", "a\\\\b", id="backslash"),
+            pytest.param("line1\nline2", "line1\\par\nline2", id="newline"),
+        ],
+    )
+    def test_esc_basic(self, input_s, expected):
+        """_esc handles ASCII, braces, backslash, newline."""
+        from tcm_gui._rtf_clipboard import _esc
+        assert _esc(input_s) == expected
+
+    def test_esc_unicode_above_127(self):
+        """Unicode >127 → \\uN? (codepoints ≤ 32767 used directly; >32767 signed)."""
+        from tcm_gui._rtf_clipboard import _esc
+
+        # © = U+00A9 = 169 → ≤ 32767 → \u169?
+        assert "\\u169?" in _esc("\u00a9")
+        # Cyrillic 'й' = U+0439 = 1081 → ≤ 32767 → \u1081? (direct codepoint)
+        assert "\\u1081?" in _esc("\u0439")
+        # Emoji 😀 = U+1F600 = 128512 → > 32767 → signed: 128512-65536 = 62976
+        # But 128512-65536 = 62976 which is also > 32767... let me recalculate:
+        # 128512 - 65536 = 62976 — that's wrong, 128512-65536 = -62976... no:
+        # 128512 - 65536 = 62976? No: 65536 - 128512 = -62976, but subtracting gives 62976.
+        # Actually: 128512 - 65536 = 62976. But that's not signed 16-bit.
+        # The formula `cp - 65536` maps to signed 16-bit range:
+        # 65535 → -1, 65534 → -2, ..., 32768 → -32768
+        # For U+1F600 (128512): 128512 > 65535 → needs surrogate pair.
+        # RTF \u only handles up to U+FFFF. Beyond that is emoji territory.
+        # We test with U+8000 = 32768 → signed: 32768-65536 = -32768
+        assert "\\u-32768?" in _esc("\u8000")
+
+    def test_build_rtf_no_tags(self, _tk_text):
+        """Plain text → RTF with empty colortbl."""
+        from tcm_gui._rtf_clipboard import build_rtf
+
+        _tk_text.insert("1.0", "plain")
+        rtf = build_rtf(_tk_text)
+        assert rtf.startswith("{\\rtf1")
+        assert "plain" in rtf
+        # No color tags → empty colortbl entry
+        assert "{\\colortbl;}" in rtf
+
+    def test_build_rtf_with_colors(self, _tk_text, capsys):
+        """Colored text → colortbl + \\cf references + \\fonttbl for Word."""
+        from tcm_gui._rtf_clipboard import build_rtf
+
+        _tk_text.insert("end", "ERROR: ", "err")
+        _tk_text.insert("end", "disk full\n", "err")
+        _tk_text.insert("end", "INFO: ", "info")
+        _tk_text.insert("end", "done")
+        rtf = build_rtf(_tk_text)
+
+        # Echo the literal RTF to stdout for ad-hoc paste-into-Word debugging.
+        print(f"\n---EMITTED_RTF_START---\n{rtf}\n---EMITTED_RTF_END---")
+
+        # \fonttbl is mandatory for Word to honour \cfN runs (\deff0 references \f0).
+        assert r"{\fonttbl{" in rtf
+        # Color table must have red and the info color
+        assert "\\red" in rtf
+        # \\cf1 and \\cf2 reference the two colors
+        assert "\\cf1" in rtf
+        assert "ERROR" in rtf
+        assert "INFO" in rtf
+        # Brace balancing — outer \rtf1 group must close exactly once.
+        assert rtf.count("{") == rtf.count("}")
+
+    def test_copy_rich_fallback_without_pywin32(self, _tk_text, monkeypatch):
+        """When pywin32 is missing, fall back to plain-text + clipboard_append."""
+        from tcm_gui._rtf_clipboard import copy_rich
+
+        _tk_text.insert("1.0", "hello")
+        monkeypatch.setitem(
+            __import__("sys").modules, "win32clipboard", None
+        )
+        # Just verify it runs without crashing (fallback to plain text)
+        copy_rich(_tk_text)
+        # After copy_rich, clipboard contents should be the plain text
+        result = _tk_text.clipboard_get()
+        assert result == "hello"

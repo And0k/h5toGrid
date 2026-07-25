@@ -29,7 +29,7 @@ build-backend = "hatchling.build"
 requires = ["hatchling"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/tcm"]
+packages = ["src/tcm", "src/tcm_gui"]
 
 [tool.pixi.pypi-dependencies]
 # Подмодули автоматически доступны через workspace

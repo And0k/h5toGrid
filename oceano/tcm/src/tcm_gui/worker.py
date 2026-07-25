@@ -1,13 +1,13 @@
 """Worker thread: pipeline stages via tcm.cli.call_in_raw_dir in background."""
 from __future__ import annotations
+
 import logging
 import sys
 import threading
 from functools import wraps
 
-from .runtime import Runtime
-from .log_bridge import install as install_qh
 from .progress_bridge import GuiTqdm, set_runtime, set_tqdm_class
+from .runtime import Runtime
 
 
 class Worker:
@@ -47,15 +47,32 @@ class Worker:
         set_tqdm_class(GuiTqdm)
 
     def _wrap(self, fun):
-        """Add QueueHandler *after* Hydra dictConfig (inside task fn)."""
+        """Ensure the persistent QueueHandler is on the root logger, then run *fun*.
+
+        The QueueHandler is installed once at App startup (see
+        :func:`tcm_gui.app.App.__init__`).  Hydra's ``dictConfig`` (applied
+        inside ``@hydra.main`` before the wrapped function runs) **replaces**
+        all handlers on the root logger with ``[console, file]`` — so when the
+        worker thread re-enters the wrapped function, the persistent QH may be
+        gone from the root logger.  Re-attach it here so:
+
+        - worker-pipeline logs (this thread) reach the queue, AND
+        - after the worker task returns, GUI-callback logs (main thread)
+          keep flowing to the queue — Hydra's handlers stay alongside it.
+
+        ``reset_dedup()`` clears the consecutive-duplicate state so the first
+        record of a new task is never swallowed as a "duplicate" of the
+        previous task's tail.
+        """
         rt = self.rt
         @wraps(fun)
         def wrapped(cfg):
-            h = install_qh(rt.log_queue, rt.pause_gate)
-            try:
-                return fun(cfg)
-            finally:
-                logging.getLogger().removeHandler(h)
+            root = logging.getLogger()
+            if rt.queue_handler is not None and rt.queue_handler not in root.handlers:
+                root.addHandler(rt.queue_handler)
+            if rt.queue_handler is not None:
+                rt.queue_handler.reset_dedup()
+            return fun(cfg)
         return wrapped
 
     def _scan(self, original_argv: list[str]) -> None:

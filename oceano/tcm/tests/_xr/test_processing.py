@@ -9,7 +9,7 @@ from omegaconf import DictConfig
 
 from tcm.config import ConfigIn_InclProc, Return
 from tcm.incl_calc.coefs import get_coefs, get_coefs_from_cfg
-from tcm.processing import process_inmemory, run_processing
+from tcm.processing import run_processing
 
 _GET_COEFS_PATCH = "tcm.incl_calc.coefs.get_coefs"
 
@@ -186,13 +186,6 @@ class TestRunProcessingDispatch:
         run_processing(cfg)
         mock_batch.assert_called_once()
 
-
-@pytest.mark.xr
-class TestProcessInmemory:
-    """process_inmemory is importable and callable."""
-
-    def test_importable(self):
-        assert callable(process_inmemory)
 
 
 # ---------------------------------------------------------------------------

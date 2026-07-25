@@ -21,7 +21,7 @@ st.start = st_base + 100  # |+ 0, 10: Extract runs; 20: Draw profiles; 100, 105:
 st.end = st_base + 105   # 300  # st.start
 st.go = True  # False?
 
-wf_cfg.path_cruise = path_cruise = Path(r"D:\Cruises\BalticSea\251201_ABP64")
+wf_cfg.path_cruise = path_cruise = Path(r"B:\Cruises\BalticSea\260421_ABP65")
 wf_cfg.path_db = (path_cruise / path_cruise / path_cruise.name.split("@", 1)[0]).with_suffix(".h5")
 
 wf_cfg.min_coord = 'Lat:53, Lon:18.6'  # 10

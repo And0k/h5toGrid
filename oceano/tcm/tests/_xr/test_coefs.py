@@ -364,16 +364,19 @@ class TestLoadCoefsFromNc:
         result = load_coefs_from_nc(nc_with_coefs, "incl_01")
         assert "2024-01-01" in str(result.get("date", ""))
 
-    def test_returns_none_for_missing_tbl(self, tmp_path):
-        """Returns None when table group doesn't exist."""
-        nc_path = tmp_path / "test.raw.nc"
-        save_coefs_to_nc(nc_path, "incl_01", {"Ag": np.eye(3), "date": "2024-01-01"})
-        result = load_coefs_from_nc(nc_path, "incl_99")
-        assert result is None
-
-    def test_returns_none_for_missing_file(self, tmp_path):
-        """Returns None when NC file doesn't exist."""
-        assert load_coefs_from_nc(tmp_path / "nonexistent.nc", "incl_01") is None
+    @pytest.mark.parametrize(
+        ("desc", "nc_path_factory", "tbl"),
+        [
+            pytest.param("missing tbl", lambda p: p / "test.raw.nc", "incl_99", id="missing-tbl"),
+            pytest.param("missing file", lambda p: p / "nonexistent.nc", "incl_01", id="missing-file"),
+        ],
+    )
+    def test_returns_none_for_missing(self, desc, nc_path_factory, tbl, tmp_path):
+        """Returns None when NC file or table group doesn't exist."""
+        # For missing-tbl, create the file first
+        if desc == "missing tbl":
+            save_coefs_to_nc(nc_path_factory(tmp_path), "incl_01", {"Ag": np.eye(3), "date": "2024-01-01"})
+        assert load_coefs_from_nc(nc_path_factory(tmp_path), tbl) is None
 
 
 @pytest.mark.xr
