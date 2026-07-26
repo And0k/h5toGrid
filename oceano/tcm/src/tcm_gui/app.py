@@ -7,24 +7,22 @@ import sys
 import tkinter as tk
 from pathlib import Path, PurePath
 from queue import Empty
-from tkinter import filedialog, ttk
+from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
 
 from omegaconf import OmegaConf
 
 from tcm import cli, config, config_yaml, format, incl_calc
+from tcm_gui.cli_cfg import default_cfg
 
+from .const import TAG_COLORS
 from ._browse_button import BrowseButtonManager
+from ._path_field import PathField
 from ._rtf_clipboard import copy_rich
 from .coef_sheet import ConfigSheet
-from .log_bridge import FUNC_COLOR, TAG_COLORS, drain, install
+from .log_bridge import FUNC_COLOR, drain, install
 from .runtime import Runtime
 from .worker import Worker
-
-
-def _default_cfg() -> dict:
-    """Return a plain dict with all ``config.ConfigIn_InclProc`` defaults wrapped as ``input`` section."""
-    return {"input": OmegaConf.to_container(OmegaConf.structured(config.ConfigIn_InclProc()), resolve=True)}
 
 
 def _shift_at_startup() -> bool:
@@ -58,21 +56,16 @@ class App:
         self._original_argv = list(argv or sys.argv)
 
         # watch Shift globally on root (Windows doesn't send Shift to widgets)
-        self._shift_held = False
         self._full_mode = _shift_at_startup()
-        self._browse_btns: list[ttk.Button] = []
-        for ks in ("Shift_L", "Shift_R"):
-            self.root.bind(f"<KeyPress-{ks}>", lambda _: self._set_shift(True))
-            self.root.bind(f"<KeyRelease-{ks}>", lambda _: self._set_shift(False))
 
         self._build()
-        self._add_page("(default)", _default_cfg())
+        self._add_page("(default)", default_cfg())
         # Prefill path entry from CLI args — only when user explicitly provided one.
         # parse_data_path returns None when no positional arg is found (e.g.
         # ``python -m tcm_gui`` without a data path), so the GUI starts empty.
         path_in, _ = cli.parse_data_path(self._original_argv)
         if path_in is not None:
-            self._path_var.set(str(path_in))
+            self._path_field.set(str(path_in))
             self.root.after(100, self._scan)
         self._poll()
 
@@ -87,14 +80,14 @@ class App:
         # §1 input.path
         f0 = ttk.Frame(r)
         f0.grid(row=0, column=0, sticky="ew", padx=4, pady=2)
-        f0.columnconfigure(0, weight=1)
-        self._path_var = tk.StringVar()
-        e = ttk.Entry(f0, textvariable=self._path_var)
-        e.grid(row=0, column=0, sticky="ew")
-        e.bind("<Return>", lambda _: self._scan())
-        e.bind("<FocusOut>", lambda _: self._scan())
-
-        self._mk_browse(f0, self._on_browse_input).grid(row=0, column=1, padx=(4, 0))
+        f0.columnconfigure(1, weight=1)
+        ttk.Label(f0, text="Data search path:").grid(row=0, column=0, padx=(0, 4))
+        self._path_field = PathField(f0, on_commit=self._on_path_changed)
+        self._path_field.grid(row=0, column=1, sticky="ew")
+        # Status message on hover — rebind on the Sheet's MT canvas
+        self._path_hovering = False
+        self._path_field.sh.MT.bind("<Enter>", lambda _: self._on_path_hover_in(), add="+")
+        self._path_field.sh.MT.bind("<Leave>", lambda _: self._on_path_hover_out(), add="+")
 
         # §2 Notebook
         self.nb = ttk.Notebook(r)
@@ -128,43 +121,18 @@ class App:
         self._prog_stage = ttk.Progressbar(f4, mode="determinate")
         self._prog_stage.grid(row=0, column=1, sticky="ew")
 
-    # ── §1 callbacks ────────────────────────────────────────────────
+    # ── §1 entry hover status message ────────────────────────────────
 
-    def _set_shift(self, held: bool) -> None:
-        self._shift_held = held
-        txt = "Files…" if held else "Dir…"
-        for b in self._browse_btns:
-            try:
-                b.config(text=txt)
-            except tk.TclError:
-                pass  # кнопка уничтожена
+    _HOVER_MSG = "Changing data path rescans and resets all config tabs below"
 
-    def _mk_browse(self, parent, cmd) -> ttk.Button:
-        """Единая фабрика Browse-кнопок: регистрация + текст по Shift."""
-        b = ttk.Button(parent, text="Files…" if self._shift_held else "Dir…")
-        self._browse_btns.append(b)
-        b.bind("<Button-1>", lambda e: cmd())
-        return b
+    def _on_path_hover_in(self) -> None:
+        """Mouse enters Entry — show status hint."""
+        self._path_hovering = True
+        self._status.set(self._HOVER_MSG)
 
-    def _on_browse_input(self) -> None:
-        if self._shift_held:
-            if paths := filedialog.askopenfilenames(title="Data files"):
-                self._path_var.set(self._fmt_multi(paths))
-                self._scan()
-        else:
-            if d := filedialog.askdirectory(title="Data directory"):
-                self._path_var.set(d)
-                self._scan()
-
-    def _browse_input(self, files: bool = False) -> None:
-        if files:
-            if paths := filedialog.askopenfilenames(title="Data files"):
-                self._path_var.set(self._fmt_multi(paths))
-                self._scan()
-        else:
-            if d := filedialog.askdirectory(title="Data directory"):
-                self._path_var.set(d)
-                self._scan()
+    def _on_path_hover_out(self) -> None:
+        """Mouse leaves Entry — clear hover flag (status restored by poll)."""
+        self._path_hovering = False
 
     @staticmethod
     def _fmt_multi(paths: tuple[str, ...]) -> str:
@@ -180,8 +148,12 @@ class App:
             names.append(f"{stem}[.]{ext}" if dot else name)
         return f"{parent.as_posix()}/({'|'.join(names)})"
 
+    def _on_path_changed(self, _path: str) -> None:
+        """PathField committed a new path — trigger scan."""
+        self._scan()
+
     def _scan(self) -> None:
-        if self._path_var.get().strip():
+        if self._path_field.get().strip():
             self._clear_log()
             self.wk.scan(self._original_argv)
 
@@ -197,8 +169,10 @@ class App:
         cs._mgr = BrowseButtonManager(
             cs.sh,
             on_path_changed=lambda path: self._set_coefs_and_reload(stem, path),
+            on_edit_restyler=cs._apply_edit_value,
         )
         cs.load(cfg, full=self._full_mode, config_root=config.Config, return_enum=config.Return)
+        cs.on_hover_status = self._status.set
         self._pages[stem] = cs
 
     def _set_coefs_and_reload(self, stem: str, coefs_path: str) -> None:
@@ -227,7 +201,7 @@ class App:
             self._write_coefs(s, cs)
         self._clear_log()
         self._run_btn.config(text="Pause")
-        self.wk.run(self._path_var.get(), stems)
+        self.wk.run(self._path_field.get(), stems)
 
     def _write_coefs(self, stem: str, cs: ConfigSheet) -> None:
         """Write edited coefs back to YAML — only if user actually changed something."""
@@ -278,7 +252,8 @@ class App:
         cur, tot, desc = self.rt.progress_stage.snapshot()
         if tot > 0:
             self._prog_stage.config(maximum=tot, value=cur)
-            self._status.set(desc or f"{cur}/{tot}")
+            if not self._path_hovering:
+                self._status.set(desc or f"{cur}/{tot}")
         cur_o, tot_o, desc_o = self.rt.progress_overall.snapshot()
         if tot_o > 0:
             self._prog_all.config(maximum=tot_o, value=cur_o)

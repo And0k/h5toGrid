@@ -15,7 +15,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tcm_gui.coef_sheet import _DEFAULT_FG, _NO_DEFAULT, ConfigSheet, _default_for_path
+from tcm_gui.coef_sheet import _NO_DEFAULT, ConfigSheet, _default_for_path
+from tcm_gui.const import DEFAULT_FG
 
 
 # -- _default_for_path -----------------------------------------------------------
@@ -337,7 +338,7 @@ class TestOnEndEditGrayToggle:
         cs._apply_end_edit_style(event)
 
         gray_calls = [
-            c for c in mock_sh.highlight_cells.call_args_list if c.kwargs.get("fg") == _DEFAULT_FG
+            c for c in mock_sh.highlight_cells.call_args_list if c.kwargs.get("fg") == DEFAULT_FG
         ]
         assert len(gray_calls) > 0, (
             f"expected highlight_cells(fg=_DEFAULT_FG) to restore gray, "

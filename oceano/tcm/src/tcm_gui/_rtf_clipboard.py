@@ -10,11 +10,7 @@ from __future__ import annotations
 import itertools
 import tkinter as tk
 
-
-def _rgb(widget, color: str) -> tuple[int, int, int]:
-    """Any Tk color spec → 8-bit RGB via the display's pixel mapping."""
-    r, g, b = widget.winfo_rgb(color)
-    return r >> 8, g >> 8, b >> 8
+from tcm_gui.const import tk_font_family, tk_color_to_rgb
 
 
 def _esc(text: str) -> str:
@@ -36,17 +32,6 @@ def _esc(text: str) -> str:
     return "".join(out)
 
 
-def _font_family(widget: tk.Text) -> str:
-    """Extract the family name from the widget font (e.g. 'Consolas').
-
-    `cget('font')` may return a Tk font spec like 'Consolas 11' or a named font;
-    we take the first whitespace-separated token as the family, falling back to
-    'Consolas' (the production default) if extraction fails.
-    """
-    spec = widget.cget("font") or ""
-    return (str(spec).split() or ["Consolas"])[0]
-
-
 def build_rtf(widget: tk.Text) -> str:
     """Serialize selected text to RTF, preserving foreground colors.
 
@@ -60,7 +45,7 @@ def build_rtf(widget: tk.Text) -> str:
     sel = widget.tag_ranges("sel")
     start, end = (widget.index(sel[0]), widget.index(sel[1])) if sel else ("1.0", end)
     palette = {
-        t: _rgb(widget, widget.tag_cget(t, "foreground"))
+        t: tk_color_to_rgb(widget, widget.tag_cget(t, "foreground"))
         for t in widget.tag_names()
         if t != "sel"
         and widget.tag_cget(t, "foreground")
@@ -93,7 +78,7 @@ def build_rtf(widget: tk.Text) -> str:
             body.append(seg)
 
     table = "".join(f"\\red{r}\\green{g}\\blue{b};" for r, g, b in colors)
-    font = _font_family(widget)
+    font = tk_font_family(widget)
     # \fonttbl is mandatory for Word to honour \cfN runs; \deff0 references \f0.
     header = (
         r"{\rtf1\ansi\deff0"

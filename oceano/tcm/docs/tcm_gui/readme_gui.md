@@ -18,7 +18,7 @@ python -m tcm_gui "D:/data/_raw/@i_p1.TXT" "input.ids=[i90, i67]"
 
 ### 1. Scan — discover configs
 
-Enter a data path in the top entry (or click **Dir…** / **Files…**) and press
+Enter a data path in the top field (or click **Dir…** / **Files…**) and press
 Enter.  The tool discovers run YAMLs in `cfg_proc/run/` and creates one tab
 **per config**.
 

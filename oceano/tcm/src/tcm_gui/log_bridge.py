@@ -22,13 +22,6 @@ import logging
 import time
 from queue import Empty, Queue
 
-TAG_COLORS: dict[str, str] = {
-    "debug": "#808080",
-    "info": "#1a1a1a",
-    "warning": "#CC7000",
-    "error": "#CC0000",
-    "critical": "#CC0000",
-}
 FUNC_COLOR = "#0070A0"
 
 

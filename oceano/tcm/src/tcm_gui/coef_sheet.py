@@ -3,58 +3,38 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from datetime import datetime
 from itertools import islice
 from tkinter import TclError, ttk
-from typing import Any, Final, Literal
+from typing import Any, Literal
 
 import numpy as np
+from tcm_gui.cli_cfg import COEF_SHAPES, CFG_DEFAULTS
 from tksheet import Sheet
 
 from tcm.config import (
-    ConfigFilter_InclProc,
-    ConfigIn_InclProc,
     ConfigInCoefs_InclProc,
-    ConfigOut_InclProc,
-    ConfigProgram,
 )
-from tcm.to_omegaconf import get_field_default
 
-from ._browse_button import BrowseButtonManager
+from ._browse_button import BrowseButtonManager, BrowseOverlay, SheetHoverBinder
 from ._cell_spec import NUMBER_SPEC, CellSpec, _spec_for_path, as_bool, enum_values, schema_type
+from . import const
 
-_lg = logging.getLogger(__name__)
+_l = logging.getLogger(__name__)
 
 # Derive field order from dataclass declaration — single source of truth.
 # Exclude `dates` / `date` which are handled as tree-level metadata, not row items.
 _COEF_FIELDS = [f.name for f in dataclasses.fields(ConfigInCoefs_InclProc) if f.name not in ("dates", "date")]
 
 
-def _build_defaults(schema: type) -> dict[str, Any]:
-    """Build `{field_name: default}` from a dataclass using :func:`get_field_default`.
-
-    Nested dataclasses are recursively expanded into sub-dicts.
-    """
-    result: dict[str, Any] = {}
-    for fld in dataclasses.fields(schema):
-        d = get_field_default(fld)
-        result[fld.name] = _build_defaults(type(d)) if dataclasses.is_dataclass(type(d)) else d
-    return result
+_1D_WITH_DATES = {"kVabs"}  # единственное 1D с датами → parent+child
+_SUB = "₁₂₃₄₅₆₇₈₉"
+_DATE_COL = 2  # sheet col: 0=tree 1=₁ 2=₂/date 3=₃…
 
 
-# Nested defaults for every config section — single source of truth for gray-out.
-_CFG_DEFAULTS: dict[str, dict[str, Any]] = {
-    section: _build_defaults(cls)
-    for section, cls in [
-        ("input", ConfigIn_InclProc),
-        ("out", ConfigOut_InclProc),
-        ("filter", ConfigFilter_InclProc),
-        ("program", ConfigProgram),
-    ]
-}
-
+_NO_DEFAULT = object()
 
 def _default_for_path(path: str) -> Any:
     """Walk dotted config path through :data:`_CFG_DEFAULTS`, return default or `_NO_DEFAULT`.
@@ -62,9 +42,9 @@ def _default_for_path(path: str) -> Any:
     Handles array indices (e.g. ``Ag[0]``) and ``None`` → ``""``.
     """
     parts = path.split(".")
-    if not parts or parts[0] not in _CFG_DEFAULTS:
+    if not parts or parts[0] not in CFG_DEFAULTS:
         return _NO_DEFAULT
-    current: Any = _CFG_DEFAULTS[parts[0]]
+    current: Any = CFG_DEFAULTS[parts[0]]
     for part in parts[1:]:
         if current is None:
             return ""
@@ -87,39 +67,6 @@ def _default_for_path(path: str) -> Any:
                 return _NO_DEFAULT
     return current
 
-
-_DEFAULT_FG: Final[str] = "#999999"  # cell value == config default
-_BLUE_FG: Final[str] = "#0055CC"     # header text + node label when subtree at default
-_NO_DEFAULT = object()
-
-_COEF_SHAPES: dict[str, tuple[int, ...]] = {
-    "Ag": (3, 3),
-    "Cg": (3,),
-    "Ah": (3, 3),
-    "Ch": (3,),
-    "Rz": (3, 3),
-    "kVabs": (6,),
-    "P_t": (3, 3),
-    "P": (2,),
-    "PBattery": (2,),
-    "PTemp": (2,),
-    "azimuth_shift_deg": (),
-    "g0xyz": (3,),
-}
-_1D_WITH_DATES = {"kVabs"}  # единственное 1D с датами → parent+child
-_SUB = "₁₂₃₄₅₆₇₈₉"
-_DATE_COL = 2  # sheet col: 0=tree 1=₁ 2=₂/date 3=₃…
-
-TkAlign = Literal["w", "center", "e"]
-_ALIGN: Final[Mapping[str, TkAlign]] = {
-    "left": "w",
-    "right": "e",
-    "center": "center",
-    "w": "w",
-    "e": "e",
-}
-
-
 def _fmt(v: Any) -> str:
     if v is None:
         return ""
@@ -134,15 +81,6 @@ def _pf(v: str) -> float | None:
     except (ValueError, TypeError):
         return None
 
-
-def _is_num(s: str) -> bool:
-    try:
-        float(s)
-        return True
-    except (ValueError, TypeError):
-        return False
-
-
 def _is_date(s: str) -> bool:
     """Check if s looks like a date — fast path via `fromisoformat`."""
     try:
@@ -152,15 +90,6 @@ def _is_date(s: str) -> bool:
         # European dd.mm.yyyy — validate structure only (no naive datetime created)
         parts = s.split(".")
         return len(parts) == 3 and all(p.isdigit() for p in parts)
-
-
-def _resolve_bg(widget, color: str) -> str:
-    """Convert any Tk color spec to hex — tksheet rejects system names like 'SystemButtonFace'."""
-    try:
-        r, g, b = widget.winfo_rgb(color)
-        return f"#{r >> 8:02x}{g >> 8:02x}{b >> 8:02x}"
-    except TclError:
-        return color
 
 
 class ConfigSheet:
@@ -181,10 +110,16 @@ class ConfigSheet:
     DATA_COL_BASE: int = 1
 
     def __init__(self, parent) -> None:
-        self.sh = Sheet(parent, treeview=True, show_horizontal_grid=False, show_vertical_grid=False)
-        raw_bg = ttk.Style().lookup("TFrame", "background") or "#F0F0F0"
-        bg = _resolve_bg(self.sh, raw_bg)
-        self.sh.set_options(allow_cell_overflow=True, header_background=bg)
+        self.sh = Sheet(
+            parent,
+            treeview=True,
+            show_horizontal_grid=False,
+            show_vertical_grid=False,
+            allow_cell_overflow=True,
+        )
+        bg = const.tk_color_to_hex(self.sh, ttk.Style().lookup("TFrame", "background") or "#F0F0F0")
+        self.sh.set_options(header_bg=bg)
+
         self.sh.enable_bindings(["all"])
         self.sh.edit_validation(self._on_edit)
         self.sh.extra_bindings([
@@ -210,6 +145,29 @@ class ConfigSheet:
         self.sh.item = self._item_hook
         # BrowseButtonManager — injected by App after construction
         self._mgr: BrowseButtonManager | None = None
+        # ── sheet-hover policy ────────────────────────────────────
+        # Status-bar hook — injected by App: ``cs.on_hover_status = statusbar.set``.
+        # Per-element text lives in ``hover_status`` (iid → str); fallback:
+        # meta key → tree label → Hydra path.  Re-map freely at runtime.
+        self.on_hover_status: Callable[[str], None] | None = None
+        self.hover_status: dict[Any, str] = {}
+        self._status_iid: Any = None
+        self._hover_iid: Any = None
+        self._iid_of_row: dict[int, Any] = {}  # inverse _row_map, rebuilt in load()
+        self._hover_ov = BrowseOverlay(
+            self.sh,
+            self._hover_write,
+            self._hover_read,
+            dir_title="Browse data path",
+            files_title="Browse data files",
+            leave_hides=True,
+        )
+
+        # Motion mechanics live in SheetHoverBinder — intent scheduling,
+        # scroll/leave teardown, churn veto; gating is injected below.
+        self._hover_binder = SheetHoverBinder(self.sh, self._hover_ov, self._hover_resolve)
+        # Status-bar clear on leave — separate bind (SheetHoverBinder handles overlay hide)
+        self.sh.MT.bind("<Leave>", lambda _: self._clear_status(), add="+")
 
     # ── public API ──────────────────────────────────────────────────
 
@@ -220,6 +178,9 @@ class ConfigSheet:
         self._config_root = config_root if config_root is not None else schema_type(cfg)
         self._return_enum = return_enum
         self._meta.clear()
+        self._hover_ov.hide()  # rows are about to die
+        self._hover_iid = self._status_iid = None
+        self._publish_status(None)
         self.sh.del_rows(rows=list(range(self.sh.total_rows())))
         self.sh.enable_bindings(["all"])
         self._nv = self._calc_nv(cfg, full)
@@ -229,6 +190,7 @@ class ConfigSheet:
         self._apply_styles()
         self._apply_default_fg()
         self.sh.redraw()
+        self._iid_of_row = {r: i for i, r in self._row_map().items()}
         self._take_snapshot()
 
     def get_edited_coefs(self) -> dict[str, Any]:
@@ -419,7 +381,7 @@ class ConfigSheet:
     # ── coef inserters ──────────────────────────────────────────────
 
     def _ins_coef(self, par: Any, name: str, value: Any, date: str) -> None:
-        shape = _COEF_SHAPES.get(name, ())
+        shape = COEF_SHAPES.get(name, ())
         if len(shape) == 2:
             self._ins_2d(par, name, value, shape, date)
         elif len(shape) == 1 and name in _1D_WITH_DATES:
@@ -543,6 +505,8 @@ class ConfigSheet:
         """
         if iid is not None and kwargs.get("open_") is not None and iid in self._meta:
             self._meta[iid]["open"] = bool(kwargs["open_"])
+            self._hover_ov.hide()
+            self._hover_iid = None
         return self._item_orig(iid, *args, **kwargs)
 
     def _ins(self, parent_iid, text, vals, date="", meta=None, open_=False):
@@ -593,7 +557,7 @@ class ConfigSheet:
         m = self._meta.get(iid, {})
         if c == _DATE_COL - self.DATA_COL_BASE and m.get("has_date"):
             result = val if _is_date(val) else None
-            _lg.debug(
+            _l.debug(
                 "edit r=%s c=%s iid=%s path=%s val=%r → %s (date)",
                 event.row,
                 c,
@@ -604,7 +568,7 @@ class ConfigSheet:
             )
             return result
         if c >= m.get("max_col", self._nv):
-            _lg.debug(
+            _l.debug(
                 "edit r=%s c=%s iid=%s path=%s → REJECT (beyond max_col=%s)",
                 event.row,
                 c,
@@ -615,9 +579,9 @@ class ConfigSheet:
             return None
         if m.get("is_string"):
             return val
-        if _is_num(val):
+        if _pf(val) is not None:
             return val
-        _lg.debug(
+        _l.debug(
             "edit r=%s c=%s iid=%s path=%s val=%r → REJECT (not numeric)",
             event.row,
             c,
@@ -630,13 +594,18 @@ class ConfigSheet:
     # ── edit lifecycle ──────────────────────────────────────────────
 
     def _on_begin_edit_cell(self, event) -> str | None:
-        """Detach any previous browse button; attach for path-type rows."""
+        """Detach any previous browse button; attach for path-type rows.
+
+        Hover → edit handoff: hide the hover overlay so the editor-anchored
+        button takes over without both being visible simultaneously.
+        """
+        self._hover_ov.hide()
         iid = self._iid_at_row(event.row)
         m = self._meta.get(iid, {})
         if self._mgr is not None:
-            self._mgr.detach()  # always clean up previous button first
+            self._mgr.detach()
         if m.get("browse") and self._mgr is not None:
-            self._mgr.attach(self._row_map()[iid], event.column)
+            self._mgr.attach(self._row_map()[iid], event.column, iid=iid)
         return self.sh.get_cell_data(event.row, event.column)
 
     def _on_end_edit_cell(self, event) -> None:
@@ -652,18 +621,111 @@ class ConfigSheet:
         # existing style logic
         self._apply_end_edit_style(event)
 
+    # ── sheet-hover overlay ──────────────────────────────────────────
+
+    def _clear_status(self) -> None:
+        """Clear status-bar text when pointer leaves the sheet."""
+        self._status_iid = None
+        self._publish_status(None)
+
+    def _publish_status(self, iid: Any) -> None:
+        """Status-bar text for the hovered element — override per-iid via
+        :attr:`hover_status` (an explicit ``""`` silences the fallback)."""
+        if self.on_hover_status is None:
+            return
+        if iid is None:
+            self.on_hover_status("")
+            return
+        if (txt := self.hover_status.get(iid)) is None:
+            m = self._meta.get(iid, {})
+            label = ""
+            with suppress(AttributeError, TclError, TypeError):
+                label = self.sh.item(iid).get("text") or ""
+            txt = str(m.get("key") or label or m.get("path") or "")
+        self.on_hover_status(txt)
+
+    def _hover_place_kw(self, internal_row: int) -> dict[str, Any]:
+        """place() kwargs: right edge of the visible row strip.
+
+        ``row_positions`` are canvas-space cumulative row edges — subtract
+        the viewport origin; ``x = winfo_width()`` with ``anchor="ne"`` pins
+        the button to the visible right edge, horizontally scroll-proof.
+        Sidesteps the ``bbox`` corner-vs-wh convention ambiguity entirely.
+        """
+        with suppress(AttributeError, TypeError, IndexError, TclError):
+            mt = self.sh.MT
+            y1, y2 = mt.row_positions[internal_row], mt.row_positions[internal_row + 1]
+            return {"in_": mt, "x": mt.winfo_width(), "y": y1 - mt.canvasy(0), "anchor": "ne", "height": y2 - y1}
+        return {"in_": self.sh, "relx": 1.0, "x": 0, "rely": 0, "y": 0, "height": 20}
+
+    def _hover_write(self, text: str) -> None:
+        """Write path to column 0 of the hovered row + restyle.
+
+        ``set_cell_data`` bypasses the edit pipeline (no ``end_edit_cell``),
+        so we call ``_apply_edit_value`` directly and ``notify_path_changed``
+        for coefs_path reload.
+        """
+        iid = self._hover_iid
+        if iid is None:
+            return
+        row_of = self._row_map()
+        r = row_of.get(iid)
+        if r is not None:
+            with suppress(TclError):
+                self.sh.set_cell_data(r, 0, text)
+        self._apply_edit_value(iid, 0, text)
+        m = self._meta.get(iid, {})
+        if m.get("key") == "coefs_path" and self._mgr is not None:
+            self.sh.after_idle(lambda: self._mgr.notify_path_changed(text))
+
+    def _hover_read(self) -> str:
+        """Read column 0 of the hovered row (for dialog initialdir)."""
+        iid = self._hover_iid
+        if iid is None:
+            return ""
+        row_of = self._row_map()
+        r = row_of.get(iid)
+        if r is not None:
+            try:
+                return self.sh.get_cell_data(r, 0) or ""
+            except (TclError, IndexError):
+                return ""
+        return ""
+
+    def _hover_resolve(self, event) -> dict[str, Any] | None:
+        """Hover gate: place_kw for browse rows, ``None`` elsewhere.
+
+        Mechanics live in :class:`SheetHoverBinder`; status publishing
+        and browse gating belong here, beside the iid resolution.
+        Uses :attr:`_iid_of_row` cache (rebuilt in :meth:`load`).
+        """
+        # API drift: 7.x identify_row takes event object, older takes y
+        r = None
+        for arg in (event, event.y):
+            with suppress(AttributeError, TypeError, TclError, ValueError):
+                r = self.sh.MT.identify_row(arg)
+                if r is not None and r >= 0:
+                    break
+        iid = self._iid_of_row.get(r) if r is not None and r >= 0 else None
+        if iid != self._status_iid:  # publish status for any row, not just browse
+            self._status_iid = iid
+            self._publish_status(iid)
+        if iid is None or not self._meta.get(iid, {}).get("browse"):
+            self._hover_iid = None
+            return None
+        self._hover_iid = iid
+        return self._hover_place_kw(r)
+
     def _style_header(self, bg: str, fg: str) -> None:
         """Color header row and top-left corner (node column styled per-row in :meth:`_apply_styles`)."""
         sh = self.sh
         # global header fg/bg — most reliable path for tksheet 7.x
-        with suppress(AttributeError, TypeError):
-            sh.set_options(header_fg=fg, header_bg=bg)
-        # per-cell header highlight (more reliable than set_options in some builds)
-        for c in range(sh.total_columns()):
-            sh.highlight_cells(row=0, column=c, canvas="header", bg=bg, fg=fg, redraw=False)
+        sh.set_options(header_fg=fg, header_bg=bg)
+        # # per-cell header highlight (more reliable than set_options in some builds)
+        # for c in range(sh.total_columns()):
+        #     sh.highlight_cells(row=0, column=c, canvas="header", bg=bg, fg=fg, redraw=False)
         # top-left corner cell (intersection of header + index/tree)
-        with suppress(AttributeError, TypeError, ValueError, KeyError):
-            sh.highlight_cells(row=0, column=0, canvas="topleft", bg=bg, redraw=False)
+        sh.highlight_cells(row=0, column=0, canvas="topleft", bg=bg, redraw=False)
 
     def _apply_open(self) -> None:
         """Re-apply desired open states stored in meta during construction.
@@ -756,14 +818,14 @@ class ConfigSheet:
     def _apply_styles(self) -> None:
         sh = self.sh
         style = ttk.Style()
-        bg = _resolve_bg(sh, style.lookup("TFrame", "background") or "#F0F0F0")
-        self._fg_default = _resolve_bg(sh, style.lookup("TFrame", "foreground") or "#000000")
+        bg = const.tk_color_to_hex(sh, style.lookup("TFrame", "background") or "#F0F0F0")
+        self._fg_default = const.tk_color_to_hex(sh, style.lookup("TFrame", "foreground") or "#000000")
         # Index canvas (tree column) background — global fallback only; the 7.6.x
         # draw path consults per-cell highlights.  No index_foreground global:
         # per-node fg is state-driven (blue = at default, see step 1).
         with suppress(AttributeError, TypeError):
             sh.set_options(index_background=bg)
-        self._style_header(bg, _BLUE_FG)
+        self._style_header(bg, const.BLUE_FG)
         row_of = self._row_map()
         first_data_col = self.DATA_COL_BASE - 1  # tksheet 0-based
         for iid, m in self._meta.items():
@@ -775,7 +837,7 @@ class ConfigSheet:
                 column=0,
                 canvas="index",
                 bg=bg,
-                fg=_BLUE_FG if self._node_at_default(iid) else self._fg_default,
+                fg=const.BLUE_FG if self._node_at_default(iid) else self._fg_default,
                 redraw=False,
             )
             date_cols = tuple(int(c) for c in (m.get("meta_date_cols") or ()))
@@ -790,7 +852,7 @@ class ConfigSheet:
                 if col >= first_data_col:
                     sh.align_cells(r, col, align="e", redraw=False)
                     if m.get("date_style") == "blue":
-                        sh.highlight_cells(row=r, column=col, fg=_BLUE_FG, highlight_fg=_BLUE_FG, redraw=False)
+                        sh.highlight_cells(row=r, column=col, fg=const.BLUE_FG, highlight_fg=const.BLUE_FG, redraw=False)
             max_col = int(m.get("max_col") or 0)
             for meta_col in range(1, max_col + 1):
                 col = meta_col - self.DATA_COL_BASE
@@ -873,65 +935,52 @@ class ConfigSheet:
                     and (dv := self._default_for_cell(iid, m, j)) is not _NO_DEFAULT
                     and _fmt(vals[j]) == _fmt(dv)
                 ):
-                    sh.highlight_cells(row=r, column=j, fg=_DEFAULT_FG, redraw=False)
+                    sh.highlight_cells(row=r, column=j, fg=const.DEFAULT_FG, redraw=False)
 
-    def _apply_end_edit_style(self, event) -> None:
-        """Toggle gray cell fg + blue node labels after a committed edit.
+    def _apply_edit_value(self, iid: Any, col: int, value: str) -> None:
+        """Restyle cell + ancestors after a committed value.
 
-        ``event.row`` is a **display** row → resolve iid via the visible
-        walk, then convert to the internal row (:meth:`_row_map`) for every
-        cell-API call.  Gray: match → ``_DEFAULT_FG``, else theme fg —
-        always explicit, since ``fg=None`` is a no-op under tksheet's
-        per-key merge.  Blue: node label + ancestors re-checked — blue
-        iff the whole subtree is at default.
+        Shared by ``_apply_end_edit_style`` (normal ``end_edit_cell`` path)
+        and ``_hover_write`` (hover-browse, where ``set_cell_data``
+        bypasses the edit pipeline).
         """
-        c, r = event.column, event.row
-        iid = self._iid_at_row(r)
-        if iid is None:
-            _lg.debug("end_edit r=%s c=%s → no iid (invalid display row)", r, c)
-            return
         row_of = self._row_map()
         if (ri := row_of.get(iid)) is None:
-            _lg.debug("end_edit r=%s c=%s iid=%s → no internal row", r, c, iid)
             return
         m = self._meta.get(iid, {})
-        dv = self._default_for_cell(iid, m, c)
+        dv = self._default_for_cell(iid, m, col)
         if dv is _NO_DEFAULT:
-            _lg.debug(
-                "end_edit r=%s→%s c=%s iid=%s path=%s → no default, skipping",
-                r,
-                ri,
-                c,
-                iid,
-                m.get("path"),
-            )
             return
-        new_val = str(event.value) if event.value is not None else ""
-        match = _fmt(new_val) == _fmt(dv)
-        _lg.debug(
-            "end_edit r=%s→%s c=%s iid=%s path=%s val=%r default=%r match=%s → %s",
-            r,
-            ri,
-            c,
-            iid,
-            m.get("path"),
-            new_val,
-            dv,
-            match,
-            "GRAY" if match else "CLEAR",
-        )
-        sh = self.sh
-        sh.highlight_cells(row=ri, column=c, fg=_DEFAULT_FG if match else self._fg_default, redraw=False)
+        match = _fmt(value) == _fmt(dv)
+        self.sh.highlight_cells(row=ri, column=col, fg=const.DEFAULT_FG if match else self._fg_default, redraw=False)
         # node labels: propagate at-default state up the ancestor chain
         node: Any = iid
         while node is not None:
             if (nr := row_of.get(node)) is not None:
-                sh.highlight_cells(
+                self.sh.highlight_cells(
                     row=nr,
                     column=0,
                     canvas="index",
-                    fg=_BLUE_FG if self._node_at_default(node) else self._fg_default,
+                    fg=const.BLUE_FG if self._node_at_default(node) else self._fg_default,
                     redraw=False,
                 )
             node = self._meta.get(node, {}).get("parent")
-        sh.redraw()
+        self.sh.redraw()
+
+    def _apply_end_edit_style(self, event) -> None:
+        """Toggle gray cell fg + blue node labels after a committed edit.
+
+        Resolves iid from the display row, then delegates to
+        :meth:`_apply_edit_value`.
+        """
+        c, r = event.column, event.row
+        iid = self._iid_at_row(r)
+        if iid is None:
+            _l.debug("end_edit r=%s c=%s → no iid (invalid display row)", r, c)
+            return
+        new_val = str(event.value) if event.value is not None else ""
+        _l.debug(
+            "end_edit r=%s c=%s iid=%s path=%s val=%r",
+            r, c, iid, self._meta.get(iid, {}).get("path"), new_val,
+        )
+        self._apply_edit_value(iid, c, new_val)

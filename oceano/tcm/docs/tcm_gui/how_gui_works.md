@@ -11,6 +11,8 @@ thread.  No custom CLI parsing — Hydra handles all config keys natively via
 | `app.py` | Tk root, layout §1–5, 300 ms polling, argv prefill |
 | `worker.py` | Background thread: `call_in_raw_dir` for Scan and Run |
 | `coef_sheet.py` | tksheet treeview: type-aware widgets (checkbox/dropdown/align), node + metadata bg; row-geometry-free styling via `_row_map()` |
+| `_path_field.py` | 1×1 tksheet as path field — cell-behavior parity (double-click/keypress edit, Enter commit, Esc undo) via `SheetHoverBinder` + `BrowseButtonManager` |
+| `_browse_button.py` | `BrowseOverlay` (widget core), `BrowseButtonManager` (sheet-edit policy), `SheetHoverBinder` (MT motion → overlay show/hide), `bind_hover_browse` (Entry legacy) |
 | `_cell_spec.py` | Hydra dataclass → ``CellSpec`` (bool/enum/text/number/date) for cell rendering |
 | `progress_bridge.py` | `GuiTqdm` (tqdm replacement) + module-level runtime injection |
 | `log_bridge.py` | `install()` once at App startup → root logger captures GUI-thread AND worker logs → `QueueHandler` (consecutive dedup + emit-time text freeze) → `ScrolledText` drain |
@@ -101,6 +103,11 @@ Click Run while processing → PauseGate
 | metadata row bg up to last date cell | all cells from col 0 through last `meta_date_cols` entry share the bg |
 | ordering `_apply_open()` → `_row_map()` → `_apply_styles()` → `_apply_default_fg()` | invariant: build tree → set open states → compute row map → apply styles → gray defaults → redraw |
 | `date` independent of `max_col` | coefs parent has `max_col=0`; styling in dedicated section before `max_col` loop |
+| PathField = 1×1 Sheet, not Entry | cell-behavior parity: double-click/keypress edit, Enter commit, Esc undo; Entry can't grow these |
+| `SheetHoverBinder` extracted from ConfigSheet | three MT binds + churn veto reusable by PathField and any future sheet-hover site |
+| `_hover_resolve` uses `_iid_of_row` cache | O(1) lookup on every `<Motion>` event; rebuilt in `load()` (stable between loads) |
+| `_hover_resolve` publishes status for ALL rows | not just browse rows; `_clear_status` is a separate `<Leave>` bind |
+| `_hover_resolve` handles identify_row API drift | tries `identify_row(event)` first (7.x), falls back to `identify_row(event.y)` (older) |
 
 ## Type-aware cell rendering (full mode)
 
@@ -121,7 +128,123 @@ The `path` stored in `_meta[iid]["path"]` is the dotted Hydra path (e.g.
 tree using `dataclasses.fields` + `get_type_hints(include_extras=True)`.
 `Annotated`, `Optional`, and `Union` are unwrapped by `_cell_spec._unwrap`.
 
-## Rich-text clipboard (Ctrl+C)
+## Floating browse button (`_browse_button.py`)
+
+A `…📁` / `…📄` button that appears next to the active editor (tksheet
+TextEditor or `ttk.Entry`) and writes the selected path to **column 0** of
+the target row, regardless of which column the user clicked.
+
+### Two usage sites
+
+| Site | Trigger | Target |
+|------|---------|--------|
+| `_path_field.py` §1 — data path | `SheetHoverBinder` motion policy | PathField's single cell `(0, 0)` via `set_cell_data` + `_notify` |
+| `coef_sheet.py` — config tree | `_on_begin_edit_cell` for rows with `meta["browse"] = True` (`input`, `coefs_path`) | tksheet cell `(row, 0)` via `set_cell_data` |
+
+### Create / destroy lifecycle
+
+Button is **created** in `_acquire_and_place` (after retry-polling finds the
+editor) and **destroyed** in `detach()`.  A persistent widget whose
+`in_=editor` master is destroyed by tksheet would survive at stale canvas
+coordinates — `place_forget()` alone is insufficient.
+
+### Three-layer teardown (tksheet path)
+
+| Layer | Signal | Covers |
+|-------|--------|--------|
+| 1 | `end_edit_cell` → `detach()` | Normal Enter / click-away close |
+| 2 | `<Destroy>` on editor → `detach()` | Tree-arrow toggle, `load()` rebuild |
+| 3 | `_update_icon` polling (80 ms) | Editor reuse without destroy; detects `get_text_editor_widget() is not self._editor` |
+
+`detach()` is also called unconditionally at the start of every
+`_on_begin_edit_cell` — ensures the previous button is destroyed before
+any new edit, even on non-path rows.
+
+### Idempotent reset (F3)
+
+`attach()` opens with `detach()`, which cancels pending retry/icon jobs
+and destroys any live button from a previous cycle.  Prevents button
+accumulation when the user rapidly switches between cells.
+
+### Shift-aware icon
+
+`_is_shift_pressed()` polls `GetAsyncKeyState(0x10)` every 80 ms while the
+button is visible.  Default label `…📁` (directory), Shift label `…📄` (files).
+
+### Focus prevention
+
+The button overrides `focus_set` to no-op and sets `takefocus=False`.
+Clicking it must not steal focus from the TextEditor (tksheet closes the
+editor on `<FocusOut>`).  `<Button-1>` returns `"break"` to suppress
+default focus-change behavior.
+
+## PathField (`_path_field.py`)
+
+A 1×1 tksheet posing as the top-level path field.  Visually an Entry
+(headers, index and grid hidden, Entry-colored background), contractually
+a cell — double-click/keypress edit, Enter commit, Esc undo, all native
+tksheet.  Reuses the floating-button stack verbatim: `BrowseButtonManager`
+(editor-anchored, during edit) and `BrowseOverlay` + `SheetHoverBinder`
+(cell-anchored, on hover).
+
+### Design decision: why not Entry?
+
+An Entry can't grow cell-behavior parity (double-click/keypress edit, Enter
+commit, Esc undo).  A 1×1 Sheet with headers/index hidden is visually an
+Entry and contractually a cell — tksheet has no "detached cell" primitive,
+but this is indistinguishable from one, and everything built for the config
+tree drops in.
+
+### Build-verify traps (all degrade silently via `suppress`)
+
+| Trap | Status |
+|------|--------|
+| `show_header`/`show_index` as `set_options` keys vs constructor kwargs | Constructor kwargs work in 7.6; `set_options` keys tested as fallback |
+| `set_height` existence | Fallback: size PathField from the app's geometry manager |
+| `attach(0, 0)` vs `(row, col, iid=None)` signature | Compatible — `iid` is optional in `BrowseButtonManager.attach` |
+| Single-click-to-edit | One extra `<Button-1>` bind if double-click feels wrong for a field |
+
+### Esc-cancel is silent by construction
+
+`_pre_edit` snapshot compare swallows unchanged values — the `_on_end_edit`
+handler only fires `_notify` when the value actually changed.
+
+## SheetHoverBinder (`_browse_button.py`)
+
+Motion policy on a sheet's MT canvas → overlay show/hide.  Extracts the
+three MT binds (`<Motion>`, `<Leave>`, `<MouseWheel>`) and the churn-veto
+logic from ConfigSheet into a reusable class.
+
+### Design
+
+```
+SheetHoverBinder(sheet, overlay, resolve)
+  <Motion>     → resolve(event) → place_kw | None
+                 same place_kw → cancel_hide (churn veto)
+                 different place_kw → schedule_show
+                 None → hide
+  <Leave>      → schedule_hide (pointer-check vetoes over button)
+  <MouseWheel> → hide (viewport shifted → button displaced)
+```
+
+The *resolve* callback owns all business logic: row identification
+(API drift: 7.x takes event object, older takes y), status-bar
+publishing, browse gating.  The binder owns only mechanical
+show/hide/churn.  All binds use `add="+"` — never replace tksheet's
+own MT handlers (a replacing `<MouseWheel>` bind kills scrolling).
+
+### ConfigSheet usage
+
+```python
+self._hover_binder = SheetHoverBinder(self.sh, self._hover_ov, self._hover_resolve)
+# Status-bar clear on leave — separate bind (binder handles overlay hide)
+self.sh.MT.bind("<Leave>", lambda _: self._clear_status(), add="+")
+```
+
+`_hover_resolve` uses `_iid_of_row` cache (rebuilt in `load()`) and
+publishes status for any row (not just browse rows).  `_clear_status`
+is a separate `<Leave>` binding — the binder's `<Leave>` only handles
+overlay hide.
 
 `Ctrl+C` on the log `ScrolledText` calls `copy_rich` from
 [`_rtf_clipboard.py`](`_rtf_clipboard.py`), which walks all tag boundaries,

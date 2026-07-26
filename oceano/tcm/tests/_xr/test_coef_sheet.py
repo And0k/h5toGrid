@@ -46,20 +46,20 @@ class _FakeConfig:
 class TestResolveBg:
     def test_hex_passthrough(self):
         """Already-hex color passes through unchanged."""
-        from tcm_gui.coef_sheet import _resolve_bg
+        from tcm_gui.const import tk_color_to_hex
 
         mock_widget = MagicMock()
         mock_widget.winfo_rgb.return_value = (0xF0 * 257, 0xF0 * 257, 0xF0 * 257)
-        assert _resolve_bg(mock_widget, "#F0F0F0") == "#f0f0f0"
+        assert tk_color_to_hex(mock_widget, "#F0F0F0") == "#f0f0f0"
 
     def test_system_color_converted(self):
         """'SystemButtonFace' → hex via winfo_rgb."""
-        from tcm_gui.coef_sheet import _resolve_bg
+        from tcm_gui.const import tk_color_to_hex
 
         mock_widget = MagicMock()
         # Windows SystemButtonFace ≈ #F0F0F0 → (0xF0*257, 0xF0*257, 0xF0*257)
         mock_widget.winfo_rgb.return_value = (61680, 61680, 61680)
-        result = _resolve_bg(mock_widget, "SystemButtonFace")
+        result = tk_color_to_hex(mock_widget, "SystemButtonFace")
         assert result.startswith("#"), f"expected hex, got {result}"
         assert len(result) == 7, f"expected #rrggbb, got {result}"
 
@@ -67,11 +67,11 @@ class TestResolveBg:
         """TclError → return original string."""
         from tkinter import TclError
 
-        from tcm_gui.coef_sheet import _resolve_bg
+        from tcm_gui.const import tk_color_to_hex
 
         mock_widget = MagicMock()
         mock_widget.winfo_rgb.side_effect = TclError("bad color")
-        assert _resolve_bg(mock_widget, "invalid") == "invalid"
+        assert tk_color_to_hex(mock_widget, "invalid") == "invalid"
 
 
 # ── _cell_spec_for ──────────────────────────────────────────────────────────
@@ -397,6 +397,13 @@ class TestCoefsPathChildRow:
         cs._return_enum = Return
         cs._snap = ({}, {}, "")
         cs._fg_default = "#000000"
+        # __new__ bypasses __init__ — set hover fields manually
+        cs._hover_ov = MagicMock()
+        cs._hover_iid = None
+        cs._iid_of_row = {}
+        cs.on_hover_status = None
+        cs.hover_status = {}
+        cs._status_iid = None
 
         cs._build_coefs(cfg)
         for m in cs._meta.values():
@@ -480,8 +487,10 @@ class TestCoefsPathChildRow:
 
 
 class TestBrowseButtonLifecycle:
-    """Browse button must be destroyed (not just hidden) on detach,
-    and must never be placed on non-browse rows.
+    """Browse button lifecycle via BrowseOverlay delegation.
+
+    ``BrowseButtonManager`` owns a ``BrowseOverlay`` (``self._ov``).
+    The overlay owns the button widget (``self._ov._button``).
     """
 
     @staticmethod
@@ -490,43 +499,38 @@ class TestBrowseButtonLifecycle:
         from tcm_gui._browse_button import BrowseButtonManager
 
         mock_sh = MagicMock()
-        # after() returns a job id that after_cancel can consume
         mock_sh.after.side_effect = lambda ms, cb=None, *_a: f"job_{id(cb)}" if cb else "job"
         return BrowseButtonManager(mock_sh, MagicMock()), mock_sh
 
     def test_detach_destroys_button(self):
-        """``detach()`` must call ``destroy()`` on the button, not ``place_forget``."""
+        """``detach()`` must destroy the button via ``_ov.hide()``."""
         from tcm_gui._browse_button import BrowseButtonManager
 
         mock_sh = MagicMock()
         mock_sh.after.side_effect = lambda ms, cb=None, *_a: f"job_{id(cb)}" if cb else "job"
         mock_editor = MagicMock()
         mock_editor.winfo_height.return_value = 20
-        # At attach() time no editor exists (begin_edit_cell fires before creation)
         mock_sh.get_text_editor_widget.return_value = None
 
         mock_btn = MagicMock()
         with patch("tcm_gui._browse_button.ttk.Button", return_value=mock_btn):
             mgr = BrowseButtonManager(mock_sh, MagicMock())
             mgr.attach(0, 0)
-            # Editor appears before retry fires
             mock_sh.get_text_editor_widget.return_value = mock_editor
             mgr._acquire_and_place()
 
-        assert mgr._button is mock_btn, "button should be the mock after acquire"
+        assert mgr._ov.visible, "overlay button should be visible after acquire"
 
         mgr.detach()
 
-        # Button must be destroyed, not just place_forget'd
         mock_btn.destroy.assert_called_once(), "detach() must destroy the button widget"
-        assert mgr._button is None, "_button must be None after detach"
+        assert not mgr._ov.visible, "overlay must be hidden after detach"
 
     def test_detach_no_button_is_safe(self):
-        """Calling ``detach()`` when no button exists must not raise."""
+        """Calling ``detach()`` when nothing is active must not raise."""
         mgr, _ = self._make_manager()
-        # Never called attach() — detach should be a no-op
         mgr.detach()
-        assert mgr._button is None
+        assert not mgr._ov.visible
 
     def test_attach_cancels_stale_retry(self):
         """A second ``attach()`` must cancel the pending retry from the first."""
@@ -535,15 +539,14 @@ class TestBrowseButtonLifecycle:
         first_job = mgr._retry_job
         assert first_job is not None
 
-        mgr.attach(0, 0)  # second attach
-        # after_cancel must have been called with the first job
+        mgr.attach(0, 0)
         mock_sh.after_cancel.assert_any_call(first_job)
         assert mgr._retry_job != first_job or mgr._retry_job is not None
 
     def test_button_not_created_without_attach(self):
         """No button widget must exist before ``attach()`` + retry fires."""
         mgr, _ = self._make_manager()
-        assert mgr._button is None, "button must not exist before attach"
+        assert not mgr._ov.visible, "button must not exist before attach"
 
     def test_end_edit_detaches_unconditionally(self):
         """``_on_end_edit_cell`` must call ``mgr.detach()`` for ANY row,
@@ -551,7 +554,6 @@ class TestBrowseButtonLifecycle:
 
         cs, mock_sh = TestCoefsPathChildRow._make_loaded_sheet()
         cs._mgr = MagicMock()
-        # Simulate _iid_at_row returning a non-path iid (e.g. Ag row)
         ag_iid = next(iid for iid, m in cs._meta.items() if m.get("type") == "2d")
         cs._iid_at_row = MagicMock(return_value=ag_iid)
         mock_sh.get_cell_data.return_value = ""
@@ -577,7 +579,6 @@ class TestBrowseButtonLifecycle:
         cs, mock_sh = TestCoefsPathChildRow._make_loaded_sheet()
         cs._mgr = MagicMock()
 
-        # Find a non-browse row (e.g. Ag)
         ag_iid = next(iid for iid, m in cs._meta.items() if m.get("type") == "2d")
         cs._iid_at_row = MagicMock(return_value=ag_iid)
         mock_sh.get_cell_data.return_value = ""
@@ -594,77 +595,23 @@ class TestBrowseButtonLifecycle:
             "detach() must be called for ALL rows (cleans up previous button)"
         )
 
-    def test_editor_destroy_triggers_detach(self):
-        """When the editor is destroyed by tksheet (without ``end_edit_cell``),
-        the ``<Destroy>`` binding must call ``detach()`` — prevents ghost buttons."""
-        from tcm_gui._browse_button import BrowseButtonManager
+    def test_begin_edit_hides_hover_overlay(self):
+        """``_on_begin_edit_cell`` must hide the hover overlay (edit takes over)."""
+        cs, mock_sh = TestCoefsPathChildRow._make_loaded_sheet()
+        cs._mgr = MagicMock()
 
-        mock_sh = MagicMock()
-        mock_sh.after.side_effect = lambda ms, cb=None, *_a: f"job_{id(cb)}" if cb else "job"
-        mock_editor = MagicMock()
-        mock_editor.winfo_height.return_value = 20
-        mock_sh.get_text_editor_widget.return_value = None  # no editor at attach time
+        input_iid = next(iid for iid, m in cs._meta.items() if m.get("type") == "input")
+        cs._iid_at_row = MagicMock(return_value=input_iid)
+        mock_sh.get_cell_data.return_value = ""
 
-        mock_btn = MagicMock()
-        with patch("tcm_gui._browse_button.ttk.Button", return_value=mock_btn):
-            mgr = BrowseButtonManager(mock_sh, MagicMock())
-            mgr.attach(0, 0)
-            mock_sh.get_text_editor_widget.return_value = mock_editor  # editor appears
-            mgr._acquire_and_place()
+        event = MagicMock()
+        event.row = 0
+        event.column = 0
+        cs._on_begin_edit_cell(event)
 
-        assert mgr._button is mock_btn, "precondition: button exists"
-
-        # Capture the <Destroy> binding that was registered on the editor
-        destroy_bind_calls = [c for c in mock_editor.bind.call_args_list if c.args and c.args[0] == "<Destroy>"]
-        assert len(destroy_bind_calls) >= 1, (
-            f"expected <Destroy> binding on editor, got {mock_editor.bind.call_args_list}"
+        cs._hover_ov.hide.assert_called_once(), (
+            "hover overlay must be hidden when edit begins (handoff)"
         )
-        # Extract the callback from the binding
-        destroy_cb = destroy_bind_calls[-1].args[1]
-
-        # Simulate tksheet destroying the editor
-        destroy_event = MagicMock()
-        destroy_event.widget = mock_editor  # must be the editor itself
-        destroy_cb(destroy_event)
-
-        # Button must be destroyed via detach()
-        mock_btn.destroy.assert_called_once(), (
-            "editor <Destroy> must trigger detach() → destroy()"
-        )
-        assert mgr._button is None, "_button must be None after editor destroy"
-
-    def test_polling_detects_replaced_editor(self):
-        """When tksheet reuses the TextEditor for a different row,
-        ``_update_icon`` polling must detect the stale editor and detach."""
-        from tcm_gui._browse_button import BrowseButtonManager
-
-        mock_sh = MagicMock()
-        mock_sh.after.side_effect = lambda ms, cb=None, *_a: f"job_{id(cb)}" if cb else "job"
-        editor_v1 = MagicMock()
-        editor_v1.winfo_height.return_value = 20
-        mock_sh.get_text_editor_widget.return_value = None  # no editor at attach time
-
-        mock_btn = MagicMock()
-        with patch("tcm_gui._browse_button.ttk.Button", return_value=mock_btn):
-            mgr = BrowseButtonManager(mock_sh, MagicMock())
-            mgr.attach(0, 0)
-            mock_sh.get_text_editor_widget.return_value = editor_v1  # editor appears
-            mgr._acquire_and_place()
-
-        assert mgr._editor is editor_v1, "precondition: editor captured"
-
-        # tksheet now returns a DIFFERENT editor (reused for another row)
-        editor_v2 = MagicMock()
-        mock_sh.get_text_editor_widget.return_value = editor_v2
-
-        # Simulate one polling tick
-        mgr._update_icon()
-
-        mock_btn.destroy.assert_called_once(), (
-            "polling must detect replaced editor and detach"
-        )
-        assert mgr._button is None, "_button must be None after editor replaced"
-        assert mgr._editor is None, "_editor must be None after editor replaced"
 
     def test_f3_stale_retry_cancelled(self):
         """F3 — ``attach()`` cancels any pending retry from a previous cycle.
@@ -684,15 +631,14 @@ class TestBrowseButtonLifecycle:
             first_job = mgr._retry_job
             assert first_job is not None, "precondition: retry scheduled"
 
-            # Second attach() must cancel the first retry
             mgr.attach(1, 0)
 
         mock_sh.after_cancel.assert_any_call(first_job), (
             "attach() must cancel the previous retry (F3 — prevents L1)"
         )
 
-    def test_f3_attach_resets_existing_button(self):
-        """F3 — ``attach()`` must destroy a live button from a previous cycle
+    def test_f3_attach_resets_existing_overlay(self):
+        """F3 — ``attach()`` must hide a live overlay from a previous cycle
         before starting a new retry.  Without this, buttons accumulate.
 
         Regression: L3 — ``attach`` ≠ reset.
@@ -701,57 +647,65 @@ class TestBrowseButtonLifecycle:
 
         mock_sh = MagicMock()
         mock_sh.after.side_effect = lambda ms, cb=None, *_a: f"job_{id(cb)}" if cb else "job"
-        mock_sh.get_text_editor_widget.return_value = None  # no editor at attach time
+        mock_sh.get_text_editor_widget.return_value = None
 
-        old_btn = MagicMock()
-        new_btn = MagicMock()
-        btn_seq = iter([old_btn, new_btn])
-        with patch("tcm_gui._browse_button.ttk.Button", side_effect=lambda *a, **kw: next(btn_seq)):
+        mock_btn = MagicMock()
+        with patch("tcm_gui._browse_button.ttk.Button", return_value=mock_btn):
             mgr = BrowseButtonManager(mock_sh, MagicMock())
 
-            # First cycle: editor appears after attach, button placed
             mock_editor_1 = MagicMock()
             mock_editor_1.winfo_height.return_value = 20
             mgr.attach(0, 0)
             mock_sh.get_text_editor_widget.return_value = mock_editor_1
             mgr._acquire_and_place()
-            assert mgr._button is old_btn, "precondition: first button placed"
+            assert mgr._ov.visible, "precondition: first overlay visible"
 
-            # Second attach() must destroy old_btn before starting new retry
             mock_sh.get_text_editor_widget.return_value = None
             mgr.attach(1, 0)
 
-            old_btn.destroy.assert_called_once(), (
-                "attach() must destroy the previous button (F3 — idempotent reset)"
-            )
+        mock_btn.destroy.assert_called_once(), (
+            "attach() must destroy the previous button (F3 — idempotent reset)"
+        )
 
-    def test_browse_writes_to_col0_regardless_of_edit_col(self):
-        """Browse must always write the selected path to column 0,
-        even if the user clicked on column 2 to open the editor."""
+    def test_write_cell_targets_col0(self):
+        """``_write_cell`` must write to column 0 and call the restyler."""
         from tcm_gui._browse_button import BrowseButtonManager
 
         mock_sh = MagicMock()
         mock_sh.after.side_effect = lambda ms, cb=None, *_a: f"job_{id(cb)}" if cb else "job"
-        mock_editor = MagicMock()
-        mock_editor.winfo_height.return_value = 20
         mock_sh.get_text_editor_widget.return_value = None
 
-        with (
-            patch("tcm_gui._browse_button.ttk.Button"),
-            patch("tcm_gui._browse_button.filedialog.askdirectory", return_value="/selected/path"),
-        ):
-            mgr = BrowseButtonManager(mock_sh, MagicMock())
-            # Attach with col=2 (user clicked on column 2)
-            mgr.attach(5, 2)
-            mock_sh.get_text_editor_widget.return_value = mock_editor
-            mgr._acquire_and_place()
+        restyler = MagicMock()
+        mgr = BrowseButtonManager(mock_sh, MagicMock(), on_edit_restyler=restyler)
+        mgr.attach(5, 2, iid="test_iid")
 
-            # Simulate browse
-            mgr._browse()
+        # Simulate write_cell directly
+        mgr._write_cell("/selected/path")
 
-        # Path must be written to column 0, not column 2
         mock_sh.set_cell_data.assert_called_once_with(5, 0, "/selected/path"), (
-            "browse must write path to column 0 regardless of edit column"
+            "write_cell must write to column 0 regardless of edit column"
         )
-        # Editor must be closed after browse
-        mock_sh.after_idle.assert_any_call(mock_sh.close_text_editor)
+        restyler.assert_called_once_with("test_iid", 0, "/selected/path"), (
+            "restyler must be called with (iid, 0, text)"
+        )
+        mock_sh.after_idle.assert_called_once_with(mock_sh.close_text_editor), (
+            "editor must be closed after write"
+        )
+
+    def test_read_cell_reads_col0(self):
+        """``_read_cell`` must read column 0 of the target row."""
+        from tcm_gui._browse_button import BrowseButtonManager
+
+        mock_sh = MagicMock()
+        mock_sh.after.side_effect = lambda ms, cb=None, *_a: f"job_{id(cb)}" if cb else "job"
+        mock_sh.get_cell_data.return_value = "/data/coefs"
+
+        mgr = BrowseButtonManager(mock_sh, MagicMock())
+        mgr.attach(3, 1)  # editing col 1
+
+        result = mgr._read_cell()
+
+        mock_sh.get_cell_data.assert_called_with(3, 0), (
+            "read_cell must read column 0 regardless of edit column"
+        )
+        assert result == "/data/coefs"
