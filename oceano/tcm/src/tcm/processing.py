@@ -20,14 +20,13 @@ from omegaconf import DictConfig, OmegaConf
 from tqdm.dask import TqdmCallback
 
 
-
-
-from tcm import _constants, cli, config_yaml, format, paths, utils2init
+from tcm import _constants, cli, config_yaml, format, paths, stage_ctx, utils2init
 from tcm._xr import coefs as xr_coefs
 from tcm._xr import dataset, physical, storage
 from tcm._xr import io as xr_io
 from tcm.config import Return
 from tcm.incl_calc.coefs import get_coefs_from_cfg
+
 try:
     from tcm_gui import progress_bridge
 except ImportError:
@@ -61,19 +60,27 @@ _EXT_BINARY = _constants._EXT_NC | _constants._EXT_HDF5
 
 class Stage(StrEnum):
     """Per-probe phase labels (value = upper-bar description text)."""
-    LOAD  = "load"   # xr_io.load_raw / _load_batch
+
+    LOAD = "load"  # xr_io.load_raw / _load_batch
     COEFS = "coefs"  # prepare_coefs + save
-    PROC  = "proc"   # physical.process (calc + binning)
-    NC    = "NC"     # store_processed_incremental (per bin), use_h5 only
-    TSV   = "TSV"    # xr_io.ds_to_csv (per bin), text_path only
+    PROC = "proc"  # physical.process (calc + binning)
+    NC = "NC"  # store_processed_incremental (per bin), use_h5 only
+    TSV = "TSV"  # xr_io.ds_to_csv (per bin), text_path only
+    COMBINE = "combine"  # _combine_probes (post-loop, not per-probe)
 
 
-_probe_base = {"v": 0}    # set per probe by process_loading_yaml
-_probe_total = {"v": 0}   # set once by process_loading_yaml (n_cfgs × 100)
+_probe_base = {"v": 0}  # set per probe by process_loading_yaml
+_probe_total = {"v": 0}  # set once by process_loading_yaml (n_cfgs × 100)
 
 
 def _stage(label: str, frac: int) -> None:
-    """Tick the upper bar: ``set(base + frac, probe_total, label)``."""
+    """Advance the overall progress bar to *frac* % of the current probe.
+
+    Uses processing-specific ``_probe_base`` / ``_probe_total`` globals
+    to compute the absolute position within the multi-config run.
+    Stage bar is NOT reset here — it is naturally replaced by the next
+    ``GuiTqdm`` or ``_tick`` call and cleared only at run completion.
+    """
     if rt := progress_bridge.get_runtime():
         rt.progress_overall.set(_probe_base["v"] + frac, _probe_total["v"], label)
 
@@ -202,10 +209,7 @@ def _resolve_use_h5(cfg: DictConfig) -> None:
         if _constants.H5_AVAILABLE:
             _constants.use_h5_set(True)
         else:
-            lf.warning(
-                "use_h5=True requested but h5py unavailable — "
-                "forced to False (TSV-only mode)"
-            )
+            lf.warning("use_h5=True requested but h5py unavailable — forced to False (TSV-only mode)")
             OmegaConf.update(cfg, "program.use_h5", False)
             _constants.use_h5_set(False)
     else:
@@ -262,13 +266,13 @@ def run(cfg: DictConfig) -> dict[str, dict[str, Any]] | None:
         # :func:`run_processing` derives the correct pcid and output group.
         tables = list(cfg.input.tables or [])
         for tbl in tables or [""]:
-            cfg_pc = OmegaConf.merge(
-                cfg, OmegaConf.create({"input": {"tables": [tbl]}})
-            ) if tables else cfg
+            cfg_pc = OmegaConf.merge(cfg, OmegaConf.create({"input": {"tables": [tbl]}})) if tables else cfg
             run_processing(cfg_pc)
         lf.info(
             "Done — processed {} table{} from {}",
-            len(tables), "" if len(tables) == 1 else "s", path_in.name,
+            len(tables),
+            "" if len(tables) == 1 else "s",
+            path_in.name,
         )
         return
 
@@ -295,13 +299,12 @@ def run(cfg: DictConfig) -> dict[str, dict[str, Any]] | None:
         if not regenerate:
             try:
                 from tcm import csv_load
+
                 discovered = csv_load.search_csv_files(path_in)
                 disc_pcids = {format.pcid_from_parts(model=m, number=n) for m, n in discovered}
                 cfg_pcids = set(cfgs_existed)
                 new_pcids = disc_pcids - cfg_pcids
-                if new_pcids and (
-                    pcids_requested == {format.PROBE_WILDCARD} or pcids_requested & new_pcids
-                ):
+                if new_pcids and (pcids_requested == {format.PROBE_WILDCARD} or pcids_requested & new_pcids):
                     lf.info("Source files without configs: {} — will generate", new_pcids)
                     regenerate = True
             except (FileNotFoundError, OSError):
@@ -323,10 +326,7 @@ def run(cfg: DictConfig) -> dict[str, dict[str, Any]] | None:
         still_stale = config_yaml.find_stale_cfgs(cfgs_existed, dir_cfgs) if stale else {}
         if still_stale:
             stale_pcids = set(still_stale)
-            ignored = (
-                stale_pcids - pcids_requested
-                if pcids_requested != {format.PROBE_WILDCARD} else set()
-            )
+            ignored = stale_pcids - pcids_requested if pcids_requested != {format.PROBE_WILDCARD} else set()
             actionable = stale_pcids - ignored
             parts = []
             if actionable:
@@ -372,10 +372,7 @@ def run(cfg: DictConfig) -> dict[str, dict[str, Any]] | None:
     if yaml_path:
         _yp_re = re.compile(_ptr(yaml_path), re.IGNORECASE)
         cfgs_to_run = {
-            pcid: [
-                s for s in stems
-                if _yp_re.fullmatch(s) or _yp_re.fullmatch(f"{s}.yaml")
-            ]
+            pcid: [s for s in stems if _yp_re.fullmatch(s) or _yp_re.fullmatch(f"{s}.yaml")]
             for pcid, stems in cfgs_to_run.items()
         }
         cfgs_to_run = {k: v for k, v in cfgs_to_run.items() if v}
@@ -406,7 +403,9 @@ def run(cfg: DictConfig) -> dict[str, dict[str, Any]] | None:
         if filtered != cfgs_to_run:
             lf.debug(
                 "input.path filter '{}' → {} probes (was {})",
-                path_in.name, len(filtered), len(cfgs_to_run),
+                path_in.name,
+                len(filtered),
+                len(cfgs_to_run),
             )
             cfgs_to_run = filtered
 
@@ -430,19 +429,27 @@ def run(cfg: DictConfig) -> dict[str, dict[str, Any]] | None:
             if not _constants.NC4_AVAILABLE:
                 lf.debug("Combine skipped — netCDF4 not available")
             else:
+                stage_ctx.set_stage(0, Stage.COMBINE)
+                # Tick GUI overall bar for combine phase
+                progress_bridge.stage_desc(stage_ctx._build_prefix())
                 _combine_probes(distinct_pcids, last_cfg)
 
     # Statistics on all variables before exit
     lf.debug(
-        "Run stats: cfgs_existed={}, cfgs_to_run={}, processed={}, failed={}, distinct={}, "
-        "last_cfg={}",
-        len(cfgs_existed), len(cfgs_to_run), processed_pcids, failed_pcids, distinct_pcids,
+        "Run stats: cfgs_existed={}, cfgs_to_run={}, processed={}, failed={}, distinct={}, last_cfg={}",
+        len(cfgs_existed),
+        len(cfgs_to_run),
+        processed_pcids,
+        failed_pcids,
+        distinct_pcids,
         OmegaConf.select(last_cfg, "_yaml_path") if last_cfg else None,
     )
     # Count by distinct probe (a probe that failed on one YAML but succeeded on
     # another is considered successful — the failure was in config, not in data).
     truly_failed = sorted(set(failed_pcids) - set(processed_pcids))
-    skipped = sorted(pcids_requested - set(cfgs_existed)) if pcids_requested != {format.PROBE_WILDCARD} else []
+    skipped = (
+        sorted(pcids_requested - set(cfgs_existed)) if pcids_requested != {format.PROBE_WILDCARD} else []
+    )
     parts = []
     if distinct_pcids:
         parts.append(f"{len(distinct_pcids)} probes: {', '.join(distinct_pcids)} ok")
@@ -453,12 +460,14 @@ def run(cfg: DictConfig) -> dict[str, dict[str, Any]] | None:
     if (return_ := OmegaConf.select(cfg, "program.return_", default=None)) and return_ != Return.END:
         parts.append(f"return_={return_}")
     lf.info("Done — {}", " | ".join(parts) if parts else "nothing processed")
+    stage_ctx.clear()
     return (processed_pcids, failed_pcids, last_cfg, collected)
 
 
 # ---------------------------------------------------------------------------
 # Single-file processing
 # ---------------------------------------------------------------------------
+
 
 def run_processing(cfg: DictConfig):
     """Process one run YAML — single file or batch.
@@ -490,14 +499,19 @@ def run_processing(cfg: DictConfig):
         tbl = format.pcid_to_raw_name(pcid)
 
     lf.debug("Loading data for {}...", pcid)
+    # Reset stage progress so the GUI clears stale text from the previous probe.
+    # Must happen before main_init — which can return early for CFG_FROM_ARGS.
+    if rt := progress_bridge.get_runtime():
+        rt.progress_stage.clear_and_reset()
+    # Set per-config base for granular stage ticks (injected by process_loading_yaml).
+    # Must extract BEFORE main_init — ini2dict strips non-section scalar keys.
+    if (si := cfg.get("_stem_idx")) and (nc := cfg.get("_n_cfgs")):
+        _probe_base["v"] = (si - 1) * 100
+        _probe_total["v"] = nc * 100
     cfg = cli.main_init(cfg, program_name="TCM processing")
     # Early-exit: main_init returns DictConfig before ini2dict; propagate upstream.
     if not isinstance(cfg, dict):
         return cfg
-    # Set per-config base for granular stage ticks (injected by process_loading_yaml).
-    if (si := cfg.get("_stem_idx")) and (nc := cfg.get("_n_cfgs")):
-        _probe_base["v"] = (si - 1) * 100
-        _probe_total["v"] = nc * 100
     cfg_in = cfg["input"]  # already type-converted plain dict after main_init
 
     # Active stage plan for upper-bar ticks (NC only if use_h5 True; TSV if text_path).
@@ -514,6 +528,10 @@ def run_processing(cfg: DictConfig):
     def _frac(i: int) -> int:  # boundary i of N active stages → 0..100
         return round(i * 100 / _n_active)
 
+    # Set stage context for logging prefix (load begins)
+    stage_ctx.set_stage(1, Stage.LOAD)
+    progress_bridge.stage_desc(stage_ctx._build_prefix())
+
     # Batch mode (cfg.files exists): iterate and concatenate
     if cfg.get("files"):
         ds_raw, coefs_from_file = _load_batch(cfg, pcid)
@@ -524,9 +542,11 @@ def run_processing(cfg: DictConfig):
             text_type=pcid[:1] if pcid else "i",
             cfg_in=cfg_in,
         )
-    _stage(f"{pcid} {Stage.LOAD}", _frac(1))  # load done → tick 1
+    _stage(stage_ctx._build_prefix(), _frac(1))  # load done → tick 1
 
     # Coefs: coefs_path (file) → input.coefs (run YAML override wins)
+    stage_ctx.set_stage(2, Stage.COEFS)
+    progress_bridge.stage_desc(stage_ctx._build_prefix())
     coefs = get_coefs_from_cfg(cfg_in, pcid)
     if coefs_from_file:
         coefs = {**coefs, **{k: v for k, v in coefs_from_file.items() if v is not None}}
@@ -538,7 +558,8 @@ def run_processing(cfg: DictConfig):
         if not raw_nc_path.exists():
             if (h5_path := raw_nc_path.with_suffix("").with_suffix(".raw.h5")).exists():
                 from tcm.incl_calc.coefs import load_coefs
-                if (h5_coefs := load_coefs(h5_path, tbl)):
+
+                if h5_coefs := load_coefs(h5_path, tbl):
                     coefs = {**h5_coefs, **{k: v for k, v in coefs.items() if v is not None}}
                     lf.info("Auto-migrate: extracted coefs from {}", h5_path)
 
@@ -555,7 +576,7 @@ def run_processing(cfg: DictConfig):
     )
     if msg:
         lf.debug("Coefs prepared: {}", msg)
-    _stage(f"{pcid} {Stage.COEFS}", _frac(2))  # coefs done → tick 2
+    _stage(stage_ctx._build_prefix(), _frac(2))  # coefs done → tick 2
 
     # ── Phase 3: Save coefs
     # Two triggers: (a) coefs changed (zeroing/azimuth), (b) raw NC being created for the first time.
@@ -586,7 +607,8 @@ def run_processing(cfg: DictConfig):
                 )
         elif changed_coefs and yaml_path:
             config_yaml.update_coefs_in_run_yaml(
-                yaml_path, {k: coefs_merged[k] for k in changed_coefs},
+                yaml_path,
+                {k: coefs_merged[k] for k in changed_coefs},
             )
             yaml_written = True
         elif changed_coefs:
@@ -603,7 +625,8 @@ def run_processing(cfg: DictConfig):
     elif yaml_path and changed_coefs:
         # noh5 fallback: write only changed coefs to run YAML
         config_yaml.update_coefs_in_run_yaml(
-            yaml_path, {k: coefs_merged[k] for k in changed_coefs},
+            yaml_path,
+            {k: coefs_merged[k] for k in changed_coefs},
         )
         yaml_written = True
     elif changed_coefs:
@@ -615,7 +638,8 @@ def run_processing(cfg: DictConfig):
     # Skip if YAML was already the primary write target above.
     if changed_coefs and yaml_path and not yaml_written:
         config_yaml.update_coefs_in_run_yaml(
-            yaml_path, {k: coefs_merged[k] for k in changed_coefs},
+            yaml_path,
+            {k: coefs_merged[k] for k in changed_coefs},
         )
 
     # ── Phase 4: Save raw data (skip for NC sources — data already there)
@@ -652,7 +676,8 @@ def run_processing(cfg: DictConfig):
         return
 
     lf.debug(
-        "Processing {} (bins: {})...", pcid,
+        "Processing {} (bins: {})...",
+        pcid,
         ", ".join(str(int(b.total_seconds())) for b in _dt_bins(cfg["out"])),
     )
     # ── stage ticks closure for _process_and_persist (PROC, NC×n_bins, TSV×n_bins)
@@ -660,21 +685,30 @@ def run_processing(cfg: DictConfig):
 
     def _tick(stage: Stage, bin_i: int = 0, n_bin: int = 1) -> None:
         _tick_idx["v"] += 1
-        label = f"{pcid} {stage}" + (f" {bin_i+1}/{n_bin}" if n_bin > 1 else "")
-        _stage(label, _frac(_tick_idx["v"]))
+        stage_ctx.set_stage(_tick_idx["v"], stage)
+        _stage(stage_ctx._build_prefix(), _frac(_tick_idx["v"]))
 
+    # Processing begins — set stage context for logging prefix
+    stage_ctx.set_stage(3, Stage.PROC)
+    progress_bridge.stage_desc(stage_ctx._build_prefix())
     _process_and_persist(
-        ds_raw, coefs_merged, cfg, pcid,
-        coef_zeroing_matrix=coef_zeroing_matrix, tick=_tick, has_nc=_has_nc, has_tsv=_has_tsv,
+        ds_raw,
+        coefs_merged,
+        cfg,
+        pcid,
+        coef_zeroing_matrix=coef_zeroing_matrix,
+        tick=_tick,
+        has_nc=_has_nc,
+        has_tsv=_has_tsv,
     )
 
 
 def _load_batch(
     cfg: Dict[str, Dict[str, Any]], pcid: str
 ) -> tuple[Optional[xr.Dataset], Optional[Dict[str, Any]]]:
-    """Iterate ``cfg.files``, load each, concatenate"""
+    """Iterate ``cfg.files``, load each, concatenate progressively to limit peak memory."""
 
-    frames = []
+    ds_raw = None
     for file_cfg in cfg["files"]:
         src_path = Path(file_cfg["path"])
         if not src_path.is_file():
@@ -686,13 +720,12 @@ def _load_batch(
             text_type=pcid[:1] if pcid else "i",
             cfg_in=cfg["input"],
         ):
-            frames.append(ds_chunk)
+            ds_raw = ds_chunk if ds_raw is None else xr.concat([ds_raw, ds_chunk], dim="time")
 
-    if not frames:
+    if ds_raw is None:
         lf.warning("No data loaded for batch {} — skipping", pcid)
         return None, None
 
-    ds_raw = xr.concat(frames, dim="time") if len(frames) > 1 else frames[0]
     coefs = get_coefs_from_cfg(cfg["input"], pcid)
     return ds_raw, coefs
 
@@ -754,7 +787,8 @@ def _process_and_persist(
         dt_bins=dt_bins,
         pcid=pcid,
         dt_min_binning_proc=(
-            v if isinstance(v := cfg_in.get("dt_min_binning_proc"), timedelta)
+            v
+            if isinstance(v := cfg_in.get("dt_min_binning_proc"), timedelta)
             else timedelta(seconds=int(v or 2))
         ),
     )
@@ -797,20 +831,24 @@ def _process_and_persist(
             if bin_s == 0 and noavg_path:
                 # no-avg → /{pcid}/ group in *.proc_noAvg.nc (incremental skip + run-params sig)
                 storage.store_processed_incremental(
-                    ds_out, noavg_path, group=pcid,
-                    filter_params=run_params_text, force_reprocess=force_reprocess,
+                    ds_out,
+                    noavg_path,
+                    group=pcid,
+                    filter_params=run_params_text,
+                    force_reprocess=force_reprocess,
                 )
                 # Phase-stopping: return after noAvg save
                 if return_ == Return.SAVED_NOAVG:
-                    lf.info(
-                        "return_={} — stopping after noAvg save for {}", Return.SAVED_NOAVG, pcid
-                    )
+                    lf.info("return_={} — stopping after noAvg save for {}", Return.SAVED_NOAVG, pcid)
                     return
             elif bin_s > 0 and avg_path:
                 # binned → /{pcid}bin{bin_s}s/ group in *.proc.nc (incremental skip + run-params sig)
                 storage.store_processed_incremental(
-                    ds_out, avg_path, group=f"{pcid}bin{bin_s}s",
-                    filter_params=run_params_text, force_reprocess=force_reprocess,
+                    ds_out,
+                    avg_path,
+                    group=f"{pcid}bin{bin_s}s",
+                    filter_params=run_params_text,
+                    force_reprocess=force_reprocess,
                 )
             else:
                 # Fallback: no PathLayout resolved paths
@@ -893,9 +931,7 @@ def _combine_probes(pcids: list[str], cfg: dict) -> None:
             if bin_s <= 0:
                 continue
             combined_group = f"/{probe_type}_bin{bin_s}s/"
-            _merge_groups_to_combined(
-                avg_path, pcids, combined_group, f"bin{bin_s}s", bin_s=bin_s
-            )
+            _merge_groups_to_combined(avg_path, pcids, combined_group, f"bin{bin_s}s", bin_s=bin_s)
 
     # Combined TSV (for each binned result)
     if text_path:

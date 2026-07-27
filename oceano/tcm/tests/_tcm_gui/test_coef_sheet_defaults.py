@@ -15,7 +15,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tcm_gui.coef_sheet import _NO_DEFAULT, ConfigSheet, _default_for_path
+from tcm_gui.cli_cfg import NO_DEFAULT, default_for_path
+from tcm_gui.coef_sheet import ConfigSheet
 from tcm_gui.const import DEFAULT_FG
 
 
@@ -27,11 +28,11 @@ class TestDefaultForPath:
 
     def test_scalar_default(self):
         """input.coefs.azimuth_shift_deg -> 180."""
-        assert _default_for_path("input.coefs.azimuth_shift_deg") == 180
+        assert default_for_path("input.coefs.azimuth_shift_deg") == 180
 
     def test_2d_array_element(self):
         """input.coefs.Ag[0] -> first row of Ag default."""
-        result = _default_for_path("input.coefs.Ag[0]")
+        result = default_for_path("input.coefs.Ag[0]")
         assert isinstance(result, list), f"expected list, got {type(result)}"
         assert len(result) == 3, f"expected 3 elements, got {len(result)}"
 
@@ -41,47 +42,47 @@ class TestDefaultForPath:
         Path input.coefs.Ag[0] returns the first row (a list).
         _default_for_cell with col_idx=0 picks the first element.
         """
-        row = _default_for_path("input.coefs.Ag[0]")
+        row = default_for_path("input.coefs.Ag[0]")
         assert isinstance(row, list), f"expected list for Ag[0], got {type(row)}"
         assert abs(row[0] - 0.00173) < 1e-6, f"expected ~0.00173, got {row[0]}"
 
     def test_none_default_field(self):
         """P_t is Optional[...] = None -> '' (treated as no-user-default)."""
-        result = _default_for_path("input.coefs.P_t")
+        result = default_for_path("input.coefs.P_t")
         assert result == "" or result is None, f"P_t default: {result!r}"
 
     def test_none_default_indexed(self):
         """input.coefs.P_t[0] -> '' or _NO_DEFAULT (P_t default is None)."""
-        result = _default_for_path("input.coefs.P_t[0]")
-        assert result is _NO_DEFAULT or result == "", f"P_t[0] default: {result!r}"
+        result = default_for_path("input.coefs.P_t[0]")
+        assert result is NO_DEFAULT or result == "", f"P_t[0] default: {result!r}"
 
     def test_missing_section(self):
         """Unknown section -> _NO_DEFAULT."""
-        assert _default_for_path("nonexistent.field") is _NO_DEFAULT
+        assert default_for_path("nonexistent.field") is NO_DEFAULT
 
     def test_missing_field(self):
         """Known section, unknown field -> _NO_DEFAULT."""
-        assert _default_for_path("input.nonexistent") is _NO_DEFAULT
+        assert default_for_path("input.nonexistent") is NO_DEFAULT
 
     def test_1d_flat_array(self):
         """input.coefs.Cg -> default list."""
-        result = _default_for_path("input.coefs.Cg")
+        result = default_for_path("input.coefs.Cg")
         assert isinstance(result, list), f"expected list, got {type(result)}"
 
     def test_out_section(self):
         """out.dt_bins -> default from ConfigOut_InclProc."""
-        result = _default_for_path("out.dt_bins")
-        assert result is not _NO_DEFAULT, "out.dt_bins should have a default"
+        result = default_for_path("out.dt_bins")
+        assert result is not NO_DEFAULT, "out.dt_bins should have a default"
 
     def test_program_return(self):
         """program.return_ -> Return.END value."""
-        result = _default_for_path("program.return_")
-        assert result is not _NO_DEFAULT, "program.return_ should have a default"
+        result = default_for_path("program.return_")
+        assert result is not NO_DEFAULT, "program.return_ should have a default"
 
     def test_doubled_path_fails(self):
         """Bug regression: input.coefs.Ag.Ag[0] should NOT resolve."""
-        result = _default_for_path("input.coefs.Ag.Ag[0]")
-        assert result is _NO_DEFAULT, f"doubled path should fail, got {result!r}"
+        result = default_for_path("input.coefs.Ag.Ag[0]")
+        assert result is NO_DEFAULT, f"doubled path should fail, got {result!r}"
 
 
 # -- _default_for_cell -----------------------------------------------------------
@@ -114,7 +115,7 @@ class TestDefaultForCell:
         """Scalar at col 1 -> _NO_DEFAULT (scalar has only col 0)."""
         cs = self._make_sheet()
         m = {"path": "input.coefs.azimuth_shift_deg", "type": "scalar"}
-        assert cs._default_for_cell("iid", m, 1) is _NO_DEFAULT
+        assert cs._default_for_cell("iid", m, 1) is NO_DEFAULT
 
     def test_2d_child_col0(self):
         """Ag[0] row, col 0 -> first element of first row."""
@@ -135,19 +136,19 @@ class TestDefaultForCell:
         cs = self._make_sheet()
         m = {"path": "input.coefs.P_t[0]", "type": "_coef_child"}
         result = cs._default_for_cell("iid", m, 0)
-        assert result == "" or result is _NO_DEFAULT
+        assert result == "" or result is NO_DEFAULT
 
     def test_empty_path_returns_no_default(self):
         """Empty path -> _NO_DEFAULT."""
         cs = self._make_sheet()
         m = {"path": ""}
-        assert cs._default_for_cell("iid", m, 0) is _NO_DEFAULT
+        assert cs._default_for_cell("iid", m, 0) is NO_DEFAULT
 
     def test_dict_default_rejected(self):
         """Non-leaf path resolving to dict -> _NO_DEFAULT (not a cell value)."""
         cs = self._make_sheet()
         m = {"path": "input"}
-        assert cs._default_for_cell("iid", m, 0) is _NO_DEFAULT
+        assert cs._default_for_cell("iid", m, 0) is NO_DEFAULT
 
 
 # -- Array child path construction -----------------------------------------------
@@ -271,26 +272,32 @@ class TestOnEndEditGrayToggle:
         cs._return_enum = Return
         cs._snap = ()
         cs._fg_default = "#000000"  # normally resolved in _apply_styles
+        # __new__ bypasses __init__ — set row-cache fields manually
+        cs._int_row_of = {}
+        cs._vis = ()
 
         cs._build_coefs(cfg)
 
         # Open the coefs subtree and its 2D child containers (Ag, …) so every
         # editable cell has a display row — matches the visible state when a
-        # user clicks a cell.  _walk_visible consults _meta[iid]["open"]
-        # directly (rather than via the _item_hook wrapper, which the stub
-        # bypasses), so flip it inline on every node along the open path.
+        # user clicks a cell.  _is_open consults _meta[iid]["open"] directly
+        # (rather than via the _item_hook wrapper, which the stub bypasses),
+        # so flip it inline on every node along the open path.
         for iid, m in cs._meta.items():
             if m.get("key") == "coefs" or m.get("type") == "2d":
                 m["open"] = True
 
-        # Display-row → iid map reconstructed via the same _walk_visible that
-        # _iid_at_row uses (not via get_row_from_iid, which the implementation
-        # no longer consults — see the two-row system docs in how_gui_works.md).
-        display_iids = list(cs._walk_visible())
+        # Display-row → iid map — _walk(visible=True) yields only nodes
+        # whose ancestors are all open; _meta filter mirrors _rebuild_row_caches.
+        display_iids = list(
+            iid for iid in cs._walk(visible=True) if iid in cs._meta
+        )
         _display_row = {iid: idx for idx, iid in enumerate(display_iids)}
         # ``get_row_from_iid`` is still used by tests that verify dual-row
         # semantics; expose the visible-order index through it.
         mock_sh.get_row_from_iid = lambda iid, rm=_display_row: rm.get(iid)
+        # Populate _vis so _iid_at_row resolves display rows correctly.
+        cs._vis = tuple(display_iids)
 
         return cs, mock_sh
 
@@ -415,14 +422,14 @@ class TestOnEndEditGrayToggle:
         )
 
     def test_iid_at_row_uses_tksheet_api(self):
-        """_iid_at_row resolves display rows to iids via _walk_visible.
+        """_iid_at_row resolves display rows to iids via _walk(visible=True).
 
         The walk consults ``sh.get_children`` + the open-state bookkeeping in
         ``_meta[iid]["open"]`` (the ``item()`` wrapper); ``get_row_from_iid``
         is NOT consulted here (see how_gui_works.md, two-row system).
         """
         cs, mock_sh = self._make_loaded_sheet()
-        visible = list(cs._walk_visible())
+        visible = list(cs._vis)
 
         for r, iid in enumerate(visible):
             assert cs._iid_at_row(r) == iid, (

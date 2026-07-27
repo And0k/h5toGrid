@@ -22,7 +22,7 @@ import logging
 import time
 from queue import Empty, Queue
 
-FUNC_COLOR = "#0070A0"
+from . import const
 
 
 class QueueHandler(logging.Handler):
@@ -83,12 +83,18 @@ def drain(q: Queue, w) -> int:
     """Drain queue → Text. Returns count of appended records."""
     n = 0
     while True:
-        try: rec = q.get_nowait()
-        except Empty: break
+        try:
+            rec = q.get_nowait()
+        except Empty:
+            break
         n += 1
-        ts  = time.strftime("%H:%M:%S", time.localtime(rec.created))
+        ts = time.strftime("%H:%M:%S", time.localtime(rec.created))
         tag = rec.levelname.lower()
         w.insert("end", f"{ts}│", tag)
         w.insert("end", f"{rec.funcName}│", "func")
+        # Show stage prefix on WARNING+ (matches StageContextFilter behaviour)
+        prefix = getattr(rec, "stage_prefix", "")
+        if prefix and rec.levelno >= logging.WARNING:
+            w.insert("end", f"[{prefix}] ", "func")
         w.insert("end", f"{rec.getMessage()}\n", tag)
     return n

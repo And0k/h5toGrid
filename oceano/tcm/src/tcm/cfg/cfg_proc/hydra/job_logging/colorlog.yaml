@@ -14,17 +14,22 @@ formatters:
       WARNING: yellow
       ERROR: red
       CRITICAL: red
+filters:
+  stage_ctx:
+    (): tcm.stage_ctx.StageContextFilter
 handlers:
   console:
     class: logging.StreamHandler
     formatter: colorlog
     stream: ext://sys.stdout
     level: INFO
+    filters: [stage_ctx]
   file:
     class: logging.FileHandler
     formatter: simple
     filename: ${hydra.run.dir}/${hydra.job.name}.log
     encoding: utf-8  # Bypasses locale.getpreferredencoding()
+    filters: [stage_ctx]
 
 loggers:
   matplotlib:  # Suppress matplotlib debug messages

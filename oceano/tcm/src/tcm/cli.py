@@ -4,9 +4,11 @@ Extracted from ``scripts/tcm_clc.py`` to keep the entry point as a thin caller.
 Hydra handles all config keys (``input.path``, ``input.ids``, ``out.*``, etc.)
 natively via ``compose`` — this module only handles pre-Hydra setup.
 """
+
 from __future__ import annotations
 
 import argparse
+import gc
 import os
 import sys
 from functools import wraps
@@ -38,6 +40,7 @@ import hydra
 from omegaconf import DictConfig, MissingMandatoryValue, OmegaConf
 
 from tcm import _constants, config, paths, to_omegaconf, config_yaml
+from tcm import stage_ctx
 from tcm.utils2init import (
     Ex_nothing_done,
     LoggingStyleAdapter,
@@ -115,7 +118,6 @@ def safe_cfg_dir(path: Path) -> Path:
     return resolved
 
 
-
 _result: Any = None  # stores fun(cfg) return — @hydra.main doesn't propagate it
 
 
@@ -166,9 +168,9 @@ def hydra_main(
         return _result
 
     try:
-        m_fun = hydra.main(
-            config_name=config_name, config_path=config_path, version_base=version_base
-        )(_store)
+        m_fun = hydra.main(config_name=config_name, config_path=config_path, version_base=version_base)(
+            _store
+        )
         m_fun()
         return _result
     except BaseException:
@@ -178,13 +180,10 @@ def hydra_main(
         raise
 
 
-
-
-
-
 # Kwargs accepted by :func:`hydra_main` (excluding ``fun``) — everything else
 # is treated as an override dict to merge on top of composed defaults.
 _HYDRA_MAIN_PARAMS = {"config_name", "config_path", "version_base", "overrides", "exit_on_error"}
+
 
 def _build_hydra_argv(data_dir: Path) -> list[str]:
     """Build Hydra argv overrides — only ``--config-dir`` (argparse layer).
@@ -276,9 +275,7 @@ def call_in_raw_dir(fun, yaml_path: Optional[Path] = None, **kwargs) -> Any:
     if yaml_path is not None:
         yaml_cfg = OmegaConf.load(Path(yaml_path))
         overrides_cfg = OmegaConf.create(overrides)
-        overrides = OmegaConf.to_container(
-            OmegaConf.merge(yaml_cfg, overrides_cfg), resolve=True
-        )
+        overrides = OmegaConf.to_container(OmegaConf.merge(yaml_cfg, overrides_cfg), resolve=True)
 
     # Extract input.path: from overrides dict or from sys.argv.
     try:
@@ -315,13 +312,17 @@ def call_in_raw_dir(fun, yaml_path: Optional[Path] = None, **kwargs) -> Any:
 
 
 def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs_existed):
-    """
-    Load a per-probe run YAML, merge on top of *base_cfg*, run process_fun with merged config
+    """Load per-probe run YAMLs, merge on top of *base_cfg*, call process_fun.
 
     Run YAMLs (``cfg_proc/run/*.yaml``) use ``@package _global_`` — their
     keys live at the root level.  :func:`OmegaConf.merge` applies the YAML
     as overrides on top of *base_cfg*, preserving all groups not mentioned
     in the YAML.
+
+    **Pre-filtering**: before processing, all YAML stems are validated against
+    ``input.path`` to exclude backup copies (e.g. ``i_90-backup260723.yaml``).
+    One WARNING summarises all skips; the remaining valid configs drive the
+    ``[idx/n_cfgs]`` numbering and GUI progress totals.
 
     :param process_fun: Callable(merged config)
     :param base_cfg: Hydra-composed config (from ``@hydra.main``).
@@ -335,64 +336,107 @@ def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs
     failed_pcids: list[str] = []
     last_cfg: DictConfig | None = None
     collected: list[tuple[str, str, Any]] = []
-    if cfgs:
-        n_cfgs = sum(len(s) for s in cfgs.values())
-        n_probes = len(cfgs)
-        lf.info(
-            "Running {} {}{}",
-            n_probes,
-            "probe" if n_probes == 1 else "probes",
-            f" (of {n_cfgs_existed} available)" if n_probes != n_cfgs_existed else "",
-        )
-        stem_idx = 0
-        for pcid, stems in cfgs.items():
-            for stem in stems:
-                stem_idx += 1
-                yaml_path = dir_cfgs / f"{stem}.yaml"
-                if not yaml_path.is_file():
-                    lf.warning("[{}/{}] Config missing for {} — {}", stem_idx, n_cfgs, pcid, yaml_path)
-                    failed_pcids.append(pcid)
-                    continue
-
-                cfg_dc = OmegaConf.load(yaml_path)
-                cfg_dc = OmegaConf.merge(base_cfg, cfg_dc)
-                OmegaConf.update(cfg_dc, "_yaml_path", yaml_path, force_add=True)
-
-                # Validate YAML stem matches input.path stem — skip manually-copied
-                # configs (e.g. "@i_p1 — копия.yaml") whose stem differs from the
-                # data file they reference.  The old pcid-level check used
-                # to_pcid_from_name which normalises both sides to the same pcid
-                # (i_p01), missing the mismatch.  Raw-stem comparison catches it.
-                yaml_core = stem.rsplit("@", 1)[-1]
-                input_core = Path(cfg_dc.input.path).stem.rsplit("@", 1)[-1]
-                if yaml_core != input_core:
-                    lf.warning(
-                        '[{}/{}] YAML stem "{}" <> input.path core "{}" — skipping (manual copy?)',
-                        stem_idx, n_cfgs, yaml_core, input_core,
-                    )
-                    continue
-
-                lf.info('[{}/{}] probe {} (from "{}")', stem_idx, n_cfgs, pcid, yaml_path.name)
-                OmegaConf.update(cfg_dc, "_stem_idx", stem_idx, force_add=True)
-                OmegaConf.update(cfg_dc, "_n_cfgs", n_cfgs, force_add=True)
-                try:
-                    result = process_fun(cfg_dc)
-                    processed_pcids.append(pcid)
-                    last_cfg = cfg_dc
-                    if result is not None:
-                        # CFG_FROM_ARGS (scan): result=DictConfig — no data processed
-                        collected.append((stem, str(yaml_path), result))
-                except FileNotFoundError as e:
-                    lf.warning(
-                        "[{}/{}] {}: source file missing ({}). Delete stale YAML",
-                        stem_idx, n_cfgs, pcid, e.filename or e,
-                    )
-                    failed_pcids.append(pcid)
-                except Exception:
-                    lf.exception("[{}/{}] Processing failed for {}", stem_idx, n_cfgs, pcid)
-                    failed_pcids.append(pcid)
-    else:
+    if not cfgs:
         lf.info("No configs to run (available: {}, requested: {})", n_cfgs_existed, len(cfgs))
+        return processed_pcids, failed_pcids, last_cfg, collected
+
+    # ── Pre-filter: validate YAML stems against input.path ──────────────
+    # Exclude backup copies and missing files BEFORE the processing loop so
+    # that [idx/n_cfgs] numbering and GUI progress totals are correct.
+    valid_cfgs: dict[str, list[str]] = {}  # pcid → [valid stems]
+    loaded_cfgs: dict[str, DictConfig] = {}  # stem → merged DictConfig (cached)
+    skipped_cfgs: list[tuple[str, str, str]] = []  # (stem, yaml_core, input_core)
+    missing_cfgs: list[tuple[str, str]] = []  # (stem, pcid)
+
+    for pcid, stems in cfgs.items():
+        valid_stems: list[str] = []
+        for stem in stems:
+            yaml_path = dir_cfgs / f"{stem}.yaml"
+            if not yaml_path.is_file():
+                missing_cfgs.append((stem, pcid))
+                continue
+            cfg_dc = OmegaConf.load(yaml_path)
+            cfg_dc = OmegaConf.merge(base_cfg, cfg_dc)
+            OmegaConf.update(cfg_dc, "_yaml_path", yaml_path, force_add=True)
+            yaml_core = stem.rsplit("@", 1)[-1]
+            input_core = Path(cfg_dc.input.path).stem.rsplit("@", 1)[-1]
+            if yaml_core != input_core:
+                skipped_cfgs.append((stem, yaml_core, input_core))
+                continue
+            valid_stems.append(stem)
+            loaded_cfgs[stem] = cfg_dc  # cache for processing loop
+        if valid_stems:
+            valid_cfgs[pcid] = valid_stems
+
+    # Report all skips in one consolidated message
+    if skipped_cfgs:
+        details = "; ".join(f'"{s}" (stem "{yc}" ≠ path "{ic}")' for s, yc, ic in skipped_cfgs)
+        lf.warning(
+            "Skipping {} config{} — YAML stem ≠ input.path (manual copy?): {}",
+            len(skipped_cfgs),
+            "" if len(skipped_cfgs) == 1 else "s",
+            details,
+        )
+    for stem, pcid in missing_cfgs:
+        lf.warning("Config missing for {}: {}", pcid, dir_cfgs / f"{stem}.yaml")
+        failed_pcids.append(pcid)
+
+    cfgs = valid_cfgs
+    n_cfgs = sum(len(s) for s in cfgs.values())
+    n_probes = len(cfgs)
+
+    # ── Process valid configs ───────────────────────────────────────────
+    lf.info(
+        "Running {} {}{} ({} config{})",
+        n_probes,
+        "probe" if n_probes == 1 else "probes",
+        f" of {n_cfgs_existed} available" if n_probes != n_cfgs_existed else "",
+        n_cfgs,
+        "" if n_cfgs == 1 else "s",
+    )
+    stem_idx = 0
+    for probe_i, (pcid, stems) in enumerate(cfgs.items(), start=1):
+        for cfg_i, stem in enumerate(stems, start=1):
+            stem_idx += 1
+            # Reuse cached config from pre-filter pass
+            cfg_dc = loaded_cfgs[stem]
+
+            # Set stage context for logging prefix and GUI progress display
+            stage_ctx.set_probe(
+                pcid,
+                probe_idx=probe_i,
+                cfg_idx=cfg_i,
+                n_probes=n_probes,
+                n_cfgs=len(stems),
+            )
+
+            lf.info('[{}/{}] probe {} (from "{}")', stem_idx, n_cfgs, pcid, yaml_path.name)
+            OmegaConf.update(cfg_dc, "_stem_idx", stem_idx, force_add=True)
+            OmegaConf.update(cfg_dc, "_n_cfgs", n_cfgs, force_add=True)
+            try:
+                result = process_fun(cfg_dc)
+                processed_pcids.append(pcid)
+                last_cfg = cfg_dc
+                if result is not None:
+                    # CFG_FROM_ARGS (scan): result=DictConfig — no data processed
+                    collected.append((stem, str(yaml_path), result))
+            except FileNotFoundError as e:
+                lf.warning(
+                    "[{}/{}] {}: source file missing ({}). Delete stale YAML",
+                    stem_idx,
+                    n_cfgs,
+                    pcid,
+                    e.filename or e,
+                )
+                failed_pcids.append(pcid)
+            except Exception:
+                lf.exception("[{}/{}] Processing failed for {}", stem_idx, n_cfgs, pcid)
+                failed_pcids.append(pcid)
+            finally:
+                gc.collect()  # release previous probe's data before loading next
+
+    # Clear stage context after all configs processed
+    stage_ctx.clear()
     return processed_pcids, failed_pcids, last_cfg, collected
 
 
@@ -532,7 +576,7 @@ def main_init(
     elif cfg.program.return_ == config.Return.CFG_FROM_ARGS:
         return cfg
 
-    hydra.verbose = (cfg.program.verbose == "DEBUG")
+    hydra.verbose = cfg.program.verbose == "DEBUG"
     print("\n" + this_prog_basename(__file__) if __file__ else program_name, end=" started. ")
     try:
         cfg_t = ini2dict(cfg)

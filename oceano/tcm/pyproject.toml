@@ -44,6 +44,7 @@ dependencies = ["pytest"]
 testpaths = ["tests"]
 markers = [
     "xr: tests for the xarray pipeline (tests/_xr/)",
+    "gui: tests for tcm_gui (tests/_tcm_gui/)",
     "calibration: tests for calibration math (tests/_calibration/)",
     "comparison: cross-pipeline validation",
 ]

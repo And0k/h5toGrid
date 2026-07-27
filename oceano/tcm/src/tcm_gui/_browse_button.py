@@ -54,6 +54,16 @@ def _pointer_inside(w) -> bool:
     except TclError:
         return False
 
+
+def browse_button_height(parent) -> int:
+    """Natural height of the browse button — host fields size to this."""
+    b = ttk.Button(parent, text=_LBL_DIR, width=4)
+    try:
+        return b.winfo_reqheight()
+    finally:
+        b.destroy()
+
+
 class BrowseOverlay:
     """Host-agnostic floating browse button.
 
@@ -89,6 +99,11 @@ class BrowseOverlay:
     @property
     def visible(self) -> bool:
         return self._button is not None
+
+    @property
+    def pending(self) -> bool:
+        """A show is scheduled but not yet realized."""
+        return self._show_job is not None
 
     # ── show / hide ───────────────────────────────────────────────
     def show(self, **place_kw: Any) -> None:
@@ -214,6 +229,7 @@ class BrowseButtonManager:
         sheet: Sheet,
         on_path_changed: Callable[[str], None],
         on_edit_restyler: Callable[[Any, int, str], None] | None = None,
+        editor_place: Callable[[Any], dict[str, Any]] | None = None,
     ) -> None:
         self._sheet = sheet
         self.notify_path_changed = on_path_changed
@@ -224,6 +240,8 @@ class BrowseButtonManager:
         self._retries = 0
         self._retry_job: str | None = None
         self._ov = BrowseOverlay(sheet, self._write_cell, self._read_cell)
+        self._editor_place = editor_place or (lambda ed: {
+            "in_": ed, "relx": 1.0, "x": 0, "rely": 0, "y": 0, "height": ed.winfo_height()})
 
     def attach(self, row: int, col: int, iid: Any = None) -> None:
         self.detach()
@@ -248,7 +266,7 @@ class BrowseButtonManager:
                 self._retry_job = self._sheet.after(_RETRY_MS, self._acquire_and_place)
             return
         self._editor = ed
-        self._ov.show(in_=ed, relx=1.0, x=0, rely=0, y=0, height=ed.winfo_height())
+        self._ov.show(**self._editor_place(ed))
 
     def _read_cell(self) -> str:
         """Read column 0 of the target row (for dialog initialdir)."""
@@ -303,10 +321,11 @@ class SheetHoverBinder:
         mt.bind("<MouseWheel>", lambda _e: overlay.hide(), add="+")
 
     def _on_motion(self, event) -> None:
-        if (pk := self._resolve(event)) == self._last:
+        pk = self._resolve(event)
+        if pk == self._last and pk is not None and (self._ov.visible or self._ov.pending):
             if self._ov.visible:
                 self._ov.cancel_hide()  # motion over target vetoes pending hide
-            return  # same target: no churn
+            return  # shown or pending on same target: no churn
         self._last = pk
         if pk is None:
             self._ov.hide()  # cancels a pending show too

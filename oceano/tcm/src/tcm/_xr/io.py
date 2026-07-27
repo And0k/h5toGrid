@@ -100,16 +100,16 @@ def load_raw(
             ds = filters.apply_load_time_ranges(ds, cfg_in.get("time_ranges"))
     elif suffix in _constants._EXT_CSV:
         # ── CSV / TXT ────────────────────────────────────────────────────────
-        frames = []
+        # Progressive concat: release each chunk after merging instead of
+        # accumulating all frames (peak ≈ 2× total data otherwise).
+        ds = None
         for ds_chunk, _meta in dataset.open_csv_chunks(
             path, text_type=text_type, cfg_in=cfg_in, chunk_time=chunk_time,
         ):
-            frames.append(ds_chunk)
-        if not frames:
+            ds = ds_chunk if ds is None else xr.concat([ds, ds_chunk], dim="time")
+        if ds is None:
             lf.warning("No data loaded from {}", path)
             return None, None
-
-        ds = frames[0] if len(frames) == 1 else xr.concat(frames, dim="time")
         coefs = None  # CSV has no embedded coefs
         # CSV already applies time_ranges via time_corr during parsing — no re-apply here.
     else:
@@ -280,9 +280,15 @@ def _write_large_csv(df: "pd.DataFrame", path: Path, csv_kwargs: dict, chunk_siz
     """Write large DataFrame to CSV with tqdm progress bar."""
     from tqdm import tqdm
 
+    try:
+        from tcm_gui.progress_bridge import get_tqdm_class
+    except ImportError:
+        get_tqdm_class = lambda: None
+
     n_rows = len(df)
     lf.info("Writing {} rows to {}", n_rows, path.name)
-    for i in tqdm(range(0, n_rows, chunk_size), desc=f"Writing {path.name}", unit="chunk"):
+    _bar_cls = get_tqdm_class() or tqdm
+    for i in _bar_cls(range(0, n_rows, chunk_size), desc=f"Writing {path.name}", unit="chunk"):
         df.iloc[i : i + chunk_size].to_csv(
             path, mode="w" if i == 0 else "a", header=i == 0, **csv_kwargs,
         )

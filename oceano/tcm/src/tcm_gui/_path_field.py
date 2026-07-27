@@ -20,8 +20,9 @@ from typing import Any
 
 from tksheet import Sheet
 
-from ._browse_button import BrowseButtonManager, BrowseOverlay, SheetHoverBinder
 from . import const
+from ._browse_button import BrowseButtonManager, BrowseOverlay, SheetHoverBinder, browse_button_height
+
 
 class PathField(ttk.Frame):
     """A single-cell tksheet posing as the path field.
@@ -43,43 +44,54 @@ class PathField(ttk.Frame):
         super().__init__(parent)
         self._on_commit, self._pre_edit = on_commit, ""
         # ── Entry metrics — measured from a throwaway probe, not guessed ──
-        style = ttk.Style()
         probe = ttk.Entry(self)
-        entry_h = probe.winfo_reqheight()
+        self._entry_h = probe.winfo_reqheight()
         probe.destroy()
-        bg = const.tk_color_to_hex(
-            self,
-            style.lookup("TEntry", "fieldbackground") or style.lookup("TEntry", "background") or "#FFFFFF",
-        )
-        fg = const.BLUE_FG
+        self._field_h = max(self._entry_h, browse_button_height(self) + 2)  # icon must fit
+        # TEntry fieldbackground often matches TFrame bg on Windows themes,
+        # producing the label's gray instead of a white entry.  Use the
+        # tksheet default (white) directly — matches the coef_sheet data cells.
+        bg = const.ENTRY_BG_FALLBACK
+        fg = const.FG_DEFAULT
         self.sh = Sheet(
             self,
-            total_rows=1, total_columns=1,
+            total_rows=1,
+            total_columns=1,
             # ── chrome off — verified ctor kwargs ─────────────────
-            show_header=False, show_row_index=False, show_top_left=False,
-            show_x_scrollbar=False, show_y_scrollbar=False,
-            show_horizontal_grid=False, show_vertical_grid=False,
+            show_header=False,
+            show_row_index=False,
+            show_top_left=False,
+            show_x_scrollbar=False,
+            show_y_scrollbar=False,
+            show_horizontal_grid=False,
+            show_vertical_grid=False,
             show_selected_cells_border=False,
-            startup_focus=False,                    # form field: don't steal focus
+            startup_focus=False,  # form field: don't steal focus
             # ── Entry silhouette ──────────────────────────────────
-            height=entry_h,                         # verified kwarg; no set_height probe
-            default_row_height=entry_h,             # int ⇒ pixels; Sheet.default_row_height() exists post-hoc
-            default_column_width=4096,              # cell spans field; x-scrollbar off ⇒ clipped, not scrollable
-            empty_vertical=0, empty_horizontal=0,   # ints (px), not bools
-            cell_auto_resize_enabled=False,         # long path must not stretch the row
+            height=self._field_h,  # verified kwarg; no set_height probe
+            default_row_height=self._field_h,  # int ⇒ pixels; Sheet.default_row_height() exists post-hoc
+            default_column_width=4096,  # cell spans field; x-scrollbar off ⇒ clipped, not scrollable
+            empty_vertical=0,
+            empty_horizontal=0,  # ints (px), not bools
+            cell_auto_resize_enabled=False,  # long path must not stretch the row
             align="w",
-            edit_cell_return="",                    # Enter commits; no row travel in a 1-row sheet
+            edit_cell_return="",  # Enter commits; no row travel in a 1-row sheet
             allow_cell_overflow=True,
             # ── Entry face ────────────────────────────────────────
-            table_bg=bg, table_fg=fg,               # not table_background — that was silently ignored
-            table_editor_bg=bg, table_editor_fg=fg, # seamless edit transition
-            table_selected_cells_bg=bg,             # selection paints nothing —
-            table_selected_cells_fg=fg,             # keyboard-edit state stays, box invisible
+            table_bg=bg,
+            table_fg=fg,  # not table_background — that was silently ignored
+            table_editor_bg=bg,
+            table_editor_fg=fg,  # seamless edit transition
+            table_selected_cells_bg=bg,  # selection paints nothing —
+            table_selected_cells_fg=fg,  # keyboard-edit state stays, box invisible
             table_selected_cells_border_fg=bg,
             outline_thickness=0,
         )
         # self.sh.set_options(font=entry_font)        # special-handled → MT.set_table_font; string acceptance to verify
         self.sh.MT.config(highlightthickness=0, cursor="xterm")   # plain Tk — no version surface
+        # Bold font: distinguish the data search path from coef sheet cells
+        cur = self.sh.font()
+        self.sh.font((cur[0], cur[1], "bold"))
         self.sh.pack(fill="x")                      # height is intrinsic now; width app-managed
 
 
@@ -89,23 +101,35 @@ class PathField(ttk.Frame):
             ("begin_edit_cell", self._on_begin_edit),
             ("end_edit_cell", self._on_end_edit),
         ])
-        # floating-button stack — unchanged
-        self._mgr = BrowseButtonManager(self.sh, self._notify)
+        # floating-button stack — editor-anchored during edit,
+        # inward anchor so the button stays visible inside the field
+        self._mgr = BrowseButtonManager(
+            self.sh,
+            self._notify,
+            editor_place=lambda ed: {"in_": ed, "relx": 1.0, "x": -2, "rely": 0.5, "anchor": "e"},
+        )
         self._ov = BrowseOverlay(
-            self.sh, self._hover_write, self._hover_read,
-            dir_title=dir_title, files_title=files_title, leave_hides=True,
+            self,                          # was self.sh — the field frame, not the canvas
+            self._hover_write,
+            self._hover_read,
+            dir_title=dir_title,
+            files_title=files_title,
+            leave_hides=True,
         )
         self._binder = SheetHoverBinder(self.sh, self._ov, lambda _e: self._place_kw())
+        # Column tracks field width: editor spans the field exactly,
+        # its right border visible, clicks anywhere still hit the cell.
+        self.bind("<Configure>", self._on_resize, add="+")
         # single cell tracks field width — clicks anywhere hit the cell,
         # content never overflows, so scrollbars have nothing to appear for
-        self.bind("<Configure>", self._on_resize, add="+")
-        # Entry silhouette: self-managed height, app-managed width (fill="x")
-        self.configure(height=entry_h)
+        self.configure(height=self._field_h)
         self.pack_propagate(False)
         self.grid_propagate(False)
         self.sh.pack(fill="both", expand=True)
 
     def _on_resize(self, event) -> None:
+        """Column ≡ field width: editor spans the field exactly, its right
+        border visible, clicks anywhere still hit the cell."""
         with suppress(AttributeError, TclError, TypeError):
             self.sh.column_width(0, max(event.width - 2, 50))
 
@@ -130,6 +154,8 @@ class PathField(ttk.Frame):
         self._mgr.detach()
         if (v := str(event.value or "")) != self._pre_edit:  # Esc ⇒ unchanged ⇒ silent
             self._notify(v)
+        # Re-arm hover button immediately — pointer is over the field by construction.
+        self._ov.schedule_show(self._place_kw())
 
     def _notify(self, value: str) -> None:
         if self._on_commit is not None and value.strip():
@@ -137,12 +163,13 @@ class PathField(ttk.Frame):
 
     # ── hover policy ──────────────────────────────────────────────
     def _place_kw(self) -> dict[str, Any]:
-        """Right edge of the single cell, viewport-adjusted."""
-        with suppress(AttributeError, TypeError, IndexError, TclError):
-            mt = self.sh.MT
-            y1, y2 = mt.row_positions[0], mt.row_positions[1]
-            return {"in_": mt, "x": mt.winfo_width(), "y": y1 - mt.canvasy(0), "anchor": "ne", "height": y2 - y1}
-        return {"in_": self.sh, "relx": 1.0, "x": 0, "rely": 0, "y": 0, "height": 20}
+        """Inset at the field's right edge, vertically centered.
+
+        Geometry-managed: ``relx=1.0`` tracks every resize with zero
+        bindings — no canvas arithmetic, no viewport adjustment, no
+        ``<Configure>`` handler, nothing to go stale between motions.
+        """
+        return {"in_": self, "relx": 1.0, "rely": 0.5, "x": -2, "anchor": "e"}
 
     def _hover_write(self, text: str) -> None:
         self.set(text)

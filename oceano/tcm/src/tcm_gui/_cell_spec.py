@@ -31,6 +31,8 @@ from typing import (
     get_type_hints,
 )
 
+import numpy as np
+
 CellKind = Literal["bool", "text", "number", "date", "enum"]
 
 
@@ -107,7 +109,7 @@ def resolve_dataclass_field(root: Any, path: str) -> Any:
 
 
 @functools.lru_cache(maxsize=4096)
-def _spec_for_path(
+def spec_for_path(
     root: type | None,
     path: str,
     return_enum: type[Enum] | None,
@@ -146,3 +148,37 @@ def as_bool(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(value)
+
+
+def any2str(v: Any) -> str:
+    """
+    String formatting for cell display: :g for floats, str for other types.
+
+    :param v: _description_
+    :return: _description_
+    """
+    if v is None:
+        return ""
+    if isinstance(v, (float, np.floating)):
+        return f"{v:g}"
+    return str(v)
+
+
+def parse_float(v: str) -> float | None:
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return None
+
+
+def as_date(s: str) -> bool:
+    """Create datetime if s is an ISO date string or looks like an naive European dd.mm.yyyy"""
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        parts = s.split(".")
+        if len(parts) == 3 and all(p.isdigit() for p in parts):
+            try:
+                return datetime.strptime(s, "%d.%m.%Y")
+            except ValueError:
+                return None

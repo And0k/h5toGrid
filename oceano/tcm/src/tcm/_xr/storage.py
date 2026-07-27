@@ -466,10 +466,17 @@ def store_processed_incremental(
                         stored_params = f[group].attrs.get("_run_params", "")
                         if isinstance(stored_params, bytes):
                             stored_params = stored_params.decode()
-                        if contained and not force_reprocess and filter_params and stored_params != filter_params:
-                            _warn_run_params_diff(group, path, stored_params, filter_params)
-
                         if contained and not force_reprocess:
+                            if (filter_params and stored_params != filter_params):
+                                lf.warning(
+                                    "Run params changed since last write — re-run with +force_reprocess=True "
+                                    "to overwrite (or Delete {}//{}). Diff ( --- stored (last write), +++ "
+                                    "current (this run)):\n{}",
+                                    path.name,
+                                    group,
+                                    _warn_run_params_diff(stored_params, filter_params)
+                                )
+
                             lf.debug(
                                 "Skipping {} — data already covered ({} to {})",
                                 group,
@@ -504,29 +511,95 @@ def store_processed_incremental(
     return store_processed(ds_out, path, group=group, mode=write_mode, engine=engine)
 
 
-def _warn_run_params_diff(group: str, path: Path, stored: str, current: str) -> None:
-    """Print unified diff between stored and current run params, then warn.
+def _warn_run_params_diff(stored: str, current: str) -> str:
+    """
+    Construct readable diff between stored and current run parameters.
 
-    Run params include filter, window, and coefficient text built by
-    :func:`tcm.processing._build_filter_params_text`. Stored as ``_run_params``
-    attribute on the NC group; on skip, current text is diff-compared to stored
-    to surface changes in filter, input window, or coefficients.
+    :return: diff_text
     """
     import difflib
 
-    diff_lines = list(difflib.unified_diff(
-        stored.splitlines(keepends=True),
-        current.splitlines(keepends=True),
-        fromfile="stored (last write)",
-        tofile="current (this run)",
-        n=3,
-    ))
-    diff_text = "".join(diff_lines) if diff_lines else ""
-    lf.warning(
-        "Run params changed since last write — re-run with +force_reprocess=True "
-        "to overwrite (or Delete {}//{}). Diff:\n{}",
-        path.name, group, diff_text,
-    )
+    def parse(text: str) -> dict[str, str]:
+        params: dict[str, str] = {}
+        key = None
+        value_lines: list[str] = []
+
+        for line in text.splitlines():
+            if "=" in line and not line.startswith((" ", "\t")):
+                if key is not None:
+                    params[key] = value_lines
+                key, first = line.split("=", 1)
+                value_lines = [first]
+            else:
+                value_lines.append(line)
+
+        if key is not None:
+            params[key] = value_lines
+
+        return params
+
+    def marker(old: str, new: str) -> str:
+        """One marker line: ^ replace, - delete, + insert."""
+        sm = difflib.SequenceMatcher(None, old, new)
+        out = [" "] * max(len(old), len(new))
+
+        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+            if tag == "equal":
+                continue
+            ch = {"replace": "^", "delete": "-", "insert": "+"}[tag]
+            if tag == "replace":
+                end = max(i2, i1 + (j2 - j1))
+            else:
+                end = i2
+            for i in range(i1, min(end, len(out))):
+                out[i] = ch
+
+        return "".join(out).rstrip()
+
+
+    out = []
+    try:
+        stored = parse(stored)
+        current = parse(current)
+        for key in sorted(stored.keys() | current.keys()):
+            old = stored.get(key)
+            new = current.get(key)
+
+            if old is None:
+                out.extend(f"+ {key}={line}" if i == 0 else f"+   {line}"
+                            for i, line in enumerate(new))
+                continue
+
+            if new is None:
+                out.extend(f"- {key}={line}" if i == 0 else f"-   {line}"
+                            for i, line in enumerate(old))
+                continue
+
+            if old == new:
+                continue
+
+            n = max(len(old), len(new))
+
+            for i in range(n):
+                o = old[i] if i < len(old) else ""
+                c = new[i] if i < len(new) else ""
+
+                old_text = f"{key}={o}" if i == 0 else f"  {o}"
+                new_text = f"{key}={c}" if i == 0 else f"  {c}"
+
+                if i < len(old):
+                    out.append(f"- {old_text}")
+                if i < len(new):
+                    out.append(f"+ {new_text}")
+
+                if i < len(old) and i < len(new):
+                    m = marker(old_text, new_text)
+                    if m.strip():
+                        out.append(f"  {m}")
+
+        return "\n".join(out)
+    except Exception as e:
+        return f"(Error comparing parameters: {e})"
 
 
 def open_processed(

@@ -17,6 +17,7 @@ tcm/
     _constants.py           ← RAW_DIR_NAME, version info, optional-dependency flags
     to_omegaconf.py         ← utils
     utils2init.py           ← LoggingStyleAdapter, directory helpers
+    stage_ctx.py            ← context-var driven stage tracking + StageContextFilter
     incl_calc/
         coefs.py            ← coefficient loading/preparation, get_coefs()
         calc.py             ← pure numpy math kernels (Layer 0)
@@ -57,6 +58,11 @@ delegate to it — no format-specific code outside `load_raw`:
     .txt / .csv →  _xr/dataset.open_csv()      (csv_load pipeline, no embedded coefs)
     _dask_legacy/           ← legacy dask.dataframe pipeline (optional, lazy import)
 ```
+
+CSV path: chunks are loaded via `csv_load.load_from_csv_gen()` (streaming
+`pd.read_csv(chunksize=blocksize)`), converted to `xr.Dataset` per chunk by
+`open_csv_chunks()`, and **progressively concatenated** in `load_raw()` — each
+chunk is released after merge instead of accumulating all frames.
 
 ### Directory resolution
 
@@ -169,6 +175,53 @@ from `cfg_proc/hydra/job_logging/colorlog.yaml` before any task function runs, s
 manual `basicConfig` is overwritten.  Callers using `cli.call_in_raw_dir` inherit the
 same Hydra-configured logging (console: `colorlog` formatter with colored `funcName|message`;
 file: `simple` formatter with `asctime|name|levelname|message`)
+
+### Stage context (`stage_ctx.py`)
+
+Processing stages are tracked via :mod:`contextvars` so every log record
+carries the current probe/stage identity **without** manual string building
+in each ``lf.info()`` call.
+
+**Architecture**:
+
+| Component | Role |
+|-----------|------|
+| `set_probe(probe_id, probe_idx, cfg_idx, n_probes, n_cfgs)` | Called once per config in `cli.process_loading_yaml` |
+| `set_stage(stage_num, stage_name)` | Called at each phase boundary in `processing.run_processing` |
+| `StageContextFilter` (logging.Filter) | Injects `record.stage_prefix` from context vars |
+| `clear()` | Resets all vars after `process_loading_yaml` / `run` completes |
+
+**Log format**: INFO/DEBUG messages are *not* modified (clean output).
+WARNING+ messages automatically receive ``[prefix]`` prepended:
+
+```
+19:42:03|tcm.cli|WARNING|[probe i90 1/2 stage 1 load] Sparse region detected
+19:42:03|tcm.cli|INFO|Loading data for i90...          ← no prefix (clean)
+```
+
+**Prefix format**: `probe {id} {pi}.{ci}/{np}.{nc} stage {sn} {name}` —
+sub-indexes displayed only when corresponding count > 1:
+
+| Scenario | Prefix |
+|----------|--------|
+| 1 probe, 1 config | `probe i90 stage 1 load` |
+| 2 probes, 1 config each | `probe i90 1/2 stage 1 load` |
+| 2 probes, 3 configs for probe 1 | `probe i90 1.1/2.3 stage 1 load` |
+
+**Stages** (per-probe, sequential):
+
+| # | Name | Description |
+|---|------|-------------|
+| 1 | `load` | CSV chunked load + time correction |
+| 2 | `coefs` | prepare_coefs + save |
+| 3 | `proc` | physical.process (velocity + binning) |
+| 4+ | `NC`/`TSV` | per-bin write (repeated for each dt_bin) |
+| — | `combine` | _combine_probes (post-loop, not per-probe) |
+
+When running under the GUI, `run_processing` also calls
+`progress_stage.clear_and_reset()` at each probe boundary so the status bar
+clears stale text from the previous probe — see
+[Status bar text — one-shot clear signal](../tcm_gui/how_gui_works.md#status-bar-text--one-shot-clear-signal).
 
 ### Why `@hydra.main` and not Compose API
 
@@ -627,6 +680,25 @@ both support `M` as a shorthand for `Mx`, `My`, `Mz`. Expansion runs at compose 
 Coefficient application order (inside `calc_velocity`):
 `prepare_coefs` (zeroing rotation) → `fG(Ag,Cg)` → `fInclination` → `v_abs_from_incl(kVabs, calc_version)` → `azimuth_shift_deg` → `polar2dekart`
 
+### Memory management
+
+All calculations use float64 for full precision; data is downcast to float32
+only at NC write time (`_downcast_float32` in `storage.py`).  Coefficients
+(`/{tbl}/coef/` HDF5 group) are always stored as float64.
+
+CSV loading is chunked (`input.blocksize`, default 500 K rows) to limit
+per-chunk memory.  Chunks are progressively concatenated in `load_raw()`
+and `_load_batch()` — each chunk is freed after merge, avoiding the
+previous pattern of holding all frames + concat result simultaneously.
+
+Between probes, `gc.collect()` runs in `cli.process_loading_yaml()` to
+release the previous probe's data before the next one loads.  On Windows,
+HDF5 uses mandatory file locking — `ds_raw.load()` + `ds_raw.close()` is
+called before h5py opens in append mode to release the read-only handle.
+
+Rough per-chunk memory for CSV (float64, 6 data columns):
+`500 K rows × 6 cols × 8 B ≈ 24 MiB` (data only, +DataFrame overhead).
+
 ### Column order
 
 Output columns are ordered to match legacy convention — see `config_reference.md`
@@ -676,11 +748,12 @@ ds_combined = xr.concat(per_probe_datasets, dim="probe").assign_coords(probe=pci
 ### Batch mode
 
 A run YAML may contain a top-level `files` list. When present,
-`run_processing()` iterates `cfg.files`, loads each, concatenates, and processes
-once. Implemented in `_run_batch()` (`tcm/processing.py`).
+`run_processing()` iterates `cfg.files`, loads each, concatenates progressively,
+and processes once. Implemented in `_load_batch()` (`tcm/processing.py`).
 
 Multi-file concatenation trusts input file order — data flows through in the
-order files are discovered (or listed in `cfg.files`). The NC incremental append
+order files are discovered (or listed in `cfg.files`). Chunks are freed after
+each progressive `xr.concat` to limit peak memory. The NC incremental append
 layer handles overlap/position logic downstream.
 
 ### Combined multi-probe output

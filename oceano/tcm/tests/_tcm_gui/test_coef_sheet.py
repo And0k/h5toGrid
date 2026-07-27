@@ -1,7 +1,7 @@
 """Unit tests for coef_sheet — ConfigSheet with mocked tksheet.Sheet.
 
 Tests path tracking, _cell_spec_for, _apply_styles (checkbox/dropdown/align),
-and _resolve_bg without requiring a real Tk event loop.
+and const.tk_color_to_hex without requiring a real Tk event loop.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ class _FakeConfig:
     program: _FakeProgram = field(default_factory=_FakeProgram)
 
 
-# ── _resolve_bg ─────────────────────────────────────────────────────────────
+# ── const.tk_color_to_hex ────────────────────────────────────────────────────
 
 
 class TestResolveBg:
@@ -263,6 +263,9 @@ class TestApplyStyles:
         cs._return_enum = Return
         cs._snap = ({}, {}, "")
         cs._fg_default = "#000000"
+        # __new__ bypasses __init__ — set row-cache fields manually
+        cs._int_row_of = {}
+        cs._vis = ()
 
         cs._build_coefs(cfg)
         # Open every constructed node so all rows receive styling.
@@ -271,7 +274,7 @@ class TestApplyStyles:
         return cs, mock_sh
 
     @patch("tcm_gui.coef_sheet.ttk")
-    @patch("tcm_gui.coef_sheet._resolve_bg", return_value="#F0F0F0")
+    @patch("tcm_gui.const.tk_color_to_hex", return_value="#F0F0F0")
     def test_node_column_gets_bg(self, mock_resolve, mock_ttk):
         """Index canvas (tree column) gets bg: global option + per-cell highlight."""
         mock_ttk.Style.return_value.lookup.return_value = "#F0F0F0"
@@ -290,7 +293,7 @@ class TestApplyStyles:
         )
 
     @patch("tcm_gui.coef_sheet.ttk")
-    @patch("tcm_gui.coef_sheet._resolve_bg", return_value="#F0F0F0")
+    @patch("tcm_gui.const.tk_color_to_hex", return_value="#F0F0F0")
     def test_coef_cells_right_aligned(self, mock_resolve, mock_ttk):
         """Coef data cells are right-aligned (number type)."""
         mock_ttk.Style.return_value.lookup.return_value = "#F0F0F0"
@@ -309,7 +312,7 @@ class TestApplyStyles:
         )
 
     @patch("tcm_gui.coef_sheet.ttk")
-    @patch("tcm_gui.coef_sheet._resolve_bg", return_value="#F0F0F0")
+    @patch("tcm_gui.const.tk_color_to_hex", return_value="#F0F0F0")
     def test_date_cells_right_aligned(self, mock_resolve, mock_ttk):
         """Date cells (coefs parent with has_date) are right-aligned (``e``).
 
@@ -328,18 +331,14 @@ class TestApplyStyles:
         assert len(right_align_calls) > 0, "expected right-aligned date cells"
 
     @patch("tcm_gui.coef_sheet.ttk")
-    @patch("tcm_gui.coef_sheet._resolve_bg", return_value="#F0F0F0")
+    @patch("tcm_gui.const.tk_color_to_hex", return_value="#F0F0F0")
     def test_header_highlighted(self, mock_resolve, mock_ttk):
-        """Header cells get highlight_cells(canvas='header')."""
+        """Header colors set via set_options (global header_fg/header_bg)."""
         mock_ttk.Style.return_value.lookup.return_value = "#F0F0F0"
         cs, mock_sh = self._make_loaded_sheet()
         cs._apply_styles()
 
-        header_calls = [
-            c for c in mock_sh.highlight_cells.call_args_list
-            if c.kwargs.get("canvas") == "header"
-        ]
-        assert len(header_calls) > 0, "expected header highlight calls"
+        mock_sh.set_options.assert_any_call(header_fg="#0055CC", header_bg="#F0F0F0")
 
 
 # ── coefs_path as child row of input ────────────────────────────────────────
@@ -397,7 +396,9 @@ class TestCoefsPathChildRow:
         cs._return_enum = Return
         cs._snap = ({}, {}, "")
         cs._fg_default = "#000000"
-        # __new__ bypasses __init__ — set hover fields manually
+        # __new__ bypasses __init__ — set row-cache + hover fields manually
+        cs._int_row_of = {}
+        cs._vis = ()
         cs._hover_ov = MagicMock()
         cs._hover_iid = None
         cs._iid_of_row = {}

@@ -85,7 +85,7 @@ class _FakeSheet:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xr
+@pytest.mark.gui
 class TestGuiScan:
     """Simulate GUI scan: ``App._scan`` → ``Worker._scan`` → ``call_in_raw_dir``."""
 
@@ -175,7 +175,7 @@ class TestGuiScan:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xr
+@pytest.mark.gui
 class TestGuiCoefWriteBack:
     """Simulate GUI coef write-back: ``App._write_coefs`` → ``update_coefs_in_run_yaml``."""
 
@@ -278,7 +278,7 @@ class TestGuiCoefWriteBack:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xr
+@pytest.mark.gui
 class TestGuiRun:
     """Simulate GUI run: ``Worker._run`` → ``call_in_raw_dir`` with ``input.yaml_path``."""
 
@@ -351,7 +351,7 @@ class TestGuiRun:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xr
+@pytest.mark.gui
 class TestGuiFullCycle:
     """Full GUI cycle: scan → edit coefs → run."""
 
@@ -406,7 +406,7 @@ class TestGuiFullCycle:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xr
+@pytest.mark.gui
 class TestGuiSysArgvIsolation:
     """call_in_raw_dir must not pollute sys.argv between consecutive calls.
 
@@ -493,7 +493,7 @@ class TestGuiSysArgvIsolation:
         assert len(result) == 4
 
 
-@pytest.mark.xr
+@pytest.mark.gui
 class TestGuiAtSignFilename:
     """Filenames with ``@`` (e.g. ``@i_p1.TXT``) are common in inclinometer data.
 
@@ -569,7 +569,7 @@ class TestGuiAtSignFilename:
         assert len(result) == 4
 
 
-@pytest.mark.xr
+@pytest.mark.gui
 class TestGuiCfgProcAutoCreation:
     """cfg_proc/run/ directory is auto-created when scanning a new data dir."""
 
@@ -596,7 +596,7 @@ class TestGuiCfgProcAutoCreation:
         assert run_dir.is_dir()
 
 
-@pytest.mark.xr
+@pytest.mark.gui
 class TestGuiGlobalHydraClear:
     """Worker._setup() clears GlobalHydra between calls.
 
@@ -641,7 +641,7 @@ class TestGuiGlobalHydraClear:
         assert len(result2) == 4
 
 
-@pytest.mark.xr
+@pytest.mark.gui
 class TestGuiCwdStability:
     """call_in_raw_dir changes cwd to the _raw/ directory.
 
@@ -667,7 +667,7 @@ class TestGuiCwdStability:
         assert Path.cwd() == raw_dir
 
 
-@pytest.mark.xr
+@pytest.mark.gui
 class TestGuiRunWithNoConfigs:
     """Run with input.yaml_path pointing to a non-existent YAML."""
 
@@ -692,7 +692,7 @@ class TestGuiRunWithNoConfigs:
         assert len(collected) == 0
 
 
-@pytest.mark.xr
+@pytest.mark.gui
 class TestGuiWriteCoefsIdempotent:
     """Writing the same coefs twice should produce two backups but same YAML."""
 
@@ -734,7 +734,7 @@ class TestGuiWriteCoefsIdempotent:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xr
+@pytest.mark.gui
 class TestGuiCliArgs:
     """GUI started with CLI args: path prefill + Hydra override propagation."""
 
@@ -833,7 +833,7 @@ class TestGuiCliArgs:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xr
+@pytest.mark.gui
 class TestFakeSheetDirtyTracking:
     """Verify _FakeSheet satisfies the dirty-tracking contract used by _write_coefs."""
 
@@ -876,7 +876,7 @@ class TestFakeSheetDirtyTracking:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xr
+@pytest.mark.gui
 class TestQueueHandlerDedup:
     """QueueHandler.emit drops consecutive records with same (funcName, message)."""
 
@@ -938,7 +938,7 @@ class TestQueueHandlerDedup:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xr
+@pytest.mark.gui
 class TestQueueHandlerFreezeMutableMessage:
     """QueueHandler.emit freezes the rendered text onto the LogRecord.
 
@@ -1039,7 +1039,7 @@ class TestQueueHandlerFreezeMutableMessage:
         )
 
 
-@pytest.mark.xr
+@pytest.mark.gui
 class TestQueueHandlerPersistsAcrossTasks:
     """GUI-thread log calls reach the queue via the single persistent QueueHandler.
 
@@ -1135,7 +1135,7 @@ class TestQueueHandlerPersistsAcrossTasks:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xr
+@pytest.mark.gui
 class TestRtfClipboard:
     """_esc and build_rtf produce well-formed RTF for colored ScrolledText."""
 

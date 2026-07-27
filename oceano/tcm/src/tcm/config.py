@@ -71,7 +71,7 @@ class ConfigInCoefs_InclProc:
         default_factory=lambda: [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
     )
     kVabs: Optional[List[float]] = field(default_factory=lambda: [10, -10, -10, -3, 3, 70])
-    P_t: Optional[List[List[float]]] = None
+    P_t: Optional[Annotated[List[List[float]], (3, 3)]] = None
     P: Optional[List[float]] = field(default_factory=lambda: [0, 1])
     PBattery: Optional[List[float]] = field(default_factory=lambda: [0, 1])
     PTemp: Optional[List[float]] = field(default_factory=lambda: [0, 1])

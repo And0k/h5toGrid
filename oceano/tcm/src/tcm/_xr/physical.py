@@ -14,6 +14,11 @@ import xarray as xr
 from numpy.polynomial.polynomial import polyval2d
 from tqdm.auto import tqdm
 
+try:
+    from tcm_gui.progress_bridge import get_tqdm_class
+except ImportError:
+    get_tqdm_class = lambda: None
+
 from tcm import utils2init
 import tcm.calibration.orientation
 from tcm.incl_calc import calc
@@ -284,7 +289,8 @@ def process(
     n_raw = ds.sizes.get("time", 0)
     # Suppress tqdm for small data — avoids visual blink when each bin < ~1s
     show_progress = n_raw >= 100_000
-    pbar = tqdm(
+    _bar_cls = get_tqdm_class() or tqdm  # GuiTqdm when GUI active, else terminal tqdm
+    pbar = _bar_cls(
         dt_bins_remaining, desc=f"[{pcid}] bins", unit="bin", leave=False,
         disable=not show_progress,
     )

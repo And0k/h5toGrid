@@ -346,7 +346,11 @@ def loaded_tcm(
             magnetometer_channels = ["Mx", "My", "Mz"]
             lf.debug("'{}' applied", key)
             a.loc[:, magnetometer_channels] = -a.loc[:, magnetometer_channels].values
-            a = a.copy()
+            # no .copy() here: assign(Time=…) on return rebuilds the frame;
+            # deep-copying a 5M-row float64 frame triggers _consolidate_inplace
+            # → _merge_blocks → argsort which doubles peak memory (~150 MiB
+            # transient for a single 2-col float64 block), causing
+            # _ArrayMemoryError when heap is already strained.
         elif invert_flag:
             lf.debug("'{}' skipped — no magnetometer columns", key)
 

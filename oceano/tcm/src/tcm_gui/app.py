@@ -15,12 +15,18 @@ from omegaconf import OmegaConf
 from tcm import cli, config, config_yaml, format, incl_calc
 from tcm_gui.cli_cfg import default_cfg
 
-from .const import TAG_COLORS
 from ._browse_button import BrowseButtonManager
 from ._path_field import PathField
 from ._rtf_clipboard import copy_rich
 from .coef_sheet import ConfigSheet
-from .log_bridge import FUNC_COLOR, drain, install
+from .const import (
+    FUNC_COLOR,
+    TAG_COLORS,
+    apply_ui_scale,
+    get_widget_meta,
+    set_widget_meta,
+)
+from .log_bridge import drain, install
 from .runtime import Runtime
 from .worker import Worker
 
@@ -37,6 +43,7 @@ class App:
 
     def __init__(self, argv: list[str] | None = None) -> None:
         self.root = tk.Tk()
+        apply_ui_scale(self.root)  # global DPI + named fonts — before any widget
         self.root.title("TCM")
         self.root.geometry("1100x800")
         self.rt = Runtime()
@@ -55,11 +62,14 @@ class App:
         # extracts the data path via cli.parse_data_path(sys.argv) internally.
         self._original_argv = list(argv or sys.argv)
 
+        # Configuration label state — drives _cfg_lbl caption transitions
+        self._cfg_scanned = False  # True after first successful scan
+        self._cfg_was_dirty = False  # True while any page has unsaved edits
+
         # watch Shift globally on root (Windows doesn't send Shift to widgets)
         self._full_mode = _shift_at_startup()
 
         self._build()
-        self._add_page("(default)", default_cfg())
         # Prefill path entry from CLI args — only when user explicitly provided one.
         # parse_data_path returns None when no positional arg is found (e.g.
         # ``python -m tcm_gui`` without a data path), so the GUI starts empty.
@@ -67,68 +77,86 @@ class App:
         if path_in is not None:
             self._path_field.set(str(path_in))
             self.root.after(100, self._scan)
+        else:
+            # No CLI path — show a placeholder page so the notebook isn't empty.
+            self._add_page("(default)", default_cfg())
         self._poll()
 
     # ── layout ──────────────────────────────────────────────────────
 
     def _build(self) -> None:
         r = self.root
-        r.grid_rowconfigure(1, weight=2)
-        r.grid_rowconfigure(3, weight=1)
+        r.grid_rowconfigure(2, weight=2)  # notebook
+        r.grid_rowconfigure(4, weight=1)  # log
         r.grid_columnconfigure(0, weight=1)
 
         # §1 input.path
         f0 = ttk.Frame(r)
         f0.grid(row=0, column=0, sticky="ew", padx=4, pady=2)
         f0.columnconfigure(1, weight=1)
-        ttk.Label(f0, text="Data search path:").grid(row=0, column=0, padx=(0, 4))
+        self._path_lbl = ttk.Label(f0, text="Data search path")
+        self._path_lbl.grid(row=0, column=0, padx=(0, 4))
+        set_widget_meta(self._path_lbl, tooltip="Path field label")
         self._path_field = PathField(f0, on_commit=self._on_path_changed)
         self._path_field.grid(row=0, column=1, sticky="ew")
+        set_widget_meta(self._path_field, status=self._HOVER_MSG, tooltip="Data search path")
         # Status message on hover — rebind on the Sheet's MT canvas
         self._path_hovering = False
         self._path_field.sh.MT.bind("<Enter>", lambda _: self._on_path_hover_in(), add="+")
         self._path_field.sh.MT.bind("<Leave>", lambda _: self._on_path_hover_out(), add="+")
 
-        # §2 Notebook
-        self.nb = ttk.Notebook(r)
-        self.nb.grid(row=1, column=0, sticky="nsew", padx=4, pady=2)
+        # §2 Configuration status label — sits between path field and notebook tabs
+        self._cfg_state = tk.StringVar(value="Default configuration")
+        self._cfg_lbl = ttk.Label(r, textvariable=self._cfg_state)
+        self._cfg_lbl.grid(row=1, column=0, sticky="w", padx=8, pady=(0, 0))
+        set_widget_meta(self._cfg_lbl, status="Current configuration state")
 
-        # §3 Run + overall progress (config-level)
+        # §3 Notebook — full width, below the configuration label
+        self.nb = ttk.Notebook(r)
+        self.nb.grid(row=2, column=0, sticky="nsew", padx=4, pady=(0, 2))
+
+        # §4 Run + overall progress (config-level)
         f2 = ttk.Frame(r)
-        f2.grid(row=2, column=0, sticky="ew", padx=4, pady=2)
+        f2.grid(row=3, column=0, sticky="ew", padx=4, pady=2)
         f2.columnconfigure(2, weight=1)
         self._run_btn = ttk.Button(f2, text="Run", command=self._on_run)
         self._run_btn.grid(row=0, column=0, padx=(0, 4))
+        set_widget_meta(self._run_btn, status="Start / pause / resume processing", tooltip="Run button")
+        set_widget_meta(f2, status="Run controls and overall progress")
         self._prog_all_lbl = tk.StringVar(value="")
         ttk.Label(f2, textvariable=self._prog_all_lbl).grid(row=0, column=1, padx=(0, 4))
         self._prog_all = ttk.Progressbar(f2, mode="determinate")
         self._prog_all.grid(row=0, column=2, sticky="ew")
 
-        # §4 Log
+        # §5 Log
         self._log = ScrolledText(r, height=10, state="disabled", wrap="word")
-        self._log.grid(row=3, column=0, sticky="nsew", padx=4, pady=2)
+        self._log.grid(row=4, column=0, sticky="nsew", padx=4, pady=2)
         for lvl, clr in TAG_COLORS.items():
             self._log.tag_configure(lvl, foreground=clr)
         self._log.tag_configure("func", foreground=FUNC_COLOR)
         self._log.bind("<Control-c>", lambda _: (copy_rich(self._log), "break")[1])
 
-        # §5 Status bar
+        # §6 Status bar
         f4 = ttk.Frame(r)
-        f4.grid(row=4, column=0, sticky="ew", padx=4, pady=2)
+        f4.grid(row=5, column=0, sticky="ew", padx=4, pady=2)
         f4.columnconfigure(1, weight=1)
         self._status = tk.StringVar(value="Ready")
-        ttk.Label(f4, textvariable=self._status).grid(row=0, column=0, padx=(0, 4))
+        self._status_lbl = ttk.Label(f4, textvariable=self._status)
+        self._status_lbl.grid(row=0, column=0, padx=(0, 4))
+        set_widget_meta(self._status_lbl, status="Application status messages")
         self._prog_stage = ttk.Progressbar(f4, mode="determinate")
         self._prog_stage.grid(row=0, column=1, sticky="ew")
 
     # ── §1 entry hover status message ────────────────────────────────
 
+    # Canonical hover hint — also stored in widget_meta by _build() for the
+    # centralized registry (future tooltip popups read the same value).
     _HOVER_MSG = "Changing data path rescans and resets all config tabs below"
 
     def _on_path_hover_in(self) -> None:
-        """Mouse enters Entry — show status hint."""
+        """Mouse enters Entry — show status hint from widget_meta registry."""
         self._path_hovering = True
-        self._status.set(self._HOVER_MSG)
+        self._status.set(get_widget_meta(self._path_field, "status", self._HOVER_MSG))
 
     def _on_path_hover_out(self) -> None:
         """Mouse leaves Entry — clear hover flag (status restored by poll)."""
@@ -163,6 +191,7 @@ class App:
         frame = ttk.Frame(self.nb)
         self.nb.add(frame, text=stem)
         self._tab_of[stem] = frame
+        set_widget_meta(frame, status=f"Configuration tab: {stem}")
 
         cs = ConfigSheet(frame)
         cs.sh.pack(fill="both", expand=True, padx=2, pady=2)
@@ -201,6 +230,9 @@ class App:
             self._write_coefs(s, cs)
         self._clear_log()
         self._run_btn.config(text="Pause")
+        # Show a sliver on overall bar immediately — before the first stage tick
+        self._prog_all.config(value=0, maximum=1)
+        self._prog_all_lbl.set("Starting…")
         self.wk.run(self._path_field.get(), stems)
 
     def _write_coefs(self, stem: str, cs: ConfigSheet) -> None:
@@ -232,14 +264,25 @@ class App:
         self.root.after(self.POLL, self._poll)
 
     def _poll_dirty_tabs(self) -> None:
-        """Append/remove '*' on tab titles to reflect unsaved edits."""
+        """Append/remove '*' on tab titles to reflect unsaved edits; update cfg label."""
+        any_dirty = False
         for stem, cs in self._pages.items():
+            if cs.is_dirty:
+                any_dirty = True
             if (frame := self._tab_of.get(stem)) is None:
                 continue
             current = self.nb.tab(frame, "text")
             desired = f"{stem}*" if cs.is_dirty else stem
             if current != desired:
                 self.nb.tab(frame, text=desired)
+        # Transition: any dirty → "Processing configurations"; all clean → restore scan caption
+        if any_dirty and not self._cfg_was_dirty:
+            self._cfg_was_dirty = True
+            self._cfg_state.set("Processing configurations")
+        elif not any_dirty and self._cfg_was_dirty:
+            self._cfg_was_dirty = False
+            if self._cfg_scanned:
+                self._cfg_state.set("Generated configuration for processing found data")
 
     def _poll_logs(self) -> None:
         at_bottom = self._log.yview()[1] > 0.99  # до вставки
@@ -249,16 +292,24 @@ class App:
         self._log.config(state="disabled")
 
     def _poll_progress(self) -> None:
+        # Snapshot both states once — avoids redundant lock acquisitions.
         cur, tot, desc = self.rt.progress_stage.snapshot()
+        cur_o, tot_o, desc_o = self.rt.progress_overall.snapshot()
         if tot > 0:
             self._prog_stage.config(maximum=tot, value=cur)
             if not self._path_hovering:
-                self._status.set(desc or f"{cur}/{tot}")
-        cur_o, tot_o, desc_o = self.rt.progress_overall.snapshot()
+                self._status.set(desc or "")
+        else:
+            self._prog_stage.config(value=0)
+            # Stage inactive: consume a one-shot clear signal (set at each
+            # probe start via progress_stage.clear_and_reset) so stale text is
+            # wiped exactly once; otherwise leave _status alone — explicit
+            # setters own it ("Ready", "Done …", hover hints).
+            if not self._path_hovering and self.rt.progress_stage.consume_clear():
+                self._status.set("")
         if tot_o > 0:
             self._prog_all.config(maximum=tot_o, value=cur_o)
-            # Composite label: config index/total + current stage desc
-            self._prog_all_lbl.set(f"{cur_o}/{tot_o}  {desc_o}")
+            self._prog_all_lbl.set(desc_o or "")
         else:
             self._prog_all.config(value=0)  # null bar when inactive
             self._prog_all_lbl.set("")  # clear label too
@@ -295,6 +346,9 @@ class App:
                 prog["return_"] = str(config.Return.END)
             self._yaml_paths[stem] = Path(yp)
             self._add_page(stem, cfg)
+        self._cfg_scanned = True
+        self._cfg_was_dirty = False
+        self._cfg_state.set("Generated configuration for processing found data")
 
     def _on_run_done(self, result) -> None:
         self._run_btn.config(text="Run")
@@ -302,8 +356,12 @@ class App:
         n = len(processed) + len(failed)
         pct = round(100 * len(processed) / n) if n else 100
         self._status.set(f"Done — {pct}% ({len(processed)}/{n} ok)")
+        # Reset both progress bars on completion
         self._prog_stage.config(value=0)
-        self.rt.progress_overall.set(0, 0, "")  # null upper bar on completion
+        self._prog_all.config(value=0)
+        self._prog_all_lbl.set("")
+        self.rt.progress_overall.set(0, 0, "")
+        self.rt.progress_stage.set(0, 0, "")
 
     def _clear_log(self) -> None:
         """Flush pending queue records and clear the ScrolledText widget."""

@@ -25,11 +25,18 @@ class PauseGate:
 
 @dataclass
 class ProgressState:
-    """Worker writes, GUI reads (lock-guarded)."""
+    """Worker writes, GUI reads (lock-guarded).
+
+    :param _clear_status: one-shot flag — :meth:`clear_and_reset` sets it,
+        :meth:`consume_clear` atomically reads-and-resets it.  Used at probe
+        boundaries so the GUI poll can wipe stale stage text without touching
+        it in every idle tick.
+    """
     current: int = 0
     total:   int = 0
     desc:    str = ""
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _clear_status: bool = field(default=False, repr=False)
 
     def set(self, cur: int, tot: int, desc: str = "") -> None:
         with self._lock:
@@ -38,6 +45,20 @@ class ProgressState:
     def snapshot(self) -> tuple[int, int, str]:
         with self._lock:
             return self.current, self.total, self.desc
+
+    def clear_and_reset(self) -> None:
+        """Reset to idle *and* signal the GUI to clear status text once."""
+        with self._lock:
+            self.current, self.total, self.desc = 0, 0, ""
+            self._clear_status = True
+
+    def consume_clear(self) -> bool:
+        """Atomically check-and-reset the clear-status flag (GUI thread)."""
+        with self._lock:
+            if self._clear_status:
+                self._clear_status = False
+                return True
+            return False
 
 
 @dataclass

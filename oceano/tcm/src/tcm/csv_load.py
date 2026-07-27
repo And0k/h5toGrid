@@ -1001,7 +1001,7 @@ cfg_default = {
         'on_bad_lines':       'warn',  #'error',
         # '--min_date', '07.10.2017 11:04:00',  # not output data < min_date
         # '--max_date', '29.12.2018 00:00:00',  # UTC, not output data > max_date
-        'blocksize':          5_000_000,  # 1_000_000  # 15_000_000 hangs my comp
+        'blocksize':          500_000,  # 5M caused _ArrayMemoryError on 2nd probe (76 MiB alloc fails after first probe consumed heap)
         'b_interact':         '0',
         'csv_specific_param': {
             'invert_magnetometer': True,

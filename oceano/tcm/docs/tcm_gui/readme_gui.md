@@ -52,7 +52,8 @@ Click **Run**.  The tool:
 - **Upper bar**: config-level progress — load → coefs → process → NC write → TSV write
 - **Lower bar**: stage-level dask task progress
 - **Log panel**: all pipeline log messages with color-coded severity
-- **Status bar**: current stage description
+- **Status bar**: current stage description; preserves "Ready" at idle and
+  "Done — X%" after completion (cleared only at probe boundaries)
 
 ### 5. Pause / Resume
 

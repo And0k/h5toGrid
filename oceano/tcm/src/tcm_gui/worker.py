@@ -1,4 +1,5 @@
 """Worker thread: pipeline stages via tcm.cli.call_in_raw_dir in background."""
+
 from __future__ import annotations
 
 import logging
@@ -41,6 +42,7 @@ class Worker:
         it the full original argv each time.
         """
         from hydra.core.global_hydra import GlobalHydra
+
         GlobalHydra.instance().clear()
         sys.argv = list(original_argv)
         set_runtime(self.rt)
@@ -65,6 +67,7 @@ class Worker:
         previous task's tail.
         """
         rt = self.rt
+
         @wraps(fun)
         def wrapped(cfg):
             root = logging.getLogger()
@@ -73,10 +76,12 @@ class Worker:
             if rt.queue_handler is not None:
                 rt.queue_handler.reset_dedup()
             return fun(cfg)
+
         return wrapped
 
     def _scan(self, original_argv: list[str]) -> None:
         from tcm import cli, processing
+
         self._setup(original_argv)
         # Null overall progress bar during scan (no probe-level processing)
         self.rt.progress_overall.set(0, 0, "")
@@ -94,10 +99,13 @@ class Worker:
 
     def _run(self, data_path: str, stems: list[str]) -> None:
         from tcm import cli, processing
+
         # Minimal argv: no original CLI overrides.  YAML files (edited by user)
         # are the sole config source.  Data path passed via overrides.
         self._setup(["__main__"])
-        self.rt.progress_overall.set(0, 0, "")
+        # Show a sliver on overall bar immediately (non-zero total → bar visible)
+        self.rt.progress_overall.set(0, 1, "Starting…")
+        self.rt.progress_stage.set(0, 0, "")
         try:
             res = cli.call_in_raw_dir(
                 self._wrap(processing.run),
