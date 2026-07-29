@@ -252,7 +252,7 @@ For example, `program.return_='<saved_raw>'` to verify raw data ingestion.
 misleading "freq unknown → defaulting to 1Hz" warnings.
 
 **Diagnostics**: `save_time_corr_diagnostics()` and `plot_time_corr_diagnostics()`
-produce NPZ arrays with action bitmask per sample:
+produce NPZ arrays (accumulated across chunks) with action bitmask per sample:
 
 | Bit | Constant | Meaning |
 |-----|----------|---------|

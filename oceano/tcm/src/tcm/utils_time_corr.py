@@ -25,21 +25,23 @@ Diagnostics (save_time_corr_diagnostics, plot_time_corr_diagnostics):
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from datetime import datetime, timedelta, timezone
+from collections.abc import Mapping, MutableMapping, Sequence
+from datetime import UTC, datetime, timedelta
 from enum import IntFlag
 from pathlib import Path
-from typing import Any, Final, Mapping, MutableMapping, Optional, Tuple, Union
+from typing import Any, Final
 
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
+
 from .utils2init import LoggingStyleAdapter, dir_create_if_need
 
 lf = LoggingStyleAdapter(__name__)
 
 NS = 1_000_000_000  # 1 s in ns (int64)
 NS_F = np.float64(NS)
+
 
 # Action bitmask: OR-able uint8 per sample, stored sparse (non-zero positions only)
 class DiagBit(IntFlag):
@@ -63,19 +65,22 @@ class DiagBit(IntFlag):
 
     See build_show_diag / build_diag_cmap for the (2, n) matrix + colormap this drives.
     """
-    HOLE         = 0x01
-    ALARM        = 0x02
+
+    HOLE = 0x01
+    ALARM = 0x02
     OUT_OF_RANGE = 0x04
-    NOT_MONO     = 0x08
-    TRIM         = 0x10
-    SPIKE        = 0x20
-    BACKWARD     = 0x40
+    NOT_MONO = 0x08
+    TRIM = 0x10
+    SPIKE = 0x20
+    BACKWARD = 0x40
+
 
 _ROW_MASKS: Final[NDArray[np.uint8]] = np.array([0x0F, 0x70], dtype=np.uint8)  # [properties, fate]
 
 # =============================================================================
 # Utilities
 # =============================================================================
+
 
 def rms_quantization_theory(freq: float) -> float:
     """RMS_q(N) = (1/N)·√[(N−1)(2N−1)/6], N = round(freq). Zero for N<2."""
@@ -85,6 +90,7 @@ def rms_quantization_theory(freq: float) -> float:
 
 I64MIN = np.iinfo(np.int64).min
 I64MAX = np.iinfo(np.int64).max
+
 
 def make_range_mask(
     t_ns: NDArray[np.int64], time_ranges: Sequence[str | pd.Timestamp | None]
@@ -120,14 +126,14 @@ def make_range_mask(
     # return b
 
 
-
 # =============================================================================
 # Step 1 – UTC conversion
 # =============================================================================
 
+
 def _to_utc(
-    date: Union[pd.Series, pd.Index, np.ndarray],
-    dt_from_utc: Optional[timedelta],
+    date: pd.Series | pd.Index | np.ndarray,
+    dt_from_utc: timedelta | None,
 ) -> np.ndarray:
     """Convert date to tz-naive ``datetime64[ns]`` values in UTC."""
     if not date.size:
@@ -191,12 +197,12 @@ def _to_utc(
             return np.asarray(t, dtype="M8[ns]")
 
 
-
 # =============================================================================
 # Step 2 – Frequency estimation
 # =============================================================================
 
-def _ceil_to_decimals_or_to_fractions(freq: float, round_snapping: int | float) -> float:
+
+def _ceil_to_decimals_or_to_fractions(freq: float, round_snapping: float) -> float:
     """Round_snapping: >1 → decimal-place ceiling; else → ceil to next multiple of round_snapping Hz."""
     scale = 10**round_snapping if round_snapping > 1 else 1 / round_snapping
     return (np.ceil(freq * scale) / scale).item()
@@ -229,18 +235,18 @@ def _estimate_freq_np(t_ns: NDArray[np.int64]) -> float:
         # Each group of identical consecutive timestamps = one second of data.
         # Run-length of group m = number of samples recorded in second m.
         bounds = np.flatnonzero(np.ediff1d(t_ns, to_begin=1) != 0)  # second-boundary positions
-        runs   = np.ediff1d(bounds, to_end=t_ns.size - bounds[-1])  # samples/second for every second
-        total  = runs.size                             # total seconds in recording
+        runs = np.ediff1d(bounds, to_end=t_ns.size - bounds[-1])  # samples/second for every second
+        total = runs.size  # total seconds in recording
 
-        vals, cnts = np.unique(runs, return_counts=True)   # sorted run-lengths + occurrence counts
-        i_mode     = np.argmax(cnts).item()
-        N_mode     = vals[i_mode].item()                 # most common samples/second
-        frac_mode  = (cnts[i_mode] / total).item()       # its fraction of all seconds
+        vals, cnts = np.unique(runs, return_counts=True)  # sorted run-lengths + occurrence counts
+        i_mode = np.argmax(cnts).item()
+        N_mode = vals[i_mode].item()  # most common samples/second
+        frac_mode = (cnts[i_mode] / total).item()  # its fraction of all seconds
 
         # i_lo = index of (N_mode−1) in vals if present; reused below for whichever
         i_lo = np.searchsorted(vals, N_mode - 1)
-        has_lo   = i_lo < vals.size and vals[i_lo] == N_mode - 1
-        frac_lo  = (cnts[i_lo] / total).item() if has_lo else 0.0
+        has_lo = i_lo < vals.size and vals[i_lo] == N_mode - 1
+        frac_lo = (cnts[i_lo] / total).item() if has_lo else 0.0
 
         # Determine N_base = floor(true_freq):
         #   5.3 Hz: 70% of seconds have 5 samples (mode=5=floor)         → N_base = N_mode
@@ -249,14 +255,15 @@ def _estimate_freq_np(t_ns: NDArray[np.int64]) -> float:
         # Below 80%: sub-mode values are burst-boundary artifacts, not a valid floor.
         if frac_lo > 0.05 and frac_mode + frac_lo >= 0.80:
             N_base, frac_N_base, frac_N_base_p1 = N_mode - 1, frac_lo, frac_mode
-            gate_note = f"  [mode={N_mode} is ceil; {frac_lo+frac_mode:.0%} in 80%-gate]"
+            gate_note = f"  [mode={N_mode} is ceil; {frac_lo + frac_mode:.0%} in 80%-gate]"
         else:
             N_base, frac_N_base, gate_note = N_mode, frac_mode, ""
             # ceil fraction not yet known — reuses vals/cnts already computed above,
             # no new searchsorted vs N_base since N_base+1 = N_mode+1 here
             i_hi = np.searchsorted(vals, N_mode + 1)
-            frac_N_base_p1 = (cnts[i_hi] / total).item() if (
-                i_hi < vals.size and vals[i_hi] == N_mode + 1) else 0.0
+            frac_N_base_p1 = (
+                (cnts[i_hi] / total).item() if (i_hi < vals.size and vals[i_hi] == N_mode + 1) else 0.0
+            )
 
         # freq = frac_N_base·N_base + frac_N_base_p1·(N_base+1) = mean of the two valid run-lengths
         kept = runs[(runs == N_base) | (runs == N_base + 1)]
@@ -336,6 +343,7 @@ def _resolve_freq(t_ns: NDArray[np.int64], cfg_in: MutableMapping[str, Any]) -> 
 # Step 3 – Trim overlong runs
 # =============================================================================
 
+
 def _trim_overlong_runs(t_ns: NDArray[np.int64], freq: float) -> NDArray[np.bool_]:
     """
     Cap each equal-value run at N = round(freq) samples to prevent parking-scan drift.
@@ -361,6 +369,7 @@ def _trim_overlong_runs(t_ns: NDArray[np.int64], freq: float) -> NDArray[np.bool
 # Step 4 – Hole detection
 # =============================================================================
 
+
 def _find_hole_edges(t_ns: NDArray[np.int64], dt_hole_ns: int) -> NDArray[np.int64]:
     """gap > dt_hole_ns → [0, h₁, …, n] segment boundaries. O(n)."""
     return np.r_[np.int64(0), np.flatnonzero(np.ediff1d(t_ns) > dt_hole_ns) + 1, np.int64(t_ns.size)]
@@ -369,6 +378,7 @@ def _find_hole_edges(t_ns: NDArray[np.int64], dt_hole_ns: int) -> NDArray[np.int
 # =============================================================================
 # Step 5 – Outlier removal
 # =============================================================================
+
 
 def _bilateral_check(
     t_ns: NDArray[np.int64],
@@ -452,6 +462,7 @@ def _remove_outliers_combined(
 # Step 6 – Snap to grid
 # =============================================================================
 
+
 def _snap_segment_np(
     t_seg: NDArray[np.int64], seg_origin: np.int64, dt_step_ns: np.int64
 ) -> NDArray[np.int64]:
@@ -523,11 +534,21 @@ def _snap_to_grid(
             # Snap interpolated values to the grid — they're estimates anyway,
             # and landing on-grid guarantees minimum spacing = dt_step (>> float64 resolution).
             origin = t_snapped[0]
-            t_out[i0 + bad_idx] = origin + np.rint(
-                (np.interp(
-                    bad_idx.astype(np.float64), good_idx.astype(np.float64), t_snapped.astype(np.float64)
-                ) - origin) / dt_step_ns
-            ).astype(np.int64) * dt_step_ns
+            t_out[i0 + bad_idx] = (
+                origin
+                + np.rint(
+                    (
+                        np.interp(
+                            bad_idx.astype(np.float64),
+                            good_idx.astype(np.float64),
+                            t_snapped.astype(np.float64),
+                        )
+                        - origin
+                    )
+                    / dt_step_ns
+                ).astype(np.int64)
+                * dt_step_ns
+            )
 
     b_monotone = np.ediff1d(t_out, to_begin=1) > 0
     rms_max = max(seg_rms) if seg_rms else 0.0
@@ -535,13 +556,26 @@ def _snap_to_grid(
 
     if n_non := (~b_monotone).sum().item():
         lf.warning("{} interpolated outlier position(s) non-monotone after snap (masked)", n_non)
-    lf.debug("snap {}/{} segs RMS: mean={:.4f}s max={:.4f}s q_theory={:.4f}s",
-            n_segs - seg_rms.count(0), n_segs, rms_mean, rms_max, rms_q)
+    lf.debug(
+        "snap {}/{} segs RMS: mean={:.4f}s max={:.4f}s q_theory={:.4f}s",
+        n_segs - seg_rms.count(0),
+        n_segs,
+        rms_mean,
+        rms_max,
+        rms_q,
+    )
 
-    return t_out, b_monotone, {
-        "rms_max": rms_max, "rms_mean": rms_mean, "rms_theory": rms_q,
-        "n_segs": n_segs, "seg_rms": seg_rms,
-    }
+    return (
+        t_out,
+        b_monotone,
+        {
+            "rms_max": rms_max,
+            "rms_mean": rms_mean,
+            "rms_theory": rms_q,
+            "n_segs": n_segs,
+            "seg_rms": seg_rms,
+        },
+    )
 
 
 # =============================================================================
@@ -551,15 +585,20 @@ def _snap_to_grid(
 
 def _null_snap_stats(freq: float, n_segs: int) -> dict:
     """Placeholder snap_stats for non-snap modes; seg_rms=[]."""
-    return {"rms_max": 0.0, "rms_mean": 0.0, "rms_theory": rms_quantization_theory(freq),
-            "n_segs": n_segs, "seg_rms": []}
+    return {
+        "rms_max": 0.0,
+        "rms_mean": 0.0,
+        "rms_theory": rms_quantization_theory(freq),
+        "n_segs": n_segs,
+        "seg_rms": [],
+    }
 
 
 def _correct_time(
     t_ns: NDArray[np.int64],
     cfg_in: Mapping[str, Any],
-    process: Union[bool, str, None],
-    b_in_range: Optional[NDArray[np.bool_]] = None,
+    process: bool | str | None,
+    b_in_range: NDArray[np.bool_] | None = None,
 ) -> tuple[NDArray[np.int64], NDArray[np.bool_], dict, NDArray[np.uint8]]:
     """
     Full pipeline on int64 ns array; returns (t_out_ns, b_monotone, stats, action).
@@ -615,7 +654,7 @@ def _correct_time(
         t_sub, int(dt_step_ns), int(thresh_s * NS_F)
     )
     b_ok_s &= b_trim_s
-    if (n_total := in_idx.size - b_ok_s.sum().item()):  # unique removed (overlap not double-counted)
+    if n_total := in_idx.size - b_ok_s.sum().item():  # unique removed (overlap not double-counted)
         lf.info(
             "Removed {:.1f}% = ({} overlong + {} spike + {} backward{})/{}",
             100 * n_total / max(in_idx.size, 1),
@@ -632,10 +671,13 @@ def _correct_time(
     clean_s = np.flatnonzero(b_ok_s)
     ec = _find_hole_edges(t_sub[b_ok_s], dt_hole_ns)
     seg_edges_s = np.r_[np.int64(0), clean_s[ec[1:-1]], np.int64(t_sub.size)]
-    if (n_holes := seg_edges_s.size - 2):
+    if n_holes := seg_edges_s.size - 2:
         lf.debug(
             "{} segments: {} hole{} > {:.2f}s",
-            n_holes + 1, n_holes, "s" if n_holes > 1 else "", dt_hole_ns.item() / NS
+            n_holes + 1,
+            n_holes,
+            "s" if n_holes > 1 else "",
+            dt_hole_ns.item() / NS,
         )
 
     # Snap → delete_inversions → mask-only + warns if `process` is unknown
@@ -678,19 +720,19 @@ def _correct_time(
     # Threshold = (N−1)·dt_step: the largest offset ANY non-drifting N-sample run can produce
     # (k∈[0,N−1] within-run position × dt_step)
     mono_full_idx = in_idx[b_mono_s]
-    dt_corr       = (t_sub_out[b_mono_s].astype(float) - t_sub[b_mono_s].astype(float)) / NS_F
-    alarm_thr     = (round(freq) - 1) * (float(dt_step_ns) / NS_F) + 1e-9
-    alarm_mask    = np.abs(dt_corr) > alarm_thr
+    dt_corr = (t_sub_out[b_mono_s].astype(float) - t_sub[b_mono_s].astype(float)) / NS_F
+    alarm_thr = (round(freq) - 1) * (float(dt_step_ns) / NS_F) + 1e-9
+    alarm_mask = np.abs(dt_corr) > alarm_thr
     # Build action array — every algorithmic decision recorded here for display on two rows
     action = np.zeros(t_ns.size, np.uint8)
-    action[~b_in_range]                   |= DiagBit.OUT_OF_RANGE.value   # row 0: property
-    action[in_idx[~b_trim_s]]             |= DiagBit.TRIM.value           # row 1: fate
-    action[in_idx[~b_bil_s]]              |= DiagBit.SPIKE.value          # row 1: fate
-    action[in_idx[~b_hwm_s]]              |= DiagBit.BACKWARD.value       # row 1: fate
+    action[~b_in_range] |= DiagBit.OUT_OF_RANGE.value  # row 0: property
+    action[in_idx[~b_trim_s]] |= DiagBit.TRIM.value  # row 1: fate
+    action[in_idx[~b_bil_s]] |= DiagBit.SPIKE.value  # row 1: fate
+    action[in_idx[~b_hwm_s]] |= DiagBit.BACKWARD.value  # row 1: fate
     if n_holes:
-        action[in_idx[clean_s[ec[1:-1]]]] |= DiagBit.HOLE.value           # row 0: property
-    action[mono_full_idx[alarm_mask]]     |= DiagBit.ALARM.value          # row 0: property, point-wise
-    action[in_idx[~b_mono_s]]             |= DiagBit.NOT_MONO.value       # row 0: property
+        action[in_idx[clean_s[ec[1:-1]]]] |= DiagBit.HOLE.value  # row 0: property
+    action[mono_full_idx[alarm_mask]] |= DiagBit.ALARM.value  # row 0: property, point-wise
+    action[in_idx[~b_mono_s]] |= DiagBit.NOT_MONO.value  # row 0: property
 
     n_alarm = alarm_mask.sum().item()
     n_mono = b_monotone.sum().item()
@@ -701,14 +743,25 @@ def _correct_time(
         lf.warning(
             "time correction: {}/{} monotone (in-range={}); {:.1f}% removed "
             "(spikes={}, backward={}); correction [{:.3f}, {:.3f}]s; {} pts > alarm {:.2f}s",
-            n_mono, t_ns.size, b_in_range.sum().item(),
-            pct_removed, out_stats["n_spikes"], out_stats["n_backward"],
-            dt_min, dt_max, n_alarm, alarm_thr,
+            n_mono,
+            t_ns.size,
+            b_in_range.sum().item(),
+            pct_removed,
+            out_stats["n_spikes"],
+            out_stats["n_backward"],
+            dt_min,
+            dt_max,
+            n_alarm,
+            alarm_thr,
         )
     else:
         lf.info(
             "time correction: {}/{} monotone; {:.1f}% removed; correction [{:.3f}, {:.3f}]s",
-            n_mono, t_ns.size, pct_removed, dt_min, dt_max,
+            n_mono,
+            t_ns.size,
+            pct_removed,
+            dt_min,
+            dt_max,
         )
 
     return (
@@ -730,11 +783,14 @@ def _correct_time(
 # Public API
 # =============================================================================
 
+
 def time_corr(
-    date: Union[pd.Series, pd.Index, np.ndarray],
+    date: pd.Series | pd.Index | np.ndarray,
     cfg_in: Mapping[str, Any],
-    process: Union[str, bool, None] = None,
+    process: str | bool | None = None,
     path_save_image: str = "diagnostics",
+    *,
+    diag_first: int = 0,
 ) -> tuple[np.ndarray, NDArray[np.bool_]]:
     """Correct timestamps from low-resolution sensor data.
 
@@ -748,11 +804,15 @@ def time_corr(
         dt_interp_between     timedelta    min gap = real hole (default 1.5 s)
         corr_time_outlier_threshold_s   float        spike/backward threshold (default 0.6 s)
     process: None/False | True/'increase' | 'delete_inversions'
+    diag_first: skip first *diag_first* samples when saving diagnostics (used by
+        csv_process to exclude the ``t_prev`` overlap region, preventing duplicate
+        events across chunks).  When > 0, the per-chunk plot is also skipped —
+        the caller should generate a single final plot from the accumulated NPZ.
 
     Returns (tim_utc, b_ok): tz-naive datetime64[ns] (values UTC) + bool mask, same length as date.
     """
     if not len(date):
-        return np.array([], dtype="datetime64[ns]"),  np.bool_([])
+        return np.array([], dtype="datetime64[ns]"), np.bool_([])
     if process == "False":
         process = False
     elif process in ("True", "increase"):
@@ -784,7 +844,7 @@ def time_corr(
     # Build range mask BEFORE correction — prevents out-of-range data from entering HWM
     t_ns = t_use.view(np.int64).copy()
     b_in_range = make_range_mask(t_ns, cfg_in.get("time_ranges") or [])
-    if (n_out := (~b_in_range).sum().item()):
+    if n_out := (~b_in_range).sum().item():
         lf.info("{}/{} pts outside time_ranges (excluded from correction)", n_out, t_ns.size)
 
     if (process is not False) and b_in_range.any():
@@ -807,12 +867,11 @@ def time_corr(
         t_out_ns = t_c
         b_out = b_mono
     if path_save_image and action.any():
-        if (p := save_time_corr_diagnostics(t_ns, t_c, action, stats, cfg_in, path_save_image)):
-            try:
-                from tcm.plot_time_corr_diagnostics import plot_time_corr_diagnostics
-                plot_time_corr_diagnostics(p, t_obs_ns=t_ns, path_save=None)
-            except Exception as e:
-                lf.debug("Plot not saved: {}", str(e))
+        # Slice away t_prev overlap to prevent duplicate events across chunks
+        ds = diag_first if diag_first else slice(None)
+        if p := save_time_corr_diagnostics(t_ns[ds], t_c[ds], action[ds], stats, cfg_in, path_save_image):
+            # Store resolved path so csv_read_gen can produce the final consolidated plot
+            cfg_in["_diag_npz_path"] = str(p)
 
     t_out = t_out_ns.view("datetime64[ns]")
     t_good = t_out[b_out]
@@ -832,6 +891,7 @@ def time_corr(
 # Diagnostics – save
 # =============================================================================
 
+
 def save_time_corr_diagnostics(
     t_obs_ns: NDArray[np.int64],
     t_corr_ns: NDArray[np.int64],
@@ -839,9 +899,15 @@ def save_time_corr_diagnostics(
     stats: dict,
     cfg_in: Mapping[str, Any],
     path_save: str = "corr_time_mode",
-) -> Optional[Path]:
+) -> Path | None:
     """
     Save sparse NPZ at positions where action ≠ 0 (algorithmic decisions only).
+
+    **Append-merge**: when the target NPZ already exists, arrays are accumulated
+    — new ``index`` values are offset by the stored ``n`` (series length),
+    ``action`` / ``dt_s`` are concatenated, and ``n`` is summed.  ``freq`` /
+    ``rms_theory`` keep the latest non-zero value.  This enables chunked CSV
+    loading to produce a single consolidated diagnostics file per probe.
 
     Sparsity relies on flags, not |dt_s| magnitude: floor-reconstruction inherently gives
     most corrected points in 1 s-floored data a large |dt_s| (up to ~1 s, RMS≈rms_theory)
@@ -855,11 +921,10 @@ def save_time_corr_diagnostics(
         index      int32[k]    flagged positions (sorted; see DiagBit for what sets a flag)
         action     uint8[k]    DiagBit bitmask (see class docstring for row 0/1 semantics)
         dt_s       float32[k]  t_corr−t_obs [s]
-        freq       float64[]   scalar — estimated frequency
+        freq       float64[]   scalar — estimated frequency (from latest chunk)
         rms_theory float64[]   scalar — RMS_q(freq), unavoidable quantisation floor
-        n          int64[]     scalar — full series length (needed for build_show_diag column
-                                alignment; NOT derivable from sparse index if trailing samples
-                                carry no event)
+        n          int64[]     scalar — full series length (sum across chunks; needed for
+                                build_show_diag column alignment)
     NOT stored (trivially re-derivable):
         dt_obs_s = np.ediff1d(t_obs_ns) / 1e9   (one-liner from source)
 
@@ -890,27 +955,52 @@ def save_time_corr_diagnostics(
                     stem_npz = f"{stem}_dt"
                 p = p / stem_npz
         if p.is_dir():
-            ts0 = datetime.fromtimestamp(t_obs_ns[0] // 1e9, tz=timezone.utc)
-            ts1 = datetime.fromtimestamp(t_obs_ns[-1] // 1e9, tz=timezone.utc)
+            ts0 = datetime.fromtimestamp(t_obs_ns[0] // 1e9, tz=UTC)
+            ts1 = datetime.fromtimestamp(t_obs_ns[-1] // 1e9, tz=UTC)
             p = p / f"{ts0:%y%m%d_%H%M}-{ts1:%H%M}_dt.npz"
         elif p.suffix != ".npz":
             p = p.with_suffix(".npz")
 
+        # Prepare new chunk arrays
+        new_index = sig.astype(np.int32)
+        new_action = action[sig]
+        new_dt_s = dt_s
+        new_n = np.int64(t_obs_ns.size)
+        freq_val = np.float64(stats.get("freq", 0))
+        rms_val = np.float64(stats.get("rms_theory", 0))
+
+        # Append-merge: accumulate diagnostics across CSV chunks into one NPZ.
+        # Chunked CSV loading calls time_corr per block; without merge, each
+        # block would overwrite the previous diagnostics file.
+        if p.is_file():
+            try:
+                old = np.load(p, allow_pickle=False)
+                offset = int(old["n"].item())
+                new_index = np.concatenate([old["index"], new_index + offset])
+                new_action = np.concatenate([old["action"], new_action])
+                new_dt_s = np.concatenate([old["dt_s"], new_dt_s])
+                new_n = np.int64(offset + t_obs_ns.size)
+                # Keep non-zero freq/rms from latest chunk; fall back to stored
+                freq_val = freq_val if freq_val else old["freq"]
+                rms_val = rms_val if rms_val else old["rms_theory"]
+            except Exception:
+                lf.warning("Could not merge existing diagnostics — overwriting", exc_info=True)
+
         np.savez_compressed(
             p,
-            index=sig.astype(np.int32),
-            action=action[sig],
-            dt_s=dt_s,
-            freq=np.float64(stats.get("freq", 0)),
-            rms_theory=np.float64(stats.get("rms_theory", 0)),
-            n          = np.int64(t_obs_ns.size)
+            index=new_index,
+            action=new_action,
+            dt_s=new_dt_s,
+            freq=freq_val,
+            rms_theory=rms_val,
+            n=new_n,
         )
         # Per-flag event counts via direct DiagBit iteration — names double as legend labels
-        counts = {bit.name: ((action[sig] & bit) != 0).sum().item() for bit in DiagBit}
+        counts = {bit.name: ((new_action & bit) != 0).sum().item() for bit in DiagBit}
         lf.info(
             "diagnostics {} saved ({} events): {}",
             p,
-            len(sig),
+            len(new_index),
             ", ".join(f"{k}={v}" for k, v in counts.items() if v),
         )
         return p

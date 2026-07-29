@@ -3,32 +3,49 @@
 ## Module Architecture
 
 ```
-scripts/tcm_clc.py          ← thin CLI entry point (@hydra.main)
+scripts/tcm_clc.py          ← thin CLI entry point (calls cli.call_in_raw_dir(processing.run))
 tcm/
-    cli.py                  ← parse_data_path, _build_hydra_argv, _prepare_overrides, safe_cfg_dir, hydra_main, call_in_raw_dir, process_loading_yaml
-    processing.py           ← run() orchestrator, run_processing(), _combine_probes()
+    cli.py                  ← parse_data_path, _build_hydra_argv, _prepare_overrides, safe_cfg_dir,
+                              hydra_main, call_in_raw_dir, process_loading_yaml, main_init,
+                              sugar_expand_m, sugar_condense_lim_date
+    processing.py           ← run() orchestrator, run_processing(), _load_batch(), _process_and_persist(),
+                              _combine_probes(), _merge_groups_to_combined(), _resolve_use_h5,
+                              process_inmemory(), _dt_bins, _dt_min_save, _output_nc_paths,
+                              _text_date_fmt, _build_filter_params_text
     config.py               ← Hydra structured config dataclasses + ConfigStore registration
-    config_yaml.py          ← gen_metadata(), save_config_to_yaml(), stale detection
+    config_yaml.py          ← gen_metadata(), save_config_to_yaml(), stale detection,
+                              sync_yamls_devmeta_and_hydra, get_existed_cfgs, find_stale_cfgs,
+                              update_coefs_in_run_yaml, has_run_yamls, _discover_tables,
+                              prep_cfg_for_probe
     metadata.py             ← device metadata I/O (get_path_in_parents, load_file_meta, extract_devices_info)
-                             extracted from veusz_helpers.common.metadata (no Veusz dependency)
-    csv_load.py             ← CSV file discovery (search_csv_files) and correction
-    format.py               ← probe identity mapping (pcid, pcid_from_parts, parse_name)
-    paths.py                ← PathLayout — declarative, lazy path resolver
-    _constants.py           ← RAW_DIR_NAME, version info, optional-dependency flags
-    to_omegaconf.py         ← utils
-    utils2init.py           ← LoggingStyleAdapter, directory helpers
+                              extracted from veusz_helpers.common.metadata (no Veusz dependency)
+    csv_load.py             ← CSV file discovery (search_csv_files), correction (correct_raw_files),
+                              pattern interpretation (_pattern_to_regex, _glob_to_regex),
+                              chunked loading (load_from_csv_gen, open_csv_chunks)
+    format.py               ← probe identity mapping (pcid, pcid_from_parts, parse_name, stem_to_pcid,
+                              to_pcid_from_name, probe_from_name, normalize_probes)
+    paths.py                ← PathLayout — declarative, lazy path resolver; find_dir_raw, _infer_proc_dir,
+                              find_dir_raw_absolute
+    _constants.py           ← RAW_DIR_NAME, version info, optional-dependency flags, use_h5 state
+    to_omegaconf.py         ← to_omegaconf_merge_compatible, to_omegaconf_compatible_types
+    utils2init.py           ← LoggingStyleAdapter, type_fix, ini2dict, Ex_nothing_done,
+                              standard_error_info, this_prog_basename, call_with_valid_kwargs
     stage_ctx.py            ← context-var driven stage tracking + StageContextFilter
     incl_calc/
-        coefs.py            ← coefficient loading/preparation, get_coefs()
-        calc.py             ← pure numpy math kernels (Layer 0)
+        coefs.py            ← coefficient loading/preparation, get_coefs(), get_coefs_from_cfg(),
+                              load_coefs(), get_coef_azimuth_shift, mag_dec
+        calc.py             ← pure numpy math kernels (Layer 0): fG, v_abs_from_incl, polar2dekart
     _xr/
-        coefs.py            ← NC coefs I/O + prepare_coefs (zeroing, azimuth)
+        coefs.py            ← NC coefs I/O + prepare_coefs (zeroing, azimuth), save_coefs_to_nc,
+                              load_coefs_from_nc, coef_zeroing_rotation_from_data, coef_azimuth_from_data,
+                              get_coef_zeroing_matrix
         physical.py         ← velocity/pressure/binning pipeline (process())
-        storage.py          ← netCDF persistence (incremental append, log table)
+        storage.py          ← netCDF persistence (incremental append, log table, dim scales)
         calc.py             ← xr.apply_ufunc wrappers around incl_calc/calc.py
         dataset.py          ← open_csv_chunks, open_nc, merge_probes
-        io.py               ← ds_to_csv, open_hdf5
-        filters.py          ← data quality filter application
+        io.py               ← load_raw (single entry point), ds_to_csv, open_hdf5
+        filters.py          ← data quality filter application (filter_global_minmax, filter_local,
+                              apply_load_time_ranges, warn_on_holes)
         calibration/        ← standalone calibration pipeline
             calibrate.py    ← ellipsoid fitting (Li & Griffiths quadric-form, pure numpy)
                             ← weighted fit via moments.py for uneven angular coverage
@@ -652,6 +669,34 @@ The correction pipeline (`_correct_time`):
 
 Three modes are available via `filter.corr_time_mode` — see `config_reference.md`
 (§Time correction) for the mode decision table, config fields, and examples.
+
+### Diagnostics under chunked CSV loading
+
+When `input.blocksize` is set (default 500 K), `csv_read_gen` feeds each chunk
+through `csv_process` → `time_corr` independently.  Two mechanisms ensure the
+diagnostics NPZ is a **single consolidated file** per probe rather than a
+per-chunk overwrite:
+
+1. **Append-merge** — `save_time_corr_diagnostics` checks if the target `.npz`
+   already exists.  If so, it loads the existing arrays, offsets the new `index`
+   by the stored `n` (cumulative series length), concatenates `index` / `action`
+   / `dt_s`, and sums `n`.  `freq` / `rms_theory` keep the latest non-zero
+   value (last chunk's estimate).
+
+2. **Overlap exclusion** — `csv_process` prepends `t_prev` (the last
+   `2·⌈fs⌉` samples from the previous chunk) to the current chunk's date for
+   time-correction continuity.  This overlap is excluded from diagnostics via
+   the `diag_first` parameter to `time_corr`, preventing duplicate events at
+   chunk boundaries.
+
+The per-chunk **plot** is skipped entirely.  Instead, `csv_read_gen` produces
+a single final plot from the accumulated NPZ after all chunks are processed
+(`t_obs_ns=None` → sample-index x-axis, correct for the merged multi-chunk
+index offsets).
+
+**Limitation**: `freq` and `rms_theory` in the merged NPZ reflect the *last*
+chunk's estimate.  Since frequency is estimated independently per chunk
+(~5.02 Hz ± 0.003 Hz typical), this is acceptable for diagnostic purposes.
 
 ### Filter stages (load vs process)
 
