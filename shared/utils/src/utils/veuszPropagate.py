@@ -880,7 +880,6 @@ def main(new_arg=None, veusze=None, **kwargs):
         cfg['out']['nfiles'] = len(cfg['out']['paths'])
         cfg['out']['path'] = cfg['out']['paths'][0]
         print(end=f"\n- {cfg['out']['nfiles']} output files to export images...")
-        pass
     else:
         # vsz-pattern needed
         if cfg['in']['pattern_path'] not in (None, Path()):

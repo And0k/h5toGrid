@@ -171,7 +171,7 @@ process it and save HDF5/CSV
     return p
 
 
-def extractRuns(P: Sequence, cfg_extract_runs: Mapping[str, Any]) -> Tuple[List[int], List[int]]:
+def extractRuns(P: np.ndarray, cfg_extract_runs: Mapping[str, Any]) -> Tuple[List[int], List[int]]:
     """
         Extract runs based on length and amplitude of intervals with sign of gradient(P)
         :param P: z coordinate - negative is below surface
@@ -231,20 +231,20 @@ def extractRuns(P: Sequence, cfg_extract_runs: Mapping[str, Any]) -> Tuple[List[
             # length samples of each up/down interval:
             s = np.ediff1d(iex, to_end=0)
             # find intervals with insufficient number of samples:
-            if np.size(min_samples) > 1:
-                bok = s > min_samples[np.int64(bl)]
-            else:
-                bok = s > min_samples
+
+            # if np.size(min_samples) > 1: bok = s > min_samples[np.int64(bl)] else: ?
+
+            bok = s > min_samples
         else:
-            bok = np.zeros_like(bt)
+            bok = np.ones_like(bt)
         if min_dp:
             # height of each up/down interval:
             s = np.abs(np.ediff1d(pex, to_end=0))
             # find intervals with insufficient height:
-            if np.size(min_dp) > 1:
-                bok &= s > min_dp[np.int64(bl)]  # down
-            else:
-                bok &= s > min_dp
+
+            # if np.size(min_dp) > 1:    bok &= s > min_dp[np.int64(bl)] else: ? # down
+
+            bok &= s > min_dp
 
         bok2 = np.zeros_like(bt)
 
@@ -271,6 +271,7 @@ def extractRuns(P: Sequence, cfg_extract_runs: Mapping[str, Any]) -> Tuple[List[
                 else ""
             )
             bl = ~bt
+            break
         else:
             pex = pex[bok]
 

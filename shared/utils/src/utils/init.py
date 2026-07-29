@@ -6,27 +6,54 @@ Author:   Andrey Korzh <ao.korzh@gmail.com>
 Created:  2016 - 2026
 """
 
-import sys
-from os import path as os_path, listdir as os_listdir, access as os_access, R_OK as os_R_OK, W_OK as os_W_OK
-from ast import literal_eval
-import enum
-from fnmatch import fnmatch
-from datetime import timedelta, datetime
-from codecs import open
+from __future__ import annotations
+
 import configparser
+import enum
+import io
 import logging
 import re
-from pathlib import Path, PurePath
-from typing import Any, Callable, Dict, Mapping, MutableMapping, Optional, Iterable, Iterator, BinaryIO, Sequence, TextIO, TypeVar, Tuple, Union, Pattern, Final
-from inspect import currentframe
-import io
-from functools import wraps, lru_cache
+import sys
+from ast import literal_eval
+from codecs import open
+from collections.abc import Mapping
 from dataclasses import dataclass
-from string import Formatter as StringFormatter
+from datetime import datetime, timedelta
+from fnmatch import fnmatch
+from functools import cache, lru_cache, wraps
+from glob import escape as glob_escape
+from inspect import currentframe
+from os import R_OK as os_R_OK
+from os import W_OK as os_W_OK
+from os import access as os_access
+from os import listdir as os_listdir
+from os import path as os_path
+from pathlib import Path, PurePath
+from re import Pattern
+from re import compile as re_compile
+from string import Formatter
+from typing import (
+    Any,
+    BinaryIO,
+    Callable,
+    Dict,
+    Final,
+    Iterable,
+    Iterator,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Pattern,
+    Sequence,
+    TextIO,
+    Tuple,
+    TypeVar,
+    Union,
+)
 
 if sys.platform == "win32":
-    from win32event import CreateMutex
     from win32api import CloseHandle, GetLastError
+    from win32event import CreateMutex
     from winerror import ERROR_ALREADY_EXISTS
 
 
@@ -1103,146 +1130,132 @@ def glob_from_format_string_v1(format_string: str) -> str:
     return format_pattern.sub(_replace_match, format_string)
 
 
-class FormatSpecifierParser:
-    """General-purpose format specifier parser leveraging string.Formatter."""
+_STRFTIME_GLOB: Final[Mapping[str, str]] = {
+    "Y": "[0-9]" * 4,
+    "y": "[0-9]" * 2,
+    "m": "[0-1][0-9]",
+    "d": "[0-3][0-9]",
+    "H": "[0-2][0-9]",
+    "I": "[0-1][0-9]",
+    "M": "[0-5][0-9]",
+    "S": "[0-5][0-9]",
+    "f": "[0-9]" * 6,
+    "j": "[0-3][0-9][0-9]",
+    "U": "[0-5][0-9]",
+    "W": "[0-5][0-9]",
+    "V": "[0-5][0-9]",
+    "z": "[-+]" + "[0-9]" * 4,
+    "Z": "[A-Za-z]*",
+    "p": "[AP]M",
+    "%": "%",
+}
 
-    # Format codes mappings
-    DATETIME_FORMAT_CODES: Dict[str, str] = {
-        "Y": r"[0-9]{4}",  # 4-digit year
-        "y": r"[0-9]{2}",  # 2-digit year
-        "m": r"[0-1][0-9]",  # month (01-12)
-        "d": r"[0-3][0-9]",  # day (01-31)
-        "H": r"[0-2][0-9]",  # hour (00-23)
-        "M": r"[0-5][0-9]",  # minute (00-59)
-        "S": r"[0-5][0-9]",  # second (00-59)
-        "f": r"[0-9]{6}",  # microsecond
-    }
+_INT_CLASS: Final[Mapping[str, str]] = {
+    "b": "[01]",
+    "d": "[0-9]",
+    "i": "[0-9]",
+    "o": "[0-7]",
+    "x": "[0-9a-f]",
+    "X": "[0-9A-F]",
+    "n": "[0-9]",
+}
 
-    NUMERIC_FORMAT_CODES: Dict[str, str] = {
-        "d": r"[+-]?[0-9]+",  # integer
-        "i": r"[+-]?[0-9]+",  # integer
-        "o": r"[0-7]+",  # octal
-        "x": r"[0-9a-fA-F]+",  # hex lowercase
-        "X": r"[0-9A-F]+",  # hex uppercase
-        "e": r"[+-]?[0-9]+\.[0-9]+[eE][+-]?[0-9]+",  # scientific notation
-        "E": r"[+-]?[0-9]+\.[0-9]+[eE][+-]?[0-9]+",  # scientific notation
-        "f": r"[+-]?[0-9]+\.[0-9]+",  # fixed point
-        "F": r"[+-]?[0-9]+\.[0-9]+",  # fixed point
-        "g": r"[+-]?[0-9]+\.?[0-9]*",  # general format
-        "G": r"[+-]?[0-9]+\.?[0-9]*",  # general format
-        "n": r"[+-]?[0-9,]+",  # locale-aware number
-        "c": r".",  # character
-    }
+_ALT_PREFIX: Final[Mapping[str, str]] = {
+    "b": "0b",
+    "o": "0o",
+    "x": "0x",
+    "X": "0X",
+}
 
-    @classmethod
-    @lru_cache(maxsize=128)
-    def parse_format_string(cls, format_str: str) -> str:
-        """
-        Convert format string to regex pattern by parsing individual format specifier elements.
-        :param format_str: Format string like '%y%m%d_%H%M%S' or '{:>10}'
-        :return: Equivalent regex/glob pattern with character classes
-        """
-        formatter = StringFormatter()  # breaks down format strings
-        try:
-            # Parse the format string into its components
-            parsed_parts = list(formatter.parse(format_str))
-            result_parts = []
+_STRFTIME_RE: Final[Pattern[str]] = re_compile(r"%(?P<directive>.)|(?P<literal>[^%]+)|(?P<percent>%)")
 
-            for literal_text, field_name, format_spec, conversion in parsed_parts:
-                # Add escaped literal text
-                if literal_text:
-                    result_parts.append(re.escape(literal_text))
-
-                # Handle field components if present
-                if field_name is not None:
-                    # Process format specification
-                    if format_spec:
-                        if format_spec.startswith("%"):
-                            # DateTime format - parse individual % codes
-                            result_parts.append(cls._parse_datetime_format(format_spec))
-                        else:
-                            # Other format specs
-                            result_parts.append(cls._convert_format_spec(format_spec))
-                    else:
-                        # No format spec - generic placeholder
-                        result_parts.append(".*")
-
-            return "".join(result_parts)
-
-        except ValueError:
-            # Fallback for malformed format strings
-            return cls._fallback_parse(format_str)
-
-    @classmethod
-    def _parse_datetime_format(cls, format_str: str) -> str:
-        """Parse datetime format strings starting with %."""
-        parts = format_str.split("%")[1:]  # Skip empty first element
-        result_parts = []
-
-        for part in parts:
-            if len(part) == 0:
-                continue
-            code: str = part[0]
-            literal_chars: str = part[1:]  # Any literal chars following the code
-
-            if code in cls.DATETIME_FORMAT_CODES:
-                result_parts.append(cls.DATETIME_FORMAT_CODES[code])
-            else:
-                result_parts.append(re.escape(f"%{code}"))  # Unknown codes as literals
-
-            if literal_chars:
-                result_parts.append(re.escape(literal_chars))
-
-        return "".join(result_parts)
-
-    @classmethod
-    def _convert_format_spec(cls, format_spec: str) -> str:
-        """Convert Python format specification to regex pattern."""
-        # Simple approach for common cases
-        if format_spec.endswith(("d", "f", "e", "g")):
-            last_char = format_spec[-1]
-            if last_char in cls.NUMERIC_FORMAT_CODES:
-                return cls.NUMERIC_FORMAT_CODES[last_char]
-        return r".*"  # Generic fallback
-
-    @classmethod
-    def _fallback_parse(cls, format_str: str) -> str:
-        """Fallback parsing for unhandled cases."""
-        return re.escape(format_str).replace(r"\*", ".*")
+_SPEC_RE: Final[Pattern[str]] = re_compile(
+    r"^(?:(?P<fill>.)?(?P<align>[<>=^]))?"
+    r"(?P<sign>[-+ ])?"
+    r"(?P<hash>#)?"
+    r"(?P<zero>0)?"
+    r"(?P<width>\d+)?"
+    r"(?P<group>[,_])?"
+    r"(?:\.(?P<precision>\d+))?"
+    r"(?P<type>[bcdeEfFgGinosxX%])?$"
+)
 
 
-def glob_from_format_string(format_string: str) -> str:
-    """
-    Convert format string to glob pattern using string.Formatter for robust parsing.
+@cache
+def _one_or_more(char_class: str) -> str:
+    return f"{char_class}{char_class}*"
 
-    :param format_string: Format string with named placeholders like {key:spec}
-    :return: Glob pattern with wildcards replacing format placeholders
 
-    # Example
-    pattern: Final[str] = "{Index:%y%m%d_%H%M%S}St{fileName}.vsz"
-    glob_pattern: str = format_string_to_glob_universal(pattern)
-    print(glob_pattern)  # Will handle datetime formats precisely
-    """
-    formatter = StringFormatter()
-    result_parts = []
+@cache
+def _strftime_to_glob(spec: str) -> str:
+    return "".join(
+        _STRFTIME_GLOB.get(d, "*")
+        if (d := m["directive"])
+        else glob_escape(m["literal"] or m["percent"] or "")
+        for m in _STRFTIME_RE.finditer(spec)
+    )
 
-    for literal_text, field_name, format_spec, conversion in formatter.parse(format_string):
-        # Add escaped literal text
-        if literal_text:
-            result_parts.append(re.escape(literal_text))
 
-        # Handle field placeholders
-        if field_name is not None:
-            if format_spec:
-                try:
-                    converted_spec = FormatSpecifierParser.parse_format_string(format_spec)
-                    result_parts.append(converted_spec)
-                except Exception:
-                    result_parts.append("*")  # Fallback wildcard
-            else:
-                result_parts.append("*")  # Simple wildcard for no format spec
+@cache
+def _py_spec_to_glob(spec: str) -> str:
+    if not (m := _SPEC_RE.match(spec)):
+        return "*"
 
-    return "".join(result_parts)
+    g = m.groupdict()
+    typ = g["type"]
+    width = int(g["width"] or 0)
+    zero_padded = bool(g["zero"] or g["fill"] == "0")
+
+    if typ in _INT_CLASS:
+        digit = _INT_CLASS[typ]
+        inner = digit[1:-1]
+
+        if prefix := (_ALT_PREFIX.get(typ, "") if g["hash"] else ""):
+            return f"[-+ ]*{prefix}{_one_or_more(digit)}"
+
+        if sep := g["group"]:
+            return f"[-+ ]*{digit}[{inner}{sep}]*"
+
+        if width and zero_padded:
+            if width == 1:
+                return f"[-+ ]*{_one_or_more(digit)}"
+            first = "[-+ ]" if g["sign"] in {"+", " "} else f"[{inner}-]"
+            return first + digit * (width - 1)
+
+        return f"[-+ ]*{_one_or_more(digit)}"
+
+    if typ == "c":
+        return "?"
+
+    if typ in {"f", "F"}:
+        p = int(g["precision"]) if g["precision"] is not None else 6
+        return ("*.[0-9]" + "[0-9]" * (p - 1)) if p else "*"
+
+    if typ == "%":
+        p = int(g["precision"]) if g["precision"] is not None else 6
+        return ("*.[0-9]" + "[0-9]" * (p - 1) + "%") if p else "*%"
+
+    if typ in {None, "s"} and g["precision"] == "0":
+        return ""
+
+    return "*"
+
+
+@cache
+def _spec_to_glob(spec: str | None) -> str:
+    if not spec:
+        return "*"
+    if spec.startswith("%"):
+        return _strftime_to_glob(spec)
+    return _py_spec_to_glob(spec)
+
+
+@cache
+def format_to_glob(pattern: str) -> str:
+    return "".join(
+        glob_escape(literal) + (_spec_to_glob(spec) if field is not None else "")
+        for literal, field, spec, _ in Formatter().parse(pattern)
+    )
 
 
 def pathAndMask(path: str, filemask=None, ext=None):
@@ -2070,7 +2083,9 @@ def open_csv_or_archive_of_them(filename: Union[PurePath, Iterable[Union[Path, s
                 # Configure RarFile Temp file size: keep ~1Gbit free, always take at least ~20Mbit:
                 # decrease the operations number as we are working with big files
                 io.DEFAULT_BUFFER_SIZE = max(io.DEFAULT_BUFFER_SIZE, 8192 * 16)
-                import tempfile, psutil
+                import tempfile
+
+                import psutil
 
                 rarfile.HACK_SIZE_LIMIT = max(
                     20_000_000, psutil.disk_usage(Path(tempfile.gettempdir()).drive).free - 1_000_000_000

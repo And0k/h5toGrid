@@ -1,3 +1,4 @@
+"""Hydro-bios MWS12 Slimline """
 from os import chdir as os_chdir
 # from pathlib import Path
 import re
@@ -6,7 +7,7 @@ import numpy as np
 import gsw
 from itertools import takewhile
 # My functions:
-from utils.init import st, glob_from_format_string
+from utils.init import st, format_to_glob
 from utils import veuszPropagate
 from hdf5_pandas.csv2h5 import main as csv2h5
 from hdf5_pandas.gpx2h5 import main as gpx2h5
@@ -27,48 +28,60 @@ cruise = re.match(r"(?P<year>\d\d)\d+_*(?P<vessel>\D+)(?P<num>\d+)", wf_cfg.path
 
 # %% Save device data to DB
 device = 'CTD_MWS12'  # '#3613'
-devices = {device: {'abbr': 'sm', 'folder': 'CTD_MWS12', 'gpx_symbol': 'Triangle, Green'}}
+devices = {device: {'abbr': 'sm', 'folder': 'CTD/MWS12', 'gpx_symbol': 'Triangle, Green'}}
 ##########################################################################################################
 sub_dir_in = "Exported"  # 'txt'
 
 
 def proc(common_ctd_params_list, st_base=400):
 
-    st_prefix = cruise["num"]  # cruise["year"]
+    st_prefix = cruise["year"]  # cruise["num"]
     if st(st_base, f"Save {device} data to DB. Searching {st_prefix}*.csv files"):
         from hdf5_pandas.csv_specific_proc import loaded_mws  # loaded_mws_with_coord
 
-        csv2h5([
-            # 'cfg/csv_CTD_SST.ini',
-            '--skiprows_integer', '40',
-            '--path', str(wf_cfg.path_cruise / devices[device].get('folder', device) / sub_dir_in / f'{st_prefix}*.txt'),
-            # '--dt_from_utc_hours', '2',
-            '--header', 'Time(text),Bottle,Pres,Temp,Cond,Sal,SVel,Dens,SpCond,Comments',
-            '--cols_not_save_list', 'Bottle,SVel,Dens,SpCond,Comments',
-            # '--cols_save_list', 'Pres,Temp,Cond,Sal,Lat,Lon',
-            '--delimiter_chars', r'\t',  # ''\s+',
-            '--table', f'{device}',
-            '--b_interact', '0'
-            # '--on_bad_lines', 'warn',
-            ] + common_ctd_params_list,
-            **{'in': {
-                'fun_proc_loaded': loaded_mws,
-                "csv_specific_param": {
-                    'Temp_fun': lambda x: np.polyval([
-                        1.3981e-05,
-                        0.99941,
-                        0.0034588
-                    ], x),  # "2025-11-21"
-                    'Cond_fun': lambda x: np.polyval([
-                        -3.5332e-06,
-                        9.3412e-05,
-                        1.0033,
-                        0.026328
-                        ], x),  # "2025-11-24" relative to not cal SST48
-                    "Sal_fun": lambda Cond, Temp, Pres: gsw.SP_from_C(Cond, Temp, Pres),
-                },
-            }
-        },
+        csv2h5(
+            [
+                # 'cfg/csv_CTD_SST.ini',
+                "--skiprows_integer",
+                "40",
+                "--path",
+                str(
+                    wf_cfg.path_cruise
+                    / devices[device].get("folder", device)
+                    / sub_dir_in
+                    / f"{st_prefix}*.txt"
+                ),
+                # '--dt_from_utc_hours', '2',
+                "--header",
+                "Time(text),Bottle,Pres,Temp,Cond,Sal,SVel,Dens,SpCond,Comments",
+                "--cols_not_save_list",
+                "Bottle,SVel,Dens,SpCond,Comments",
+                # '--cols_save_list', 'Pres,Temp,Cond,Sal,Lat,Lon',
+                "--delimiter_chars",
+                r"\t",  # ''\s+',
+                "--table",
+                f"{device}",
+                "--b_interact",
+                "0",
+                # '--on_bad_lines', 'warn',
+            ]
+            + common_ctd_params_list,
+            **{
+                "in": {
+                    "fun_proc_loaded": loaded_mws,
+                    "csv_specific_param": {
+                        "Temp_fun": lambda x: np.polyval(
+                            [2.1161e-05, 0.99951, 0.00065515],  # 2026-04-08
+                            # [1.3981e-05, 0.99941, 0.0034588]  # "2025-11-21"
+                            x,
+                        ),
+                        "Cond_fun": lambda x: np.polyval(
+                            [-3.5332e-06, 9.3412e-05, 1.0033, 0.026328], x
+                        ),  # "2025-11-24" relative to not cal SST48
+                        "Sal_fun": lambda Cond, Temp, Pres: gsw.SP_from_C(Cond, Temp, Pres),
+                    },
+                }
+            },
         )
 
     if st(st_base + 10, 'Extract CTD runs to "logRuns" table, filling it with CTD & nav params'):
@@ -98,7 +111,7 @@ def proc(common_ctd_params_list, st_base=400):
             # 'min_time': np.datetime64('2022-11-04T22:00:00'),
             # 'max_time': '2020-12-30T22:37:00',
         }
-        format_string = "{Index:%y%m%d_%H%M%S}St{fileName}.vsz"
+        format_string = "{fileName}.vsz"  # {Index:%y%m%d_%H%M%S}St
         f_row2name = lambda r: format_string.format_map(r)
         # It is possible to add exact interval to filename but time after probe is back on surface can be determined only
         # from next row, so we rely on ~pattern_loader.vsz to do it. Even freq=16Hz to determine last time not helps:
@@ -127,7 +140,7 @@ def proc(common_ctd_params_list, st_base=400):
         veuszPropagate.main([
             "cfg/veuszPropagate.ini",
             "--path",  # |"??????_??????.vsz" _*s wf_cfg.path_db),
-            str(cfg_in["pattern_path"].with_name(glob_from_format_string(format_string))),
+            str(cfg_in["pattern_path"].with_name(format_to_glob(format_string))),
             "--pattern_path",  # here used to auto get export dir only. must not be not existed file path
             f"{cfg_in['pattern_path']}_",
             #'--table_log', f'/{device}/logRuns',
@@ -136,7 +149,7 @@ def proc(common_ctd_params_list, st_base=400):
             # """'[["{log_row[Index]:%Y-%m-%dT%H:%M:%S}", "{log_row[DateEnd]:%Y-%m-%dT%H:%M:%S}"]]'""",
             # '--export_pages_int_list', '2,3', # 0  '--b_images_only', 'True'
             "--export_format",
-            "svg",  # "png",
+            "png",  # "svg",
             "--b_update_existed",
             "True",  # False is default todo: allow "delete_overlapped" time named files
             "--b_interact",

@@ -467,13 +467,17 @@ def plot_bad_time_in_thread(cfg_in, t: np.ndarray, b_ok=None, idel=None,
     :param msg:
     :return:
     """
-    from bokeh.plotting import figure, output_file, show
-    from bokeh.io import export_png, export_svgs
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-    from selenium.common.exceptions import (
-        SessionNotCreatedException, WebDriverException, NoSuchDriverException
-    )
+    try:
+        from bokeh.plotting import figure, output_file, show
+        from bokeh.io import export_png, export_svgs
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        from selenium.common.exceptions import (
+            SessionNotCreatedException, WebDriverException, NoSuchDriverException
+        )
+    except ImportError as e:
+        print(e)
+        return
     global fig_save_format_suffix
     # output figure name
     fig_name = '{:%y%m%d_%H%M}-{:%H%M}'.format(*(

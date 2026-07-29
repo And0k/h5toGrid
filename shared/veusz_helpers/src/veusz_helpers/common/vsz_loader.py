@@ -157,6 +157,10 @@ def get_fun_load_end_ext(probe, db, parent=None, time_range=tuple(), time_shift_
     elif probe["type"] == "CTD":  # and probe['type'] == 'ADV'
         data_file_ext = ".txt"
         # re_n_runs = '(?P<n_runs>\d*)(?:run)s?'
+        if not probe["id"]:
+            if probe["model"] == "SST48":
+                probe["model"] = "SST_48Mc"
+                probe["id"] = "#1253"
 
         # hdf5 data group name must be equal to dir name of current file?
         time_range_raw = vsz_add_data.veusz_load_hdf5_ctd_profile(
@@ -430,9 +434,13 @@ if __name__ in ("__main__", "builtins"):
 
     # dir where search this device and other devices/meteo dirs
     cruise_dir = (
-        device_dir.parent
+        (device_dir.parent if device_dir.parent.name[0].isdigit() else device_dir.parent.parent)
         if not device_dir.name[0].isdigit()
-        else device_dir.parent.parent
+        else (
+            device_dir.parent.parent
+            if device_dir.parent.parent.name[0].isdigit()
+            else device_dir.parent.parent.parent
+        )
         if device_dir.parent.name.startswith(
             ("inclinometer", "CTD", "meteo")  # and so on (add all used devices to exclude)
         )
@@ -476,12 +484,11 @@ if __name__ in ("__main__", "builtins"):
     #################################################################
     # Check whether default DB file (*.h5) exist to load data from it
     #################################################################
-
     try:  # DB specified in dir name?
         db_stem = re.match(".*,db_stem=([^,)]+)", parent.name).group(1)
         print(f"DB from dir name: {db_stem}")
     except Exception:
-        db_stem = (device_dir if device_dir.name[0].isdigit() else device_dir.parent).name.split("@")[0]
+        db_stem = (device_dir if device_dir.name[0].isdigit() else (device_dir.parent if parent.name != "profiles_vsz" else cruise_dir)).name.split("@")[0]
 
     # Does it must be raw DB? - search "*.raw.h5" or skip if parent (up to 2 levels) folder contain "txt"
     b_use_db_raw = "_raw" in parent.parent.parts

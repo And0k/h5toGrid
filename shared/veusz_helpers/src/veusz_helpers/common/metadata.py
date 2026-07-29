@@ -74,7 +74,10 @@ def get_info_from_filename(basename) -> Tuple[Optional[Tuple[Any]], Mapping[str,
         r"(?:{time}|(?P<dt_to_last>\d+(?:h|s))_to_last)?"
         r"(?:(?:\.\.|-){time_end})?(?:[_,]? ?(?:dt=)?{dt})?"
         r"(?:[,_]?d(?P<decimation>\d+))?"
-        r")?(?:@{pids})?"
+        r")?"
+        r"(?:[Ss]t_?(?P<st0>[a-zA-Z\d_]+[^-,_]))?"
+        r"(?:@{pids})?"
+        r"(?:[Ss]t_?(?P<st>[a-zA-Z\d_]+[^-,_]))?"
         r"(?:[-,_] ?(?P<descr>[^@\d][^@]*))?\.vsz"
     ).format(
         time=re_time,  # end time have same parts but optional and with new names:
@@ -191,10 +194,12 @@ def get_info_from_filename(basename) -> Tuple[Optional[Tuple[Any]], Mapping[str,
             }
         },
         "descr": re_parts["descr"],
-        "is_type_mod": ("-" in model),  # re_parts[f"model{max_devices_idx}"] (?P<is_type_mod>-?)
+        "is_type_mod": model and ("-" in model),  # re_parts[f"model{max_devices_idx}"] (?P<is_type_mod>-?)
     }
     if re_parts["decimation"]:
         out_info["decimation"] = int(re_parts["decimation"])
+    if re_parts["st0"]:  # was temporary
+        re_parts["st"] = re_parts.pop("st0")
     print("-> ", time_range, out_info, end="")
     return time_range, out_info
 

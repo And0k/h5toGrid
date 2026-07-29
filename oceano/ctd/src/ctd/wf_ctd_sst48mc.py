@@ -6,7 +6,7 @@ import pandas as pd
 import gsw
 from itertools import takewhile
 # my funcs
-from utils.init import st, glob_from_format_string
+from utils.init import st, format_to_glob
 from utils import veuszPropagate
 from hdf5_pandas.csv2h5 import main as csv2h5
 from hdf5_pandas.gpx2h5 import main as gpx2h5
@@ -27,7 +27,7 @@ cruise = re.match(r"(?P<year>\d\d)\d+_*(?P<vessel>\D+)(?P<num>\d+)", wf_cfg.path
 
 # %% Save device data to DB
 device = "CTD_SST_48Mc#1253"
-devices = {device: {"abbr": "ss", "folder": "CTD_SST48", "gpx_symbol": "Triangle, Red"}}
+devices = {device: {"abbr": "ss", "folder": "CTD/SST48", "gpx_symbol": "Triangle, Red"}}
 ##########################################################################################################
 sub_dir_in = "Exported"  # 'txt'
 
@@ -58,8 +58,9 @@ def proc(common_ctd_params_list, o2_fun=None, o2ppm_fun=None, st_base=10):
                 "in": {
                     "fun_proc_loaded": loaded_sst,
                     "csv_specific_param": {
-                        "Temp_fun": lambda x: np.polyval(  # 2025-11-21
-                            [-0.00010627, 1.003, -0.0099154],
+                        "Temp_fun": lambda x: np.polyval(
+                            [-2.0047e-05, 1.0006, 0.008388],   # 2026-04-08
+                            # [-0.00010627, 1.003, -0.0099154],  # 2025-11-21
                             x,
                         ),
                         # "Cond_fun": lambda x: np.polyval(  # 2025-11-28 - not used (may be bad)
@@ -70,8 +71,8 @@ def proc(common_ctd_params_list, o2_fun=None, o2ppm_fun=None, st_base=10):
                         ),  # 2022-10-18
                         "Sal_fun": lambda Cond, Temp, Pres: gsw.SP_from_C(Cond, Temp, Pres),
                         # coef from ABP64 Winkler data before or in the GoF
-                        "O2_fun": o2_fun,
-                        "O2ppm_fun": o2ppm_fun,
+                        **({"O2_fun": o2_fun} if o2_fun else {}),
+                        **({"O2ppm_fun": o2ppm_fun} if o2ppm_fun else {}),
                         # coef from ABP64 all Winkler data together - not to use
                         # "O2_fun": lambda O2ppm, Sal, Temp, Pres: DO(0.44499 + 1.1976 * O2ppm, Sal, Temp, Pres),
                         # "O2ppm_fun": lambda x: 0.44499 + 1.1976 * x,  # 2025-12-19 ABP64 intercal. to Winkler
@@ -126,7 +127,7 @@ def proc(common_ctd_params_list, o2_fun=None, o2ppm_fun=None, st_base=10):
             # 'min_time': np.datetime64('2022-11-04T22:00:00'),
             # 'max_time': '2020-12-30T22:37:00',
         }
-        format_string = "{Index:%y%m%d_%H%M%S}St{fileName}.vsz"
+        format_string = "{fileName}.vsz"  # {Index:%y%m%d_%H%M%S}St - already in hdf5 table_log
         f_row2name = lambda r: format_string.format_map(r)
         # It is possible to add exact interval to filename but time after probe is back on surface can be determined only
         # from next row, so we rely on ~pattern_loader.vsz to do it. Even freq=16Hz to determine last time not helps:
@@ -154,7 +155,7 @@ def proc(common_ctd_params_list, o2_fun=None, o2ppm_fun=None, st_base=10):
         veuszPropagate.main([
             "cfg/veuszPropagate.ini",
             "--path",
-            str(cfg_in["pattern_path"].with_name(glob_from_format_string(format_string))),
+            str(cfg_in["pattern_path"].with_name(format_to_glob(format_string))),
             "--pattern_path",  # here used to auto get export dir only. must not be not existed file path
             f"{cfg_in['pattern_path']}_",
             #'--table_log', f'/{device}/logRuns',
@@ -163,7 +164,7 @@ def proc(common_ctd_params_list, o2_fun=None, o2ppm_fun=None, st_base=10):
             # """'[["{log_row[Index]:%Y-%m-%dT%H:%M:%S}", "{log_row[DateEnd]:%Y-%m-%dT%H:%M:%S}"]]'""",
             # '--export_pages_int_list', '2,3', # 0  '--b_images_only', 'True'
             "--export_format",
-            "svg",  # "png",
+            "png",  # "svg",
             "--b_update_existed", "True",  # False is default todo: allow "delete_overlapped" time named files
             "--b_interact", "0",
             "--b_images_only", "True",  # mandatory

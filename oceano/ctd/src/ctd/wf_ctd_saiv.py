@@ -1,3 +1,5 @@
+""" SAIV SD208 """
+
 from os import chdir as os_chdir
 # from pathlib import Path
 import re
@@ -6,7 +8,7 @@ import numpy as np
 import gsw
 from itertools import takewhile
 # My functions:
-from utils.init import st, glob_from_format_string
+from utils.init import st, format_to_glob
 from utils import veuszPropagate
 from hdf5_pandas.csv2h5 import main as csv2h5
 from hdf5_pandas.gpx2h5 import main as gpx2h5
@@ -16,7 +18,7 @@ from utils.h5_to_gpx import main as h5_to_gpx
 from utils.grid2d_vsz import main as grid2d_vsz
 from hdf5_pandas import h5
 from hdf5_alt.h5tocsv import main_call as h5tocsv
-
+from time import sleep
 from ctd import wf_cfg  # path_cruise, path_db, min_coord, max_coord
 
 
@@ -27,7 +29,7 @@ cruise = re.match(r"(?P<year>\d\d)\d+_*(?P<vessel>\D+)(?P<num>\d+)", wf_cfg.path
 
 # %% Save device data to DB
 device = 'CTD_SAIV'
-devices = {device: {'abbr': 'sa', 'folder': 'CTD_SAIV', 'gpx_symbol': 'Diamond, Blue'}}
+devices = {device: {'abbr': 'sa', 'folder': 'CTD/SAIV', 'gpx_symbol': 'Diamond, Blue'}}
 ##########################################################################################################
 sub_dir_in = "Exported"  # 'txt'
 
@@ -55,8 +57,9 @@ def proc(common_ctd_params_list, o2_fun=None, o2ppm_fun=None, st_base=200):
                 'fun_proc_loaded': loaded_sst,
                 "csv_specific_param": {
                     'Temp_fun': lambda x: np.polyval([
-                        # Апрельское уравнение: Corr_Temp = 1.00086 * T_sd208 - 0.01736
-                        1.00086, -0.01736], x),
+                        7.3352e-07, -2.1235e-05, 1.0007, -0.014569   # 2026-04-08
+                        # 1.00086, -0.01736  # Апрельское уравнение: Corr_Temp = 1.00086 * T_sd208 - 0.01736
+                        ], x),
                     'Cond_fun': lambda x: np.polyval([
                         -3.63041285e-06,
                         4.26987780e-04,
@@ -99,14 +102,21 @@ def proc(common_ctd_params_list, o2_fun=None, o2ppm_fun=None, st_base=200):
             # 'min_time': np.datetime64('2022-11-04T22:00:00'),
             # 'max_time': '2020-12-30T22:37:00',
         }
-        format_string = "{Index:%y%m%d_%H%M%S}St{fileName}.vsz"
+        format_string = "{fileName}.vsz"  # {Index:%y%m%d_%H%M%S}St
         f_row2name = lambda r: format_string.format_map(r)
         # It is possible to add exact interval to filename but time after probe is back on surface can be determined only
         # from next row, so we rely on ~pattern_loader.vsz to do it. Even freq=16Hz to determine last time not helps:
         # '_{}s.vsz'.format(round(max(r['rows']/16, (r['DateEnd'] - r['Index'] + pd.Timedelta(300, "s")).total_seconds()))
 
         # Copy files
-        pattern_code = cfg_in["pattern_path"].read_bytes()  # encoding='utf-8'
+        while True:
+            try:
+                pattern_code = cfg_in["pattern_path"].read_bytes()  # encoding='utf-8'
+                break
+            except FileNotFoundError:
+                print(f"File not found: {cfg_in['pattern_path']}")
+                cfg_in["pattern_path"].parent.mkdir(parents=True, exist_ok=True)
+                sleep(1)
         filename_st = None
         os_chdir(cfg_in["pattern_path"].parent)
         for filename in h5.log_names_gen(cfg_in, f_row2name):
@@ -127,7 +137,7 @@ def proc(common_ctd_params_list, o2_fun=None, o2ppm_fun=None, st_base=200):
         veuszPropagate.main([
             "cfg/veuszPropagate.ini",
             "--path",  # |"??????_??????.vsz" _*s wf_cfg.path_db),
-            str(cfg_in["pattern_path"].with_name(glob_from_format_string(format_string))),
+            str(cfg_in["pattern_path"].with_name(format_to_glob(format_string))),
             "--pattern_path",  # here used to auto get export dir only. must not be not existed file path
             f"{cfg_in['pattern_path']}_",
             #'--table_log', f'/{device}/logRuns',
@@ -136,7 +146,7 @@ def proc(common_ctd_params_list, o2_fun=None, o2ppm_fun=None, st_base=200):
             # """'[["{log_row[Index]:%Y-%m-%dT%H:%M:%S}", "{log_row[DateEnd]:%Y-%m-%dT%H:%M:%S}"]]'""",
             # '--export_pages_int_list', '2,3', # 0  '--b_images_only', 'True'
             "--export_format",
-            "svg",  # "png",
+            "png",  # "svg",
             "--b_update_existed", "True",  # False is default todo: allow "delete_overlapped" time named files
             "--b_interact", "0",
             "--b_images_only", "True",  # mandatory

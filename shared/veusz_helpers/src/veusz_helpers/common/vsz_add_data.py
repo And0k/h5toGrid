@@ -784,7 +784,30 @@ def veusz_load_hdf5_ctd_profile(
         params_d = {tbl: [] for tbl in grp_d}
 
     with h5py.File(file, "r") as h:
-        tbl_cols_exist = {tbl: h[grp_d[tbl]].dtype.fields.keys() for tbl in params_d}
+        try:
+            tbl_cols_exist = {tbl: h[grp_d[tbl]].dtype.fields.keys() for tbl in params_d}
+        except KeyError as e:
+
+            def safe_inspect_h5(file: str):
+                """Safely enumerate all accessible paths in HDF5 file"""
+                accessible_paths = []
+
+                def visitor(name, obj):
+                    accessible_paths.append((name, type(obj).__name__, getattr(obj, 'shape', 'N/A')))
+
+                with h5py.File(file, "r") as h:
+                    h.visititems(visitor)
+
+                print("Accessible HDF5 paths:")
+                for name, obj_type, shape in accessible_paths:
+                    print(f"/{name} ({obj_type}): {shape}")
+
+                return accessible_paths
+
+            # Run diagnostic
+            paths = safe_inspect_h5(file)
+            print(f"Error: {e}. Only following paths exist ", '\n'.join(paths))
+
         log_index = h[grp_d["table_log"]]["index"]
         if not np.isfinite(time_range[-1]):  # loading n runs
             time_range_raw0 = np.int64(np.array(time_range[0], "M8[ns]") - np.timedelta64(time_shift_s, "s"))

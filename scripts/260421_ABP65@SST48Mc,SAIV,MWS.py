@@ -16,8 +16,8 @@ from hdf5_pandas.csv2h5 import main as csv2h5
 from hdf5_pandas.gpx2h5 import main as gpx2h5
 from ctd import wf_cfg, wf_ctd_sst48mc, wf_ctd_saiv, wf_ctd_mws
 
-st_base = 400             # 10: SST, 200: SAIV
-st.start = st_base + 100  # |+ 0, 10: Extract runs; 20: Draw profiles; 100, 105: Export csv
+st_base = 400  # Use only these numbers correspondingly: 0 - navigation, 10 - SST, 200 - SAIV, 400 - MWS
+st.start = st_base + 105  # |+ 0, 10: Extract runs; 20: Draw profiles; 100, 105: Export csv
 st.end = st_base + 105   # 300  # st.start
 st.go = True  # False?
 
@@ -34,7 +34,7 @@ wf_cfg.devices = {}
 
 # %% Save navigation to DB
 if st(1, "Save gpx navigation to DB"):
-    for folder in ["_raw"]:
+    for folder in [""]:  # ["_raw"]:
         gpx2h5([  # '',
             "--db_path",
             str(wf_cfg.path_db),
@@ -108,8 +108,8 @@ if any(st(s, 'SST48') for s in list(range(st_base, st_base+190, 5))):
 
     wf_ctd_sst48mc.proc(
         common_ctd_params_list,
-        o2_fun=lambda O2ppm, Sal, Temp, Pres, Time: DO(do_polyval_time_sst48mc(O2ppm, Time), Sal, Temp, Pres),
-        o2ppm_fun=lambda O2ppm, Time: do_polyval_time_sst48mc(O2ppm, Time),
+        # o2_fun=lambda O2ppm, Sal, Temp, Pres, Time: DO(do_polyval_time_sst48mc(O2ppm, Time), Sal, Temp, Pres),
+        # o2ppm_fun=lambda O2ppm, Time: do_polyval_time_sst48mc(O2ppm, Time),
         st_base=st_base
     )
 
