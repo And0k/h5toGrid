@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from omegaconf import DictConfig
 
-from tcm import _constants, processing, cli
+from tcm import _constants, cli, processing
 from tcm.config import Return
 
 # ---------------------------------------------------------------------------

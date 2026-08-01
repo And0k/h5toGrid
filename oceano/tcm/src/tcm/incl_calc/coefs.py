@@ -1,16 +1,12 @@
 """Coefficient loading, preparation and zeroing — HDF5 or YAML source."""
 
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, is_dataclass
 from datetime import date as datetime_date
 from datetime import datetime
 from pathlib import Path
 from typing import (
     Any,
-    Dict,
-    Mapping,
-    Optional,
-    Sequence,
-    Tuple,
 )
 
 import numpy as np
@@ -29,27 +25,27 @@ def coef_rotate(*A, Z):
 
 
 def get_coef_azimuth_shift(
-    azimuth_add: Optional[float],
-    coordinates: Optional[Tuple[float, float]],
+    azimuth_add: float | None,
+    coordinates: tuple[float, float] | None,
     azimuth_shift_deg: float | np.ndarray = 0,
     data_date: datetime = datetime.now(),
     **kwargs,
 ) -> np.ndarray:
     if azimuth_add or coordinates:
-        msgs = ["(coef. {:g})".format(
-            azimuth_shift_deg.item() if isinstance(azimuth_shift_deg, np.ndarray) else azimuth_shift_deg
-        )]
+        msgs = [
+            f"(coef. {azimuth_shift_deg.item() if isinstance(azimuth_shift_deg, np.ndarray) else azimuth_shift_deg:g})"
+        ]
         if azimuth_add:
-            msgs.append("(azimuth_shift_deg {:g})".format(azimuth_add))
+            msgs.append(f"(azimuth_shift_deg {azimuth_add:g})")
             azimuth_shift_deg += azimuth_add
         if coordinates:
             mag_decl = mag_dec(*coordinates, data_date, depth=-1)
-            msgs.append("(magnetic declination {:g})".format(mag_decl))
+            msgs.append(f"(magnetic declination {mag_decl:g})")
             azimuth_shift_deg += mag_decl
         lf.warning(
             "Azimuth correction updated to {:g} = {}°",
             azimuth_shift_deg.item() if isinstance(azimuth_shift_deg, np.ndarray) else azimuth_shift_deg,
-            " + ".join(msgs)
+            " + ".join(msgs),
         )
     return azimuth_shift_deg
 
@@ -70,11 +66,12 @@ def mag_dec(lat, lon, time: datetime, depth: float = 0):
     :return: declination in degrees (positive = east of true north)
     """
     from pygeomag import GeoMag
+
     yeardec = _year_fraction(time)
     return GeoMag().calculate(glat=lat, glon=lon, alt=depth / 1000.0, time=yeardec).d
 
 
-def _load_coefs_from_yaml(yaml_path: Path) -> Optional[Dict[str, Any]]:
+def _load_coefs_from_yaml(yaml_path: Path) -> dict[str, Any] | None:
     """Load coefficients from a YAML file exported by export_coefs_to_yaml.py.
 
     Expected structure: ``input.coefs: {Ag: [...], Cg: [...], ...}``
@@ -85,13 +82,13 @@ def _load_coefs_from_yaml(yaml_path: Path) -> Optional[Dict[str, Any]]:
     if coefs_node is None:
         return None
     coefs_dict = OmegaConf.to_container(coefs_node, resolve=True)
-    coefs_dict.setdefault('dates', {})
+    coefs_dict.setdefault("dates", {})
 
     lf.debug("Loaded coefficients from {}", yaml_path)
     return coefs_dict
 
 
-def _resolve_coef_date(coefs_dict: Dict[str, Any], coef_grp) -> None:
+def _resolve_coef_date(coefs_dict: dict[str, Any], coef_grp) -> None:
     """Resolve ``coefs_dict["date"]`` from HDF5 coef group.
 
     Legacy ``.h5`` files store the date in three different on-disk formats:
@@ -138,13 +135,13 @@ def load_coefs(store, tbl: str):
     store_path = Path(store) if not isinstance(store, Path) else store
 
     # YAML path: directory → resolve {tbl}.yaml, or direct .yaml file
-    if (yaml_path := (
+    if yaml_path := (
         store_path
         if store_path.suffix in (".yaml", ".yml")
         else store_path / f"{tbl}.yaml"
         if store_path.is_dir()
         else None
-    )):
+    ):
         if not yaml_path.exists():
             return None
         return _load_coefs_from_yaml(yaml_path)
@@ -156,7 +153,7 @@ def load_coefs(store, tbl: str):
     # HDF5 path — skip if binary I/O disabled (noh5 mode)
     if not isinstance(store, pd.HDFStore) and store_path.suffix in _constants.hdf5_suffixes:
         if _constants.use_h5_get() is not True:
-            return None
+            return None  # None=silent, False=caller warns (see use_h5 docstring)
         if not store_path.exists():
             lf.debug("Coefficients file {} not found", store_path)
             return None
@@ -185,17 +182,17 @@ def load_coefs(store, tbl: str):
     return coefs_dict
 
 
-def get_coefs(
-    coefs_paths: Sequence, tbl: str, coefs_ovr: Optional[Mapping[str, Any]] = None
-) -> Dict[str, Any]:
-    """
-    merge logic + converts YAML list values to numpy arrays.
+def get_coefs(coefs_paths: Sequence, tbl: str, coefs_ovr: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Load and merge coefficients from file(s) + config overrides.
 
-    :param coefs_paths: _description_
-    :param tbl: _description_
-    :param coefs_ovr: _description_, defaults to None
-    :raises ValueError: _description_
-    :return: _description_
+    Converts YAML list values to numpy arrays.  When no coefs are found in
+    any *coefs_paths* and no overrides are provided, logs a warning and
+    returns an empty dict (processing continues with dataclass defaults).
+
+    :param coefs_paths: ordered list of search paths (H5, YAML dir, NC).
+    :param tbl: coefficient table name (from :func:`format.pcid_to_raw_name`).
+    :param coefs_ovr: config overrides (``input.coefs``), defaults to None.
+    :return: merged coefficients dict with array values as numpy ndarrays.
     """
 
     # Normalize dataclass → dict (coefs_ovr may come from config.ConfigInCoefs_InclProc)
@@ -211,13 +208,15 @@ def get_coefs(
         and not (isinstance(v_def, (list, dict)) and ((not v_def) or not any(lst != [] for lst in v_def)))
     }
 
-    coefs_ovr_dates: Dict[str, Any] = {}
+    coefs_ovr_dates: dict[str, Any] = {}
     not_ovr: list = list(defaults)  # assume all are defaults until override proves otherwise
     if coefs_ovr:
         not_ovr = [
-            k for k, v_def in defaults.items() if (
-                (v_ovr := coefs_ovr.get(k)) == v_def or
-                (isinstance(v_ovr, list) and ((not v_ovr) or not any(lst != [] for lst in v_ovr)))
+            k
+            for k, v_def in defaults.items()
+            if (
+                (v_ovr := coefs_ovr.get(k)) == v_def
+                or (isinstance(v_ovr, list) and ((not v_ovr) or not any(lst != [] for lst in v_ovr)))
             )
         ]
         # ``P_t`` (2-D pressure-T polynomial) supersedes the legacy scalar
@@ -228,7 +227,7 @@ def get_coefs(
         if len(not_ovr) < len(defaults):
             if not not_ovr:
                 coefs_paths = []
-            if (coefs_ovr_dates := coefs_ovr.get("dates", {})):
+            if coefs_ovr_dates := coefs_ovr.get("dates", {}):
                 coefs_ovr_dates = {
                     k: d for k, d in coefs_ovr_dates.items() if k in defaults and k not in not_ovr
                 }
@@ -238,7 +237,7 @@ def get_coefs(
 
     _META_KEYS = frozenset(("dates", "date", "pid"))
     if coefs_paths:
-        coefs_load_src: Optional[Path] = None
+        coefs_load_src: Path | None = None
         for coefs_path in coefs_paths:
             coefs_load = load_coefs(coefs_path, tbl)
             if coefs_load is not None:
@@ -248,14 +247,12 @@ def get_coefs(
         if coefs_load and "P_t" in coefs_load:
             not_ovr = [k for k in not_ovr if k not in ("P", "PBattery", "PTemp")]
         if coefs_load is None:
-            lf.error(
-                'Not found coefficients table "{:s}" in {}, {:s} redefined from current run config!',
-                tbl, coefs_paths,
-                "but all are" if not not_ovr else
-                f"and {not_ovr} are not" if len(not_ovr) < len(defaults) else "and no one are"
+            lf.warning(
+                'Not found coefs "{:s}" in {}, {:s}redefined from run config — using defaults',
+                tbl,
+                coefs_paths,
+                "" if not not_ovr else f"{not_ovr} not " if len(not_ovr) < len(defaults) else "none ",
             )
-            if len(not_ovr) == len(defaults):
-                raise ValueError(f'No coefficients provided / found for device "{tbl}"!')
             coefs_load = {**(coefs_ovr or {}), "dates": coefs_ovr_dates}
         else:
             # Log only when loaded coefs provide keys not already in coefs_ovr.
@@ -312,18 +309,18 @@ def get_coefs(
     return coefs_load
 
 
-def coefs_format_for_h5(coef: Mapping[str, Any], pcid: str = None, date: Optional[str] = None):
+def coefs_format_for_h5(coef: Mapping[str, Any], pcid: str = None, date: str | None = None):
     if coef is None:
         coef = config.ConfigInCoefs_InclProc().__dict__
-        del coef['g0xyz']
-        if not pcid.split("_")[-1].startswith('p'):
-            del coef['P_t']
-        if not pcid.startswith('w'):
+        del coef["g0xyz"]
+        if not pcid.split("_")[-1].startswith("p"):
+            del coef["P_t"]
+        if not pcid.startswith("w"):
             del coef["P"]
             del coef["PBattery"]
             del coef["PTemp"]
-    elif 'Rz' not in coef and ("Ag" in coef or "Ah" in coef):
-        coef['Rz'] = np.eye(3)
+    elif "Rz" not in coef and ("Ag" in coef or "Ah" in coef):
+        coef["Rz"] = np.eye(3)
 
     coef_renamed_or_skip = {"Ag", "Cg", "Ah", "Ch", "azimuth_shift_deg", "kVabs", "dates", "i"}
     return {
@@ -363,9 +360,16 @@ def get_coefs_from_cfg(cfg_in: dict, pcid: str) -> dict:
     coefs_paths: list = []
     if cp := cfg_in.get("coefs_path"):
         coefs_paths.append(cp)
-    if (cp_default := config.ConfigIn_InclProc.coefs_path) and cp_default not in coefs_paths:
-        coefs_paths.append(cp_default)
-        if (yaml_dir := Path(cp_default).parent / "yaml_export") not in coefs_paths:
+    cp_default = config.ConfigIn_InclProc.coefs_path
+    if cp_default and cp_default not in coefs_paths:
+        # Skip H5 path when binary I/O is unavailable/disabled
+        if cp_default.suffix not in _constants.hdf5_suffixes or _constants.use_h5_get() is True:
+            coefs_paths.append(cp_default)
+    # Always add yaml_export dir as fallback (may be the only working source
+    # when use_h5_get() is False or the H5 file is missing in dist builds).
+    if cp_default:
+        yaml_dir = Path(cp_default).parent / "yaml_export"
+        if yaml_dir not in coefs_paths:
             coefs_paths.append(yaml_dir)
     coefs_ovr = cfg_in.get("coefs") or None
     cfg_in_coefs = get_coefs(

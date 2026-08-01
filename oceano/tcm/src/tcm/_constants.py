@@ -32,8 +32,10 @@ TABLES_AVAILABLE: bool = _tables is not None
 
 try:
     import netCDF4 as _netCDF4
+    nc_engine = "h5netcdf"  # "netcdf4"
 except ImportError:
     _netCDF4 = None
+    nc_engine = "h5netcdf"
 NC4_AVAILABLE: bool = _netCDF4 is not None
 """Whether ``netCDF4`` is importable (xarray NC engine)."""
 

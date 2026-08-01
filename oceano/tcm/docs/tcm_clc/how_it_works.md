@@ -67,8 +67,9 @@ tcm/
 ### Unified loading
 
 `_xr/io.py::load_raw()` is the single entry point for all input formats.
-Both `processing._load_single` and `calibration.run.run_calibration`
-delegate to it — no format-specific code outside `load_raw`:
+Both `processing.run_processing` (single-file mode) and
+`calibration.run.run_calibration` delegate to it — no format-specific
+code outside `load_raw`:
 
     .nc / .nc4  →  _xr/dataset.open_nc()      (group-based, coefs from /{tbl}/coef/)
     .h5 / .hdf5 →  _xr/io.open_hdf5()         (pandas HDFStore, coefs via load_coefs)
@@ -119,7 +120,7 @@ they serve different purposes (CLI CWD vs output path roots).
 python scripts/tcm_clc.py "_raw/*i*.txt"
 
 # Override any config field
-python scripts/tcm_clc.py "_raw/*i*.txt" input.ids=[i01,i_p02]
+python scripts/tcm_clc.py "_raw/*i*.txt" 'input.ids=[i01,i_p02]'
 python scripts/tcm_clc.py "_raw/*i*.txt" out.text_path=./results filter.corr_time_mode=false
 
 # Filter by data file (non-directory input.path → matches YAML's input.path)
@@ -150,8 +151,18 @@ cli.call_in_raw_dir(
 
 ### Flow
 
+0. **Flag bypass**: when any ``-`` prefixed argument is present in ``sys.argv``,
+   ``call_in_raw_dir`` delegates straight to :func:`hydra_main` without consuming
+   positional args or resolving a data directory.  This covers all Hydra flags
+   (``--help``, ``--cfg job``, ``--info``, ``--version``, ``--run``,
+   ``--multirun``, …) — ``parse_data_path`` is skipped entirely so flag values
+   like ``job`` (argument to ``--cfg``) are not mistakenly consumed as path
+   segments.  When neither a positional path **nor** flags are present, a
+   user-friendly usage error is printed (via ``_print_usage_error``).  When
+   the resolved ``_raw/`` anchor does not exist on disk, the same helper prints
+   an actionable message explaining what ``_raw/`` is and why it's needed.
 1. `cli.parse_data_path(sys.argv)` → extract **first run of consecutive non-flag, non-`key=value` arguments** as the data path (joined with commas to reconstruct paths split by shell comma-handling, e.g. `@i,t-chain`), remaining CLI args returned unchanged
-2. `paths.find_dir_raw_absolute(path_in)` → `data_dir`
+2. `paths.find_dir_raw_absolute(path_in)` → `data_dir` (verified to exist on disk)
 3. `os.chdir(data_dir)` — all relative paths resolve against data directory
 4. Build `sys.argv` for Hydra via `_build_hydra_argv(data_dir)`: only `--config-dir <data_dir>/cfg_proc` (if exists) — targets Hydra's **argparse** layer which natively handles commas, backslashes, colons, parentheses, brackets, braces, equals signs, and other ANTLR special characters. ``input.path`` is injected via ``_prepare_overrides()`` into the overrides dict, then merged into ``DictConfig`` by :func:`hydra_main` — the path string **never passes through Hydra's ANTLR override parser**.
 5. `hydra_main(processing.run, config_name="config")` — if no dict overrides, uses `@hydra.main(config_name="config", config_path=pkg://tcm.cfg.cfg_proc)` to compose the full `Config`
@@ -167,8 +178,13 @@ cli.call_in_raw_dir(
 
 ### Log output
 
-Hydra writes logs to `{data_dir}/cfg_proc/log/{timestamp}/tcm_clc.log` (configured
-in `cfg_proc/config.yaml` via `hydra.run.dir: ./cfg_proc/log/${now:...}`).
+Hydra writes logs to `{data_dir}/cfg_proc/log/{timestamp}/processing.log` (configured
+in `cfg_proc/config.yaml` via `hydra.run.dir: ./cfg_proc/log/${now:...}` and
+the file handler's `filename: ${hydra.run.dir}/${hydra.job.name}.log` in
+`hydra/job_logging/colorlog.yaml`).  ``hydra.job.name`` is resolved via
+Hydra's ``@wraps``-unwrap chain: ``_store`` → ``__wrapped__`` → ``processing.run``
+→ ``__module__`` = ``"tcm.processing"`` → last segment → ``"processing"``.
+See ``cli.hydra_main`` docstring for details.
 Since `os.chdir(data_dir)` is called before `@hydra.main`, all relative paths
 resolve inside the data directory.
 Hydra's own output (`config.yaml`, `overrides.yaml`) goes to the same directory.
@@ -191,7 +207,16 @@ Key conventions:
 from `cfg_proc/hydra/job_logging/colorlog.yaml` before any task function runs, so any
 manual `basicConfig` is overwritten.  Callers using `cli.call_in_raw_dir` inherit the
 same Hydra-configured logging (console: `colorlog` formatter with colored `funcName|message`;
-file: `simple` formatter with `asctime|name|levelname|message`)
+file: `AnsiStrippedFormatter` with `asctime|name|levelname|message`)
+
+> **Why `AnsiStrippedFormatter`?** Python ≥ 3.13 colours tracebacks natively via
+> `traceback.print_exception(colorize=True)`.  `colorlog.ColoredFormatter` forwards
+> this through `formatException(colorize=self._colorize())`, which returns `True`
+> because Hydra instantiates it without a `stream` (bypasses the tty guard).
+> ``logging`` caches the coloured text on ``record.exc_text`` so a later plain
+> ``file`` handler inherits the raw `\033[35m` escapes into ``processing.log``.
+> ``AnsiStrippedFormatter`` (in :mod:`tcm.stage_ctx`) strips the cache in
+> ``format()`` before the ``file`` handler writes — console colours are untouched.
 
 ### Stage context (`stage_ctx.py`)
 
@@ -308,13 +333,22 @@ matches the data file they reference.
 `call_in_raw_dir(fun, yaml_path=None, **kwargs)` bootstraps the Hydra
 runtime for any entry point (calibration, etc.):
 
-1. Resolves `data_dir` from `input.path` (in kwargs or `sys.argv`)
-2. `os.chdir(data_dir)` + injects `--config-dir <data_dir>/cfg_proc`
+1. **Flag bypass**: when any ``-`` prefixed argument is present, delegates
+   straight to ``hydra_main`` without consuming positional args or resolving
+   a data directory.  ``parse_data_path`` is skipped entirely so flag values
+   like ``job`` (argument to ``--cfg``) are not consumed as path segments.
+2. Resolves `data_dir` from `input.path` (in kwargs or `sys.argv`).
+   When **no** positional path was provided **and** no info flag is present,
+   prints a user-friendly usage error via ``_print_usage_error`` instead of
+   crashing with a cryptic ``FileNotFoundError``.
+3. Verifies `data_dir` exists on disk; if not, ``_print_usage_error``
+   explains what ``_raw/`` is and why it's needed.
+4. `os.chdir(data_dir)` + injects `--config-dir <data_dir>/cfg_proc`
    (if exists) — targets Hydra's argparse layer (natively handles special chars)
-3. Collects non-`hydra_main` kwargs as override dicts
-4. Optionally loads a per-probe YAML via `yaml_path=` (merged as base;
+5. Collects non-`hydra_main` kwargs as override dicts
+6. Optionally loads a per-probe YAML via `yaml_path=` (merged as base;
    explicit kwargs win on top)
-5. Calls `hydra_main(fun, overrides=...)`
+7. Calls `hydra_main(fun, overrides=...)`
 
 ```python
 cli.call_in_raw_dir(
@@ -345,7 +379,8 @@ The inverse `pcid_to_raw_name()` maps `i01` → `incl01` (for HDF5/NC group name
 
 ## Input routing
 
-`processing._load_single(cfg, pcid)` auto-detects format from `cfg.input.path` suffix:
+`processing.run_processing()` auto-detects format from `cfg.input.path` suffix
+(via `_xr.io.load_raw()`):
 
 | Suffix | Handler (`tcm/`) | Coefs source |
 |--------|------------------|-------------|
@@ -423,11 +458,12 @@ Key name-driven conversions by `type_fix` (`utils2init.py`):
 | `dt_*` (prefix) | `timedelta` | suffix stripped if unit name, else kept | `dt_hole_warning=600` → `timedelta(600s)` |
 | `*_path` / `path_*` | `Path` | kept | `path="/raw/i.txt"` → `Path("/raw/i.txt")` |
 | `*_date` / `*_time` | `datetime` | suffix stripped | `min_date="2024-01-01"` → `datetime(2024,1,1)` |
-| `*_int` / `*_integer` | `int` | suffix stripped | `count_int="5"` → `5` |
+| `*_int` / `*_integer` / `*_index` | `int` | suffix stripped | `count_int="5"` → `5` |
 | `*_float` | `float` | suffix stripped | `ratio_float="1.5"` → `1.5` |
+| `*_bool` / `*_b` | `bool` | suffix stripped | `flag_b="True"` → `True` |
 | `*_list` / `*_names` | `list` | suffix stripped, comma-split | `ids_list="a,b"` → `["a","b"]` |
 | `*_dict` | `dict` | suffix stripped, colon-split | `cfg_dict="k:v"` → `{"k":"v"}` |
-| `min_*` / `max_*` | `float` (catch-all) | kept | `min_Mx="0.1"` → `0.1` |
+| `min_*` / `max_*` / `fixed_*` / `float_*` (catch-all) | `float` | kept | `min_Mx="0.1"` → `0.1` |
 
 **Important `dt_*` detail**: ALL `dt_*`-prefixed keys become `timedelta`, even
 when the suffix is not a recognised duration unit (e.g. `dt_hole_warning`,
@@ -444,7 +480,7 @@ After `ini2dict`, `main_init` also:
 
 ### Hydra search path
 
-`main()` adds `--config-dir <data_dir>/cfg_proc` (if exists) via Hydra's
+`cli.call_in_raw_dir()` adds `--config-dir <data_dir>/cfg_proc` (if exists) via Hydra's
 argparse layer (bypasses ANTLR) so that per-project run YAMLs in `cfg_proc/run/`
 are discoverable by Hydra.
 
@@ -644,7 +680,7 @@ is loaded and no output is written. `process_loading_yaml` still dispatches
 to `run_processing` for each config (the early exit is inside `main_init`,
 not before dispatch). Existing user-edited configs are **not** overwritten —
 `save_config_to_yaml` is only called when configs are stale, missing, or new
-source files appear (see `processing.run()` lines 174–196).
+source files appear (see `processing.run()` config generation block, ~lines 292–321).
 
 `<saved_coefs>` stops `run_processing` after Phase 3 (coef persistence to
 YAML with backup + NC), before Phase 4 (raw NC save) and data processing.
@@ -715,10 +751,10 @@ both support `M` as a shorthand for `Mx`, `My`, `Mz`. Expansion runs at compose 
 
 ### Processing pipeline stages
 
-`_xr/physical.py::process()` (line 194) applies the following stages in order:
+`_xr/physical.py::process()` applies the following stages in order:
 
 1. **filter_local** — NaN-out on raw columns where `cfg_filter.min`/`max` thresholds exceeded
-2. **calc_velocity** — calibration (`fG`/`fInclination`), `g_minus_1` NaN-out on computed `GsumMinus1`, `v_abs_from_incl`, `h_minus_1` NaN-out on computed `HsumMinus1`, `polar2dekart`
+2. **calc_velocity** — calibration (`fG`/`fInclination`), `g_minus_1` NaN-out on computed `GsumMinus1`, `v_abs_from_incl(kVabs, calc_version)`, `h_minus_1` NaN-out on computed `HsumMinus1`, `polar2dekart`
 3. **calc_pressure** — `polyval2d` + `bad_p_at_bursts_starts_period` (first-2-per-burst NaN-out)
 4. **binning** — `resample(time=dt_bin).mean()` with NaN threshold on valid-sample count.  When data is large (≥ 100 K rows), a persistent `TqdmCallback` is registered in `process()` and passed to each `binning()` call; the dataset is chunked along `time` (1 M rows) and `.compute()` materialises the dask graph so task-level progress is shown in a single bar shared across all bins (`_RESAMPLE_CHUNK_N`, `tqdm_cb` parameter).
 
@@ -919,6 +955,13 @@ read or `xr.concat` is ever used:
   (non-extendable datasets), builds a new group with `maxshape=(None,)`,
   copies old data chunk-wise from h5py, then appends new data.
   O(chunk) memory.
+
+`store_processed(mode='a')` uses `_time_extends_beyond()` to detect when
+`to_netcdf(mode='a')` would silently overwrite same-size data (sizes match
+but time ranges differ — e.g. after a resize fallback created extendable
+datasets).  When new data extends beyond the existing range, the h5py
+append path (`_append_to_nc_group`) is used directly, which properly
+extends the time dimension via `resize()`.
 
 After any h5py resize (`_h5py_extend_group`, `_prepend_nc_group`),
 dimension scales (`make_scale`/`attach_scale`) are re-attached so
@@ -1143,7 +1186,7 @@ to match the data.  This prevents `ValueError` in `init_input_cols` and
 
 ## Coefficient loading
 
-`processing.get_coefs_from_cfg()` builds a three-tier fallback chain:
+`incl_calc.coefs.get_coefs_from_cfg()` builds a three-tier fallback chain:
 1. `input.coefs` in YAML (highest priority)
 2. `coefs_path` (HDF5 `calibration.h5` or YAML directory)
 3. Sibling `cfg/coef/yaml_export/` directory — **always** appended as final fallback

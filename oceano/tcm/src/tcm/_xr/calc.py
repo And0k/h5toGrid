@@ -3,13 +3,14 @@
 - Helper that wraps low-level math kernels with ``xr.apply_ufunc``.
 """
 
+from collections.abc import Callable
 from datetime import timedelta
 from functools import wraps
-from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
 import xarray as xr
+
 # from tcm._xr.storage import _time_values_to_int64
 
 def _time_values_to_int64(time_coord: xr.DataArray) -> np.ndarray:
@@ -99,7 +100,7 @@ def binning(
     min_valid_fraction: float = 0.1,
     *,
     progress: bool = False,  # API compat; numpy path needs no bar
-) -> Optional[xr.Dataset]:
+) -> xr.Dataset | None:
     """O(n) time-resampling with NaN-fraction threshold.
 
     Discards bins where valid count < ``min_valid_fraction × mean(nonempty)``.

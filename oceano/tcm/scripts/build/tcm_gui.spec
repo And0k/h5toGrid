@@ -1,0 +1,304 @@
+# -*- mode: python ; coding: utf-8 -*-
+"""PyInstaller spec for tcm_gui — Tkinter GUI for TCM data processing.
+
+Build: pixi run -e bin-optim-tcm build-tcm-gui
+
+Environment ``bin-optim-tcm`` includes h5py, scipy, matplotlib, numba
+(via ``bin-optim`` feature) — all kept for the GUI.  Only pyarrow,
+Jupyter, and dev-only packages are excluded.
+"""
+
+import os
+import sys
+from pathlib import Path
+
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
+if "SPECPATH" not in globals():
+    from PyInstaller.building.build_main import COLLECT, EXE, PYZ, Analysis
+
+    SPEC_DIR = Path(os.path.abspath(__file__)).parent
+else:
+    SPEC_DIR = Path(SPECPATH)
+
+# Shared utilities
+sys.path.insert(0, str(SPEC_DIR))
+from spec_common import (
+    EXCLUDE_BINARIES,
+    RUNTIME_DLLs,
+    collect_docs,
+    load_version,
+    should_keep_binary,
+    should_keep_data,
+)
+
+VERSION = load_version(SPEC_DIR)
+
+block_cipher = None
+
+PROJECT_ROOT = SPEC_DIR.parent.parent
+TCM_SRC = "src/tcm"
+TCM_REL = "tcm"
+GUI_SRC = "src/tcm_gui"
+GUI_REL = "tcm_gui"
+
+_ENV_PREFIX = os.path.dirname(sys.executable)
+_ENV_LIB_BIN = os.path.join(_ENV_PREFIX, "Library", "bin")
+_site_pkgs = os.path.join(_ENV_PREFIX, "Lib", "site-packages")
+SITE_PKGS = Path(_site_pkgs)
+
+_ALL_DIST_DLLS = RUNTIME_DLLs
+
+print(
+    f"[spec] DLLs to bundle: {len(_ALL_DIST_DLLS)} "
+    f"({sum(os.path.getsize(os.path.join(_ENV_LIB_BIN, d)) for d in _ALL_DIST_DLLS if os.path.isfile(os.path.join(_ENV_LIB_BIN, d))) / 1024**2:.1f} MB)"
+)
+
+
+# ---------------------------------------------------------------------------
+# Data files
+# ---------------------------------------------------------------------------
+
+_DOC_EXCLUDE = {"todo.md", "potential_functionality_and_improvement.md"}
+added_files = [
+    (str(PROJECT_ROOT / TCM_SRC), TCM_REL),
+    (str(PROJECT_ROOT / GUI_SRC), GUI_REL),
+    *collect_docs(PROJECT_ROOT, _DOC_EXCLUDE),
+    *(collect_data_files("hydra", subdir="conf") + collect_data_files("hydra_plugins.hydra_colorlog")),
+    *collect_data_files("pygeomag"),
+    *[
+        (str(SITE_PKGS / dir_to / file), dir_to.replace("*", "0"))
+        for file, dir_to in [
+            ("METADATA", "pandas-*.dist-info"),
+            ("METADATA", "numpy-*.dist-info"),
+            ("__init__.py", "hydra/conf"),
+            ("__init__.py", "hydra_plugins/hydra_colorlog/conf"),
+        ]
+    ],
+]
+
+
+# ---------------------------------------------------------------------------
+# Analysis
+# ---------------------------------------------------------------------------
+
+a = Analysis(
+    [str(PROJECT_ROOT / "scripts" / "tcm_gui.py")],
+    pathex=[str(PROJECT_ROOT), str(PROJECT_ROOT / "src")],
+    binaries=[
+        (os.path.join(_ENV_LIB_BIN, dll), ".")
+        for dll in _ALL_DIST_DLLS
+        if os.path.isfile(os.path.join(_ENV_LIB_BIN, dll))
+    ],
+    datas=added_files,
+    hiddenimports=[
+        "colorlog",
+        "colorlog.formatter",
+        "omegaconf",
+        "ruamel.yaml",
+        "dask",
+        "dask.base",
+        "dask.diagnostics",
+        "numba",
+        "numba.core",
+        "pygeomag",
+        "pandas",
+        "pandas._libs",
+        "xarray",
+        "tcm._constants",
+        "tksheet",
+    ]
+    + collect_submodules("hydra")
+    + collect_submodules("hydra_plugins"),
+    hookspath=[str(PROJECT_ROOT / "scripts" / "build" / "hooks")],
+    hooksconfig={},
+    runtime_hooks=[
+        str(PROJECT_ROOT / "scripts" / "build" / "rthook_hydra_pkg.py"),
+        # rthook_noh5_bins.py NOT used — GUI shows full config defaults
+    ],
+    excludes=[
+        # MKL — OpenBLAS env (from noh5 feature)
+        "mkl",
+        "mkl_rt",
+        "mkl_core",
+        "mkl_intel_thread",
+        "mkl_sequential",
+        "mkl_tbb_thread",
+        "mkl_def",
+        "mkl_avx",
+        "mkl_avx2",
+        "mkl_avx512",
+        "mkl_mc",
+        "mkl_mc3",
+        "mkl_vml_def",
+        "mkl_vml_avx",
+        "mkl_vml_avx2",
+        "mkl_vml_avx512",
+        "mkl_vml_cmpt",
+        "mkl_vml_mc",
+        "mkl_vml_mc3",
+        "mkl_blacs_ilp64",
+        "mkl_blacs_lp64",
+        "mkl_scalapack_ilp64",
+        "mkl_scalapack_lp64",
+        "mkl_cdft_core",
+        "mkl_pgi_thread",
+        "mkl_msg",
+        # HDF5 modules not used by GUI code path
+        "tcm.h5inclinometer_coef",
+        "tcm.h5",
+        "tcm.h5_dask_pandas",
+        "tcm.incl_h5_utils",
+        "tcm.incl_h5spectrum",
+        "tcm.incl_calibr_hy",
+        "tcm.veuszPropagate",
+        # PyArrow (not needed)
+        "pyarrow",
+        "pyarrow.libs",
+        "pyarrow.flight",
+        "pyarrow._flight",
+        "pyarrow.gandiva",
+        "botocore",
+        "botocore.session",
+        "botocore.utils",
+        "botocore.awsrequest",
+        "botocore.client",
+        "botocore.endpoint",
+        "botocore.httpsession",
+        "botocore.parsers",
+        "botocore.serialize",
+        "botocore.validate",
+        "botocore.credentials",
+        "botocore.auth",
+        "botocore.eventstream",
+        "botocore.handlers",
+        "botocore.loaders",
+        "botocore.model",
+        "botocore.paginate",
+        "botocore.retries",
+        "botocore.waiter",
+        "botocore.compat",
+        "botocore.exceptions",
+        "botocore.stub",
+        "botocore.translate",
+        "botocore.vendored",
+        "certifi",
+        "charset_normalizer",
+        "charset_normalizer.utf8",
+        "charset_normalizer.md",
+        "google_crc32c",
+        "numcodecs",
+        "numcodecs.registry",
+        "numcodecs.compat",
+        "numcodecs.blosc",
+        "numcodecs.zstd",
+        "numcodecs.lz4",
+        "zstandard",
+        "zstd",
+        # Heavy libs not used by GUI
+        "numexpr",
+        "IPython",
+        "jupyter",
+        "notebook",
+        "jupyterlab",
+        "jupyter_server",
+        "jupyter_client",
+        "jupyter_core",
+        "nbformat",
+        "nbconvert",
+        "bokeh",
+        "dtale",
+        "selenium",
+        "sklearn",
+        "polars",
+        "geopandas",
+        "pyproj",
+        "seaborn",
+        "gsw",
+        "statsmodels",
+        "sympy",
+        "PyQt5",
+        "PyQt6",
+        "PySide2",
+        "PySide6",
+        "qtpy",
+        "qtconsole",
+        "lxml",
+        "openpyxl",
+        "cryptography",
+        "sphinx",
+        "docutils",
+        "pytest",
+        "_pytest",
+        "py",
+        "pluggy",
+        "setuptools",
+        "pkg_resources",
+        "wheel",
+        "pip",
+        "webbrowser",
+        "tornado",
+        "msgpack",
+        "lz4",
+        "numba.core.tbbpool",
+        "unittest",
+        "test",
+        "tests",
+        "curses",
+        "readline",
+        "lib2to3",
+        "py_compile",
+        "compileall",
+        "distributed",
+    ],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
+    noarchive=False,
+)
+
+
+# ---------------------------------------------------------------------------
+# Post-analysis filters (shared via spec_common)
+# ---------------------------------------------------------------------------
+
+a.binaries = [b for b in a.binaries if should_keep_binary(b)]
+a.datas = [d for d in a.datas if should_keep_data(d)]
+
+# Exclude both tcm.* and tcm_gui.* from pure — collected as data instead
+a.pure = [m for m in a.pure if not (m[0].startswith(TCM_REL) or m[0].startswith(GUI_REL))]
+# Exclude distributed scheduler (not available in bin-optim-tcm)
+_dist_prefix = "distributed."
+a.pure = [m for m in a.pure if not (m[0] == "distributed" or m[0].startswith(_dist_prefix))]
+
+# ---------------------------------------------------------------------------
+# Bundle
+# ---------------------------------------------------------------------------
+
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name="tcm_gui",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=False,  # GUI app — no console window
+    icon=SPEC_DIR / "tcm.ico",
+    version=SPEC_DIR / "version_info.txt",
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name="tcm_gui",
+)

@@ -29,7 +29,7 @@ class _KeyAsDefault(dict):
     """Return *key* itself when key is missing — replaces veusz_helpers.DictKeyIfNoVal.
 
     Used as the *mapping* argument to :meth:`str.format_map` so that any
-    ``{name}`` placeholders in the pressure string are replaced with ``name``
+    ``{name}`` placeholders in the probe string are replaced with ``name``
     (braces stripped), matching the English-locale behaviour of the original.
     """
 
@@ -46,21 +46,21 @@ def _meta_array_to_dict(
     """Convert a flat metadata array into a labelled dict.
 
     Keys follow the Veusz ``vsz_drawer`` convention:
-    ``p`` (pressure), ``b`` (magnetic field), ``bd`` (declination),
-    ``s`` (sound speed), ``c`` (coordinates), ``r`` (time range),
+    ``p`` (point/station), ``b`` (bottom depth), ``bd`` (height above bottom),
+    ``s`` (device type&model symbol), ``c`` (coordinates), ``r`` (time range),
     ``t`` (burst_dt), ``T`` (bursts_t).
     """
     return dict(
         zip(
             "pbdscrtT",
             [
-                p.format_map(_I),
+                p.format_map(_I) if p is not None else None,
                 b,
                 None if None in (b, bd) else round(b - bd, 1),
                 s,
             ]
-            + ([(lat, lon)] if lat else [])
-            + ([(time_st, time_en)] if time_st else [])
+            + ([(lat, lon)] if lat else [None])
+            + [(time_st, time_en)]
             + ([burst_dt, bursts_t] if bursts_t else []),
         )
     )

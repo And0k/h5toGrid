@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import argparse
 import gc
+import inspect
 import os
 import sys
+from collections.abc import Callable, Mapping
 from functools import wraps
-from pathlib import Path, PurePath
-from typing import Any, Callable, Dict, Mapping, Optional
 from io import StringIO
+from pathlib import Path, PurePath
+from types import FrameType, ModuleType
+from typing import Any, NamedTuple
 
 # ---------------------------------------------------------------------------
 # argparse compatibility for Python 3.14 — must run before Hydra builds parser
@@ -36,19 +39,18 @@ def _patched_get_help_string(self, action) -> str | None:
 
 argparse.HelpFormatter._get_help_string = _patched_get_help_string
 
-import hydra
-from omegaconf import DictConfig, MissingMandatoryValue, OmegaConf
+import hydra  # noqa: E402
+from omegaconf import DictConfig, MissingMandatoryValue, OmegaConf  # noqa: E402
 
-from tcm import _constants, config, paths, to_omegaconf, config_yaml
-from tcm import stage_ctx
-from tcm.utils2init import (
+from tcm import _constants, config, config_yaml, paths, stage_ctx, to_omegaconf  # noqa: E402
+from tcm.utils2init import (  # noqa: E402
     Ex_nothing_done,
     LoggingStyleAdapter,
     ini2dict,
     standard_error_info,
     this_prog_basename,
     update_cfg_time_ranges,
-)
+)  # noqa: E402
 
 lf = LoggingStyleAdapter(__name__)
 
@@ -57,8 +59,30 @@ lf = LoggingStyleAdapter(__name__)
 _TCM_DEFAULT_GLOB_PATTERN = "*I*.txt"
 DEFAULT_GLOB = f"{config.RAW_DIR_NAME}/{_TCM_DEFAULT_GLOB_PATTERN}"
 
+# Scan/config-generation modes — when program.return_ is one of these, no data
+# is processed, only YAMLs are generated.  Used by is_scan_mode() to derive
+# hydra.job.name="scan" (→ scan.log) instead of the default processing.log.
+_SCAN_RETURN_VALUES = frozenset({config.Return.CFG_FROM_ARGS, config.Return.GEN_NAMES_AND_LOG})
 
-def parse_data_path(argv: list[str]) -> tuple[Optional[Path], list[str]]:
+
+def is_scan_mode(argv: list[str]) -> bool:
+    """Detect scan/config-generation mode from raw CLI ``argv``.
+
+    Scans ``argv`` for ``program.return_=<value>`` where ``<value>`` is one of
+    :data:`_SCAN_RETURN_VALUES` (``<cfg_from_args>``, ``<gen_names_and_log>``).
+    In that case the caller passes ``job_name="scan"`` to :func:`hydra_main`
+    so the log file is ``scan.log`` instead of the default ``processing.log``.
+    """
+    for arg in argv[1:]:
+        if not arg.startswith("program.return_="):
+            continue
+        val = arg.split("=", 1)[1].strip("\"'")
+        if val in _SCAN_RETURN_VALUES:
+            return True
+    return False
+
+
+def parse_data_path(argv: list[str]) -> tuple[Path | None, list[str]]:
     """Extract first positional arg (data path) from ``argv``, handling commas.
 
     Positional = non-flag, non-``key=value`` argument.  Consecutive positional
@@ -126,9 +150,10 @@ def hydra_main(
     config_name: str = "config",
     config_path: str = _constants.BUNDLED_CFG_PKG,
     version_base: str = "1.3",
-    overrides: Optional[Mapping[str, Any]] = None,
+    overrides: Mapping[str, Any] | None = None,
     *,
     exit_on_error: bool = True,
+    job_name: str | None = None,
 ) -> Any:
     """Dispatch *fun* via Hydra, return its result (``@hydra.main`` swallows returns).
 
@@ -143,7 +168,22 @@ def hydra_main(
     The decorated function's return value is stored in :data:`_result` and
     returned to the caller — ``@hydra.main`` itself discards return values.
 
+    Note on ``hydra.job.name``: Hydra unwraps the ``@wraps`` chain on the
+    decorated ``_store`` function via ``__wrapped__``, following it back to the
+    original *fun* (e.g. ``processing.run``).  It then reads ``fun.__module__``
+    (``"tcm.processing"``) and takes the last dotted segment as the job name
+    (``"processing"``).  This means the log file is always named after the
+    **task module** (``processing.log``) — not ``config_name`` or the entry-point
+    script.  To override (e.g. ``scan.log`` for config-generation-only runs),
+    pass ``job_name``.  See ``hydra/_internal/utils.py:
+    detect_calling_file_or_module_from_task_function``.
+
     :param fun: task function accepting one ``DictConfig`` argument.
+    :param job_name: Override for ``hydra.job.name`` (and thus the log file
+        name).  ``None`` (default) → derived from task function's module
+        (e.g. ``processing.run`` → ``processing.log``).  Injected as
+        ``hydra.job.name=<value>`` CLI override into ``sys.argv`` before
+        ``hydra.main()`` is called; cleaned up afterwards.
     :param overrides: hierarchical dict to merge on top of composed defaults.
     :returns: whatever *fun* returned (``None`` if it returned nothing).
     """
@@ -155,10 +195,29 @@ def hydra_main(
     # only a bare ``SystemExit`` and the real traceback is lost.
     os.environ.setdefault("HYDRA_FULL_ERROR", "1")
 
+    caller = caller_info(skip=2)
+
     @wraps(fun)
     def _store(cfg: DictConfig):
         """Run *fun*, stashing its return in :data:`_result`."""
         global _result
+
+        # our hydra powered function INFO banner
+        lf.info(
+            "{}. {} calls {}.{}{}",
+            "TCM",
+            caller,
+        getattr(fun, "__module__", repr(fun)),
+        getattr(fun, "__name__", repr(fun)),
+            {True: "", False: " (h5 disabled)", None: " (h5 unavailable)"}[_constants.use_h5_get()],
+        )
+        lf.debug(
+            "{} | argv={} | Working directory: {}",
+            Path(sys.argv[0]).stem if sys.argv else "?",
+            sys.argv[1:],
+            os.getcwd(),
+        )
+
         if overrides:
             base = OmegaConf.create(OmegaConf.to_container(cfg, resolve=False))
             merged = OmegaConf.merge(base, overrides)
@@ -167,22 +226,32 @@ def hydra_main(
             _result = fun(cfg)
         return _result
 
+    _job_name_override = f"hydra.job.name={job_name}" if job_name else None
     try:
+        # Override hydra.job.name via CLI override (hydra.main() has no job_name param).
+        # Hydra resolves this before running _store, so the log file gets the right name.
+        if _job_name_override:
+            sys.argv.append(_job_name_override)
         m_fun = hydra.main(config_name=config_name, config_path=config_path, version_base=version_base)(
             _store
         )
         m_fun()
         return _result
+    except SystemExit:
+        raise  # Propagate Hydra's sys.exit (e.g. --help, --cfg) without logging
     except BaseException:
         lf.exception("Error. Exiting the entire process")
         if exit_on_error:
             sys.exit(1)
         raise
+    finally:
+        if _job_name_override and sys.argv and sys.argv[-1] == _job_name_override:
+            sys.argv.pop()
 
 
 # Kwargs accepted by :func:`hydra_main` (excluding ``fun``) — everything else
 # is treated as an override dict to merge on top of composed defaults.
-_HYDRA_MAIN_PARAMS = {"config_name", "config_path", "version_base", "overrides", "exit_on_error"}
+_HYDRA_MAIN_PARAMS = {"config_name", "config_path", "version_base", "overrides", "exit_on_error", "job_name"}
 
 
 def _build_hydra_argv(data_dir: Path) -> list[str]:
@@ -212,20 +281,81 @@ def _prepare_overrides(path_in: Path, overrides: dict) -> dict:
     )
 
 
-def call_in_raw_dir(fun, yaml_path: Optional[Path] = None, **kwargs) -> Any:
+def _print_usage_error(data_dir: Path | None, path_in: Path | None) -> None:
+    """Print a user-friendly usage error and ``sys.exit(1)``.
+
+    Called by :func:`call_in_raw_dir` when no data path was provided **and** no
+    Hydra flag was present, **or** the resolved ``_raw/`` anchor directory does
+    not exist on disk.  Replaces the cryptic ``FileNotFoundError`` from
+    ``os.chdir`` with a message explaining what the program needs, why, and how
+    to supply it (positional path argument, ``--help`` for option list, docs
+    link).
+
+    :param data_dir:  directory that was supposed to be the runtime anchor
+        (``None`` when the caller detected *no* positional path at all).
+    :param path_in:   resolved input path passed to
+        :func:`paths.find_dir_raw_absolute` (``None`` when no positional
+        path was found and no flag was present).
+    """
+    if path_in is None:
+        head = "No data path was provided as a positional argument."
+        body = (
+            "The first non-flag, non-'key=value' CLI argument must be a path"
+            " to your raw data — a directory, glob, or regex."
+        )
+    else:
+        head = f"Data directory not found: {data_dir}"
+        body = (
+            f"  looked for '{_constants.RAW_DIR_NAME}/' via: {path_in}\n"
+            f"  The '{_constants.RAW_DIR_NAME}/' directory is the anchor for all"
+            " relative processing paths (configs, logs, outputs)."
+        )
+    print(
+        f"{'─' * 60}\n"
+        f"Error: {head}\n{body}\n"
+        f"{'─' * 60}\n"
+        f"Usage:\n"
+        f"  tcm_clc_txt <path_to_data> [options]\n\n"
+        f"Examples:\n"
+        f'  tcm_clc_txt "_raw/*i*.txt"\n'
+        f"  tcm_clc_txt \"_raw\" 'input.ids=[i01,i_p02]' out.text_path=./results\n"
+        f"  tcm_clc_txt --help           ← list all options\n"
+        f"  tcm_clc_txt --cfg job        ← show the composed config without running\n\n"
+        f"See --help for all config fields, or the user guide:\n"
+        f"  docs/tcm_clc/README.md\n"
+        f"{'─' * 60}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
+def call_in_raw_dir(fun, yaml_path: Path | None = None, **kwargs) -> Any:
     """Bootstrap CLI → Hydra runtime for a processing entry point.
 
-    1. Parses the raw-data path from ``sys.argv``: 1st non-flag, non-``key=value``
+    1. **Flag bypass**: when any ``-`` prefixed argument is present in
+       ``sys.argv``, the function delegates straight to :func:`hydra_main`
+       without consuming positional args or resolving a data directory.
+       This covers all Hydra flags (``--help``, ``--cfg job``, ``--info``,
+       ``--version``, ``--run``, ``--multirun``, …) — ``parse_data_path``
+       is skipped entirely so flag values like ``job`` (argument to ``--cfg``)
+       are not mistakenly consumed as path segments.  When **no** positional
+       path **and** no flags are present, a user-friendly usage error is
+       printed via :func:`_print_usage_error`.
+    2. Parses the raw-data path from ``sys.argv``: 1st non-flag, non-``key=value``
        argument treated as path; resolves to nearest ``_raw/`` ancestor via
-       :func:`paths.find_dir_raw_absolute` (always returns a valid directory).
-    2. Changes the working directory there.
-    3. Injects ``input.path`` into the *overrides* dict via
+       :func:`paths.find_dir_raw_absolute`.  If no positional path was given,
+       prints a user-friendly usage error (via :func:`_print_usage_error`)
+       instead of crashing with a cryptic :exc:`FileNotFoundError`.
+    3. Verifies the resolved ``data_dir`` exists on disk; if not, prints a
+       user-friendly error explaining what ``_raw/`` is and why it's needed.
+    4. Changes the working directory to ``data_dir``.
+    5. Injects ``input.path`` into the *overrides* dict via
        :func:`_prepare_overrides` (OmegaConf merge — bypasses Hydra's ANTLR
        override parser, so commas, backslashes, quotes are handled correctly).
        Injects ``--config-dir`` into ``sys.argv`` via
        :func:`_build_hydra_argv` (argparse layer — natively handles ALL
        ANTLR special characters in paths).
-    4. Calls *fun* via :func:`hydra_main`.
+    6. Calls *fun* via :func:`hydra_main`.
 
     Any keyword argument whose name is **not** a :func:`hydra_main` parameter
     (``config_name``, ``config_path``, ``version_base``, ``overrides``) is
@@ -247,6 +377,8 @@ def call_in_raw_dir(fun, yaml_path: Optional[Path] = None, **kwargs) -> Any:
         Whatever *fun* returned (``None`` if it didn't return anything).
         ``@hydra.main`` doesn't propagate return values, so :func:`hydra_main`
         stashes the result in :data:`_result` and returns it here.
+        For flag-only invocations (``--help``, ``--cfg``, …): ``None`` (Hydra
+        prints info and exits, *fun* is never called).
 
     Note:
         ConfigStore registration (structured-group dataclasses) must happen
@@ -254,8 +386,8 @@ def call_in_raw_dir(fun, yaml_path: Optional[Path] = None, **kwargs) -> Any:
         ``tcm.config`` (imported above) does this at module level.
     """
     # Separate hydra_main params from override dicts.
-    hydra_main_kwargs: Dict[str, Any] = {}
-    overrides: Dict[str, Any] = {}
+    hydra_main_kwargs: dict[str, Any] = {}
+    overrides: dict[str, Any] = {}
     for k, v in kwargs.items():
         if k in _HYDRA_MAIN_PARAMS:
             hydra_main_kwargs[k] = v
@@ -284,9 +416,19 @@ def call_in_raw_dir(fun, yaml_path: Optional[Path] = None, **kwargs) -> Any:
         try:
             path_in = Path(hydra_main_kwargs["overrides"]["input"]["path"])
         except (KeyError, AttributeError, TypeError):
+            # If any '-' prefixed arg is present, it's a Hydra/argparse flag.
+            # Delegate to Hydra directly without consuming positional args
+            # (which might be flag values like --cfg's 'job' argument).
+            # Info flags (--help, --cfg, --info, …) print and exit; execution
+            # flags (--run, --multirun) proceed with path=None from defaults.
+            if any(a.startswith("-") for a in sys.argv[1:]):
+                lf.debug("Flags detected — delegating to Hydra directly")
+                return hydra_main(fun, overrides=overrides or None, **hydra_main_kwargs)
+
             path_in, remaining_argv = parse_data_path(sys.argv)
             if path_in is None:
-                path_in = Path(DEFAULT_GLOB)  # CLI fallback when no positional arg
+                # No positional path and no flags → user error.
+                _print_usage_error(data_dir=None, path_in=None)
             path_in = path_in.resolve() if not path_in.is_absolute() else path_in
         else:
             # overrides dict provided path — keep sys.argv as-is (Worker
@@ -295,8 +437,15 @@ def call_in_raw_dir(fun, yaml_path: Optional[Path] = None, **kwargs) -> Any:
     else:
         remaining_argv = list(sys.argv)
 
-    # Resolve the nearest `_raw/` ancestor (always returns a valid dir).
+    # Resolve the nearest `_raw/` ancestor.
     data_dir = paths.find_dir_raw_absolute(path_in)
+
+    # Verify the anchor directory exists — find_dir_raw may return a `_raw/`
+    # path whose name matches but doesn't exist on disk (e.g. from DEFAULT_GLOB
+    # glob pattern embedded in the path), causing a cryptic FileNotFoundError
+    # from os.chdir.  Give a user-friendly message instead.
+    if not data_dir.is_dir():
+        _print_usage_error(data_dir=data_dir, path_in=path_in)
 
     # Inject input.path into overrides dict (bypasses Hydra's ANTLR parser).
     overrides = _prepare_overrides(path_in, overrides)
@@ -308,6 +457,7 @@ def call_in_raw_dir(fun, yaml_path: Optional[Path] = None, **kwargs) -> Any:
     os.chdir(data_dir)
 
     sys.argv = remaining_argv
+
     return hydra_main(fun, overrides=overrides or None, **hydra_main_kwargs)
 
 
@@ -496,7 +646,7 @@ def sugar_condense_lim_date(cfg_dict: Mapping[str, Any]) -> Mapping[str, Any]:
 def main_init(
     cfg: DictConfig[str, DictConfig[str, Any]],
     program_name: str = "",
-    __file__: Optional[str] = None,
+    __file__: str | None = None,
 ) -> Mapping[str, Any]:
     """Convert Hydra ``DictConfig`` to a plain dict with resolved types and paths.
 
@@ -513,10 +663,12 @@ def main_init(
          - ``dt_*`` prefix → ``timedelta`` (suffix becomes the unit, default seconds)
          - ``*_path`` / ``path_*`` → ``pathlib.Path``
          - ``*_date`` / ``*_time`` → ``datetime``
-         - ``*_int`` / ``*_float`` / ``*_bool`` → native types
+         - ``*_int`` / ``*_integer`` / ``*_index`` → ``int``
+         - ``*_float`` → ``float``
+         - ``*_bool`` / ``*_b`` → ``bool``
          - ``*_list`` / ``*_names`` → ``list`` (comma-split, recursive fix)
          - ``*_dict`` → ``dict`` (colon-split, recursive fix)
-         - ``min_*`` / ``max_*`` (catch-all) → ``float``
+         - ``min_*`` / ``max_*`` / ``fixed_*`` / ``float_*`` (catch-all) → ``float``
 
       4. Sugar expansion: ``M`` shorthand → ``Mx/My/Mz`` in min/max dicts.
       5. ``min_date``/``max_date`` → merged into ``time_ranges``.
@@ -528,11 +680,6 @@ def main_init(
     ----------
     cfg
         Hydra-composed top-level ``DictConfig`` (all groups resolved).
-    program_name
-        Short label for the startup banner (e.g. ``"TCM processing"``).
-    __file__
-        Optional module path for the startup banner (auto-detected if omitted).
-
     Returns
     -------
     dict
@@ -540,7 +687,6 @@ def main_init(
         and output paths resolved.  Downstream code should use this instead of
         the original ``DictConfig``.
     """
-    lf.debug("Working directory: {}", os.getcwd())
     try:
         conf_, ignored_keys = to_omegaconf.to_omegaconf_merge_compatible(cfg, config.Config)
         conf_ignored = {
@@ -562,10 +708,6 @@ def main_init(
             ru.dump(conf_ignored, s)
             msg = s.getvalue()
         lf.debug(msg)
-        # OmegaConf.to_yaml({
-        #     k0: ({k1: v1 for k1, v1 in v0.items() if v1} if hasattr(v0, "items") else hasattr(v0, "items") if isinstance(v0, PurePath) else v0)
-        #     for k0, v0 in cfg.items()
-        # })
     except MissingMandatoryValue as e:
         lf.error(standard_error_info(e))
         raise Ex_nothing_done()
@@ -601,3 +743,56 @@ def main_init(
         lf.debug("PathLayout resolution skipped: {}", e)
 
     return cfg_t
+
+
+# The caller frame; derive module identity from frame globals.
+# For PyInstaller, prefer module name as stable identity; file path may be synthetic or absent.
+
+class Caller(NamedTuple):
+    module: str | None
+    package: str | None
+    file: Path | None
+    function: str | None
+    line: int
+
+
+def _path(value: str | Path | None) -> Path | None:
+    return Path(value) if value and not str(value).startswith("<") else None
+
+
+def _frozen_file(name: str | None, is_package: bool) -> Path | None:
+    if (base := getattr(sys, "_MEIPASS", None)) and name:
+        stem = Path(base).joinpath(*name.split("."))
+        return stem / "__init__.pyc" if is_package else stem.with_suffix(".pyc")
+    return None
+
+
+def caller_info(skip: int = 0) -> Caller:
+    """
+    Return immediate caller info.
+    skip=1 when calling from a wrapper/decorator/helper layer.
+    """
+    frm: FrameType = sys._getframe(skip + 1)
+    mod: ModuleType | None = inspect.getmodule(frm)
+
+    name, package = [getattr(mod, key, None) or frm.f_globals.get(key) for key in ("__name__", "__package__")]
+    # todo: if function=='_run_code' change: skip-=1
+    # or when module='_pydevd_bundle.pydevd_runpy', package='_pydevd_bundle'
+
+    origin = getattr(getattr(mod, "__spec__", None), "origin", None)
+
+    file = next(
+        filter(
+            None,
+            (
+                _path(getattr(mod, "__file__", None)),
+                _path(origin) if origin not in {None, "built-in", "frozen", "namespace"} else None,
+                _frozen_file(name, hasattr(mod, "__path__")),
+                _path(frm.f_globals.get("__file__")),
+                _path(frm.f_code.co_filename),
+            ),
+        ),
+        None,
+    )
+
+    return Caller(name, package, file, frm.f_code.co_name, frm.f_lineno)

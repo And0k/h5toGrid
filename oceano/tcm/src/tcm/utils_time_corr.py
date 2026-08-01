@@ -868,8 +868,11 @@ def time_corr(
         b_out = b_mono
     if path_save_image and action.any():
         # Slice away t_prev overlap to prevent duplicate events across chunks
-        ds = diag_first if diag_first else slice(None)
-        if p := save_time_corr_diagnostics(t_ns[ds], t_c[ds], action[ds], stats, cfg_in, path_save_image):
+        ds = slice(diag_first, None) if diag_first else slice(None)
+        if p := save_time_corr_diagnostics(
+            t_ns[ds], t_c[ds], action[ds], stats, cfg_in, path_save_image,
+            is_first_chunk=not diag_first,
+        ):
             # Store resolved path so csv_read_gen can produce the final consolidated plot
             cfg_in["_diag_npz_path"] = str(p)
 
@@ -899,6 +902,8 @@ def save_time_corr_diagnostics(
     stats: dict,
     cfg_in: Mapping[str, Any],
     path_save: str = "corr_time_mode",
+    *,
+    is_first_chunk: bool = False,
 ) -> Path | None:
     """
     Save sparse NPZ at positions where action ≠ 0 (algorithmic decisions only).
@@ -960,6 +965,13 @@ def save_time_corr_diagnostics(
             p = p / f"{ts0:%y%m%d_%H%M}-{ts1:%H%M}_dt.npz"
         elif p.suffix != ".npz":
             p = p.with_suffix(".npz")
+
+        # Clear stale NPZ from previous run on first chunk of this file.
+        # Without this, append-merge accumulates events/n across runs → n grows
+        # unbounded → build_show_diag(n) creates (2, n) matrix exceeding 2^23 columns.
+        if is_first_chunk and p.is_file():
+            p.unlink()
+            lf.debug("Cleared stale diagnostics from previous run: {}", p.name)
 
         # Prepare new chunk arrays
         new_index = sig.astype(np.int32)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+
+from collections.abc import Sequence
 import ctypes
 import sys
 import tkinter as tk
@@ -39,13 +41,23 @@ def _shift_at_startup() -> bool:
 
 
 class App:
+    APP_ID = "Vendor.Product"  # todo: Fix, not hardcode here
     POLL = 300  # ms
 
-    def __init__(self, argv: list[str] | None = None) -> None:
+    def __init__(self, argv: Sequence[str] | None = None) -> None:
+        if sys.platform == "win32":
+            shell32.SetCurrentProcessExplicitAppUserModelID(self.APP_ID)
+
         self.root = tk.Tk()
         apply_ui_scale(self.root)  # global DPI + named fonts — before any widget
         self.root.title("TCM")
         self.root.geometry("1100x800")
+        
+        # use exe icon
+        self._icons: tuple[int, ...] = ()
+        self.root.bind("<Destroy>", self._free_icons, add=True)
+        self.set_window_icon()
+     
         self.rt = Runtime()
         # Install the QueueHandler on the root logger once, for the lifetime
         # of the app, so log calls from the GUI main thread (e.g.
@@ -382,6 +394,105 @@ class App:
 
     def run(self) -> None:
         self.root.mainloop()
+
+    def set_window_icon(self, icon_index: int = 0) -> None:
+        """Set title/taskbar icon from the executable's RT_GROUP_ICON."""
+        if sys.platform != "win32":
+            return
+            
+        WM_SETICON = 0x0080
+        GA_ROOT = 2
+        EXTRACT_FAIL = 0xFFFFFFFF
+            
+        self.root.update_idletasks()
+        
+        base = ctypes.wintypes.HWND(int(str(self.root.winfo_id()), 0))
+        if not (hwnd := user32.GetAncestor(base, GA_ROOT) or base):
+            return
+
+        large, small = HICON(), HICON()
+
+        n = shell32.ExtractIconExW(
+            sys.executable,
+            icon_index,
+            ctypes.byref(large),
+            ctypes.byref(small),
+            1,
+        )
+
+        if not n or n == EXTRACT_FAIL:
+            return
+
+        # Если доступен только один размер, использовать его для обоих.
+        large.value, small.value = (
+            large.value or small.value,
+            small.value or large.value,
+        )
+
+        if not (large.value or small.value):
+            return
+
+        new = tuple(dict.fromkeys(filter(None, (large.value, small.value))))
+
+        for wparam, h in zip(
+            (1, 0),  # ICON_BIG, ICON_SMALL
+            (large.value, small.value),
+            strict=False,
+        ):
+            if h:
+                user32.SendMessageW(hwnd, WM_SETICON, wparam, h)
+
+        # Старые иконки уничтожаются только после установки новых.
+        for h in set(self._icons) - set(new):
+            user32.DestroyIcon(h)
+
+        self._icons = new
+
+    def _free_icons(self, event: tk.Event) -> None:
+        if sys.platform == "win32" and event.widget is self.root:
+            for h in self._icons:
+                user32.DestroyIcon(h)
+            self._icons = ()
+
+
+if sys.platform == "win32":
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+
+    LRESULT = getattr(ctypes.wintypes, "LRESULT", ctypes.c_ssize_t)
+    HRESULT = getattr(ctypes.wintypes, "HRESULT", ctypes.c_long)
+    HICON = getattr(ctypes.wintypes, "HICON", ctypes.c_void_p)
+
+    shell32.ExtractIconExW.argtypes = (
+        ctypes.wintypes.LPCWSTR,
+        ctypes.c_int,
+        ctypes.POINTER(HICON),
+        ctypes.POINTER(HICON),
+        ctypes.c_uint,
+    )
+    shell32.ExtractIconExW.restype = ctypes.c_uint
+
+    shell32.SetCurrentProcessExplicitAppUserModelID.argtypes = (
+        ctypes.wintypes.LPCWSTR,
+    )
+    shell32.SetCurrentProcessExplicitAppUserModelID.restype = HRESULT
+
+    user32.SendMessageW.argtypes = (
+        ctypes.wintypes.HWND,
+        ctypes.wintypes.UINT,
+        ctypes.wintypes.WPARAM,
+        ctypes.wintypes.LPARAM,
+    )
+    user32.SendMessageW.restype = LRESULT
+
+    user32.GetAncestor.argtypes = (
+        ctypes.wintypes.HWND,
+        ctypes.c_uint,
+    )
+    user32.GetAncestor.restype = ctypes.wintypes.HWND
+
+    user32.DestroyIcon.argtypes = (HICON,)
+    user32.DestroyIcon.restype = ctypes.wintypes.BOOL
 
 
 def main(argv: list[str] | None = None) -> None:

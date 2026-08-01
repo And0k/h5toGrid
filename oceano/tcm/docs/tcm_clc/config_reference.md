@@ -11,7 +11,7 @@ Every run YAML starts with `# @package _global_` so Hydra merges it into the top
 | Field | Type | Default | Required | Purpose |
 |-------|------|---------|----------|---------|
 | `path` | `str` | — | **Yes** | File path, glob, or regex pattern (CLI input). Interpreted as glob or regex automatically (see [Pattern interpretation](#pattern-interpretation)). **Inside per‑probe YAMLs** this field always stores the **resolved absolute path** to the concrete data file — never the user's glob/regex. When the CLI value is not a directory, it acts as a **filter**: only YAMLs whose stored resolved `input.path` filename matches the CLI pattern are processed. Re‑running with a different CLI pattern limits processing to YAMLs whose resolved paths match. |
-| `tables` | `List[str]` | `['incl.*']` | No | HDF5 table names (regex allowed). For CSV, set to the raw table name derived from pcid. |
+| `tables` | `List[str]` | `['incl*']` | No | HDF5 table names (regex allowed). For CSV, set to the raw table name derived from pcid. |
 | `ids` | `List[str]` | `None` | No | Restrict processing to specific probe IDs (e.g. `[i01, i_p02]`). |
 | `yaml_path` | `str` | `None` | No | **Filter + skip-generation**: glob/regex pattern matched against run YAML stems in `cfg_proc/run/`. Accepts both bare stems (`@i_01`) and full filenames (`@i_01.yaml`). When set (any non‑`None` value), **config generation is skipped entirely** — only existing YAMLs matching the pattern are processed. `"*"` matches all. See [Config filtering](#config-filtering). |
 | `prefix` | `str` | `'I*[_0]'` | No | Filename prefix for CSV discovery. |

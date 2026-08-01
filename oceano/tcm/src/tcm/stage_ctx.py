@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import re
 
 # ── Context variables (task-local, thread-safe) ─────────────────────────
 _cv_probe_id = contextvars.ContextVar("probe_id", default="")
@@ -136,3 +137,37 @@ class StageContextFilter(logging.Filter):
 def _is_message(msg: object) -> bool:
     """True if *msg* is a :class:`tcm.utils2init.Message` instance."""
     return hasattr(msg, "fmt") and hasattr(msg, "args") and not isinstance(msg, str)
+
+
+# ── Plain-text formatter for file handlers ─────────────────────────────
+
+# ANSI/SGR escape sequence: ESC '[' params 'm' — matches colour, bold, italic…
+_ANSI_RE = re.compile("\033\\[[0-9;]*m")
+
+
+class AnsiStrippedFormatter(logging.Formatter):
+    """``logging.Formatter`` whose exception text is free of ANSI colour codes.
+
+    ``colorlog.ColoredFormatter`` (the *console* handler) colours the traceback
+    on Python ≥ 3.13 via ``traceback.print_exception(colorize=True)`` — its
+    ``_colorize()`` returns ``True`` because Hydra instantiates the formatter
+    without a ``stream``, so the tty guard is bypassed.  ``logging`` then caches
+    that *coloured* traceback on ``record.exc_text`` and every later handler
+    reuses the cache, so the plain ``file`` handler would inherit the raw
+    ``\033[35m`` escapes into ``processing.log``.
+
+    Stripping here — not in the colour formatter — keeps the console output
+    coloured and guarantees a clean file regardless of handler order.
+    """
+
+    def formatException(self, exc_info) -> str:  # noqa: D401
+        return _ANSI_RE.sub("", super().formatException(exc_info))
+
+    def format(self, record: logging.LogRecord) -> str:
+        # On ≥3.11 ``Formatter.format()`` short-circuits to the cached
+        # ``record.exc_text`` (set by the colour console handler) before
+        # reaching ``formatException()``, so the cache must be stripped here
+        # too — else a coloured exc_text passes straight through to the file.
+        if record.exc_text:
+            record.exc_text = _ANSI_RE.sub("", record.exc_text)
+        return super().format(record)

@@ -302,7 +302,7 @@ def save_netcdf(
     ds: xr.Dataset,
     path: Union[str, Path],
     *,
-    engine: str = "netcdf4",
+    engine: str = _constants.nc_engine,
 ) -> Path:
     """
     Persist a Dataset to netCDF.
@@ -334,7 +334,7 @@ def open_netcdf(
     path: Union[str, Path],
     *,
     chunk_time: Optional[int] = None,
-    engine: str = "netcdf4",
+    engine: str = _constants.nc_engine,
 ) -> xr.Dataset:
     """
     Open a netCDF file as a (possibly chunked) Dataset.

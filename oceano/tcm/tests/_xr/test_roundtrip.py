@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 import xarray as xr
 
+from tcm import _constants
 from tcm._xr.storage import store_processed, _write_dataset_to_nc_group
 
 
@@ -42,7 +43,7 @@ class TestH5pyWriterRoundtrip:
         nc_path = tmp_path / "test.nc"
         _write_dataset_to_nc_group(ds, nc_path, "tbl")
 
-        with xr.open_dataset(nc_path, group="tbl", engine="netcdf4") as ds2:
+        with xr.open_dataset(nc_path, group="tbl", engine=_constants.nc_engine) as ds2:
             np.testing.assert_array_equal(
                 ds2.time.values, ds.time.values,
                 err_msg="Time values differ after h5py roundtrip",
@@ -62,7 +63,7 @@ class TestH5pyWriterRoundtrip:
         nc_path = tmp_path / "test.nc"
         _write_dataset_to_nc_group(ds, nc_path, "tbl")
 
-        with xr.open_dataset(nc_path, group="tbl", engine="netcdf4") as ds2:
+        with xr.open_dataset(nc_path, group="tbl", engine=_constants.nc_engine) as ds2:
             diffs = np.diff(ds2.time.values.astype(np.int64))
             expected_ns = 100_000_000  # 100ms in nanoseconds
             np.testing.assert_array_equal(
@@ -78,9 +79,9 @@ class TestH5pyWriterRoundtrip:
         _write_dataset_to_nc_group(ds1, nc_path, "g1")
         _write_dataset_to_nc_group(ds2, nc_path, "g2")
 
-        with xr.open_dataset(nc_path, group="g1", engine="netcdf4") as r1:
+        with xr.open_dataset(nc_path, group="g1", engine=_constants.nc_engine) as r1:
             assert r1.sizes["time"] == 10
-        with xr.open_dataset(nc_path, group="g2", engine="netcdf4") as r2:
+        with xr.open_dataset(nc_path, group="g2", engine=_constants.nc_engine) as r2:
             assert r2.sizes["time"] == 20
 
     def test_overwrite_existing_group(self, tmp_path):
@@ -91,7 +92,7 @@ class TestH5pyWriterRoundtrip:
         _write_dataset_to_nc_group(ds1, nc_path, "tbl")
         _write_dataset_to_nc_group(ds2, nc_path, "tbl")
 
-        with xr.open_dataset(nc_path, group="tbl", engine="netcdf4") as r:
+        with xr.open_dataset(nc_path, group="tbl", engine=_constants.nc_engine) as r:
             assert r.sizes["time"] == 30
 
 
@@ -110,7 +111,7 @@ class TestStoreProcessedRoundtrip:
         nc_path = tmp_path / "test.nc"
         store_processed(ds, nc_path, group="i01", mode="a")
 
-        with xr.open_dataset(nc_path, group="i01", engine="netcdf4") as ds2:
+        with xr.open_dataset(nc_path, group="i01", engine=_constants.nc_engine) as ds2:
             np.testing.assert_array_equal(
                 ds2.time.values, ds.time.values,
                 err_msg="Time values differ after store_processed roundtrip",
@@ -122,7 +123,7 @@ class TestStoreProcessedRoundtrip:
         nc_path = tmp_path / "test.nc"
         store_processed(ds, nc_path, group="i01", mode="a")
 
-        with xr.open_dataset(nc_path, group="i01", engine="netcdf4") as ds2:
+        with xr.open_dataset(nc_path, group="i01", engine=_constants.nc_engine) as ds2:
             diffs = np.diff(ds2.time.values.astype(np.int64))
             expected_ns = 100_000_000
             np.testing.assert_array_equal(
@@ -139,9 +140,9 @@ class TestStoreProcessedRoundtrip:
         store_processed(ds1, nc_path, group="i01", mode="a")
         store_processed(ds2, nc_path, group="i02", mode="a")
 
-        with xr.open_dataset(nc_path, group="i01", engine="netcdf4") as r1:
+        with xr.open_dataset(nc_path, group="i01", engine=_constants.nc_engine) as r1:
             assert r1.sizes["time"] == 10
             np.testing.assert_array_equal(r1.time.values, ds1.time.values)
-        with xr.open_dataset(nc_path, group="i02", engine="netcdf4") as r2:
+        with xr.open_dataset(nc_path, group="i02", engine=_constants.nc_engine) as r2:
             assert r2.sizes["time"] == 20
             np.testing.assert_array_equal(r2.time.values, ds2.time.values)

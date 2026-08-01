@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# coding:utf-8
 """
   Plotting
 
@@ -7,12 +6,14 @@
 
 """
 import logging
-from time import sleep
-from typing import Any, List, Callable, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
-
-import numpy as np
-import msgpack
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import PurePath
+from time import sleep
+from typing import Any
+
+import msgpack
+import numpy as np
+
 # from graphics import plot_prepare_input, move_figure, make_figure, interactive_deleter
 
 backup_user_input_dir: PurePath = None
@@ -86,7 +87,7 @@ class MutableTuple(Sequence):
 #
 #     ))
 class Plt_select(MutableTuple):
-    __slots__ = 'x_range_arr', 'x_range', 'y_range_arr', 'finish', 'reset'
+    __slots__ = 'finish', 'reset', 'x_range', 'x_range_arr', 'y_range_arr'
 
 
 plt_select = Plt_select(
@@ -99,9 +100,9 @@ plt_select = Plt_select(
 
 
 def plot_prepare_input(ax,
-                       callback: Optional[Callable[[Any, Any], None]] = None,
+                       callback: Callable[[Any, Any], None] | None = None,
                        mask: np.ndarray = None,
-                       x: Optional[np.ndarray] = None,
+                       x: np.ndarray | None = None,
                        ys: Sequence[np.ndarray] = None,
                        lines: Sequence[Any] = None):
     """
@@ -161,7 +162,7 @@ def plot_prepare_input(ax,
             #     lines[i].set_ydata(data)
             #
             # ax.figure.canvas.draw()
-            
+
         if event.key in ['A', 'a'] and not toggle_selector.RS.active:
             print(' RectangleSelector activated.')
             toggle_selector.RS.set_active(True)
@@ -190,7 +191,7 @@ def plot_prepare_input(ax,
             :return:
             """
             ranges_select_callback(eclick, erelease)
-            
+
             sl = slice(*(selected_st_en()))
             print(selected_st_en())
             if plt_select.reset:
@@ -230,16 +231,16 @@ def move_figure(f, x, y):
         f.canvas.manager.window.move(x, y)
 
 
-def make_figure(x: Optional[Sequence] = None,
-                y_kwrgs: Tuple[Mapping[str, Any], ...] = ({'': []},),
-                mask_kwrgs: Optional[Mapping[str, Any]] = None,
-                ax: Optional[matplotlib.axes.Axes] = None,
-                ax_title: Optional[str] = None, ax_invert=False,
-                lines: Union[List[matplotlib.lines.Line2D], str, None] = None,
+def make_figure(x: Sequence | None = None,
+                y_kwrgs: tuple[Mapping[str, Any], ...] = ({'': []},),
+                mask_kwrgs: Mapping[str, Any] | None = None,
+                ax: matplotlib.axes.Axes | None = None,
+                ax_title: str | None = None, ax_invert=False,
+                lines: list[matplotlib.lines.Line2D] | str | None = None,
                 position=None,
                 clear=None,
-                window_title: Optional[str] = None
-                ) -> Tuple[matplotlib.axes.Axes, matplotlib.lines.Line2D]:
+                window_title: str | None = None
+                ) -> tuple[matplotlib.axes.Axes, matplotlib.lines.Line2D]:
     """
     Clear or create new axis with lines
 
@@ -314,17 +315,17 @@ def make_figure(x: Optional[Sequence] = None,
         ax.legend(prop={'size': 10}, loc='upper right')
         if position is not None:
             move_figure(ax.figure, *position)
-    except Exception as e:
+    except Exception:
         l.exception('make_figure error')
         return ax, lines
     return ax, lines
 
 
-def interactive_deleter(x: Optional[Sequence] = None,
-                        y_kwrgs: Tuple[Mapping[str, Any], ...] = ({'': []},),
-                        mask_kwrgs: Optional[Mapping[str, Any]] = None,
-                        ax: Optional[matplotlib.axes.Axes] = None,
-                        stop: Union[str, bool, None] = True,
+def interactive_deleter(x: Sequence | None = None,
+                        y_kwrgs: tuple[Mapping[str, Any], ...] = ({'': []},),
+                        mask_kwrgs: Mapping[str, Any] | None = None,
+                        ax: matplotlib.axes.Axes | None = None,
+                        stop: str | bool | None = True,
                         **kwargs) -> np.ndarray:
     """
     Modifies mask graphically.

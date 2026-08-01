@@ -1,6 +1,7 @@
 """Tests for _xr/storage.py — netCDF persistence, groups, and incremental skip."""
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import h5py
@@ -9,6 +10,7 @@ import pandas as pd
 import pytest
 import xarray as xr
 
+from tcm import _constants
 from tcm._xr.storage import (
     _strip_tz_datetime,
     incremental_skip,
@@ -148,7 +150,7 @@ class TestStoreProcessedH5pyFallback:
 
         Regression: h5py resize stripped DIMENSION_LIST metadata that netCDF4
         requires, causing ``AttributeError: 'NoneType' has no attribute
-        'dimensions'`` on the next ``xr.open_dataset(engine='netcdf4')``.
+        'dimensions'`` on the next ``xr.open_dataset(engine=_constants.nc_engine)``.
         """
         from tcm._xr.storage import _h5py_extend_group, _dt_ns_to_cf
 
@@ -203,8 +205,11 @@ class TestEnsureDimScales:
         pytest.importorskip("dask")
         path = tmp_path / "proc.nc"
         store_processed(_sample_ds(100), path)
-        with xr.open_dataset(path, chunks=10) as loaded:
-            assert loaded.chunks is not None
+        # Chunk size 10 ≠ stored chunk along time; suppress xarray performance warning
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="The specified chunks separate", category=UserWarning)
+            with xr.open_dataset(path, chunks=10) as loaded:
+                assert loaded.chunks is not None
 
 
 @pytest.mark.xr
@@ -237,8 +242,8 @@ class TestStoreProcessedGrouped:
         path = tmp_path / "proc.nc"
         store_processed(_sample_ds(10), path, group="i_01", mode="w")
         store_processed(_sample_ds(20), path, group="i_02", mode="a")
-        with xr.open_dataset(path, group="i_01", engine="netcdf4") as g1, \
-             xr.open_dataset(path, group="i_02", engine="netcdf4") as g2:
+        with xr.open_dataset(path, group="i_01", engine=_constants.nc_engine) as g1, \
+             xr.open_dataset(path, group="i_02", engine=_constants.nc_engine) as g2:
             assert set(g1.data_vars) == {"Ax", "Ay"}
             assert g1.sizes["time"] == 10
             assert g2.sizes["time"] == 20
@@ -263,7 +268,7 @@ class TestOpenProcessedGrouped:
     def test_returns_empty_for_no_groups(self, tmp_path):
         """File with only root variables → empty dict."""
         path = tmp_path / "proc.nc"
-        _sample_ds().to_netcdf(path, engine="netcdf4")
+        _sample_ds().to_netcdf(path, engine=_constants.nc_engine)
         assert open_processed_grouped(path) == {}
 
 
@@ -402,8 +407,8 @@ class TestDiscoverTables:
         """Finds groups matching pattern in NC file."""
         nc_path = tmp_path / "test.nc"
         ds = _sample_ds()
-        ds.to_netcdf(nc_path, group="incl_01", engine="netcdf4")
-        ds.to_netcdf(nc_path, group="incl_02", engine="netcdf4", mode="a")
+        ds.to_netcdf(nc_path, group="incl_01", engine=_constants.nc_engine)
+        ds.to_netcdf(nc_path, group="incl_02", engine=_constants.nc_engine, mode="a")
         assert set(_discover_tables(nc_path, pattern)) == expected
 
     @pytest.mark.parametrize(
@@ -503,7 +508,7 @@ class TestStoreWithTzAwareDatetime:
         assert path_root.exists() and path_grp.exists()
         with xr.open_dataset(path_root) as loaded:
             np.testing.assert_array_equal(loaded["Ax"].values, ds_root["Ax"].values)
-        with xr.open_dataset(path_grp, group="i_01", engine="netcdf4") as loaded:
+        with xr.open_dataset(path_grp, group="i_01", engine=_constants.nc_engine) as loaded:
             np.testing.assert_array_equal(loaded["Ax"].values, ds_grp["Ax"].values)
 
     def test_roundtrip_tz_utc_preserves_data(self, tmp_path):

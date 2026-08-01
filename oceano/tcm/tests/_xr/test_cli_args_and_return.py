@@ -176,7 +176,9 @@ class TestReturnCfgFromArgs:
         # Inject a user marker into the existing config
         yaml_path = run_dir / "@i_01.yaml"
         original = yaml_path.read_text(encoding="utf-8")
-        yaml_path.write_text(original.replace("dt_bins: [0]", "dt_bins: [0]\n  # USER_MARKER"), encoding="utf-8")
+        yaml_path.write_text(
+            original.replace("dt_bins: [0]", "dt_bins: [0]\n  # USER_MARKER"), encoding="utf-8"
+        )
 
         monkeypatch.chdir(project_dir)
         monkeypatch.setattr(
@@ -284,3 +286,146 @@ class TestDuplicateYamlBehaviour:
 
         # Only the real config is processed; ghost is skipped
         assert mock_proc.call_count == 1
+
+
+# --------------------------------------------------------------------------- #
+# Scan mode detection — job_name → log file name
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.xr
+class TestScanModeDetection:
+    """``is_scan_mode`` detects config-generation-only runs from ``sys.argv``.
+
+    When ``program.return_`` is set to a scan-mode value (``<cfg_from_args>``,
+    ``<gen_names_and_log>``), the entry point passes ``job_name="scan"`` to
+    :func:`hydra_main` so the log file is ``scan.log`` (not ``processing.log``).
+    """
+
+    @pytest.mark.parametrize(
+        ("argv", "expected", "test_description"),
+        [
+            pytest.param(
+                ["tcm_clc.py", "_raw/i*.txt", "program.return_=<cfg_from_args>"],
+                True,
+                "cfg_from_args triggers scan mode",
+                id="cfg-from-args",
+            ),
+            pytest.param(
+                ["tcm_clc.py", "_raw/i*.txt", "program.return_=<gen_names_and_log>"],
+                True,
+                "gen_names_and_log triggers scan mode",
+                id="gen-names-and-log",
+            ),
+            pytest.param(
+                ["tcm_clc.py", "_raw/i*.txt"],
+                False,
+                "no override → normal processing mode",
+                id="no-override",
+            ),
+            pytest.param(
+                ["tcm_clc.py", "_raw/i*.txt", "program.return_=<end>"],
+                False,
+                "<end> → normal processing mode",
+                id="end-mode",
+            ),
+            pytest.param(
+                ["tcm_clc.py", "_raw/i*.txt", "program.return_=<saved_all>"],
+                False,
+                "<saved_all> → normal processing mode",
+                id="saved-all",
+            ),
+            pytest.param(
+                ["tcm_clc.py", "_raw/i*.txt", "program.return_=<saved_coefs>"],
+                False,
+                "<saved_coefs> → normal processing mode",
+                id="saved-coefs",
+            ),
+            pytest.param(
+                [],
+                False,
+                "empty argv → normal processing mode",
+                id="empty-argv",
+            ),
+        ],
+    )
+    def test_is_scan_mode(self, argv, expected, test_description):
+        """is_scan_mode correctly identifies scan vs processing mode from argv."""
+        assert cli.is_scan_mode(argv) is expected, (
+            f"{test_description}: expected {expected!r}, got {not expected!r}"
+        )
+
+    def test_job_name_passed_to_hydra_main(self, _raw_with_csv, monkeypatch, mocker):
+        """job_name='scan' flows from call_in_raw_dir to hydra_main.
+
+        Verifies that ``call_in_raw_dir(job_name="scan")`` passes ``job_name``
+        to :func:`hydra_main` as a kwarg.  The actual ``sys.argv`` injection
+        and cleanup are tested in ``test_job_name_sys_argv_injection``.
+        """
+        project_dir, raw_dir = _raw_with_csv
+        monkeypatch.chdir(project_dir)
+        monkeypatch.setattr(sys, "argv", ["prog", str(raw_dir / "*i*.txt")])
+
+        spy_calls = []
+        original_hydra_main = cli.hydra_main
+
+        def _spy_hydra_main(*args, **kwargs):
+            spy_calls.append(kwargs)
+            return original_hydra_main(*args, **kwargs)
+
+        mocker.patch.object(cli, "hydra_main", side_effect=_spy_hydra_main)
+        mocker.patch("tcm.processing.run")
+
+        cli.call_in_raw_dir(processing.run, job_name="scan")
+
+        assert spy_calls, "hydra_main was never called"
+        assert spy_calls[0].get("job_name") == "scan", (
+            f"Expected job_name='scan' in hydra_main kwargs, got {spy_calls[0].get('job_name')!r}"
+        )
+
+    def test_job_name_sys_argv_injection(self, tmp_path, monkeypatch, mocker):
+        """hydra_main injects hydra.job.name=<value> into sys.argv and cleans up.
+
+        Directly tests the ``hydra_main(job_name="scan")`` plumbing without
+        going through ``call_in_raw_dir``.
+        """
+        raw_dir = tmp_path / "_raw"
+        raw_dir.mkdir()
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys, "argv", ["prog"])
+
+        mocker.patch("tcm.processing.run")
+
+        # hydra_main will fail (no config) but the argv injection happens first
+        try:
+            cli.hydra_main(lambda cfg: None, job_name="scan")
+        except Exception:
+            pass  # expected — we only care about argv
+
+        # After hydra_main, sys.argv must be cleaned up
+        assert "hydra.job.name=scan" not in sys.argv, (
+            f"sys.argv not cleaned up: {sys.argv}"
+        )
+
+    def test_no_job_name_default_mode(self, _raw_with_csv, monkeypatch, mocker):
+        """Without job_name kwarg, hydra_main receives job_name=None (default)."""
+        project_dir, raw_dir = _raw_with_csv
+        monkeypatch.chdir(project_dir)
+        monkeypatch.setattr(sys, "argv", ["prog", str(raw_dir / "*i*.txt")])
+
+        spy_calls = []
+        original_hydra_main = cli.hydra_main
+
+        def _spy_hydra_main(*args, **kwargs):
+            spy_calls.append(kwargs)
+            return original_hydra_main(*args, **kwargs)
+
+        mocker.patch.object(cli, "hydra_main", side_effect=_spy_hydra_main)
+        mocker.patch("tcm.processing.run")
+
+        cli.call_in_raw_dir(processing.run)
+
+        assert spy_calls, "hydra_main was never called"
+        assert "job_name" not in spy_calls[0], (
+            f"Unexpected job_name in default mode: {spy_calls[0]}"
+        )

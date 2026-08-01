@@ -7,16 +7,16 @@ velocity, inclination, direction, and pressure outputs.
 
 ```bash
 # Process all probes in a data directory (_raw is just an recommended name — use any path)
-python -m scripts.tcm_clc "D:/data/experiment/_raw"
+python scripts/tcm_clc.py "D:/data/experiment/_raw"
 
 # Process specific probes only from any txt files that contains `i`
-python -m scripts.tcm_clc "_raw/*i*.txt" input.ids=[i01,i_p02]
+python scripts/tcm_clc.py "_raw/*i*.txt" 'input.ids=[i01,i_p02]'
 
 # Override any other field described in the config_reference.md, for example:
-python -m scripts.tcm_clc "_raw/*i*.txt" filter.corr_time_mode=false out.text_path=./results
+python scripts/tcm_clc.py "_raw/*i*.txt" filter.corr_time_mode=false out.text_path=./results
 
 # List overrides — wrap in single quotes to protect brackets from the shell:
-python -m scripts.tcm_clc "_raw" \
+python scripts/tcm_clc.py "_raw" \
   'input.time_ranges=["2024-01-01T00:00:00","2024-01-02T00:00:00"]'
 
 ```
@@ -35,7 +35,19 @@ The name `_raw` is just a convention — your data can live anywhere.
 > **must** be quoted — these characters are shell metacharacters and will break
 > the command or silently alter the pattern otherwise.  Glob patterns with
 > commas are auto-reassembled, but shell metacharacters cannot be recovered.
-> Example: ``python -m scripts.tcm_clc "(i|v)_chain.txt"``
+> Example: ``python scripts/tcm_clc.py "(i|v)_chain.txt"``
+
+**Hydra CLI flags** (``--help``, ``--cfg``, ``--info``, ``--hydra-help``,
+``--version``, ``--shell-completion``) work **without** a data path — no
+``_raw/`` directory is needed.  These flags cause Hydra to print information
+and exit before the processing pipeline starts.  For example:
+
+```bash
+tcm_clc_txt --help           # all config fields and overrides
+tcm_clc_txt --cfg job        # show the composed config without running
+tcm_clc_txt --info           # Hydra internals (plugins, search path, defaults)
+tcm_clc_txt --hydra-help     # Hydra-specific flags only
+```
 
 ### Common workflows
 
@@ -47,11 +59,11 @@ then re-run:
 
 ```bash
 # Phase 1: generate configs (auto-detected from data)
-python -m scripts.tcm_clc "_raw/i*.txt"
+python scripts/tcm_clc.py "_raw/i*.txt"
 
 # Edit cfg_proc/run/@i_01.yaml — replace default coefs with actual values
 # Then re-run to process:
-python -m scripts.tcm_clc "_raw/i*.txt"
+python scripts/tcm_clc.py "_raw/i*.txt"
 ```
 
 **Re-process with tweaked coefficients**: edit the probe's YAML, re-run.
@@ -172,7 +184,7 @@ subsequent runs — only missing configs are created, and stale ones (whose
   If so, no new YAML is created.  This prevents duplicates when the same probe
   has differently-formatted filenames (e.g. `i_090` vs `i90`).
 - **Generating only configs** (no processing):
-  `python -m scripts.tcm_clc "_raw/i*.txt" 'program.return_="<cfg_from_args>"'`.
+  `python scripts/tcm_clc.py "_raw/i*.txt" 'program.return_="<cfg_from_args>"'`.
 
 Hand-editable:
 
@@ -270,12 +282,12 @@ Coefs saved to ...//incl01: 12 datasets (2 overwritten)
 
 ```bash
 # From text CSV — generates config, computes Rz, proceeds with processing
-python -m scripts.tcm_clc "_raw/*i*.txt" \
+python scripts/tcm_clc.py "_raw/*i*.txt" \
   'input.time_ranges_zeroing=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
   'input.time_ranges=["2026-06-25T17:23:30","2026-06-25T17:25:00"]'
 
 # From binary NC — specify tables
-python -m scripts.tcm_clc "260624.raw.nc" \
+python scripts/tcm_clc.py "260624.raw.nc" \
   'input.tables=["incl_p05"]' \
   'input.time_ranges_zeroing=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
   'input.time_ranges=["2026-06-25T17:23:30","2026-06-25T17:25:00"]'
@@ -377,19 +389,19 @@ Useful for debugging, discovery, or coef-only updates:
 
 **Discover-only** (generate configs, don't process):
 ```bash
-python -m scripts.tcm_clc "_raw/i*.txt" 'program.return_="<cfg_from_args>"'
+python scripts/tcm_clc.py "_raw/i*.txt" 'program.return_="<cfg_from_args>"'
 ```
 
 **Zeroing-only** (compute Rz, persist coefs, stop — no data processing):
 ```bash
 # Text CSV source — coefs saved to YAML (with backup) + raw NC if available
-python -m scripts.tcm_clc "_raw/*i*.txt" \
+python scripts/tcm_clc.py "_raw/*i*.txt" \
   'input.time_ranges_zeroing=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
   'input.time_ranges=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
   'program.return_="<saved_coefs>"'
 
 # Binary NC source
-python -m scripts.tcm_clc "260624.raw.nc" \
+python scripts/tcm_clc.py "260624.raw.nc" \
   'input.tables=["incl_p05"]' \
   'input.time_ranges_zeroing=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
   'input.time_ranges=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
@@ -409,7 +421,7 @@ input time range (incremental update). Pass `+force_reprocess=True` to override
 this containment check:
 
 ```bash
-python -m scripts.tcm_clc "_raw/i*.txt" +force_reprocess=True
+python scripts/tcm_clc.py "_raw/i*.txt" +force_reprocess=True
 ```
 
 `force_reprocess` affects **processed** NC writes only (`*.proc_noAvg.nc`,
@@ -486,7 +498,7 @@ Only `nkl`/`ncl` (instrument model name) and `_` (separator) are consumed and ig
 pcid/table the pipeline assigns without processing:
 
 ```bash
-python -m scripts.tcm_clc "_raw/i*.txt" 'program.return_="<cfg_from_args>"'
+python scripts/tcm_clc.py "_raw/i*.txt" 'program.return_="<cfg_from_args>"'
 ```
 
 The log shows: `Coefs for i_p05: paths=[...], date=2023-08-13` — confirming
@@ -550,6 +562,8 @@ Below are the most important ones to watch for.
 | `Done — N probes: i90 ok | 1 failed (i67)` | Some probes failed — check errors above |
 
 Log file location: `cfg_proc/log/{timestamp}/processing.log` (inside the data directory).
+The filename derives from ``hydra.job.name`` = ``"processing"`` (resolved via Hydra's
+``@wraps`` unwrap of the task function; see ``cli.hydra_main`` docstring).
 Full log includes DEBUG-level detail (per-stem checks, snap RMS, segment counts, etc.).
 
 ## Related Documentation

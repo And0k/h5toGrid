@@ -89,7 +89,7 @@ def run_calibration(
         ``{table: {channel: {"A": gain, "b": bias}}}`` — computed
         coefficients for all successfully calibrated tables.
     """
-    cfg = cli.main_init(cfg, program_name="Calibration")
+    cfg = cli.main_init(cfg)
 
     # ── PipelineConfig + freeform +overrides from resolved dict ─────────
     proc = cfg.get("proc") or {}

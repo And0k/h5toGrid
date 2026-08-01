@@ -15,7 +15,7 @@ import pytest
 import xarray as xr
 from omegaconf import DictConfig
 
-from tcm._constants import RAW_DIR_NAME
+from tcm import _constants
 from tcm._xr import io as xr_io
 from tcm.config import Return
 from tcm.processing import run_processing
@@ -43,7 +43,7 @@ def real_env(tmp_path):
         pytest.skip(f"Real data file not found: {_REAL_FILE}")
 
     proc_dir = tmp_path / "260604_test_format"
-    raw_dir = proc_dir / RAW_DIR_NAME
+    raw_dir = proc_dir / _constants.RAW_DIR_NAME
     raw_dir.mkdir(parents=True)
     csv_file = raw_dir / _REAL_FILE.name
     shutil.copy2(_REAL_FILE, csv_file)
@@ -102,7 +102,7 @@ class TestE2ERealCSV:
             f"proc_noAvg.nc not created; dir: {list(real_env['proc_dir'].iterdir())}"
         )
 
-        with xr.open_dataset(noavg, group="i_p01", engine="netcdf4") as ds:
+        with xr.open_dataset(noavg, group="i_p01", engine=_constants.nc_engine) as ds:
             assert hasattr(ds.time.dtype, "kind") and ds.time.dtype.kind == "M", (
                 f"proc_noAvg.nc time must be datetime64, got {ds.time.dtype}; "
                 f"time[:5]={ds.time.values[:5]}"
@@ -145,7 +145,7 @@ class TestE2ERealCSV:
         noavg = real_env["noavg_path"]
         assert noavg.exists(), "proc_noAvg.nc not created"
 
-        with xr.open_dataset(noavg, group="i_p01", engine="netcdf4") as ds:
+        with xr.open_dataset(noavg, group="i_p01", engine=_constants.nc_engine) as ds:
             diffs_ns = np.diff(ds.time.values.astype(np.int64))
             median_ms = np.median(diffs_ns) / 1e6
             assert median_ms < 500, (

@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from tcm import _constants
 from tcm._xr.storage import (
     _read_nc_group_as_dataset,
     _read_nc_group_h5py,
@@ -247,7 +248,7 @@ class TestNcIncrementalAppend:
         ds = _make_ds(50)
         nc_path = tmp_path / "test.raw.nc"
         append_to_nc(ds, nc_path, "incl_01")
-        with xr.open_dataset(nc_path, group="incl_01", engine="netcdf4") as result:
+        with xr.open_dataset(nc_path, group="incl_01", engine=_constants.nc_engine) as result:
             assert result.sizes["time"] == 50
 
     def test_append_after_fast_path(self, tmp_path):
@@ -271,7 +272,7 @@ class TestNcIncrementalAppend:
         # Sub-range of existing data — should skip
         ds_sub = ds.isel(time=slice(5, 45))
         append_to_nc(ds_sub, nc_path, "incl_01")
-        with xr.open_dataset(nc_path, group="incl_01", engine="netcdf4") as result:
+        with xr.open_dataset(nc_path, group="incl_01", engine=_constants.nc_engine) as result:
             assert result.sizes["time"] == 50
 
     def test_append_overlap_tail_trims_and_appends(self, tmp_path):
@@ -343,7 +344,7 @@ class TestNcIncrementalAppend:
         )
         nc_path = tmp_path / "test_tz.raw.nc"
         append_to_nc(ds_tz, nc_path, "incl_01")
-        with xr.open_dataset(nc_path, group="incl_01", engine="netcdf4") as ds:
+        with xr.open_dataset(nc_path, group="incl_01", engine=_constants.nc_engine) as ds:
             assert ds.sizes["time"] == 10
 
     def test_never_re_sorts(self, tmp_path):
@@ -474,7 +475,7 @@ class TestNcIncrementalAppend:
         nc_incremental_update(ds1, nc_path, "incl_A", meta1)
 
         # Open the file with xarray (simulates load_raw keeping a handle)
-        with xr.open_dataset(nc_path, group="incl_A", engine="netcdf4"):
+        with xr.open_dataset(nc_path, group="incl_A", engine=_constants.nc_engine):
             ds2 = _make_ds(30, start="2024-02-01")
             meta2 = {"fileName": "probeB.txt", "fileChangeTime": np.datetime64("2024-02-01", "ns")}
             with pytest.raises(OSError, match="already open"):
@@ -503,7 +504,7 @@ class TestStoreProcessedIncremental:
         result = store_processed_incremental(ds, path, group="i_p01")
         assert result == path
         # Verify only one group's worth of data
-        with xr.open_dataset(path, group="i_p01", engine="netcdf4") as existing:
+        with xr.open_dataset(path, group="i_p01", engine=_constants.nc_engine) as existing:
             assert existing.sizes["time"] == 50
 
     def test_write_when_new_group(self, tmp_path):
@@ -511,7 +512,7 @@ class TestStoreProcessedIncremental:
         ds = _make_ds(30)
         path = tmp_path / "test.proc.nc"
         store_processed_incremental(ds, path, group="i_p01")
-        with xr.open_dataset(path, group="i_p01", engine="netcdf4") as existing:
+        with xr.open_dataset(path, group="i_p01", engine=_constants.nc_engine) as existing:
             assert existing.sizes["time"] == 30
 
     def test_write_when_data_extends(self, tmp_path):
@@ -521,7 +522,7 @@ class TestStoreProcessedIncremental:
         path = tmp_path / "test.proc.nc"
         store_processed_incremental(ds1, path, group="i_p01")
         store_processed_incremental(ds2, path, group="i_p01", mode="w")
-        with xr.open_dataset(path, group="i_p01", engine="netcdf4") as existing:
+        with xr.open_dataset(path, group="i_p01", engine=_constants.nc_engine) as existing:
             assert existing.sizes["time"] == 50
 
     def test_handles_int64_time_from_legacy_write(self, tmp_path):
@@ -541,9 +542,9 @@ class TestStoreProcessedIncremental:
         path = tmp_path / "test.proc.nc"
         store_processed_incremental(ds1, path, group="i_p01")
         store_processed_incremental(ds2, path, group="i_p02")
-        with xr.open_dataset(path, group="i_p01", engine="netcdf4") as r1:
+        with xr.open_dataset(path, group="i_p01", engine=_constants.nc_engine) as r1:
             assert r1.sizes["time"] == 30
-        with xr.open_dataset(path, group="i_p02", engine="netcdf4") as r2:
+        with xr.open_dataset(path, group="i_p02", engine=_constants.nc_engine) as r2:
             assert r2.sizes["time"] == 40
 
 

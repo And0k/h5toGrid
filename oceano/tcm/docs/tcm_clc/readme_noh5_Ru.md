@@ -385,7 +385,7 @@ tcm_clc_txt.exe "_raw/*i*.txt" 'program.return_="<cfg_from_args>"'
 | `Zeroing data -> no-op: time_ranges_zeroing ... not in current data range` | Предупреждение: в указанном интервале нет данных |
 | `Azimuth data -> no-op: time_ranges_azimuth ... not in current data range` | Предупреждение: в интервале азимута нет данных |
 
-Расположение журнала: `cfg_proc/log/{timestamp}/tcm_clc.log` (внутри каталога данных).
+Расположение журнала: `cfg_proc/log/{timestamp}/processing.log` (внутри каталога данных).
 
 ## Дополнительная документация
 

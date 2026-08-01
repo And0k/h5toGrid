@@ -21,23 +21,33 @@
 
 ### 2.1. Окружение `noh5-tcm`
 
-Используется выделенное pixi-окружения `noh5-tcm` или `bin-optim-tcm`, в которых все зависимости
-BLAS/LAPACK собраны с OpenBLAS, а Intel MKL отсутствует.
+Используется выделенное pixi-окружение **`noh5-tcm`** (solve-group `noh5`),
+в котором все зависимости BLAS/LAPACK собраны с OpenBLAS, а Intel MKL отсутствует.
 
-Ключевые пакеты окружения (из `pyproject.toml`):
+Окружение собирается из двух features (`pyproject.toml`):
 
-| Пакет          | Назначение                           |
-| -------------- | ------------------------------------ |
-| `python 3.12`  | Фиксировано `<3.13` (совместимость с hydra) |
-| `numpy`        | Численные расчёты                    |
-| `pandas`       | Табличные данные                     |
-| `hydra-core`   | Конфигурация CLI                     |
-| `hydra-colorlog` | Цветной лог                          |
-| `libblas`/`libcblas`/`liblapack` | OpenBLAS-вариа    |
+| Feature | Ключевые пакеты | Назначение |
+|---------|----------------|------------|
+| `noh5` | `libblas`/`libcblas`/`liblapack` (build=`*openblas*`), `pyinstaller`, `pyinstaller-hooks-contrib` | BLAS без MKL, инструмент сборки |
+| `tcm` | `python>=3.11`, `dask-core>=2024.4`, `xarray>=2026.7`, `absioras-tcm` (editable), `pygeomag>=1.1.0` | Вычислительное ядро |
 
-| `dask-core`    | Параллельные вычисления              |
+Ключевые пакеты окружения:
 
-| `numba`        | JIT-оптимизации                      |
+| Пакет              | Назначение                           |
+| ------------------ | ------------------------------------ |
+| `python >=3.11`    | Разрешается до 3.14 (`noh5-tcm` использует 3.14.6) |
+| `numpy`            | Численные расчёты                    |
+| `pandas`           | Табличные данные                     |
+| `xarray`           | Многомерные массивы                  |
+| `dask-core`        | Параллельные вычисления (только ядро, без `dask.dataframe`) |
+| `hydra-core`       | Конфигурация CLI                     |
+| `hydra-colorlog`   | Цветной лог                          |
+| `pygeomag`         | Геомагнитные модели (IGRF)           |
+| `libblas`/`libcblas`/`liblapack` | OpenBLAS-вариа                      |
+| `numba`            | JIT-оптимизации                      |
+
+**Важно:** `noh5-tcm` **не включает** `h5py`, `pytables`, `scipy`, `matplotlib` —
+эти пакеты остаются в `bin-optim-tcm` / `ocean`-features.
 
 Отдельно указаны build-строки для BLAS-пакетов:
 
@@ -48,22 +58,35 @@ liblapack = { version = "*", build = "*openblas*" }
 ```
 
 Это гарантирует, что `libblas.dll`, `libcblas.dll`, `liblapack.dll` будут
-обёртками над `openblas.dll`, а не переключателями на `mkl_rt.3.dll`.
-
-`dask` с его `pyarrow` - Работа с pandas через dask.dataframe - исключены
+обёртками над `openblas.dll`, а не над `mkl_rt.3.dll`.
 
 ### 2.2. Запуск сборки
 
-Активировать окружение и запустить PyInstaller:
+Через pixi-задачу (рекомендуется):
 ```bash
-pixi run -e noh5-tcm pyinstaller --noconfirm scripts\build\tcm_clc_txt.spec
+pixi run -e noh5-tcm build-tcm-clc-txt
 ```
 
-Или через batch-скрипт:
-
-```cmd
-scripts\build_tcm_clc_txt.bat
+Задача определена в `pyproject.toml` и устанавливает `BUILD_MODE=manual`:
+```toml
+[tool.pixi.tasks.build-tcm-clc-txt]
+cmd = "python oceano/tcm/scripts/build/build_tcm_clc_txt.py"
+env = { BUILD_MODE = "manual" }
 ```
+
+`BUILD_MODE=manual` — версия генерируется из текущей даты (`YYYY.MM`).
+При `BUILD_MODE=auto` (задача `build-tcm-clc-txt-auto`) версия читается из
+`oceano/tcm/scripts/build/version.py`.
+
+Или напрямую через скрипт-обёртку:
+```bash
+pixi run -e noh5-tcm python oceano/tcm/scripts/build/build_tcm_clc_txt.py
+```
+
+Скрипт-обёртка (`scripts/build/build_tcm_clc_txt.py`):
+1. Обновляет/читает `VERSION` (в `version.py`)
+2. Запускает `generate_version_info` — создаёт `version_info.txt` с Windows-ресурсами
+3. Вызывает PyInstaller с spec-файлом
 
 Результат: `dist/tcm_clc_txt/tcm_clc_txt.exe` + сопутствующие файлы.
 
@@ -72,32 +95,65 @@ scripts\build_tcm_clc_txt.bat
 `scripts/build/tcm_clc_txt.spec` — конфигурация PyInstaller. Ключевые моменты:
 
 -   **Точка входа:** `scripts/tcm_clc.py`
--   **Явно добавленные DLL:** `openblas.dll`, `libcblas.dll`, `libblas.dll`, `liblapack.dll`,
-    а также системные: `libmpdec-4.dll`, `yaml.dll`, `sqlite3.dll`, `libzmq-mt-4_3_5.dll`,
-    `tbb12.dll`, `tbbmalloc.dll`, и др.
--   **Фильтрация бинарников:** из собранного набора удаляются все
-    `mkl_*`, `arrow_flight*`, `gandiva*`, `libiomp5md*` (т.е. MKL-специфичные
-    и неиспользуемые библиотеки Arrow).
--   **Данные:** конфиги `tcm/cfg/`, `tcm/cfg/coef/`, файлы конфигурации dask
-    (`dask.yaml`, `distributed.yaml` и схемы), METADATA пакетов pandas/numpy/pyarrow.
--   **Hydra conf:** автоматический сбор данных `hydra/conf/` и
-    `hydra_plugins.hydra_colorlog` через `collect_data_files`, плюс явное
-    добавление `__init__.py` для корректной работы `importlib.resources`.
+-   **Явно добавленные DLL** (из `_ENV_LIB_BIN`):
+    `openblas.dll`, `libcblas.dll`, `libblas.dll`, `liblapack.dll`,
+    `libmpdec-4.dll`, `liblzma.dll`, `libexpat.dll`, `ffi-8.dll`,
+    `yaml.dll`, `sqlite3.dll`, `libzmq-mt-4_3_5.dll`,
+    `tbb12.dll`, `tbbmalloc.dll`, `tbbmalloc_proxy.dll`.
+-   **Фильтрация бинарников** (post-analysis, `_should_keep_binary`):
+    из собранного набора удаляются всё, содержащее в имени:
+    `mkl_`, `.h5`, `.hdf5`, `pyarrow`, `parquet.dll`, `libzstd.dll`,
+    `_zstd`, `botocore`, `certifi`, `charset_normalizer`, `google_crc32c`,
+    `numcodecs`, `zstd`, `lz4`.
+    А также `.pyd`-расширения pyarrow (`_parquet`, `_orc`, `_dataset`,
+    `_fs`, `_gcsfs`, `_s3fs`, `_flight`, `_gandiva`, `_acero`, и др. —
+    полный список в `_exclude_pyarrow_pyd`).
+-   **Данные:**
+    - Исходный код `src/tcm/` → `tcm/`
+    - Документация из `docs/` (кроме `todo.md`,
+      `potential_functionality_and_improvement.md`)
+    - Конфиги Hydra: `collect_data_files("hydra", subdir="conf")` +
+      `collect_data_files("hydra_plugins.hydra_colorlog")`
+    - Данные `pygeomag` (через `collect_data_files`)
+    - `__init__.py` в `hydra/conf/` и `hydra_plugins/hydra_colorlog/conf/`
+      для корректной работы `importlib.resources`
+    - METADATA пакетов `pandas` и `numpy`
+-   **Исключения pure-Python:**
+    - Все модули HDF5: `h5py`, `tables`, `pytables`, `hdf5`, `tcm.h5*`,
+      `tcm.incl_h5*`, `tcm.incl_calibr_hy`, `tcm.veuszPropagate`
+    - Все MKL-модули (`mkl`, `mkl_rt`, `mkl_core`, `mkl_intel_thread`, и т.д.)
+    - `pyarrow` целиком + его транзитивные зависимости (`botocore`, `certifi`,
+      `charset_normalizer`, `google_crc32c`, `numcodecs`, `zstandard`)
+    - Тяжёлые библиотеки: `scipy`, `matplotlib`, `bokeh`, `sklearn`,
+      `IPython`, `jupyter*`, `PIL`, `lxml`, `openpyxl`, `cryptography`,
+      `tkinter`, `sphinx`, `pytest`, `setuptools`, `pip`, и др.
+    - `distributed` (планировщик dask)
+    - Модули `tcm.*` исключаются из `pure` и собираются только из `datas`
+      (чтобы избежать дублирования при заморозке)
 -   **Runtime hooks:**
-    - `rthook_hydra_pkg.py` — вручную регистрирует все core-плагины Hydra
-      (ImportlibResourcesConfigSource, FileConfigSource, StructuredConfigSource,
-      BasicLauncher, BasicSweeper) и цветовой плагин, т.к. `pkgutil.walk_packages`
-      не работает в замороженном exe.
-    - `rthook_noh5_bins.py` — переопределяет `out/base` в ConfigStore:
-      `dt_bins=[0, 3600]`, `dt_bins_min_save_text=0` (см. § 2.5).
+    - `rthook_hydra_pkg.py` — patch argparse для Python 3.14 + регистрация
+      плагинов Hydra (см. § 2.4)
+    - `rthook_noh5_bins.py` — переопределение `out/base` в ConfigStore
+      (см. § 2.5)
 
 ### 2.4. Runtime hook (`rthook_hydra_pkg.py`)
+
+Выполняет две задачи:
+
+**① Python 3.14 argparse-patch (до регистрации Hydra):**
+
+Начиная с Python 3.14, `argparse.HelpFormatter._get_help_string` вызывает
+`_check_help`, который проверяет `'%' not in help_string`. Если значение
+`help=` — не строка (например, lazy-doc wrapper от dask), возникает
+`ValueError: badly formed help string`. Хук перехватывает
+`_get_help_string` и приводит non-string значения к `str()`.
+
+**② Регистрация плагинов Hydra (для pkg:// и file:// схем):**
 
 ```python
 from hydra.core.plugins import Plugins
 p = Plugins.instance()
 
-# Core ConfigSources — без них hydra не найдёт pkg:// и file:// схемы
 from hydra._internal.core_plugins.importlib_resources_config_source import ImportlibResourcesConfigSource
 from hydra._internal.core_plugins.file_config_source import FileConfigSource
 from hydra._internal.core_plugins.structured_config_source import StructuredConfigSource
@@ -108,7 +164,6 @@ for cls in [ImportlibResourcesConfigSource, FileConfigSource,
             StructuredConfigSource, BasicLauncher, BasicSweeper]:
     p.register(cls)
 
-# Цветной лог
 try:
     from hydra_plugins.hydra_colorlog.colorlog import HydraColorlogSearchPathPlugin
     p.register(HydraColorlogSearchPathPlugin)
@@ -150,3 +205,99 @@ cs.store(
 
 Для сравнения, в dev-окружении (где доступны h5py/pytables) умолчания
 остаются `[0, 2, 600, 3600, 7200]` с `dt_bins_min_save_text=1`.
+
+---
+
+## 3. Сборка GUI (`tcm_gui`)
+
+**tcm_gui** — самодостаточный exe-файл с Tkinter-интерфейсом для обработки
+данных инклинометров. В отличие от `tcm_clc_txt`, GUI включает:
+- Графический интерактивный редактор коэффициентов (`tksheet`)
+- Визуальный контроль прогресса обработки
+- Поддержку HDF5 (чтение/запись через `h5py`)
+- Поддержку `scipy`, `matplotlib`, `numba` (из `bin-optim` feature)
+
+### 3.1. Окружение `bin-optim-tcm`
+
+Используется pixi-окружение **`bin-optim-tcm`** (solve-group `noh5`),
+которое объединяет features `noh5` + `bin-optim` + `tcm` + `test`:
+
+| Feature      | Ключевые пакеты                           | Назначение                    |
+| ------------ | ----------------------------------------- | ----------------------------- |
+| `noh5`       | OpenBLAS, `pyinstaller`                   | BLAS без MKL, инструмент сборки |
+| `bin-optim`  | `h5py`, `scipy`, `matplotlib`, `numba`, `xarray`, `netcdf4` | Полный вычислительный стек    |
+| `tcm`        | `dask-core`, `absioras-tcm`, `pygeomag`   | Ядро обработки TCM            |
+| `test`       | `pytest`, `pytest-mock`                   | Тестирование                  |
+
+**Важно:** `bin-optim-tcm` **включает** `h5py`, `scipy`, `matplotlib` —
+в отличие от `noh5-tcm`, эти пакеты доступны и собираются в дистрибутив.
+
+### 3.2. Запуск сборки
+
+Через pixi-задачу (рекомендуется):
+```bash
+pixi run -e bin-optim-tcm build-tcm-gui
+```
+
+Задача определена в `pyproject.toml` и устанавливает `BUILD_MODE=manual`:
+```toml
+[tool.pixi.tasks.build-tcm-gui]
+cmd = "python oceano/tcm/scripts/build/build_tcm_gui.py"
+env = { BUILD_MODE = "manual" }
+```
+
+Или напрямую:
+```bash
+pixi run -e bin-optim-tcm python oceano/tcm/scripts/build/build_tcm_gui.py
+```
+
+Скрипт-обёртка (`scripts/build/build_tcm_gui.py`):
+1. Обновляет/читает `VERSION` (в `version.py`)
+2. Запускает `generate_version_info` с GUI-описанием:
+   - `FileDescription`: `"AB SIO RAS' TCM inclinometer data processor GUI..."`
+   - `InternalName`: `tcm_gui.exe`
+   - `OriginalFilename`: `tcm_gui\__main__.py`
+3. Вызывает PyInstaller с `tcm_gui.spec`
+
+Результат: `dist/tcm_gui/tcm_gui.exe` + сопутствующие файлы.
+
+### 3.3. Структура spec-файла
+
+`scripts/build/tcm_gui.spec` — конфигурация PyInstaller для GUI.
+Ключевые отличия от `tcm_clc_txt.spec`:
+
+| Параметр            | `tcm_clc_txt`                 | `tcm_gui`                          |
+| ------------------- | ----------------------------- | ---------------------------------- |
+| Точка входа         | `scripts/tcm_clc.py`          | `src/tcm_gui/__main__.py`          |
+| `console`           | `True`                        | **`False`** (оконное приложение)   |
+| tkinter             | Исключён                      | **Включён**                        |
+| `h5py`              | Исключён                      | **Включён**                        |
+| `scipy`, `matplotlib` | Исключён                    | **Включён**                        |
+| `tksheet`           | —                             | **Включён** (hidden import)        |
+| `rthook_noh5_bins`  | Включён                       | **Не используется**                |
+| Данные `src/tcm_gui`| —                             | **Включён**                        |
+| Бинарные фильтры    | `.h5`, `.hdf5` исключены      | `.h5`, `.hdf5` **не** исключены   |
+| Pure-модули         | `tcm.*` исключены             | `tcm.*` + `tcm_gui.*` исключены   |
+
+Общая логика (фильтрация бинарников, сборка данных) вынесена в
+`scripts/build/spec_common.py` и используется обоими spec-файлами.
+
+### 3.4. Runtime hook (`rthook_hydra_pkg.py`)
+
+GUI использует тот же хук регистрации Hydra-плагинов, что и CLI
+(см. § 2.4). Хук `rthook_noh5_bins.py` **не используется** —
+GUI показывает полные умолчания конфигурации (`[0, 2, 600, 3600, 7200]`),
+пользователь редактирует их в интерактивном режиме.
+
+### 3.5. Windows file properties
+
+Оба дистрибутива (`tcm_clc_txt.exe` и `tcm_gui.exe`) имеют
+Windows file properties (версия, описание, копирайт), генерируемые
+из `scripts/build/version_info.template` через `generate_version_info.py`.
+Параметризованные поля шаблона:
+
+| Поле                 | CLI значение                          | GUI значение                          |
+| -------------------- | ------------------------------------- | ------------------------------------- |
+| `FileDescription`    | `AB SIO RAS' TCM raw data processing CLI...` | `AB SIO RAS' TCM inclinometer data processor GUI...` |
+| `InternalName`       | `tcm_clc_txt.exe`                     | `tcm_gui.exe`                         |
+| `OriginalFilename`   | `tcm\scripts\tcm_clc.py`              | `tcm_gui\__main__.py`                 |

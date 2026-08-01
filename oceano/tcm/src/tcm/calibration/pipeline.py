@@ -17,14 +17,14 @@ Design
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Optional
 
 import numpy as np
 
 from tcm import utils2init
-from tcm.calibration.calibrate import calibrate_channel, coef2str, SensorCalibration
 from tcm.calibration import robust  # calibrate,
+from tcm.calibration.calibrate import SensorCalibration, calibrate_channel, coef2str
 
 lf = utils2init.LoggingStyleAdapter(__name__)
 
@@ -129,7 +129,7 @@ def calibrate_pipeline(
     data_3d: np.ndarray,
     cfg: PipelineConfig = PipelineConfig(),
     *,
-    on_iter: Optional[Callable[[int, float, float, np.ndarray, np.ndarray], None]] = None,
+    on_iter: Callable[[int, float, float, np.ndarray, np.ndarray], None] | None = None,
 ) -> CalibrationResult:
     """Run calibration with robust outlier rejection (default) or legacy progressive schedule.
 

@@ -7,7 +7,7 @@ from typing import Any, Dict, Iterator, Mapping, Optional, Sequence, Union
 import pandas as pd
 import xarray as xr
 
-from tcm import format, csv_load, utils2init
+from tcm import format, csv_load, utils2init, _constants
 
 lf = utils2init.LoggingStyleAdapter(__name__)
 
@@ -176,7 +176,7 @@ def open_nc(
     *,
     tbl: str = "",
     chunk_time: Optional[int] = None,
-    engine: str = "netcdf4",
+    engine: str = _constants.nc_engine,
 ) -> tuple[xr.Dataset, Optional[Dict[str, Any]]]:
     """Load data and coefs from a NetCDF4 file.
 

@@ -498,7 +498,7 @@ def run_processing(cfg: DictConfig):
         pcid = format.to_pcid_from_name(format.stem_to_pcid(src_path.stem))
         tbl = format.pcid_to_raw_name(pcid)
 
-    lf.debug("Loading data for {}...", pcid)
+    lf.debug("Loading {} data for processing...", pcid)
     # Reset stage progress so the GUI clears stale text from the previous probe.
     # Must happen before main_init — which can return early for CFG_FROM_ARGS.
     if rt := progress_bridge.get_runtime():
@@ -508,7 +508,7 @@ def run_processing(cfg: DictConfig):
     if (si := cfg.get("_stem_idx")) and (nc := cfg.get("_n_cfgs")):
         _probe_base["v"] = (si - 1) * 100
         _probe_total["v"] = nc * 100
-    cfg = cli.main_init(cfg, program_name="TCM processing")
+    cfg = cli.main_init(cfg)
     # Early-exit: main_init returns DictConfig before ini2dict; propagate upstream.
     if not isinstance(cfg, dict):
         return cfg
@@ -944,7 +944,7 @@ def _combine_probes(pcids: list[str], cfg: dict) -> None:
             nc_path = avg_path if bin_s > 0 else noavg_path
             combined_group = f"/{probe_type}_bin{bin_s}s/" if bin_s > 0 else f"/{probe_type}/"
             try:
-                ds_combined = xr.open_dataset(nc_path, group=combined_group, engine="netcdf4")
+                ds_combined = xr.open_dataset(nc_path, group=combined_group, engine=_constants.nc_engine)
             except (AttributeError, KeyError, OSError):
                 lf.debug("Combined group {} not found — skipping TSV", combined_group)
                 continue
@@ -979,7 +979,7 @@ def _merge_groups_to_combined(
     for pcid in pcids:
         grp_name = f"{pcid}bin{bin_s}s" if bin_s > 0 else pcid
         try:
-            ds = xr.open_dataset(nc_path, group=grp_name, engine="netcdf4", autoclose=True)
+            ds = xr.open_dataset(nc_path, group=grp_name, engine=_constants.nc_engine)
             groups_to_merge.append(ds.expand_dims(probe=[pcid]))
         except (AttributeError, KeyError, OSError):
             lf.debug("Group {} not found in {} — skipping for combined {}", grp_name, nc_path.name, label)

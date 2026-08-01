@@ -8,17 +8,25 @@ from __future__ import annotations
 
 import os
 
+import numpy as np
+import pandas as pd
 import pytest
+import xarray as xr
 from hydra import compose, initialize_config_dir
 from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig, OmegaConf
 
 import tcm.config  # noqa: F401 — triggers ConfigStore registration
+from tcm import _constants
 from tcm.config import (
-    Config, ConfigFilterCalib, ConfigFilter_InclProc, ConfigIn_InclProc,
-    ConfigProcCalib, ConfigProcSpectrum,
+    Config,
+    ConfigFilter_InclProc,
+    ConfigFilterCalib,
+    ConfigIn_InclProc,
+    ConfigProcCalib,
+    ConfigProcSpectrum,
 )
-
+from tcm.config_yaml import gen_metadata
 
 # --------------------------------------------------------------------------- #
 # ConfigStore groups
@@ -191,10 +199,7 @@ class TestCorrTimeModeMigration:
         TDD regression: OmegaConf.to_container → create round-trip drops structured
         defaults, leaving cfg["out"] as a plain dict without dt_bins.
         """
-        import numpy as np
-        import pandas as pd
-        import xarray as xr
-        from tcm.config_yaml import gen_metadata
+
 
         # Create a minimal NC file with an incl table group so discovery succeeds
         nc_path = tmp_path / "test.nc"
@@ -203,7 +208,7 @@ class TestCorrTimeModeMigration:
             {"Ax": ("time", np.zeros(10)), "Ay": ("time", np.ones(10))},
             coords={"time": time},
         )
-        ds.to_netcdf(nc_path, group="incl_p05", engine="netcdf4")
+        ds.to_netcdf(nc_path, group="incl_p05", engine=_constants.nc_engine)
 
         # Simulate post-round-trip config: out is a plain dict missing dt_bins
         cfg = DictConfig({

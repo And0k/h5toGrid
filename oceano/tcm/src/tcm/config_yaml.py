@@ -2,11 +2,15 @@
 
 Saves, loads, and validates per-file YAML configs in ``cfg_proc/run/``.
 """
+
+from collections.abc import Iterator, Mapping, MutableMapping, Sequence
 from datetime import datetime
-from pathlib import Path, PurePath
-from typing import Any, Dict, Iterator, Mapping, MutableMapping, Sequence, Tuple, Optional
-from omegaconf import OmegaConf
 from itertools import chain
+from pathlib import Path, PurePath
+from typing import Any
+
+from omegaconf import OmegaConf
+
 from tcm import _constants, config, csv_load, format, metadata, paths, to_omegaconf, utils2init
 from tcm.incl_calc.coefs import get_coefs_from_cfg
 
@@ -16,6 +20,7 @@ lf = utils2init.LoggingStyleAdapter(__name__)
 def has_run_yamls(dir_run: Path) -> bool:
     """Return True when ``cfg_proc/run/`` contains at least one YAML."""
     return dir_run.is_dir() and any(dir_run.glob("*.yaml"))
+
 
 try:
     from ruamel.yaml import YAML
@@ -41,7 +46,7 @@ def _ry(write: bool = True) -> YAML:
 def get_existed_cfgs(
     dir_cfgs: Path,
     glob: str = "*.yaml",
-) -> Dict[str, list[str]]:
+) -> dict[str, list[str]]:
     """Resolve config mapping ``{pcid: [stem, …]}`` from *dir_cfgs*.
 
     Each YAML file's stem is used directly (no timestamp extraction).
@@ -52,7 +57,7 @@ def get_existed_cfgs(
     :param glob: glob pattern for YAML files.
     :returns: ``{pcid: [stem_sorted, …]}``.
     """
-    result: Dict[str, list[str]] = {}
+    result: dict[str, list[str]] = {}
     for f in dir_cfgs.glob(glob):
         stem = f.stem
         # Derive pcid from stem via probe_from_name (strips @ prefix and -comment suffix)
@@ -68,7 +73,7 @@ def get_existed_cfgs(
     return result
 
 
-def sync_yamls_devmeta_and_hydra(dev_dir, dir_cfgs, cfgs: Dict[str, list[str]]):
+def sync_yamls_devmeta_and_hydra(dev_dir, dir_cfgs, cfgs: dict[str, list[str]]):
     """Load date ranges from ``info_devices.yaml/.json`` and update ``time_ranges`` in hydra configs.
 
     For each probe (pcid), iterates all its config stems.  When multiple configs exist,
@@ -106,9 +111,7 @@ def sync_yamls_devmeta_and_hydra(dev_dir, dir_cfgs, cfgs: Dict[str, list[str]]):
 
     ry = _ry()
 
-    if not any(
-        str_time_ranges_devmeta_all := {pcid: v["r"] for pcid, v in device_info.items() if "r" in v}
-    ):
+    if not any(str_time_ranges_devmeta_all := {pcid: v["r"] for pcid, v in device_info.items() if "r" in v}):
         lf.info("No time records in metadata file")
         return
 
@@ -120,8 +123,7 @@ def sync_yamls_devmeta_and_hydra(dev_dir, dir_cfgs, cfgs: Dict[str, list[str]]):
                 continue
 
             time_ranges_devmeta = [
-                datetime.fromisoformat(t).strftime("%Y-%m-%dT%H:%M:%S")
-                for t in str_time_ranges_devmeta_pcid
+                datetime.fromisoformat(t).strftime("%Y-%m-%dT%H:%M:%S") for t in str_time_ranges_devmeta_pcid
             ]
 
             updated_stems: list[str] = []
@@ -135,7 +137,7 @@ def sync_yamls_devmeta_and_hydra(dev_dir, dir_cfgs, cfgs: Dict[str, list[str]]):
                 except Exception:
                     lf.warning("  Skipping {} (load error)", stem, exc_info=True)
                     continue
-                if (tr_existing := (cfg_cur or {}).get("input", {}).get("time_ranges")):
+                if tr_existing := (cfg_cur or {}).get("input", {}).get("time_ranges"):
                     kept_stems.append(stem)
                     if tr_existing[0] < time_ranges_devmeta[0] or tr_existing[-1] > time_ranges_devmeta[-1]:
                         broader_stems[stem] = tr_existing
@@ -157,7 +159,7 @@ def sync_yamls_devmeta_and_hydra(dev_dir, dir_cfgs, cfgs: Dict[str, list[str]]):
             if kept_stems:
                 if broader_stems:
                     lf.warning(
-                        '  found: {} - broader than in metadata file',
+                        "  found: {} - broader than in metadata file",
                         ", ".join(f"[{tr[0]}, {tr[-1]}] in {s}.yaml" for s, tr in broader_stems.items()),
                     )
                 else:
@@ -178,6 +180,7 @@ def _discover_tables(path: Path, table_pattern: str) -> list[str]:
     Raises :exc:`ImportError` when the needed backend is not installed.
     """
     import re
+
     from tcm.csv_load import _glob_to_regex
 
     re_pattern = re.compile(_glob_to_regex(table_pattern))
@@ -186,6 +189,7 @@ def _discover_tables(path: Path, table_pattern: str) -> list[str]:
         if not _constants.TABLES_AVAILABLE:
             raise ImportError("pytables (tables) required to read HDF5 files — install or use NC/CSV input")
         import pandas as pd
+
         with pd.HDFStore(str(path), mode="r") as s:
             return [k.lstrip("/") for k in s.keys() if re_pattern.fullmatch(k.lstrip("/"))]
     if suffix in _constants.nc_suffixes:
@@ -201,7 +205,7 @@ def prep_cfg_for_probe(
     cfg_in_for_probes: Mapping[str, Any],
     cfg_in_common: Mapping[str, Any],
     cfg: Mapping[str, Any],
-    path_csv: Optional[Path] = None,
+    path_csv: Path | None = None,
 ) -> MutableMapping[str, Any]:
     """Build probe-specific config with coefficients.
 
@@ -240,10 +244,8 @@ def prep_cfg_for_probe(
 
 
 def gen_metadata(
-    cfg: MutableMapping[str, Any],
-    input_paths: Sequence[Path],
-    cfg_in_for_probes: dict = {}
-) -> Iterator[Tuple[dict[str, dict[str, Any]], Tuple[bool, str, None]]]:
+    cfg: MutableMapping[str, Any], input_paths: Sequence[Path], cfg_in_for_probes: dict = {}
+) -> Iterator[tuple[dict[str, dict[str, Any]], tuple[bool, str, None]]]:
     """
     Yield per-probe metadata (config + edge time rows) for YAML export in the xarray pipeline.
 
@@ -270,7 +272,8 @@ def gen_metadata(
     cfg_in_input = cfg["input"]
     cfg_in_common: dict = (
         OmegaConf.to_container(cfg_in_input, resolve=True)
-        if OmegaConf.is_config(cfg_in_input) else dict(cfg_in_input)
+        if OmegaConf.is_config(cfg_in_input)
+        else dict(cfg_in_input)
     )
 
     # HDF5/NC mode: discover table groups in the file
@@ -294,7 +297,11 @@ def gen_metadata(
                 cfg1["input"]["tables"] = [tbl]
                 cfg1["out"]["dt_bins"] = cfg["out"].get("dt_bins", [0, 2, 600, 3600, 7200])
                 for del_field in [
-                    "tables", "nfiles", "b_del_temp_db", "temp_db_path", "b_incremental_update",
+                    "tables",
+                    "nfiles",
+                    "b_del_temp_db",
+                    "temp_db_path",
+                    "b_incremental_update",
                 ]:
                     cfg1["out"].pop(del_field, None)
                 cfg1["input"].pop("dt_min_binning_proc", None)
@@ -302,7 +309,11 @@ def gen_metadata(
                 cfg1["input"].pop("cfgFile", None)
                 yield cfg1, (False, pcid, None)
             except Exception:
-                lf.exception("Skipping table {:s} due to error", tbl)
+                lf.warning(
+                    "Skipping config generation for table {:s} (will use existing config if available)",
+                    tbl,
+                    exc_info=True,
+                )
         return
 
     # CSV mode: locate corrected CSV files across input_paths
@@ -340,7 +351,11 @@ def gen_metadata(
 
             # Delete fields not in structured config
             for del_field in [
-                "tables", "nfiles", "b_del_temp_db", "temp_db_path", "b_incremental_update",
+                "tables",
+                "nfiles",
+                "b_del_temp_db",
+                "temp_db_path",
+                "b_incremental_update",
             ]:
                 cfg1["out"].pop(del_field, None)
             cfg1["input"].pop("dt_min_binning_proc", None)
@@ -349,10 +364,14 @@ def gen_metadata(
 
             yield cfg1, (False, pcid, None)
         except Exception:
-            lf.exception("Skipping probe {:s} due to error", pcid)
+            lf.warning(
+                "Skipping config generation for probe {:s} (will use existing config if available)",
+                pcid,
+                exc_info=True,
+            )
 
 
-def save_config_to_yaml(cfg: Mapping[str, Any], input_paths: Sequence[Path]) -> Dict[str, Dict[str, Any]]:
+def save_config_to_yaml(cfg: Mapping[str, Any], input_paths: Sequence[Path]) -> dict[str, dict[str, Any]]:
     """Save per-file YAML configs from gen_metadata() to ``cfg_proc/run/``.
 
     Each source file gets one YAML named ``{yymmdd_hhmm}@{pcid_stem}.yaml``
@@ -372,11 +391,12 @@ def save_config_to_yaml(cfg: Mapping[str, Any], input_paths: Sequence[Path]) -> 
     :param input_paths: resolved list of input paths (from :func:`init_file_names`).
     :return: mapping of ``{input_path_str: cfg1_dict}``.
     """
-    out_dicts: Dict[str, Dict[str, Any]] = {}
+    out_dicts: dict[str, dict[str, Any]] = {}
     # Find config dir: try h5 paths first, fall back to text_path
     in_path = Path(cfg["input"]["path"])
     dir_cfg_proc = paths.find_dir_raw_absolute(in_path) / "cfg_proc" / "run"
     from tcm.cli import safe_cfg_dir
+
     safe_cfg_dir(dir_cfg_proc)
 
     ry = _ry()

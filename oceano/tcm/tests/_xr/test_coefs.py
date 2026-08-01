@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import ast
 import logging
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict
+from typing import Any
 
 import h5py
 import numpy as np
@@ -24,6 +25,7 @@ from tcm._xr.coefs import (
 from tcm.config import ConfigIn_InclProc
 from tcm.config_yaml import prep_cfg_for_probe, update_coefs_in_run_yaml
 from tcm.incl_calc.coefs import get_coefs, load_coefs
+
 
 def _stub_get_coefs(paths, tbl, coefs_ovr=None):
     """Reusable stub for get_coefs monkeypatching."""
@@ -65,7 +67,7 @@ class TestPrepCfgForProbe:
     """prep_cfg_for_probe builds correct cfg1 without _dask_legacy dependency."""
 
     @pytest.fixture()
-    def cfg_in_common(self) -> Dict[str, Any]:
+    def cfg_in_common(self) -> dict[str, Any]:
         return {
             "path": Path("/data/_raw/@i_01.txt"),
             "tables": ["incl*"],
@@ -74,7 +76,7 @@ class TestPrepCfgForProbe:
         }
 
     @pytest.fixture()
-    def cfg_top(self) -> Dict[str, Any]:
+    def cfg_top(self) -> dict[str, Any]:
         return {
             "input": {
                 # fmt_in_base := {
@@ -159,7 +161,7 @@ class TestPrepCfgForProbe:
 # save_coefs_to_nc / load_coefs_from_nc
 # --------------------------------------------------------------------------- #
 
-_SAMPLE_COEFS: Dict[str, Any] = {
+_SAMPLE_COEFS: dict[str, Any] = {
     "Ag": np.eye(3),
     "Cg": np.array([0.1, 0.2, 0.3]),
     "Ah": np.eye(3) * 0.5,

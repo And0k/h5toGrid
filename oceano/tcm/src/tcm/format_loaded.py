@@ -16,35 +16,26 @@ from __future__ import annotations
 
 import io
 import re
-from datetime import datetime, timezone
-from functools import wraps
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path, PurePath
+from re import Match
 from typing import (
     Any,
     AnyStr,
     BinaryIO,
-    Callable,
-    Dict,
-    Iterable,
-    Mapping,
-    Match,
-    Optional,
-    Sequence,
     TextIO,
-    Tuple,
-    TypeVar,
-    Union,
 )
 
 import numpy as np
 import pandas as pd
 
 from tcm.utils2init import (
+    FakeContextIfOpen,
     LoggingStyleAdapter,
     dir_create_if_need,
     set_field_if_no,
     standard_error_info,
-    FakeContextIfOpen,
 )
 from tcm.utils_time_corr import save_time_corr_diagnostics
 
@@ -60,7 +51,7 @@ century = b"20"
 
 
 def chars_array_to_datetimeindex(
-    date: Union[np.ndarray, pd.Series], dtype: np.dtype, format: str = "%Y-%m-%dT%H:%M:%S"
+    date: np.ndarray | pd.Series, dtype: np.dtype, format: str = "%Y-%m-%dT%H:%M:%S"
 ) -> pd.DatetimeIndex:
     """Error-corrected conversion of byte/string date arrays to DatetimeIndex.
 
@@ -103,10 +94,10 @@ def fill0(arr: np.ndarray, width: int) -> np.ndarray:
 
 def out_fields(
     types: Mapping[str, type],
-    keys_del: Optional[Iterable[str]] = (),
-    add_before: Optional[Mapping[str, type]] = None,
-    add_after: Optional[Mapping[str, type]] = None,
-) -> Dict[str, type]:
+    keys_del: Iterable[str] | None = (),
+    add_before: Mapping[str, type] | None = None,
+    add_after: Mapping[str, type] | None = None,
+) -> dict[str, type]:
     """Remove ``keys_del`` from ``types`` and add ``add_before`` / ``add_after``."""
     if add_before is None:
         add_before = {}
@@ -126,7 +117,7 @@ def log_csv_specific_param_operation(
 
 
 def param_funs_closure(
-    csv_specific_param: Mapping[str, Union[Callable[[str], Any], float]],
+    csv_specific_param: Mapping[str, Callable[[str], Any] | float],
     cfg_in: Mapping[str, Any],
 ) -> Mapping[str, Callable[[str], Any]]:
     """Convert ``csv_specific_param`` dict to per-column assignment functions.
@@ -155,7 +146,7 @@ def param_funs_closure(
 
         elif fun_id == "add":
 
-            def fun(prm, const):  # noqa: F811
+            def fun(prm, const):
                 param_closure = prm
                 v_closure = const
                 def fun_closure(x):
@@ -176,7 +167,7 @@ def param_funs_closure(
 
 def day_jumps_correction(
     cfg_in: Mapping[str, Any],
-    t: Union[np.ndarray, pd.DatetimeIndex],
+    t: np.ndarray | pd.DatetimeIndex,
     path_save_image: str = "day_jumps_corr",
 ):
     """Correct day jumps (up/down) caused by unsynchronised date+time sources."""
@@ -210,27 +201,23 @@ def day_jumps_correction(
         t_orig = t
         for bjU, jSt, jEn in zip(bjumpU[::2], jumps[:-1:2], jumps[1::2]):
             t_datetime = (
-                datetime.fromtimestamp(t[jSt].astype(datetime) * 1e-9, timezone.utc)
+                datetime.fromtimestamp(t[jSt].astype(datetime) * 1e-9, UTC)
                 if isinstance(t, np.ndarray) else t[jSt]
             )
             if bjU:
                 t[jSt:jEn] -= dT_day_jump
                 print(
-                    "Date correction to {:%d.%m.%y}UTC: day jumps up was detected in [{}:{}] rows".format(
-                        t_datetime, jSt, jEn
-                    )
+                    f"Date correction to {t_datetime:%d.%m.%y}UTC: day jumps up was detected in [{jSt}:{jEn}] rows"
                 )
             else:
                 t[jSt:jEn] += dT_day_jump
                 print(
-                    "Date correction to {:%d.%m.%y}UTC: day jumps down was detected in [{}:{}] rows".format(
-                        t_datetime, jSt, jEn
-                    )
+                    f"Date correction to {t_datetime:%d.%m.%y}UTC: day jumps down was detected in [{jSt}:{jEn}] rows"
                 )
         if t_orig is not None and path_save_image:
             try:
-                tim_out = pd.to_datetime(t, unit="ns", utc=True)
-                save_time_corr_diagnostics(t_orig, tim_out, np.ones_like(t, np.bool_), cfg_in, "day_jumps_corr")
+                # Pass int64 nanoseconds — same convention as time_corr's call at utils_time_corr:872
+                save_time_corr_diagnostics(t_orig.view("i8"), t.view("i8"), np.ones_like(t, np.bool_), cfg_in, "day_jumps_corr")
             except Exception:
                 lf.debug("failed to save diagnostics", exc_info=True)
     return t
@@ -263,7 +250,7 @@ def concat_to_iso8601(a: pd.DataFrame) -> pd.Series:
 def loaded_tcm(
     a: pd.DataFrame,
     cfg_in: Mapping[str, Any] = None,
-    csv_specific_param: Optional[Mapping[str, Any]] = None,
+    csv_specific_param: Mapping[str, Any] | None = None,
 ) -> pd.DataFrame:
     """TCM inclinometer post-load processing.
 
@@ -367,9 +354,9 @@ loaded_wavegauge = loaded_tcm
 
 
 def loaded_corr(
-    a: Union[pd.DataFrame, np.ndarray],
+    a: pd.DataFrame | np.ndarray,
     cfg_in: Mapping[str, Any],
-    csv_specific_param: Optional[Mapping[str, Any]] = None,
+    csv_specific_param: Mapping[str, Any] | None = None,
 ) -> pd.DataFrame:
     """Apply oneliner ``csv_specific_param`` corrections (``_fun`` / ``_add`` suffixes)."""
     if csv_specific_param is not None:
@@ -406,13 +393,13 @@ def f_repl_by_dict(
 
 
 def rep_in_file(
-    file_in: Union[str, Path, BinaryIO, TextIO],
+    file_in: str | Path | BinaryIO | TextIO,
     file_out,
-    f_replace: Union[Callable[[bytes], bytes], Callable[[str], str]],
+    f_replace: Callable[[bytes], bytes] | Callable[[str], str],
     header_rows=0,
     block_size=None,
     min_out_length=2,
-    f_replace_in_header: Optional[Callable[[bytes], bytes]] = None,
+    f_replace_in_header: Callable[[bytes], bytes] | None = None,
     binary_mode=True,
 ) -> int:
     """Replace text in file via *f_replace*, keeping *header_rows* intact."""
@@ -477,9 +464,9 @@ def rep_in_file(
 
 
 def correct_txt(
-    file_in: Union[str, Path, BinaryIO, TextIO],
-    file_out: Optional[Path] = None,
-    dir_out: Optional[PurePath] = None,
+    file_in: str | Path | BinaryIO | TextIO,
+    file_out: Path | None = None,
+    dir_out: PurePath | None = None,
     mod_file_name: Callable[[PurePath], PurePath] = lambda n: Path(
         n.name.replace(".", "_clean.")
     ),
@@ -599,8 +586,8 @@ def _parse_name(name: str):
 
 
 def mod_name(
-    file_in: Union[str, PurePath], add_prefix: str = "", parse: bool = True
-) -> Tuple[str, Path]:
+    file_in: str | PurePath, add_prefix: str = "", parse: bool = True
+) -> tuple[str, Path]:
     """Normalize inclinometer filename → ``{add_prefix}{pcid}-{comment}.{ext}``.
 
     Extracts ``(type, model, number, comment)`` probe identity via :func:`_parse_name`,

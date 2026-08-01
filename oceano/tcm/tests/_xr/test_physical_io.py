@@ -10,6 +10,7 @@ from tcm._xr.calc import binning
 import pytest
 import xarray as xr
 
+from tcm import _constants
 from tcm._xr import io as xr_io
 from tcm._xr.coefs import save_coefs_to_nc
 from tcm._xr.dataset import merge_probes, open_nc, open_csv
@@ -246,7 +247,7 @@ class TestOpenNc:
              "Az": ("time", np.random.default_rng(44).normal(0, 1, 100))},
             coords={"time": pd.date_range("2024-01-01", periods=100, freq="s")},
         )
-        ds.to_netcdf(nc_path, group="incl_01", engine="netcdf4")
+        ds.to_netcdf(nc_path, group="incl_01", engine=_constants.nc_engine)
         return nc_path
 
     @pytest.fixture()
@@ -258,7 +259,7 @@ class TestOpenNc:
              "Mx": ("time", np.random.default_rng(43).normal(0, 1, 50))},
             coords={"time": pd.date_range("2024-01-01", periods=50, freq="s")},
         )
-        ds.to_netcdf(nc_path, group="incl_01", engine="netcdf4")
+        ds.to_netcdf(nc_path, group="incl_01", engine=_constants.nc_engine)
         save_coefs_to_nc(nc_path, "incl_01", {"Ag": np.eye(3), "Cg": np.array([0.1, 0.2, 0.3]), "date": "2024-01-01T00:00:00"})
         return nc_path
 

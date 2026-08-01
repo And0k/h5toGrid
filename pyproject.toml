@@ -60,6 +60,11 @@ numbagg = ">=0.9.4,<0.10"
 scipy = ">=1.11"
 xarray = ">=2026.7.0,<2027"
 matplotlib = ">=3.2"
+h5netcdf = ">=1.8.1,<2"
+
+
+[dependency-groups]
+bin-optim = ["tksheet>=7.6.0,<8"]
 
 
 [tool.pixi.feature.noh5.dependencies]
@@ -229,12 +234,16 @@ env = { BUILD_MODE = "manual" }
 [tool.pixi.tasks.build-tcm-clc-txt-auto]
 cmd = "python oceano/tcm/scripts/build/build_tcm_clc_txt.py"
 
+[tool.pixi.tasks.build-tcm-gui]
+cmd = "python oceano/tcm/scripts/build/build_tcm_gui.py"
+env = { BUILD_MODE = "manual" }
+
+[tool.pixi.tasks.build-tcm-gui-auto]
+cmd = "python oceano/tcm/scripts/build/build_tcm_gui.py"
+
 [build-system]
 build-backend = "hatchling.build"
 requires = ["hatchling"]
-
-[dependency-groups]
-bin-optim = ["tksheet>=7.6.0,<8"]
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]

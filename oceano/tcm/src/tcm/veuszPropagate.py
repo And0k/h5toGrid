@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# coding:utf-8
 # , division
 """
 Author:  Andrey Korzh <ao.korzh@gmail.com>
@@ -10,36 +9,40 @@ to have the ability not process twice same data on next calls.
 Created: 02.09.2016
 """
 # import ast
-from contextlib import suppress
+
+import asyncio
+import multiprocessing
 import re
+import sys
+from collections.abc import Callable, Iterable, Iterator
+from concurrent.futures.thread import ThreadPoolExecutor
+from contextlib import suppress
 from datetime import datetime
-from os import chdir as os_chdir, getcwd as os_getcwd, environ as os_environ
-from pathlib import Path, PurePath
-from sys import platform as sys_platform, stdout as sys_stdout
-from time import sleep
-from typing import Any, Callable, Dict, Iterator, Iterable, Optional, Tuple, Sequence, Union
+from functools import partial
 from itertools import dropwhile
+from os import chdir as os_chdir
+from os import environ as os_environ
+from os import getcwd as os_getcwd
+from pathlib import Path, PurePath
+from time import sleep
+from typing import Any
+
 import pandas as pd
 from dateutil.tz import tzlocal, tzoffset
 
-import asyncio
-from functools import partial
-import multiprocessing
-from concurrent.futures.thread import ThreadPoolExecutor
 # my
 from .utils2init import (
-    my_argparser_common_part,
-    cfg_from_args,
-    this_prog_basename,
-    init_file_names,
-    dir_from_cfg,
-    init_logging,
     Ex_nothing_done,
-    import_file,
-    standard_error_info,
     LoggingStyleAdapter,
+    cfg_from_args,
+    dir_from_cfg,
+    import_file,
+    init_file_names,
+    init_logging,
+    my_argparser_common_part,
+    standard_error_info,
+    this_prog_basename,
 )
-
 
 # Globals
 to_mytz_offset = tzoffset(None, -tzlocal()._dst_offset.total_seconds())
@@ -52,7 +55,7 @@ else:
     lf = None  # will set in main()
 
 default_veusz_path = PurePath(
-    'C:\\Program Files\\Veusz' if sys_platform == 'win32' else '/home/korzh/.local/lib/python3.9/site-packages/veusz'  # try os_environ['PATH']?
+    'C:\\Program Files\\Veusz' if sys.platform == 'win32' else '/home/korzh/.local/lib/python3.9/site-packages/veusz'  # try os_environ['PATH']?
 )
 
 
@@ -64,15 +67,14 @@ def my_argparser():
     :return p: configargparse object of parameters
     """
     version = '0.1.0'
-    p = my_argparser_common_part({'description': 'veuszPropagate version {}'.format(version) + """
+    p = my_argparser_common_part({'description': f'veuszPropagate version {version}' + """
 ----------------------------
 Create vsz file for each source
 file based on vsz pattern
 ----------------------------"""}, version)
 
     # Configuration sections
-    s = p.add_argument_group('in',
-                             'all about input files')
+    s = p.add_argument_group("in", "all about input files")
     s.add('--path', help='path to source file(s) to generate list of their names '
                          '(usually *.csv or *.txt, or *.vsz in b_images_only mode)')
     s.add('--pattern_path', help='path to ".vsz" file to use as pattern')
@@ -97,8 +99,7 @@ file based on vsz pattern
     s.add('--min_time', help='%%Y-%%m-%%dT%%H:%%M:%%S, optional, allows range table_log rows')
     s.add('--max_time', help='%%Y-%%m-%%dT%%H:%%M:%%S, optional, allows range table_log rows')
 
-    s = p.add_argument_group('out',
-                             'all about output files')
+    s = p.add_argument_group("out", "all about output files")
     s.add('--export_pages_int_list', default='0',
           help='pages numbers to export, comma separated (1 is first), 0 = all, empty = none')
     s.add('--b_images_only', default='False',
@@ -124,8 +125,7 @@ file based on vsz pattern
     s.add('--exclude_files_endswith_list', default='coef.txt, -.txt, test.txt',
           help='exclude files which ends with this srings')
 
-    s = p.add_argument_group('program',
-                             'program behaviour')
+    s = p.add_argument_group("program", "program behavior")
     s.add('--export_timeout_s_float', default='0',
           help='export asyncroniously with this timeout, s (tried 600s?)')
     s.add('--load_timeout_s_float', default='180',
@@ -167,7 +167,7 @@ class SingletonTimeOut:
         try:
             task = loop.run_in_executor(pool, to_run)
             return loop.run_until_complete(asyncio.wait_for(task, timeout=timeout))
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             error_type = type(e).__name__  # TODO
             raise e
 
@@ -189,7 +189,7 @@ class SingletonTimeOut:
 
 # ----------------------------------------------------------------------
 
-def veusz_data(veusze, prefix: Union[str, Tuple[str]], suffix_prior: str = '') -> Dict[str, Any]:
+def veusz_data(veusze, prefix: str | tuple[str], suffix_prior: str = '') -> dict[str, Any]:
     """
     Get data, loaded into the Veusz document filtered by prefix and suffix_prior
     :param veusze: Veusz embedded object
@@ -221,7 +221,7 @@ def veusz_data(veusze, prefix: Union[str, Tuple[str]], suffix_prior: str = '') -
     msg_names_skip = []
     if len(names_to_check_on_step2.keys()):
         for name_out, name in names_to_check_on_step2.items():
-            if not name_out in names_filt:
+            if name_out not in names_filt:
                 names_filt[name_out] = name
             else:
                 msg_names_skip.append(name)
@@ -229,7 +229,7 @@ def veusz_data(veusze, prefix: Union[str, Tuple[str]], suffix_prior: str = '') -
         msg_names_skip = 'skip {} fields: '.format('|'.join(prefix)) + ','.join(msg_names_skip)
     else:
         msg_names_skip = ''
-    lf.debug('\n'.join([msg_names_skip, ' load fields: {}'.format(names_filt)]))
+    lf.debug('\n'.join([msg_names_skip, f' load fields: {names_filt}']))
 
     vsz_data = dict([(name_out, veusze.GetData(name)[0]) for name_out, name in names_filt.items()])
     if ('time' in vsz_data) and len(vsz_data['time']):
@@ -239,7 +239,7 @@ def veusz_data(veusze, prefix: Union[str, Tuple[str]], suffix_prior: str = '') -
         if name.endswith(('starts', 'ends')):
             int_suffix = 'starts' if name.endswith('starts') else 'ends'
             tmp = vsz_data[name].astype('int32')
-            if int_suffix in vsz_data.keys():
+            if int_suffix in vsz_data:
                 vsz_data[name] = tmp
                 continue
             vsz_data[int_suffix] = tmp
@@ -249,12 +249,12 @@ def veusz_data(veusze, prefix: Union[str, Tuple[str]], suffix_prior: str = '') -
 
 def load_vsz_closure(
     veusz_path: PurePath = default_veusz_path,
-    load_timeout_s: Optional[int] = 120,
+    load_timeout_s: int | None = 120,
     b_execute_vsz: bool = False,
     hidden=False,
     vsz_path_env=r"C:/Work/Python/AB_SIO_RAS/h5toGrid/shared/veusz_helpers/func_vsz.py",
 ) -> Callable[
-    [Union[str, PurePath], Optional[str], Optional[str], Optional[str]], Tuple[Any, Optional[Dict[str, Any]]]
+    [str | PurePath, str | None, str | None, str | None], tuple[Any, dict[str, Any] | None]
 ]:
     """
     See load_vsz inside
@@ -274,7 +274,7 @@ def load_vsz_closure(
     #     #importlib.import_module('.embed', package=veusz_dir_name)
     #     sys_path.pop()
     #
-    #     sep = ';' if sys_platform == 'win32' else ':'
+    #     sep = ';' if sys.platform == 'win32' else ':'
     #     os_environ['PATH'] += sep + veusz_path
     #     return
     # not works:
@@ -282,7 +282,7 @@ def load_vsz_closure(
     # sys_path.append(os_path.dirname(cfg['program']['veusz_path']))
     os_environ['VSZ_PATH'] = vsz_path_env  # variable that can be accessed in vsz by ENVIRON()
     if veusz_path:
-        sep = ';' if sys_platform == 'win32' else ':'
+        sep = ';' if sys.platform == 'win32' else ':'
         # to find Veusz executable (Windows only):
         os_environ['PATH'] += f'{sep}{veusz_path}'
 
@@ -298,10 +298,12 @@ def load_vsz_closure(
 
     # sys_path.append(os_path.dirname(cfg['program']['veusz_path']))
 
-    def load_vsz(vsz: Union[str, PurePath, None] = None,
-                 veusze: Optional[str] = None,
-                 prefix: Optional[str] = None,
-                 suffix_prior: Optional[str] = '_fbot') -> Tuple[veusz.Embedded, Optional[Dict[str, Any]]]:
+    def load_vsz(
+        vsz: str | PurePath | None = None,
+        veusze: str | None = None,
+        prefix: str | None = None,
+        suffix_prior: str | None = "_fbot",
+    ) -> tuple[veusz.Embedded, dict[str, Any] | None]:
         """
         Load (create) specifid data from '*.vsz' files
         :param vsz: full name of vsz or None. If not None and such file not found then create it
@@ -328,7 +330,7 @@ def load_vsz_closure(
             else:
                 lf.debug(f'creatig vsz: {vsz}')
                 title = f'{vsz} - was created'
-
+        sys_argv_prev = None
         if veusze is None:
             # Veusz embedded window construction
 
@@ -336,6 +338,7 @@ def load_vsz_closure(
             if __name__ != '__main__' and vsz:       # if this haven't done in main()
                 path_prev = os_getcwd()      # to recover
                 os_chdir(vsz.parent)   # allows veusze.Load(path) to work if _path_ is relative or relative paths is used in vsz
+                sys_argv_prev = sys.argv.copy()
             try:
                 veusze = veusz.Embedded(title, hidden=hidden)   # , hidden=True
             except ConnectionResetError:
@@ -392,7 +395,7 @@ def load_vsz_closure(
                                     break
                                 except SyntaxError:
                                     pass   # part of previous line?
-                                except NameError as e:
+                                except NameError:
                                     if _line.startswith('SetCompatLevel'):  # skip 'SetCompatLevel' line
                                         continue
                                     else:
@@ -403,10 +406,11 @@ def load_vsz_closure(
                         # Dangerous for unknown vsz! We allow 1 time at beginning of file to use for known vsz.
                         loc_exclude = locals().copy()
                         del loc_exclude['_veusze']
+                        sys.argv = ["veusz.exe", str(_vsz)]
                         loc = {
                             **_veusze.__dict__,
-                            'argv': ['veusz.exe', str(_vsz)],
-                            'BASENAME': (lambda: _vsz.name),
+                            "argv": ["veusz.exe", str(_vsz)],
+                            "BASENAME": (lambda: _vsz.name),
                         }
                         exec('\n'.join(_lines), loc, loc)
                         if _have_no_commands:
@@ -414,7 +418,7 @@ def load_vsz_closure(
 
                         # 2. Evaluate Veusz commands (we restrict our format so that standard one-liner Veusz commands only left)
 
-                        _basename_result = '\"{}\"'.format(loc['BASENAME']())
+                        _basename_result = '"{}"'.format(loc['BASENAME']())
 
                         # Preparing to execute "AddCustom*" lines at first
 
@@ -455,20 +459,20 @@ def load_vsz_closure(
                                 eval(f"""_veusze.{_line}""", {}, loc)
                                 # if r := eval(f"""_veusze.{_line}""", {}, loc):
                                 #     print(r)
-                            except Exception as e:
+                            except Exception:
                                 lf.exception(f'Error eval({_line})')
                             # from ast import literal_eval
                             # params_dict = literal_eval(params.rsplit(')', maxsplit=1)[0])
                             # getattr(veusze, cmd)(**params_dict)
-                    print('')  # loaded
+                    print()  # loaded
                     return
 
                 if was_in_use:
                     veusze.Wipe()  # todo: delete/update only vsz changes
                 load_by_exec(vsz, veusze)
                 # SingletonTimeOut.run(partial(load_by_exec, vsz, veusze)), load_timeout_s)
-
-
+        if sys_argv_prev is not None:
+            sys.argv = sys_argv_prev
         if prefix is None:
             return veusze, None
         return veusze, veusz_data(veusze, prefix, suffix_prior)
@@ -511,7 +515,7 @@ def export_images(veusze, cfg_out, suffix, b_skip_if_exists=False):
 
             try:
                 veusze.Export(str(file_name), page=i - 1, dpi=dpi)
-            except Exception as e:
+            except Exception:
                 lf.error('Exporting error', exc_info=True)
             print(i, end=', ')
 
@@ -579,20 +583,29 @@ def veusze_commands(veusze, cfg_in, file_name_r):
     if 'import_method' in cfg_in:
         if cfg_in['import_method'] == 'ImportFile':
             # veusze.call('ImportFile')
-            veusze.ImportFile(f'{file_name_r}', cfg_in['c'], encoding='ascii', ignoretext=True, linked=True,
-                              prefix=u'_')
+            veusze.ImportFile(
+                f"{file_name_r}", cfg_in["c"], encoding="ascii", ignoretext=True, linked=True, prefix="_"
+            )
             # veusze.ImportFile(f'{file_name_r}', u'`date`,Tim(time),Pres(float),Temp(float),Cond(float),'+
             # 'Sal(float),O2(float),O2ppm(floatadd_custom_expressions),pH(float),Eh(float),Turb(float)',
             #            encoding='ascii', ignoretext=True, linked=True, prefix=u'_')
         elif cfg_in['import_method'] == 'ImportFileCSV':
-            veusze.ImportFileCSV(f'{file_name_r}', blanksaredata=True, dateformat=u'DD/MM/YYYY hh:mm:s',
-                                 delimiter=b'\t', encoding='ascii', headermode='1st', linked=True, dsprefix=u'_',
-                                 skipwhitespace=True)
-    if ('add_custom_expressions' in cfg_in) and cfg_in['add_custom_expressions']:
+            veusze.ImportFileCSV(
+                f"{file_name_r}",
+                blanksaredata=True,
+                dateformat="DD/MM/YYYY hh:mm:s",
+                delimiter=b"\t",
+                encoding="ascii",
+                headermode="1st",
+                linked=True,
+                dsprefix="_",
+                skipwhitespace=True,
+            )
+    if cfg_in.get('add_custom_expressions'):
         for name, expr in zip(cfg_in['add_custom'], cfg_in['add_custom_expressions']):
             veusze.AddCustom('definition', name, expr.format_map(cfg_in).strip(), mode='replace')
 
-    if ('eval' in cfg_in) and cfg_in['eval']:
+    if cfg_in.get('eval'):
         cfg_in['nameRFE'] = file_name_r
         for ev in cfg_in['eval']:
             eval_str = ev.format_map(cfg_in).strip()
@@ -600,7 +613,7 @@ def veusze_commands(veusze, cfg_in, file_name_r):
                 lf.debug('eval: {}', eval_str)
             try:
                 eval(f"veusze.{eval_str}")  # compile(, '', 'eval') or [], 'eval')
-            except Exception as e:
+            except Exception:
                 lf.error('error to eval "{:s}"', eval_str, exc_info=True)
     # veusze.AddCustom('constant', u'fileDataSource', f"u'{file_name_r}'", mode='replace')
 
@@ -653,7 +666,7 @@ def load_to_veusz(in_fulls: Iterable, cfg, veusze=None):
             lf.info('{:d}. {:s} -> {:s}, ', ifile, in_full.name, out_vsz_full.name)
         else:
             lf.info('{:d}. {:s}, ', ifile, in_full.name)
-        sys_stdout.flush()
+        sys.stdout.flush()
         log = {'out_name': out_name, 'out_vsz_full': out_vsz_full}
 
         if veusze:  # else  to do: try Wipe()
@@ -661,7 +674,7 @@ def load_to_veusz(in_fulls: Iterable, cfg, veusze=None):
                 b_closed = veusze.IsClosed()
             except AttributeError:  # 'NoneType' object has no attribute 'cmds'
                 b_closed = True
-            except Exception as e:
+            except Exception:
                 lf.error('IsClosed() error', exc_info=True)
                 b_closed = True
             if b_closed:
@@ -696,7 +709,7 @@ def load_to_veusz(in_fulls: Iterable, cfg, veusze=None):
                 # Relative path from new vsz to data, such as u'txt/160813_0010.txt'
                 try:
                     file_name_r = in_full.relative_to(cfg['out']['path'].parent)
-                except ValueError as e:
+                except ValueError:
                     # lf.exception('path not related to pattern')
                     file_name_r = in_full
                 veusze_commands(veusze, cfg['in'], file_name_r)
@@ -704,7 +717,7 @@ def load_to_veusz(in_fulls: Iterable, cfg, veusze=None):
 
         try:
             veusze = do_load_vsz(in_full, veusze, load_vsz)
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             lf.warning('Recreating window because of {:s}', standard_error_info(e))
             veusze.remote.terminate()
             veusze.remote = None
@@ -748,10 +761,10 @@ def ge_names(cfg, f_mod_name=lambda x: x):
 
 
 
-def co_savings(cfg: Dict[str, Any]) -> Iterator[None]:
+def co_savings(cfg: dict[str, Any]) -> Iterator[None]:
     """
     Saves vsz, exports images and saves hdf5 log
-    Corutine must receive:
+    Coroutine must receive:
         veusze: Veusz embedded object
         log: dict with parameters: 'out_name' - log's index, 'out_vsz_full' - vsz file name to save
 
@@ -795,12 +808,12 @@ def co_savings(cfg: Dict[str, Any]) -> Iterator[None]:
                     # asyncio.wait_for(, cfg['async']['export_timeout_s'], loop=cfg['async']['loop'])
                     b = cfg['async']['loop'].run_until_complete(
                         export_images_timed(veusze, cfg, export_suffix))
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     lf.warning('can not export in time')
             else:
                 export_images(veusze, cfg['out'], export_suffix)
     except GeneratorExit:
-        print('Ok>')
+            print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>")
     finally:
         if __name__ != '__main__':
             os_chdir(path_prev)
@@ -814,13 +827,13 @@ def co_savings(cfg: Dict[str, Any]) -> Iterator[None]:
 
 def co_send_data(gen_veusz_and_logs, cfg, cor_savings):
     """
-    - sends loaded Veusz data to caller and recives parameter cfg_in for next step
+    - sends loaded Veusz data to caller and receives parameter cfg_in for next step
     - executes Veusz commands by veusze_commands(veusze, cfg_in, ...)
     - sends (veusze, log) to cor_savings()
 
     :param gen_veusz_and_logs: load_to_veusz(ge_names(cfg), cfg)
     :param cfg: configuration dict. Must contain ['in']['data_yield_prefix'] field to specify which data to send
-    :param cor_savings: corutine which receives (veusze, log) for example co_savings corutine
+    :param cor_savings: coroutine which receives (veusze, log) for example co_savings coroutine
 
     Usage:
     cfgin_update = None
@@ -828,18 +841,18 @@ def co_send_data(gen_veusz_and_logs, cfg, cor_savings):
         try:
             d, log = gen_data.send(cfgin_update)
         except (GeneratorExit, StopIteration):
-            print('Ok>')
+            print(f"{datetime.now():%Y-%m-%d %H:%M:%S} Ok>")
             break
         except Exception as e:
             print('There are error ', standard_error_info(e))
             continue
 
-        # ... do some calcuations to prepare custom_expressions ...
+        # ... do some calculations to prepare custom_expressions ...
 
         # if add_custom the same then update only add_custom_expressions:
         cfgin_update = {'add_custom_expressions': [expression1, expression2, ...]}
 
-    Note: Courutine fubricated by this function is returned by veuszpropagate if it is called with --data_yield_prefix argument.
+    Note: Coroutine fabricated by this function is returned by veuszpropagate if it is called with --data_yield_prefix argument.
     """
     for veusze, log in gen_veusz_and_logs:
         if not veusze:
@@ -891,7 +904,6 @@ def main(new_arg=None, veusze=None, **kwargs):
         cfg['out']['nfiles'] = len(cfg['out']['paths'])
         cfg['out']['path'] = cfg['out']['paths'][0]
         print(end=f"\n- {cfg['out']['nfiles']} output files to export images...")
-        pass
     else:
         # vsz-pattern needed
         if cfg['in']['pattern_path'] not in (None, Path()):
@@ -983,7 +995,7 @@ def main(new_arg=None, veusze=None, **kwargs):
     try:  # if True:
         path_prev = os_getcwd()
         os_chdir(cfg['out']['path'].parent)
-        if cfg['program']['return'] == '<corutines_in_cfg>':
+        if cfg['program']['return'] == '<coroutines_in_cfg>':
             cfg['co']['savings'] = cor_savings
             cfg['co']['gen_veusz_and_logs'] = load_to_veusz(in_fulls, cfg)
             cfg['co']['send_data'] = co_send_data(load_to_veusz, cfg, cor_savings)

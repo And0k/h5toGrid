@@ -1,7 +1,8 @@
 # @package hydra.job_logging
 version: 1
 formatters:
-  simple:
+  file_clean:
+    (): tcm.stage_ctx.AnsiStrippedFormatter
     format: '%(asctime)s|%(name)s|%(levelname)s|%(message)s'
     datefmt: '%H:%M:%S'
   colorlog:
@@ -26,7 +27,7 @@ handlers:
     filters: [stage_ctx]
   file:
     class: logging.FileHandler
-    formatter: simple
+    formatter: file_clean
     filename: ${hydra.run.dir}/${hydra.job.name}.log
     encoding: utf-8  # Bypasses locale.getpreferredencoding()
     filters: [stage_ctx]
