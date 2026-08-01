@@ -1,14 +1,9 @@
-import sys
-from typing import Any, Callable, Dict, Iterator, Mapping, MutableMapping, Optional, List, Sequence, Tuple, Union
-from pathlib import Path
-from datetime import datetime, timedelta, timezone
-from email.utils import parsedate_to_datetime
 import mailbox
+import sys
+from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
+from pathlib import Path
 from time import sleep
-import pandas as pd
-
-import logging
-import imaplib
 
 try:
     # from ruamel_yaml import safe_load
@@ -18,7 +13,7 @@ try:
     # yaml.indent(mapping=2, sequence=4, offset=2)
     # # yaml.explicit_start=False
 except ImportError:
-    from yaml import safe_load
+    pass
 
 from gps_tracker.gmail_read import get_gmails_data
 
@@ -48,7 +43,7 @@ from gps_tracker.gmail_read import get_gmails_data
 #     except Exception as e:
 #         print(str(e))
 
-def spot_from_gmail(device_number: Union[str, int], time_start: datetime, by_time_range: Optional[timedelta] = None):
+def spot_from_gmail(device_number: str | int, time_start: datetime, by_time_range: timedelta | None = None):
     """
 
     :param device_number:
@@ -56,7 +51,7 @@ def spot_from_gmail(device_number: Union[str, int], time_start: datetime, by_tim
     :param by_time_range: timedelta(days=2)
     :return:
     """
-    ep = datetime(1970, 1, 1, tzinfo=timezone.utc)  # 'US/Pacific' PST -1 day, 16:00:00 STD
+    ep = datetime(1970, 1, 1, tzinfo=UTC)  # 'US/Pacific' PST -1 day, 16:00:00 STD
 
     #ep = pd.Timestamp('1969-12-31 19:00:00', tz='utc')  # datetime( 0, tzinfo=timezone.utc)
     if by_time_range:
@@ -204,7 +199,7 @@ mboxfile = (Path.home() / 'AppData' / 'Roaming' / 'Thunderbird' / 'Profiles' / '
     #'C:/Users/Username/Documents/Thunderbird/Data/profile/ImapMail/server.name/INBOX'
 
 
-def parse_spot_text(body: str) -> Tuple[datetime, float, float]:
+def parse_spot_text(body: str) -> tuple[datetime, float, float]:
     """
     :param body:
     :return: Time, Lat, Lon
@@ -222,11 +217,13 @@ def parse_spot_text(body: str) -> Tuple[datetime, float, float]:
                     data[key] = row.split(' : ', maxsplit=1)[1].strip()
                     break
                 except IndexError:  # list index out of range
-                    continue        # -> try next row
-    return [datetime.strptime(data['Time'], '%m/%d/%Y %I:%M:%S %p')] + [float(k) for k in data['Lat/Lng'].split(', ')]
+                    continue  # -> try next row
+    return [datetime.strptime(data["Time"], "%m/%d/%Y %I:%M:%S %p")] + [
+        float(k) for k in data["Lat/Lng"].split(", ")
+    ]
 
 
-def spot_tracker_data_from_mbox(mboxfile, subject_end, time_start) -> List[Tuple[datetime, float, float]]:
+def spot_tracker_data_from_mbox(mboxfile, subject_end, time_start) -> list[tuple[datetime, float, float]]:
     print('reading', mboxfile)
     data = []
 

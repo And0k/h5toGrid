@@ -2,11 +2,12 @@
 
 import logging
 import sys
-from typing import Any, Callable, List, Optional, Tuple, Union
+from collections.abc import Callable
+from typing import Any
 
 import questionary
-from prompt_toolkit.keys import Keys
 from prompt_toolkit.key_binding import KeyPressEvent
+from prompt_toolkit.keys import Keys
 from questionary import Choice, Separator
 
 logger = logging.getLogger(__name__)
@@ -31,10 +32,10 @@ def _clear_lines(n: int) -> None:
 
 def enhanced_select(
     message: str,
-    choices: List[Any],
-    on_ctrl_enter: Optional[Callable[[Any], Any]] = None,
+    choices: list[Any],
+    on_ctrl_enter: Callable[[Any], Any] | None = None,
     show_ctrl_hint: bool = True,
-    instruction: Optional[str] = None,
+    instruction: str | None = None,
     **kwargs,
 ) -> Any:
     """
@@ -123,13 +124,13 @@ def enhanced_select(
 
 def select_then_edit(
     message: str,
-    choices: List[str],
+    choices: list[str],
     default: str = "",
     erase_intermediate: bool = True,
-    new_item_marker_prefix: Optional[str] = None,
-    accept_string_immediately: Optional[bool] = None,
+    new_item_marker_prefix: str | None = None,
+    accept_string_immediately: bool | None = None,
     **kwargs,
-) -> Optional[str]:
+) -> str | None:
     """
     Show select, then immediately open selected item in text editor.
 
@@ -172,12 +173,12 @@ def select_then_edit(
 
 def select_and_edit_list(
     message: str,
-    list_variants: List[List[str]],
-    generated_list: List[str],
+    list_variants: list[list[str]],
+    generated_list: list[str],
     max_preview_items: int = 3,
     max_item_len: int = 60,
     erase_intermediate: bool = True,
-) -> Optional[List[str]]:
+) -> list[str] | None:
     """
     Multi-step list editor:
     1. Select list variant (with preview)
@@ -186,7 +187,7 @@ def select_and_edit_list(
     4. Return to step 2
     """
 
-    def preview(items: List[str]) -> str:
+    def preview(items: list[str]) -> str:
         """Format list preview."""
         preview_items = "; ".join(
             f"{item[:max_item_len]}..." if len(item) > max_item_len else item

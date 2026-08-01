@@ -7,20 +7,19 @@ Before digits and after units may be any characters that will not be used here (
 Date units: years 'Y', months 'M', weeks 'W', and days 'D',
 time units: hours 'h', minutes 'm', seconds 's'
 """
-import logging
-from itertools import dropwhile
-from functools import partial
-import sys
-from pathlib import Path
-
-from typing import Callable, Iterable, Optional
-from time import strptime
-import numpy as np
-import re
 import importlib.util
-import metadata
-import vsz_add_data  # namespace will be updated in runtime by definitions of Veusz functions
+import logging
+import re
+import sys
+from functools import partial
+from itertools import dropwhile
+from pathlib import Path
+from time import strptime
+from collections.abc import Callable, Iterable
 import func_vsz as fv
+import metadata
+import numpy as np
+import vsz_add_data  # namespace will be updated in runtime by definitions of Veusz functions
 
 l = logging.getLogger(__name__)
 NaT = np.datetime64("NaT")
@@ -288,6 +287,7 @@ def remove_meteo_device(basename):
 if __name__ in ("__main__", "builtins"):
     if __name__ == "__main__":
         import os
+
         from utils.veuszPropagate import load_vsz_closure
         try:
             parent, basename = (lambda p: (p.parent, p.name))(Path(sys.argv[1]))

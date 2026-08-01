@@ -12,23 +12,25 @@ swh   Significant height of combined wind waves and swell (Hs)
 sp    surface_pressure
 """
 
-import netCDF4
-from netCDF4 import num2date
-import numpy as np
-from pathlib import Path
-import pandas as pd
-from typing import Any, Callable, Dict, Iterator, Iterable, Mapping, MutableMapping, Optional, Sequence, Tuple, List, Union, TypeVar
 import re
+from collections.abc import Sequence
+from pathlib import Path
+
+import netCDF4
+import numpy as np
+import pandas as pd
+from netCDF4 import num2date
+
 # from itertools import islice
 # import difflib
 
 
 def main(
-    file_path: Union[Path, str],
-    output_dir: Optional[Path]=None,
+    file_path: Path | str,
+    output_dir: Path | None=None,
     method: str='file_for_each_coord',
-    variables: Optional[Sequence[str]]=None,
-    var_short_names: Optional[Sequence[str]]=None
+    variables: Sequence[str] | None=None,
+    var_short_names: Sequence[str] | None=None
     ):
     """
 
@@ -66,7 +68,7 @@ def main(
         for file_p in file_path:
             try:
                 f = netCDF4.Dataset(file_path)
-            except OSError as e:
+            except OSError:
                 raise (NotImplementedError("multiple hdf5 files not supported"))
             if variables is None:
                 itim = list(f.variables.keys()).index("time")
@@ -144,7 +146,6 @@ def main(
 
 
 if __name__ == '__main__':
-    #
     main(
         file_path=
         r"C:\Work\Veusz\meteo\ECMWF\wind@ECMWF-ERA5_area(54.744417,19.5799,54.744417,19.5799).zip",

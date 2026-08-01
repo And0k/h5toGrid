@@ -1,29 +1,11 @@
 import logging
-import math
-from pathlib import Path
-import re
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Iterator,
-    Iterable,
-    Mapping,
-    MutableMapping,
-    Optional,
-    Sequence,
-    Tuple,
-    List,
-    Union,
-    TypeVar,
-)
-import numpy as np
-import xarray as xr
-from zipfile import ZipFile
-from io import IOBase
 import os
+import re
+from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+import numpy as np
+import xarray as xr
 from scripts.downloading.utils import safe_netcdf_atomic
 
 l = logging.getLogger(__name__)
@@ -92,7 +74,7 @@ def interp_to_point(path_loaded: Path, lat: float, lon: float, backend="h5netcdf
         coord_names_options = [["lat", "latitude"], ["lon", "longitude"]]
         target_coords = [lat, lon]
 
-        new_coords: Dict[str, float] = {}
+        new_coords: dict[str, float] = {}
         for i, name_options in enumerate(coord_names_options):
             found_name = None
             for name_option in name_options:
@@ -172,7 +154,7 @@ def interp_to_point(path_loaded: Path, lat: float, lon: float, backend="h5netcdf
     # Attempt to save using NETCDF4_CLASSIC format with careful encoding
     try:
         ds_interp.to_netcdf(path_new, format="NETCDF4_CLASSIC", engine="netcdf4", encoding=encoding)
-    except ValueError as e:
+    except ValueError:
         l.exception("Bad encoding parameters or other ValueError during save. Falling back...")
         # Fallback to safe_netcdf_atomic if to_netcdf fails
     except Exception as e:

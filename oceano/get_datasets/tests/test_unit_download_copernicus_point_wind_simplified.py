@@ -1,13 +1,11 @@
-import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
-import xarray as xr
-import numpy as np
-import datetime
+import io  # Added for StringIO
 import json
-import io # Added for StringIO
-import sys
-import os
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+import xarray as xr
+
 from get_datasets import d_utils, manager
 
 

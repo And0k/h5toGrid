@@ -1,5 +1,4 @@
 # !/usr/bin/env python3
-# coding:utf-8
 """
   Author:  Andrey Korzh <ao.korzh@gmail.com>
   Purpose: Load coordinates from GPS trackers to GPX files and HDF5 pandas store:
@@ -12,50 +11,54 @@
   Created: 08.04.2021
   Modified: 08.05.2022
 """
-import sys
 import logging
+import re
+import sys
+from collections.abc import Callable, Iterator, MutableMapping
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta, timezone
+from io import IOBase
+from itertools import zip_longest
+from os import PathLike
 from pathlib import Path
 from shutil import copyfile
-from typing import Any, Callable, Dict, Iterator, MutableMapping, Optional, List, Tuple, Union
-from datetime import datetime, timedelta, timezone
-from itertools import zip_longest
-from io import IOBase
-from dataclasses import dataclass, field
+
+# import gc
+from time import sleep
+from typing import Any
+
 import hydra
 import numpy as np
-import tables
 import pandas as pd
+import requests
+import utils.cfg_dataclasses as cfg_d
+from gpxpy.gpx import GPX
+from hdf5_pandas import h5
+
+# from csv2h5_vaex import argparser_files, with_prog_config
+from hdf5_pandas.gpx2h5 import h5_sort_filt_append  # df_rename_cols,
+from hdf5_pandas.h5_dask_pandas import df_to_csv  #, filter_global_minmax, filter_local
+
 # import vaex
 from pandas.tseries.frequencies import to_offset
 from tables.exceptions import HDF5ExtError
-from os import PathLike
-import re
-import requests
-# import gc
-from time import sleep
 from tabulate import tabulate
-from gpxpy.gpx import GPX
+
 # import pyproj   # from geopy import Point, distance
 # my
-from utils.h5_to_gpx import save_to_gpx, gpx_save  # gpx_track_create
-from hdf5_pandas.h5_dask_pandas import df_to_csv  #, filter_global_minmax, filter_local
-from hdf5_pandas import h5
-
-import utils.cfg_dataclasses as cfg_d
+from utils.h5_to_gpx import save_to_gpx  # gpx_track_create
 from utils.init import (
     Ex_nothing_done,
-    FakeContextIfOpen,
-    LoggingStyleAdapter,
-    set_field_if_no,
-    call_with_valid_kwargs,
     ExitStatus,
+    FakeContextIfOpen,
     GetMutex,
+    LoggingStyleAdapter,
+    call_with_valid_kwargs,
+    set_field_if_no,
 )
 
-# from csv2h5_vaex import argparser_files, with_prog_config
-from hdf5_pandas import h5
-from hdf5_pandas.gpx2h5 import h5_sort_filt_append  # df_rename_cols,
-from gps_tracker.mail_parse import spot_tracker_data_from_mbox, spot_from_gmail
+from gps_tracker.mail_parse import spot_from_gmail, spot_tracker_data_from_mbox
+
 # from inclinometer.incl_h5clc import dekart2polar_df_uv
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
@@ -103,9 +106,9 @@ mid2tables = {v: k for k, v in tables2mid.items()}
 def save2gpx(nav_df: pd.DataFrame,
              track_name: str,
              path: Path = None,
-             process: Dict[str, Any] = None,
-             gpx: Optional[GPX] = None,
-             dt_from_utc: Optional[timedelta] = None) -> GPX:
+             process: dict[str, Any] = None,
+             gpx: GPX | None = None,
+             dt_from_utc: timedelta | None = None) -> GPX:
     """
     Saves track and anchor point to the ``path / f"{nav_df.index[0]:%y%m%d_%H%M}{track_name}.gpx"``
     :param nav_df: DataFrame
@@ -184,9 +187,9 @@ def prepare_loading_xlsx_links_by_pandas():
     if prepare_loading_xlsx_links_by_pandas.is_done:
         return()
 
-    from pandas.io.excel._openpyxl import OpenpyxlReader
+    from openpyxl.cell.cell import TIME_TYPES, TYPE_BOOL, TYPE_ERROR, TYPE_NUMERIC
     from pandas._typing import Scalar
-    from openpyxl.cell.cell import TYPE_BOOL, TYPE_ERROR, TYPE_NUMERIC, TIME_TYPES
+    from pandas.io.excel._openpyxl import OpenpyxlReader
 
     def _convert_cell(self, cell, convert_float: bool) -> Scalar:
 
@@ -219,7 +222,7 @@ def prepare_loading_xlsx_links_by_pandas():
 
         return cell.value
 
-    def load_workbook(self, filepath_or_buffer: Union[str, PathLike, IOBase]):
+    def load_workbook(self, filepath_or_buffer: str | PathLike | IOBase):
         from openpyxl import load_workbook
         # had to change read_only to False:
         return load_workbook(filepath_or_buffer, read_only=False, data_only=True, keep_links=False)
@@ -278,13 +281,13 @@ def autofon_df_from_dict(g, dt_from_utc: timedelta):
 
     # used parameters
     prm = {
-        id_coords: {'cols': 'Lat Lon Speed'.split(),
+        id_coords: {'cols': ['Lat', 'Lon', 'Speed'],
                     'types': np.float32},
-        2491416576: {'cols': 'LGSM HDOP n_GPS n_GLONASS Temp'.split(),
+        2491416576: {'cols': ['LGSM', 'HDOP', 'n_GPS', 'n_GLONASS', 'Temp'],
                      'types': {'LGSM': np.int8, 'HDOP': np.float16, 'n_GPS': np.int8, 'Temp': np.int8},
                      'drop': ['n_GLONASS'],
                      'comma_to_dot': ['HDOP']},
-        2524971008: {'cols': 'Course Height Acceleration'.split(),
+        2524971008: {'cols': ['Course', 'Height', 'Acceleration'],
                      'types': np.int8,
                      'drop': ['Height', 'Acceleration'],
                      'comma_to_dot': ['Course']},
@@ -393,8 +396,8 @@ def autofon_df_from_dict(g, dt_from_utc: timedelta):
 
 def loading(
         table: str,
-        path_raw_local: Union[str, Path],
-        time_interval: List[pd.Timestamp],
+        path_raw_local: str | Path,
+        time_interval: list[pd.Timestamp],
         dt_from_utc: timedelta,
         alias,
         key=None,
@@ -505,7 +508,7 @@ def loading(
 
         if False:  # this will obtain filtered data useful for display only
             r = requests.post(f'{url}/?{key_pwd}',
-                              json=[{'mid': str(k), **time_interval} for k in tables2mid.keys()]
+                              json=[{'mid': str(k), **time_interval} for k in tables2mid]
                               )
             if r.status_code != 200:
                 print(r)
@@ -582,7 +585,7 @@ class OpenHDF5(FakeContextIfOpen):
     def __init__(self, db_path, tables, tables_log, db=None):
         self.tables = tables
         self.tables_log = tables_log
-        self.handle = super(OpenHDF5, self).__init__(
+        self.handle = super().__init__(
             lambda f: pd.HDFStore(f, mode='r'),
             file=db_path,
             opened_file_object=db)
@@ -591,7 +594,7 @@ class OpenHDF5(FakeContextIfOpen):
         """
         :return: opened handle or :param file: from __init__ if not need open
         """
-        self.handle = super(OpenHDF5, self).__enter__()
+        self.handle = super().__enter__()
         return (
             self.handle,
             self.tables,
@@ -605,21 +608,21 @@ hydra.output_subdir = 'cfg'
 
 @dataclass
 class ConfigInAutofon:
-    time_interval: List[str] = field(default_factory=lambda: ['2021-04-08T12:00:00', 'now'])  # UTC
+    time_interval: list[str] = field(default_factory=lambda: ['2021-04-08T12:00:00', 'now'])  # UTC
     # data coordinates source (path_raw_local - single, path_raw_local - multiple) with value of file path or None:
     # - None: request data from internet,
     # - xls/xlsx-file: load its data instead,
     # - h5-file: loading and use its data for reprocess (same as if table is included in tbl_raw_not_update below):
-    path_raw_local_default: Optional[str] = '_raw/ActivityReport.xlsx'  # default filename loaded from spot site
+    path_raw_local_default: str | None = '_raw/ActivityReport.xlsx'  # default filename loaded from spot site
     # If there are different devices' data in different sources then use dict {device: source} where device is regex
     # pattern str. that matches devices name that is output table name defined by ``out`` config. If no key will be
     # found then path_raw_local_default value will be used
-    path_raw_local: Optional[Dict[str, str]] = field(default_factory=dict)  # Need to be None for tr* to load from internet
+    path_raw_local: dict[str, str] | None = field(default_factory=dict)  # Need to be None for tr* to load from internet
     dt_from_utc_default_hours: int = 0
-    dt_from_utc_hours: Dict[str, float] = field(default_factory=dict)  # for specified output tables
+    dt_from_utc_hours: dict[str, float] = field(default_factory=dict)  # for specified output tables
     # b_incremental_update: bool = True
-    tbl_raw_not_update: List[str] = field(default_factory=lambda: [])  # List tables in .raw.h5 that not try to update
-    alias: Optional[Dict[Any, str]] = field(default_factory=dict)  # load device with name=value  and output with
+    tbl_raw_not_update: list[str] = field(default_factory=list)  # List tables in .raw.h5 that not try to update
+    alias: dict[Any, str] | None = field(default_factory=dict)  # load device with name=value  and output with
     # name=key which corresponds to output table
 
 @dataclass
@@ -628,25 +631,25 @@ class ConfigProcessAutofon:
     simplify_tracks_error_m = 0
     dt_per_file_days = 356
     b_missed_coord_to_zeros: bool = False
-    period_tracks: Optional[str] = None
-    period_segments: Optional[str] = '1D'
+    period_tracks: str | None = None
+    period_segments: str | None = '1D'
     # anchor settings
-    anchor_coord_default: Any = field(default_factory=lambda: [])    # List[float]: constant coord. (i.e. [44.56905, 37.97308]),
-    anchor_coord: Dict[Any, Any] = field(default_factory=dict)  # {tracker: [Lat, Lon]} - anchor for each tracker
+    anchor_coord_default: Any = field(default_factory=list)    # List[float]: constant coord. (i.e. [44.56905, 37.97308]),
+    anchor_coord: dict[Any, Any] = field(default_factory=dict)  # {tracker: [Lat, Lon]} - anchor for each tracker
     # or str "mean" to assign mean of each data source to anchor coord else - empty list to use anchor_coord_at
-    anchor_coord_at_time: Dict[Any, Any] = field(default_factory=dict)  # {time: [Lat, Lon]} - use if anchor moved
+    anchor_coord_at_time: dict[Any, Any] = field(default_factory=dict)  # {time: [Lat, Lon]} - use if anchor moved
     # If anchor_coord_default and anchor_coord_at are empty, and no tracker key in anchor_coord too then will not
     # calc. distance.
     anchor_depth: float = 0
-    anchor_tracker: List[str] = field(default_factory=lambda: [])   # names of devices to calc. distances to them as to anchors
+    anchor_tracker: list[str] = field(default_factory=list)   # names of devices to calc. distances to them as to anchors
     max_dr_default: float = 100  # common maximum distance to anchor, m. Delete data with dr > max_dr
-    max_dr: Dict[str, float] = field(default_factory=dict)  # maximum distance to anchor for specified output tables
+    max_dr: dict[str, float] = field(default_factory=dict)  # maximum distance to anchor for specified output tables
 
     # absent data settings
     # detect absent data to try download again. Default is '10min' for gprs and '20min' for satellite based tracker:
-    dt_max_hole: Optional[str] = None
+    dt_max_hole: str | None = None
     # detect absent data only in this interval back from last data. Default is '1D' for GPRS and '0D' for satellite based tracker:
-    dt_max_wait: Optional[str] = None
+    dt_max_wait: str | None = None
 
     # other
     # b_reprocess: bool = False  # todo: after implementing of processing only last data part after its loading: will be useful to reprocess all data (previously calculated dx, dy...) from Lat, Lon, DateTimeIndex
@@ -657,10 +660,10 @@ class ConfigProcessAutofon:
 class ConfigOutAutofon(cfg_d.ConfigOutSimple):
     # dt_bins_rolling: List[List[str]] = field(default_factory=lambda: [['2h', None], ['5min', None], ['10min', '1h']])
     # List[List[ or List[Optional[str] not supported so we split it:
-    dt_bins: List[str] = field(default_factory=lambda: ['2h', '5min', '10min'])
-    dt_rollings: List[str] = field(default_factory=lambda: ['', '', '1h'])
+    dt_bins: list[str] = field(default_factory=lambda: ['2h', '5min', '10min'])
+    dt_rollings: list[str] = field(default_factory=lambda: ['', '', '1h'])
     # len(to_gpx) should be less than 1(for raw table) + dt_bins
-    to_gpx: List[bool] = field(default_factory=list)  # empty: means True for averaging bins <= 1h
+    to_gpx: list[bool] = field(default_factory=list)  # empty: means True for averaging bins <= 1h
 
 
 ConfigProgram = cfg_d.ConfigProgram
@@ -723,7 +726,7 @@ def dx_dy_dist_bearing(lon1, lat1, lon2, lat2):
 
 
 def format_log_filename(start, end):
-    return '{:%y%m%d_%H%M}-{:%m%d_%H%M}'.format(start, end)
+    return f'{start:%y%m%d_%H%M}-{end:%m%d_%H%M}'
 
 
 def resample_df(df, bin_raw, index_st=None, index_en=None, limit=None, new_index=None):
@@ -742,7 +745,7 @@ def resample_df(df, bin_raw, index_st=None, index_en=None, limit=None, new_index
 
 
 def proc_and_h5save(df, tbl, cfg_in, out, process: MutableMapping[str, Any],
-                    bin: Optional[str] = None, rolling_dt: Optional[str] = None):
+                    bin: str | None = None, rolling_dt: str | None = None):
     """
     Calculates displacement, bin average and saves to HDF5
     For averaged data tables if column Course exist then calculates averaged 'speed_x' and 'speed_y' from Course and dr
@@ -787,7 +790,7 @@ def proc_and_h5save(df, tbl, cfg_in, out, process: MutableMapping[str, Any],
     if df.empty:
         return ()
 
-    out['log']['fileChangeTime'] = datetime.now(tz=timezone.utc)  # :%y%m%d_%H%M%S
+    out['log']['fileChangeTime'] = datetime.now(tz=UTC)  # :%y%m%d_%H%M%S
     out['log']['fileName'] = format_log_filename(*df.index[[0, -1]])
     try:
         del out['log']['index']  # was temporary used internally
@@ -819,7 +822,7 @@ def proc_and_h5save(df, tbl, cfg_in, out, process: MutableMapping[str, Any],
         df.index += shift_to_mid
 
         if rolling_dt:
-            window_not_even = int(re.match('.*mov(\d+)bin', tbl).group(1))
+            window_not_even = int(re.match(r'.*mov(\d+)bin', tbl).group(1))
             lf.info('{}: moving average over {} bins of {}', tbl, window_not_even, bin)
             out['log']['fileName'] += f'bin{bin}'
             df = df.resample(bin, origin='epoch').mean().rolling(
@@ -938,7 +941,7 @@ def proc_and_h5save(df, tbl, cfg_in, out, process: MutableMapping[str, Any],
     return h5_sort_filt_append(df, input={**cfg_in, 'dt_from_utc': timedelta(0)}, out=out)
 
 
-def holes_starts(t: pd.DatetimeIndex, t_max: int) -> Tuple[pd.DatetimeIndex, np.timedelta64]:
+def holes_starts(t: pd.DatetimeIndex, t_max: int) -> tuple[pd.DatetimeIndex, np.timedelta64]:
     """
     Finds time starts of data holes and its sizes
     :param t: time data
@@ -966,10 +969,10 @@ def holes_starts(t: pd.DatetimeIndex, t_max: int) -> Tuple[pd.DatetimeIndex, np.
 
 
 def holes_prepare_to_fill(db, tbl, tbl_log,
-                          time_holes: Optional[List[pd.Timestamp]] = None,
-                          dt_max_hole: Optional[str] = '10min',
-                          dt_max_wait: Optional[str] = '1D'
-                          ) -> Tuple[Optional[List[pd.Timestamp]], Optional[pd.Timestamp], Optional[str]]:
+                          time_holes: list[pd.Timestamp] | None = None,
+                          dt_max_hole: str | None = '10min',
+                          dt_max_wait: str | None = '1D'
+                          ) -> tuple[list[pd.Timestamp] | None, pd.Timestamp | None, str | None]:
     """
     Finds time holes in data index (if time_holes is None else just uses it instead) to download from data's hole start
 
@@ -989,7 +992,7 @@ def holes_prepare_to_fill(db, tbl, tbl_log,
     """
 
     try:  # Last data time from log table
-        t_max_exist = db.select(tbl_log, columns=['DateEnd'], start=-1)['DateEnd'].iat[0].tz_convert(tz=timezone.utc)
+        t_max_exist = db.select(tbl_log, columns=['DateEnd'], start=-1)['DateEnd'].iat[0].tz_convert(tz=UTC)
     except (KeyError, IndexError, AttributeError) as e:      # no log (yet or lost?)
         try:
             t_min_exist = db.select(tbl, columns=[], stop=1).index[0]
@@ -1008,7 +1011,7 @@ def holes_prepare_to_fill(db, tbl, tbl_log,
                 n_rows = -1
             df_log = pd.DataFrame(
                 {'DateEnd': [t_max_exist],
-                 'fileChangeTime': datetime.now(tz=timezone.utc),
+                 'fileChangeTime': datetime.now(tz=UTC),
                  'fileName': format_log_filename(t_min_exist, t_max_exist),
                  'rows': n_rows},
                 index=[t_min_exist]
@@ -1036,7 +1039,7 @@ def holes_prepare_to_fill(db, tbl, tbl_log,
                     lf.error('Can not query {} for "{}": {}. Retrying in memory', tbl, try_query, e)
                     continue  # Checking for holes all data
                 else:
-                    raise HDF5ExtError('Can not load data from "{}/{}"'.format(db, tbl))
+                    raise HDF5ExtError(f'Can not load data from "{db}/{tbl}"')
     elif time_start_wait:
         time_holes = time_holes[time_holes >= time_start_wait]
 
@@ -1082,11 +1085,11 @@ def holes_prepare_to_fill(db, tbl, tbl_log,
 def names_gen(
     cfg_out: MutableMapping[str, Any],
     processed_tables: bool,
-    dt_max_hole: Optional[str] = None,
-    dt_max_wait: Optional[str] = None,
+    dt_max_hole: str | None = None,
+    dt_max_wait: str | None = None,
     **kwargs,
 ) -> Iterator[
-    Union[Tuple[str, str, None, Optional[str], str], Tuple[int, str, str, Tuple[str, Optional[str]], str]]
+    tuple[str, str, None, str | None, str] | tuple[int, str, str, tuple[str, str | None], str]
 ]:
     """
     Generate table names from cfg_out['tables'] and other parameters depending on ``processed_tables`` mode parameter,
@@ -1329,8 +1332,8 @@ def main(config: ConfigType) -> None:
     for t in cfg_in['time_interval']:
         print(t.tzinfo)
     out['time_interval'] = [
-        t.replace(tzinfo=timezone.utc) if ~(isinstance(t, str) and t == 'now') else
-        datetime.now(tz=timezone.utc) for t in cfg_in['time_interval']
+        t.replace(tzinfo=UTC) if ~(isinstance(t, str) and t == 'now') else
+        datetime.now(tz=UTC) for t in cfg_in['time_interval']
         ]
     cfg_in['new_data_time_starts'] = {}  # default, will be updated in h5.names_gen with last data time in store
 
@@ -1389,13 +1392,13 @@ def main(config: ConfigType) -> None:
 
         # Recover temp db if were errors
         if out.get('db_is_bad') and not b_retry:
-            lf.warning(f'Recovering temp db from *.copy.h5 because of "db_is_bad" flag have been set')
+            lf.warning('Recovering temp db from *.copy.h5 because of "db_is_bad" flag have been set')
             try:
                 copyfile(src=out['db_path'].with_suffix('.copy.h5'), dst=out['temp_db_path'])
                 out['db_is_bad'] = False
                 continue
             except:
-                lf.exception(f'Recovering temp db from *.copy.h5 failed!')
+                lf.exception('Recovering temp db from *.copy.h5 failed!')
         sleep(2)  # reduces error rate if all bad
         break
 
@@ -1630,9 +1633,9 @@ def load_prev_source_data(tbl: str, tbl_log: str, store: pd.HDFStore, db_path_ot
 
 
 def main_call(
-        cmd_line_list: Optional[List[str]] = None,
+        cmd_line_list: list[str] | None = None,
         fun: Callable[[], Any] = main
-        ) -> Dict:
+        ) -> dict:
     """
     Adds command line args, calls fun, then restores command line args
     :param cmd_line_list: command line args of hydra commands or config options selecting/overwriting

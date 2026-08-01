@@ -59,14 +59,14 @@ def get_info_from_filename(basename) -> Tuple[Optional[Tuple[Any]], Mapping[str,
     def re_model_and_number(i: int):
         """
         Regex to get `model` and `number`
-        Must ends with number except for last device where allowed any [a-zA-Z_-] chars
+        Must ends with number except for last device where allowed any [A-Za-z_-] chars
         optionally ending with numbers (for `number`)
         # Regex field `is_type_mod` for last (used only if one) device just denotes that user wants the type and model be used together
         """
         return (
-            f"(?P<model{i}>[DBPdbp]?)(?P<number{i}>{d}[{d}-]*{d}|{d})"
+            f"(?P<model{i}>[DBPdbp]?)(?P<number{i}>{d}+(-{d}+)?)"
             if i < max_devices_idx
-            else f"(?P<model{i}>[^-][a-zA-Z_-]*)(?P<number{i}>{d}[{d}-]*{d}|{d}*)"
+            else f"(?P<model{i}>[A-Za-z][A-Za-z_-]*)(?P<number{i}>{d}+(-{d}+)?)"
         )
 
     re_exp = (
@@ -75,16 +75,16 @@ def get_info_from_filename(basename) -> Tuple[Optional[Tuple[Any]], Mapping[str,
         r"(?:(?:\.\.|-){time_end})?(?:[_,]? ?(?:dt=)?{dt})?"
         r"(?:[,_]?d(?P<decimation>\d+))?"
         r")?"
-        r"(?:[Ss]t_?(?P<st0>[a-zA-Z\d_]+[^-,_]))?"
+        r"(?:[Ss]t_?(?P<st0>[A-Za-z\d_]+[^-,_]))?"
         r"(?:@{pids})?"
-        r"(?:[Ss]t_?(?P<st>[a-zA-Z\d_]+[^-,_]))?"
+        r"(?:[Ss]t_?(?P<st>[A-Za-z\d_]+[^-,_]))?"
         r"(?:[-,_] ?(?P<descr>[^@\d][^@]*))?\.vsz"
     ).format(
         time=re_time,  # end time have same parts but optional and with new names:
         time_end=re_time.replace(">", "e>").replace(")(", ")?(").replace(")[", ")?["),
         dt=re_dt,
         pids="".join(  # some allowed types&models are switches under "Load text file(s) in Veusz" below
-            rf"?:{'?,' if i else ''}?((?P<type{i}>i(ncl)?|INKL|w|tr|ADV|ECMWF|CMEMS|)_?"
+            rf"{'?,?' if i else ''}((?P<type{i}>i(ncl)?|INKL|w|tr|ADV|ECMWF|CMEMS|)_?"
             f"{re_model_and_number(i)})"
             for i in range(max_devices_idx + 1)
         ),
@@ -182,6 +182,11 @@ def get_info_from_filename(basename) -> Tuple[Optional[Tuple[Any]], Mapping[str,
                 model = re_parts.pop(f"model{i}")  # or device_type_cur or model or "i"
             except KeyError:
                 pass
+            else:
+                if model == "i" and not device_type:
+                    device_type_cur = device_type = model
+                    model = ""
+
             pid = f"{model or device_type}{number:{'02d' if device_type in custom_device_types else 'd'}}"
             devices[pid] = {"type": device_type, "model": model, "number": number}
     out_info = {
@@ -264,17 +269,24 @@ def select_cfgs(dir_cfgs: Path, incl_type_nums: Set[str]) -> Tuple[Dict[str, str
 def _meta_array_to_dict(
     p, b, bd, s, lat=None, lon=None, time_st="", time_en="", burst_dt=None, bursts_t=None
 ):
+    """Convert a flat metadata array into a labelled dict.
+
+    Keys follow the Veusz ``vsz_drawer`` convention:
+    ``p`` (point/station), ``b`` (bottom depth), ``bd`` (height above bottom),
+    ``s`` (device type&model symbol), ``c`` (coordinates), ``r`` (time range),
+    ``t`` (burst_dt), ``T`` (bursts_t).
+    """
     return dict(
         zip(
             "pbdscrtT",
             [
-                p.format_map(fv.I),
+                p.format_map(fv.I) if p is not None else None,
                 b,
                 None if None in (b, bd) else round(b - bd, 1),
                 s,
             ]
-            + ([(lat, lon)] if lat else [])
-            + ([(time_st, time_en)] if time_st else [])
+            + ([(lat, lon)] if lat else [None])
+            + [(time_st, time_en)]
             + ([burst_dt, bursts_t] if bursts_t else []),
         )
     )

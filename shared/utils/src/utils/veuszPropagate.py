@@ -10,12 +10,13 @@ to have the ability not process twice same data on next calls.
 Created: 02.09.2016
 """
 # import ast
-import logging
+
 import re
 from datetime import datetime
 from os import chdir as os_chdir, getcwd as os_getcwd, environ as os_environ
 from pathlib import Path, PurePath
 import sys
+from contextlib import suppress
 from time import sleep
 from typing import Any, Callable, Dict, Iterator, Iterable, Optional, Tuple, Sequence, Union
 from itertools import dropwhile
@@ -47,7 +48,7 @@ to_mytz_offset = tzoffset(None, -tzlocal()._dst_offset.total_seconds())
 load_vsz = None  # must be corrected later
 
 if __name__ != '__main__':
-    lf = LoggingStyleAdapter(logging.getLogger(__name__))
+    lf = LoggingStyleAdapter(__name__)
 else:
     lf = None  # will set in main()
 
@@ -395,7 +396,7 @@ def load_vsz_closure(
                                 except NameError as e:
                                     if 'SetCompatLevel' in _line:  # name 'SetCompatLevel' is not defined?
                                         continue
-                            _lines.append(_line.replace('from sys import argv', ''))
+                            _lines.append(_line.removeprefix('from sys import argv'))
                         else:
                             _have_no_commands = True
                         # Dangerous for unknown vsz! We allow 1 time at beginning of file to use for known vsz.
@@ -754,7 +755,7 @@ def ge_names(cfg, f_mod_name=lambda x: x):
 def co_savings(cfg: Dict[str, Any]) -> Iterator[None]:
     """
     Saves vsz, exports images and saves hdf5 log
-    coroutine must receive:
+    Coroutine must receive:
         veusze: Veusz embedded object
         log: dict with parameters: 'out_name' - log's index, 'out_vsz_full' - vsz file name to save
 
@@ -996,24 +997,24 @@ def main(new_arg=None, veusze=None, **kwargs):
                 veusze = None  # to note that it is closed in cor_savings.close()
         print(f'{nfiles} processed. ok>')
 
-        pass
-    except Exception as e:
+    except Exception:
         lf.exception('Not good')
-        return  # or raise FileNotFoundError?
-    finally:
-        if cfg['async']['loop']:
-            cfg['async']['loop'].close()
-        os_chdir(path_prev)
-        if veusze and cfg['program']['return'] == '<end>':
-            veusze.Close()
-            try:
-                veusze.WaitForClose()
-            except AttributeError:  # 'NoneType' object has no attribute 'cmds'
-                pass
-            veusze = None
-        elif cfg['program']['return'] == '<embedded_object>':
-            cfg['veusze'] = veusze
+        raise
+    else:
+        if cfg['program']['return'] == '<embedded_object>':
             return cfg
+    finally:  # Guaranteed cleanup and state mutation
+        if loop := cfg['async']['loop']:
+            loop.close()
+        os_chdir(path_prev)
+        if veusze:
+            match cfg['program']['return']:
+                case '<end>':
+                    veusze.Close()
+                    with suppress(AttributeError):
+                        veusze.WaitForClose()
+                case '<embedded_object>':
+                    cfg['veusze'] = veusze
 
 
 if __name__ == '__main__':

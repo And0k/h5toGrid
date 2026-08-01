@@ -1,33 +1,20 @@
-from datetime import timedelta
-from io import IOBase
 import math
-from pathlib import Path
-import netCDF4
-import numpy as np
 import os
 import re
-from tempfile import NamedTemporaryFile
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Iterator,
-    Iterable,
-    Mapping,
-    MutableMapping,
-    Optional,
-    Sequence,
-    Tuple,
-    List,
-    Union,
-    TypeVar,
-)
-from veusz_helpers.common import func_vsz as fv
-import xarray as xr
 import xml.etree.ElementTree as ET
+from collections.abc import Mapping
+from datetime import timedelta
+from io import IOBase
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+from typing import Any
 from zipfile import ZipFile
 
+import netCDF4
+import numpy as np
+import xarray as xr
 from utils.logging_config import setup_logging
+from veusz_helpers.common import func_vsz as fv
 
 l = setup_logging(__name__)
 
@@ -106,7 +93,7 @@ def interp_to_point(path_loaded: str|Path, lat: float, lon: float, backend="h5ne
 
     target_coords = [lat, lon]
 
-    new_coords: Dict[str, float] = {}
+    new_coords: dict[str, float] = {}
     with xr.open_dataset(path_loaded, engine=backend) as ds:
         # Creating dict with the actual coordinate names in the dataset
         for i, name_options in enumerate(coord_names_options):
@@ -164,7 +151,7 @@ def interp_to_point(path_loaded: str|Path, lat: float, lon: float, backend="h5ne
 
         safe_netcdf_atomic(ds_interp, path_new, encoding=encoding)
         return path_new
-    except ValueError as e:
+    except ValueError:
         l.exception("Bad encoding parameters or other ValueError during save. Falling back...")
         # Fallback to safe_netcdf_atomic if to_netcdf fails
     except Exception as e:
@@ -194,7 +181,7 @@ def extract_zip_to_named_dir(zip_path: str | Path, target_dir=None, dry_run=Fals
     return target_dir
 
 
-def h5_format(file: Union[str, Path, List[Union[str, Path]]], backend="h5netcdf", **meta: Mapping[str, Any]):
+def h5_format(file: str | Path | list[str | Path], backend="h5netcdf", **meta: Mapping[str, Any]):
     """
     Format and add metadata to HDF5/NetCDF files. If input file is .grib file then writes to .nc file, if
     input file is .nc, then overwrites input file
@@ -237,7 +224,7 @@ def h5_format(file: Union[str, Path, List[Union[str, Path]]], backend="h5netcdf"
                     ds.sel(latitude=lat, longitude=lon) if grib_to_netcdf else ds,
                     file_path.with_suffix(".nc")
                 )
-            except PermissionError as e:
+            except PermissionError:
                 print(f"{file_path.with_suffix('.nc').name}:", "Permission denied")
                 done = False
             except Exception as e:
@@ -248,7 +235,7 @@ def h5_format(file: Union[str, Path, List[Union[str, Path]]], backend="h5netcdf"
 
 def grid_aligned_bbox(
     lat: float, lon: float, delta: float = 0.25, extend: float = 0
-) -> Tuple[float, float, float, float]:
+) -> tuple[float, float, float, float]:
     """
     Generate ECMWF-style area bounding box aligned to ERA5 grid.
 
@@ -346,7 +333,7 @@ class ReverseTxt(IOBase):
             yield file.read(delta)
 
 
-def extract_coordinates_from_gpx(gpx_path: Path, waypoints_re: str = None) -> Optional[Dict[str, Dict[str, float]]]:
+def extract_coordinates_from_gpx(gpx_path: Path, waypoints_re: str = None) -> dict[str, dict[str, float]] | None:
     """Extract coordinates from a .gpx file.
 
     Args:
@@ -446,7 +433,7 @@ def nc_load(path_section: Path, variables):
             # latitudes = f.variables[lat_name][:]
             # longitudes = f.variables[lon_name][:]
         else:
-            y_name = next(name for name in dims.keys() if name != time_name)
+            y_name = next(name for name in dims if name != time_name)
     time_var = f.variables[time_name]
     time_nc = (
         netCDF4.num2date(
@@ -470,7 +457,7 @@ def nc_load(path_section: Path, variables):
 def create_dar(
     data=None,
     coords=None,
-    interp_dt: Union[None, np.timedelta64, timedelta] = None,
+    interp_dt: None | np.timedelta64 | timedelta = None,
     bin_dt=None,
     bin_dz=None,
     attrs={},
@@ -560,7 +547,7 @@ def save_nc_for_surfer(
     y: np.ndarray,
     out: Mapping[str, np.ndarray],
     path_base: Path,
-    dt: Union[None, list, np.timedelta64],
+    dt: None | list | np.timedelta64,
     dy=None,
     not_interp_keys = {},  # todo: auto detect
     stem_sfx="",

@@ -1,24 +1,28 @@
-from pathlib import Path
-import logging
-from typing import Any, Callable, Dict, Iterator, Mapping, MutableMapping, Optional, List, Sequence, Tuple, Union
-
-from googleapiclient.discovery import build
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-import pickle
 import base64
+import logging
+import pickle
+from collections.abc import Callable
+from pathlib import Path
+from typing import (
+    Any,
+)
+
+from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+
 # import email
 # from datetime import datetime
 # from bs4 import BeautifulSoup
-
 from utils.init import LoggingStyleAdapter
+
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
 
 # Define the SCOPES. If modifying it, delete the token.pickle file.
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
 
-def get_gmails_data(json_cred, q: str, parse_body: Callable[[str], Any], cfg_dir=None, q_display: Optional[str] = None):
+def get_gmails_data(json_cred, q: str, parse_body: Callable[[str], Any], cfg_dir=None, q_display: str | None = None):
     """
 
     :param json_cred: json file name downloaded from https://console.cloud.google.com/apis/credentials
@@ -86,9 +90,8 @@ def get_gmails_data(json_cred, q: str, parse_body: Callable[[str], Any], cfg_dir
 
                 body = base64.b64decode(payload['body']['data'].replace('-', '+').replace('_', '/'))
                 data.append(parse_body(body.decode(errors='ignore')))
-            except Exception as e:
+            except Exception:
                 lf.exception('Read message')
-                pass
 
     batch = service.new_batch_http_request()
 
@@ -143,9 +146,8 @@ def get_gmails_data(json_cred, q: str, parse_body: Callable[[str], Any], cfg_dir
             # print('\n')
             data.append()
 
-        except Exception as e:
+        except Exception:
             lf.exception('Read message')
-            pass
     return data
 
 

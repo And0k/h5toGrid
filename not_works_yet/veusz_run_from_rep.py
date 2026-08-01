@@ -6,7 +6,8 @@ from pathlib import Path, PurePath
 import sys
 from sys import platform as sys_platform, stdout as sys_stdout
 from time import sleep
-from typing import Any, Callable, Dict, Iterator, Optional, Tuple, Union
+from typing import Any, Dict, Iterator, Tuple, Union
+from collections.abc import Callable, Iterable
 
 veusz_path = 'd:/workCode/veusz/veusz'
 

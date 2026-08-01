@@ -370,6 +370,8 @@ def veusz_load_hdf5(
         def cols_spec_or_existed(device_id, grp):
             if not cols_namemap[grp]:
                 return existed_devs[device_id][grp]
+            elif existed_devs[device_id][grp] is None:
+                raise KeyError(f'No "{grp}" group in {device_id}!')
             else:
                 return set(existed_devs[device_id][grp]).intersection(cols_namemap[grp])
 
