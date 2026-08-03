@@ -16,7 +16,7 @@ from collections import abc
 
 from omegaconf import DictConfig, ListConfig
 
-from tcm import config
+from tcm import schema
 from numpy import ndarray
 
 

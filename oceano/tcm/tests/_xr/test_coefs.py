@@ -22,7 +22,7 @@ from tcm._xr.coefs import (
     load_coefs_from_nc,
     save_coefs_to_nc,
 )
-from tcm.config import ConfigIn_InclProc
+from tcm.schema import ConfigIn_InclProc
 from tcm.config_yaml import prep_cfg_for_probe, update_coefs_in_run_yaml
 from tcm.incl_calc.coefs import get_coefs, load_coefs
 

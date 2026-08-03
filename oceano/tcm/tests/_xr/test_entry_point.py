@@ -1,4 +1,4 @@
-"""Tests for tcm.cli, tcm.config ConfigStore registration, and bundled config accessibility."""
+"""Tests for tcm.cli, tcm.schema ConfigStore registration, and bundled config accessibility."""
 from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
@@ -217,7 +217,7 @@ class TestBundledConfigAccessible:
 
 @pytest.mark.xr
 class TestConfigStoreRegistration:
-    """tcm.config must register structured config groups with Hydra ConfigStore."""
+    """tcm.schema must register structured config groups with Hydra ConfigStore."""
 
     @staticmethod
     def _cs_repo():

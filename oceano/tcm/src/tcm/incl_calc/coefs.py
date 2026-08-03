@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 from omegaconf import OmegaConf
 
-from tcm import _constants, config, format, to_omegaconf, utils2init
+from tcm import schema, _constants, format, policy, to_omegaconf, utils2init
 from tcm._xr import coefs as _xr_coefs
 
 lf = utils2init.LoggingStyleAdapter(__name__)
@@ -151,9 +151,9 @@ def load_coefs(store, tbl: str):
         return _xr_coefs.load_coefs_from_nc(store_path, tbl)
 
     # HDF5 path — skip if binary I/O disabled (noh5 mode)
-    if not isinstance(store, pd.HDFStore) and store_path.suffix in _constants.hdf5_suffixes:
-        if _constants.use_h5_get() is not True:
-            return None  # None=silent, False=caller warns (see use_h5 docstring)
+    if not isinstance(store, pd.HDFStore) and store_path.suffix in _constants._EXT_HDF5:
+        if not policy.io():
+            return None  # silent skip — caller falls through to YAML coefs
         if not store_path.exists():
             lf.debug("Coefficients file {} not found", store_path)
             return None
@@ -203,7 +203,7 @@ def get_coefs(coefs_paths: Sequence, tbl: str, coefs_ovr: Mapping[str, Any] | No
 
     defaults = {
         k: v_def
-        for k, v in config.ConfigInCoefs_InclProc.__dataclass_fields__.items()
+        for k, v in schema.ConfigInCoefs_InclProc.__dataclass_fields__.items()
         if (v_def := to_omegaconf.get_field_default(v)) is not None
         and not (isinstance(v_def, (list, dict)) and ((not v_def) or not any(lst != [] for lst in v_def)))
     }
@@ -236,6 +236,10 @@ def get_coefs(coefs_paths: Sequence, tbl: str, coefs_ovr: Mapping[str, Any] | No
             coefs_ovr = {}
 
     _META_KEYS = frozenset(("dates", "date", "pid"))
+    # Source attribution per coef — populated below, returned via module state
+    # so callers (get_coefs_from_cfg) can log a precise breakdown.
+    from_file: set[str] = set()
+    from_ovr: set[str] = set()
     if coefs_paths:
         coefs_load_src: Path | None = None
         for coefs_path in coefs_paths:
@@ -255,29 +259,29 @@ def get_coefs(coefs_paths: Sequence, tbl: str, coefs_ovr: Mapping[str, Any] | No
             )
             coefs_load = {**(coefs_ovr or {}), "dates": coefs_ovr_dates}
         else:
-            # Log only when loaded coefs provide keys not already in coefs_ovr.
-            _new_from_file = (
-                {
-                    k
-                    for k, v in coefs_load.items()
-                    if k not in _META_KEYS and k not in coefs_ovr and not isinstance(v, (str, bytes))
-                }
+            # Coefs present in the file but absent from overrides → file wins.
+            from_file = {
+                k
+                for k, v in coefs_load.items()
+                if k not in _META_KEYS and not isinstance(v, (str, bytes)) and (not coefs_ovr or k not in coefs_ovr)
+            }
+            # Coefs supplied by overrides merge on top of file values below.
+            from_ovr = (
+                {k for k in (coefs_ovr or {}) if k in defaults and k not in not_ovr and coefs_ovr[k] is not None}
                 if coefs_ovr
-                else {
-                    k
-                    for k, v in coefs_load.items()
-                    if k not in _META_KEYS and not isinstance(v, (str, bytes))
-                }
+                else set()
             )
-            if _new_from_file:
-                lf.debug(
-                    "Loaded {} new coefs from {}: {}",
-                    len(_new_from_file),
-                    coefs_load_src,
-                    sorted(_new_from_file),
-                )
-            else:
-                lf.debug("All coefs from {} already in overrides", coefs_load_src)
+            from_file -= from_ovr  # override wins → attribute to override, not file
+            lf.debug(
+                "Coef sources for {}: {} file={}[{}], {} override[{}], {} default",
+                tbl,
+                len(from_file),
+                coefs_load_src,
+                sorted(from_file),
+                len(from_ovr),
+                sorted(from_ovr),
+                len(defaults) - len(from_file) - len(from_ovr),
+            )
             coefs_load_dates = coefs_load.get("dates", coefs_ovr_dates)
             if coefs_ovr:
                 for k, v in coefs_ovr.items():
@@ -290,6 +294,11 @@ def get_coefs(coefs_paths: Sequence, tbl: str, coefs_ovr: Mapping[str, Any] | No
             coefs_load["dates"] = coefs_load_dates
     else:
         coefs_load = {**(coefs_ovr or {}), "dates": coefs_ovr_dates}
+        from_ovr = (
+            {k for k in (coefs_ovr or {}) if k in defaults and k not in not_ovr and coefs_ovr[k] is not None}
+            if coefs_ovr
+            else set()
+        )
 
     if coefs_load:
         coefs_load = {
@@ -306,12 +315,22 @@ def get_coefs(coefs_paths: Sequence, tbl: str, coefs_ovr: Mapping[str, Any] | No
     ]
     if out_dates:
         coefs_load["date"] = max(out_dates)
+
+    # Stash attribution on the function for the caller (get_coefs_from_cfg).
+    # Avoids polluting the coefs dict (direct callers like tests/tcm_gui expect a clean dict).
+    get_coefs._src = {
+        "file": coefs_load_src if coefs_paths else None,
+        "from_file": from_file,
+        "from_ovr": from_ovr,
+        "n_default": max(0, len(defaults) - len(from_file) - len(from_ovr)),
+        "paths": list(coefs_paths),
+    }
     return coefs_load
 
 
 def coefs_format_for_h5(coef: Mapping[str, Any], pcid: str = None, date: str | None = None):
     if coef is None:
-        coef = config.ConfigInCoefs_InclProc().__dict__
+        coef = schema.ConfigInCoefs_InclProc().__dict__
         del coef["g0xyz"]
         if not pcid.split("_")[-1].startswith("p"):
             del coef["P_t"]
@@ -360,13 +379,13 @@ def get_coefs_from_cfg(cfg_in: dict, pcid: str) -> dict:
     coefs_paths: list = []
     if cp := cfg_in.get("coefs_path"):
         coefs_paths.append(cp)
-    cp_default = config.ConfigIn_InclProc.coefs_path
+    cp_default = schema.ConfigIn_InclProc.coefs_path
     if cp_default and cp_default not in coefs_paths:
         # Skip H5 path when binary I/O is unavailable/disabled
-        if cp_default.suffix not in _constants.hdf5_suffixes or _constants.use_h5_get() is True:
+        if cp_default.suffix not in _constants._EXT_HDF5 or policy.io():
             coefs_paths.append(cp_default)
     # Always add yaml_export dir as fallback (may be the only working source
-    # when use_h5_get() is False or the H5 file is missing in dist builds).
+    # when io().h5 is False or the H5 file is missing in dist builds).
     if cp_default:
         yaml_dir = Path(cp_default).parent / "yaml_export"
         if yaml_dir not in coefs_paths:
@@ -377,12 +396,31 @@ def get_coefs_from_cfg(cfg_in: dict, pcid: str) -> dict:
         tbl=format.pcid_to_raw_name(pcid),
         coefs_ovr=coefs_ovr,
     )
-    date_str = (coefs_ovr or {}).get("date", "N/A")
-    lf.info(
-        "Coefs for {}: paths={}, date={}, {} override keys",
-        pcid,
-        coefs_paths,
-        date_str,
-        len(coefs_ovr) if coefs_ovr else 0,
-    )
+    # Log source attribution: which coefs came from file, override, or default.
+    src = getattr(get_coefs, "_src", None)
+    get_coefs._src = None  # consume once
+    if src:
+        from_f, from_o = sorted(src["from_file"]), sorted(src["from_ovr"])
+        file_tag = Path(src["file"]).name if src["file"] else "(no file)"
+        parts: list[str] = []
+        if from_f:
+            parts.append(f"{len(from_f)} from {file_tag}: {from_f}")
+        if from_o:
+            parts.append(f"{len(from_o)} from config override: {from_o}")
+        if n_def := src["n_default"]:
+            parts.append(f"{n_def} default")
+        lf.info(
+            "Coefs for {}: {} | date={}",
+            pcid,
+            "; ".join(parts) if parts else "no coefs (all defaults)",
+            cfg_in_coefs.get("date", "N/A"),
+        )
+    else:
+        lf.info(
+            "Coefs for {}: paths={}, date={}, {} override keys",
+            pcid,
+            coefs_paths,
+            (coefs_ovr or {}).get("date", "N/A"),
+            len(coefs_ovr) if coefs_ovr else 0,
+        )
     return cfg_in_coefs

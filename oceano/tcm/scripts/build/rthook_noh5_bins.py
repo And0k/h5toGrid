@@ -9,13 +9,13 @@ binning/text-save defaults:
 Executed **before** the application entry point → Hydra compose picks up
 the overridden defaults instead of the dataclass originals.
 
-``tcm/config.py`` registers ``out/base`` at module level during ``import tcm``
+``tcm/schema.py`` registers ``out/base`` at module level during ``import tcm``
 (which ``from tcm import processing`` triggers).  This hook forces that import
 then re-registers with noh5 values — ``cs.store(group="out", name="base", ...)``
 overwrites the prior registration.
 """
-# Force tcm.config import → triggers ConfigStore registration with dev defaults
-import tcm.config  # noqa: F401 — side-effect only
+# Force tcm.schema import → triggers ConfigStore registration with dev defaults
+import tcm.schema  # noqa: F401 — side-effect only
 
 from hydra.core.config_store import ConfigStore
 
@@ -26,7 +26,7 @@ cs = ConfigStore.instance()
 cs.store(
     group="out",
     name="base",
-    node=tcm.config.ConfigOut_InclProc(
+    node=tcm.schema.ConfigOut_InclProc(
         dt_bins=[0, 3600],
         dt_bins_min_save_text=0,
     ),

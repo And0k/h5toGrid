@@ -38,7 +38,7 @@ class PipelineConfig:
     """Parameters for the calibration pipeline.
 
     This is the **single source of truth** for all pipeline parameters.
-    :mod:`tcm.config` re-exports it as ``ConfigProcCalib`` for Hydra's
+    :mod:`tcm.schema` re-exports it as ``ConfigProcCalib`` for Hydra's
     ConfigStore — no separate duplicate dataclass.
 
     Attributes

@@ -3,8 +3,7 @@ from typing import Annotated, Any, Union, get_args, get_origin, get_type_hints
 
 from omegaconf import OmegaConf
 
-from tcm.config import Config
-from tcm.to_omegaconf import get_field_default
+from tcm import schema, to_omegaconf
 
 
 def default_cfg() -> dict:
@@ -13,14 +12,14 @@ def default_cfg() -> dict:
     return {"input": OmegaConf.to_container(OmegaConf.structured(input_type()), resolve=True)}
 
 
-def build_defaults(schema: type) -> dict[str, Any]:
+def build_defaults(cls: type) -> dict[str, Any]:
     """Build `{field_name: default}` from a dataclass using :func:`get_field_default`.
 
     Nested dataclasses are recursively expanded into sub-dicts.
     """
     result: dict[str, Any] = {}
-    for fld in dataclasses.fields(schema):
-        d = get_field_default(fld)
+    for fld in dataclasses.fields(cls):
+        d = to_omegaconf.get_field_default(fld)
         result[fld.name] = build_defaults(type(d)) if dataclasses.is_dataclass(type(d)) else d
     return result
 
@@ -28,7 +27,7 @@ def build_defaults(schema: type) -> dict[str, Any]:
 # Derive section types from Config — single import replaces five.
 _SECTION_TYPES: dict[str, type] = {
     name: tp
-    for name, tp in get_type_hints(Config).items()
+    for name, tp in get_type_hints(schema.Config).items()
     if name != "defaults" and dataclasses.is_dataclass(tp)
 }
 
@@ -43,7 +42,7 @@ _COEF_META_SKIP = frozenset(("dates", "date"))  # tree-level metadata, not row i
 
 # Derive ConfigInCoefs_InclProc from Config.input.coefs — no direct import.
 COEFS_TYPE: type = type(
-    get_field_default(next(f for f in dataclasses.fields(_SECTION_TYPES["input"]) if f.name == "coefs"))
+    to_omegaconf.get_field_default(next(f for f in dataclasses.fields(_SECTION_TYPES["input"]) if f.name == "coefs"))
 )
 
 
@@ -85,7 +84,7 @@ def infer_coef_shapes(coefs_type: type = COEFS_TYPE) -> dict[str, tuple[int, ...
     for fld in dataclasses.fields(coefs_type):
         if fld.name in _COEF_META_SKIP:
             continue
-        default = get_field_default(fld)
+        default = to_omegaconf.get_field_default(fld)
         shapes[fld.name] = (
             _shape_of(default) if default is not None
             else _shape_from_annotation(hints[fld.name])

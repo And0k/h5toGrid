@@ -1,10 +1,6 @@
 # @package hydra.job_logging
 version: 1
 formatters:
-  file_clean:
-    (): tcm.stage_ctx.AnsiStrippedFormatter
-    format: '%(asctime)s|%(name)s|%(levelname)s|%(message)s'
-    datefmt: '%H:%M:%S'
   colorlog:
     '()': 'colorlog.ColoredFormatter'
     format: '%(cyan)s%(asctime)s%(reset)s|%(blue)s%(funcName)s%(reset)s|%(log_color)s%(message)s'
@@ -25,17 +21,11 @@ handlers:
     stream: ext://sys.stdout
     level: INFO
     filters: [stage_ctx]
-  file:
-    class: logging.FileHandler
-    formatter: file_clean
-    filename: ${hydra.run.dir}/${hydra.job.name}.log
-    encoding: utf-8  # Bypasses locale.getpreferredencoding()
-    filters: [stage_ctx]
 
 loggers:
   matplotlib:  # Suppress matplotlib debug messages
     level: WARNING
-    handlers: [console, file]
+    handlers: [console]
     propagate: false
   h5py._conv:  # Suppress
     level: WARNING
@@ -47,6 +37,6 @@ loggers:
     level: WARNING
 root:
   level: DEBUG
-  handlers: [console, file]
+  handlers: [console]
 
 disable_existing_loggers: false

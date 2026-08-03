@@ -386,6 +386,8 @@ tcm_clc_txt.exe "_raw/*i*.txt" 'program.return_="<cfg_from_args>"'
 | `Azimuth data -> no-op: time_ranges_azimuth ... not in current data range` | Предупреждение: в интервале азимута нет данных |
 
 Расположение журнала: `cfg_proc/log/{timestamp}/processing.log` (внутри каталога данных).
+При нестандартном `program.return_` (напр. `<cfg_from_args>`) файл называется
+`processing-cfg_from_args.log` (см. ``cli._setup_file_handler`` в ``how_it_works.md``).
 
 ## Дополнительная документация
 

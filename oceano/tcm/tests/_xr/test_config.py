@@ -1,4 +1,4 @@
-"""Tests for tcm/config.py — B-2 regroup, new fields, inheritance, ConfigStore groups.
+"""Tests for tcm/schema.py — B-2 regroup, new fields, inheritance, ConfigStore groups.
 
 Covers: new input.min/max fields, corr_time_* moved to input,
 ConfigFilterCalib inherits ConfigFilter_InclProc, ConfigStore proc group,
@@ -16,9 +16,9 @@ from hydra import compose, initialize_config_dir
 from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig, OmegaConf
 
-import tcm.config  # noqa: F401 — triggers ConfigStore registration
+import tcm.schema  # noqa: F401 — triggers ConfigStore registration
 from tcm import _constants
-from tcm.config import (
+from tcm.schema import (
     Config,
     ConfigFilter_InclProc,
     ConfigFilterCalib,
@@ -241,7 +241,7 @@ class TestDefaultTablesPattern:
 
     def test_default_tables_pattern(self):
         """Default tables pattern is incl* (glob — matches both dot and underscore)."""
-        from tcm.config import ConfigIn_InclProc
+        from tcm.schema import ConfigIn_InclProc
 
         cfg = ConfigIn_InclProc()
         assert cfg.tables == ["incl*"], (

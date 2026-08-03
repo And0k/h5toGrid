@@ -7,15 +7,18 @@ Verifies that:
 - Duplicate YAMLs (same pcid, multiple stems) are both processed, but data is
   not duplicated (incremental NC writes skip overlapping time ranges)
 """
+
 from __future__ import annotations
 
+import logging
 import sys
+from pathlib import Path
 
 import pytest
 
 from tcm import cli, processing
 from tcm._constants import RAW_DIR_NAME
-from tcm.config import Return
+from tcm.schema import Return
 
 
 # --------------------------------------------------------------------------- #
@@ -94,6 +97,97 @@ class TestCliOverrideParsing:
 
         cfg = mock_run.call_args[0][0]
         assert check(cfg), f"Override not applied: {extra_args}"
+
+
+@pytest.mark.xr
+class TestCliOverrideFullPropagation:
+    """CLI Hydra overrides survive process_loading_yaml merge into run_processing.
+
+    The ``test_cli_overrides_parsed`` suite (above) only verifies the first hop
+    (CLI → ``run()``).  Here we verify the second hop: ``process_loading_yaml``
+    merges the base_cfg with per-probe YAML via ``OmegaConf.merge`` and passes
+    the result to ``run_processing``.  Extra keys added via ``+key=value`` must
+    survive this merge.
+    """
+
+    @pytest.mark.parametrize(
+        ("extra_args", "check"),
+        [
+            pytest.param(
+                ["+force_reprocess=True"],
+                lambda cfg: cfg.get("force_reprocess") is True,
+                id="force-reprocess",
+            ),
+            pytest.param(
+                ["+force_reprocess=False"],
+                lambda cfg: cfg.get("force_reprocess") is False,
+                id="force-reprocess-false",
+            ),
+        ],
+    )
+    def test_cli_override_reaches_run_processing(
+        self,
+        _raw_with_csv,
+        monkeypatch,
+        mocker,
+        extra_args,
+        check,
+    ):
+        """CLI override propagates through process_loading_yaml → run_processing."""
+        project_dir, raw_dir = _raw_with_csv
+        monkeypatch.chdir(project_dir)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["prog", str(raw_dir / "*i*.txt")] + extra_args,
+        )
+
+        mock_proc = mocker.patch("tcm.processing.run_processing")
+        cli.call_in_raw_dir(processing.run)
+
+        mock_proc.assert_called_once()
+        cfg_dc = mock_proc.call_args[0][0]
+        assert check(cfg_dc), (
+            f"Override {extra_args} did not reach run_processing: "
+            f"cfg.get('force_reprocess') = {cfg_dc.get('force_reprocess')!r}"
+        )
+
+
+@pytest.mark.xr
+class TestMainInitPreservesExtraKeys:
+    """``main_init`` → ``ini2dict`` must preserve extra top-level keys (e.g. ``+force_reprocess``).
+
+    Regression: ``ini2dict`` pre-allocates ``cfg = {key: {} for key in config}``
+    then skips non-dict values via ``hasattr(sec, 'items')`` → ``continue``.
+    Boolean keys like ``force_reprocess=True`` survive as ``{}`` (empty dict),
+    which is falsy — causing ``bool(cfg.get('force_reprocess', False))`` → ``False``.
+    """
+
+    def test_force_reprocess_survives_main_init(self, _raw_with_csv, monkeypatch, mocker):
+        """force_reprocess=True from CLI must be True AFTER main_init converts cfg to dict."""
+        project_dir, raw_dir = _raw_with_csv
+        monkeypatch.chdir(project_dir)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["prog", str(raw_dir / "*i*.txt"), "+force_reprocess=True"],
+        )
+
+        # Capture cfg AFTER main_init by patching _process_and_persist
+        captured: dict = {}
+        orig_pap = processing._process_and_persist
+
+        def _spy_pap(*args, **kwargs):
+            captured["force_reprocess"] = kwargs.get("force_reprocess")
+            return orig_pap(*args, **kwargs)
+
+        mocker.patch.object(processing, "_process_and_persist", side_effect=_spy_pap)
+        cli.call_in_raw_dir(processing.run)
+
+        assert captured.get("force_reprocess") is True, (
+            f"force_reprocess was stripped by main_init/ini2dict — "
+            f"expected True, got {captured.get('force_reprocess')!r}"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -247,9 +341,14 @@ class TestDuplicateYamlBehaviour:
         )
 
         monkeypatch.chdir(project_dir)
-        monkeypatch.setattr(sys, "argv", [
-            "prog", str(raw_dir / "*i*.txt"),
-        ])
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "prog",
+                str(raw_dir / "*i*.txt"),
+            ],
+        )
 
         mock_proc = mocker.patch("tcm.processing.run_processing")
         cli.call_in_raw_dir(processing.run)
@@ -277,9 +376,14 @@ class TestDuplicateYamlBehaviour:
         )
 
         monkeypatch.chdir(project_dir)
-        monkeypatch.setattr(sys, "argv", [
-            "prog", str(raw_dir / "*i*.txt"),
-        ])
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "prog",
+                str(raw_dir / "*i*.txt"),
+            ],
+        )
 
         mock_proc = mocker.patch("tcm.processing.run_processing")
         cli.call_in_raw_dir(processing.run)
@@ -289,143 +393,115 @@ class TestDuplicateYamlBehaviour:
 
 
 # --------------------------------------------------------------------------- #
-# Scan mode detection — job_name → log file name
+# Log file naming — as_filename + _setup_file_handler
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.xr
-class TestScanModeDetection:
-    """``is_scan_mode`` detects config-generation-only runs from ``sys.argv``.
+class TestLogFileNaming:
+    """Log file name is derived from ``program.return_`` via ``_setup_file_handler``.
 
-    When ``program.return_`` is set to a scan-mode value (``<cfg_from_args>``,
-    ``<gen_names_and_log>``), the entry point passes ``job_name="scan"`` to
-    :func:`hydra_main` so the log file is ``scan.log`` (not ``processing.log``).
+    Default (``return_`` = ``<end>``): ``processing.log``.
+    Non-default: ``processing-{sanitized_return_}.log`` (e.g. ``processing-cfg_from_args.log``).
     """
 
     @pytest.mark.parametrize(
-        ("argv", "expected", "test_description"),
+        ("input_s", "expected", "test_description"),
         [
+            pytest.param("<cfg_from_args>", "cfg_from_args", "angle brackets stripped", id="cfg-from-args"),
             pytest.param(
-                ["tcm_clc.py", "_raw/i*.txt", "program.return_=<cfg_from_args>"],
-                True,
-                "cfg_from_args triggers scan mode",
-                id="cfg-from-args",
+                "<gen_names_and_log>",
+                "gen_names_and_log",
+                "angle brackets stripped",
+                id="gen-names",
             ),
-            pytest.param(
-                ["tcm_clc.py", "_raw/i*.txt", "program.return_=<gen_names_and_log>"],
-                True,
-                "gen_names_and_log triggers scan mode",
-                id="gen-names-and-log",
-            ),
-            pytest.param(
-                ["tcm_clc.py", "_raw/i*.txt"],
-                False,
-                "no override → normal processing mode",
-                id="no-override",
-            ),
-            pytest.param(
-                ["tcm_clc.py", "_raw/i*.txt", "program.return_=<end>"],
-                False,
-                "<end> → normal processing mode",
-                id="end-mode",
-            ),
-            pytest.param(
-                ["tcm_clc.py", "_raw/i*.txt", "program.return_=<saved_all>"],
-                False,
-                "<saved_all> → normal processing mode",
-                id="saved-all",
-            ),
-            pytest.param(
-                ["tcm_clc.py", "_raw/i*.txt", "program.return_=<saved_coefs>"],
-                False,
-                "<saved_coefs> → normal processing mode",
-                id="saved-coefs",
-            ),
-            pytest.param(
-                [],
-                False,
-                "empty argv → normal processing mode",
-                id="empty-argv",
-            ),
+            pytest.param("<end>", "end", "angle brackets stripped for default too", id="end"),
+            pytest.param("", "_", "empty string → fallback", id="empty"),
+            pytest.param("normal", "normal", "safe string passes through", id="safe"),
+            pytest.param("a/b:c", "abc", "slashes and colons stripped", id="special-chars"),
+            pytest.param("foo.", "foo", "trailing dot stripped", id="trailing-dot"),
         ],
     )
-    def test_is_scan_mode(self, argv, expected, test_description):
-        """is_scan_mode correctly identifies scan vs processing mode from argv."""
-        assert cli.is_scan_mode(argv) is expected, (
-            f"{test_description}: expected {expected!r}, got {not expected!r}"
+    def test_as_filename(self, input_s, expected, test_description):
+        """as_filename sanitizes return_ values for use in filenames."""
+        assert cli.as_filename(input_s) == expected, (
+            f"{test_description}: as_filename({input_s!r}) → "
+            f"{cli.as_filename(input_s)!r}, expected {expected!r}"
         )
 
-    def test_job_name_passed_to_hydra_main(self, _raw_with_csv, monkeypatch, mocker):
-        """job_name='scan' flows from call_in_raw_dir to hydra_main.
+    def test_file_handler_default_name(self, tmp_path, monkeypatch, mocker):
+        """Default return_ → file handler named processing.log."""
+        run_dir = tmp_path / "log" / "2024-01-01"
+        run_dir.mkdir(parents=True)
 
-        Verifies that ``call_in_raw_dir(job_name="scan")`` passes ``job_name``
-        to :func:`hydra_main` as a kwarg.  The actual ``sys.argv`` injection
-        and cleanup are tested in ``test_job_name_sys_argv_injection``.
-        """
-        project_dir, raw_dir = _raw_with_csv
-        monkeypatch.chdir(project_dir)
-        monkeypatch.setattr(sys, "argv", ["prog", str(raw_dir / "*i*.txt")])
+        # Mock HydraConfig.get() to return a known run dir and job name
+        mock_hydra_cfg = mocker.MagicMock()
+        mock_hydra_cfg.run.dir = str(run_dir)
+        mock_hydra_cfg.job.name = "processing"
+        mocker.patch("hydra.core.hydra_config.HydraConfig.get", return_value=mock_hydra_cfg)
 
-        spy_calls = []
-        original_hydra_main = cli.hydra_main
+        cfg = {"program": {"return_": "<end>"}}
+        cli._setup_file_handler(cfg)
 
-        def _spy_hydra_main(*args, **kwargs):
-            spy_calls.append(kwargs)
-            return original_hydra_main(*args, **kwargs)
-
-        mocker.patch.object(cli, "hydra_main", side_effect=_spy_hydra_main)
-        mocker.patch("tcm.processing.run")
-
-        cli.call_in_raw_dir(processing.run, job_name="scan")
-
-        assert spy_calls, "hydra_main was never called"
-        assert spy_calls[0].get("job_name") == "scan", (
-            f"Expected job_name='scan' in hydra_main kwargs, got {spy_calls[0].get('job_name')!r}"
+        root = logging.getLogger()
+        file_handlers = [h for h in root.handlers if isinstance(h, logging.FileHandler)]
+        assert len(file_handlers) == 1, f"Expected 1 FileHandler, got {len(file_handlers)}"
+        assert Path(file_handlers[0].baseFilename).name == "processing.log", (
+            f"Expected processing.log, got {Path(file_handlers[0].baseFilename).name}"
         )
+        # Cleanup
+        for h in file_handlers:
+            h.close()
+            root.removeHandler(h)
 
-    def test_job_name_sys_argv_injection(self, tmp_path, monkeypatch, mocker):
-        """hydra_main injects hydra.job.name=<value> into sys.argv and cleans up.
+    def test_file_handler_non_default_name(self, tmp_path, monkeypatch, mocker):
+        """Non-default return_ → file handler named processing-cfg_from_args.log."""
+        run_dir = tmp_path / "log" / "2024-01-01"
+        run_dir.mkdir(parents=True)
 
-        Directly tests the ``hydra_main(job_name="scan")`` plumbing without
-        going through ``call_in_raw_dir``.
-        """
-        raw_dir = tmp_path / "_raw"
-        raw_dir.mkdir()
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(sys, "argv", ["prog"])
+        mock_hydra_cfg = mocker.MagicMock()
+        mock_hydra_cfg.run.dir = str(run_dir)
+        mock_hydra_cfg.job.name = "processing"
+        mocker.patch("hydra.core.hydra_config.HydraConfig.get", return_value=mock_hydra_cfg)
 
-        mocker.patch("tcm.processing.run")
+        cfg = {"program": {"return_": "<cfg_from_args>"}}
+        cli._setup_file_handler(cfg)
 
-        # hydra_main will fail (no config) but the argv injection happens first
-        try:
-            cli.hydra_main(lambda cfg: None, job_name="scan")
-        except Exception:
-            pass  # expected — we only care about argv
-
-        # After hydra_main, sys.argv must be cleaned up
-        assert "hydra.job.name=scan" not in sys.argv, (
-            f"sys.argv not cleaned up: {sys.argv}"
+        root = logging.getLogger()
+        file_handlers = [h for h in root.handlers if isinstance(h, logging.FileHandler)]
+        assert len(file_handlers) == 1
+        assert Path(file_handlers[0].baseFilename).name == "processing-cfg_from_args.log", (
+            f"Expected processing-cfg_from_args.log, got {Path(file_handlers[0].baseFilename).name}"
         )
+        for h in file_handlers:
+            h.close()
+            root.removeHandler(h)
 
-    def test_no_job_name_default_mode(self, _raw_with_csv, monkeypatch, mocker):
-        """Without job_name kwarg, hydra_main receives job_name=None (default)."""
-        project_dir, raw_dir = _raw_with_csv
-        monkeypatch.chdir(project_dir)
-        monkeypatch.setattr(sys, "argv", ["prog", str(raw_dir / "*i*.txt")])
+    def test_file_handler_removes_old_handlers(self, tmp_path, monkeypatch, mocker):
+        """_setup_file_handler removes existing FileHandlers before adding new one."""
+        run_dir = tmp_path / "log" / "2024-01-01"
+        run_dir.mkdir(parents=True)
 
-        spy_calls = []
-        original_hydra_main = cli.hydra_main
+        mock_hydra_cfg = mocker.MagicMock()
+        mock_hydra_cfg.run.dir = str(run_dir)
+        mock_hydra_cfg.job.name = "processing"
+        mocker.patch("hydra.core.hydra_config.HydraConfig.get", return_value=mock_hydra_cfg)
 
-        def _spy_hydra_main(*args, **kwargs):
-            spy_calls.append(kwargs)
-            return original_hydra_main(*args, **kwargs)
+        root = logging.getLogger()
+        # Add a stale FileHandler
+        stale = logging.FileHandler(str(run_dir / "stale.log"), encoding="utf-8")
+        root.addHandler(stale)
 
-        mocker.patch.object(cli, "hydra_main", side_effect=_spy_hydra_main)
-        mocker.patch("tcm.processing.run")
+        cfg = {"program": {"return_": "<end>"}}
+        cli._setup_file_handler(cfg)
 
-        cli.call_in_raw_dir(processing.run)
-
-        assert spy_calls, "hydra_main was never called"
-        assert "job_name" not in spy_calls[0], (
-            f"Unexpected job_name in default mode: {spy_calls[0]}"
+        file_handlers = [h for h in root.handlers if isinstance(h, logging.FileHandler)]
+        assert len(file_handlers) == 1, f"Expected 1 FileHandler after cleanup, got {len(file_handlers)}"
+        assert "stale.log" not in str(file_handlers[0].baseFilename), (
+            f"Stale handler still present: {file_handlers[0].baseFilename}"
         )
+        # Stale handler was closed (stream is None after close)
+        assert stale.stream is None, "Stale handler was not closed"
+        for h in file_handlers:
+            h.close()
+            root.removeHandler(h)

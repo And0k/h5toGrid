@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from omegaconf import DictConfig
 
-from tcm.config import ConfigIn_InclProc, Return
+from tcm.schema import ConfigIn_InclProc, Return
 from tcm.incl_calc.coefs import get_coefs, get_coefs_from_cfg
 from tcm.processing import run_processing
 
@@ -216,10 +216,10 @@ class TestBuildFilterParamsText:
         assert "input.time_ranges=[2024-01-01, 2024-06-01]" in result.splitlines()
 
     def test_coef_scalars(self):
-        """Scalar coefficient values rendered via str()."""
+        """Scalar coefficient values rendered via {:.8g} (compact, stable diff)."""
         result = self._call({}, {}, coefs={"azimuth_shift_deg": 180.0, "kVabs": 1.5, "dates": {}})
         lines = result.splitlines()
-        assert "coef.azimuth_shift_deg=180.0" in lines
+        assert "coef.azimuth_shift_deg=180" in lines
         assert "coef.kVabs=1.5" in lines
         assert not any("coef.dates" in ln for ln in lines), "dates should be skipped"
 

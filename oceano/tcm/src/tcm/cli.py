@@ -10,7 +10,9 @@ from __future__ import annotations
 import argparse
 import gc
 import inspect
+import logging
 import os
+import re
 import sys
 from collections.abc import Callable, Mapping
 from functools import wraps
@@ -18,6 +20,9 @@ from io import StringIO
 from pathlib import Path, PurePath
 from types import FrameType, ModuleType
 from typing import Any, NamedTuple
+from omegaconf import DictConfig, MissingMandatoryValue, OmegaConf
+
+from tcm import policy, schema
 
 # ---------------------------------------------------------------------------
 # argparse compatibility for Python 3.14 — must run before Hydra builds parser
@@ -40,9 +45,8 @@ def _patched_get_help_string(self, action) -> str | None:
 argparse.HelpFormatter._get_help_string = _patched_get_help_string
 
 import hydra  # noqa: E402
-from omegaconf import DictConfig, MissingMandatoryValue, OmegaConf  # noqa: E402
 
-from tcm import _constants, config, config_yaml, paths, stage_ctx, to_omegaconf  # noqa: E402
+from tcm import _constants, config_yaml, paths, stage_ctx, to_omegaconf  # noqa: E402
 from tcm.utils2init import (  # noqa: E402
     Ex_nothing_done,
     LoggingStyleAdapter,
@@ -57,29 +61,95 @@ lf = LoggingStyleAdapter(__name__)
 
 # Default glob pattern (Windows-first: uppercase I).
 _TCM_DEFAULT_GLOB_PATTERN = "*I*.txt"
-DEFAULT_GLOB = f"{config.RAW_DIR_NAME}/{_TCM_DEFAULT_GLOB_PATTERN}"
-
-# Scan/config-generation modes — when program.return_ is one of these, no data
-# is processed, only YAMLs are generated.  Used by is_scan_mode() to derive
-# hydra.job.name="scan" (→ scan.log) instead of the default processing.log.
-_SCAN_RETURN_VALUES = frozenset({config.Return.CFG_FROM_ARGS, config.Return.GEN_NAMES_AND_LOG})
+DEFAULT_GLOB = f"{_constants.RAW_DIR_NAME}/{_TCM_DEFAULT_GLOB_PATTERN}"
 
 
-def is_scan_mode(argv: list[str]) -> bool:
-    """Detect scan/config-generation mode from raw CLI ``argv``.
+# ---------------------------------------------------------------------------
+# File handler creation (replaces Hydra's default)
+# ---------------------------------------------------------------------------
 
-    Scans ``argv`` for ``program.return_=<value>`` where ``<value>`` is one of
-    :data:`_SCAN_RETURN_VALUES` (``<cfg_from_args>``, ``<gen_names_and_log>``).
-    In that case the caller passes ``job_name="scan"`` to :func:`hydra_main`
-    so the log file is ``scan.log`` instead of the default ``processing.log``.
+_UNSAFE_FILENAME: re.Pattern[str] = re.compile(r"[^\w.-]", re.ASCII)
+
+
+def as_filename(s: str, fallback: str = "_") -> str:
+    """Sanitize *s* for use as a filename component.
+
+    Allow-list deletion (``\\w``, ``.``, ``-``), strip trailing dots,
+    return *fallback* if empty.
+
+    >>> as_filename('<cfg_from_args>')
+    'cfg_from_args'
     """
-    for arg in argv[1:]:
-        if not arg.startswith("program.return_="):
-            continue
-        val = arg.split("=", 1)[1].strip("\"'")
-        if val in _SCAN_RETURN_VALUES:
-            return True
-    return False
+    clean = _UNSAFE_FILENAME.sub("", s).rstrip(".")
+    return clean or fallback
+
+
+# ANSI/SGR escape sequence: ESC '[' params 'm' — matches colour, bold, italic…
+_ANSI_RE: re.Pattern[str] = re.compile("\033\\[[0-9;]*m")
+
+# Format matching the legacy "simple" formatter in colorlog.yaml
+_FILE_LOG_FMT = "%(asctime)s|%(name)s|%(levelname)s|%(message)s"
+_FILE_LOG_DATEFMT = "%H:%M:%S"
+
+
+class AnsiStrippedFormatter(logging.Formatter):
+    """File-safe formatter that strips ANSI colour codes from exception text.
+
+    ``colorlog.ColoredFormatter`` (the *console* handler) colours tracebacks
+    on Python ≥ 3.13 via ``traceback.print_exception(colorize=True)``.
+    ``logging`` caches the coloured text on ``record.exc_text`` — every later
+    handler reuses the cache.  Stripping here keeps console output coloured
+    while guaranteeing a clean file regardless of handler order.
+    """
+
+    def formatException(self, exc_info) -> str:  # noqa: D401
+        return _ANSI_RE.sub("", super().formatException(exc_info))
+
+    def format(self, record: logging.LogRecord) -> str:
+        if record.exc_text:
+            record.exc_text = _ANSI_RE.sub("", record.exc_text)
+        return super().format(record)
+
+
+def _setup_file_handler(cfg: Mapping[str, Any]) -> None:
+    """Create a FileHandler with the correct filename and ANSI-stripped formatting.
+
+    Called from ``_store`` after Hydra initialization and override merge.
+    Replaces Hydra's default file handler (removed from ``colorlog.yaml``)
+    so that:
+
+    * the filename is derived from ``program.return_`` (e.g.
+      ``processing-cfg_from_args.log`` for config-generation-only runs),
+    * ANSI escapes are stripped (``AnsiStrippedFormatter``),
+    * stage context is injected (``StageContextFilter``).
+
+    Removes any existing ``FileHandler``s first (e.g. from a previous
+    ``call_in_raw_dir`` in the same process — worker re-entry).
+    """
+    from hydra.core.hydra_config import HydraConfig
+
+    hydra_cfg = HydraConfig.get()
+    run_dir = Path(hydra_cfg.run.dir)
+    job_name = hydra_cfg.job.name  # e.g. "processing"
+
+    return_ = cfg.get("program", {}).get("return_")
+    if return_ and str(return_) != schema.Return.END:
+        filename = f"{job_name}-{as_filename(str(return_))}.log"
+    else:
+        filename = f"{job_name}.log"
+
+    root = logging.getLogger()
+    for h in root.handlers[:]:
+        if isinstance(h, logging.FileHandler):
+            h.close()
+            root.removeHandler(h)
+
+    fh = logging.FileHandler(str(run_dir / filename), encoding="utf-8")
+    fh.setFormatter(AnsiStrippedFormatter(fmt=_FILE_LOG_FMT, datefmt=_FILE_LOG_DATEFMT))
+    fh.setLevel(logging.DEBUG)
+    fh.addFilter(stage_ctx.StageContextFilter())
+    root.addHandler(fh)
+    lf.debug("Log file: {}", run_dir / filename)
 
 
 def parse_data_path(argv: list[str]) -> tuple[Path | None, list[str]]:
@@ -130,8 +200,7 @@ def safe_cfg_dir(path: Path) -> Path:
 
     :raises SystemExit: if *path* resolves inside :data:`_constants.PROJECT_ROOT`.
     """
-    resolved = path.resolve()
-    if resolved == _constants.PROJECT_ROOT or _constants.PROJECT_ROOT in resolved.parents:
+    if (resolved := path.resolve()) == _constants.PROJECT_ROOT or _constants.PROJECT_ROOT in resolved.parents:
         print(
             f"Error: refusing to create {resolved} inside code project {_constants.PROJECT_ROOT}.\n"
             "Move your data outside the project tree.",
@@ -153,7 +222,6 @@ def hydra_main(
     overrides: Mapping[str, Any] | None = None,
     *,
     exit_on_error: bool = True,
-    job_name: str | None = None,
 ) -> Any:
     """Dispatch *fun* via Hydra, return its result (``@hydra.main`` swallows returns).
 
@@ -168,22 +236,17 @@ def hydra_main(
     The decorated function's return value is stored in :data:`_result` and
     returned to the caller — ``@hydra.main`` itself discards return values.
 
-    Note on ``hydra.job.name``: Hydra unwraps the ``@wraps`` chain on the
-    decorated ``_store`` function via ``__wrapped__``, following it back to the
-    original *fun* (e.g. ``processing.run``).  It then reads ``fun.__module__``
-    (``"tcm.processing"``) and takes the last dotted segment as the job name
-    (``"processing"``).  This means the log file is always named after the
-    **task module** (``processing.log``) — not ``config_name`` or the entry-point
-    script.  To override (e.g. ``scan.log`` for config-generation-only runs),
-    pass ``job_name``.  See ``hydra/_internal/utils.py:
-    detect_calling_file_or_module_from_task_function``.
+    **Log file naming**: inside ``_store`` (before any logging), the composed
+    config's ``program.return_`` is inspected.  If non-default, the file
+    handler is created with a suffixed filename (e.g.
+    ``processing-cfg_from_args.log``).  See :func:`_setup_file_handler`.
+
+    Note on ``hydra.job.name``: Hydra unwraps the ``@wraps`` chain on ``_store``
+    to find the original *fun*, reads ``fun.__module__`` (``"tcm.processing"``),
+    and takes the last dotted segment as the job name (``"processing"``).
+    See ``hydra/_internal/utils.py:detect_calling_file_or_module_from_task_function``.
 
     :param fun: task function accepting one ``DictConfig`` argument.
-    :param job_name: Override for ``hydra.job.name`` (and thus the log file
-        name).  ``None`` (default) → derived from task function's module
-        (e.g. ``processing.run`` → ``processing.log``).  Injected as
-        ``hydra.job.name=<value>`` CLI override into ``sys.argv`` before
-        ``hydra.main()`` is called; cleaned up afterwards.
     :param overrides: hierarchical dict to merge on top of composed defaults.
     :returns: whatever *fun* returned (``None`` if it returned nothing).
     """
@@ -202,14 +265,26 @@ def hydra_main(
         """Run *fun*, stashing its return in :data:`_result`."""
         global _result
 
-        # our hydra powered function INFO banner
+        # Merge overrides FIRST (worker passes program.return_ etc. here)
+        if overrides:
+            base = OmegaConf.create(OmegaConf.to_container(cfg, resolve=False))
+            cfg = OmegaConf.merge(base, overrides)
+
+        # Create file handler with correct filename (before any logging)
+        _setup_file_handler(cfg)
+
+        # Resolve use_h5: user preference × library availability
+        policy.init_io(cfg)
+
+        # Banner logging
+        _io = policy.io()
         lf.info(
             "{}. {} calls {}.{}{}",
             "TCM",
             caller,
-        getattr(fun, "__module__", repr(fun)),
-        getattr(fun, "__name__", repr(fun)),
-            {True: "", False: " (h5 disabled)", None: " (h5 unavailable)"}[_constants.use_h5_get()],
+            getattr(fun, "__module__", repr(fun)),
+            getattr(fun, "__name__", repr(fun)),
+            "" if _io else f" ({_io.reason})",
         )
         lf.debug(
             "{} | argv={} | Working directory: {}",
@@ -218,20 +293,10 @@ def hydra_main(
             os.getcwd(),
         )
 
-        if overrides:
-            base = OmegaConf.create(OmegaConf.to_container(cfg, resolve=False))
-            merged = OmegaConf.merge(base, overrides)
-            _result = fun(merged)
-        else:
-            _result = fun(cfg)
+        _result = fun(cfg)
         return _result
 
-    _job_name_override = f"hydra.job.name={job_name}" if job_name else None
     try:
-        # Override hydra.job.name via CLI override (hydra.main() has no job_name param).
-        # Hydra resolves this before running _store, so the log file gets the right name.
-        if _job_name_override:
-            sys.argv.append(_job_name_override)
         m_fun = hydra.main(config_name=config_name, config_path=config_path, version_base=version_base)(
             _store
         )
@@ -244,14 +309,11 @@ def hydra_main(
         if exit_on_error:
             sys.exit(1)
         raise
-    finally:
-        if _job_name_override and sys.argv and sys.argv[-1] == _job_name_override:
-            sys.argv.pop()
 
 
 # Kwargs accepted by :func:`hydra_main` (excluding ``fun``) — everything else
 # is treated as an override dict to merge on top of composed defaults.
-_HYDRA_MAIN_PARAMS = {"config_name", "config_path", "version_base", "overrides", "exit_on_error", "job_name"}
+_HYDRA_MAIN_PARAMS = {"config_name", "config_path", "version_base", "overrides", "exit_on_error"}
 
 
 def _build_hydra_argv(data_dir: Path) -> list[str]:
@@ -383,7 +445,7 @@ def call_in_raw_dir(fun, yaml_path: Path | None = None, **kwargs) -> Any:
     Note:
         ConfigStore registration (structured-group dataclasses) must happen
         before ``@hydra.main`` resolves — for the processing pipeline,
-        ``tcm.config`` (imported above) does this at module level.
+        ``tcm.schema`` (imported above) does this at module level.
     """
     # Separate hydra_main params from override dicts.
     hydra_main_kwargs: dict[str, Any] = {}
@@ -558,6 +620,8 @@ def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs
                 cfg_idx=cfg_i,
                 n_probes=n_probes,
                 n_cfgs=len(stems),
+                stem_idx=stem_idx,
+                n_cfgs_total=n_cfgs,
             )
 
             lf.info('[{}/{}] probe {} (from "{}")', stem_idx, n_cfgs, pcid, yaml_path.name)
@@ -688,7 +752,7 @@ def main_init(
         the original ``DictConfig``.
     """
     try:
-        conf_, ignored_keys = to_omegaconf.to_omegaconf_merge_compatible(cfg, config.Config)
+        conf_, ignored_keys = to_omegaconf.to_omegaconf_merge_compatible(cfg, schema.Config)
         conf_ignored = {
             k0: (
                 {k1: v1 for k1, v1 in v0.items() if v1}
@@ -715,7 +779,7 @@ def main_init(
     if not cfg.program.return_:
         print("Can not initialise: provide non empty program.return_ value")
         return cfg
-    elif cfg.program.return_ == config.Return.CFG_FROM_ARGS:
+    elif cfg.program.return_ == schema.Return.CFG_FROM_ARGS:
         return cfg
 
     hydra.verbose = cfg.program.verbose == "DEBUG"
@@ -747,6 +811,7 @@ def main_init(
 
 # The caller frame; derive module identity from frame globals.
 # For PyInstaller, prefer module name as stable identity; file path may be synthetic or absent.
+
 
 class Caller(NamedTuple):
     module: str | None

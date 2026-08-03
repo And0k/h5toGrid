@@ -2,7 +2,7 @@
 
 Parses CLI arguments, resolves data directory, and delegates to
 :func:`tcm.processing.run` via Hydra ``@hydra.main`` which composes
-the full :class:`tcm.config.Config`.
+the full :class:`tcm.schema.Config`.
 
 Usage::
 
@@ -15,15 +15,13 @@ Usage::
     # Override any config field
     python scripts/tcm_clc.py "_raw/*i*.txt" out.text_path=./results
 
-    # Config-generation-only (scan) — writes scan.log instead of processing.log
+    # Config-generation-only (scan) — writes processing-cfg_from_args.log
     python scripts/tcm_clc.py "_raw/*i*.txt" 'program.return_=<cfg_from_args>'
 
 For the legacy dask-dataframe pipeline, use ``tcm._dask_legacy.scripts.tcm_clc``.
 Full user guide: :file:`docs/tcm_clc/README.md`.
 """
-import sys
-
 from tcm import cli, processing
 
 if __name__ == "__main__":
-    cli.call_in_raw_dir(processing.run, job_name="scan" if cli.is_scan_mode(sys.argv) else None)
+    cli.call_in_raw_dir(processing.run)

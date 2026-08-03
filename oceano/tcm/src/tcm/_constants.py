@@ -3,7 +3,6 @@
 Single source of truth for
 - path names
 - optional-dependency availability flags
-- resolved ``use_h5`` runtime state (mirror of ``ConfigProgram.use_h5``)
 """
 from __future__ import annotations
 
@@ -39,56 +38,6 @@ except ImportError:
 NC4_AVAILABLE: bool = _netCDF4 is not None
 """Whether ``netCDF4`` is importable (xarray NC engine)."""
 
-nc_suffixes = (".nc", )  # +".nc4"?
-hdf5_suffixes = (".h5", ".hdf5")
-
-
-# ---------------------------------------------------------------------------
-# Resolved ``use_h5`` runtime state
-# ---------------------------------------------------------------------------
-# Mirrors ``ConfigProgram.use_h5`` after startup resolution.
-# Written once by :func:`use_h5_set` from ``processing.run()``.
-# Read by ``storage.py``, ``coefs.py``, and other modules that don't
-# receive the config dict directly.
-
-_use_h5: Optional[bool] = None
-"""Resolved ``use_h5`` state — set once at pipeline startup.
-
-- ``True``  — binary (NC/HDF5) I/O enabled.  Proceed without extra logging.
-- ``False`` — binary I/O disabled (user override *or* forced by missing libs).
-              Log a warning at each skip point.
-- ``None``  — binary I/O unavailable and user didn't request it.
-              Skip silently.
-"""
-
-
-def use_h5_set(value: Optional[bool]) -> None:
-    """Store the resolved ``use_h5`` value for module-level access.
-
-    Called once from :func:`processing.run` after resolving the user's
-    ``ConfigProgram.use_h5`` setting against actual library availability.
-    """
-    global _use_h5
-    _use_h5 = value
-
-
-def use_h5_get() -> Optional[bool]:
-    """Return the current ``use_h5`` state for guard checks.
-
-    Returns
-    -------
-    ``True``
-        Binary I/O is enabled — proceed without extra logging.
-    ``False``
-        Binary I/O is disabled (user override *or* forced by missing libs).
-        The **caller** should log a warning at the skip point.
-    ``None``
-        Binary I/O is unavailable and user didn't request it.
-        Skip **silently** (no log message).
-    """
-    return _use_h5
-
-
 # ---------------------------------------------------------------------------
 # Raw-data layout
 # ---------------------------------------------------------------------------
@@ -107,5 +56,5 @@ BUNDLED_CFG_PKG = f"pkg://{PROJECT_ROOT.name}.cfg.cfg_proc"
 
 # Supported extensions grouped by backend
 _EXT_CSV = {".txt", ".csv", ".tsv"}
-_EXT_HDF5 = {".h5", ".hdf5"}
-_EXT_NC = {".nc", ".nc4"}
+_EXT_HDF5 = {".h5"}  # , ".hdf5" not need
+_EXT_NC = {".nc"}  # , ".nc4" not need

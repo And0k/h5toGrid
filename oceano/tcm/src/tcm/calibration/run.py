@@ -20,14 +20,14 @@ Two entry points
 Structured configs
 ------------------
 All calibration dataclasses inherit from the processing base schemas in
-:mod:`tcm.config` — single source of truth:
+:mod:`tcm.schema` — single source of truth:
 
 - ``ConfigInCalib(ConfigIn_InclProc)`` — adds ``time_ranges_north`` only.
   ``channels`` is NOT a structured field; read via
   ``OmegaConf.select(cfg, "input.channels", default=["M","A"])``.
-- ``ConfigFilterCalib(ConfigFilter_InclProc)`` — from :mod:`tcm.config`.
+- ``ConfigFilterCalib(ConfigFilter_InclProc)`` — from :mod:`tcm.schema`.
   Typed ``A``/``M`` per-axis despike overrides (``ConfigFilterChannel``).
-- ``ConfigProcCalib`` — from :mod:`tcm.config`.  Maps to
+- ``ConfigProcCalib`` — from :mod:`tcm.schema`.  Maps to
   :class:`tcm.calibration.pipeline.PipelineConfig` fields.
   Per-channel ``field_magnitude`` via freeform
   ``+proc.field_magnitudes.M=52000`` (not in schema).
@@ -36,17 +36,59 @@ All calibration dataclasses inherit from the processing base schemas in
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, List, Mapping
+from typing import Any
 
 import numpy as np
 import xarray as xr
 from hydra.core.config_store import ConfigStore
-from tcm import h5inclinometer_coef, utils2init, cli
+
+from tcm import cli, h5inclinometer_coef, schema, utils2init
 from tcm._xr import io as xr_io
 from tcm.calibration import filtering, pipeline, robust, visualization
 from tcm.calibration.calibrate import to_unit_vector
+
+# ── Structured config ───────────────────────────────────────────────────────── #
+
+@dataclass
+class ConfigInCalib(schema.ConfigIn_InclProc):
+    """Calibration input — inherits all load-stage fields + adds ``time_ranges_north``.
+
+    ``channels`` is NOT a structured field (function-default ``["M","A"]``
+    in :func:`run_calibration`).  Override via ``+input.channels=[M]`` at
+    the Hydra CLI — :func:`_hydra_main`` reads it via
+    ``OmegaConf.select(cfg, "input.channels", default=["M","A"])``.
+    """
+
+    time_ranges_north: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ConfigOutCalib:
+    """Calibration output — where to write coefficients (simpler than processing output)."""
+
+    db_paths: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ConfigProgramCalib(schema.ConfigProgram):
+    """Calibration program behavior — adds ``dask_scheduler``."""
+
+    dask_scheduler: str = "synchronous"
+
+
+# ── Hydra ConfigStore registration ──────────────────────────────────────────── #
+
+_cs_store_name = Path(__file__).stem  # "run"
+_cs = ConfigStore.instance()
+_cs.store(group="input", name="base", node=ConfigInCalib)
+_cs.store(group="out", name="base", node=ConfigOutCalib)
+_cs.store(group="filter", name="base", node=schema.ConfigFilterCalib)
+_cs.store(group="proc", name="calib", node=schema.ConfigProcCalib)
+_cs.store(group="program", name="base", node=ConfigProgramCalib)
+
 
 lf = utils2init.LoggingStyleAdapter(__name__)
 
@@ -57,7 +99,7 @@ lf = utils2init.LoggingStyleAdapter(__name__)
 
 def run_calibration(
     cfg: Mapping[str, Mapping[str, Any]],
-) -> Dict[str, dict]:
+) -> dict[str, dict]:
     """Calibrate inclinometer channels for the given tables.
 
     This is the **primary entry point** — called by Hydra (via
@@ -136,7 +178,7 @@ def run_calibration(
             if axis in ch_cfg
         }
 
-    coefs: Dict[str, dict] = {}
+    coefs: dict[str, dict] = {}
     fig_filt, fig_fit = None, None
     for tbl in cfg_in["tables"]:
         # ── Load using shared infrastructure ─────────────────────────────
@@ -234,7 +276,7 @@ def run_calibration(
 # Channel extraction helper
 # --------------------------------------------------------------------------- #
 
-def _extract_channel(ds: xr.Dataset, channel: str) -> "np.ndarray | None":
+def _extract_channel(ds: xr.Dataset, channel: str) -> np.ndarray | None:
     """Extract 3×N array ``(Mx,My,Mz)`` or ``(Ax,Ay,Az)`` from a Dataset.
 
     Returns ``None`` if any column is missing.
@@ -244,48 +286,6 @@ def _extract_channel(ds: xr.Dataset, channel: str) -> "np.ndarray | None":
     if not all(c in ds.data_vars for c in cols):
         return None
     return np.vstack([ds[c].values for c in cols])
-
-
-# ── Structured config (inherits from tcm.config base schemas) ────────────── #
-
-from tcm.config import (  # noqa: E402 — after __future__ annotations
-    ConfigFilterCalib, ConfigIn_InclProc, ConfigProcCalib, ConfigProgram,
-)
-
-
-@dataclass
-class ConfigInCalib(ConfigIn_InclProc):
-    """Calibration input — inherits all load-stage fields + adds ``time_ranges_north``.
-
-    ``channels`` is NOT a structured field (function-default ``["M","A"]``
-    in :func:`run_calibration`).  Override via ``+input.channels=[M]`` at
-    the Hydra CLI — :func:`_hydra_main`` reads it via
-    ``OmegaConf.select(cfg, "input.channels", default=["M","A"])``.
-    """
-    time_ranges_north: List[str] = field(default_factory=list)
-
-
-@dataclass
-class ConfigOutCalib:
-    """Calibration output — where to write coefficients (simpler than processing output)."""
-    db_paths: List[str] = field(default_factory=list)
-
-
-@dataclass
-class ConfigProgramCalib(ConfigProgram):
-    """Calibration program behavior — adds ``dask_scheduler``."""
-    dask_scheduler: str = "synchronous"
-
-
-# ── Hydra ConfigStore registration ──────────────────────────────────────────── #
-
-_cs_store_name = Path(__file__).stem  # "run"
-_cs = ConfigStore.instance()
-_cs.store(group="input", name="base", node=ConfigInCalib)
-_cs.store(group="out", name="base", node=ConfigOutCalib)
-_cs.store(group="filter", name="base", node=ConfigFilterCalib)
-_cs.store(group="proc", name="calib", node=ConfigProcCalib)
-_cs.store(group="program", name="base", node=ConfigProgramCalib)
 
 
 if __name__ == "__main__":

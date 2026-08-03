@@ -12,14 +12,17 @@ Layer 2 — **Output path layout** (:class:`PathLayout`):
 """
 
 from __future__ import annotations
+
 from functools import cached_property
 from pathlib import Path
-from typing import Dict, Tuple, Optional, Any, List
-from omegaconf import OmegaConf, DictConfig
+from typing import Any
+
+from omegaconf import DictConfig, OmegaConf
 
 from tcm import _constants, utils2init
 
 lf = utils2init.LoggingStyleAdapter(__name__)
+
 
 class PathLayout:
     """Declarative, lazily-evaluated path resolver for output paths (Layer 2).
@@ -45,22 +48,23 @@ class PathLayout:
 
     # Schema Definition: entity_name -> (base_anchor_attribute, suffix, use_stem)
     # Entity name equal to an `config.out` name with "_path" suffix stripped
-    SCHEMA: Dict[str, Tuple[str, str, bool]] = {
+    SCHEMA: dict[str, tuple[str, str, bool]] = {
         "raw_db": ("raw_dir", ".raw.nc", True),
-        "db": ("proc_dir", ".proc.nc", True),
         "not_joined_db": ("proc_dir", ".proc_noAvg.nc", True),
+        "avg_db": ("proc_dir", ".proc_Avg.nc", True),
+        "db": ("proc_dir", ".proc.nc", True),
         "text": ("proc_dir", "", False),  # Directory
     }
 
     def __init__(self, path_in: Path | str, **user_paths: Any):
         self._path_in = Path(path_in)
         self._user_paths = user_paths
-        self._cache: Dict[str, Optional[Path]] = {}
+        self._cache: dict[str, Path | None] = {}
 
         self._resolve_anchors()
 
     @classmethod
-    def from_cfg(cls, cfg_in: DictConfig, cfg_out: DictConfig) -> "PathLayout":
+    def from_cfg(cls, cfg_in: DictConfig, cfg_out: DictConfig) -> PathLayout:
         """
         Extracting the source paths of the Hydra structured config available in SCHEMA for deferred processing
         """
@@ -135,7 +139,7 @@ class PathLayout:
         # Strip everything after first '_' or '@'
         return raw_stem.replace("@", "_", 1).split("_")[0]
 
-    def resolve(self, entity_name: str) -> Optional[Path]:
+    def resolve(self, entity_name: str) -> Path | None:
         """
         Generic lazy resolver for any entity defined in SCHEMA.
         - Absolute user paths are used as-is.
@@ -185,7 +189,7 @@ class PathLayout:
             return self.resolve(name)
         raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
 
-    def select_input_db(self, dt_bins: List[float], dt_min_binning_proc: float) -> Path:
+    def select_input_db(self, dt_bins: list[float], dt_min_binning_proc: float) -> Path:
         """Select the correct input DB based on binning parameters.
 
         Checks ``.nc`` first, then falls back to ``.h5`` for legacy files.
@@ -200,9 +204,7 @@ class PathLayout:
 
         # Also add .h5 fallback variants for each path
         h5_fallbacks = [
-            p.with_suffix(p.suffix.replace(".nc", ".h5"))
-            for p in paths_to_check
-            if p and p.suffix == ".nc"
+            p.with_suffix(p.suffix.replace(".nc", ".h5")) for p in paths_to_check if p and p.suffix == ".nc"
         ]
         all_paths = paths_to_check + h5_fallbacks
 
@@ -213,7 +215,7 @@ class PathLayout:
         raise FileNotFoundError(f"Not found stored data: {[p for p in all_paths if p]}")
 
 
-def find_dir_raw(path_in: Path, raw_dir_name: Optional[str] = None) -> Optional[Path]:
+def find_dir_raw(path_in: Path, raw_dir_name: str | None = None) -> Path | None:
     """Return *path_in* or its nearest ancestor whose name equals :data:`RAW_DIR_NAME` (case-insensitive).
 
     :param path_in: The raw-dir itself or any descendant.
@@ -237,8 +239,11 @@ def _infer_proc_dir(path_in: Path) -> Path:
     :return: Inferred ``proc_dir``.
     """
     return next(
-        (parent for parent in path_in.parents
-         if parent.name and (parent.name[0].isdigit() or parent.name.startswith("inclinometer"))),
+        (
+            parent
+            for parent in path_in.parents
+            if parent.name and (parent.name[0].isdigit() or parent.name.startswith("inclinometer"))
+        ),
         path_in.parent,
     )
 
@@ -264,8 +269,7 @@ def find_dir_raw_absolute(path_in: Path) -> Path:
     if (dir_raw := find_dir_raw(path_in)) is not None:
         return dir_raw
     lf.warning(
-        "Not standard input path {}: raw data should be in {} subdirectory."
-        " Using deepest dir as anchor…",
+        "Not standard input path {}: raw data should be in {} subdirectory. Using deepest dir as anchor…",
         path_in,
         _constants.RAW_DIR_NAME,
     )

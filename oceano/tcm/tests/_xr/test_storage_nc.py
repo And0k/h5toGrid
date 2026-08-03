@@ -407,7 +407,7 @@ class TestNcIncrementalAppend:
             assert f["incl_01"]["time"].shape[0] == 80
 
     def test_incremental_resume_log_has_two_rows(self, tmp_path):
-        """RESUME: log gets two rows (original start + tail end) for updated file."""
+        """RESUME: log keeps one row per file (updated DateEnd, new fileChangeTime)."""
         ds1 = _make_ds(50, start="2024-01-01", seed=42)
         ds2 = _make_ds(80, start="2024-01-01", seed=99)
         nc_path = tmp_path / "test.raw.nc"
@@ -418,8 +418,8 @@ class TestNcIncrementalAppend:
         meta2 = {"fileName": "raw/@i_01", "fileChangeTime": np.datetime64("2024-06-01", "ns")}
         nc_incremental_update(ds2, nc_path, "incl_01", meta2)
         log_after2 = read_nc_log(nc_path, "incl_01")
-        # Two rows: original + tail end
-        assert log_after2.sizes["Date0"] == 2
+        # One row per file — resume updates DateEnd + fileChangeTime in place
+        assert log_after2.sizes["Date0"] == 1
 
     def test_incremental_update_with_datetime_meta(self, tmp_path):
         """fileChangeTime as Python datetime (from file_name_and_time_to_record)."""

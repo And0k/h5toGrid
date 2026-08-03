@@ -1,5 +1,4 @@
 from . import (
-    config,
     config_yaml,
     csv_load,
     filters,
@@ -10,6 +9,7 @@ from . import (
     _xr,
     incl_calc,
     paths,
+    schema,
     to_omegaconf,
     utils_time,
     utils_time_corr,

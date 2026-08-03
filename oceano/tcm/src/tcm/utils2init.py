@@ -763,7 +763,9 @@ def ini2dict(arg_source: Union[Mapping[str, Any], str, PurePath, None] = None):
     """
 
     config, arg_source, arg_ext = cfgfile2dict(arg_source)
-    cfg = {key: {} for key in config}
+    # Preserve non-dict scalar keys (e.g. +force_reprocess=True from Hydra CLI)
+    # as-is — only pre-allocate {} for dict sections that the loop below fills.
+    cfg = {key: (val if not hasattr(val, "items") else {}) for key, val in config.items()}
     oname = "..."
     opt = None
     # convert specific fields data types
@@ -1712,9 +1714,9 @@ class Message:
                     + "\n- Bad format string!\n"
                     + (f"Logging arguments: {self.args}" if len(self.args) else "")
                 )
-        except (TypeError, IndexError):
-            print("Logging error due to wrong format string:", self.fmt, "for arguments:", self.args)
-            raise
+        except (TypeError, IndexError) as e:
+            # Format/arg count mismatch — degrade gracefully instead of crashing
+            return f"{self.fmt} | format error({e}): args={self.args}"
 
 
 class LoggingContextFilter(logging.Filter):

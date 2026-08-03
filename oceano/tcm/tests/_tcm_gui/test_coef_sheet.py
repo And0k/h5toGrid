@@ -257,7 +257,7 @@ class TestApplyStyles:
         cs._nv = 6
         cs._full = False
         cs._cfg = cfg
-        from tcm.config import Config, Return
+        from tcm.schema import Config, Return
 
         cs._config_root = Config
         cs._return_enum = Return
@@ -390,7 +390,7 @@ class TestCoefsPathChildRow:
         cs._nv = 6
         cs._full = False
         cs._cfg = cfg
-        from tcm.config import Config, Return
+        from tcm.schema import Config, Return
 
         cs._config_root = Config
         cs._return_enum = Return

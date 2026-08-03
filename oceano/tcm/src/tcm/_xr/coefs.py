@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
 
-from tcm import _constants
+from tcm import policy
 from tcm._constants import _h5py
 
 import numpy as np
@@ -104,8 +104,7 @@ def save_coefs_to_nc(
     :param pcid: Probe Column ID (written as ``//coef//pid``).
     :param dates: If truthy, numeric datasets get ``timestamp`` attr.
     """
-    if _constants.use_h5_get() is not True:
-        raise ImportError("cannot save coefs to NC/HDF5 (use_h5 wasn't set True)")
+    policy.io().require_nc("saving coefs to NC/HDF5")
     from tcm import h5inclinometer_coef as _h5coef
 
     h5_dict = _coefs_to_h5_dict(coefs, pcid=pcid, date=coefs.get("date"))
@@ -183,8 +182,7 @@ def load_coefs_from_nc(nc_path: Path, tbl: str) -> dict[str, Any] | None:
     :param tbl: Table group name (e.g. ``"incl_01"``).
     :return: Coefs dict or ``None`` if file/table missing.
     """
-    if _constants.use_h5_get() is not True:
-        raise ImportError("cannot load coefs from NC/HDF5 (use_h5 wasn't set True)")
+    policy.io().require_nc("loading coefs from NC/HDF5")
     nc_path = Path(nc_path)
     if not nc_path.exists():
         lf.debug("NC file not found: {}", nc_path)

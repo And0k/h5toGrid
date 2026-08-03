@@ -7,12 +7,16 @@ scripts/tcm_clc.py          ← thin CLI entry point (calls cli.call_in_raw_dir(
 tcm/
     cli.py                  ← parse_data_path, _build_hydra_argv, _prepare_overrides, safe_cfg_dir,
                               hydra_main, call_in_raw_dir, process_loading_yaml, main_init,
-                              sugar_expand_m, sugar_condense_lim_date
+                              sugar_expand_m, sugar_condense_lim_date, as_filename,
+                              AnsiStrippedFormatter, _setup_file_handler
     processing.py           ← run() orchestrator, run_processing(), _load_batch(), _process_and_persist(),
-                              _combine_probes(), _merge_groups_to_combined(), _resolve_use_h5,
+                              _combine_probes(), _merge_groups_to_combined()
                               process_inmemory(), _dt_bins, _dt_min_save, _output_nc_paths,
-                              _text_date_fmt, _build_filter_params_text
-    config.py               ← Hydra structured config dataclasses + ConfigStore registration
+                              _text_date_fmt, _build_filter_params_text,
+                              _read_run_params, _time_ranges_in_nc, _trim_all_nc, _export_tsv_from_nc,
+                              _load_raw_nc_if_covered
+    schema.py               ← Hydra structured config dataclasses + ConfigStore registration
+    policy.py               ← h5 availability policy (IOPolicy), based on user preferences and H5_AVAILABLE
     config_yaml.py          ← gen_metadata(), save_config_to_yaml(), stale detection,
                               sync_yamls_devmeta_and_hydra, get_existed_cfgs, find_stale_cfgs,
                               update_coefs_in_run_yaml, has_run_yamls, _discover_tables,
@@ -26,11 +30,12 @@ tcm/
                               to_pcid_from_name, probe_from_name, normalize_probes)
     paths.py                ← PathLayout — declarative, lazy path resolver; find_dir_raw, _infer_proc_dir,
                               find_dir_raw_absolute
-    _constants.py           ← RAW_DIR_NAME, version info, optional-dependency flags, use_h5 state
+    _constants.py           ← RAW_DIR_NAME, version info, optional-dependency flags
     to_omegaconf.py         ← to_omegaconf_merge_compatible, to_omegaconf_compatible_types
     utils2init.py           ← LoggingStyleAdapter, type_fix, ini2dict, Ex_nothing_done,
                               standard_error_info, this_prog_basename, call_with_valid_kwargs
-    stage_ctx.py            ← context-var driven stage tracking + StageContextFilter
+    stage_ctx.py            ← context-var driven state tracking: set_probe/set_stage/set_sublevel/tick,
+                              boundary marks (## / ###), StageContextFilter, progress bar positioning
     incl_calc/
         coefs.py            ← coefficient loading/preparation, get_coefs(), get_coefs_from_cfg(),
                               load_coefs(), get_coef_azimuth_shift, mag_dec
@@ -40,7 +45,8 @@ tcm/
                               load_coefs_from_nc, coef_zeroing_rotation_from_data, coef_azimuth_from_data,
                               get_coef_zeroing_matrix
         physical.py         ← velocity/pressure/binning pipeline (process())
-        storage.py          ← netCDF persistence (incremental append, log table, dim scales)
+        storage.py          ← netCDF persistence (incremental append, log table, dim scales,
+                              splice_group, trim_group_to_range)
         calc.py             ← xr.apply_ufunc wrappers around incl_calc/calc.py
         dataset.py          ← open_csv_chunks, open_nc, merge_probes
         io.py               ← load_raw (single entry point), ds_to_csv, open_hdf5
@@ -178,13 +184,22 @@ cli.call_in_raw_dir(
 
 ### Log output
 
-Hydra writes logs to `{data_dir}/cfg_proc/log/{timestamp}/processing.log` (configured
-in `cfg_proc/config.yaml` via `hydra.run.dir: ./cfg_proc/log/${now:...}` and
-the file handler's `filename: ${hydra.run.dir}/${hydra.job.name}.log` in
-`hydra/job_logging/colorlog.yaml`).  ``hydra.job.name`` is resolved via
-Hydra's ``@wraps``-unwrap chain: ``_store`` → ``__wrapped__`` → ``processing.run``
-→ ``__module__`` = ``"tcm.processing"`` → last segment → ``"processing"``.
-See ``cli.hydra_main`` docstring for details.
+The file handler is created inside ``_store`` (in ``cli.py``) — not by Hydra's
+``colorlog.yaml`` — so the filename is derived from the composed config's
+``program.return_`` via ``_setup_file_handler``:
+
+| `program.return_` | Log filename |
+|---|---|
+| `<end>` (default) | `processing.log` |
+| `<cfg_from_args>` | `processing-cfg_from_args.log` |
+| `<gen_names_and_log>` | `processing-gen_names_and_log.log` |
+| any other value | `processing-{sanitized}.log` |
+
+The directory is `HydraConfig.get().run.dir` (resolved from
+`cfg_proc/config.yaml`'s `hydra.run.dir: ./cfg_proc/log/${now:...}`).
+``hydra.job.name`` (``"processing"``) is derived from the task function's
+module via Hydra's ``@wraps``-unwrap chain (see ``cli.hydra_main`` docstring).
+
 Since `os.chdir(data_dir)` is called before `@hydra.main`, all relative paths
 resolve inside the data directory.
 Hydra's own output (`config.yaml`, `overrides.yaml`) goes to the same directory.
@@ -204,9 +219,10 @@ Key conventions:
 - **FileNotFoundError** in `process_loading_yaml` is caught separately with context about likely stale config
 
 **Do not call `logging.basicConfig`** — `@hydra.main` applies `logging.config.dictConfig`
-from `cfg_proc/hydra/job_logging/colorlog.yaml` before any task function runs, so any
-manual `basicConfig` is overwritten.  Callers using `cli.call_in_raw_dir` inherit the
-same Hydra-configured logging (console: `colorlog` formatter with colored `funcName|message`;
+from `cfg_proc/hydra/job_logging/colorlog.yaml` (console handler only) before any task
+function runs; the file handler is created by ``cli._setup_file_handler`` inside ``_store``.
+Callers using `cli.call_in_raw_dir` inherit the same logging setup
+(console: `colorlog` formatter with colored `funcName|message`;
 file: `AnsiStrippedFormatter` with `asctime|name|levelname|message`)
 
 > **Why `AnsiStrippedFormatter`?** Python ≥ 3.13 colours tracebacks natively via
@@ -214,41 +230,70 @@ file: `AnsiStrippedFormatter` with `asctime|name|levelname|message`)
 > this through `formatException(colorize=self._colorize())`, which returns `True`
 > because Hydra instantiates it without a `stream` (bypasses the tty guard).
 > ``logging`` caches the coloured text on ``record.exc_text`` so a later plain
-> ``file`` handler inherits the raw `\033[35m` escapes into ``processing.log``.
-> ``AnsiStrippedFormatter`` (in :mod:`tcm.stage_ctx`) strips the cache in
+> ``file`` handler inherits the raw `\033[35m` escapes into the log file.
+> ``AnsiStrippedFormatter`` (in :mod:`tcm.cli`) strips the cache in
 > ``format()`` before the ``file`` handler writes — console colours are untouched.
 
 ### Stage context (`stage_ctx.py`)
 
-Processing stages are tracked via :mod:`contextvars` so every log record
-carries the current probe/stage identity **without** manual string building
-in each ``lf.info()`` call.
+Centralised state tracking for three concerns that were previously scattered
+across ``processing.py`` (``_probe_base``, ``_probe_total``, ``_tick_idx``,
+``_frac``, ``_stage``) and ``cli.py`` (manual prefix strings in ``lf.*``):
 
-**Architecture**:
+1. **Log context** — contextvars inject prefix into every log record
+2. **Boundary marks** — `##`/`###` headers in the file log for stage transitions
+3. **Progress bar** — overall bar positioning (100 units per config, fraction per stage)
 
-| Component | Role |
-|-----------|------|
-| `set_probe(probe_id, probe_idx, cfg_idx, n_probes, n_cfgs)` | Called once per config in `cli.process_loading_yaml` |
-| `set_stage(stage_num, stage_name)` | Called at each phase boundary in `processing.run_processing` |
-| `StageContextFilter` (logging.Filter) | Injects `record.stage_prefix` from context vars |
-| `clear()` | Resets all vars after `process_loading_yaml` / `run` completes |
+**Setters** (the single state entry point):
 
-**Log format**: INFO/DEBUG messages are *not* modified (clean output).
-WARNING+ messages automatically receive ``[prefix]`` prepended:
+| Function | Called from | Updates |
+|----------|-----------|---------|
+| `set_probe(…, stem_idx=, n_cfgs_total=)` | `cli.process_loading_yaml` | probe context + progress base/total |
+| `set_stage_plan(n_active)` | `processing.run_processing` | stage count for `tick()` fraction |
+| `set_stage(num, name, details?, *args?)` | `processing.run_processing` | stage context + boundary mark + log |
+| `set_sublevel(name, details?, *args?)` | loading loops, kernels | sublevel context + boundary mark |
+| `tick(stage_name?)` | `processing.run_processing` | stage counter + progress bar |
 
 ```
-19:42:03|tcm.cli|WARNING|[probe i90 1/2 stage 1 load] Sparse region detected
-19:42:03|tcm.cli|INFO|Loading data for i90...          ← no prefix (clean)
+cli.py:   set_probe("i90", stem_idx=1, n_cfgs_total=2, …)
+          → probe_base=0, probe_total=200, context armed
+
+processing.py:  set_stage_plan(5)
+                set_stage(1, "load", "Loading %s", path.name)
+                # INFO:  [## probe i90 stage 1 load] Loading @i90.TXT
+                …
+                tick()  # counter→1, frac=20%, progress_overall=20/200
+                set_stage(2, "coefs")
+                …
+                tick()  # counter→2, frac=40%, progress_overall=40/200
 ```
 
-**Prefix format**: `probe {id} {pi}.{ci}/{np}.{nc} stage {sn} {name}` —
-sub-indexes displayed only when corresponding count > 1:
+**Boundary marks** in the file log (consumed by `StageContextFilter`, one per state change):
+
+| Mark | Level | After |
+|------|-------|-------|
+| `[# probe …]` | — | `set_probe` (rare — first `set_stage` usually carries identity) |
+| `[## … stage N name]` | INFO | `set_stage` — always logged |
+| `[### … / sub]` | DEBUG | `set_sublevel` with details |
+| `[prefix]` | WARNING+ | any record within a scope, no mark |
+
+```
+14:15:03|tcm.stage_ctx|INFO|[## probe i90 stage 1 load] Loading @i90.TXT
+14:15:04|tcm.stage_ctx|DEBUG|[### probe i90 stage 1 load / read] chunk 1/3
+14:15:06|tcm.stage_ctx|DEBUG|[### probe i90 stage 1 load / time_corr] chunk 1/3
+14:15:06|tcm.utils_time_corr|DEBUG|freq 5.02 Hz, rms 0.003
+14:15:10|tcm.utils_time_corr|WARNING|[probe i90 stage 1 load / time_corr] non-monotone: 12 pts
+```
+
+**Prefix format**: `probe {id} [{pi}.{ci}/{np}.{nc}] [stage {sn} {name}] [/ {sub}]` —
+sub-indexes only when count > 1; sublevel only when set:
 
 | Scenario | Prefix |
 |----------|--------|
 | 1 probe, 1 config | `probe i90 stage 1 load` |
 | 2 probes, 1 config each | `probe i90 1/2 stage 1 load` |
 | 2 probes, 3 configs for probe 1 | `probe i90 1.1/2.3 stage 1 load` |
+| with sublevel | `probe i90 stage 1 load / read` |
 
 **Stages** (per-probe, sequential):
 
@@ -260,10 +305,15 @@ sub-indexes displayed only when corresponding count > 1:
 | 4+ | `NC`/`TSV` | per-bin write (repeated for each dt_bin) |
 | — | `combine` | _combine_probes (post-loop, not per-probe) |
 
-When running under the GUI, `run_processing` also calls
-`progress_stage.clear_and_reset()` at each probe boundary so the status bar
-clears stale text from the previous probe — see
-[Status bar text — one-shot clear signal](../tcm_gui/how_gui_works.md#status-bar-text--one-shot-clear-signal).
+**Progress bar**: `tick()` auto-increments an internal counter and computes
+`frac = round(counter * 100 / n_active)`.  The absolute position is
+`probe_base + frac` where `probe_base = (stem_idx - 1) * 100`.  The GUI
+bridge (`progress_bridge`) is imported optionally (try/except) — no-op when
+GUI is not installed.
+
+**QueueHandler**: the GUI's `log_bridge.QueueHandler` installs its own
+`StageContextFilter` so `emit()` sees the prefixed message (boundary marks)
+before freeze + dedup.
 
 ### Why `@hydra.main` and not Compose API
 
@@ -660,13 +710,31 @@ part of the per-text-file config sweep.
    tilt direction) and/or `azimuth_add`/`coordinates` (manual/declination)
 5. **Phase 3 — Save coefs**: write changed coefs to NC file (NC source or raw_db_path)
    or run YAML (noh5). NC-source coefs overwrite in-place (bypasses data-skip guard).
+   CSV+H5 sources always write coefs (idempotent via `save_coefs_to_nc`) — multiple
+   probes may share one `*.raw.nc`, each needing its own `/{tbl}/coef/` group.
    Changed coefs are **always** mirrored to the run YAML when `yaml_path` exists
    (not just in noh5 mode) — keeps the config readable.  Before first modification,
    `update_coefs_in_run_yaml` creates a timestamped backup
    (`-backupYYMMDD_HHMMSS.yaml`); subsequent updates reuse the same backup.
 6. **Phase 4 — Save data**: append raw data to `*.raw.nc` via `nc_incremental_update`
-   (skip for NC sources). Runs after Phase 3 because coefs may be in the same NC file.
-7. Process + persist via `_process_and_persist()` — passes `coef_zeroing_matrix`
+   (skip for NC sources **or** when raw NC fast-path was taken — see below).
+   Runs after Phase 3 because coefs may be in the same NC file.
+7. **Raw NC fast-path** (text source + `*.raw.nc` exists + ``time_ranges`` ⊆ existing):
+   skip text parsing entirely — load ``ds_raw`` + coefs from ``*.raw.nc`` instead.
+   Phase 4 save is also skipped (data already there).  Text files may be absent:
+   when the source file is missing, the NC's ``/{tbl}/logFiles`` must contain a
+   ``fileName`` entry matching the source (``{parent}/{stem}`` format) — prevents
+   loading from an NC built from a different file.  Configs whose text file is
+   absent but whose raw NC has a matching log entry are **not** marked stale.
+   Helpers: ``_load_raw_nc_if_covered``, ``_source_file_in_nc_log``,
+   ``config_yaml._raw_nc_has_source``.
+8. **Trim fast-path** (``force_reprocess=True`` + coefs unchanged +
+   ``time_ranges`` ⊆ existing): trim all NC files (raw, noavg, bins) to
+   ``time_ranges`` via ``trim_group_to_range``, re-export TSV from NC,
+   and return — no reprocessing needed.  Helpers: ``_read_run_params``,
+   ``_time_ranges_in_nc``, ``_trim_all_nc``, ``_export_tsv_from_nc``.
+9. Process + persist via `_process_and_persist()` — passes `coef_zeroing_matrix`
+   + `run_params_text` + `force_reprocess`
    to `_xr.physical.process()`
 
 ### Phase-stopping (`program.return_`)
@@ -804,23 +872,28 @@ NC write so `to_netcdf` triggers `.compute()` with task-level progress
 | dt_bin | Target file | Group | Example |
 |--------|-------------|-------|---------|
 | `0` (no-avg) | `not_joined_db_path` (`*.proc_noAvg.nc`) | `/{pcid}/` | `/i01/` |
-| `>0` (binned) | `db_path` (`*.proc.nc`) | `/{pcid}bin{bin_s}s/` | `/i01bin600s/` |
+| `>0` (binned) | `avg_db_path` (`*.proc_Avg.nc`) | `/{pcid}bin{bin_s}s/` | `/i01bin600s/` |
+
+Combined output lives in `db_path` (`*.proc.nc`) — see
+[Combined multi-probe output](#combined-multi-probe-output).
 
 Fallback: when PathLayout fails (no `_raw/` ancestor), output goes to
 `cfg.out.dir / @{pcid}.nc` — per-probe files only as last resort.
 
 **CSV/TSV export**: each binned result (`dt_bin >= dt_bins_min_save_text`) is
 exported to `{text_path}/{timestamp}{suffix}@{pcid}.tsv`.  Dev default:
-threshold ≥ 1 s → no-avg (dt_bin=0) skipped.  **noh5 dist** default:
-`dt_bins_min_save_text=0` → no-avg TSV enabled alongside 1 h bin.
+threshold ≥ 1 s → no-avg (dt_bin=0) skipped.  **noh5 dist** default:
+`dt_bins_min_save_text=0` → no-avg TSV enabled alongside 1 h bin.
 
 **Logging directory**: configured in `cfg_proc/config.yaml` via
 `hydra.run.dir: ./cfg_proc/log/${now:...}`. Since `os.chdir(data_dir)` is called
 before `@hydra.main`, logs go to `{data_dir}/cfg_proc/log/{timestamp}/`.
 
-Per-probe groups in `*.proc.nc`: each bin result is stored as a NetCDF4 group
-(`/{pcid}/` for no-avg, `/{pcid}bin{bin_s}s/` for binned) within a shared file.
-`merge_probes()` concatenates along a `probe` dimension:
+Per-probe groups in `*.proc_Avg.nc`: each binned result is stored as a NetCDF4
+group (`/{pcid}bin{bin_s}s/`) within a shared file. No-avg per-probe groups
+live in `*.proc_noAvg.nc` (`/{pcid}/`). `_combine_probes()` reads from
+`*.proc_Avg.nc`, concatenates along a `probe` dimension, and writes combined
+groups to `*.proc.nc` (see below).
 
 ```python
 ds_combined = xr.concat(per_probe_datasets, dim="probe").assign_coords(probe=pcids)
@@ -840,15 +913,15 @@ layer handles overlap/position logic downstream.
 ### Combined multi-probe output
 
 When multiple probes are processed in one run, `_combine_probes()` in
-`processing.py` merges per-probe groups into combined groups with a
-`probe` dimension.  Only **distinct** pcids are combined — multiple
-stems (source files) for the same pcid are deduplicated via
-`dict.fromkeys()` to avoid spurious probe duplicates in the combined output.
-Skipped when `H5_AVAILABLE` is `False` (noh5 environment — no netCDF4 backend).
+`processing.py` reads per-probe binned groups from `*.proc_Avg.nc`, merges
+them along a `probe` dimension, and writes combined groups to `*.proc.nc`.
+Only **distinct** pcids are combined — multiple stems (source files) for
+the same pcid are deduplicated via `dict.fromkeys()`. No-averaged
+(`dt_bin=0`) data is **never combined** — per-probe only.
+Skipped when `H5_AVAILABLE` is `False` (noh5 environment).
 
 | Output | Group | Content |
 |--------|-------|---------|
-| `*.proc_noAvg.nc` | `/{probe_type}/` | All probes, no-avg, `probe` dim |
 | `*.proc.nc` | `/{probe_type}_bin{N}s/` | All probes, binned, `probe` dim |
 | TSV | `{ts}bin{N}s@{pcid1},{pcid2}.tsv` | Combined tab-separated text |
 
@@ -865,15 +938,32 @@ On re-processing the same input data, each NC output type handles idempotency di
 | Output | Write function | Re-run behavior |
 |--------|---------------|----------------|
 | `*.raw.nc` | `nc_incremental_update` (log dedup) | **SKIP** — same fileName + mtime detected via log table |
-| `*.proc.nc` (binned) | `store_processed_incremental` (time-range check) | **SKIP** — new time range ⊂ existing range |
-| `*.proc_noAvg.nc` (no-avg) | `store_processed_incremental` (time-range check) | **SKIP** — new time range ⊂ existing range |
-| Combined groups | `_combine_probes` → `store_processed(..., mode="a")` | **Overwrites** in-place — re-reads per-probe groups, re-concatenates, re-writes |
+| `*.proc_Avg.nc` (per-probe binned) | `store_processed_incremental` (time-range check) | **SKIP** — new time range ⊂ existing range |
+| `*.proc_noAvg.nc` (per-probe no-avg) | `store_processed_incremental` (time-range check) | **SKIP** — new time range ⊂ existing range |
+| `*.proc.nc` (combined) | `_combine_probes` → `to_netcdf(mode="a")` | **Always delete+rewrite** — re-reads per-probe groups, re-concatenates |
 
 `store_processed_incremental` only checks time-range containment, not data content.
-If filter params, coefficients, or input window change, the stored ``_run_params``
-attribute is diff-compared to the current values — a WARNING with unified diff
-is emitted, but the data is still skipped. Delete the `*.proc.nc`
-file or pass `+force_reprocess=True` to force re-processing.
+If coefficients change (detected via the latest ``_run_params`` JSON history entry
+vs current, ignoring ``input.time_ranges`` lines), a **ValueError** is raised
+showing a unified diff.  Each processing run appends a new dated entry to the
+history; duplicate params are not recorded.  Delete the group or pass
+`+force_reprocess=True` to force re-processing.
+See `config_reference.md` (§`_run_params` attribute) for the full field list.
+
+| `force_reprocess` | Params changed? | `time_ranges` vs existing | Behavior |
+|:---:|:---:|:---:|---|
+| `False` | No | subset | **Skip NC** — export TSV only |
+| `False` | No | extends | **Append** — append new tail only |
+| `False` | Yes | any | **Error** — ``ValueError`` |
+| `True` | No | subset | **Trim** — delete outside ``time_ranges``, no reprocessing |
+| `True` | Yes | subset | **Splice** — keep outside, replace inside with reprocessed |
+| `True` | any | extends | **Splice** — keep outside, replace/append inside |
+| `True` | same | None | **Splice** — normal force reprocess |
+
+`force_reprocess=True` uses :func:`splice_group` which keeps data outside
+``[ds_new.time.min(), ds_new.time.max()]`` intact (head + tail) and replaces
+the overlapping portion with reprocessed results.  TSV is read from NC after
+splice (not from in-memory ``ds_out``) to include the preserved head/tail.
 
 ### Incremental update
 
@@ -883,6 +973,15 @@ fully contained in existing range — avoids duplicates on re-run. See
 `config_reference.md` (§Incremental append positions) for the position-aware
 append strategy decision table and `config_reference.md` (§Log-based dedup)
 for the log-based skip/resume/new-file decision table.
+
+Two new primitives support the ``force_reprocess`` + ``time_ranges`` redesign:
+
+- ``splice_group(nc_path, tbl, ds_new)`` — replaces the overlapping portion
+  of *tbl* with *ds_new*, preserving head/tail outside the new time range.
+  Uses boolean masking for robust boundary handling.
+- ``trim_group_to_range(nc_path, tbl, time_start, time_end)`` — trims *tbl*
+  to ``[time_start, time_end]``.  Deletes the group entirely when all data
+  falls outside the window.
 
 ### `process_inmemory(ds, coefs, ...)` — standalone API
 
@@ -902,8 +1001,13 @@ Raw data and coefficients are persisted in separate phases (see [run_processing]
   and no file handle is touched.  `OSError` (e.g. file locked by another
   reader) is caught and logged as a warning — processing continues with the
   in-memory data.
-- **CSV/HDF5 source + h5py**: all coefs written to `raw_db_path` NC on first
-  creation; only changed coefs on re-run.
+- **CSV/HDF5 source + h5py**: all coefs written to `raw_db_path` NC via
+  `save_coefs_to_nc` (after Phase 4).  Multiple probes may share one `*.raw.nc` —
+  each gets its own `/{tbl}/coef/` group.  `save_coefs_to_nc` is idempotent:
+  `h5copy_coef` handles both group creation and overwrite.  Before writing,
+  `ds_raw.load()` + `ds_raw.close()` releases any lingering netCDF4 read handle
+  (required for the autoload fast-path where `ds_raw` was loaded from the same
+  `*.raw.nc`; no-op when Phase 4 already closed the handle).
 - **noh5 mode**: changed coefs written to the run YAML (`cfg_proc/run/*.yaml`)
   via `config_yaml.update_coefs_in_run_yaml()`.
 
@@ -954,20 +1058,50 @@ read or `xr.concat` is ever used:
 - **Resize fallback**: `_rebuild_and_append()` — when h5py `resize()` fails
   (non-extendable datasets), builds a new group with `maxshape=(None,)`,
   copies old data chunk-wise from h5py, then appends new data.
-  O(chunk) memory.
+   O(chunk) memory.
 
-`store_processed(mode='a')` uses `_time_extends_beyond()` to detect when
-`to_netcdf(mode='a')` would silently overwrite same-size data (sizes match
-but time ranges differ — e.g. after a resize fallback created extendable
-datasets).  When new data extends beyond the existing range, the h5py
-append path (`_append_to_nc_group`) is used directly, which properly
-extends the time dimension via `resize()`.
+`store_processed(mode='a', group=...)` delegates entirely to
+``append_to_nc()`` — no ``to_netcdf(mode='a')`` attempt, no fallback chain.
+This gives two properties out of the box:
+
+1. **Extendable from the start** — ``_write_dataset_to_nc_group`` creates
+   all datasets with ``maxshape=(None,)`` so ``_h5py_extend_group`` can
+   resize them on subsequent appends without ``_rebuild_and_append``.
+2. **Position-aware writes** — ``_Overlap`` (Allen's interval algebra)
+   classifies the new data against the existing time range and only writes
+   the non-overlapping head/tail, preventing duplicate timestamps.
+
+**CF float64 dedup**: ``store_processed_incremental`` checks containment at
+both nanosecond precision and CF float64 precision (seconds since epoch,
+``float64`` ≈ 100 ns resolution at current epoch).  New timestamps that are
+distinct at ns precision but collapse to the same ``float64``-second value
+on disk are treated as contained — preventing duplicate time indices after
+encoding.
+
+### Combined group lifecycle
+
+`_merge_groups_to_combined()` reads per-probe binned groups from
+`*.proc_Avg.nc`, concatenates along a `probe` dimension, and writes the
+combined result to `*.proc.nc` via ``to_netcdf(engine="netcdf4", mode="a")``.
+On re-run:
+
+1. **Skip** — `_combined_group_is_current()` checks if the existing combined
+   group is readable (h5netcdf validates dimension-scale metadata) and covers
+   all per-probe time ranges.  If so, no write occurs.
+2. **Delete + fresh write** — when the combined group is missing, unreadable,
+   or its time range no longer covers all per-probe groups, it is deleted via
+   ``delete_h5py_group()`` before writing.  Combined groups use ``to_netcdf``
+   directly (not ``_write_dataset_to_nc_group``) to produce correct
+   dimension-scale metadata for string coordinates like ``probe``.
 
 After any h5py resize (`_h5py_extend_group`, `_prepend_nc_group`),
 dimension scales (`make_scale`/`attach_scale`) are re-attached so
 `xr.open_dataset(engine="netcdf4")` can read the group back.
 Before the combine step, `ensure_dim_scales()` repairs scales across all
 groups in a file — defensive against files corrupted by older runs.
+The safety guard ``dset.shape[0] == n_time`` prevents attaching the ``time``
+scale to datasets with a different first-axis length (e.g. a ``probe``
+coordinate with 2 elements).
 On Windows, HDF5 mandatory file locks can cause `OSError` when opening
 a file whose netCDF4 handle was recently closed; `ensure_dim_scales`
 catches both `RuntimeError` and `OSError` gracefully (warning + continue).
@@ -980,8 +1114,11 @@ decision (SKIP, RESUME, NEW_FILE). The decision table is in
 
 **RESUME mode** (`_resume_append()`): when the same source file was updated
 (newer mtime), only data after the existing last timestamp is appended.
-The log is updated with two rows: original start and new tail end (both
-marked with the new `fileChangeTime`).
+The log is updated with a **single row** per fileName (replacing the old row)
+spanning the full range from original start to new tail end — keeps the log
+idempotent and avoids precision drift from CF float64 round-trip.
+The existing last timestamp is read as raw ``float64`` seconds from h5py
+(no ns round-trip) for precision-faithful comparison.
 
 **Overlap warning**: when new data overlaps existing data *and* the file
 is a different source (not a resume), `append_to_nc()` logs a warning
@@ -1019,6 +1156,7 @@ for writing.  This applies to:
 |----------|----------|------|
 | Processing (Phase 3) | When `changed_coefs` is non-empty: `ds_raw.load()` + `ds_raw.close()` to release the read-only netCDF4 handle, then `save_coefs_to_nc` opens with h5py in append mode.  When coefs unchanged: no memory overhead, no file handle touched.  `OSError` caught and logged as warning. | ``processing.py`` Phase 3 |
 | Processing (Phase 4) | Before `nc_incremental_update`: `ds_raw.load()` + `ds_raw.close()` to release the read-only handle (same pattern as Phase 3).  On Windows, HDF5 mandatory locking blocks ANY open (even read) when another handle exists. | ``processing.py`` Phase 4 |
+| Processing (coefs write) | After Phase 4, before `save_coefs_to_nc`: `ds_raw.load()` + `ds_raw.close()` — required when `ds_raw` was loaded from the same `*.raw.nc` via the autoload fast-path (`_loaded_from_raw_nc`).  `load()`/`close()` are no-ops when Phase 4 already released the handle. | ``processing.py`` coefs write |
 | Calibration (`run_calibration`) | Calls `ds.close()` before `h5copy_coef` writes to the **same** NC file | `calibration/run.py:241` |
 | Storage (`append_to_nc`) | Uses h5py exclusively for writes; read via `autoclose=True` | `_xr/storage.py` |
 
@@ -1131,17 +1269,22 @@ Resolves output paths from structural anchors (`proc_dir`, `raw_dir`).
 
 ```python
 SCHEMA = {
-    "raw_db":        ("raw_dir",  ".raw.nc",       True),
-    "db":            ("proc_dir", ".proc.nc",      True),
-    "not_joined_db": ("proc_dir", ".proc_noAvg.nc", True),
-    "text":          ("proc_dir", "",               False),
+    "raw_db":        ("raw_dir",  ".raw.nc",         True),
+    "not_joined_db": ("proc_dir", ".proc_noAvg.nc",  True),   # per-probe no-avg
+    "avg_db":        ("proc_dir", ".proc_Avg.nc",    True),   # per-probe binned
+    "db":            ("proc_dir", ".proc.nc",        True),   # combined output
+    "text":          ("proc_dir", "",                False),  # directory
 }
 ```
 
 Resolution hierarchy (`resolve(entity_name)`):
 1. **Absolute path** — used as-is
-2. **Relative path** — resolved relative to `proc_dir`
-3. **Auto-generation** — stem from `RAW_DIR_NAME`-anchored directory + SCHEMA suffix
+2. **Relative path** — resolved relative to ``proc_dir``
+3. **Auto-generation** — stem from ``RAW_DIR_NAME``-anchored directory + SCHEMA suffix
+
+``db`` (``.proc.nc``) stores **combined** multi-probe groups only (probe
+dimension). Per-probe binned groups live in ``avg_db`` (``.proc_Avg.nc``).
+Per-probe no-avg groups live in ``not_joined_db`` (``.proc_noAvg.nc``).
 
 `_constants.RAW_DIR_NAME` (`"_raw"`) is the single source of truth for the
 raw-data directory name — all source and test code imports this constant

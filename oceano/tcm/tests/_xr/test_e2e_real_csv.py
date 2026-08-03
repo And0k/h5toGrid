@@ -17,7 +17,7 @@ from omegaconf import DictConfig
 
 from tcm import _constants
 from tcm._xr import io as xr_io
-from tcm.config import Return
+from tcm.schema import Return
 from tcm.processing import run_processing
 
 # ---------------------------------------------------------------------------
@@ -67,7 +67,7 @@ def real_env(tmp_path):
     return dict(
         proc_dir=proc_dir, raw_dir=raw_dir, csv_file=csv_file, cfg=cfg,
         noavg_path=proc_dir / "260604.proc_noAvg.nc",
-        avg_path=proc_dir / "260604.proc.nc",
+        avg_path=proc_dir / "260604.proc_Avg.nc",
         text_path=proc_dir / "text_output",
     )
 
@@ -109,18 +109,18 @@ class TestE2ERealCSV:
             )
 
     def test_proc_nc_has_binned_groups(self, real_env):
-        """proc.nc must contain binned groups (bin2s, bin600s)."""
+        """proc_Avg.nc must contain binned groups (bin2s, bin600s)."""
 
         run_processing(real_env["cfg"])
 
         avg = real_env["avg_path"]
         assert avg.exists(), (
-            f"proc.nc not created; dir: {list(real_env['proc_dir'].iterdir())}"
+            f"proc_Avg.nc not created; dir: {list(real_env['proc_dir'].iterdir())}"
         )
         with h5py.File(str(avg), "r") as f:
             groups = list(f.keys())
             assert any("bin2s" in g for g in groups), (
-                f"bin2s group missing from proc.nc: {groups}"
+                f"bin2s group missing from proc_Avg.nc: {groups}"
             )
 
     def test_tsv_files_created(self, real_env):

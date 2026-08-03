@@ -1,7 +1,7 @@
 # Config YAML Field Reference
 
 Each run YAML (`cfg_proc/run/{source_stem}.yaml`) is a structured Hydra/OmegaConf config.
-All fields are defined in `tcm/config.py` via the `Config` dataclass and registered groups
+All fields are defined in `tcm/schema.py` via the `Config` dataclass and registered groups
 (`input`, `out`, `filter`, `program`).
 
 Every run YAML starts with `# @package _global_` so Hydra merges it into the top-level Config.
@@ -129,9 +129,10 @@ those scalar defaults are silently ignored — no warning about "not redefined".
 
 | Field | Type | Default | Required | Purpose |
 |-------|------|---------|----------|---------|
-| `db_path` | `str` | `None` | No | `.proc.h5` path (HDF5 mode; null when h5py unavailable). |
-| `not_joined_db_path` | `str` | `None` | No | `.proc_noAvg.h5` path. |
-| `raw_db_path` | `str` | `None` | No | `.raw.h5` path. |
+| `db_path` | `str` | `None` | No | `.proc.nc` path — combined multi-probe output (probe dimension). |
+| `avg_db_path` | `str` | `None` | No | `.proc_Avg.nc` path — per-probe binned output. |
+| `not_joined_db_path` | `str` | `None` | No | `.proc_noAvg.nc` path — per-probe non-averaged output. |
+| `raw_db_path` | `str` | `None` | No | `.raw.nc` path — raw data + coefficients. |
 | `table` | `str` | `''` | No | Output table name override. When non-empty, overrides the pcid derived from `input.path` for text-file suffixes. The raw value is also used as HDF5 table name (not the derived pcid). |
 | `dt_bins` | `List[int]` | `[0, 2, 600, 3600, 7200]` | **Yes** | Averaging bins (seconds → timedelta). `0` = no averaging.  **noh5 dist** default: `[0, 3600]` (no-avg + 1h only). |
 | `dt_bins_min_save_text` | `int` | `1` | No | Minimum bin size to save text output. Bin=0 skipped when >0.  **noh5 dist** default: `0` (no-avg TSV enabled). |
@@ -201,7 +202,7 @@ typed despike overrides (mirrors `_dask_legacy/incl_calibr_hy.ConfigFilter`):
 | `sleep_s` | `float` | `0.5` | Sleep between probes to manage memory. |
 | `verbose` | `str` | `'INFO'` | Log level. |
 | `force_reprocess` | `bool` | `False` | Override time-range containment for **processed** NC writes (noAvg/binned). Does NOT affect coef persistence (always overwrites in-place). Accepted via `+force_reprocess=True`. |
-| `use_h5` | `bool` or `None` | `None` | Control HDF5/NC I/O. `None` auto-detects from `h5py`/`netCDF4` availability. `True` forces enable (errors if unavailable). `False` forces disable (warnings on skipped operations). Used in noh5 builds to suppress HDF5 writes gracefully. |
+| `use_h5` | `str` | `'auto'` | Control binary (NC/HDF5) I/O. Values: `auto` — enable if `h5py`/`netCDF4` available, skip silently otherwise. `off` — disable; skipped NC operations are logged. `require` — enable if available, **error** if unavailable. `prefer` — enable if available, **warn** and fall back otherwise. Resolved at startup via `policy.IOPolicy.resolve()`. |
 
 ## Decision tables and behavior tuning
 
@@ -355,6 +356,67 @@ differently:
 
 Time-range containment uses ``ex_ns.min()``/``ex_ns.max()`` (not ``[0]``/``[-1]``)
 because time may be unsorted when multiple stems are appended in discovery order.
+
+#### `_run_params` attribute
+
+Every processed NC group written by `store_processed_incremental` stores a
+``_run_params`` JSON history dict.  Each processing run appends a new entry
+under an ISO-timestamp key — previous entries are preserved for audit.
+When the latest entry already matches the current params, no duplicate is
+recorded.
+
+On re-run with data already covered, only the **latest** history entry is
+compared to the current value (ignoring ``input.time_ranges`` lines) — a
+mismatch raises ``ValueError`` with a unified diff.
+
+The attribute is built by ``_build_filter_params_text()`` (``processing.py``)
+and contains **all** resolved parameters that affect processed output, sorted
+by key:
+
+| Prefix | Source | Config section | Fields |
+|--------|--------|----------------|--------|
+| `filter.` | Process-stage NaN-out thresholds | `filter` (`ConfigFilter_InclProc`) | `min.<var>`, `max.<var>`, `bad_p_at_bursts_starts_period` |
+| `input.` | Load-stage window / thresholds | `input` (`ConfigIn_InclProc`) | `time_ranges`, `min.<var>`, `max.<var>`, `dt_min_binning_proc` |
+| `coef.` | Prepared coefficients | `coefs` dict (post `prepare_coefs()`) | All keys except `dates`, `Rz` |
+
+The comparison on skip strips ``input.time_ranges`` lines before comparing —
+so changing only the time window (e.g. narrowing ``time_ranges``) does NOT
+trigger a ``ValueError``; only filter or coefficient changes do.  The full
+(including ``input.time_ranges``) text is still stored for diagnostic purposes.
+
+**Example** ``_run_params`` value (JSON history with two entries)::
+
+    {"2024-01-15T10:00:00+00:00": "coef.Ag=[[1. 0. 0.]\n [0. 1. 0.]\n [0. 0. 1.]]\ncoef.Az=0.0\nfilter.max.Ax=5\nfilter.min.Ax=-5\ninput.dt_min_binning_proc=1.0\ninput.time_ranges=[2024-01-01, 2024-01-02]",
+     "2024-02-01T09:30:00+00:00": "coef.Ag=[[1. 0. 0.]\n [0. 1. 0.]\n [0. 0. 1.]]\ncoef.Az=0.0\nfilter.max.Ax=5\nfilter.min.Ax=-5\ninput.dt_min_binning_proc=1.0\ninput.time_ranges=[2024-01-01, 2024-01-03]"}
+
+#### `force_reprocess` + `time_ranges` behavior
+
+| `force_reprocess` | Params changed? | `time_ranges` vs existing | Behavior |
+|:---:|:---:|:---:|---|
+| `False` | No | subset | **Skip NC** — export TSV only |
+| `False` | No | extends | **Append** — append new tail only |
+| `False` | Yes | any | **Error** — ``ValueError`` |
+| `True` | No | subset | **Trim** — delete outside ``time_ranges``, no reprocessing |
+| `True` | Yes | subset | **Splice** — keep outside, replace inside with reprocessed |
+| `True` | any | extends | **Splice** — keep outside, replace/append inside |
+| `True` | same | None | **Splice** — normal force reprocess |
+
+#### Absent text files
+
+When the text file referenced by ``input.path`` no longer exists on disk, the
+pipeline can still load from ``*.raw.nc`` via the **raw NC fast-path** — provided:
+
+1. ``*.raw.nc`` exists and its time range covers ``time_ranges``, AND
+2. the NC's ``/{tbl}/logFiles`` group contains a ``fileName`` entry matching
+   the source file (``{parent_dir_name}/{stem}`` format, first 255 chars).
+
+When both conditions hold, configs are **not** marked stale and the pipeline
+loads ``ds_raw`` + coefs from ``*.raw.nc`` as if the text file were present.
+Phase 4 (raw NC save) is skipped since the data already resides in the NC.
+
+If neither the text file nor a matching raw NC log entry exists, the config is
+marked stale and ``FileNotFoundError`` is raised during processing (caught by
+``process_loading_yaml``).
 
 ## Per-file run YAMLs (`@package _global_`)
 

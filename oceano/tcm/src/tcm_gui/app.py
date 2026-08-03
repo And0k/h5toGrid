@@ -14,7 +14,7 @@ from tkinter.scrolledtext import ScrolledText
 
 from omegaconf import OmegaConf
 
-from tcm import cli, config, config_yaml, format, incl_calc
+from tcm import schema, cli, config_yaml, format, incl_calc
 from tcm_gui.cli_cfg import default_cfg
 
 from ._browse_button import BrowseButtonManager
@@ -52,12 +52,12 @@ class App:
         apply_ui_scale(self.root)  # global DPI + named fonts — before any widget
         self.root.title("TCM")
         self.root.geometry("1100x800")
-        
+
         # use exe icon
         self._icons: tuple[int, ...] = ()
         self.root.bind("<Destroy>", self._free_icons, add=True)
         self.set_window_icon()
-     
+
         self.rt = Runtime()
         # Install the QueueHandler on the root logger once, for the lifetime
         # of the app, so log calls from the GUI main thread (e.g.
@@ -212,7 +212,7 @@ class App:
             on_path_changed=lambda path: self._set_coefs_and_reload(stem, path),
             on_edit_restyler=cs._apply_edit_value,
         )
-        cs.load(cfg, full=self._full_mode, config_root=config.Config, return_enum=config.Return)
+        cs.load(cfg, full=self._full_mode, config_root=schema.Config, return_enum=schema.Return)
         cs.on_hover_status = self._status.set
         self._pages[stem] = cs
 
@@ -225,7 +225,7 @@ class App:
         coefs = incl_calc.coefs.get_coefs(coefs_path.split(","), tbl)
         cs._cfg.setdefault("input", {})["coefs"] = coefs
         cs._cfg.setdefault("input", {})["coefs_path"] = coefs_path
-        cs.load(cs._cfg, full=self._full_mode, config_root=config.Config, return_enum=config.Return)
+        cs.load(cs._cfg, full=self._full_mode, config_root=schema.Config, return_enum=schema.Return)
 
     # ── §3 Run / Pause / Resume ─────────────────────────────────────
 
@@ -354,8 +354,8 @@ class App:
             # Restore the real default so the dropdown shows the value that
             # ``processing.run`` will actually use when the user clicks Run.
             prog = cfg.get("program")
-            if prog and prog.get("return_") == config.Return.CFG_FROM_ARGS:
-                prog["return_"] = str(config.Return.END)
+            if prog and prog.get("return_") == schema.Return.CFG_FROM_ARGS:
+                prog["return_"] = str(schema.Return.END)
             self._yaml_paths[stem] = Path(yp)
             self._add_page(stem, cfg)
         self._cfg_scanned = True
@@ -399,13 +399,13 @@ class App:
         """Set title/taskbar icon from the executable's RT_GROUP_ICON."""
         if sys.platform != "win32":
             return
-            
+
         WM_SETICON = 0x0080
         GA_ROOT = 2
         EXTRACT_FAIL = 0xFFFFFFFF
-            
+
         self.root.update_idletasks()
-        
+
         base = ctypes.wintypes.HWND(int(str(self.root.winfo_id()), 0))
         if not (hwnd := user32.GetAncestor(base, GA_ROOT) or base):
             return

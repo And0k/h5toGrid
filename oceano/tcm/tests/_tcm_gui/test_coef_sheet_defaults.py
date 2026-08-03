@@ -233,7 +233,7 @@ class TestOnEndEditGrayToggle:
         tree :meth:`_build_coefs` constructed.  Sets ``_fg_default`` since the
         stub bypasses :meth:`_apply_styles` (where it is normally resolved).
         """
-        from tcm.config import Config, Return
+        from tcm.schema import Config, Return
 
         cfg = {
             "input": {

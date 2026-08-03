@@ -11,7 +11,7 @@ import pytest
 from omegaconf import DictConfig
 
 from tcm import _constants, cli, processing
-from tcm.config import Return
+from tcm.schema import Return
 
 # ---------------------------------------------------------------------------
 # Shared fixtures

@@ -20,11 +20,10 @@ from omegaconf import DictConfig, OmegaConf
 from tqdm.dask import TqdmCallback
 
 
-from tcm import _constants, cli, config_yaml, format, paths, stage_ctx, utils2init
+from tcm import _constants, cli, config_yaml, format, paths, stage_ctx, utils2init, policy, schema
 from tcm._xr import coefs as xr_coefs
 from tcm._xr import dataset, physical, storage
 from tcm._xr import io as xr_io
-from tcm.config import Return
 from tcm.incl_calc.coefs import get_coefs_from_cfg
 
 try:
@@ -53,7 +52,7 @@ _EXT_BINARY = _constants._EXT_NC | _constants._EXT_HDF5
 # ── Upper-bar stage ticks (one tick per stage boundary) ─────────────────
 # ``Stage`` labels the per-probe phases; the upper bar advances within each
 # probe as stages start.  Each probe occupies 100 units of the upper-bar
-# scale; active stages share it evenly (NC only when ``use_h5_get() is True``,
+# scale; active stages share it evenly (NC only when ``io()`` is truthy,
 # TSV only when ``text_path`` set).  Bottom bar (dask TqdmCallback) covers
 # substages continuously within a stage.
 
@@ -67,22 +66,6 @@ class Stage(StrEnum):
     NC = "NC"  # store_processed_incremental (per bin), use_h5 only
     TSV = "TSV"  # xr_io.ds_to_csv (per bin), text_path only
     COMBINE = "combine"  # _combine_probes (post-loop, not per-probe)
-
-
-_probe_base = {"v": 0}  # set per probe by process_loading_yaml
-_probe_total = {"v": 0}  # set once by process_loading_yaml (n_cfgs × 100)
-
-
-def _stage(label: str, frac: int) -> None:
-    """Advance the overall progress bar to *frac* % of the current probe.
-
-    Uses processing-specific ``_probe_base`` / ``_probe_total`` globals
-    to compute the absolute position within the multi-config run.
-    Stage bar is NOT reset here — it is naturally replaced by the next
-    ``GuiTqdm`` or ``_tick`` call and cleared only at run completion.
-    """
-    if rt := progress_bridge.get_runtime():
-        rt.progress_overall.set(_probe_base["v"] + frac, _probe_total["v"], label)
 
 
 # ---------------------------------------------------------------------------
@@ -111,14 +94,17 @@ def _dt_min_save(cfg_out) -> timedelta:
     return val if isinstance(val, timedelta) else timedelta(seconds=int(val or 1))
 
 
-def _output_nc_paths(cfg_out) -> tuple[Path | None, Path | None]:
-    """Resolve ``(noavg_path, avg_path)`` from ``not_joined_db_path``."""
-    njp = cfg_out.get("not_joined_db_path")
-    if njp:
-        noavg = Path(njp)
-        avg = noavg.parent / noavg.name.replace("_noAvg", "", 1)
-        return noavg, avg
-    return None, None
+def _output_nc_paths(cfg_out) -> tuple[Path | None, Path | None, Path | None]:
+    """Resolve ``(noavg_path, avg_path, combined_path)`` from config.
+
+    - ``noavg_path``: per-probe no-averaged groups (``.proc_noAvg.nc``)
+    - ``avg_path``: per-probe averaged/binned groups (``.proc_Avg.nc``)
+    - ``combined_path``: combined groups with probe dimension (``.proc.nc``)
+    """
+    noavg = Path(p) if (p := cfg_out.get("not_joined_db_path")) else None
+    avg = Path(p) if (p := cfg_out.get("avg_db_path")) else None
+    combined = Path(p) if (p := cfg_out.get("db_path")) else None
+    return noavg, avg, combined
 
 
 def _text_date_fmt(cfg_out, bin_s: int) -> str:
@@ -160,14 +146,20 @@ def _build_filter_params_text(cfg_in: dict, cfg_filter: dict, coefs: dict | None
     # After main_init/ini2dict the '_s' suffix is stripped by type_fix.
     if dt_bp := cfg_in.get("dt_min_binning_proc"):
         params["input.dt_min_binning_proc"] = str(dt_bp)
-    # Coefficients (sorted keys, ndarray rendered via np.array2string)
+    # Coefficients (sorted keys, ndarray rendered via %g-format for stable diff
+    # across magnitudes — handles very large and very small values uniformly)
+    _G_FMT = "{:.8g}".format
     if coefs:
         _SKIP_COEF_KEYS = frozenset({"dates", "Rz"})
         for k, v in sorted(coefs.items()):
             if k in _SKIP_COEF_KEYS:
                 continue
             if isinstance(v, np.ndarray):
-                params[f"coef.{k}"] = np.array2string(v.astype(float), separator=", ")
+                params[f"coef.{k}"] = np.array2string(
+                    v.astype(float), separator=", ", formatter={"float_kind": _G_FMT}
+                )
+            elif isinstance(v, (int, float, np.floating, np.integer)):
+                params[f"coef.{k}"] = _G_FMT(float(v))
             else:
                 params[f"coef.{k}"] = str(v)
 
@@ -176,94 +168,247 @@ def _build_filter_params_text(cfg_in: dict, cfg_filter: dict, coefs: dict | None
 
 
 # ---------------------------------------------------------------------------
+# Trim fast-path helpers — used by run_processing when force_reprocess
+# but coefs unchanged and time_ranges ⊆ existing data.
+# ---------------------------------------------------------------------------
+
+
+def _read_run_params(nc_path: str | Path, tbl: str) -> str:
+    """Read the latest stored ``_run_params`` entry from *tbl* in *nc_path*.
+
+    The on-disk attribute is a JSON history dict ``{ISO-date: params, ...}``.
+    Returns only the most recent params text, or ``""`` when the file/group
+    is missing or lacks the attr.
+    """
+    nc_path = Path(nc_path)
+    if not nc_path.exists():
+        return ""
+    try:
+        with _constants._h5py.File(str(nc_path), "r") as f:
+            if tbl in f:
+                val = f[tbl].attrs.get("_run_params", "")
+                raw = val.decode() if isinstance(val, bytes) else val
+                return storage._get_latest_params(raw)
+    except (OSError, KeyError):
+        pass
+    return ""
+
+
+def _time_ranges_in_nc(nc_path: str | Path, tbl: str, time_ranges: list) -> bool:
+    """Check whether *time_ranges* is a subset of the existing NC time extent.
+
+    Returns ``True`` when the NC group's time range fully covers *time_ranges*
+    (i.e. no data outside the stored range is requested).  Used to decide
+    whether a trim fast-path is safe.
+    """
+    if not time_ranges or len(time_ranges) < 2:
+        return True
+    nc_path = Path(nc_path)
+    if not nc_path.exists():
+        return False
+    try:
+        with _constants._h5py.File(str(nc_path), "r") as f:
+            if tbl not in f or "time" not in f[tbl]:
+                return False
+            td = f[tbl]["time"]
+            if td.shape[0] == 0:
+                return False
+            ex_min, ex_max = float(td[0]), float(td[-1])
+    except (OSError, KeyError):
+        return False
+    # Convert time_ranges endpoints to CF float64 seconds for comparison
+    _EPOCH_NS = np.datetime64("1970-01-01", "ns").astype(np.int64)
+    tr_min = (
+        (np.datetime64(time_ranges[0], "ns").astype(np.int64) - _EPOCH_NS) / 1e9 if time_ranges[0] else ex_min
+    )
+    tr_max = (
+        (np.datetime64(time_ranges[-1], "ns").astype(np.int64) - _EPOCH_NS) / 1e9
+        if time_ranges[-1]
+        else ex_max
+    )
+    return bool(tr_min >= ex_min and tr_max <= ex_max)
+
+
+def _load_raw_nc_if_covered(
+    raw_nc: str | Path,
+    tbl: str,
+    cfg_in: dict,
+    *,
+    source_path: Path | None = None,
+) -> tuple[xr.Dataset | None, dict | None] | None:
+    """Load ``ds_raw`` + coefs from ``*.raw.nc`` when it covers ``time_ranges``.
+
+    Returns ``(ds_raw, coefs_from_file)`` on success, or ``None`` when
+    the fast-path cannot be taken (file missing, group absent, range not
+    covered, log mismatch, or empty result).
+
+    When *source_path* is given and the file does **not** exist on disk,
+    verifies that the NC's ``/{tbl}/logFiles`` contains a ``fileName``
+    entry matching the source file — prevents loading from an NC built
+    from a different file with an overlapping time range.
+    """
+    if not policy.io():
+        return None
+    nc_path = Path(raw_nc)
+    if not nc_path.exists():
+        return None
+    if not _time_ranges_in_nc(nc_path, tbl, cfg_in.get("time_ranges")):
+        return None
+    # When source file is absent, verify NC log provenance
+    if (
+        source_path is not None
+        and not source_path.exists()
+        and not _source_file_in_nc_log(nc_path, tbl, source_path)
+    ):
+        lf.debug("Raw NC log has no entry for {} — skipping fast-path", source_path.name)
+        return None
+    lf.info("Raw NC covers time_ranges — loading from {}", nc_path.name)
+    ds, coefs = xr_io.load_raw(path=nc_path, tbl=tbl, cfg_in=cfg_in)
+    if ds is None or ds.sizes.get("time", 0) == 0:
+        lf.warning("Raw NC {} group {} is empty after time filter — falling back to text", nc_path.name, tbl)
+        return None
+    return ds, coefs
+
+
+def _source_file_in_nc_log(nc_path: Path, tbl: str, source_path: Path) -> bool:
+    """Check if ``/{tbl}/logFiles`` in *nc_path* has a ``fileName`` matching *source_path*.
+
+    The log ``fileName`` format is ``{parent_name}/{stem}`` (first 255 chars),
+    matching :func:`tcm.h5.file_name_and_time_to_record`.
+    """
+    log = storage.read_nc_log(nc_path, tbl)
+    if log.sizes.get("Date0", 0) == 0:
+        return False
+    expected = f"{source_path.parent.name}/{source_path.stem}"[-255:]
+    return bool((log["fileName"].values == expected).any())
+
+
+def _trim_all_nc(cfg: dict, pcid: str, time_ranges: list) -> None:
+    """Trim all NC output files (raw, noavg, all bins) to *time_ranges*.
+
+    Operates on the same NC files that :func:`_process_and_persist` writes to.
+    """
+    tr_start = np.datetime64(time_ranges[0]) if time_ranges[0] else None
+    tr_end = np.datetime64(time_ranges[-1]) if time_ranges[-1] else None
+    cfg_out = cfg["out"]
+
+    # raw NC
+    if raw_nc := cfg_out.get("raw_db_path"):
+        tbl = format.pcid_to_raw_name(pcid)
+        storage.trim_group_to_range(raw_nc, tbl, tr_start, tr_end)
+
+    # proc_noAvg NC
+    noavg_path, avg_path, _ = _output_nc_paths(cfg_out)
+    if noavg_path:
+        storage.trim_group_to_range(noavg_path, pcid, tr_start, tr_end)
+
+    # proc NC (all bins)
+    if avg_path:
+        for dt_bin in _dt_bins(cfg_out):
+            bin_s = int(dt_bin.total_seconds())
+            if bin_s > 0:
+                storage.trim_group_to_range(avg_path, f"{pcid}bin{bin_s}s", tr_start, tr_end)
+
+
+def _export_tsv_from_nc(cfg: dict, pcid: str) -> None:
+    """Re-export TSV files from NC data after trim fast-path.
+
+    Reads each processed NC group and writes TSV — used when data was trimmed
+    but not reprocessed, so the in-memory ``ds_out`` is stale.
+    """
+    cfg_out = cfg["out"]
+    text_path = cfg_out.get("text_path")
+    if not text_path:
+        return
+    text_columns = cfg_out.get("text_columns") or []
+    split_period = cfg_out.get("split_period") or None
+    dt_min_save = _dt_min_save(cfg_out)
+    noavg_path, avg_path, _ = _output_nc_paths(cfg_out)
+
+    for dt_bin in _dt_bins(cfg_out):
+        bin_s = int(dt_bin.total_seconds())
+        if dt_bin < dt_min_save:
+            continue
+        nc_path = avg_path if bin_s > 0 and avg_path else noavg_path
+        if not nc_path:
+            continue
+        group = f"{pcid}bin{bin_s}s" if bin_s > 0 else pcid
+        try:
+            ds_tsv = xr.open_dataset(nc_path, group=group, engine=_constants.nc_engine)
+        except (OSError, KeyError):
+            lf.debug("Trim TSV export: group {} not found in {}", group, nc_path.name)
+            continue
+        if ds_tsv.sizes.get("time", 0) == 0:
+            ds_tsv.close()
+            continue
+        fmt = _text_date_fmt(cfg_out, bin_s)
+        suffix_csv = f"bin{bin_s}s" if bin_s else ""
+        ts = datetime.fromtimestamp(int(ds_tsv["time"].values[0]) // 1_000_000_000, timezone.utc).strftime(
+            "%y%m%d_%H%M"
+        )
+        csv_name = f"{ts}{suffix_csv}@{pcid}.tsv"
+        csv_out = Path(text_path) / csv_name
+        xr_io.ds_to_csv(
+            ds_tsv,
+            csv_out,
+            split_period=split_period,
+            text_date_format=fmt,
+            text_columns=text_columns or None,
+        )
+        ds_tsv.close()
+        lf.info("Re-exported TSV {} after trim", csv_out.name)
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
 
-def _resolve_use_h5(cfg: DictConfig) -> None:
-    """Resolve ``program.use_h5`` against library availability.
-
-    Overwrites the config field **and** :data:`_constants._use_h5` so that
-    both config-aware and config-unaware code sees the same resolved value.
-
-    Resolution rules (``use_h5`` × h5py available):
-
-    ==============  ==========  ==========================
-    use_h5 (in)  h5py avail  result
-    ==============  ==========  ==========================
-    ``None``        yes         ``True``  (auto-enable)
-    ``None``        no          ``None``  (silent skip)
-    ``True``        yes         ``True``  (user confirmed)
-    ``True``        no          ``False`` + **WARNING**
-    ``False``       any         ``False`` (user disabled)
-    ==============  ==========  ==========================
+def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[tuple[str, str, Any]]] | None:
     """
-    bio = OmegaConf.select(cfg, "program.use_h5", default=None)
-    if bio is None:
-        if _constants.H5_AVAILABLE:
-            OmegaConf.update(cfg, "program.use_h5", True)
-            _constants.use_h5_set(True)
-        else:
-            _constants.use_h5_set(None)  # stays None → silent skip
-    elif bio:
-        if _constants.H5_AVAILABLE:
-            _constants.use_h5_set(True)
-        else:
-            lf.warning("use_h5=True requested but h5py unavailable — forced to False (TSV-only mode)")
-            OmegaConf.update(cfg, "program.use_h5", False)
-            _constants.use_h5_set(False)
-    else:
-        # User explicitly set False — honour without extra logging.
-        _constants.use_h5_set(False)
+    Canonical pipeline: discover → generate configs → process.
 
+    :param cfg: Hydra-composed top-level configuration (from ``@hydra.main``),
+    cfg.input.path - input data path:
+    - **Text ** (``.txt/.csv/.tsv``) — discovery sweep:
+        1. Generate missing/stale YAML configs via :func:`config_yaml.save_config_to_yaml`.
+        2. Sync ``time_ranges`` from device metadata into run YAMLs (idempotent:
+        configs with existing ``input.time_ranges`` are skipped).
+        3. Filter by ``input.ids``, ``yaml_path`` (YAML stem glob), and
+        ``input.path`` (matches stored YAML's ``input.path`` filename).
+        4. Dispatch one :func:`run_processing` per YAML via
+        :func:`cli.process_loading_yaml`.
+        5. Log completion summary with ok/skipped/failed counts.
 
-def run(cfg: DictConfig) -> dict[str, dict[str, Any]] | None:
-    """Discover (text), generate configs, process — the canonical pipeline entry point.
+    - **Binary** (``.nc/.h5``) — direct dispatch, no config sweep:
+        Binary formats carry their own coefficients; skip config search/generation/sync.
+        Calls :func:`run_processing` once per ``input.tables`` entry (a single
+        NC/HDF5 may hold several probes). Each call pins ``tables=[tbl]`` so
+        :func:`run_processing` derives the correct pcid/output group.  Use
+        ``cli.call_in_raw_dir(processing.run, input={...}, yaml_path=...)`` to pass
+        an explicit per-probe YAML override if needed.
 
-    Accepts a Hydra-composed :class:`DictConfig` (from ``@hydra.main``).
-    All groups (input, out, filter, program) are fully resolved — no MISSING
-    sentinels.  Per-probe YAMLs are merged on top via
-    ``OmegaConf.merge(cfg, OmegaConf.load(yaml))``.
+    All Hydra groups (input, out, filter, program) are fully resolved — no MISSING sentinels.
+    Per-probe YAMLs use ``@package _global_`` and are merged on top.
 
-    **Text inputs** (``.txt/.csv/.tsv``) — discovery sweep:
-    1. Generate missing/stale YAML configs (``save_config_to_yaml``).
-    2. Resolve which configs to process (by ``input.ids`` or all).
-    3. Process each YAML via :func:`run_processing`.
-    4. Log completion summary with ok/failed counts.
+    :returns: ``(processed_pcids, failed_pcids, last_cfg, collected)`` after
+    processing, or ``None`` for binary inputs. Where:
+    ``collected`` is  ``[(stem, yaml_path_str, result), ...]`` — populated only when
+    ``program.return_ == Return.CFG_FROM_ARGS`` (early exit before data load);
+    ``result`` is the **full** per-probe config (all fields, not just non-defaults) — unlike YAMLs on disk
+    which strip defaults.
 
-    **Binary inputs** (``.nc/.h5``) — direct dispatch:
-    Calls :func:`run_processing` once per ``input.tables`` entry,
-    skipping the entire config discovery/generation/sync chain.
-    Use ``cli.call_in_raw_dir(processing.run, input={...}, yaml_path=...)``
-    to pass an explicit per-probe YAML override if needed.
-
-    :param cfg: Hydra-composed top-level configuration (from ``@hydra.main``).
-    :returns: ``{input_path_str: cfg1_dict}`` from :func:`config_yaml.save_config_to_yaml`
-        when ``program.return_ == Return.CFG_FROM_ARGS``; ``None`` otherwise.
-        Each ``cfg1_dict`` is the **full** per-probe config (all fields, not just
-        non-defaults) — unlike YAMLs on disk which strip defaults.
+    See also: :doc:`how_it_works </tcm_clc/how_it_works>`, :doc:`config_reference
+    </tcm_clc/config_reference>`.
     """
-
-    path_in = cfg.input.path
-    if path_in is None:
+    if (path_in := cfg.input.path) is None:
         raise ValueError("cfg.input.path must be provided")
     path_in = Path(path_in).absolute()
 
-    # ── Resolve use_h5: user preference × library availability ─────────
-    # True  → proceed with NC/HDF5 I/O (no extra logging).
-    # False → skip + warn at each write point.
-    # None  → skip silently (env doesn't support, user didn't ask).
-    _resolve_use_h5(cfg)
-
-    # Binary formats (HDF5/NC) carry their own coefs and are not part of the
-    # text-file discovery pipeline: skip config search/generation and process
-    # the directly-passed config via :func:`run_processing`.  Per-probe run
-    # YAMLs (``cfg_proc/run/``) and the searchpath injection are text-only;
-    # pass an explicit ``yaml_path`` to :func:`cli.call_in_raw_dir` to opt in.
+    # Binary: NC/HDF5 carry their own coefs — direct dispatch, no config sweep.
     if path_in.suffix.lower() in _EXT_BINARY:
-        # Iterate ``input.tables`` → one probe per table group (NC/HDF5 may
-        # hold several probes in one file); pin ``tables=[tbl]`` per call so
-        # :func:`run_processing` derives the correct pcid and output group.
+        # One probe per table group (a single NC/HDF5 may hold several);
+        # pin ``tables=[tbl]`` per call so run_processing derives correct pcid.
         tables = list(cfg.input.tables or [])
         for tbl in tables or [""]:
             cfg_pc = OmegaConf.merge(cfg, OmegaConf.create({"input": {"tables": [tbl]}})) if tables else cfg
@@ -281,48 +426,40 @@ def run(cfg: DictConfig) -> dict[str, dict[str, Any]] | None:
 
     dir_raw = paths.find_dir_raw_absolute(path_in)
     dir_cfgs = dir_raw / "cfg_proc" / "run"
-
     cli.safe_cfg_dir(dir_cfgs)
-
-    # ── yaml_path filter: ANY non‑None skips config generation ──────────
-    yaml_path = OmegaConf.select(cfg, "input.yaml_path", default=None)
-
     cfgs_existed = config_yaml.get_existed_cfgs(dir_cfgs)
 
-    if yaml_path is None:
-        # Step 1: generate missing configs via gen_metadata (single discovery source)
+    # ── Config generation (skipped when yaml_path provided) ──────────────
+    if (yaml_path := OmegaConf.select(cfg, "input.yaml_path", default=None)) is None:
+        # Step 1: regenerate on stale configs OR new source files missing configs.
         stale = config_yaml.find_stale_cfgs(cfgs_existed, dir_cfgs)
-        # Check for source files that have no config yet (lightweight: just directory scan).
-        # Runs for wildcard (all new files) and for specific IDs (only when requested IDs
-        # lack configs but source data may exist) — avoids a false "no configs" error.
         regenerate = bool(stale) or not cfgs_existed
         if not regenerate:
-            try:
+            try:  # lightweight: check for source files lacking config
                 from tcm import csv_load
 
                 discovered = csv_load.search_csv_files(path_in)
                 disc_pcids = {format.pcid_from_parts(model=m, number=n) for m, n in discovered}
-                cfg_pcids = set(cfgs_existed)
-                new_pcids = disc_pcids - cfg_pcids
+                new_pcids = disc_pcids - set(cfgs_existed)
                 if new_pcids and (pcids_requested == {format.PROBE_WILDCARD} or pcids_requested & new_pcids):
                     lf.info("Source files without configs: {} — will generate", new_pcids)
                     regenerate = True
             except (FileNotFoundError, OSError):
                 pass  # discovery fails → skip regeneration check
         if regenerate:
-            if stale:
-                reason = f"regenerating {len(stale)} stale config(s): {', '.join(stale)}"
-            elif not cfgs_existed:
-                reason = "no configs exist — generating from scratch"
-            else:
-                reason = "new source files found"
+            reason = (
+                f"regenerating {len(stale)} stale config(s): {', '.join(stale)}"
+                if stale
+                else "no configs exist — generating from scratch"
+                if not cfgs_existed
+                else "new source files found"
+            )
             lf.info("Config generation: {}", reason)
             config_yaml.save_config_to_yaml(cfg, [path_in])
             cfgs_existed = config_yaml.get_existed_cfgs(dir_cfgs)
-        # Sync time_ranges from info_devices metadata into run YAMLs lacking them.
-        # Idempotent: configs with existing input.time_ranges are skipped inside.
+        # Sync time_ranges (idempotent: configs with existing ranges are skipped).
         config_yaml.sync_yamls_devmeta_and_hydra(dir_raw.parent, dir_cfgs, cfgs_existed)
-        # Warn about orphan configs after regeneration
+        # Warn about orphan configs pointing to non-existing files.
         still_stale = config_yaml.find_stale_cfgs(cfgs_existed, dir_cfgs) if stale else {}
         if still_stale:
             stale_pcids = set(still_stale)
@@ -346,11 +483,11 @@ def run(cfg: DictConfig) -> dict[str, dict[str, Any]] | None:
         stale = {}
         still_stale = {}
 
-    # Step 2: resolve which configs to run
+    # Step 2: select configs to run by requested pcids.
     if pcids_requested == {format.PROBE_WILDCARD}:
         cfgs_to_run = cfgs_existed
     elif pcids_requested:
-        if not_found := (pcids_requested - set(cfgs_existed)):
+        if not_found := pcids_requested - set(cfgs_existed):
             raise ValueError(
                 f"Requested probes have no configs: {not_found}. Available: {sorted(cfgs_existed)}"
             )
@@ -358,7 +495,7 @@ def run(cfg: DictConfig) -> dict[str, dict[str, Any]] | None:
     else:
         cfgs_to_run = {}
 
-    # Exclude stale stems (already warned above) so process_loading_yaml never sees them
+    # Drop stale stems so run_processing never sees them.
     if still_stale:
         cfgs_to_run = {
             pcid: [s for s in stems if s not in still_stale.get(pcid, [])]
@@ -366,7 +503,7 @@ def run(cfg: DictConfig) -> dict[str, dict[str, Any]] | None:
         }
         cfgs_to_run = {pcid: stems for pcid, stems in cfgs_to_run.items() if stems}
 
-    # ── Filter by yaml_path pattern (YAML stem match) ──────────────────
+    # ── Filter: yaml_path pattern ↔ YAML stem ───────────────────────────
     from tcm.csv_load import _pattern_to_regex as _ptr
 
     if yaml_path:
@@ -378,12 +515,10 @@ def run(cfg: DictConfig) -> dict[str, dict[str, Any]] | None:
         cfgs_to_run = {k: v for k, v in cfgs_to_run.items() if v}
         lf.debug("yaml_path filter '{}' → {} probes", yaml_path, len(cfgs_to_run))
 
-    # ── Filter by input.path pattern (match against YAML's input.path) ─
-    # Skipped only when path_in is a directory (default discovery mode).
-    # When path_in is a concrete file OR a glob/regex, only YAMLs whose
-    # stored input.path filename matches the pattern are kept.
-    # Uses ruamel YAML (config_yaml._ry) to avoid collision with OmegaConf.load
-    # mocks in process_loading_yaml.
+    # ── Filter: input.path pattern ↔ stored YAML input.path ─────────────
+    # A concrete file / glob narrows YAMLs whose stored input.path filename
+    # matches; uses ruamel YAML directly — lightweight read, avoids
+    # OmegaConf.load's full resolution overhead.
     if not path_in.is_dir():
         _ip_re = re.compile(_ptr(path_in.name), re.IGNORECASE)
         _ry = config_yaml._ry(write=False)
@@ -391,13 +526,11 @@ def run(cfg: DictConfig) -> dict[str, dict[str, Any]] | None:
         for pcid, stems in cfgs_to_run.items():
             matched = []
             for s in stems:
-                try:
+                with contextlib.suppress(Exception):
                     y = _ry.load((dir_cfgs / f"{s}.yaml").open(encoding="utf-8"))
                     ip = (y or {}).get("input", {}).get("path", "")
                     if ip and _ip_re.fullmatch(Path(ip).name):
                         matched.append(s)
-                except Exception:
-                    continue
             if matched:
                 filtered[pcid] = matched
         if filtered != cfgs_to_run:
@@ -409,32 +542,26 @@ def run(cfg: DictConfig) -> dict[str, dict[str, Any]] | None:
             )
             cfgs_to_run = filtered
 
-    # Step 3: process each config
-    # Early-exit (CFG_FROM_ARGS): run_processing returns DictConfig before data load.
+    # Step 3: process each config; early-exit (CFG_FROM_ARGS) returns before data load.
     processed_pcids, failed_pcids, last_cfg, collected = cli.process_loading_yaml(
-        run_processing, base_cfg=cfg, dir_cfgs=dir_cfgs, cfgs=cfgs_to_run, n_cfgs_existed=len(cfgs_existed)
+        run_processing,
+        base_cfg=cfg,
+        dir_cfgs=dir_cfgs,
+        cfgs=cfgs_to_run,
+        n_cfgs_existed=len(cfgs_existed),
     )
+    if cfg["program"]["return_"] == schema.Return.CFG_FROM_ARGS:
+        return processed_pcids, failed_pcids, last_cfg, collected
 
-    if cfg["program"]["return_"] == Return.CFG_FROM_ARGS:
-        return (processed_pcids, failed_pcids, last_cfg, collected)
-
-    # Combined output: merge distinct probes with probe dimension (legacy parity).
-    # Deduplicate preserving order (multiple stems for the same pcid do not constitute multiple probes).
-    # No main_init needed: last_cfg.out already has PathLayout-resolved paths (side-effect from
-    # run_processing's main_init), and _dt_bins/_dt_min_save handle raw int/str values.
-    # Combined output requires HDF5/netCDF4 backend — skip when use_h5 is not True.
+    # Combine distinct probes (legacy parity). Requires HDF5/netCDF4 backend.
     distinct_pcids = list(dict.fromkeys(processed_pcids))
-    if len(distinct_pcids) > 1 and last_cfg is not None:
-        if _constants.use_h5_get() is True:
-            if not _constants.NC4_AVAILABLE:
-                lf.debug("Combine skipped — netCDF4 not available")
-            else:
-                stage_ctx.set_stage(0, Stage.COMBINE)
-                # Tick GUI overall bar for combine phase
-                progress_bridge.stage_desc(stage_ctx._build_prefix())
-                _combine_probes(distinct_pcids, last_cfg)
+    if len(distinct_pcids) > 1 and last_cfg is not None and policy.io():
+        if not _constants.NC4_AVAILABLE:
+            lf.debug("Combine skipped — netCDF4 not available")
+        else:
+            stage_ctx.set_stage(0, Stage.COMBINE, "Combining %d probes", len(distinct_pcids))
+            _combine_probes(distinct_pcids, last_cfg)
 
-    # Statistics on all variables before exit
     lf.debug(
         "Run stats: cfgs_existed={}, cfgs_to_run={}, processed={}, failed={}, distinct={}, last_cfg={}",
         len(cfgs_existed),
@@ -444,24 +571,21 @@ def run(cfg: DictConfig) -> dict[str, dict[str, Any]] | None:
         distinct_pcids,
         OmegaConf.select(last_cfg, "_yaml_path") if last_cfg else None,
     )
-    # Count by distinct probe (a probe that failed on one YAML but succeeded on
-    # another is considered successful — the failure was in config, not in data).
+    # A probe failed on one YAML but succeeded on another = success (config, not data, failed).
     truly_failed = sorted(set(failed_pcids) - set(processed_pcids))
     skipped = (
         sorted(pcids_requested - set(cfgs_existed)) if pcids_requested != {format.PROBE_WILDCARD} else []
     )
-    parts = []
-    if distinct_pcids:
-        parts.append(f"{len(distinct_pcids)} probes: {', '.join(distinct_pcids)} ok")
-    if skipped:
-        parts.append(f"{len(skipped)} skipped ({', '.join(skipped)})")
-    if truly_failed:
-        parts.append(f"{len(truly_failed)} failed ({', '.join(truly_failed)})")
-    if (return_ := OmegaConf.select(cfg, "program.return_", default=None)) and return_ != Return.END:
+    parts = [
+        *([f"{len(distinct_pcids)} probes: {', '.join(distinct_pcids)} ok"] if distinct_pcids else []),
+        *([f"{len(skipped)} skipped ({', '.join(skipped)})"] if skipped else []),
+        *([f"{len(truly_failed)} failed ({', '.join(truly_failed)})"] if truly_failed else []),
+    ]
+    if (return_ := OmegaConf.select(cfg, "program.return_", default=None)) and return_ != schema.Return.END:
         parts.append(f"return_={return_}")
     lf.info("Done — {}", " | ".join(parts) if parts else "nothing processed")
     stage_ctx.clear()
-    return (processed_pcids, failed_pcids, last_cfg, collected)
+    return processed_pcids, failed_pcids, last_cfg, collected
 
 
 # ---------------------------------------------------------------------------
@@ -499,61 +623,62 @@ def run_processing(cfg: DictConfig):
         tbl = format.pcid_to_raw_name(pcid)
 
     lf.debug("Loading {} data for processing...", pcid)
-    # Reset stage progress so the GUI clears stale text from the previous probe.
-    # Must happen before main_init — which can return early for CFG_FROM_ARGS.
-    if rt := progress_bridge.get_runtime():
-        rt.progress_stage.clear_and_reset()
-    # Set per-config base for granular stage ticks (injected by process_loading_yaml).
-    # Must extract BEFORE main_init — ini2dict strips non-section scalar keys.
+    # Set per-config progress base (injected by process_loading_yaml).
+    # Extract early for logging context — before main_init for minimal latency.
     if (si := cfg.get("_stem_idx")) and (nc := cfg.get("_n_cfgs")):
-        _probe_base["v"] = (si - 1) * 100
-        _probe_total["v"] = nc * 100
+        stage_ctx.set_probe(pcid, stem_idx=si, n_cfgs_total=nc)
     cfg = cli.main_init(cfg)
     # Early-exit: main_init returns DictConfig before ini2dict; propagate upstream.
     if not isinstance(cfg, dict):
         return cfg
     cfg_in = cfg["input"]  # already type-converted plain dict after main_init
 
-    # Active stage plan for upper-bar ticks (NC only if use_h5 True; TSV if text_path).
+    # Active stage plan for upper-bar ticks (NC only if io().h5; TSV if text_path).
     # Each active stage gets an equal slice of the 100-unit per-probe scale.
     _dt_bins_list = _dt_bins(cfg["out"])
     _n_bins = len(_dt_bins_list)
-    _has_nc = _constants.use_h5_get() is True
+    _has_nc = bool(policy.io())
     _has_tsv = bool(cfg["out"].get("text_path"))
     _stages = [Stage.LOAD, Stage.COEFS, Stage.PROC]
     _stages += [Stage.NC] * _n_bins if _has_nc else []
     _stages += [Stage.TSV] * _n_bins if _has_tsv else []
     _n_active = len(_stages)
+    stage_ctx.set_stage_plan(_n_active)
 
-    def _frac(i: int) -> int:  # boundary i of N active stages → 0..100
-        return round(i * 100 / _n_active)
-
-    # Set stage context for logging prefix (load begins)
-    stage_ctx.set_stage(1, Stage.LOAD)
-    progress_bridge.stage_desc(stage_ctx._build_prefix())
+    # Load begins — boundary record carries data source for clarity
+    _src = cfg_in.get("path", "")
+    stage_ctx.set_stage(1, Stage.LOAD, "Loading %s", Path(_src).name if _src else pcid)
 
     # Batch mode (cfg.files exists): iterate and concatenate
+    _loaded_from_raw_nc = False  # track fast-path for Phase 4 skip
     if cfg.get("files"):
         ds_raw, coefs_from_file = _load_batch(cfg, pcid)
     else:
-        # Single-file mode — load data + optional coefs from file
-        ds_raw, coefs_from_file = xr_io.load_raw(
-            tbl=tbl,
-            text_type=pcid[:1] if pcid else "i",
-            cfg_in=cfg_in,
-        )
-    _stage(stage_ctx._build_prefix(), _frac(1))  # load done → tick 1
+        # Single-file mode — try raw NC fast-path first for text sources:
+        # if *.raw.nc already covers time_ranges, skip text parsing entirely.
+        _fast_path: tuple | None = None
+        if src_path.suffix.lower() not in _EXT_BINARY and (raw_nc := cfg["out"].get("raw_db_path")):
+            _fast_path = _load_raw_nc_if_covered(raw_nc, tbl, cfg_in, source_path=src_path)
+        if _fast_path is not None:
+            ds_raw, coefs_from_file = _fast_path
+            _loaded_from_raw_nc = True
+        else:
+            ds_raw, coefs_from_file = xr_io.load_raw(
+                tbl=tbl,
+                text_type=pcid[:1] if pcid else "i",
+                cfg_in=cfg_in,
+            )
+    stage_ctx.tick()  # load done
 
     # Coefs: coefs_path (file) → input.coefs (run YAML override wins)
     stage_ctx.set_stage(2, Stage.COEFS)
-    progress_bridge.stage_desc(stage_ctx._build_prefix())
     coefs = get_coefs_from_cfg(cfg_in, pcid)
     if coefs_from_file:
         coefs = {**coefs, **{k: v for k, v in coefs_from_file.items() if v is not None}}
         lf.debug("Merged coefs from data file: {} extra keys", len(coefs_from_file))
 
     # ── Phase 1b: extract coefs from .raw.h5 if .raw.nc absent (legacy HDF5 auto-migrate)
-    if (raw_nc_path := cfg["out"].get("raw_db_path")) and _constants.use_h5_get() is True:
+    if (raw_nc_path := cfg["out"].get("raw_db_path")) and policy.io():
         raw_nc_path = Path(raw_nc_path)
         if not raw_nc_path.exists():
             if (h5_path := raw_nc_path.with_suffix("").with_suffix(".raw.h5")).exists():
@@ -574,9 +699,14 @@ def run_processing(cfg: DictConfig):
         azimuth_add=cfg_in.get("azimuth_add") or None,
         coordinates=tuple(cfg_in["coordinates"]) if cfg_in.get("coordinates") else None,
     )
-    if msg:
-        lf.debug("Coefs prepared: {}", msg)
-    _stage(stage_ctx._build_prefix(), _frac(2))  # coefs done → tick 2
+    lf.info("Coefs prepared for {}: {}", pcid, msg or "no zeroing/azimuth adjustments")
+    stage_ctx.tick()  # coefs done
+
+    # Compute run params text once — used by incremental skip, trim fast-path,
+    # and passed to _process_and_persist for storage attrs.
+    cfg_filter = cfg.get("filter") or {}
+    run_params_text = _build_filter_params_text(cfg_in, cfg_filter, coefs=coefs_merged)
+    force_reprocess = bool(cfg.get("force_reprocess", False))
 
     # ── Phase 3: Save coefs
     # Two triggers: (a) coefs changed (zeroing/azimuth), (b) raw NC being created for the first time.
@@ -589,7 +719,7 @@ def run_processing(cfg: DictConfig):
     yaml_written = False  # track whether YAML was the primary write target
 
     if src_path.suffix.lower() in _EXT_BINARY:
-        if changed_coefs and _constants.use_h5_get() is True:
+        if changed_coefs and policy.io():
             # Release xr's read-only netCDF4/HDF5 file handle before h5py opens in
             # append mode.  Only materialise when coefs actually changed — avoids
             # unnecessary memory pressure on large files.
@@ -615,13 +745,21 @@ def run_processing(cfg: DictConfig):
             lf.warning("Coefs changed ({}) but no write target available", sorted(changed_coefs))
         else:
             lf.debug("Coefs unchanged for {} — skipping write", pcid)
-    elif _constants.use_h5_get() is True and (raw_nc := cfg["out"].get("raw_db_path")):
-        # CSV source + H5: write all coefs to raw_db_path (first creation or changed)
-        raw_nc = Path(raw_nc)
-        if not raw_nc.exists() or changed_coefs:
-            coefs_to_write = coefs_merged
+    elif policy.io() and (raw_nc := cfg["out"].get("raw_db_path")):
+        # CSV source + H5: write coefs to raw_db_path.
+        # Multiple probes may share one *.raw.nc — each needs its own
+        # /{tbl}/coef/ group.  save_coefs_to_nc (called AFTER Phase 4)
+        # is idempotent: h5copy_coef handles both create and overwrite.
+        if _loaded_from_raw_nc:
+            # Autoload fast-path: coefs group already exists in NC —
+            # only overwrite when prepare_coefs detected a difference.
+            if changed_coefs:
+                coefs_to_write = coefs_merged
+            else:
+                lf.debug("Coefs unchanged for {} — skipping write", pcid)
         else:
-            lf.debug("Coefs unchanged for {} — skipping write", pcid)
+            # CSV text → NC: always write (group may not exist yet).
+            coefs_to_write = coefs_merged
     elif yaml_path and changed_coefs:
         # noh5 fallback: write only changed coefs to run YAML
         config_yaml.update_coefs_in_run_yaml(
@@ -642,55 +780,66 @@ def run_processing(cfg: DictConfig):
             {k: coefs_merged[k] for k in changed_coefs},
         )
 
-    # ── Phase 4: Save raw data (skip for NC sources — data already there)
-    if src_path.suffix.lower() not in _EXT_BINARY and ds_raw is not None:
-        try:
-            from tcm import h5
-        except ImportError:
-            lf.debug("pytables not available — skipping raw NC data save for {}", pcid)
-        else:
-            raw_nc_path = cfg["out"].get("raw_db_path")
-            if raw_nc_path:
-                # Release xarray read handle so h5py can open the same file.
-                # On Windows, HDF5 uses mandatory locking — any open handle
-                # (even read-only) blocks new opens (read or write).
-                if ds_raw is not None:
-                    ds_raw.load()
-                    ds_raw.close()
-                file_meta = h5.file_name_and_time_to_record(src_path)
-                storage.nc_incremental_update(ds_raw, Path(raw_nc_path), tbl, file_meta)
+    # ── Phase 4: Save raw data (skip for NC sources — data already there,
+    #   or when loaded from *.raw.nc fast-path — covers time_ranges already)
+    if src_path.suffix.lower() not in _EXT_BINARY and ds_raw is not None and not _loaded_from_raw_nc:
+        raw_nc_path = cfg["out"].get("raw_db_path")
+        if raw_nc_path:
+            # Release xarray read handle so h5py can open the same file.
+            # On Windows, HDF5 uses mandatory locking — any open handle
+            # (even read-only) blocks new opens (read or write).
+            if ds_raw is not None:
+                ds_raw.load()
+                ds_raw.close()
+            # Mirror tcm.h5.file_name_and_time_to_record (no tables dependency):
+            file_meta = {
+                "fileName": f"{src_path.parent.name}/{src_path.stem}"[-255:],
+                "fileChangeTime": datetime.fromtimestamp(src_path.stat().st_mtime),
+            }
+            storage.nc_incremental_update(ds_raw, Path(raw_nc_path), tbl, file_meta)
 
     # Write coefs after data (raw NC may have been created by Phase 4)
     if coefs_to_write is not None and (raw_nc := cfg["out"].get("raw_db_path")):
+        if _loaded_from_raw_nc and ds_raw is not None:
+            # Autoload fast-path with changed coefs: ds_raw still holds a
+            # netCDF4 read handle on the same NC file.  close() releases the
+            # file lock without materialising all data into memory (unlike
+            # load()+close()).  save_coefs_to_nc writes via h5py, then we
+            # reopen from the same file for _process_and_persist.
+            ds_raw.close()
         xr_coefs.save_coefs_to_nc(Path(raw_nc), tbl, coefs_to_write, pcid=pcid, dates=dates)
         # save_coefs_to_nc logs "Coefs saved to ..."
+        if _loaded_from_raw_nc:
+            # Reopen after h5py released its handle — restores lazy access
+            # for _process_and_persist without full materialisation.
+            ds_raw, _ = xr_io.load_raw(path=Path(raw_nc), tbl=tbl, cfg_in=cfg_in)
 
     # Phase-stopping: stop after coefs saved or raw data saved (before processing).
-    if (return_ := cfg["program"]["return_"]) in (Return.SAVED_COEFS, Return.SAVED_RAW):
-        lf.info(
-            "return_={} — stopping after {} for {}",
-            return_,
-            "coef save" if return_ == Return.SAVED_COEFS else "raw NC save",
-            pcid,
-        )
+    if (return_ := cfg["program"]["return_"]) in (schema.Return.SAVED_COEFS, schema.Return.SAVED_RAW):
+        lf.info("return_={} — stopping {} now", return_, pcid)
         return
 
-    lf.debug(
-        "Processing {} (bins: {})...",
-        pcid,
-        ", ".join(str(int(b.total_seconds())) for b in _dt_bins(cfg["out"])),
-    )
-    # ── stage ticks closure for _process_and_persist (PROC, NC×n_bins, TSV×n_bins)
-    _tick_idx = {"v": 2}  # already ticked LOAD(1), COEFS(2)
+    # ── Trim fast-path: force_reprocess + params unchanged + time_ranges ⊆ existing
+    # When only time_ranges changed (shrank), there is no need to reprocess —
+    # just trim all NC files to the new window and export TSV.
+    if force_reprocess and run_params_text:
+        raw_nc = cfg["out"].get("raw_db_path")
+        stored_rp = _read_run_params(raw_nc, tbl) if raw_nc else ""
+        if stored_rp and storage._strip_time_ranges(stored_rp) == storage._strip_time_ranges(run_params_text):
+            tr = cfg_in.get("time_ranges")
+            if tr and _time_ranges_in_nc(raw_nc, tbl, tr):
+                _trim_all_nc(cfg, pcid, tr)
+                _export_tsv_from_nc(cfg, pcid)
+                lf.info("Trimmed {} to time_ranges — no reprocessing", pcid)
+                return
 
-    def _tick(stage: Stage, bin_i: int = 0, n_bin: int = 1) -> None:
-        _tick_idx["v"] += 1
-        stage_ctx.set_stage(_tick_idx["v"], stage)
-        _stage(stage_ctx._build_prefix(), _frac(_tick_idx["v"]))
+    # ── tick adapter for _process_and_persist (PROC, NC×n_bins, TSV×n_bins)
+    def _tick(stage: Stage, _bin_i: int = 0, _n_bin: int = 1) -> None:
+        stage_ctx.tick(stage)
 
-    # Processing begins — set stage context for logging prefix
+    # Processing begins — start decoration at DEBUG (result INFO from _process_and_persist follows)
     stage_ctx.set_stage(3, Stage.PROC)
-    progress_bridge.stage_desc(stage_ctx._build_prefix())
+    lf.debug("Processing %s (%d bins)...", pcid, _n_bins)
     _process_and_persist(
         ds_raw,
         coefs_merged,
@@ -700,6 +849,8 @@ def run_processing(cfg: DictConfig):
         tick=_tick,
         has_nc=_has_nc,
         has_tsv=_has_tsv,
+        run_params_text=run_params_text,
+        force_reprocess=force_reprocess,
     )
 
 
@@ -740,13 +891,19 @@ def _process_and_persist(
     tick: "Callable[[Stage, int, int], None] | None" = None,
     has_nc: bool = False,
     has_tsv: bool = False,
+    run_params_text: str | None = None,
+    force_reprocess: bool = False,
 ) -> None:
     """Apply physical conversion + binning, persist results.
 
     Saves each bin result to netCDF using shared files with per-probe groups:
-    - no-avg (dt_bin=0): writes to ``not_joined_db_path`` with group ``/{pcid}/``
-    - binned (dt_bin>0): writes to ``db_path`` (derived from ``not_joined_db_path``
-      by replacing ``_noAvg``) with group ``/{pcid}bin{bin_s}s/``
+    - no-avg (dt_bin=0): writes to ``not_joined_db_path`` (``.proc_noAvg.nc``)
+      with group ``/{pcid}/``
+    - binned (dt_bin>0): writes to ``avg_db_path`` (``.proc_Avg.nc``)
+      with group ``/{pcid}bin{bin_s}s/``
+
+    Combined output (``db_path`` = ``.proc.nc``) is written later by
+    ``_combine_probes()``.
 
     Exports CSV/TSV for bins ≥ ``dt_bins_min_save_text`` to ``text_path``.
 
@@ -766,11 +923,9 @@ def _process_and_persist(
     if cfg_filter:
         cli.sugar_expand_m(cfg_filter)
 
-    # Build run_params text for re-run warning: sorted text of resolved filter + window + coefs
-    run_params_text = _build_filter_params_text(cfg_in, cfg_filter, coefs=coefs)
-
-    # Resolve +force_reprocess (accepted via +, not in structured schema)
-    force_reprocess = bool(cfg.get("force_reprocess", False))
+    # Build run_params text when not precomputed by caller (process_inmemory compat)
+    if run_params_text is None:
+        run_params_text = _build_filter_params_text(cfg_in, cfg_filter, coefs=coefs)
 
     # Merge calc params into coefs (calc_velocity receives them via **coefs)
     coefs_for_calc = {**coefs}
@@ -801,7 +956,7 @@ def _process_and_persist(
     text_columns = cfg_out.get("text_columns") or []
 
     # Resolve shared output files once
-    noavg_path, avg_path = _output_nc_paths(cfg_out)
+    noavg_path, avg_path, _combined_path = _output_nc_paths(cfg_out)
     return_ = cfg["program"]["return_"]
 
     for _bin_i, (ds_out, dt_bin) in enumerate(zip(results, dt_bins)):
@@ -838,8 +993,8 @@ def _process_and_persist(
                     force_reprocess=force_reprocess,
                 )
                 # Phase-stopping: return after noAvg save
-                if return_ == Return.SAVED_NOAVG:
-                    lf.info("return_={} — stopping after noAvg save for {}", Return.SAVED_NOAVG, pcid)
+                if return_ == schema.Return.SAVED_NOAVG:
+                    lf.info("return_={} — stopping after noAvg save for {}", return_, pcid)
                     return
             elif bin_s > 0 and avg_path:
                 # binned → /{pcid}bin{bin_s}s/ group in *.proc.nc (incremental skip + run-params sig)
@@ -862,8 +1017,19 @@ def _process_and_persist(
                 fmt = _text_date_fmt(cfg_out, bin_s)
 
                 suffix_csv = f"bin{bin_s}s" if bin_s else ""
+                # TSV source: read from NC after splice when force_reprocess
+                # (spliced data may include head/tail not in ds_out)
+                if force_reprocess:
+                    nc_tsv_path = avg_path if bin_s > 0 and avg_path else noavg_path
+                    nc_tsv_group = f"{pcid}bin{bin_s}s" if bin_s > 0 else pcid
+                    try:
+                        ds_tsv = xr.open_dataset(nc_tsv_path, group=nc_tsv_group, engine=_constants.nc_engine)
+                    except (OSError, KeyError):
+                        ds_tsv = ds_out
+                else:
+                    ds_tsv = ds_out
                 ts = datetime.fromtimestamp(
-                    int(ds_out["time"].values[0]) // 1_000_000_000, timezone.utc
+                    int(ds_tsv["time"].values[0]) // 1_000_000_000, timezone.utc
                 ).strftime("%y%m%d_%H%M")
                 csv_name = f"{ts}{suffix_csv}@{pcid}.tsv"
                 csv_out = Path(text_path) / csv_name
@@ -874,17 +1040,19 @@ def _process_and_persist(
                     if tick and has_tsv:
                         tick(Stage.TSV, _bin_i, len(dt_bins))  # TSV stage start for this bin
                     xr_io.ds_to_csv(
-                        ds_out,
+                        ds_tsv,
                         csv_out,
                         split_period=split_period,
                         text_date_format=fmt,
                         text_columns=text_columns or None,
                     )
                     lf.info("Saved TSV {} to {}", pcid, csv_out.name)
+                    if ds_tsv is not ds_out:
+                        ds_tsv.close()
 
     # Phase-stopping: return after all NC writes (before combined output)
-    if return_ == Return.SAVED_ALL:
-        lf.info("return_={} — stopping after all NC saves for {}", Return.SAVED_ALL, pcid)
+    if return_ == schema.Return.SAVED_ALL:
+        lf.info("return_={} — stopping after all NC saves for {}", return_, pcid)
         return
 
 
@@ -906,8 +1074,8 @@ def _combine_probes(pcids: list[str], cfg: dict) -> None:
     """
 
     cfg_out = cfg["out"]
-    noavg_path, avg_path = _output_nc_paths(cfg_out)
-    if not noavg_path:
+    _noavg_path, avg_path, combined_path = _output_nc_paths(cfg_out)
+    if not combined_path:
         return
 
     text_path = cfg_out.get("text_path")
@@ -918,42 +1086,41 @@ def _combine_probes(pcids: list[str], cfg: dict) -> None:
     if any(p[0] != probe_type for p in pcids):
         lf.debug("Combined probes have mixed types — using type '{}' from first pcid", probe_type)
 
-    # Combine noAvg groups
-    if noavg_path.exists():
-        storage.ensure_dim_scales(noavg_path)
-        _merge_groups_to_combined(noavg_path, pcids, f"/{probe_type}/", "noAvg")
-
-    # Combine binned groups — group name ``{probe_type}_bin{bin_s}s``
-    if avg_path.exists():
+    # Combine binned groups from proc_Avg.nc → proc.nc
+    # (noAvg is not combined — per-probe only)
+    if avg_path and avg_path.exists():
         storage.ensure_dim_scales(avg_path)
         for dt_bin in dt_bins:
             bin_s = int(dt_bin.total_seconds())
             if bin_s <= 0:
                 continue
             combined_group = f"/{probe_type}_bin{bin_s}s/"
-            _merge_groups_to_combined(avg_path, pcids, combined_group, f"bin{bin_s}s", bin_s=bin_s)
+            _merge_groups_to_combined(
+                avg_path, pcids, combined_group, f"bin{bin_s}s", bin_s=bin_s, combined_nc_path=combined_path
+            )
 
-    # Combined TSV (for each binned result)
-    if text_path:
+    # Combined TSV (for each binned result only — no noAvg combined TSV)
+    if text_path and combined_path:
         dt_min_save = _dt_min_save(cfg_out)
         for dt_bin in dt_bins:
             if dt_bin < dt_min_save:
                 continue
             bin_s = int(dt_bin.total_seconds())
-            # Read combined group from NC, write TSV (matches new combined group naming)
-            nc_path = avg_path if bin_s > 0 else noavg_path
-            combined_group = f"/{probe_type}_bin{bin_s}s/" if bin_s > 0 else f"/{probe_type}/"
+            if bin_s <= 0:
+                continue
+            combined_group = f"/{probe_type}_bin{bin_s}s/"
             try:
-                ds_combined = xr.open_dataset(nc_path, group=combined_group, engine=_constants.nc_engine)
-            except (AttributeError, KeyError, OSError):
-                lf.debug("Combined group {} not found — skipping TSV", combined_group)
+                ds_combined = xr.open_dataset(
+                    combined_path, group=combined_group, engine=_constants.nc_engine
+                )
+            except (AttributeError, KeyError, OSError, ValueError):
+                lf.debug("Combined group {} not found or malformed — skipping TSV", combined_group)
                 continue
 
             ts = datetime.fromtimestamp(
                 int(ds_combined["time"].values[0]) // 1_000_000_000, timezone.utc
             ).strftime("%y%m%d_%H%M")
-            suffix_csv = f"bin{bin_s}s" if bin_s > 0 else ""
-            csv_name = f"{ts}{suffix_csv}@{joined}.tsv"
+            csv_name = f"{ts}bin{bin_s}s@{joined}.tsv"
             csv_out = Path(text_path) / csv_name
             xr_io.ds_to_csv(
                 ds_combined,
@@ -965,6 +1132,67 @@ def _combine_probes(pcids: list[str], cfg: dict) -> None:
             ds_combined.close()
 
 
+def _combined_group_is_current(
+    nc_path: Path,
+    combined_grp: str,
+    pcids: list[str],
+    bin_s: int,
+) -> bool:
+    """Quick metadata check: is the combined group readable and covering all per-probe ranges?
+
+    Uses h5netcdf for readability (catches corrupted dimension scales) and
+    h5py for time-range comparison (lightweight — no full data load).
+    """
+    if not nc_path.exists():
+        return False
+
+    # 1. Readability check — h5netcdf validates dimension-scale metadata
+    import gc
+
+    try:
+        ds = xr.open_dataset(nc_path, group=combined_grp, engine=_constants.nc_engine)
+        ds.close()
+        del ds
+        gc.collect()
+    except (ValueError, AttributeError, KeyError, OSError):
+        return False
+
+    # 2. Time-range coverage check via h5py (reads only time datasets)
+    _h5py = _constants._h5py
+    if _h5py is None:
+        return True
+    try:
+        with _h5py.File(str(nc_path), "r") as f:
+            if combined_grp not in f or "time" not in f[combined_grp]:
+                return False
+            td_c = f[combined_grp]["time"]
+            if td_c.shape[0] == 0:
+                return False
+            c_vals = storage._cf_to_dt_ns(
+                td_c[:],
+                td_c.attrs.get("units", ""),
+            ).astype(np.int64)
+            combined_min, combined_max = c_vals[0], c_vals[-1]
+
+            for pcid in pcids:
+                grp_name = f"{pcid}bin{bin_s}s" if bin_s > 0 else pcid
+                if grp_name not in f or "time" not in f[grp_name]:
+                    return False
+                td = f[grp_name]["time"]
+                if td.shape[0] == 0:
+                    return False
+                t_vals = storage._cf_to_dt_ns(
+                    td[:],
+                    td.attrs.get("units", ""),
+                ).astype(np.int64)
+                if t_vals[0] < combined_min or t_vals[-1] > combined_max:
+                    return False
+    except (OSError, KeyError, AttributeError):
+        return False
+
+    return True
+
+
 def _merge_groups_to_combined(
     nc_path: Path,
     pcids: list[str],
@@ -972,8 +1200,24 @@ def _merge_groups_to_combined(
     label: str,
     *,
     bin_s: int = 0,
+    combined_nc_path: Path | None = None,
 ) -> None:
-    """Read per-probe groups from NC, merge with probe dimension, write combined group."""
+    """Read per-probe groups from *nc_path*, merge with probe dimension, write combined group.
+
+    *combined_nc_path* (default: same as *nc_path*) is where the combined
+    group is written — allows per-probe data to live in a different file
+    (e.g. ``.proc_Avg.nc``) from the combined output (``.proc.nc``).
+    """
+
+    combined_grp = combined_group.strip("/")
+    out_path = combined_nc_path or nc_path
+
+    # Quick metadata check — avoids loading per-probe data when the combined
+    # group is already valid.  Old groups with corrupted dimension scales will
+    # fail the h5netcdf readability test → rewrite.
+    if _combined_group_is_current(out_path, combined_grp, pcids, bin_s):
+        lf.debug("Combined group {} is current — skipping", combined_grp)
+        return
 
     groups_to_merge = []
     for pcid in pcids:
@@ -993,8 +1237,17 @@ def _merge_groups_to_combined(
     combined = xr.concat(groups_to_merge, dim="probe", join="outer")
     for ds in groups_to_merge:
         ds.close()
-    storage.store_processed(combined, nc_path, group=combined_group.strip("/"), mode="a")
-    lf.info("Combined {} to {} (probe dim with {} probes)", label, nc_path.name, len(groups_to_merge))
+
+    storage.delete_h5py_group(out_path, combined_grp)
+    # Use to_netcdf directly — it handles multi-dimensional data with string
+    # coordinates (like "probe") natively, producing correct dimension-scale
+    # metadata.  _write_dataset_to_nc_group (h5py-only) can produce malformed
+    # byte-string dimension scales that h5netcdf misinterprets on read.
+    combined = storage._strip_tz_datetime(combined)
+    combined = storage._downcast_float32(combined)
+    enc = {**storage._force_epoch(combined), **storage._compression_encoding(combined)}
+    combined.to_netcdf(out_path, group=combined_grp, mode="a", engine=_constants.nc_engine, encoding=enc)
+    lf.info("Combined {} to {} (probe dim with {} probes)", label, out_path.name, len(groups_to_merge))
 
 
 # ---------------------------------------------------------------------------

@@ -13,24 +13,21 @@ import pytest
 import xarray as xr
 from omegaconf import DictConfig
 
-from tcm._constants import RAW_DIR_NAME
-from tcm.config import Return
+from tcm import _constants, schema, policy
 
 
-# ---------------------------------------------------------------------------
-# Auto-configure use_h5 for all tests (mirrors processing._resolve_use_h5)
-# ---------------------------------------------------------------------------
+
+# Auto-configure use_h5 for all tests (mirrors policy._io.set(policy.IOPolicy.resolve(cfg)))
 @pytest.fixture(autouse=True)
 def _auto_use_h5_set():
     """Set use_h5 based on H5_AVAILABLE before each test.
 
     Resets to the default after the test, preventing state leakage from tests
-    that call ``_constants.use_h5_set(value)`` explicitly.
+    that call ``policy._io.set(value)`` explicitly.
     """
-    from tcm import _constants
-    _constants.use_h5_set(True if _constants.H5_AVAILABLE else None)
+    policy._io.set(policy.IOPolicy(schema.UseH5.AUTO, _constants.H5_AVAILABLE))
     yield
-    _constants.use_h5_set(None)  # reset to unresolved
+    policy._io.set(policy.IOPolicy(schema.UseH5.AUTO, False))  # reset to unavailable
     import gc
     gc.collect()  # force HDF5 C-object cleanup while handles are still valid
 
@@ -141,7 +138,7 @@ def _mock_pipeline(cfg, env, mocker, pcid="i_01"):
         },
         "out": {},
         "filter": dict(cfg.get("filter") or {}),
-        "program": dict(cfg.get("program") or {"return_": Return.END}),
+        "program": dict(cfg.get("program") or {"return_": schema.Return.END}),
     }
     # Carry forward all input/out keys (including PathLayout-resolved paths)
     for k, v in cfg.input.items():
@@ -192,7 +189,7 @@ def pipeline_env(tmp_path):
     """
     n = 100
     proc_dir = tmp_path / "240730_inclinometer"
-    raw_dir = proc_dir / RAW_DIR_NAME
+    raw_dir = proc_dir / _constants.RAW_DIR_NAME
     raw_dir.mkdir(parents=True)
 
     # Synthetic CSV file (minimal inclinometer format)
@@ -236,10 +233,10 @@ def pipeline_env(tmp_path):
             },
             "out": {"dt_bins": [0, 2, 600]},
             "filter": {},
-            "program": {"return_": Return.END},
+            "program": {"return_": schema.Return.END},
         }),
         raw_db_path=raw_dir / "240730.raw.nc",
         noavg_path=proc_dir / "240730.proc_noAvg.nc",
-        avg_path=proc_dir / "240730.proc.nc",
+        avg_path=proc_dir / "240730.proc_Avg.nc",
         text_path=proc_dir / "text_output",
     )

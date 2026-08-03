@@ -22,29 +22,29 @@ import logging
 import time
 from queue import Empty, Queue
 
+from tcm.stage_ctx import StageContextFilter
+
 from . import const
+
+# Re-export for ``install()`` callers.
+__all__ = ["QueueHandler", "install", "drain"]
 
 
 class QueueHandler(logging.Handler):
     """Enqueue record; PauseGate checkpoint before enqueue; skip consecutive dupes.
 
-    Freezes the rendered message onto the record (mirroring Hydra's colorlog
-    formatter, which calls ``getMessage()`` once at emit time).  Subsequent
-    lazy reads by :func:`drain` cannot be corrupted by the mutable ``Message``
-    reused across log calls in :class:`~tcm.utils2init.LoggingStyleAdapter`.
-
-    Installed **once** on the root logger at GUI startup so log calls from
-    *any* thread — GUI callbacks (``_reload_coefs``, ``_scan``) and the
-    worker pipeline alike — reach the ScrolledText.  Between worker tasks
-    call :meth:`reset_dedup` to clear the consecutive-duplicate state so the
-    first record of a new task is never swallowed as a "duplicate" of the
-    last record of the previous task.
+    Has its own :class:`StageContextFilter` so ``emit()`` sees the prefixed
+    message (boundary marks like ``[## …]``) **before** freezing.  Without
+    it the dedup key would be the raw message, collapsing same-named
+    boundaries.
     """
 
     def __init__(self, q: Queue, gate: PauseGate) -> None:  # noqa: F821
         super().__init__()
         self.q, self.gate = q, gate
         self._last_key: tuple[str, str] | None = None
+        # Own filter — mark prefix must be visible to freeze + dedup.
+        self.addFilter(StageContextFilter())
 
     def reset_dedup(self) -> None:
         """Clear consecutive-duplicate state — call at the start of each worker task."""
@@ -57,7 +57,7 @@ class QueueHandler(logging.Handler):
         # caller's reused Message object was last mutated to.
         text = rec.getMessage()
         rec.msg, rec.args = text, ()
-        key = (rec.funcName, rec.getMessage())
+        key = (rec.funcName, text)
         if key == self._last_key:
             return
         self._last_key = key
@@ -80,7 +80,11 @@ def install(q: Queue, gate, level: int = logging.DEBUG) -> QueueHandler:
 
 
 def drain(q: Queue, w) -> int:
-    """Drain queue → Text. Returns count of appended records."""
+    """Drain queue → Text.  Returns count of appended records.
+
+    Boundary marks (``stage_fresh > 0``) are already baked into
+    ``rec.getMessage()`` by the QueueHandler's own ``StageContextFilter``.
+    """
     n = 0
     while True:
         try:
@@ -92,9 +96,5 @@ def drain(q: Queue, w) -> int:
         tag = rec.levelname.lower()
         w.insert("end", f"{ts}│", tag)
         w.insert("end", f"{rec.funcName}│", "func")
-        # Show stage prefix on WARNING+ (matches StageContextFilter behaviour)
-        prefix = getattr(rec, "stage_prefix", "")
-        if prefix and rec.levelno >= logging.WARNING:
-            w.insert("end", f"[{prefix}] ", "func")
         w.insert("end", f"{rec.getMessage()}\n", tag)
     return n

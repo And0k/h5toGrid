@@ -1,4 +1,5 @@
 """Tests for _xr/storage.py — netCDF persistence, groups, and incremental skip."""
+
 from __future__ import annotations
 
 import warnings
@@ -90,12 +91,13 @@ class TestStoreProcessed:
 
         Expected behavior: second call extends the existing group along 'time'
         (or fails gracefully with a clear error if extension is not supported),
-        rather than silently skipping.
+        rather than silently skipping.  Uses non-overlapping time ranges so the
+        position-aware ``append_to_nc`` writes all new rows.
         """
         path = tmp_path / "proc.nc"
         ds_small = _sample_ds(10)
         store_processed(ds_small, path, group="i_p05", mode="a")
-        ds_large = _sample_ds(20)
+        ds_large = _sample_ds(20, start="2024-01-01 00:00:10")
         store_processed(ds_large, path, group="i_p05", mode="a")
         with xr.open_dataset(path, group="i_p05") as loaded:
             assert loaded.sizes["time"] == 30  # 10 + 20 concatenated along time
@@ -132,12 +134,15 @@ class TestStoreProcessedH5pyFallback:
 
         Reprods user crash: _rebuild_and_append → subsequent xr.to_netcdf(mode='a')
         → OSError: [Errno -103] NetCDF: Can't write file.
+
+        Uses non-overlapping time ranges so ``append_to_nc`` writes all rows
+        (position-aware append only trims overlapping portions).
         """
         path = tmp_path / "proc.nc"
         ds1 = _sample_ds(10)
         store_processed(ds1, path, group="i_p05", mode="a")
-        # Force h5py rebuild
-        ds2 = _sample_ds(20)
+        # Force h5py rebuild — different size, non-overlapping time
+        ds2 = _sample_ds(20, start="2024-01-01 00:00:10")
         store_processed(ds2, path, group="i_p05", mode="a")
         # Third write must not crash with OSError
         ds3 = _sample_ds(30, start="2024-01-01 00:01:00")
@@ -183,7 +188,7 @@ class TestEnsureDimScales:
         path = tmp_path / "proc.nc"
         ds1 = _sample_ds(10)
         store_processed(ds1, path, group="g", mode="a")
-        ds2 = _sample_ds(20)
+        ds2 = _sample_ds(20, start="2024-01-01 00:00:10")
         store_processed(ds2, path, group="g", mode="a")
 
         # Repair on already-valid file — must not corrupt anything
@@ -192,6 +197,7 @@ class TestEnsureDimScales:
         with xr.open_dataset(path, group="g") as loaded:
             assert loaded.sizes["time"] == 30
             assert set(loaded.data_vars) == {"Ax", "Ay"}
+
     def test_open_without_chunks(self, tmp_path):
         """Basic open returns Dataset with expected vars."""
         path = tmp_path / "proc.nc"
@@ -242,8 +248,10 @@ class TestStoreProcessedGrouped:
         path = tmp_path / "proc.nc"
         store_processed(_sample_ds(10), path, group="i_01", mode="w")
         store_processed(_sample_ds(20), path, group="i_02", mode="a")
-        with xr.open_dataset(path, group="i_01", engine=_constants.nc_engine) as g1, \
-             xr.open_dataset(path, group="i_02", engine=_constants.nc_engine) as g2:
+        with (
+            xr.open_dataset(path, group="i_01", engine=_constants.nc_engine) as g1,
+            xr.open_dataset(path, group="i_02", engine=_constants.nc_engine) as g2,
+        ):
             assert set(g1.data_vars) == {"Ax", "Ay"}
             assert g1.sizes["time"] == 10
             assert g2.sizes["time"] == 20
@@ -300,14 +308,21 @@ class TestPrepareCoefs:
         """time_ranges outside data range → no rotation applied."""
         time = pd.date_range("2024-01-01", periods=10, freq="s", tz="UTC")
         ds = xr.Dataset(
-            {"Ax": ("time", np.ones(10)), "Ay": ("time", np.ones(10)),
-             "Az": ("time", np.ones(10) * 9.8), "Mx": ("time", np.ones(10)),
-             "My": ("time", np.zeros(10)), "Mz": ("time", np.zeros(10))},
+            {
+                "Ax": ("time", np.ones(10)),
+                "Ay": ("time", np.ones(10)),
+                "Az": ("time", np.ones(10) * 9.8),
+                "Mx": ("time", np.ones(10)),
+                "My": ("time", np.zeros(10)),
+                "Mz": ("time", np.zeros(10)),
+            },
             coords={"time": time},
         )
         result = coef_zeroing_rotation_from_data(
-            ds, time_ranges=["2099-01-01", "2099-01-02"],
-            Ag=np.eye(3), Cg=np.zeros(3),
+            ds,
+            time_ranges=["2099-01-01", "2099-01-02"],
+            Ag=np.eye(3),
+            Cg=np.zeros(3),
         )
         assert result is None
 
@@ -332,21 +347,28 @@ class TestPrepareCoefs:
         heading = np.radians(45.0)
         time = pd.date_range("2024-01-01", periods=n, freq="s")
         ds = xr.Dataset(
-            {"Ax": ("time", np.sin(tilt) * np.ones(n)),
-             "Ay": ("time", np.zeros(n)),
-             "Az": ("time", np.cos(tilt) * np.ones(n)),
-             "Mx": ("time", np.cos(heading) * np.cos(tilt) * np.ones(n)),
-             "My": ("time", np.sin(heading) * np.ones(n)),
-             "Mz": ("time", -np.cos(heading) * np.sin(tilt) * np.ones(n))},
+            {
+                "Ax": ("time", np.sin(tilt) * np.ones(n)),
+                "Ay": ("time", np.zeros(n)),
+                "Az": ("time", np.cos(tilt) * np.ones(n)),
+                "Mx": ("time", np.cos(heading) * np.cos(tilt) * np.ones(n)),
+                "My": ("time", np.sin(heading) * np.ones(n)),
+                "Mz": ("time", -np.cos(heading) * np.sin(tilt) * np.ones(n)),
+            },
             coords={"time": time},
         )
         coefs = {
-            "Ag": np.eye(3), "Cg": np.zeros(3),
-            "Ah": np.eye(3), "Ch": np.zeros(3),
-            "azimuth_shift_deg": 180.0, "dates": {},
+            "Ag": np.eye(3),
+            "Cg": np.zeros(3),
+            "Ah": np.eye(3),
+            "Ch": np.zeros(3),
+            "azimuth_shift_deg": 180.0,
+            "dates": {},
         }
         result, _, _, msg = prepare_coefs(
-            coefs, ds, time_ranges_azimuth=["2024-01-01", "2024-01-02"],
+            coefs,
+            ds,
+            time_ranges_azimuth=["2024-01-01", "2024-01-02"],
         )
         # azimuth_shift_deg should be overwritten by data-computed value (~45°)
         assert result["azimuth_shift_deg"] != 180.0, (
@@ -368,25 +390,40 @@ class TestCoefAzimuthFromData:
     def test_returns_none_when_no_data_in_range(self):
         """Time range outside data → None."""
         ds = _sample_ds()
-        assert coef_azimuth_from_data(
-            ds, time_ranges=["2099-01-01", "2099-01-02"],
-            Ah=np.eye(3), Ch=np.zeros(3), Ag=np.eye(3), Cg=np.zeros(3),
-        ) is None
+        assert (
+            coef_azimuth_from_data(
+                ds,
+                time_ranges=["2099-01-01", "2099-01-02"],
+                Ah=np.eye(3),
+                Ch=np.zeros(3),
+                Ag=np.eye(3),
+                Cg=np.zeros(3),
+            )
+            is None
+        )
 
     def test_returns_finite_degrees(self):
         """Valid data → finite float (degrees)."""
         n = 50
         time = pd.date_range("2024-01-01", periods=n, freq="s")
         ds = xr.Dataset(
-            {"Ax": ("time", np.zeros(n)), "Ay": ("time", np.zeros(n)),
-             "Az": ("time", np.ones(n)),
-             "Mx": ("time", np.ones(n)), "My": ("time", np.zeros(n)),
-             "Mz": ("time", np.zeros(n))},
+            {
+                "Ax": ("time", np.zeros(n)),
+                "Ay": ("time", np.zeros(n)),
+                "Az": ("time", np.ones(n)),
+                "Mx": ("time", np.ones(n)),
+                "My": ("time", np.zeros(n)),
+                "Mz": ("time", np.zeros(n)),
+            },
             coords={"time": time},
         )
         result = coef_azimuth_from_data(
-            ds, time_ranges=["2024-01-01", "2024-01-02"],
-            Ah=np.eye(3), Ch=np.zeros(3), Ag=np.eye(3), Cg=np.zeros(3),
+            ds,
+            time_ranges=["2024-01-01", "2024-01-02"],
+            Ah=np.eye(3),
+            Ch=np.zeros(3),
+            Ag=np.eye(3),
+            Cg=np.zeros(3),
         )
         assert isinstance(result, float)
         assert np.isfinite(result)
@@ -416,19 +453,22 @@ class TestDiscoverTables:
         [
             # incl* glob → incl.*? regex: matches both dot and underscore
             pytest.param(
-                "incl*", ["incl.05", "incl.06", "incl_p05", "incl_p06", "pressure.01"],
+                "incl*",
+                ["incl.05", "incl.06", "incl_p05", "incl_p06", "pressure.01"],
                 {"incl.05", "incl.06", "incl_p05", "incl_p06"},
                 id="incl-star-glob-matches-both",
             ),
             # incl.* glob → incl\..*? regex: literal dot required (HDF5 only)
             pytest.param(
-                "incl.*", ["incl.05", "incl_p05", "pressure.01"],
+                "incl.*",
+                ["incl.05", "incl_p05", "pressure.01"],
                 {"incl.05"},
                 id="incl-dot-star-glob-dot-only",
             ),
             # pressure* glob → matches both dot and underscore
             pytest.param(
-                "pressure*", ["incl.05", "pressure.01", "pressure_p01"],
+                "pressure*",
+                ["incl.05", "pressure.01", "pressure_p01"],
                 {"pressure.01", "pressure_p01"},
                 id="glob-pressure-star",
             ),
@@ -531,8 +571,8 @@ class TestRunParamsAttr:
     """store_processed_incremental stores _run_params attr on NC group."""
 
     def test_run_params_written(self, tmp_path):
-        """_run_params attribute is written to the group on first store."""
-        from tcm._xr.storage import store_processed_incremental
+        """_run_params attribute is written to the group as JSON history."""
+        from tcm._xr.storage import _get_latest_params, store_processed_incremental
 
         path = tmp_path / "proc.nc"
         ds = _sample_ds(50)
@@ -542,26 +582,27 @@ class TestRunParamsAttr:
             # h5py returns bytes for string attrs
             if isinstance(stored, bytes):
                 stored = stored.decode()
-            assert stored == "filter.max.g=1.0", (
-                f"_run_params mismatch: expected 'filter.max.g=1.0', got {stored!r}"
+            assert _get_latest_params(stored) == "filter.max.g=1.0", (
+                f"_run_params latest mismatch: expected 'filter.max.g=1.0', got {_get_latest_params(stored)!r}"
             )
 
-    def test_run_params_warn_on_diff(self, tmp_path, caplog):
-        """When stored _run_params differ, a WARNING with unified diff is emitted."""
-        import logging
-
+    def test_run_params_warn_on_diff(self, tmp_path):
+        """When stored _run_params differ (ignoring time_ranges) and not force_reprocess, raise ValueError."""
         from tcm._xr.storage import store_processed_incremental
 
         path = tmp_path / "proc.nc"
         ds = _sample_ds(50)
         # First write with one set of params
-        store_processed_incremental(ds, path, group="i_p01", filter_params="filter.max.g=1.0")
-        # Second write with different params — data is covered, so it skips
-        with caplog.at_level(logging.WARNING, logger="tcm._xr.storage"):
-            store_processed_incremental(ds, path, group="i_p01", filter_params="filter.max.g=2.0")
-        assert any("Run params changed" in r.message for r in caplog.records), (
-            f"Expected 'Run params changed' warning, got: {[r.message for r in caplog.records]}"
+        store_processed_incremental(
+            ds, path, group="i_p01",
+            filter_params="filter.max.g=1.0\ncoef.Ax=1.0",
         )
+        # Second write with different coef — data is covered, should error
+        with pytest.raises(ValueError, match="Coefficients/params changed"):
+            store_processed_incremental(
+                ds, path, group="i_p01",
+                filter_params="filter.max.g=1.0\ncoef.Ax=2.0",
+            )
 
     def test_run_params_no_warn_when_same(self, tmp_path, caplog):
         """Same _run_params on re-run → no warning (skip is silent)."""
@@ -578,6 +619,140 @@ class TestRunParamsAttr:
         assert not any("Run params changed" in r.message for r in caplog.records), (
             f"Unexpected warning with same params: {[r.message for r in caplog.records]}"
         )
+
+    def test_run_params_history_preserved(self, tmp_path):
+        """Each write appends a new entry — previous entries are preserved."""
+        import json
+
+        from tcm._xr.storage import _get_latest_params, store_processed_incremental
+
+        path = tmp_path / "proc.nc"
+        ds_a = _sample_ds(50)
+        ds_b = _sample_ds(50, start="2024-02-01")
+        params_a = "filter.max.g=1.0\ncoef.Ax=1.0"
+        params_b = "filter.max.g=1.0\ncoef.Ax=2.0"
+
+        # First write
+        store_processed_incremental(ds_a, path, group="i_p01", filter_params=params_a)
+        # Force-reprocess with different params (extends time range)
+        store_processed_incremental(ds_b, path, group="i_p01", filter_params=params_b, force_reprocess=True)
+
+        with h5py.File(path, "r") as f:
+            raw = f["i_p01"].attrs.get("_run_params", "")
+            if isinstance(raw, bytes):
+                raw = raw.decode()
+        history = json.loads(raw)
+        assert len(history) == 2, f"Expected 2 history entries, got {len(history)}"
+        # Latest entry matches params_b
+        assert _get_latest_params(raw) == params_b
+        # Both entries present
+        assert params_a in history.values()
+        assert params_b in history.values()
+
+    def test_run_params_no_duplicate_when_unchanged(self, tmp_path):
+        """Same params on force-reprocess → no duplicate entry in history."""
+        import json
+
+        from tcm._xr.storage import _get_latest_params, store_processed_incremental
+
+        path = tmp_path / "proc.nc"
+        ds_a = _sample_ds(50)
+        ds_b = _sample_ds(50, start="2024-02-01")
+        params = "filter.max.g=1.0\ncoef.Ax=1.0"
+
+        # First write
+        store_processed_incremental(ds_a, path, group="i_p01", filter_params=params)
+        # Force-reprocess with same params (different data)
+        store_processed_incremental(ds_b, path, group="i_p01", filter_params=params, force_reprocess=True)
+
+        with h5py.File(path, "r") as f:
+            raw = f["i_p01"].attrs.get("_run_params", "")
+            if isinstance(raw, bytes):
+                raw = raw.decode()
+        history = json.loads(raw)
+        assert len(history) == 1, f"Expected 1 entry (dedup), got {len(history)}"
+        assert _get_latest_params(raw) == params
+
+
+@pytest.mark.xr
+class TestRunParamsHistoryHelpers:
+    """Standalone tests for _get_latest_params and _append_run_params."""
+
+    def test_get_latest_empty(self):
+        from tcm._xr.storage import _get_latest_params
+
+        assert _get_latest_params("") == ""
+
+    def test_get_latest_non_json_returns_empty(self):
+        """Non-JSON input returns empty (no legacy compat)."""
+        from tcm._xr.storage import _get_latest_params
+
+        assert _get_latest_params("filter.max.g=1.0\ncoef.Ax=1.0") == ""
+
+    def test_get_latest_json_single_entry(self):
+        import json
+
+        from tcm._xr.storage import _get_latest_params
+
+        params = "filter.max.g=2.0"
+        history = json.dumps({"2024-01-15T10:00:00+00:00": params})
+        assert _get_latest_params(history) == params
+
+    def test_get_latest_json_multi_entry_returns_last(self):
+        import json
+
+        from tcm._xr.storage import _get_latest_params
+
+        history = json.dumps({
+            "2024-01-15T10:00:00+00:00": "old_params",
+            "2024-06-01T12:00:00+00:00": "new_params",
+        }, sort_keys=True)
+        assert _get_latest_params(history) == "new_params"
+
+    def test_append_run_params_first_time(self):
+        import json
+
+        from tcm._xr.storage import _append_run_params
+
+        result = _append_run_params("params_v1")
+        records = json.loads(result)
+        assert len(records) == 1
+        assert "params_v1" in records.values()
+
+    def test_append_run_params_preserves_existing(self):
+        import json
+
+        from tcm._xr.storage import _append_run_params
+
+        # Pre-seed with a known older entry to avoid same-second key collision
+        old_history = json.dumps({"2024-01-01T00:00:00+00:00": "params_v1"})
+        result = _append_run_params("params_v2", old_history)
+        records = json.loads(result)
+        assert len(records) == 2
+        assert records["2024-01-01T00:00:00+00:00"] == "params_v1"
+        assert "params_v2" in records.values()
+
+    def test_append_run_params_ignores_non_json_history(self):
+        """Non-JSON history is discarded — starts fresh."""
+        import json
+
+        from tcm._xr.storage import _append_run_params
+
+        result = _append_run_params("new_params", "not_valid_json{{{")
+        records = json.loads(result)
+        assert len(records) == 1
+        assert "new_params" in records.values()
+
+    def test_append_run_params_dedup_when_unchanged(self):
+        """Same params as latest entry → history returned unchanged."""
+        import json
+
+        from tcm._xr.storage import _append_run_params
+
+        history = json.dumps({"2024-01-01T00:00:00+00:00": "same_params"})
+        result = _append_run_params("same_params", history)
+        assert result == history  # identical — no new entry
+        assert len(json.loads(result)) == 1
 
 
 # ---------------------------------------------------------------------------

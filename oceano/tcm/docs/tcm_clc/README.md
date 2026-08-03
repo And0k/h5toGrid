@@ -115,11 +115,15 @@ After processing, the pipeline produces these output data files
 |------|----------|
 | `*.raw.nc` | Raw data + calibration coefficients (incremental append) |
 | `*.proc_noAvg.nc` | Non-averaged processed output (per-probe groups) |
-| `*.proc.nc` | Binned processed output (per-probe groups for each bin) |
-| `text_output/{timestamp}@{pcid}.tsv` | Tab-separated text exports (binned only) |
+| `*.proc_Avg.nc` | Binned processed output (per-probe groups for each bin) |
+| `*.proc.nc` | Combined multi-probe output (probe dimension) + combined TSV |
+| `text_output/{timestamp}@{pcid}.tsv` | Tab-separated text exports (per-probe, binned only) |
 
-When multiple probes are processed in one run, combined groups with a `probe`
-dimension are written to the same NC files and combined TSV files.
+Per-probe binned data is written to `*.proc_Avg.nc` (one group per pcid per
+bin interval). When multiple probes are processed in one run, `_combine_probes`
+reads from `*.proc_Avg.nc` and writes combined groups (with a `probe`
+dimension) to `*.proc.nc`. Combined TSV files are also written from the
+combined groups. Non-averaged (`dt_bin=0`) data is never combined.
 
 ## Probe Identity (pcid)
 
@@ -425,15 +429,26 @@ python scripts/tcm_clc.py "_raw/i*.txt" +force_reprocess=True
 ```
 
 `force_reprocess` affects **processed** NC writes only (`*.proc_noAvg.nc`,
-`*.proc.nc`) — it does NOT affect coefficient persistence (coefs always overwrite
-in-place). Use it when filter parameters, coefficients, or input window changed
-and you need to re-bin existing data.
+`*.proc_Avg.nc`) — it does NOT affect coefficient persistence (coefs always
+overwrite in-place). Use it when filter parameters, coefficients, or input
+window changed and you need to re-bin existing data.
 
-When skipping, the pipeline compares stored `_run_params` (filter + window +
-coefficient text) to the current values and emits a unified-diff warning on
-mismatch — so you see exactly what changed.
+**Re-run decision matrix**:
 
-See `config_reference.md` for the full decision table.
+| `force_reprocess` | Coefs/params changed? | Behavior |
+|:---:|:---:|---|
+| `False` (default) | No | **Skip** NC write, export TSV only |
+| `False` (default) | Yes | **Error** — `ValueError` with unified diff showing what changed |
+| `True` | No | **Re-write** — delete existing group, write fresh |
+| `True` | Yes | **Re-write** — delete existing group, write fresh |
+
+When coefs/params changed and `force_reprocess=False`, the pipeline compares
+stored `_run_params` to the current values (ignoring `input.time_ranges` lines)
+and raises `ValueError` with a unified diff — so you see exactly what changed
+and need to pass `+force_reprocess=True` to proceed.
+
+See `config_reference.md` (§`_run_params` attribute) for the full field list
+and (§`force_reprocess` + `time_ranges` behavior) for the decision table.
 
 ## Time Correction
 
@@ -562,8 +577,9 @@ Below are the most important ones to watch for.
 | `Done — N probes: i90 ok | 1 failed (i67)` | Some probes failed — check errors above |
 
 Log file location: `cfg_proc/log/{timestamp}/processing.log` (inside the data directory).
-The filename derives from ``hydra.job.name`` = ``"processing"`` (resolved via Hydra's
-``@wraps`` unwrap of the task function; see ``cli.hydra_main`` docstring).
+When `program.return_` is non-default (e.g. `<cfg_from_args>`), the file is named
+`processing-cfg_from_args.log` — derived from the Hydra job name + sanitized return value
+(see ``cli._setup_file_handler`` in ``how_it_works.md``).
 Full log includes DEBUG-level detail (per-stem checks, snap RMS, segment counts, etc.).
 
 ## Related Documentation

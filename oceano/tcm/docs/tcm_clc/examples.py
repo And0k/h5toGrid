@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from tcm import cli, config_yaml, format, processing
-from tcm.config import Return
+from tcm.schema import Return
 
 
 def _pcid_from_path(path: str | Path) -> str:

@@ -1,4 +1,4 @@
-"""Tests for tcm/config.py — ConfigStore registration and Config dataclass."""
+"""Tests for tcm/schema.py — ConfigStore registration and Config dataclass."""
 from __future__ import annotations
 
 import os
@@ -8,8 +8,8 @@ from hydra import compose, initialize_config_dir
 from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig
 
-import tcm.config  # noqa: F401 — triggers ConfigStore registration
-from tcm.config import Config, ConfigIn_InclProc
+import tcm.schema  # noqa: F401 — triggers ConfigStore registration
+from tcm.schema import Config, ConfigIn_InclProc
 
 _CONFIG_YAML = (
     "defaults:\n"

@@ -12,9 +12,9 @@ import pytest
 import xarray as xr
 from omegaconf import DictConfig
 
-from tcm import _constants, config_yaml as cfg_mod, csv_load
+from tcm import _constants, config_yaml as cfg_mod, csv_load, policy, schema
 from tcm._constants import RAW_DIR_NAME
-from tcm.config import Return
+from tcm.schema import Return
 from tcm.config_yaml import (
     find_stale_cfgs,
     get_existed_cfgs,
@@ -304,7 +304,7 @@ class TestCoefPersistence:
         from tcm._xr.coefs import save_coefs_to_nc
 
         # Ensure use_h5 is enabled for fixture setup (NC write).
-        _constants.use_h5_set(True)
+        policy._io.set(policy.IOPolicy(schema.UseH5.REQUIRE, True))
         raw_nc = pipeline_env.raw_db_path
         # Write minimal NC structure + initial coefs
         ds = pipeline_env.synthetic_ds.copy()
@@ -395,9 +395,9 @@ class TestCoefPersistence:
             encoding="utf-8",
         )
 
-        # Monkeypatch H5_AVAILABLE to False + reset use_h5 to None (noh5 auto-skip)
+        # Monkeypatch H5_AVAILABLE to False + reset io to unavailable (noh5 auto-skip)
         mocker.patch.object(_constants, "H5_AVAILABLE", False)
-        _constants.use_h5_set(None)
+        policy._io.set(policy.IOPolicy(schema.UseH5.AUTO, False))
 
         # Mock pipeline
         from tcm.paths import PathLayout

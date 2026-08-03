@@ -11,7 +11,7 @@ from typing import Any
 
 from omegaconf import OmegaConf
 
-from tcm import _constants, config, csv_load, format, metadata, paths, to_omegaconf, utils2init
+from tcm import schema, _constants, csv_load, format, metadata, paths, policy, to_omegaconf, utils2init
 from tcm.incl_calc.coefs import get_coefs_from_cfg
 
 lf = utils2init.LoggingStyleAdapter(__name__)
@@ -185,16 +185,15 @@ def _discover_tables(path: Path, table_pattern: str) -> list[str]:
 
     re_pattern = re.compile(_glob_to_regex(table_pattern))
     suffix = path.suffix.lower()
-    if suffix in _constants.hdf5_suffixes:
+    if suffix in _constants._EXT_HDF5:
         if not _constants.TABLES_AVAILABLE:
             raise ImportError("pytables (tables) required to read HDF5 files — install or use NC/CSV input")
         import pandas as pd
 
         with pd.HDFStore(str(path), mode="r") as s:
             return [k.lstrip("/") for k in s.keys() if re_pattern.fullmatch(k.lstrip("/"))]
-    if suffix in _constants.nc_suffixes:
-        if _constants.use_h5_get() is not True:
-            raise ImportError("cannot read NC4 groups (use_h5 wasn't set True)")
+    if suffix in _constants._EXT_NC:
+        policy.io().require_nc("reading NC4 groups")
         with _constants._h5py.File(path, "r") as f:
             return [k for k in f.keys() if re_pattern.fullmatch(k)]
     return []
@@ -277,7 +276,7 @@ def gen_metadata(
     )
 
     # HDF5/NC mode: discover table groups in the file
-    if Path(cfg["input"]["path"]).suffix.lower() in _constants.hdf5_suffixes + _constants.nc_suffixes:
+    if Path(cfg["input"]["path"]).suffix.lower() in _constants._EXT_HDF5 | _constants._EXT_NC:
         cfg_in_common["corr_time_mode"] = cfg["input"].get("corr_time_mode", True)
         table_patterns = cfg["input"].get("tables", ["incl*"])
         discovered: list[str] = [
@@ -452,7 +451,7 @@ def save_config_to_yaml(cfg: Mapping[str, Any], input_paths: Sequence[Path]) -> 
             + [".yaml"]
         )
 
-        conf_, ignored_keys = to_omegaconf.to_omegaconf_merge_compatible(cfg1, config.Config)
+        conf_, ignored_keys = to_omegaconf.to_omegaconf_merge_compatible(cfg1, schema.Config)
         lf.debug("Saving {} config: {} to {}", pcid, file_name, dir_cfg_proc)
         if ignored_keys:
             lf.debug('Removed fields "{}" not in Config', ignored_keys)
@@ -471,9 +470,9 @@ def find_stale_cfgs(
 ) -> dict[str, list[str]]:
     """Return pcids → stale YAML stems whose ``input.path`` file is missing.
 
-    Replaces the old ``_find_stale_cfgs`` which required ``ProbeFiles`` from
-    ``discover_probes``.  This version checks YAML ``input.path`` existence
-    directly — no file-discovery dependency.
+    A config is **not** marked stale when the raw NC log has a ``fileName``
+    entry matching the missing source file — the data can still be loaded
+    from the raw NC fast-path.
 
     :param cfgs_existed: ``{pcid: [cfg_stems]}`` from :func:`get_existed_cfgs`.
     :param dir_cfgs: directory containing YAML config files.
@@ -492,11 +491,38 @@ def find_stale_cfgs(
                     cfg_yaml = ry.load(fp)
                 cfg_path = (cfg_yaml or {}).get("input", {}).get("path")
                 if cfg_path and not Path(cfg_path).expanduser().is_file():
+                    if _raw_nc_has_source(Path(cfg_path), pcid):
+                        lf.debug("Config {} for {}: text absent but raw NC has log entry", stem, pcid)
+                        continue
                     lf.debug("Config {} for {} references non-existent {}", stem, pcid, cfg_path)
                     stale.setdefault(pcid, []).append(stem)
             except Exception:
                 lf.debug("Skipping stale check for {} (load error)", stem, exc_info=True)
     return stale
+
+
+def _raw_nc_has_source(source_path: Path, pcid: str) -> bool:
+    """Check if the raw NC for *pcid* has a log entry matching *source_path*.
+
+    Resolves ``raw_db_path`` via :class:`paths.PathLayout` and reads the
+    ``/{tbl}/logFiles`` group.  Returns ``True`` when the log contains a
+    ``fileName`` matching the expected ``{parent_name}/{stem}`` format.
+    """
+    try:
+        layout = paths.PathLayout(source_path)
+        raw_nc = layout.raw_db
+        if not raw_nc or not raw_nc.exists():
+            return False
+    except (ValueError, OSError):
+        return False
+    from tcm._xr.storage import read_nc_log
+
+    tbl = format.pcid_to_raw_name(pcid)
+    log = read_nc_log(raw_nc, tbl)
+    if log.sizes.get("Date0", 0) == 0:
+        return False
+    expected = f"{source_path.parent.name}/{source_path.stem}"[-255:]
+    return bool((log["fileName"].values == expected).any())
 
 
 def update_coefs_in_run_yaml(yaml_path: Path, coefs_changed: dict[str, object]) -> None:

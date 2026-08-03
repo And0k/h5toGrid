@@ -180,14 +180,14 @@ except ImportError:
 дистрибутиве — **только** при сборке в окружении `noh5-tcm`:
 
 ```python
-import tcm.config  # форсирует регистрацию ConfigStore с dev-умолчаниями
+import tcm.schema  # форсирует регистрацию ConfigStore с dev-умолчаниями
 from hydra.core.config_store import ConfigStore
 
 cs = ConfigStore.instance()
 cs.store(
     group="out",
     name="base",
-    node=tcm.config.ConfigOut_InclProc(
+    node=tcm.schema.ConfigOut_InclProc(
         dt_bins=[0, 3600],            # без усреднения + 1 час
         dt_bins_min_save_text=0,      # разрешить TSV для bin=0
     ),

@@ -25,7 +25,7 @@ from omegaconf import OmegaConf
 
 from tcm import cli, config_yaml, processing
 from tcm._constants import RAW_DIR_NAME
-from tcm.config import Return
+from tcm.schema import Return
 
 
 # --------------------------------------------------------------------------- #
