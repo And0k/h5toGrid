@@ -1,4 +1,5 @@
 """Tests for _xr/physical.py (binning, process), _xr/io.py, and _xr/dataset.py."""
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -16,13 +17,14 @@ from tcm._xr.coefs import save_coefs_to_nc
 from tcm._xr.dataset import merge_probes, open_nc, open_csv
 from tcm._xr.physical import process
 
-_VELOCITY_COLS = ("Vabs", "Vdir", "v", "u", "inclination")
+_VELOCITY_COLS = ("v", "u", "inclination")  # Vabs/Vdir intentionally excluded from NC/in-memory
 _RAW_COLS = ("Ax", "Ay", "Az", "Mx", "My", "Mz")
 
 
 # --------------------------------------------------------------------------- #
 # Binning
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.xr
 class TestBinning:
@@ -68,6 +70,7 @@ class TestBinning:
 # process
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.xr
 class TestToPhysical:
     def test_returns_list(self, sensor_ds, identity_coefs):
@@ -89,8 +92,10 @@ class TestToPhysical:
     def test_binned_output(self, sensor_ds, identity_coefs):
         """Binning with dt > dt_min produces binned output."""
         result = process(
-            sensor_ds, coefs=identity_coefs,
-            dt_bins=[timedelta(seconds=5)], dt_min_binning_proc=timedelta(seconds=2),
+            sensor_ds,
+            coefs=identity_coefs,
+            dt_bins=[timedelta(seconds=5)],
+            dt_min_binning_proc=timedelta(seconds=2),
         )
         assert len(result) == 1 and result[0] is not None
         assert result[0].sizes["time"] <= 10
@@ -111,6 +116,7 @@ class TestToPhysical:
 # --------------------------------------------------------------------------- #
 # I/O
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.xr
 class TestIO:
@@ -155,6 +161,7 @@ class TestIO:
 # merge_probes
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.xr
 class TestMergeProbes:
     def test_single_probe(self):
@@ -167,7 +174,10 @@ class TestMergeProbes:
 
     def test_multiple_probes_outer_join(self):
         """Different-length time axes → outer join (NaN-padded)."""
-        t1, t2 = pd.date_range("2024-01-01", periods=3, freq="s"), pd.date_range("2024-01-01", periods=5, freq="s")
+        t1, t2 = (
+            pd.date_range("2024-01-01", periods=3, freq="s"),
+            pd.date_range("2024-01-01", periods=5, freq="s"),
+        )
         ds1 = xr.Dataset({"Vabs": ("time", [1.0, 2.0, 3.0])}, coords={"time": t1})
         ds2 = xr.Dataset({"Vabs": ("time", [10.0, 20.0, 30.0, 40.0, 50.0])}, coords={"time": t2})
         result = merge_probes({"a": ds1, "b": ds2})
@@ -194,11 +204,13 @@ class TestMergeProbes:
 # open_csv
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.xr
 class TestOpenCsv:
     def test_calls_load_from_csv_gen(self, sensor_df, monkeypatch):
         """open_csv delegates to csv_load.load_from_csv_gen and converts to Dataset."""
         import tcm.csv_load as csv_load_mod
+
         meta = (1, "i_p01", Path("dummy.csv"))
         monkeypatch.setattr(csv_load_mod, "search_csv_files", lambda path: {("i", 1): [Path("dummy.csv")]})
         monkeypatch.setattr(csv_load_mod, "load_from_csv_gen", lambda **kw: iter([(sensor_df, meta)]))
@@ -210,9 +222,13 @@ class TestOpenCsv:
     def test_concatenates_chunks(self, monkeypatch):
         """Multiple chunks from generator are concatenated."""
         import tcm.csv_load as csv_load_mod
+
         t1 = pd.date_range("2024-01-01", periods=3, freq="s", name="Time")
         t2 = pd.date_range("2024-01-01 00:00:03", periods=3, freq="s", name="Time")
-        df1, df2 = pd.DataFrame({"Ax": [1.0, 2.0, 3.0]}, index=t1), pd.DataFrame({"Ax": [4.0, 5.0, 6.0]}, index=t2)
+        df1, df2 = (
+            pd.DataFrame({"Ax": [1.0, 2.0, 3.0]}, index=t1),
+            pd.DataFrame({"Ax": [4.0, 5.0, 6.0]}, index=t2),
+        )
         meta = (1, "i_p01", Path("dummy.csv"))
         monkeypatch.setattr(csv_load_mod, "search_csv_files", lambda path: {("i", 1): [Path("dummy.csv")]})
         monkeypatch.setattr(csv_load_mod, "load_from_csv_gen", lambda **kw: iter([(df1, meta), (df2, meta)]))
@@ -223,6 +239,7 @@ class TestOpenCsv:
     def test_empty_returns_empty_dataset(self, monkeypatch):
         """Generator yielding no data → empty Dataset."""
         import tcm.csv_load as csv_load_mod
+
         monkeypatch.setattr(csv_load_mod, "search_csv_files", lambda path: {("i", 1): [Path("dummy.csv")]})
         monkeypatch.setattr(csv_load_mod, "load_from_csv_gen", lambda **kw: iter([]))
         ds = open_csv(Path("_raw/*i*.txt"), text_type="i")
@@ -233,6 +250,7 @@ class TestOpenCsv:
 # open_nc (from dataset_nc)
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.xr
 class TestOpenNc:
     """open_nc loads data and coefs from NetCDF4 files."""
@@ -242,9 +260,11 @@ class TestOpenNc:
         """Create a .nc file with data in /incl_01/ group."""
         nc_path = tmp_path / "test.raw.nc"
         ds = xr.Dataset(
-            {"Ax": ("time", np.random.default_rng(42).normal(0, 1, 100)),
-             "Ay": ("time", np.random.default_rng(43).normal(0, 1, 100)),
-             "Az": ("time", np.random.default_rng(44).normal(0, 1, 100))},
+            {
+                "Ax": ("time", np.random.default_rng(42).normal(0, 1, 100)),
+                "Ay": ("time", np.random.default_rng(43).normal(0, 1, 100)),
+                "Az": ("time", np.random.default_rng(44).normal(0, 1, 100)),
+            },
             coords={"time": pd.date_range("2024-01-01", periods=100, freq="s")},
         )
         ds.to_netcdf(nc_path, group="incl_01", engine=_constants.nc_engine)
@@ -255,12 +275,18 @@ class TestOpenNc:
         """Create a .nc file with data + coefs in /incl_01/ group."""
         nc_path = tmp_path / "test.raw.nc"
         ds = xr.Dataset(
-            {"Ax": ("time", np.random.default_rng(42).normal(0, 1, 50)),
-             "Mx": ("time", np.random.default_rng(43).normal(0, 1, 50))},
+            {
+                "Ax": ("time", np.random.default_rng(42).normal(0, 1, 50)),
+                "Mx": ("time", np.random.default_rng(43).normal(0, 1, 50)),
+            },
             coords={"time": pd.date_range("2024-01-01", periods=50, freq="s")},
         )
         ds.to_netcdf(nc_path, group="incl_01", engine=_constants.nc_engine)
-        save_coefs_to_nc(nc_path, "incl_01", {"Ag": np.eye(3), "Cg": np.array([0.1, 0.2, 0.3]), "date": "2024-01-01T00:00:00"})
+        save_coefs_to_nc(
+            nc_path,
+            "incl_01",
+            {"Ag": np.eye(3), "Cg": np.array([0.1, 0.2, 0.3]), "date": "2024-01-01T00:00:00"},
+        )
         return nc_path
 
     def test_loads_data_from_table_group(self, nc_data_file):

@@ -851,7 +851,9 @@ Rough per-chunk memory for CSV (float64, 6 data columns):
 ### Column order
 
 Output columns are ordered to match legacy convention — see `config_reference.md`
-(§Column order) for the exact ordering specification.
+(§Column order) for the exact ordering specification, including the Vabs/Vdir
+save policy (computed on-the-fly for per-probe TSV only; never persisted in NC
+or combined TSV; `inclination` excluded from combined TSV).
 
 ### Text type → column layout
 
@@ -928,8 +930,9 @@ Skipped when `H5_AVAILABLE` is `False` (noh5 environment).
 *`probe_type`* is the short probe prefix derived from the first pcid
 (e.g. `"i"` for inclinometers, `"w"` for wave gauges).
 
-Column order in combined TSV: `v_i01, u_i01, inclination_i01, v_i02, ...`
-(axis=1 concatenation unless `b_all_to_one_col=True`).
+Column order in combined TSV: `v_i01, u_i01, v_i02, ...`
+(Vabs/Vdir/inclination excluded from combined TSV; axis=1 concatenation
+unless `b_all_to_one_col=True`).
 
 ### Re-run behavior
 

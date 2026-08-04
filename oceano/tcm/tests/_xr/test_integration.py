@@ -2,6 +2,7 @@
 
 Uses pytest fixtures + monkeypatch (no unittest.mock.patch).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -62,9 +63,14 @@ def _patch_discovery(monkeypatch, raw_dir, n_probes=1):
 def _base_cfg(raw_dir, path=None):
     return {
         "input": {
-            "path": path or raw_dir / "i_01.txt", "tables": ["incl*"],
-            "coefs_path": None, "coefs": {},
-            "text_type": None, "text_line_regex": None, "prefix": None, "dt_from_utc": 0,
+            "path": path or raw_dir / "i_01.txt",
+            "tables": ["incl*"],
+            "coefs_path": None,
+            "coefs": {},
+            "text_type": None,
+            "text_line_regex": None,
+            "prefix": None,
+            "dt_from_utc": 0,
             "corr_time_mode": None,  # moved from filter
         },
         "filter": {},
@@ -76,10 +82,13 @@ def _base_cfg(raw_dir, path=None):
 class TestIntegrationDiscovery:
     """gen_metadata + save_config_to_yaml + find_stale_cfgs."""
 
-    @pytest.mark.parametrize("n_probes,expected_pcids", [
-        pytest.param(1, {"i01"}, id="single-probe"),
-        pytest.param(2, {"i01", "i02"}, id="multiple-probes"),
-    ])
+    @pytest.mark.parametrize(
+        "n_probes,expected_pcids",
+        [
+            pytest.param(1, {"i01"}, id="single-probe"),
+            pytest.param(2, {"i01", "i02"}, id="multiple-probes"),
+        ],
+    )
     def test_gen_metadata_discovers_probes(self, raw_dir, monkeypatch, n_probes, expected_pcids):
 
         _patch_discovery(monkeypatch, raw_dir, n_probes)
@@ -98,7 +107,8 @@ class TestIntegrationDiscovery:
 
         _patch_discovery(monkeypatch, raw_dir, 1)
         monkeypatch.setattr(
-            cfg_mod, "prep_cfg_for_probe",
+            cfg_mod,
+            "prep_cfg_for_probe",
             lambda pcid, *a, **kw: {"input": {"path": raw_dir / f"{pcid}.txt"}, "out": {}, "filter": {}},
         )
 
@@ -112,14 +122,14 @@ class TestIntegrationDiscovery:
         raw_path = raw_dir / "i_01.txt"
 
         fake_cfg1 = {
-            "input": {"path": raw_path, "tables": ["incl*"], "text_type": None,
-                      "corr_time_mode": None},
+            "input": {"path": raw_path, "tables": ["incl*"], "text_type": None, "corr_time_mode": None},
             "out": {"dt_bins": [0], "table": ""},
             "filter": {},
             "coefs": {},
         }
         monkeypatch.setattr(
-            cfg_mod, "gen_metadata",
+            cfg_mod,
+            "gen_metadata",
             lambda cfg, paths, **kw: iter([(fake_cfg1, (False, "i01", None))]),
         )
 
@@ -184,8 +194,12 @@ class TestPipelineIntegration:
         Mz = np.full(n, -np.cos(np.radians(45.0)) * np.sin(np.radians(10.0)))
         return xr.Dataset(
             {
-                "Ax": ("time", Ax), "Ay": ("time", Ay), "Az": ("time", Az),
-                "Mx": ("time", Mx), "My": ("time", My), "Mz": ("time", Mz),
+                "Ax": ("time", Ax),
+                "Ay": ("time", Ay),
+                "Az": ("time", Az),
+                "Mx": ("time", Mx),
+                "My": ("time", My),
+                "Mz": ("time", Mz),
                 "Battery": ("time", rng.uniform(12, 13, n)),
                 "Temp": ("time", rng.uniform(24, 26, n)),
             },
@@ -196,31 +210,35 @@ class TestPipelineIntegration:
         """DictConfig for run_processing."""
         out_dir = tmp_path / "out"
         out_dir.mkdir(exist_ok=True)
-        return DictConfig({
-            "input": {
-                "path": str(csv_file),
-                "coefs_path": None,
-                "coefs": {},
-                "tables": ["incl*"],
-                "text_type": None,
-                "text_line_regex": None,
-                "prefix": None,
-                "dt_from_utc": 0,
-                "corr_time_mode": None,  # moved from filter
-            },
-            "out": {
-                "dt_bins": [0],
-                "dir": str(out_dir),
-                "raw_db_path": str(out_dir / "i_01.raw.nc"),
-            },
-            "filter": {},
-        })
+        return DictConfig(
+            {
+                "input": {
+                    "path": str(csv_file),
+                    "coefs_path": None,
+                    "coefs": {},
+                    "tables": ["incl*"],
+                    "text_type": None,
+                    "text_line_regex": None,
+                    "prefix": None,
+                    "dt_from_utc": 0,
+                    "corr_time_mode": None,  # moved from filter
+                },
+                "out": {
+                    "dt_bins": [0],
+                    "dir": str(out_dir),
+                    "raw_db_path": str(out_dir / "i_01.raw.nc"),
+                },
+                "filter": {},
+            }
+        )
 
     def _known_coefs(self):
         """Standard coefs dict for pipeline tests."""
         return {
-            "Ag": np.eye(3) * 0.00173, "Cg": np.zeros(3),
-            "Ah": np.eye(3), "Ch": np.zeros(3),
+            "Ag": np.eye(3) * 0.00173,
+            "Cg": np.zeros(3),
+            "Ah": np.eye(3),
+            "Ch": np.zeros(3),
             "kVabs": np.array([1.0, 0.0, 0.5]),
             "azimuth_shift_deg": 180.0,
         }
@@ -236,22 +254,20 @@ class TestPipelineIntegration:
         # Verify raw.nc created with coefs group
         assert pipeline_env.raw_db_path.exists(), "raw.nc not created"
         with h5py.File(pipeline_env.raw_db_path, "r") as f:
-            assert "incl01/coef" in f, (
-                f"coefs group missing from raw.nc, got: {list(f.keys())}"
-            )
+            assert "incl01/coef" in f, f"coefs group missing from raw.nc, got: {list(f.keys())}"
 
         # Verify shared proc_noAvg.nc created with probe group
         assert pipeline_env.noavg_path.exists(), (
             f"proc_noAvg.nc not created; proc_dir: {list(pipeline_env.proc_dir.iterdir())}"
         )
         with h5py.File(pipeline_env.noavg_path, "r") as f:
-            assert "i01" in f, (
-                f"Probe group 'i01' missing from proc_noAvg.nc, got: {list(f.keys())}"
-            )
+            assert "i01" in f, f"Probe group 'i01' missing from proc_noAvg.nc, got: {list(f.keys())}"
         ds = xr.open_dataset(pipeline_env.noavg_path, group="i01")
         try:
-            assert any(v in ds.data_vars for v in ("v", "Vabs", "Vdir")), (
-                f"Expected velocity vars in proc_noAvg.nc, got: {list(ds.data_vars)}"
+            # v, u, inclination persisted in NC; Vabs/Vdir intentionally excluded
+            assert "v" in ds.data_vars, f"Expected 'v' in proc_noAvg.nc, got: {list(ds.data_vars)}"
+            assert not any(v in ds.data_vars for v in ("Vabs", "Vdir")), (
+                f"Vabs/Vdir must NOT be in proc_noAvg.nc, got: {list(ds.data_vars)}"
             )
         finally:
             ds.close()
@@ -261,7 +277,8 @@ class TestPipelineIntegration:
 
         pipeline_env.cfg.out.dt_bins = [0]
         pipeline_env.cfg.input.time_ranges_zeroing = [
-            "2024-01-01T00:00:00", "2024-01-01T00:00:05",
+            "2024-01-01T00:00:00",
+            "2024-01-01T00:00:05",
         ]
 
         mock_pipeline(pipeline_env.cfg, pipeline_env, mocker)
@@ -325,12 +342,14 @@ class TestCoefPersistence:
 
         env = nc_source_env
         env.cfg.input.time_ranges_zeroing = [
-            "2024-01-01T00:00:00", "2024-01-01T00:00:05",
+            "2024-01-01T00:00:00",
+            "2024-01-01T00:00:05",
         ]
         env.cfg.out.dt_bins = [0]
 
         # Mock for NC-source mode: main_init returns NC path, load_raw returns synthetic data
         from tcm.paths import PathLayout
+
         try:
             layout = PathLayout.from_cfg(env.cfg.input, env.cfg.out)
             layout.apply_to_cfg(env.cfg.out)
@@ -341,7 +360,8 @@ class TestCoefPersistence:
             "input": {
                 "path": Path(env.cfg.input.path),
                 "tables": ["incl01"],
-                "coefs_path": None, "coefs": {},
+                "coefs_path": None,
+                "coefs": {},
                 "dt_from_utc": pd.Timedelta(0),
                 "corr_time_mode": None,
                 "time_ranges_zeroing": env.cfg.input.time_ranges_zeroing,
@@ -382,7 +402,8 @@ class TestCoefPersistence:
 
         env = nc_source_env
         env.cfg.input.time_ranges_zeroing = [
-            "2024-01-01T00:00:00", "2024-01-01T00:00:05",
+            "2024-01-01T00:00:00",
+            "2024-01-01T00:00:05",
         ]
         env.cfg.out.dt_bins = [0]
 
@@ -401,6 +422,7 @@ class TestCoefPersistence:
 
         # Mock pipeline
         from tcm.paths import PathLayout
+
         try:
             layout = PathLayout.from_cfg(env.cfg.input, env.cfg.out)
             layout.apply_to_cfg(env.cfg.out)
@@ -411,7 +433,8 @@ class TestCoefPersistence:
             "input": {
                 "path": Path(env.cfg.input.path),
                 "tables": ["incl01"],
-                "coefs_path": None, "coefs": {},
+                "coefs_path": None,
+                "coefs": {},
                 "dt_from_utc": pd.Timedelta(0),
                 "corr_time_mode": None,
                 "time_ranges_zeroing": env.cfg.input.time_ranges_zeroing,
@@ -442,6 +465,7 @@ class TestCoefPersistence:
 
         # Verify Rz written to YAML
         from ruamel.yaml import YAML
+
         ry = YAML(typ="safe", pure=True)
         with yaml_path.open(encoding="utf-8") as f:
             data = ry.load(f)
@@ -449,6 +473,4 @@ class TestCoefPersistence:
         assert "Rz" in coefs, f"Rz missing from YAML coefs after noh5 zeroing. Keys: {list(coefs)}"
         Rz = np.array(coefs["Rz"])
         assert Rz.shape == (3, 3)
-        assert not np.allclose(Rz, np.eye(3)), (
-            f"Rz still identity in YAML after noh5 zeroing: {Rz}"
-        )
+        assert not np.allclose(Rz, np.eye(3)), f"Rz still identity in YAML after noh5 zeroing: {Rz}"

@@ -286,12 +286,23 @@ filter:
 Output columns are ordered to match legacy convention:
 
 ```text
-v, u, inclination, Vabs, Vdir          ← first (velocity/direction group)
-Pressure, Temp, Battery, ...           ← remaining sensor variables
+v, u, inclination                          ← persisted in NC (velocity/direction group)
+Pressure, Temp, Battery, ...               ← remaining sensor variables
 ```
 
+**Vabs/Vdir save policy** (implemented in `_xr/physical.py`):
+
+| Output | Vabs/Vdir | inclination |
+|--------|-----------|-------------|
+| NC files (`*.proc_noAvg.nc`, `*.proc_Avg.nc`, `*.proc.nc`) | **not saved** | saved |
+| Per-probe TSV | computed on-the-fly from `v`/`u` | saved |
+| Combined TSV (`@joined.tsv`) | **not saved** | **not saved** |
+
+`Vabs = hypot(v, u)`, `Vdir = degrees(arctan2(u, v))` — exact inverse of
+`polar2dekart`.  The on-the-fly computation is in `physical.add_vabs_vdir()`.
+
 For combined multi-probe TSV, each probe's columns are interleaved per-probe:
-`v_i01, u_i01, inclination_i01, v_i02, u_i02, ...` (axis=1 concatenation).
+`v_i01, u_i01, v_i02, u_i02, ...` (axis=1 concatenation; no inclination).
 When `b_all_to_one_col=True`, probes are stacked row-wise instead.
 
 ### Text type → column layout

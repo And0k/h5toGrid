@@ -4,6 +4,7 @@ Physical-parameter calculations (:class:`xarray.Dataset` backend).
 Replaces ``tcm._dask_legacy.incl_calc.physical`` with pure
 ``xarray.Dataset`` / ``dask.array`` implementations.
 """
+
 import time as _time
 from datetime import timedelta
 from typing import Any, List, Mapping, Optional, Sequence
@@ -31,6 +32,7 @@ lf = utils2init.LoggingStyleAdapter(__name__)
 # --------------------------------------------------------------------------- #
 # Velocity
 # --------------------------------------------------------------------------- #
+
 
 def calc_velocity(
     ds: xr.Dataset,
@@ -69,8 +71,10 @@ def calc_velocity(
     Returns
     -------
     xr.Dataset
-        Same dataset with ``Vabs, Vdir, v, u, inclination`` added;
+        Same dataset with ``v, u, inclination`` added;
         raw ``Ax..Mz`` columns removed.
+        ``Vabs``/``Vdir`` are computed internally (needed for ``v``/``u``)
+        but NOT assigned — use :func:`add_vabs_vdir` for TSV export.
     """
     Axyz = ds[["Ax", "Ay", "Az"]].to_array(dim="axis")
     Mxyz = ds[["Mx", "My", "Mz"]].to_array(dim="axis")
@@ -81,7 +85,7 @@ def calc_velocity(
     incl = calc_xr._axis_first_reduce(tcm.calibration.orientation.tilt_from_vertical)(Gxyz)
 
     # GsumMinus1 = ||Gxyz|| - 1  (reduces 'axis' dim)
-    GsumMinus1 = np.sqrt((Gxyz ** 2).sum("axis")) - 1
+    GsumMinus1 = np.sqrt((Gxyz**2).sum("axis")) - 1
 
     # Process-stage NaN-out: |GsumMinus1| > threshold → null inclination
     try:
@@ -89,7 +93,7 @@ def calc_velocity(
     except (KeyError, TypeError):
         pass  # no threshold configured
     else:
-        if (n_bad := int(bad_g.sum())):
+        if n_bad := int(bad_g.sum()):
             lf.warning(
                 "Acceleration |‖G‖−1| > {} in {:d} points ({:.1f}%) => inclination nulled",
                 g_minus_1_max,
@@ -116,16 +120,18 @@ def calc_velocity(
         Hy = Hxyz.isel(axis=1)
         Hz = Hxyz.isel(axis=2)
 
-        Vdir = azimuth_shift_deg - np.degrees(np.arctan2(
-            (Gx * Hy - Gy * Hx) * (GsumMinus1 + 1),
-            Hz * (Gx ** 2 + Gy ** 2) - Gz * (Gx * Hx + Gy * Hy),
-        ))
+        Vdir = azimuth_shift_deg - np.degrees(
+            np.arctan2(
+                (Gx * Hy - Gy * Hx) * (GsumMinus1 + 1),
+                Hz * (Gx**2 + Gy**2) - Gz * (Gx * Hx + Gy * Hy),
+            )
+        )
 
         # Process-stage NaN-out: |HsumMinus1| > threshold → null Vdir
         if filt_max and "h_minus_1" in filt_max and filt_max["h_minus_1"] is not None:
-            HsumMinus1 = np.sqrt((Hxyz ** 2).sum("axis")) - 1
+            HsumMinus1 = np.sqrt((Hxyz**2).sum("axis")) - 1
             bad_h = np.abs(HsumMinus1) > filt_max["h_minus_1"]
-            if (n_bad_h := int(bad_h.sum())):
+            if n_bad_h := int(bad_h.sum()):
                 lf.warning(
                     "Magnetometer |‖H‖−1| > {} in {:d} points ({:.1f}%) => Vdir nulled",
                     filt_max["h_minus_1"],
@@ -135,21 +141,31 @@ def calc_velocity(
             Vdir = Vdir.where(~bad_h)
 
         v, u = calc.polar2dekart(Vabs, Vdir)
-        ds = ds.assign(
-            Vabs=Vabs,
-            Vdir=Vdir,
-            v=v,
-            u=u,
-            inclination=np.degrees(incl),
-        )
+        # Vabs/Vdir are NOT persisted — computed on-the-fly for TSV only (via add_vabs_vdir).
+        ds = ds.assign(v=v, u=u, inclination=np.degrees(incl))
         ds = ds.drop_vars(["Ax", "Ay", "Az", "Mx", "My", "Mz"])
 
     return ds
 
 
+def add_vabs_vdir(ds: xr.Dataset) -> xr.Dataset:
+    """Compute ``Vabs`` and ``Vdir`` on-the-fly from ``v``/``u`` for TSV export.
+
+    Vabs/Vdir are never persisted in NC files; this helper reconstructs them
+    from the cartesian velocity components (``v`` = north, ``u`` = east).
+    Returns *ds* unchanged when ``v``/``u`` are absent (e.g. ``kVabs=None``).
+    """
+    if "v" not in ds or "u" not in ds:
+        return ds
+    Vabs = np.hypot(ds["v"], ds["u"])
+    Vdir = np.degrees(np.arctan2(ds["u"], ds["v"]))
+    return ds.assign(Vabs=Vabs, Vdir=Vdir)
+
+
 # --------------------------------------------------------------------------- #
 # Pressure
 # --------------------------------------------------------------------------- #
+
 
 def calc_pressure(
     ds: xr.Dataset,
@@ -224,6 +240,7 @@ def _null_first2_per_period(
 # Full pipeline
 # --------------------------------------------------------------------------- #
 
+
 def process(
     ds_raw: xr.Dataset,
     *,
@@ -291,7 +308,10 @@ def process(
     show_progress = n_raw >= 100_000
     _bar_cls = get_tqdm_class() or tqdm  # GuiTqdm when GUI active, else terminal tqdm
     pbar = _bar_cls(
-        dt_bins_remaining, desc=f"[{pcid}] bins", unit="bin", leave=False,
+        dt_bins_remaining,
+        desc=f"[{pcid}] bins",
+        unit="bin",
+        leave=False,
         disable=not show_progress,
     )
     for dt_bin in pbar:
@@ -343,8 +363,8 @@ def process(
     result.extend(d_avgs)
     pbar.close()
 
-    # 5. Reorder columns: v, u, inclination, Vabs, Vdir first (legacy cols_out_h5 order)
-    _cols_first_names = ("v", "u", "inclination", "Vabs", "Vdir")
+    # 5. Reorder columns: v, u, inclination first (legacy cols_out_h5 order; Vabs/Vdir excluded from NC)
+    _cols_first_names = ("v", "u", "inclination")
     for i, r in enumerate(result):
         if r is not None:
             first = [c for c in _cols_first_names if c in r.data_vars]

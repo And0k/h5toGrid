@@ -349,7 +349,7 @@ def _export_tsv_from_nc(cfg: dict, pcid: str) -> None:
         csv_name = f"{ts}{suffix_csv}@{pcid}.tsv"
         csv_out = Path(text_path) / csv_name
         xr_io.ds_to_csv(
-            ds_tsv,
+            physical.add_vabs_vdir(ds_tsv),
             csv_out,
             split_period=split_period,
             text_date_format=fmt,
@@ -1040,7 +1040,7 @@ def _process_and_persist(
                     if tick and has_tsv:
                         tick(Stage.TSV, _bin_i, len(dt_bins))  # TSV stage start for this bin
                     xr_io.ds_to_csv(
-                        ds_tsv,
+                        physical.add_vabs_vdir(ds_tsv),
                         csv_out,
                         split_period=split_period,
                         text_date_format=fmt,
@@ -1122,8 +1122,10 @@ def _combine_probes(pcids: list[str], cfg: dict) -> None:
             ).strftime("%y%m%d_%H%M")
             csv_name = f"{ts}bin{bin_s}s@{joined}.tsv"
             csv_out = Path(text_path) / csv_name
+            # Combined TSV: exclude Vabs/Vdir/inclination (never saved to combined)
+            _drop_combined = [v for v in ("Vabs", "Vdir", "inclination") if v in ds_combined]
             xr_io.ds_to_csv(
-                ds_combined,
+                ds_combined.drop_vars(_drop_combined) if _drop_combined else ds_combined,
                 csv_out,
                 text_date_format=_text_date_fmt(cfg_out, bin_s),
                 text_columns=text_columns or None,
@@ -1296,6 +1298,6 @@ def process_inmemory(
         if out_csv_path is not None:
             suffix = f"_bin{bin_s}s" if bin_s else ""
             csv_path = out_csv_path.with_stem(f"{out_csv_path.stem}{suffix}")
-            xr_io.ds_to_csv(ds_out, csv_path, split_period=split_period)
+            xr_io.ds_to_csv(physical.add_vabs_vdir(ds_out), csv_path, split_period=split_period)
 
     return [r for r in results if r is not None]

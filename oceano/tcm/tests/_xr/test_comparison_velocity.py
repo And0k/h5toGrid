@@ -2,13 +2,14 @@
 
 The numpy reference pipeline is the ground truth; _xr must match it.
 """
+
 from __future__ import annotations
 
 import numpy as np
 import pytest
 from numpy.polynomial.polynomial import polyval2d
 
-from tcm._xr.physical import calc_pressure, calc_velocity
+from tcm._xr.physical import add_vabs_vdir, calc_pressure, calc_velocity
 from tcm.calibration.orientation import tilt_from_vertical
 from tcm.incl_calc.calc import (
     fG,
@@ -16,11 +17,24 @@ from tcm.incl_calc.calc import (
     v_abs_from_incl,
 )
 
-_VELOCITY_COLS = ("Vabs", "Vdir", "v", "u", "inclination")
+# calc_velocity returns v, u, inclination; Vabs/Vdir are computed on-the-fly for TSV only
+_PERSISTED_COLS = ("v", "u", "inclination")
 
 
 def _reference_velocity_pipeline(
-    Ax, Ay, Az, Mx, My, Mz, *, Ag, Cg, Ah, Ch, kVabs, azimuth_shift_deg=0.0,
+    Ax,
+    Ay,
+    Az,
+    Mx,
+    My,
+    Mz,
+    *,
+    Ag,
+    Cg,
+    Ah,
+    Ch,
+    kVabs,
+    azimuth_shift_deg=0.0,
     calc_version="trigonometric(incl)",
 ):
     """Pure-numpy reference — mirrors _dask_legacy without dask/despike/recovery."""
@@ -32,16 +46,18 @@ def _reference_velocity_pipeline(
     GsumMinus1 = np.linalg.norm(Gxyz, axis=0) - 1
     Vabs = v_abs_from_incl(incl, kVabs, calc_version=calc_version)
     # Vdir formula from _dask_legacy (with GsumMinus1+1 correction)
-    Vdir = azimuth_shift_deg - np.degrees(np.arctan2(
-        (Gxyz[0, :] * Hxyz[1, :] - Gxyz[1, :] * Hxyz[0, :]) * (GsumMinus1 + 1),
-        Hxyz[2, :] * (Gxyz[0, :] ** 2 + Gxyz[1, :] ** 2)
-        - Gxyz[2, :] * (Gxyz[0, :] * Hxyz[0, :] + Gxyz[1, :] * Hxyz[1, :])
-    ))
+    Vdir = azimuth_shift_deg - np.degrees(
+        np.arctan2(
+            (Gxyz[0, :] * Hxyz[1, :] - Gxyz[1, :] * Hxyz[0, :]) * (GsumMinus1 + 1),
+            Hxyz[2, :] * (Gxyz[0, :] ** 2 + Gxyz[1, :] ** 2)
+            - Gxyz[2, :] * (Gxyz[0, :] * Hxyz[0, :] + Gxyz[1, :] * Hxyz[1, :]),
+        )
+    )
     v, u = polar2dekart(Vabs, Vdir)
     return {"Vabs": Vabs, "Vdir": Vdir, "v": v, "u": u, "inclination": np.degrees(incl)}
 
 
-def _assert_velocity_matches(result, ref, *, atol=1e-10, cols=_VELOCITY_COLS):
+def _assert_velocity_matches(result, ref, *, atol=1e-10, cols=_PERSISTED_COLS):
     """Assert xr calc_velocity output matches numpy reference for each column."""
     for col in cols:
         assert col in result, f"Missing column '{col}'"
@@ -52,6 +68,7 @@ def _assert_velocity_matches(result, ref, *, atol=1e-10, cols=_VELOCITY_COLS):
 # _xr vs numpy reference
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.xr
 @pytest.mark.comparison
 class TestVelocityComparison:
@@ -60,8 +77,12 @@ class TestVelocityComparison:
     def test_identity_calibration(self, sensor_ds, identity_coefs):
         """Clean data, identity calibration → _xr matches reference."""
         ref = _reference_velocity_pipeline(
-            sensor_ds.Ax.values, sensor_ds.Ay.values, sensor_ds.Az.values,
-            sensor_ds.Mx.values, sensor_ds.My.values, sensor_ds.Mz.values,
+            sensor_ds.Ax.values,
+            sensor_ds.Ay.values,
+            sensor_ds.Az.values,
+            sensor_ds.Mx.values,
+            sensor_ds.My.values,
+            sensor_ds.Mz.values,
             **identity_coefs,
         )
         _assert_velocity_matches(calc_velocity(sensor_ds, **identity_coefs), ref)
@@ -69,8 +90,12 @@ class TestVelocityComparison:
     def test_simple_calibration(self, sensor_ds, simple_coefs):
         """Non-trivial calibration → _xr matches reference."""
         ref = _reference_velocity_pipeline(
-            sensor_ds.Ax.values, sensor_ds.Ay.values, sensor_ds.Az.values,
-            sensor_ds.Mx.values, sensor_ds.My.values, sensor_ds.Mz.values,
+            sensor_ds.Ax.values,
+            sensor_ds.Ay.values,
+            sensor_ds.Az.values,
+            sensor_ds.Mx.values,
+            sensor_ds.My.values,
+            sensor_ds.Mz.values,
             **simple_coefs,
         )
         _assert_velocity_matches(calc_velocity(sensor_ds, **simple_coefs), ref)
@@ -82,26 +107,41 @@ class TestVelocityComparison:
             assert col not in result, f"Raw column '{col}' not removed"
 
     def test_with_azimuth_shift(self, sensor_ds, identity_coefs):
-        """Azimuth shift adds offset to Vdir."""
+        """Azimuth shift adds offset to Vdir (verified via add_vabs_vdir on-the-fly)."""
         coefs = {**identity_coefs, "azimuth_shift_deg": 30.0}
         result = calc_velocity(sensor_ds, **coefs)
         ref = _reference_velocity_pipeline(
-            sensor_ds.Ax.values, sensor_ds.Ay.values, sensor_ds.Az.values,
-            sensor_ds.Mx.values, sensor_ds.My.values, sensor_ds.Mz.values,
+            sensor_ds.Ax.values,
+            sensor_ds.Ay.values,
+            sensor_ds.Az.values,
+            sensor_ds.Mx.values,
+            sensor_ds.My.values,
+            sensor_ds.Mz.values,
             **coefs,
         )
-        np.testing.assert_allclose(result.Vdir.values, ref["Vdir"], atol=1e-10)
+        assert "Vdir" not in result, "Vabs/Vdir should not be in calc_velocity output"
+        result_with_vabs = add_vabs_vdir(result)
+        np.testing.assert_allclose(result_with_vabs.Vdir.values, ref["Vdir"], atol=1e-10)
 
     def test_zero_kVabs_no_velocity(self, sensor_ds, identity_coefs):
-        """kVabs=None → no Vabs/Vdir/v/u computed."""
+        """kVabs=None → no velocity columns computed at all."""
         result = calc_velocity(sensor_ds, **{**identity_coefs, "kVabs": None})
         for col in ("Vabs", "Vdir", "v", "u"):
             assert col not in result, f"'{col}' should not exist when kVabs=None"
+
+    def test_Vabs_Vdir_not_persisted(self, sensor_ds, identity_coefs):
+        """Vabs/Vdir are NOT in calc_velocity output (computed on-the-fly for TSV only)."""
+        result = calc_velocity(sensor_ds, **identity_coefs)
+        assert "Vabs" not in result, "Vabs should not be in calc_velocity output"
+        assert "Vdir" not in result, "Vdir should not be in calc_velocity output"
+        assert "v" in result, "v must be persisted"
+        assert "u" in result, "u must be persisted"
 
 
 # --------------------------------------------------------------------------- #
 # Pressure comparison
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.xr
 @pytest.mark.comparison

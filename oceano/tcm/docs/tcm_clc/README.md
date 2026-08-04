@@ -88,10 +88,11 @@ The pipeline processes raw sensor data through three high-level stages:
    user-specified time windows.
 
 3. **Processing & Export** — computes velocity projections (`u`, `v`),
-   absolute speed (`Vabs`), direction (`Vdir`), sensor inclination, and optional
-   pressure. Averages over configurable bin intervals (default in the full
-   distribution: none, 2 s, 600 s, 3600 s, 7200 s). Saves to NetCDF4 with
-   per-probe groups and exports TSV text files.
+   sensor inclination, and optional pressure. Absolute speed (`Vabs`) and
+   direction (`Vdir`) are computed on-the-fly for per-probe TSV export only
+   (never persisted in NC files or combined TSV). Averages over configurable
+   bin intervals (default in the full distribution: none, 2 s, 600 s, 3600 s,
+   7200 s). Saves to NetCDF4 with per-probe groups and exports TSV text files.
 
 ## What You Get
 
