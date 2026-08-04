@@ -1,6 +1,5 @@
 from pathlib import Path
-from typing import Any, Mapping, Sequence, Tuple, Dict, Set, Optional
-
+from typing import Any, Final, Mapping, Sequence, Tuple, Dict, Set, Optional
 import numpy as np
 import re
 
@@ -50,47 +49,57 @@ def get_info_from_filename(basename) -> Tuple[Optional[Tuple[Any]], Mapping[str,
     - If last data in db was at '2020-09-17T20:20:00'
     3h_to_last_tr0 -> (['2020-09-17T20:15:00', '2020-09-17T20:20:00'], 'tr0')
     """
+    MAX_DEV: Final[int] = 9  # allow comma separated list of this + 1 number of devices
+    _TYPE: Final[str] = r"(?:i(?:ncl)?|INKL|w|tr|ADV|ECMWF|CMEMS)"
+    _NUM: Final[str] = r"\d+(?:-\d+)?"
     print(f'"{basename}"', end=" ")
-    max_devices_idx = 9  # allow comma separated list of this + 1 number of devices
-    re_time = r"(?P<yy>\d\d)(?P<mm>\d\d)(?P<dd>\d\d)[_T]?(?P<HH>\d\d)?(?P<MM>\d\d)?(?P<SS>\d\d)?"
-    d = r"\d"  # digits
     custom_device_types = ('i', 'w', 'tr')  # our devices which pids will have zero prefix if `number` < 2
 
-    def re_model_and_number(i: int):
+    def _time(suffix: str = "", date_mandatory: bool = False) -> str:
+        opt_date = "" if date_mandatory else "?"
+        return "[_T]?".join(
+            "".join(rf"(?P<{t}{suffix}>\d\d){opt}" for t in time_fields)
+            for time_fields, opt in [(("yy", "mm", "dd"), opt_date), (("HH", "MM", "SS"), "?")]
+        )
+
+    def _device(i: int, last: int = MAX_DEV) -> str:
         """
         Regex to get `model` and `number`
         Must ends with number except for last device where allowed any [A-Za-z_-] chars
         optionally ending with numbers (for `number`)
-        # Regex field `is_type_mod` for last (used only if one) device just denotes that user wants the type and model be used together
         """
-        return (
-            f"(?P<model{i}>[DBPdbp]?)(?P<number{i}>{d}+(-{d}+)?)"
-            if i < max_devices_idx
-            else f"(?P<model{i}>[A-Za-z][A-Za-z_-]*)(?P<number{i}>{d}+(-{d}+)?)"
+        # some allowed types&models are switches under "Load text file(s) in Veusz" below
+        model = (
+            rf"(?P<model{i}>[A-Za-z][A-Za-z_-]*)"
+            if i == last
+            else rf"(?P<model{i}>[DBPdbp]?)"
+        )
+        number = rf"(?P<number{i}>{_NUM}){'?' if i == last else ''}"
+        return rf"(?P<type{i}>{_TYPE})?_?{model}{number}"
+        # add if need: Regex field `is_type_mod` for last (used only if one) device just denotes that user
+        # wants the type and model be used together
+
+    def _devices(last: int = MAX_DEV) -> str:
+        return "".join(
+            rf"(?:{',' if i else ''}{_device(i, last)})?"
+            for i in range(last + 1)
         )
 
-    re_exp = (
+    re_exp: Final[str] = (
         r"(?:"
-        r"(?:{time}|(?P<dt_to_last>\d+(?:h|s))_to_last)?"
-        r"(?:(?:\.\.|-){time_end})?(?:[_,]? ?(?:dt=)?{dt})?"
+        rf"(?:{_time(date_mandatory=True)}|(?P<dt_to_last>\d+(?:h|s))_to_last)?"
+        rf"(?:(?:\.\.|-){_time(suffix='e')})?"
+        rf"(?:[_,]? ?(?:dt=)?{re_dt})?"
         r"(?:[,_]?d(?P<decimation>\d+))?"
         r")?"
         r"(?:[Ss]t_?(?P<st0>[A-Za-z\d_]+[^-,_]))?"
-        r"(?:@{pids})?"
+        rf"(?:@{_devices()})?"
         r"(?:[Ss]t_?(?P<st>[A-Za-z\d_]+[^-,_]))?"
         r"(?:[-,_] ?(?P<descr>[^@\d][^@]*))?\.vsz"
-    ).format(
-        time=re_time,  # end time have same parts but optional and with new names:
-        time_end=re_time.replace(">", "e>").replace(")(", ")?(").replace(")[", ")?["),
-        dt=re_dt,
-        pids="".join(  # some allowed types&models are switches under "Load text file(s) in Veusz" below
-            rf"{'?,?' if i else ''}((?P<type{i}>i(ncl)?|INKL|w|tr|ADV|ECMWF|CMEMS|)_?"
-            f"{re_model_and_number(i)})"
-            for i in range(max_devices_idx + 1)
-        ),
     )
-    re_parts = re.match(re_exp, basename)
-    if re_parts is not None:
+
+
+    if (re_parts := re.match(re_exp, basename)) is not None:
         re_parts = re_parts.groupdict()
     if re_parts is None:
         raise (NameError(f'File name: "{basename}" not matches regex "{re_exp}"'))
@@ -157,7 +166,7 @@ def get_info_from_filename(basename) -> Tuple[Optional[Tuple[Any]], Mapping[str,
     devices = {}
     model = None
     device_type = None
-    for i in range(max_devices_idx + 1):
+    for i in range(MAX_DEV + 1):
         number = re_parts.pop(f"number{i}")
         if not number:
             device_type_cur = re_parts.pop(f"type{i}")
@@ -199,7 +208,7 @@ def get_info_from_filename(basename) -> Tuple[Optional[Tuple[Any]], Mapping[str,
             }
         },
         "descr": re_parts["descr"],
-        "is_type_mod": model and ("-" in model),  # re_parts[f"model{max_devices_idx}"] (?P<is_type_mod>-?)
+        "is_type_mod": model and ("-" in model),  # re_parts[f"model{MAX_DEV}"] (?P<is_type_mod>-?)
     }
     if re_parts["decimation"]:
         out_info["decimation"] = int(re_parts["decimation"])

@@ -29,7 +29,7 @@ def vsz_draw_init_tcm(
     :param probes:
     :param time_range:
     :param device_dir:
-    :param db_stem:
+    :param db:
     :param cus:
     :param use_bins: bin average intervals and corresponding data names prefixes.
     defaults to {"": 2, "bin_": 600, "bin2_": 3600} [s].
@@ -67,8 +67,8 @@ def vsz_draw_init_tcm(
     else:
         cus.add_later(USE_bursts=set())
         # todo: autoget and use pulse ratio
-    ids_w = [pid for pid in ids_i if pid.startswith("_w")]
-    if ids_w:
+
+    if (ids_w := [pid for pid in ids_i if pid.startswith("_w")]):
         ids_i = [pid for pid in ids_i if not pid.startswith("_w")]
         # f'_w{int(n):02d}' for n in ''.split(',') if n]
 
@@ -87,27 +87,20 @@ def vsz_draw_init_tcm(
                     # assigning to any value - it will not be used
                     ids_order[id_to_load] = None
 
-                    # Also adding items for stacked devices in meta_devices by combining existed items (and copy other used items)
+                    # Also adding items for stacked devices in meta_devices by combining existed items
+                    # (and copy other used items)
                     idls = [s for s in re.split(r"([^\d]+\d+)_", id_to_load1) if s]
                     if len(idls) > 1:
                         # print([meta_devices[f'{id_to_load1[0]}{idl[-2:]}'] for idl in id_to_load1.split('_')])
-                        meta_devices[
-                                id_to_load1
-                            ] = [  # combine str items, use 1st item for numbers
-                                ",".join(vv)
-                                if isinstance(vv[0], str) and iparam != 0
-                                else vv[0]
-                                for iparam, vv in enumerate(
-                                    zip(
-                                        *[
-                                            meta_devices_all[
-                                                f"{id_to_load[0]}{idl[-2:]}"
-                                            ]
-                                            for idl in idls
-                                        ]
-                                    )
-                                )
-                            ]  # ((p,p),(b,b),(bd,bd),(s,s))
+                        meta_devices[id_to_load1] = [
+                            # combine str items, use 1st item for numbers
+                            ",".join(vv)
+                            if isinstance(vv[0], str) and iparam != 0
+                            else vv[0]
+                            for iparam, vv in enumerate(
+                                zip(*[meta_devices_all[f"{id_to_load[0]}{idl[-2:]}"] for idl in idls])
+                            )
+                        ]  # ((p,p),(b,b),(bd,bd),(s,s))
                     else:
                         meta_devices[id_to_load1] = val  # (p,b,bd,s,*lat_lon)
 
@@ -172,7 +165,6 @@ def vsz_draw_init_tcm(
     # load db with one table for all devices if binned data will be needed
 
     b_one_table = db.stem.endswith('.proc')  # still may load other db with separate table for each device
-
     b_load_all_data = False
     if b_load_all_data:
         # try:
@@ -249,26 +241,33 @@ def vsz_draw_init_tcm(
         params = (["u", "v"] if ids_i else []) + ["Temp"]
         for is_binning, ub in groupby(use_bins.items(), lambda x: x[1] > 0):
             if is_binning:  # bin > 0
-                cols_name_map = {"index": "t_ns"}
+                cols_name_map = {t_orig_name: t_name}
                 if b_one_table:
                     h5_group_to_bin_prefix = {
                         f"{'i' if ids!=ids_w else 'w'}_bin{dt_s}s": bin for bin, dt_s in ub
                     }
                     top_groups = list(h5_group_to_bin_prefix.keys())
 
-                    # for bin, dt_s in ub.items():  # ?
-                    if b_old_format_in_h5:
-                        for idci, idci_old in zip(ids_i, ids_i_old):
-                            for prm in params:
-                                cols_name_map[f"{prm}{idci_old}"] = f"{prm}{idci}"
+                    if db.suffix == ".h5":
+                        if b_old_format_in_h5:
+                            for idci, idci_old in zip(ids_i, ids_i_old):
+                                for prm in params:
+                                    cols_name_map[f"{prm}{idci_old}"] = f"{prm}{idci}"
+                        else:
+                            for idci in ids_i:
+                                for prm in params:
+                                    cols_name_map[f"{prm}{idci}"] = f"{prm}{idci}"  # need?
+                        for id_p, idc in zip(ids_ip, ids_p):
+                            cols_name_map[f"Pressure{id_p}"] = f"P{idc}"
+                        # if any(ids_w) or any(ids_p):
+                        #     # - wave gauges
+
                     else:
-                        for idci in ids_i:
-                            for prm in params:
-                                cols_name_map[f"{prm}{idci}"] = f"{prm}{idci}"  # need?
-                    for id_p, idc in zip(ids_ip, ids_p):
-                        cols_name_map[f"Pressure{id_p}"] = f"P{idc}"
-                    # if any(ids_w) or any(ids_p):
-                    #     # - wave gauges
+                        cols_name_map.update({f"{prm}": f"{prm}" for prm in params})
+                        # if len(probes["devices"]) > 1 else params
+                        for id_p in ids_p:
+                            cols_name_map[f"Pressure{id_p}"] = f"P{id_p}"
+                        cols_name_map["probe"] = "probe"
                 else:
                     h5_group_to_bin_prefix = {
                         f"{pid.removeprefix('_')}bin{dt_s}s": (bin, pid)
@@ -276,13 +275,8 @@ def vsz_draw_init_tcm(
                         for pid in ids  # ids_i
                     }
                     top_groups = list(h5_group_to_bin_prefix.keys())
-                    cols_name_map.update(
-                        {
-                            f"{prm}": f"{prm}"
-                            for prm in params
-                            # if len(probes["devices"]) > 1 else params
-                        }
-                    )
+                    cols_name_map.update({f"{prm}": f"{prm}" for prm in params})
+                    # if len(probes["devices"]) > 1 else params
                     for id_p in ids_p:
                         cols_name_map[f"Pressure{id_p}"] = f"P{id_p}"
                 if any(ids_w):
@@ -293,7 +287,7 @@ def vsz_draw_init_tcm(
                     if b_one_table:
                         bin = h5_group_to_bin_prefix[device_id]
                         if device_id in ids_w:
-                            if col == "index":  # 't_ns'?
+                            if col == t_orig_name:  # 't_ns'?
                                 prefix = ""
                                 sfx = "_w"
                             else:
@@ -310,7 +304,7 @@ def vsz_draw_init_tcm(
                     return f"{prefix}{bin}{col}{sfx}"
                 db_for_bin = db
             else:  # no binning (bin = 0 means this): loading from *.proc_noAvg.h5 db
-                cols_name_map = {"index": "t_ns", **dict(zip(params, params))}
+                cols_name_map = {t_orig_name: t_name, **dict(zip(params, params))}
                 if ids_p or ids_w:
                     cols_name_map["Pressure"] = "P"
                 top_groups = {pid.removeprefix("_") for pid in ids}  # ids_i
@@ -332,7 +326,7 @@ def vsz_draw_init_tcm(
             existed_devs, time_range_raw, i_ranges = vsz_add_data.veusz_load_hdf5(
                 db_for_bin,
                 top_groups,
-                grp_d={"table": "/table/"},
+                grp_d={"table": group_data},  # veusz_load_hdf5 defaults
                 cols_namemap={"table": cols_name_map},
                 grp_d_rename_funs={"table": f_table_cols_fmt},
                 time_range=time_range,
@@ -353,7 +347,7 @@ def vsz_draw_init_tcm(
     if ids_w:
         bin_max_w = list(use_bins_w)[-1]
 
-    # separately for iclinometers and wave gauges
+    # separately for inclinometers and wave gauges
     for devs, sfx_w, ub, bin0 in [  # devices, w suffix for wave gauges, bins to use, name of min bin
         (ids_i, "", use_bins, bin0name),  # inclinometers
         (ids_w, "w", *((use_bins_w, next(iter(use_bins_w))) if ids_w else ([], None))),  # wave gauges
@@ -367,7 +361,7 @@ def vsz_draw_init_tcm(
                 if t_sfx is not None:
                     SetDataExpression(
                         "dt" if not bin else f"{bin[:-1]}{sfx_w}",
-                        f"1E-9*min(diff({bin}t_ns{t_sfx}[:3]))",
+                        f"min(diff({bin}{t_name}{t_sfx}[:3])){t_mul}",
                         linked=True,
                     )
                 # Intervals for each device
@@ -387,8 +381,8 @@ def vsz_draw_init_tcm(
                             )
                             SetData2DExpression(
                                 f"iu{pid}",
-                                f"v.min_range_2d(atleast_2d(v.i_positive(v.i_use(t_ns_w, USEtime{pid}, "
-                                f"t_shift_s=USE_timeShift_s), t_ns_w.size)), iUseAuto{pid})",
+                                f"v.min_range_2d(atleast_2d(v.i_positive(v.i_use({t_name}_w, USEtime{pid}, "
+                                f"t_shift_s=USE_timeShift_s), {t_name}_w.size)), iUseAuto{pid})",
                                 linked=True,
                             )
                         SetDataExpression(
@@ -404,21 +398,21 @@ def vsz_draw_init_tcm(
                         )
                         SetData2DExpression(
                             f"iu{pid}",
-                            f"v.min_range_2d(atleast_2d(v.i_positive(v.i_use(t_ns{t_sfx}, USEtime{pid}, "
-                            f"t_shift_s=USE_timeShift_s), t_ns{t_sfx}.size)), iUseAuto{pid})",
+                            f"v.min_range_2d(atleast_2d(v.i_positive(v.i_use({t_name}{t_sfx}, USEtime{pid}, "
+                            f"t_shift_s=USE_timeShift_s), {t_name}{t_sfx}.size)), iUseAuto{pid})",
                             linked=True,
                         )
                         # SetData2DExpression(
                         #     f"iu{pid}",
-                        #     f"searchsorted({bin}t_ns{t_sfx}, (float64(array(DISPtime, 'datetime64[ns]'))) - "
-                        #     f"USE_timeShift_s*1E9) if len(DISPtime)>0 else [[0, {bin}t_ns{sfx_w}.size]]",
+                        #     f"searchsorted({bin}{t_name}{t_sfx}, (float64(array(DISPtime, 'datetime64[ns]'))) - "
+                        #     f"USE_timeShift_s*1E9) if len(DISPtime)>0 else [[0, {bin}{t_name}{sfx_w}.size]]",
                         #     linked=True
                         # )
                         SetDataExpression(
                             f"time_span{pid}",
-                            f"around(v.dt64s2vsz(1E-9*{bin}t_ns{t_sfx}[sl_(iu{pid})][[0, -1]] + "
+                            f"around(v.dt64s2vsz({bin}{t_name}{t_sfx}[sl_(iu{pid})][[0, -1]]{t_mul} + "
                             "USE_timeShift_s) / 60) * 60",
-                            linked=True
+                            linked=True,
                         )
             elif devs:
                 ## Binning
@@ -440,8 +434,8 @@ def vsz_draw_init_tcm(
                     SetData2DExpression(
                         f"{bin}iu{pid}",
                         (
-                            f"[searchsorted({bin}t_ns{t_sfx}, {bin0}t_ns{t0sfx}[int32(clip("
-                            f"iu{pid}[0], 0, {bin0}t_ns{t0sfx}.size - 1))]) + int32([0, -1])]"
+                            f"[searchsorted({bin}{t_name}{t_sfx}, {bin0}{t_name}{t0sfx}[int32(clip("
+                            f"iu{pid}[0], 0, {bin0}{t_name}{t0sfx}.size - 1))]) + int32([0, -1])]"
                         ),
                         linked=True,
                     )
@@ -449,7 +443,7 @@ def vsz_draw_init_tcm(
                     SetData2DExpression(
                         f"{bin}iu_cmn{pid}",
                         (
-                            f"[searchsorted({bin}t_ns{t_sfx}, "
+                            f"[searchsorted({bin}{t_name}{t_sfx}, "
                             "v.vsz2dt64s(time_span_i_common).astype(int)*1E9) + int32([0, -1])]"
                         ),
                         linked=True,
@@ -459,7 +453,7 @@ def vsz_draw_init_tcm(
                     # Time for individual devices
                     SetDataExpression(
                         f"{bin}t0st{pid}",
-                        f"v.dt64s2vsz(1E-9*{bin}t_ns{t_sfx}[sl_({bin}iu{pid})]) + USE_timeShift_s",
+                        f"v.dt64s2vsz({bin}{t_name}{t_sfx}[sl_({bin}iu{pid})]{t_mul}) + USE_timeShift_s",
                         linked=True,
                     )
 
@@ -475,7 +469,7 @@ def vsz_draw_init_tcm(
                     )
                 SetDataExpression(
                     f"{bin[:-1]}{sfx_w}",
-                    f"1E-9*min(diff({bin}t_ns{t_sfx}[:3]))",
+                    f"min(diff({bin}{t_name}{t_sfx}[:3])){t_mul}",
                     linked=True,
                 )
     SetDataExpression(
@@ -504,13 +498,13 @@ def vsz_draw_init_tcm(
         t_sfx = "" if b_one_table else pid
         SetData2DExpression(
             f"binB_iu{pid}",
-            f"[searchsorted(binB_t_ns{t_sfx}, {bin0name}t_ns{t0sfx}[int32("
-            f"clip(iu{pid}[0], 0, {bin0name}t_ns{t0sfx}.size - 1))]) + int32([0, -1])]",
+            f"[searchsorted(binB_{t_name}{t_sfx}, {bin0name}{t_name}{t0sfx}[int32("
+            f"clip(iu{pid}[0], 0, {bin0name}{t_name}{t0sfx}.size - 1))]) + int32([0, -1])]",
             linked=True,
         )
         SetDataExpression(
             f"binB_t0st{pid}",
-            f"v.dt64s2vsz(1E-9*binB_t_ns{t_sfx}[sl_(binB_iu{pid})] + USE_timeShift_s)",
+            f"v.dt64s2vsz(binB_{t_name}{t_sfx}[sl_(binB_iu{pid})]{t_mul} + USE_timeShift_s)",
             linked=True,
         )
         SetDataExpression(

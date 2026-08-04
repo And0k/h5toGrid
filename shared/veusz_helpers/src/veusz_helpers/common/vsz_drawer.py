@@ -835,7 +835,7 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
             Set("hide", True)
             Set(
                 "xPos",
-                f"v.dt64s2vsz(1E-9*t_ns{t0sfx}{'' if b_one_table else pid}[sl_(iu{pid})]) "
+                f"v.dt64s2vsz({t_name}{t0sfx}{'' if b_one_table else pid}[sl_(iu{pid})]{t_mul}) "
                 "+ USE_timeShift_s",
             )
             Set(
@@ -927,7 +927,7 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
             else:
                 Set(
                     "xPos",
-                    f"v.dt64s2vsz(1E-9*t_ns{pid_for_time}[sl_(*iu{pid})]) + "
+                    f"v.dt64s2vsz({t_name}{pid_for_time}[sl_(*iu{pid})]{t_mul}) + "
                     f"USE_timeShift_s{disp_vec.shift}",
                 )
                 Set("length", f"absolute(u{pid} + v{pid})*DISPscale_page_vectors")
@@ -1758,7 +1758,7 @@ def pg_1d(
                         f"{bin}t0st{pid_for_time}"
                         if bin
                         else (
-                            f"v.dt64s2vsz(1E-9*t_ns{t0sfx}[sl_(*iu{pid_for_time})]{only_finite}) + "
+                            f"v.dt64s2vsz({t_name}{t0sfx}[sl_(*iu{pid_for_time})]{only_finite}{t_mul}) + "
                             "USE_timeShift_s"
                         )
                     )
@@ -1874,9 +1874,8 @@ def pg_1d(
                         Set("PlotLine/style", "dotted-fine")
                     To("..")
 
-        bin0name_cur = (
-            list(use_bins_w)[0] if pid.startswith("_w") else bin0name
-        )  # if main_param == 'P'
+        bin0name_cur = list(use_bins_w)[0] if pid.startswith("_w") else bin0name  # if main_param == 'P'
+
 
         # Parameter averaged by binAB
         for i, (p, p_clr) in enumerate(zip(params_cur, (binAB_color, "#ff44ff"))):
@@ -1943,7 +1942,7 @@ def pg_1d(
                         / (disp_dtime_range_s + 20000)
                         * cfg_plot.graph_width_standard
                         / (415 - cfg_plot.grid_horMargins_sum)
-                    )
+                    ).item()
                     transparency = int(value) if value > 0 else 0
                     Set("PlotLine/color", "red" if p_clr == "yellow" else p_clr)
                     Set("PlotLine/width", "0.25pt")
@@ -1959,10 +1958,9 @@ def pg_1d(
                         * (disp_dtime_range_s - 500)
                         / (disp_dtime_range_s + 20000)
                         * min(cfg_plot.graph_width_standard / cur_graph_width, 1)
-                    )
-                    transparency = (
-                        int(value) if value > 0 else 0
-                    )  # 0.1 px line of transparency 99% is invisible so make its max transparency 30%
+                    ).item()  # 0.1 px line of transparency 99% is invisible so make its max transparency 30%
+                    transparency = (int(value) if value > 0 else 0)
+
                     # - int(1/(5/30 if pid in cus.USE_bursts else 15/60 if pid in ids_w else 1))
                     # theoretic: 5/30, 15/60 # practic: 50/90
                     Set("PlotLine/color", p_clr)  # and pid not in cus.USE_bursts
@@ -2636,8 +2634,8 @@ def pg_progress(graphs, clr_by="probe", aspect=1, b_dt_big=True, cfg_plot=None):
                 Set(
                     f"{x}Data",
                     f"append(nanmean({u}{pid}[sl_([iu{pid}[0,0], searchsorted("
-                    f"t_ns{t0sfx}{'' if b_one_table else pid}, "
-                    f"1E9*({bin}t0st{pid}[0] - USE_timeShift_s))])])*{bin[:-1]}, {bin}{u}_cum{pid})",
+                    f"{t_name}{t0sfx}{'' if b_one_table else pid}, "
+                    f"({bin}t0st{pid}[0] - USE_timeShift_s))])])*{bin[:-1]}/(1{mul}), {bin}{u}_cum{pid})",
                 )
             Set("hide", n_graphs > 1)
             Set("xAxis", "x_km")

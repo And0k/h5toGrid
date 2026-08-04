@@ -256,7 +256,7 @@ def veusz_load_hdf5(
         if grp_d is None:
             grp_d = {"table": "/table/"}
         time_var_name = "index"
-    else:
+    else:  # .nc
         if grp_d is None:
             grp_d = {"table": "/"}
         time_var_name = "time"
@@ -432,12 +432,23 @@ def veusz_load_hdf5_tcm_raw(
         for pid, probe in _
     ]
 
+    if file.suffix == ".h5":
+        t_name = "t_ns"
+        t_orig_name = "index"
+        t_mul = " * 1e-9"
+        group_data = "/table/"
+    else:
+        t_name = "t_s"
+        t_orig_name = "time"
+        t_mul = ""
+        group_data = "/"
+
     grp_d = {
         "coef": "/coef/",
-        "table": ("/table/" if file.suffix == ".h5" else "/"),
+        "table": group_data,
     }
     table_cols_to_slice_namemap_common = {  # common parameters which time slice is need to load
-        **({"index": "t_ns"} if file.suffix == ".h5" else {"time": "t_s"}),
+        t_orig_name: t_name,
         "P_counts": "_P_counts",
         "P": "_P_counts",
         "Temp": "Temp",
@@ -460,9 +471,9 @@ def veusz_load_hdf5_tcm_raw(
         }
 
         if dev_dir:
-            file = dev_dir / f"{dev_dir.stem}.proc_noAvg.h5"
+            file = dev_dir / f"{dev_dir.stem}.proc_noAvg{file.suffix}"
             if not Path(file).is_file():  # try & except not works here (OSError)
-                file = dev_dir.stem / f"{dev_dir.stem}@w.proc_noAvg.h5"
+                file = dev_dir.stem / f"{dev_dir.stem}@w.proc_noAvg{file.suffix}"
 
             del grp_d["coef"]
             SetDataExpression("kP", "[1, 0]", linked=True)  # 1:1
@@ -538,9 +549,9 @@ def veusz_load_hdf5_tcm_raw(
                 print("KeyError:", e, "Skipping TagDatasets and continue...")
 
     # Add time which should be used by all functions used for ~drawer@i.vsz as veusz_load_csv_tcm_raw give it
-    if file.suffix != ".h5":  # .nc
+    if file.suffix != ".h5":  # for legacy expressions
         SetDataExpression("_t_ns__", "1E9*_t_s__", linked=True)
-    SetDataExpression("time__", "v.dt64s2vsz(1E-9*_t_ns__[v.sl(iu__)]) + USE_timeShift_s", linked=True)
+    SetDataExpression("time__", f"v.dt64s2vsz(_{t_name}__[v.sl(iu__)]{t_mul}) + USE_timeShift_s", linked=True)
 
     return (
         existed_devs,

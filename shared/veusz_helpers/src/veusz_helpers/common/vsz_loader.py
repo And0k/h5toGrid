@@ -447,6 +447,20 @@ if __name__ in ("__main__", "builtins"):
         else device_dir
     )
 
+    # Parent folder encodes folder where get data `data_dir` relative to current dir `parent` if has "vsz"
+    # - by ".." before "vsz" in its name: means the number of parent levels relative to vsz folder
+    # - by "vsz({dir})" to point on sibling folder {dir}. "vsz" alone means that data in parent folder
+    if "vsz" in parent.name:
+        # 1. Check/use "..vsz" parent dir encoding: '..' used to encode data_dir location
+        _ = parent.name.rsplit("..", 1)[-1]
+        m = parent.name.count("..")
+        data_dir = parent.parents[m]
+        if m := re.match(r"_?vsz\(([^)=]+)\)", _[-1]) or re.match(r"_?vsz\(dir=([^,)=]+)", _[-1]):
+            data_dir = data_dir.with_name(m.group(1))  # if m else device_dir
+    else:
+        data_dir = device_dir
+
+
     # if any(probes["devices"]):
     #    # Probes have been determined from file name or parent dir - add common info to each probe?
     #    for pid, probe in probes["devices"].items():
@@ -480,27 +494,29 @@ if __name__ in ("__main__", "builtins"):
     # get 1st pid & probe
     pid, probe = next(iter(probes["devices"].items()))
 
-
     #################################################################
-    # Check whether default DB file (*.h5) exist to load data from it
+    # Check whether default DB file exist to load data from it
     #################################################################
     try:  # DB specified in dir name?
         db_stem = re.match(".*,db_stem=([^,)]+)", parent.name).group(1)
         print(f"DB from dir name: {db_stem}")
     except Exception:
-        db_stem = (device_dir if device_dir.name[0].isdigit() else (device_dir.parent if parent.name != "profiles_vsz" else cruise_dir)).name.split("@")[0]
+        db_stem = (
+            device_dir
+            if device_dir.name[0].isdigit()
+            else (device_dir.parent if parent.name != "profiles_vsz" else cruise_dir)
+        ).name.split("@")[0]
 
     # Does it must be raw DB? - search "*.raw.h5" or skip if parent (up to 2 levels) folder contain "txt"
     b_use_db_raw = "_raw" in parent.parent.parts
     if "txt" in parent.name or "txt" in parent.parent.name:
         b_use_db_raw = False
 
-    b_device_is_tcm = (
+    time_range_raw = []  # time range from raw data
+    if (b_device_is_tcm := (
         any(p for p in device_dir.parts if p.startswith("inclinometer"))
         or probe["type"] == "i"
-    )
-    time_range_raw = []  # time range from raw data
-    if b_device_is_tcm:
+    )):
         # DB stem should not contain "_" (but dir can)
         db_stem = db_stem.split('_', maxsplit=1)[0]
         if b_use_db_raw:
@@ -538,71 +554,81 @@ if __name__ in ("__main__", "builtins"):
                 if len(probes["devices"]) > 1
                 else [".proc_Avg", ".proc"]
             ):
-                _ = list(device_dir.glob(f"*{sfx}.h5"))
-                if not any(_):
+                for sfx_last in sfx_db:
+                    _ = list(device_dir.glob(f"*{sfx}{sfx_last}"))
+                    if any(_):
+                        dbs += _
+                        _ = [f.name for f in _]
+                        try:
+                            db = dbs[_.index(f"{db_stem}{sfx}{sfx_last}")]
+                            b_db_ok = True
+                            break
+                        except ValueError:  # file name with `db_stem` - not found, other with `sfx` - exist
+                            continue
+                else:
                     continue
-                dbs += _
-                _ = [f.name for f in _]
-                try:
-                    db = dbs[_.index(f"{db_stem}{sfx}.h5")]
-                    b_db_ok = True
-                    break
-                except ValueError:  # exact file name with `db_stem` not in index, but with `sfx` suffix exist
-                    continue
+                break
             else:
                 _ = len(dbs)
-                b_db_ok = _ > 0
-                if b_db_ok:
+                if (b_db_ok := _ > 0):
                     if _ > 1:
-                        dbs_check_1st = [f for f in dbs if f.name.endswith(f"{probe['type']}{sfx}.h5")]
+                        dbs_check_1st = [
+                            f
+                            for f in dbs
+                            if any(f.name.endswith(f"{probe['type']}{sfx}{sfx_last}") for sfx_last in sfx_db)
+                        ]
                         if dbs_check_1st:
                             dbs = dbs_check_1st
                             _ = len(dbs)
                         if _ > 1:
                             l.warning(
-                                f"No {db_stem}.proc.h5 or {db_stem}.proc_Avg.h5 found, other variants number "
+                                f"No {db_stem}.proc.{'|'.join(sfx_db)} or {db_stem}.proc_Avg."
+                                f"{'|'.join(sfx_db)} found, other variants number "
                                 f"with this suffixes > 1 ({_}): {dbs}. Selecting 1st"
                             )
                     db = dbs[0]
                 else:
-                    db = ".proc.h5 or .proc_Avg.h5"
+                    db = "pre sfx is .proc or .proc_Avg"
                 # todo: fail back to other db if current db loading will be failed
             if b_db_ok:
                 db_stem = db.stem
         else:
             db = None
             b_db_ok = False
+
+
+        if db.suffix == ".h5":
+            t_name = "t_ns"
+            t_orig_name = "index"
+            t_mul = " * 1e-9"
+            group_data = "/table/"
+        else:
+            t_name = "t_s"
+            t_orig_name = "time"
+            t_mul = ""
+            group_data = "/"
+
     else:
         # DB stem should be equal to the name of parent folder and DB file will be under _raw dir or
         # device_dir
-        if parent.name == "profiles_vsz":
-            # Special folder name to draw profiles in device dir taking data from common cruise DB
-            db = cruise_dir / f"{db_stem}.h5"
+        for sfx_last in sfx_db:
+            db = (
+                # Special folder name to draw profiles in device dir taking data from common cruise DB
+                cruise_dir / f"{db_stem}{sfx_last}"
+                if parent.name == "profiles_vsz"
+                else device_dir / ("_raw" if b_use_db_raw else "") / f"{db_stem}{sfx_last}"
+            )
+            if (b_db_ok := db.is_file()):
+                print("Raw data DB found:", db)
+                existed_devs = {}  # dict with existed data in db (fields [device_id][grp])
+                break
         else:
-            db = device_dir / ("_raw" if b_use_db_raw else "") / f"{db_stem}.h5"
+            if not device_wind:
+                raise (FileNotFoundError(f"{db.stem}{'|'.join(sfx_db)} not found!"))
+        # else we will search DBs specially for device_wind
 
-        b_db_ok = db.is_file()
-        if b_db_ok:
-            print("Raw data DB found:", db)
-            existed_devs = {}  # dict with existed data in db (fields [device_id][grp])
-        elif not device_wind:
-            raise (FileNotFoundError(f"{db} not found!"))
-        # else we will search for DBs specilly for device_wind
 
-    if not b_use_db_raw:  # still need to load data
-        # Parent folder encodes folder where get data `data_dir` relative to current dir `parent` if has "vsz"
-        # - by ".." before "vsz" in its name: means the number of parent levels relative to vsz folder
-        # - by "vsz({dir})" to point on sibling folder {dir}. "vsz" alone means that data in parent folder
-        if "vsz" in parent.name:
-            # 1. Check/use "..vsz" parent dir encoding: '..' used to encode data_dir location
-            _ = parent.name.rsplit("..", 1)[-1]
-            m = parent.name.count("..")
-            data_dir = parent.parents[m]
-            m = re.match(r"_?vsz\(([^)=]+)\)", _[-1]) or re.match(r"_?vsz\(dir=([^,)=]+)", _[-1])
-            if m:
-                data_dir = data_dir.with_name(m.group(1))  # if m else device_dir
-        else:
-            data_dir = device_dir
+        # if not b_use_db_raw:  # still need to load data
 
         ## Load known file types into Veusz if any in `probes["devices"]` (except TCM DB, which proc. later)
 
@@ -615,10 +641,11 @@ if __name__ in ("__main__", "builtins"):
             if fun_load:
                 # Search data files
                 # 1. Try exact match
-                if isinstance(data_file_ext, str):
-                    data_file = (data_dir / basename).with_suffix(data_file_ext)
-                else:
-                    data_file = data_dir / data_file_ext(probe)
+                data_file = (
+                    (data_dir / basename).with_suffix(data_file_ext)
+                    if isinstance(data_file_ext, str)
+                    else data_dir / data_file_ext(probe)
+                )
                 if not data_file.is_file():
                     if "@" in basename:
                         # _type should be in dir or in data file name
@@ -697,7 +724,7 @@ if __name__ in ("__main__", "builtins"):
                                     else f"{data_dir} is not a directory!"
                                 )
                             else:
-                                break  # we will search for DBs specilly for device_wind
+                                break  # we will search DBs specially for device_wind
                 time_range_raw, *stats = fun_load(data_file)
                 if stats:
                     wind_mean_uv = stats[0]  # check me
@@ -806,6 +833,11 @@ if __name__ in ("__main__", "builtins"):
             use_bins=use_bins,  # {'': 600, 'bin_': 3600, 'bin2_': 7200}  # 7200  # sorted
             # b_old_format_in_h5 = True
         )
+
+        if b_one_table and db.suffix != ".h5":
+            fpix = lambda pid: f"[iprobe[{pid}]]"
+        else:
+            fpix = lambda pid: pid
 
         # Load data that contains wind or useful for wave gauges P_a data
         if device_wind or ids_w or ids_p:
