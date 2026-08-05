@@ -7,112 +7,31 @@ Replaces HDF5-based storage from ``_dask_legacy`` with netCDF4.
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
+from collections.abc import Mapping
 from enum import IntEnum
 from pathlib import Path
-from typing import Any, Dict, Mapping, NamedTuple, Optional, Union
+from typing import Any, NamedTuple
 
 import numpy as np
-import pandas as pd
 import xarray as xr
 
-from tcm import _constants, policy, utils2init
+from tcm import policy, utils2init
+from tcm._constants import _h5py, nc_engine
+from tcm._xr import store_params
+from tcm._xr.nc_utils import (
+    CF_CALENDAR,
+    CF_TIME_UNITS,
+    EPOCH_NS,
+    cf_to_dt_ns,
+    compression_encoding,
+    downcast_float32,
+    dt_ns_to_cf,
+    force_epoch,
+    strip_tz_datetime,
+    write_time_ds,
+)
 
-_h5py = _constants._h5py
 lf = utils2init.LoggingStyleAdapter(__name__)
-
-
-# CF-standard time encoding — single source of truth for all NC I/O.
-# Both data groups and log tables use this encoding so that the same
-# datetime value has identical on-disk representation everywhere.
-# Change the epoch to switch all on-disk time encoding at once.
-_EPOCH_NS: int = np.datetime64((_ := "1970-01-01"), "ns").astype(np.int64)
-_CF_TIME_UNITS = f"seconds since {_}"  # str(_EPOCH_NS.astype("datetime64[ns]").astype("datetime64[D]"))
-_CF_CALENDAR = "proleptic_gregorian"
-
-# Compression defaults for all data variables with meaningful sizes.
-# Applied automatically — no scale_factor/add_offset (avoid precision loss).
-_ZLIB_CFG: dict[str, Any] = {
-    "zlib": True,
-    "complevel": 9,
-    "shuffle": True,
-    "fletcher32": True,
-}
-
-
-def _force_epoch(ds: xr.Dataset) -> dict[str, Any]:
-    """Return xarray encoding dict forcing CF-standard epoch on ``time`` coord."""
-    if "time" not in ds.coords:
-        return {}
-    return {"time": {"units": _CF_TIME_UNITS, "calendar": _CF_CALENDAR, "dtype": "f8"}}
-
-
-def _compression_encoding(ds: xr.Dataset) -> dict[str, dict[str, Any]]:
-    """Return xarray encoding dict with zlib compression for each data variable.
-
-    Only numeric variables (float/int, not string/datetime) get compression.
-    The ``time`` coordinate is handled separately by :func:`_force_epoch`.
-    No ``scale_factor`` / ``add_offset`` — avoid implicit dtype change.
-    """
-    enc: dict[str, dict[str, Any]] = {}
-    for name, da in ds.data_vars.items():
-        if da.dtype.kind in ("f", "i", "u"):
-            enc[name] = {**_ZLIB_CFG, "dtype": "float32"}
-    return enc
-
-
-def _downcast_float32(ds: xr.Dataset) -> xr.Dataset:
-    """Convert all float64 data variables to float32 in-place.
-
-    Coordinate variables (e.g. ``time``) are left unchanged.
-    Float32 is sufficient for all measured geophysical data and halves
-    on-disk size.  Applied before every NC write.
-    """
-    for name, da in ds.data_vars.items():
-        if da.dtype == np.float64:
-            ds[name] = da.astype(np.float32)
-    return ds
-
-
-def _drop_battery(ds: xr.Dataset) -> xr.Dataset:
-    """Drop ``Battery`` variable from Dataset (non-raw outputs only).
-
-    Battery is retained in ``*.raw.nc`` for completeness but excluded
-    from all processed/binned outputs and TSV exports.
-    """
-    if "Battery" in ds.data_vars:
-        ds = ds.drop_vars("Battery")
-    return ds
-
-
-def _dt_ns_to_cf(arr: np.ndarray) -> np.ndarray:
-    """datetime64[ns] → float64 seconds since ``_CF_TIME_UNITS`` epoch (for h5py write)."""
-    return (arr.astype("datetime64[ns]").astype(np.int64) - _EPOCH_NS) / 1e9
-
-
-def _cf_to_dt_ns(raw: np.ndarray, units: Union[str, bytes] = "") -> np.ndarray:
-    """float64 seconds OR legacy int64 ns → datetime64[ns] (for h5py read).
-
-    Backward-compatible: inspects dtype to handle both CF-float64 and
-    legacy-int64 formats.  For float64, parses the epoch date from *units*
-    (e.g. ``"seconds since 1970-01-01"``).  When *units* is empty the
-    legacy-1970 path is used.  Accepts ``bytes`` (from h5py attrs).
-    """
-    if isinstance(units, bytes):
-        units = units.decode()
-    if raw.dtype.kind == "f":
-        epoch_ns = np.datetime64(units.removeprefix("seconds since "), "ns").astype(np.int64) if units else 0
-        return ((raw * 1e9).astype(np.int64) + epoch_ns).astype("datetime64[ns]")
-    # Legacy int64 path — nanoseconds since 1970 (old h5py format)
-    return raw.astype(np.int64).astype("datetime64[ns]")
-
-
-def _write_time_ds(grp: "_h5py.Group", name: str, data: np.ndarray) -> None:
-    """Create a CF-standard time dataset (float64, ``"seconds since ..."``)."""
-    ds = grp.create_dataset(name, data=data, dtype="f8")
-    ds.attrs["units"] = _CF_TIME_UNITS
-    ds.attrs["calendar"] = _CF_CALENDAR
 
 
 # --------------------------------------------------------------------------- #
@@ -120,7 +39,7 @@ def _write_time_ds(grp: "_h5py.Group", name: str, data: np.ndarray) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def read_nc_log(nc_path: Union[str, Path], tbl: str, tables_log: str = "{}/logFiles") -> xr.Dataset:
+def read_nc_log(nc_path: str | Path, tbl: str, tables_log: str = "{}/logFiles") -> xr.Dataset:
     """Read log from ``/{tbl}/{log_group}`` group in a NC4 file.
 
     Returns an :class:`xr.Dataset` with dimension ``Date0`` (``datetime64[ns]``)
@@ -157,19 +76,19 @@ def read_nc_log(nc_path: Union[str, Path], tbl: str, tables_log: str = "{}/logFi
 
         # Read variables — _cf_to_dt_ns handles both CF float64 and legacy int64
         file_names = [v.decode() if isinstance(v, bytes) else str(v) for v in grp["fileName"][:]]
-        date0 = _cf_to_dt_ns(grp["Date0"][:], grp["Date0"].attrs.get("units", ""))
+        date0 = cf_to_dt_ns(grp["Date0"][:], grp["Date0"].attrs.get("units", ""))
 
         data_vars: dict[str, Any] = {"fileName": ("Date0", file_names)}
         for col in ("fileChangeTime", "DateEnd", "DateProc"):
             if col in grp:
-                data_vars[col] = ("Date0", _cf_to_dt_ns(grp[col][:], grp[col].attrs.get("units", "")))
+                data_vars[col] = ("Date0", cf_to_dt_ns(grp[col][:], grp[col].attrs.get("units", "")))
 
     lf.debug("Read {} log entries from {}//{}", n, nc_path, log_grp_path)
     return xr.Dataset(data_vars, coords={"Date0": date0})
 
 
 def write_nc_log(
-    nc_path: Union[str, Path],
+    nc_path: str | Path,
     tbl: str,
     log: xr.Dataset,
     tables_log: str = "{}/logFiles",
@@ -209,12 +128,12 @@ def write_nc_log(
 
         if n == 0:
             grp.create_dataset("fileName", data=np.array([], dtype=object), dtype=str_dt)
-            _write_time_ds(grp, "Date0", np.array([], dtype=np.float64))
+            write_time_ds(grp, "Date0", np.array([], dtype=np.float64))
             f.flush()
             return
 
         # Date0 — CF-standard float64 seconds
-        _write_time_ds(grp, "Date0", _dt_ns_to_cf(log["Date0"].values))
+        write_time_ds(grp, "Date0", dt_ns_to_cf(log["Date0"].values))
         # fileName as variable-length UTF-8 strings
         grp.create_dataset(
             "fileName",
@@ -225,57 +144,18 @@ def write_nc_log(
         # Datetime columns — same CF encoding
         for col in ("fileChangeTime", "DateEnd", "DateProc"):
             if col in log:
-                _write_time_ds(grp, col, _dt_ns_to_cf(log[col].values))
+                write_time_ds(grp, col, dt_ns_to_cf(log[col].values))
 
         f.flush()
 
     lf.debug("Wrote {} log entries to {}//{}", n, nc_path, log_grp_path)
 
 
-# --------------------------------------------------------------------------- #
-# Timezone-aware datetime → naive conversion for netCDF compat
-# --------------------------------------------------------------------------- #
-
-
-def _strip_tz_datetime(ds: xr.Dataset) -> xr.Dataset:
-    """Convert tz-aware datetime64 coordinates/vars to naive.
-
-    ``datetime64[ns, UTC]`` is a pandas extension dtype that numpy cannot
-    interpret (TypeError in ``np.issubdtype``).  xarray's netCDF writer
-    hits this during CF encoding, so we strip timezone before persist.
-
-    Uses ``pd.DatetimeIndex.tz_localize(None)`` to drop timezone info,
-    then converts to ``datetime64[ns]`` for netCDF compatibility.
-    """
-    for coord_name in list(ds.coords):
-        coord = ds.coords[coord_name]
-        try:
-            if coord.dtype.tz is None:
-                continue
-        except (TypeError, AttributeError):
-            continue
-        naive = pd.DatetimeIndex(coord.values).tz_localize(None).to_numpy(dtype="datetime64[ns]")
-        ds = ds.assign_coords({coord_name: naive})
-
-    # Fix tz-aware data variables (uncommon but defensive)
-    for var_name in list(ds.data_vars):
-        var = ds[var_name]
-        try:
-            if var.dtype.tz is None:
-                continue
-        except (TypeError, AttributeError):
-            continue
-        naive = pd.DatetimeIndex(var.values).tz_localize(None).to_numpy(dtype="datetime64[ns]")
-        ds[var_name] = naive
-
-    return ds
-
-
 def store_raw(
     ds: xr.Dataset,
-    path: Union[str, Path],
-    attrs: Optional[Dict[str, Any]] = None,
-    engine: str = _constants.nc_engine,
+    path: str | Path,
+    attrs: dict[str, Any] | None = None,
+    engine: str = nc_engine,
 ) -> Path:
     """Write a raw Dataset to netCDF with global attributes.
 
@@ -301,9 +181,9 @@ def store_raw(
     path.parent.mkdir(parents=True, exist_ok=True)
     if attrs:
         ds = ds.assign_attrs(attrs)
-    ds = _strip_tz_datetime(ds)
-    ds = _downcast_float32(ds)
-    enc = {**_force_epoch(ds), **_compression_encoding(ds)}
+    ds = strip_tz_datetime(ds)
+    ds = downcast_float32(ds)
+    enc = {**force_epoch(ds), **compression_encoding(ds)}
     try:
         ds.to_netcdf(path, engine=engine, encoding=enc)
     except (ImportError, ValueError) as e:
@@ -315,7 +195,7 @@ def store_raw(
     return path
 
 
-def delete_h5py_group(nc_path: Union[str, Path], tbl: str) -> bool:
+def delete_h5py_group(nc_path: str | Path, tbl: str) -> bool:
     """Delete group *tbl* from NC file via h5py.  Returns ``True`` on success."""
     nc_path = Path(nc_path)
     if not nc_path.exists():
@@ -332,13 +212,24 @@ def delete_h5py_group(nc_path: Union[str, Path], tbl: str) -> bool:
         return False
 
 
+def _drop_battery(ds: xr.Dataset) -> xr.Dataset:
+    """Drop ``Battery`` variable from Dataset (non-raw outputs only).
+
+    Battery is retained in ``*.raw.nc`` for completeness but excluded
+    from all processed/binned outputs and TSV exports.
+    """
+    if "Battery" in ds.data_vars:
+        ds = ds.drop_vars("Battery")
+    return ds
+
+
 def store_processed(
     ds: xr.Dataset,
-    path: Union[str, Path],
+    path: str | Path,
     *,
-    group: Optional[str] = None,
+    group: str | None = None,
     mode: str = "w",
-    engine: str = _constants.nc_engine,
+    engine: str = nc_engine,
 ) -> Path:
     """Write (or append) a processed Dataset to netCDF.
 
@@ -368,9 +259,9 @@ def store_processed(
         return path
     path.parent.mkdir(parents=True, exist_ok=True)
     ds = _drop_battery(ds)
-    ds = _strip_tz_datetime(ds)
-    ds = _downcast_float32(ds)
-    enc = {**_force_epoch(ds), **_compression_encoding(ds)}
+    ds = strip_tz_datetime(ds)
+    ds = downcast_float32(ds)
+    enc = {**force_epoch(ds), **compression_encoding(ds)}
     # For mode='a' with a group, delegate to ``append_to_nc`` which:
     # - creates extendable ``maxshape=(None,)`` datasets on fresh write
     #   (via ``_write_dataset_to_nc_group``), so subsequent resizes never
@@ -405,12 +296,12 @@ def store_processed(
 
 def store_processed_incremental(
     ds: xr.Dataset,
-    path: Union[str, Path],
+    path: str | Path,
     *,
     group: str,
     mode: str = "a",
-    engine: str = _constants.nc_engine,
-    filter_params: Optional[str] = None,
+    engine: str = nc_engine,
+    filter_params: str | None = None,
     force_reprocess: bool = False,
 ) -> Path:
     """Write processed data only if group doesn't already cover this time range.
@@ -418,16 +309,15 @@ def store_processed_incremental(
     Checks existing group's time range before writing.  Skips if the new data
     is fully contained within the existing range (avoids duplicates on re-run).
 
-    **Re-run warning**: when *filter_params* is given, appends it to the
-    ``_run_params`` JSON history dict on the group (``{ISO-date: params}``).
-    On skip, the *latest* history entry is compared to *filter_params*
-    (ignoring ``input.time_ranges`` lines) — a **ValueError** is raised
-    showing a unified diff if they differ.  Set *force_reprocess* to
-    ``True`` to bypass the containment skip + splice overlapping data.
+    When *filter_params* is given, appends it to the ``/param_spans/{group}``
+    interval table.  On skip, the latest stored entry is compared to
+    *filter_params* (ignoring ``input.time_ranges`` lines) — a **ValueError**
+    is raised if they differ.  Set *force_reprocess* to ``True``
+    (``out.overwrite_db="splice"``) to bypass the containment skip.
 
-    Uses h5py for the time-range check to avoid netCDF4/h5py file-handle
-    conflicts when the same file was previously modified by h5py (e.g. after
-    a resize-fallback rebuild).
+    When data extends beyond existing and *force_reprocess* is ``False``,
+    a warning is emitted if stored params differ — existing data is kept
+    and only the extending part is appended.
 
     Parameters
     ----------
@@ -443,12 +333,10 @@ def store_processed_incremental(
         netCDF backend.
     filter_params
         Full sorted text representation of the resolved filtering parameters
-        (filter + window + coefs).  Appended to the ``_run_params`` JSON
-        history; on skip, the latest entry is compared after stripping
-        ``input.time_ranges`` lines — diff-printed if they differ.
+        (filter + window + coefs).  Stored in ``/param_spans/{group}``.
     force_reprocess
         When ``True``, bypass the containment skip and splice overlapping
-        data into the existing group via :func:`splice_group`.
+        data via :func:`splice_group`.  Set via ``out.overwrite_db="splice"``.
 
     Returns
     -------
@@ -461,43 +349,35 @@ def store_processed_incremental(
 
     # Strip tz early — .values on tz-aware coords returns object arrays that
     # crash .astype("datetime64[ns]") / .view(np.int64) below.
-    ds = _strip_tz_datetime(ds)
+    ds = strip_tz_datetime(ds)
 
-    # Read stored run-params history (JSON dict or legacy plain string).
-    # Hoisted outside the h5py block so the write path can append to it.
-    stored_history = ""
+    # Read parameter spans from /param_spans/{group}.
+    stored_params = store_params.read_param_spans(path, group)
+    stored_latest = store_params.get_latest_params(stored_params)
     if path.exists():
         try:
             with _h5py.File(str(path), "r") as f:
                 if group in f and "time" in f[group]:
                     time_dset = f[group]["time"]
                     if time_dset.shape[0] > 0:
-                        ex_ns = _cf_to_dt_ns(
+                        ex_ns = cf_to_dt_ns(
                             time_dset[:],
                             time_dset.attrs.get("units", ""),
                         ).astype(np.int64)
                         new_ns = ds["time"].values.astype("datetime64[ns]").astype(np.int64)
                         contained = new_ns.min() >= ex_ns.min() and new_ns.max() <= ex_ns.max()
 
-                        # Re-run warning: compare stored run params (filter + coefs text) to current.
-                        # Extract only the latest entry from the JSON history.
-                        stored_history = f[group].attrs.get("_run_params", "")
-                        if isinstance(stored_history, bytes):
-                            stored_history = stored_history.decode()
-                        stored_latest = _get_latest_params(stored_history)
                         if contained and not force_reprocess:
-                            # Detect coef/filter change (ignoring time_ranges) to give
-                            # a precise "re-run with force_reprocess" error.
                             if (
                                 filter_params
                                 and stored_latest
-                                and _strip_time_ranges(stored_latest) != _strip_time_ranges(filter_params)
+                                and strip_time_ranges(stored_latest) != strip_time_ranges(filter_params)
                             ):
                                 raise ValueError(
                                     f"Coefficients/params changed for {path.name}//{group} since "
-                                    f"last write — re-run with +force_reprocess=True to overwrite "
+                                    f"last write — re-run with out.overwrite_db=splice to overwrite "
                                     f"(or delete the group). Diff ( --- stored, +++ current):\n"
-                                    f"{_warn_run_params_diff(stored_latest, filter_params)}"
+                                    f"{warn_run_params_diff(stored_latest, filter_params)}"
                                 )
 
                             lf.debug(
@@ -508,13 +388,24 @@ def store_processed_incremental(
                             )
                             return path
 
-                        # Also check at CF float64 precision — timestamps that are
-                        # distinct at ns precision but collapse to the same float64-second
-                        # value on disk (≤ ~100 ns apart at current epoch) would create
-                        # duplicate time indices after encoding.
+                        if (
+                            not contained
+                            and not force_reprocess
+                            and filter_params
+                            and stored_latest
+                            and strip_time_ranges(stored_latest) != strip_time_ranges(filter_params)
+                        ):
+                            lf.warning(
+                                "{}//{}: existing data has different params — "
+                                "keeping existing, appending new only.\n{}",
+                                path.name,
+                                group,
+                                warn_run_params_diff(stored_latest, filter_params),
+                            )
+
                         if not force_reprocess:
-                            ex_cf = (ex_ns - _EPOCH_NS).astype(np.float64) / 1e9
-                            new_cf = (new_ns - _EPOCH_NS).astype(np.float64) / 1e9
+                            ex_cf = (ex_ns - EPOCH_NS).astype(np.float64) / 1e9
+                            new_cf = (new_ns - EPOCH_NS).astype(np.float64) / 1e9
                             if new_cf.min() >= ex_cf[0] and new_cf.max() <= ex_cf[-1]:
                                 lf.debug(
                                     "Skipping {} — data contained at CF float64 precision (Δmax={:.1f}ns)",
@@ -531,7 +422,7 @@ def store_processed_incremental(
         # Timestamps differing by < DT_CF_NS are unique at ns precision but
         # collapse to the same float64-second value on disk.  Monotonicity
         # check is O(n) vs O(n·log n) for np.unique.
-        t_cf = (ds_out["time"].values.view(np.int64) - _EPOCH_NS).astype(np.float64) / 1e9
+        t_cf = (ds_out["time"].values.view(np.int64) - EPOCH_NS).astype(np.float64) / 1e9
         mono = np.ones(t_cf.size, dtype=bool)
         mono[1:] = np.diff(t_cf) > 0
         if not mono.all():
@@ -543,21 +434,30 @@ def store_processed_incremental(
                 n_near_dup,
             )
             ds_out = ds_out.isel(time=mono)
-    if filter_params:
-        ds_out = ds_out.assign_attrs(_run_params=_append_run_params(filter_params, stored_history))
 
     # Force-reprocess path: splice replaces the old group with new data,
     # preserving head/tail outside the new time range.
     if force_reprocess:
-        # Build attrs on ds_out before splice (splice preserves them from ds_out)
         splice_group(path, group, ds_out)
         lf.info("Spliced {:s}//{} ({:d} rows)", str(path), group, ds_out.sizes.get("time", 0))
-        return path
+    else:
+        store_processed(ds_out, path, group=group, mode=mode, engine=engine)
 
-    return store_processed(ds_out, path, group=group, mode=mode, engine=engine)
+    # Write param_spans after data write (NC file now exists).
+    if filter_params:
+        new_params = store_params.append_param(filter_params, stored_params)
+        store_params.write_param_spans(path, group, new_params)
+        lf.info(
+            "Param spans written for {:s}//{} ({:d} interval(s))",
+            str(path),
+            group,
+            new_params.sizes.get("interval", 0),
+        )
+
+    return path
 
 
-def splice_group(nc_path: Union[str, Path], tbl: str, ds_new: xr.Dataset) -> bool:
+def splice_group(nc_path: str | Path, tbl: str, ds_new: xr.Dataset) -> bool:
     """Replace the overlapping portion of *tbl* in *nc_path* with *ds_new*.
 
     Keeps existing data outside ``[ds_new.time.min(), ds_new.time.max()]``
@@ -602,19 +502,16 @@ def splice_group(nc_path: Union[str, Path], tbl: str, ds_new: xr.Dataset) -> boo
     if not parts:
         return False
     result = xr.concat(parts, dim="time")
-    # Preserve run_params attr from the new dataset
-    if "_run_params" in ds_new.attrs:
-        result.attrs["_run_params"] = ds_new.attrs["_run_params"]
     delete_h5py_group(nc_path, tbl)
     _write_dataset_to_nc_group(result, nc_path, tbl)
     return True
 
 
 def trim_group_to_range(
-    nc_path: Union[str, Path],
+    nc_path: str | Path,
     tbl: str,
-    time_start: "np.datetime64 | None" = None,
-    time_end: "np.datetime64 | None" = None,
+    time_start: np.datetime64 | None = None,
+    time_end: np.datetime64 | None = None,
 ) -> bool:
     """Trim *tbl* in *nc_path* to ``[time_start, time_end]`` and rewrite.
 
@@ -657,160 +554,20 @@ def trim_group_to_range(
         return False  # nothing to trim
     if ds_trimmed.sizes["time"] == 0:
         delete_h5py_group(nc_path, tbl)
+        store_params.delete_param_spans(nc_path, tbl)
         return True
     delete_h5py_group(nc_path, tbl)
     _write_dataset_to_nc_group(ds_trimmed, nc_path, tbl)
+    trimmed = store_params.trim_param_spans(store_params.read_param_spans(nc_path, tbl), time_start, time_end)
+    store_params.write_param_spans(nc_path, tbl, trimmed)
     return True
 
 
-def _strip_time_ranges(params: str) -> str:
-    """Remove ``input.time_ranges=...`` lines from *params* text.
-
-    Used to compare stored vs current run parameters while ignoring the
-    time window — coefficient/filter changes are detected even when only
-    ``input.time_ranges`` differs.
-    """
-    return "\n".join(line for line in params.splitlines() if not line.startswith("input.time_ranges"))
-
-
-def _get_latest_params(history: str) -> str:
-    """Extract the most recent run-params entry from JSON *history*.
-
-    Returns ``""`` for empty or unparseable input.  The JSON dict maps
-    ``{ISO-date: params-text, ...}``; the value whose key sorts last
-    (most recent processing date) is returned.
-    """
-    if not history:
-        return ""
-    try:
-        records = json.loads(history)
-        if isinstance(records, dict) and records:
-            return records[max(records)]
-    except (json.JSONDecodeError, TypeError, ValueError):
-        pass
-    return ""
-
-
-def _append_run_params(params: str, history: str = "") -> str:
-    """Append *params* under a new ISO-timestamp key, preserving all previous entries.
-
-    If the latest entry already matches *params*, returns *history* unchanged
-    (no duplicate recording).  If *history* is not valid JSON dict, starts a
-    fresh single-entry dict.  Handles same-second collisions via microsecond suffix.
-    """
-    # Dedup: skip if latest entry already matches
-    if history and _get_latest_params(history) == params:
-        return history
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    records: dict[str, str] = {}
-    if history:
-        try:
-            loaded = json.loads(history)
-            if isinstance(loaded, dict):
-                records = loaded
-        except (json.JSONDecodeError, TypeError):
-            pass  # start fresh
-    # Avoid same-second key collision
-    key = now
-    if key in records:
-        key = datetime.now(timezone.utc).isoformat(timespec="microseconds")
-    records[key] = params
-    return json.dumps(records, sort_keys=True)
-
-
-def _warn_run_params_diff(stored: str, current: str) -> str:
-    """
-    Construct readable diff between stored and current run parameters.
-
-    :return: diff_text
-    """
-    import difflib
-
-    def parse(text: str) -> dict[str, str]:
-        params: dict[str, str] = {}
-        key = None
-        value_lines: list[str] = []
-
-        for line in text.splitlines():
-            if "=" in line and not line.startswith((" ", "\t")):
-                if key is not None:
-                    params[key] = value_lines
-                key, first = line.split("=", 1)
-                value_lines = [first]
-            else:
-                value_lines.append(line)
-
-        if key is not None:
-            params[key] = value_lines
-
-        return params
-
-    def marker(old: str, new: str) -> str:
-        """One marker line: ^ replace, - delete, + insert."""
-        sm = difflib.SequenceMatcher(None, old, new)
-        out = [" "] * max(len(old), len(new))
-
-        for tag, i1, i2, j1, j2 in sm.get_opcodes():
-            if tag == "equal":
-                continue
-            ch = {"replace": "^", "delete": "-", "insert": "+"}[tag]
-            if tag == "replace":
-                end = max(i2, i1 + (j2 - j1))
-            else:
-                end = i2
-            for i in range(i1, min(end, len(out))):
-                out[i] = ch
-
-        return "".join(out).rstrip()
-
-    out = []
-    try:
-        stored = parse(stored)
-        current = parse(current)
-        for key in sorted(stored.keys() | current.keys()):
-            old = stored.get(key)
-            new = current.get(key)
-
-            if old is None:
-                out.extend(f"+ {key}={line}" if i == 0 else f"+   {line}" for i, line in enumerate(new))
-                continue
-
-            if new is None:
-                out.extend(f"- {key}={line}" if i == 0 else f"-   {line}" for i, line in enumerate(old))
-                continue
-
-            if old == new:
-                continue
-
-            n = max(len(old), len(new))
-
-            for i in range(n):
-                o = old[i] if i < len(old) else ""
-                c = new[i] if i < len(new) else ""
-
-                old_text = f"{key}={o}" if i == 0 else f"  {o}"
-                new_text = f"{key}={c}" if i == 0 else f"  {c}"
-
-                if i < len(old):
-                    out.append(f"- {old_text}")
-                if i < len(new):
-                    out.append(f"+ {new_text}")
-
-                if i < len(old) and i < len(new):
-                    m = marker(old_text, new_text)
-                    if m.strip():
-                        out.append(f"  {m}")
-
-        return "\n".join(out)
-    except Exception as e:
-        return f"(Error comparing parameters: {e})"
-
-
 def open_processed(
-    path: Union[str, Path],
+    path: str | Path,
     *,
-    chunks: Optional[int] = None,
-    engine: str = _constants.nc_engine,
+    chunks: int | None = None,
+    engine: str = nc_engine,
 ) -> xr.Dataset:
     """Open a processed netCDF file, optionally with dask chunking.
 
@@ -832,10 +589,10 @@ def open_processed(
 
 
 def open_processed_grouped(
-    path: Union[str, Path],
+    path: str | Path,
     *,
-    chunks: Optional[int] = None,
-    engine: str = _constants.nc_engine,
+    chunks: int | None = None,
+    engine: str = nc_engine,
 ) -> dict[str, xr.Dataset]:
     """Open per-probe groups from a shared ``*.proc.nc`` file.
 
@@ -860,7 +617,7 @@ def open_processed_grouped(
 
 
 def incremental_skip(
-    path: Union[str, Path],
+    path: str | Path,
     input_mtime: float,
 ) -> bool:
     """Check whether output is already up-to-date relative to input.
@@ -909,7 +666,7 @@ class _Overlap(NamedTuple):
     n: int  # len(new_t)
 
     @classmethod
-    def of(cls, new_t: np.ndarray, ex_min: np.int64, ex_max: np.int64) -> "_Overlap":
+    def of(cls, new_t: np.ndarray, ex_min: np.int64, ex_max: np.int64) -> _Overlap:
         """Classify sorted *new_t* against existing range — O(log n) via searchsorted, no copy."""
         return cls(
             new_t.searchsorted(ex_min, side="left"), new_t.searchsorted(ex_max, side="right"), new_t.size
@@ -956,15 +713,15 @@ class _Overlap(NamedTuple):
         the outcome for :func:`append_to_nc`'s log line.
         """
         if self.has_head:
-            _prepend_nc_group(_strip_tz_datetime(ds_new.isel(time=self.head)), nc_path, tbl)
+            _prepend_nc_group(strip_tz_datetime(ds_new.isel(time=self.head)), nc_path, tbl)
         if self.has_tail:
-            _append_to_nc_group(_strip_tz_datetime(ds_new.isel(time=self.tail)), nc_path, tbl)
+            _append_to_nc_group(strip_tz_datetime(ds_new.isel(time=self.tail)), nc_path, tbl)
         return self.has_head or self.has_tail
 
 
 def _fresh_write(ds_new: xr.Dataset, nc_path: Path, tbl: str, reason: str) -> bool:
     """Write *ds_new* as a brand-new group — shared by every "nothing to compare against" guard."""
-    ds_new = _strip_tz_datetime(ds_new)
+    ds_new = strip_tz_datetime(ds_new)
     _write_dataset_to_nc_group(ds_new, nc_path, tbl)
     lf.debug("{} {}//{}: fresh write {:d} time steps", reason, nc_path, tbl, ds_new.sizes.get("time", 0))
     return True
@@ -972,7 +729,7 @@ def _fresh_write(ds_new: xr.Dataset, nc_path: Path, tbl: str, reason: str) -> bo
 
 def append_to_nc(
     ds_new: xr.Dataset,
-    nc_path: Union[str, Path],
+    nc_path: str | Path,
     tbl: str,
 ) -> bool:
     """Append *ds_new* to ``/{tbl}/`` group in an existing NC4 file.  Returns whether data was written.
@@ -996,7 +753,7 @@ def append_to_nc(
 
     # Strip tz early — .values on tz-aware coords returns object arrays that
     # crash .astype("datetime64[ns]") / .view(np.int64) below.
-    ds_new = _strip_tz_datetime(ds_new)
+    ds_new = strip_tz_datetime(ds_new)
 
     # Read existing time range using h5py (avoids netCDF4 cache conflicts). FileNotFoundError/KeyError
     # are routine — first write for this file/table; a bare OSError means something's actually wrong.
@@ -1008,7 +765,7 @@ def append_to_nc(
             elif (time_dset := f[tbl]["time"]).shape[0] == 0:
                 needs_fresh_write = "Empty existing group —"
             else:
-                ex_ns = _cf_to_dt_ns(time_dset[:], time_dset.attrs.get("units", "")).astype(np.int64)
+                ex_ns = cf_to_dt_ns(time_dset[:], time_dset.attrs.get("units", "")).astype(np.int64)
                 # Diagnostic: log shapes of all datasets in group (detects transposition/corruption)
                 shapes = {n: f[tbl][n].shape for n in f[tbl] if isinstance(f[tbl][n], _h5py.Dataset)}
                 lf.debug("Existing {}//{} shapes: {}", nc_path, tbl, shapes)
@@ -1055,10 +812,10 @@ def _append_to_nc_group(
     files satisfy this automatically; pre-existing files are rebuilt).
     """
     nc_path.parent.mkdir(parents=True, exist_ok=True)
-    ds_new = _downcast_float32(ds_new)
+    ds_new = downcast_float32(ds_new)
 
     # Prepare numpy arrays for writing
-    time_cf = _dt_ns_to_cf(ds_new["time"].values)
+    time_cf = dt_ns_to_cf(ds_new["time"].values)
     var_arrays: dict[str, np.ndarray] = {"time": time_cf}
     for name, da in ds_new.data_vars.items():
         vals = da.values
@@ -1168,8 +925,8 @@ def _rebuild_and_append(
 
         # Time coordinate
         time_dset = new_grp.create_dataset("time", shape=(n_total,), dtype="f8", maxshape=(None,))
-        time_dset.attrs["units"] = _CF_TIME_UNITS
-        time_dset.attrs["calendar"] = _CF_CALENDAR
+        time_dset.attrs["units"] = CF_TIME_UNITS
+        time_dset.attrs["calendar"] = CF_CALENDAR
         time_dset.make_scale("time")
 
         # Data variables — copy shape/dtype/attrs, create extendable + compressed
@@ -1223,10 +980,10 @@ def _prepend_nc_group(
     Shifts existing rows right in chunks, then writes new rows at index 0.
     This avoids loading the entire existing dataset into RAM.
     """
-    ds_new = _strip_tz_datetime(ds_new)
-    ds_new = _downcast_float32(ds_new)
+    ds_new = strip_tz_datetime(ds_new)
+    ds_new = downcast_float32(ds_new)
     n_new = ds_new.sizes.get("time", 0)
-    time_cf = _dt_ns_to_cf(ds_new["time"].values)
+    time_cf = dt_ns_to_cf(ds_new["time"].values)
     var_arrays: dict[str, np.ndarray] = {"time": time_cf}
     for name, da in ds_new.data_vars.items():
         vals = da.values
@@ -1275,20 +1032,15 @@ def _prepend_nc_group(
     lf.debug("Prepended {}//{}: +{:d} rows (total {:d})", nc_path, tbl, n_new, n_total)
 
 
-def _read_nc_group_h5py(nc_path: Path, tbl: str) -> xr.Dataset:
-    """Read all variables from ``/{tbl}/`` group into an xr.Dataset via h5py."""
-    with _h5py.File(str(nc_path), "r") as f:
-        return _read_nc_group_as_dataset(f, tbl)
-
-
 def ensure_dim_scales(nc_path: Path) -> None:
     """Re-attach HDF5 dimension scales for every group in a netCDF4 file.
 
     After h5py modifications (resize, rebuild, prepend), the
-    ``make_scale``/``attach_scale`` metadata that netCDF4 requires may be
-    missing or broken. Calling this once before reading the file with
-    ``engine="netcdf4"`` restores compatibility. Idempotent — safe to
-    call on files whose scales are already correct.
+    ``make_scale``/``attach_scale`` metadata that xarray expects may be
+    missing or broken. Calling this once before ``xr.open_dataset``
+    restores compatibility. Idempotent — skips the write-mode open when
+    all scales are already attached (avoids HDF5 metadata bloat from
+    redundant ``attach_scale`` calls).
 
     Windows file-handle quirk: netCDF4/xarray may hold a cached handle
     past the close call; a brief ``gc.collect()`` before opening h5py
@@ -1301,6 +1053,48 @@ def ensure_dim_scales(nc_path: Path) -> None:
     import gc
 
     gc.collect()
+
+    # Read-only pre-check: skip write-mode open when all scales are already
+    # correct.  h5py's ``attach_scale`` reallocates HDF5 metadata even when
+    # the scale is already attached (+736 bytes per file on repeated calls).
+    if _h5py is None:
+        return
+    try:
+        needs_fix = False
+        with _h5py.File(str(nc_path), "r") as f:
+            for grp_name in list(f.keys()):
+                grp = f[grp_name]
+                if not isinstance(grp, _h5py.Group) or "time" not in grp:
+                    continue
+                time_dset = grp["time"]
+                if not isinstance(time_dset, _h5py.Dataset):
+                    continue
+                if not time_dset.is_scale:
+                    needs_fix = True
+                    break
+                n_time = time_dset.shape[0]
+                for name in grp:
+                    if name == "time" or not isinstance(grp[name], _h5py.Dataset):
+                        continue
+                    dset = grp[name]
+                    if (
+                        dset.ndim >= 1
+                        and not dset.is_scale
+                        and dset.shape[0] == n_time
+                        and "time" not in list(dset.dims[0].keys())
+                    ):
+                        needs_fix = True
+                        break
+                if needs_fix:
+                    break
+    except (RuntimeError, OSError):
+        needs_fix = True
+
+    if not needs_fix:
+        lf.debug("Dim scales intact in {} — skipped write-mode open", nc_path.name)
+        return
+
+    n_fixed = 0
     try:
         with _h5py.File(str(nc_path), "a") as f:
             for grp_name in list(f.keys()):
@@ -1322,6 +1116,7 @@ def ensure_dim_scales(nc_path: Path) -> None:
                     if dset.ndim >= 1 and not dset.is_scale and dset.shape[0] == n_time:
                         dset.dims[0].attach_scale(time_dset)
                         dset.dims[0].label = "time"
+                        n_fixed += 1
     except (RuntimeError, OSError) as exc:
         lf.warning(
             "ensure_dim_scales failed for {} ({}): continuing without dim-scale metadata",
@@ -1329,10 +1124,10 @@ def ensure_dim_scales(nc_path: Path) -> None:
             exc,
         )
         return
-    lf.debug("Ensured dimension scales in {}", nc_path.name)
+    lf.debug("Re-attached dim scales for {} datasets in {}", n_fixed, nc_path.name)
 
 
-def _read_nc_group_as_dataset(f: "_h5py.File", tbl: str) -> xr.Dataset:
+def _read_nc_group_as_dataset(f: _h5py.File, tbl: str) -> xr.Dataset:
     """Read all variables from a h5py group into an xr.Dataset."""
     grp = f[tbl]
     data_vars = {}
@@ -1358,7 +1153,7 @@ def _read_nc_group_as_dataset(f: "_h5py.File", tbl: str) -> xr.Dataset:
             dim_names = tuple(f"d{i}" for i in range(arr.ndim))
         da = xr.DataArray(arr, dims=dim_names)
         if name == "time":
-            coords["time"] = _cf_to_dt_ns(arr, grp[name].attrs.get("units", ""))
+            coords["time"] = cf_to_dt_ns(arr, grp[name].attrs.get("units", ""))
         else:
             data_vars[name] = da
     return xr.Dataset(data_vars, coords=coords)
@@ -1381,7 +1176,7 @@ def _write_dataset_to_nc_group(
     O(1) tail-appends without re-reading existing data.
     """
     nc_path.parent.mkdir(parents=True, exist_ok=True)
-    ds = _downcast_float32(ds)
+    ds = downcast_float32(ds)
     with _h5py.File(str(nc_path), "a") as f:
         # Delete existing group if present
         if tbl in f:
@@ -1395,12 +1190,12 @@ def _write_dataset_to_nc_group(
             if coord_name == "time":
                 coord_dset = grp.create_dataset(
                     "time",
-                    data=_dt_ns_to_cf(coord.values),
+                    data=dt_ns_to_cf(coord.values),
                     dtype="f8",
                     maxshape=(None,),
                 )
-                coord_dset.attrs["units"] = _CF_TIME_UNITS
-                coord_dset.attrs["calendar"] = _CF_CALENDAR
+                coord_dset.attrs["units"] = CF_TIME_UNITS
+                coord_dset.attrs["calendar"] = CF_CALENDAR
             else:
                 vals = coord.values
                 if vals.dtype.kind in ("U", "S"):
@@ -1507,7 +1302,7 @@ def keep_recorded_nc(
 
 def nc_incremental_update(
     ds_new: xr.Dataset,
-    nc_path: Union[str, Path],
+    nc_path: str | Path,
     tbl: str,
     file_meta: dict,
 ) -> bool:
@@ -1541,7 +1336,7 @@ def nc_incremental_update(
 
     # Strip tz early — .values on tz-aware coords returns object arrays that
     # crash np.datetime64(obj, "ns") and .astype("datetime64[ns]") downstream.
-    ds_new = _strip_tz_datetime(ds_new)
+    ds_new = strip_tz_datetime(ds_new)
 
     # Step 1: log check
     log = read_nc_log(nc_path, tbl)
@@ -1595,7 +1390,7 @@ def _resume_append(
 
     # Strip tz early — .values on tz-aware coords returns object arrays that
     # crash .astype("datetime64[ns]") / .view(np.int64) below.
-    ds_new = _strip_tz_datetime(ds_new)
+    ds_new = strip_tz_datetime(ds_new)
 
     try:
         with _h5py.File(str(nc_path), "r") as f:
@@ -1614,7 +1409,7 @@ def _resume_append(
     new_ns = ds_new["time"].values.astype("datetime64[ns]").astype(np.int64)
 
     # Trim: keep only rows where new > existing end at CF float64 precision.
-    new_cf = (new_ns - _EPOCH_NS).astype(np.float64) / 1e9
+    new_cf = (new_ns - EPOCH_NS).astype(np.float64) / 1e9
     idx_start = int(np.searchsorted(new_cf, ex_max_cf, side="right"))
     n_new_total = ds_new.sizes["time"]
 
@@ -1633,7 +1428,7 @@ def _resume_append(
     )
 
     # Append tail (must be AFTER existing data → safe to _append_to_nc_group)
-    ds_tail = _strip_tz_datetime(ds_tail)
+    ds_tail = strip_tz_datetime(ds_tail)
     _append_to_nc_group(ds_tail, nc_path, tbl)
 
     # Update log: replace old row for this fileName with single row spanning
@@ -1663,3 +1458,77 @@ def _resume_append(
     )
     write_nc_log(nc_path, tbl, log_updated)
     return True
+
+
+# ---------------------------------------------------------------------------
+# Run-params text helpers — used by storage and store_params modules.
+# ---------------------------------------------------------------------------
+def strip_time_ranges(params: str) -> str:
+    """Remove ``input.time_ranges=...`` lines from *params* text.
+
+    Used to compare stored vs current run parameters while ignoring the
+    time window — coefficient/filter changes are detected even when only
+    ``input.time_ranges`` differs.
+    """
+    return "\n".join(line for line in params.splitlines() if not line.startswith("input.time_ranges"))
+
+
+def warn_run_params_diff(stored: str, current: str) -> str:
+    """Construct readable diff between stored and current run parameters."""
+    import difflib
+
+    def parse(text: str) -> dict[str, str]:
+        params: dict[str, str] = {}
+        key = None
+        value_lines: list[str] = []
+        for line in text.splitlines():
+            if "=" in line and not line.startswith((" ", "\t")):
+                if key is not None:
+                    params[key] = value_lines
+                key, first = line.split("=", 1)
+                value_lines = [first]
+            else:
+                value_lines.append(line)
+        if key is not None:
+            params[key] = value_lines
+        return params
+
+    def marker(old: str, new: str) -> str:
+        """One marker line: ^ replace, - delete, + insert."""
+        sm = difflib.SequenceMatcher(None, old, new)
+        out = [" "] * max(len(old), len(new))
+        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+            if tag == "equal":
+                continue
+            ch = {"replace": "^", "delete": "-", "insert": "+"}[tag]
+            end = max(i2, i1 + (j2 - j1)) if tag == "replace" else i2
+            for i in range(i1, min(end, len(out))):
+                out[i] = ch
+        return "".join(out).rstrip()
+
+    out = []
+    try:
+        stored, current = parse(stored), parse(current)
+        for key in sorted(stored.keys() | current.keys()):
+            old, new = stored.get(key), current.get(key)
+            if old is None:
+                out.extend(f"+ {key}={line}" if i == 0 else f"+   {line}" for i, line in enumerate(new))
+                continue
+            if new is None:
+                out.extend(f"- {key}={line}" if i == 0 else f"-   {line}" for i, line in enumerate(old))
+                continue
+            if old == new:
+                continue
+            for i in range(max(len(old), len(new))):
+                o = old[i] if i < len(old) else ""
+                c = new[i] if i < len(new) else ""
+                old_text, new_text = (f"{key}={o}", f"{key}={c}") if i == 0 else (f"  {o}", f"  {c}")
+                if i < len(old):
+                    out.append(f"- {old_text}")
+                if i < len(new):
+                    out.append(f"+ {new_text}")
+                if i < len(old) and i < len(new) and (m := marker(old_text, new_text)).strip():
+                    out.append(f"  {m}")
+        return "\n".join(out)
+    except Exception as e:
+        return f"(Error comparing parameters: {e})"

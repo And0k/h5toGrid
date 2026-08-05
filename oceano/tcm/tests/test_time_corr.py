@@ -165,6 +165,46 @@ class TestMakeRangeMask:
         tr = [datetime(2000, 1, 1, 10, 0), datetime(2000, 1, 1, 12, 0)]
         assert make_range_mask(t, tr).all(), ".as_unit('ns') missing: us-precision mismatch vs ns timestamps"
 
+    def test_inclusive_end_includes_sub_second(self) -> None:
+        """Second-precision end bound includes sub-second data within that second.
+
+        User specifies ``end='10:00:05'`` meaning "through 10:00:05".
+        Data at 10:00:05.071, 10:00:05.270, … must NOT be dropped.
+        """
+        NS = 10**9
+        base = pd.Timestamp("2000-01-01 10:00:00", tz="UTC").value
+        # 5 data points with sub-second parts just after 10:00:05
+        t = np.array(
+            [
+                base + 5 * NS + 71_365_888,
+                base + 5 * NS + 270_155_520,
+                base + 5 * NS + 468_945_152,
+                base + 5 * NS + 667_734_784,
+                base + 5 * NS + 866_524_672,
+            ],
+            dtype=np.int64,
+        )
+        # Second-precision end = 10:00:05 (inclusive → internally exclusive +1 s)
+        tr = ["2000-01-01T10:00:00", "2000-01-01T10:00:05"]
+        m = make_range_mask(t, tr)
+        assert m.all(), (
+            f"Sub-second rows at second boundary dropped by inclusive end: "
+            f"mask={m}, diffs={t - (base + 5 * NS)} ns"
+        )
+
+    def test_exclusive_sub_second_end_excludes_next_ns(self) -> None:
+        """Sub-second end bound gets +1 ns: data exactly at next ns is excluded."""
+        NS = 10**9
+        base = pd.Timestamp("2000-01-01 10:00:00", tz="UTC").value
+        end_val = base + 500_000_000  # 10:00:00.500
+        t = np.array([end_val, end_val + 1], dtype=np.int64)
+        tr = [
+            pd.Timestamp("2000-01-01 10:00:00", tz="UTC"),
+            pd.Timestamp("2000-01-01 10:00:00.500", tz="UTC"),
+        ]
+        m = make_range_mask(t, tr)
+        np.testing.assert_array_equal(m, [True, False], err_msg="end_val and end_val+1")
+
 
 # ===========================================================================
 class TestEstimateFreq:

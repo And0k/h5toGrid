@@ -210,7 +210,22 @@ class ConfigOut_InclProc:
     table: str = ""
     tables_log: list[str] = field(default_factory=lambda: ["{}/logFiles"])
     b_incremental_update: bool = True
-    b_overwrite: bool | None = False
+    b_overwrite: bool | None = False  # legacy h5 pipeline only
+    overwrite_db: str | None = None
+    """NC overwrite mode — controls how existing data is handled.
+
+    ``None`` (default) — extend-only: append new data with current config.
+      If existing data has different config, keep and warn.
+
+    ``"export"`` — export-only: block NC/H5 writes, only export TSV.
+
+    ``"splice"`` — always reprocess (splice): replace existing data in
+      ``time_ranges`` with new processing.  NEVER trim.
+
+    ``"trim"`` — trim-only: trim existing data to ``time_ranges``.
+      NEVER reprocess existing data.  If ``time_ranges`` extends existing
+      AND new source data exists, process and append that new data.
+    """
 
     # ── binning ──
     dt_bins: list[int] | None = field(default_factory=lambda: [0, 2, 600, 3600, 7200])

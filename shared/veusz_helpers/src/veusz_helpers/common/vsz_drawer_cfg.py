@@ -55,18 +55,17 @@ for t, ids_t, t_ranges in zip(
         },
     ),
 ):
-    for pid, t_range in {**{pid[2:]: [] for pid in ids_t}, **t_ranges}.items():
+    for number, t_range in {**{pid[2:]: [] for pid in ids_t}, **t_ranges}.items():
         AddCustom(
             "definition",
-            f"USEtime_{t}{pid}",
+            f"USEtime_{t}{number}",
             f"[{t_range}]"  # "['{}']".format("', '".join(t_range))
             if t_range
             else "DISPtime",
         )
 
 disp_dtime_range_s = np.ediff1d(disp_time_range).astype(int)
-if not disp_dtime_range_s.size:
-    disp_dtime_range_s = nan
+disp_dtime_range_s = nan if not disp_dtime_range_s.size else disp_dtime_range_s.item()
 print("Graph time interval, s:", disp_dtime_range_s)
 
 imax_time_unit_char = len(
@@ -451,20 +450,21 @@ if ids_i or ids_w:
     ## Depths for each device (negative), extent of 2D data, 2D data
 
     num_names_prev = 0  # starting index of device:
-    for t in compress(
-        ("i", "w"), [builtins.any(ids_i), builtins.any(ids_w) and ids_w != ids_p]
-    ):  # in groups of same type
+    # in groups of same type
+    for t in compress(("i", "w"), [builtins.any(ids_i), builtins.any(ids_w) and ids_w != ids_p]):
         # Vertical dimension of 2d images
         names = [pid[1:] for pid in (ids_i + ids_w) if pid[1:].startswith(t)]
         SetDataExpression(
             f"grD_ext_{t}",
-            f"array([f(lambda p, b, bd, *kw: 0 if b is None else bd - b, *DISPdevices_info[k]) for k in {names}])",
+            f"array([f(lambda p, b, bd, *kw: 0 if b is None else bd - b, *DISPdevices_info[k]) for k in "
+            f"{names}])",
             linked=True,
         )  # [::-1]
         SetData2DExpressionXYZ(
             f"Dim_DataP_{t}",
             f"vf.dim_bug_cor(time_span_{t})",
-            f"vf.dim_bug_cor(-grD_ext_{t} if all(diff(grD_ext_{t})) else int32([{num_names_prev}, len(grD_ext_{t}) + {num_names_prev}]))  # if can not use depth then use devices list index",
+            f"vf.dim_bug_cor(-grD_ext_{t} if all(diff(grD_ext_{t})) else int32([{num_names_prev}, "
+            f"len(grD_ext_{t}) + {num_names_prev}]))  # if can not use depth then use devices list index",
             "0",
             linked=True,
         )
@@ -543,18 +543,37 @@ if b_draw_progressive_vector:
     bin_use_2d = (
         "bin_" if "bin_" in use_bins else list(use_bins)[-1]
     )  # 'bin_' or max_bin. 'bin2_' if pid == '_Wind'
+
+    pid0 = (ids_w + ids_i)[0]
     if b_one_table:
+        for pid in ids_i:
+            SetDataExpression(
+                f'bin_t0i{pid}',
+                f'hstack([0, searchsorted(t_s[sl_(iu{pid})], bin_t_s[sl_(bin_iu{pid})])])',
+                linked=True,
+            )
         for u in "uv":
+            for op_name, op in [("max", "maximum"), ("min", "minimum")]:
+                for pid in ids_i:
+                    SetDataExpression(
+                        f'bin_{u}_{op_name}{pid}',
+                        f'{op}.reduceat({u}[iprobe.{pid}, sl_(iu{pid})], int32(bin_t0i{pid})[:-1])',
+                        linked=True,
+                    )
+
+
+
             SetData2DExpression(
                 f"{bin_use_2d}{u}_cum2d",
                 f"column_stack((zeros(len(DISPdevices_info)), cumsum("
                 f"{bin_use_2d}{u}{'_2d' if fpix is identity else ''}, axis=1)*{bin_use_2d[:-1]}))",
                 linked=True,
             )
+
         SetDataExpression(
             "bin_t0st_i",
-            "vf.dt64s2vsz(1E-9*bin_t_ns[sl_({bin_use_2d}iu_cmn{pid})]) + USE_timeShift_s  "
-            "# Veusz 3.6.2 bug: can not use lambda as it blind to arguments",  # lambda:
+            f"vf.dt64s2vsz(bin_{t_name}[sl_({bin_use_2d}iu_cmn{pid0})]{t_mul}) + "
+            "USE_timeShift_s  # Veusz 3.6.2 bug: can not use lambda as it blind to arguments",  # lambda:
             # ("(lambda d: array([min(d), max(d)]))(hstack("
             # "[DATA(f'bin_t_ns_{i}')[DATA(f'bin_iu_{i}')[[0, -1]]] for i in DISPdevices_info]))")
             linked=True,
@@ -568,7 +587,7 @@ if b_draw_progressive_vector:
                 "flatnonzero(diff(int8(array(bin_t0st_i[:-1]+1230768000, 'M8[s]')"
                 ".astype(f'M8[{{{}}}]')))) + 1".format(
                     # todo: adjust to be equal to no op output in 1/op points
-                    "str(int(float(Progress_lbl_dt[:-1]){op})) + Progress_lbl_dt[-1]" if op else
+                    f"str(int(float(Progress_lbl_dt[:-1]){op})) + Progress_lbl_dt[-1]" if op else
                     "Progress_lbl_dt"
                 ),
                 linked=True,
@@ -598,8 +617,8 @@ if b_draw_progressive_vector:
             if fpix is identity and bin_use_2d:  # else already created
                 SetData2DExpression(
                     f"{u}_2d",
-                    f"zeros_like(Dim_DataP_i[0,0]) + array([DATA(f'{u}_{{i}}')[sl_({bin_use_2d}iu_cmn{pid})] "
-                    "for i in DISPdevices_info])",
+                    f"zeros_like(Dim_DataP_i[0,0]) + array([DATA(f'{u}_{{i}}')["
+                    "sl_({bin_use_2d}iu_cmn{pid0})] for i in DISPdevices_info])",
                     linked=True,
                 )
             SetData2DExpression(
@@ -613,8 +632,8 @@ if b_draw_progressive_vector:
 
         SetDataExpression(
             "zb_i_en",
-            f"searchsorted(t_ns{t0sfx}[int(zb_i_st[0]):], "
-            "(float64(timedelta64(timedelta64(1, Zabor_range_dt), 's')) - USE_timeShift_s)*1E9)",
+            f"searchsorted({t_name}{t0sfx}[int(zb_i_st[0]):], (float64(timedelta64(timedelta64(1, "
+            f"Zabor_range_dt), 's')) - USE_timeShift_s){f'/(1{t_mul})' if t_mul else ''})",
             linked=True,
         )
         SetDataExpression(

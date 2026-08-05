@@ -95,12 +95,22 @@ I64MAX = np.iinfo(np.int64).max
 def make_range_mask(
     t_ns: NDArray[np.int64], time_ranges: Sequence[str | pd.Timestamp | None]
 ) -> NDArray[np.bool_]:
-    """Vectorized inclusion mask: t_ns ∈ ∪[sᵢ, eᵢ]. NaT/None ≡ open bound.
-    t_ns: input time (int64 ns)
-    time_ranges: flat alternating limits [start1, end1, start2, end2, …]
-    Broadcasting:
-        (N, 1) >= (1, M) -> (N, M)
-        (N, 1) <= (1, M) -> (N, M)
+    """Vectorized inclusion mask: t_ns ∈ ∪[sᵢ, eᵢ). NaT/None ≡ open bound.
+
+    End bounds are **inclusive** in user config but stored as **exclusive**
+    internally: whole-second end values (e.g. ``"2026-07-20T09:55:05"``) get
+    +1 s so ``< 09:55:06`` includes all sub-second data within that second;
+    sub-second ends get +1 ns.
+
+    Parameters
+    ----------
+    t_ns
+        Input time as int64 nanoseconds.
+    time_ranges
+        Flat alternating limits ``[start1, end1, start2, end2, …]``.
+        ``None`` / ``NaT`` → open bound.
+
+    Broadcasting: ``(N, 1) >= (1, M)`` / ``(N, 1) < (1, M)`` → ``(N, M)``.
     """
     if not time_ranges:
         return np.ones(t_ns.size, dtype=bool)
@@ -116,8 +126,15 @@ def make_range_mask(
     # Split & branchless bound expansion
     s = iv[::2]  # s=I64MIN is naturally <= any valid t_ns
     e = iv[1::2]
-    e[e == I64MIN] = I64MAX  # e=I64MIN must be mapped to I64MAX to satisfy t_ns <= e.
-    return ((t_ns[:, None] >= s) & (t_ns[:, None] <= e)).any(axis=1)
+    e[e == I64MIN] = I64MAX  # NaT → open end: t_ns < I64MAX always true
+
+    # Convert inclusive end → exclusive: +1 s for whole-second bounds
+    # (user means "through that second"), +1 ns for sub-second bounds.
+    whole_sec = (e != I64MAX) & (e % 10**9 == 0)
+    e[whole_sec] += 10**9
+    sub_sec = (e != I64MAX) & ~whole_sec
+    e[sub_sec] += 1
+    return ((t_ns[:, None] >= s) & (t_ns[:, None] < e)).any(axis=1)
 
     # previous version:
     # b = np.zeros(t_ns.size, bool)
@@ -870,7 +887,12 @@ def time_corr(
         # Slice away t_prev overlap to prevent duplicate events across chunks
         ds = slice(diag_first, None) if diag_first else slice(None)
         if p := save_time_corr_diagnostics(
-            t_ns[ds], t_c[ds], action[ds], stats, cfg_in, path_save_image,
+            t_ns[ds],
+            t_c[ds],
+            action[ds],
+            stats,
+            cfg_in,
+            path_save_image,
             is_first_chunk=not diag_first,
         ):
             # Store resolved path so csv_read_gen can produce the final consolidated plot

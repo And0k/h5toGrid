@@ -667,8 +667,8 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
     Set("MinorTicks/hide", True)
     Set("GridLines/hide", False)
     To("..")
-    Add("graph", name=f"v", autoadd=False)
-    To(f"v")
+    Add("graph", name="vectors", autoadd=False)
+    To("vectors")
     # Legend: vector scale
     for ii, (dev, have) in enumerate([("wind", device_wind), ("incl", graphs)]):
         if not have:
@@ -695,11 +695,13 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
             Set("hide", False)
             Set(
                 "xPos",
-                f"float64(eval(str(SETTING('/_vectors/grid1/v/Leg_{dev}/xPos')))) - LANG({{'default': 0.07, 'ru': 0.08}})",
+                f"float64(eval(SETTING('/_vectors/grid1/vectors/Leg_{dev}/xPos'))) - LANG("
+                f"{{'default': 0.07, 'ru': 0.08}})",
             )
             Set(
                 "yPos",  # center with Leg_{dev} and its underlying vector symbol
-                f"float64(eval(str(SETTING('/_vectors/grid1/v/Leg_{dev}/yPos')))) - {0.0525 / graphs_height_sum:.4g}",
+                f"float64(eval(SETTING('/_vectors/grid1/vectors/Leg_{dev}/yPos'))) - "
+                f"{0.0525 / graphs_height_sum:.4g}",
             )
             Set("positioning", "axes")
             Set("xAxis", "xL")
@@ -746,10 +748,10 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
         Set("arrowright", "arrownarrow")
         Set("arrowSize", "1pt")
         Set("hide", False)
-        Set("xPos", f"float64(eval(str(SETTING('/_vectors/grid1/v/Leg_{dev}/xPos'))))")
+        Set("xPos", f"float64(eval(SETTING('/_vectors/grid1/vectors/Leg_{dev}/xPos')))")
         Set(
             "yPos",
-            f"float64(eval(str(SETTING('/_vectors/grid1/v/Leg_{dev}/yPos')))) - {0.0525 / graphs_height_sum:.4g}",
+            f"float64(eval(SETTING('/_vectors/grid1/vectors/Leg_{dev}/yPos'))) - {0.0525 / graphs_height_sum:.4g}",
         )
         Set("length", f"{prefix.title()}_leg_v * {prefix}scale_page_vectors")
         Set("angle", f"zeros(size({prefix.title()}_leg_v))")
@@ -764,11 +766,13 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
         To(f"Lv-bg_{dev}")
         Set(
             "xPos",
-            f"float64(eval(str(SETTING('/_vectors/grid1/v/Leg_{dev}/xPos')))) + ({prefix.title()}_leg_v * {prefix}scale_page_vectors)/2",
+            f"float64(eval(SETTING('/_vectors/grid1/vectors/Leg_{dev}/xPos'))) + "
+            f"({prefix.title()}_leg_v * {prefix}scale_page_vectors)/2",
         )
         Set(
             "yPos",
-            f"float64(eval(str(SETTING('/_vectors/grid1/v/Leg_{dev}/yPos')))) - {0.0525 / graphs_height_sum:.4g}",
+            f"float64(eval(str(SETTING('/_vectors/grid1/vectors/Leg_{dev}/yPos')))) - "
+            f"{0.0525 / graphs_height_sum:.4g}",
         )
         Set("width", f"{prefix.title()}_leg_v * {prefix}scale_page_vectors")
         Set("height", [round(0.05 / graphs_height_sum, 3)])
@@ -795,13 +799,13 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
     for ii, pid in enumerate(vf.xy_or_y(["_Wind"], graphs, use_x_if=device_wind)):
         is_wind = pid == "_Wind"
         # cum_k_scale += k_scale
-        cum_k_scale_vsz = "DISP_vecY0_distribute*" + vf.xy_sel(
+        cum_k_scale_vsz = f"DISP_vecY0_distribute*{n}" if (n:=vf.xy_sel(
             "1",
             f"sum(list(Disp_vectors_scale_height.values())[:{ii}])",
             use_x_if=device_wind,
             use_y_if=ii > 0,
-            f_xy="({} + {})".format,
-        )
+            f_xy="({} + {})".format
+        )) else "0"
         # print("cum_k_scale =", cum_k_scale)
         if not is_wind:
             Add("label", name=f"l_device{pid}", autoadd=False)
@@ -810,7 +814,8 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
             Set("xPos", l_device_x)
             Set(
                 "yPos",
-                f"float64(eval(str(SETTING('/_vectors/grid1/v/vectors{pid}_lite/yPos')))) + DISP_legY0dev/{n_graphs}",
+                f"float64(eval(SETTING('/_vectors/grid1/vectors/vectors{pid}_lite/yPos'))) + "
+                f"DISP_legY0dev/{n_graphs}",
             )
             Set("positioning", "axes")
             Set("xAxis", "xL")
@@ -858,10 +863,10 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
         # b_lite_in_fg = is_wind or (len(bin_lite) == len(bin_main) and bin_lite >= bin_main)
         bin_bg_wind = ""
         shift = round(
-            np.fmin(
+            min(
                 disp_dtime_range_s / (cfg_plot.graph_width * 100),
                 (wind_bin_average_s if is_wind else use_bins[bin_main]) / 2,
-            ).item()
+            )
         )
         disp_vec_all = {  # :
             "suffix": ("_lite", "", "_bg"),
@@ -901,7 +906,7 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
             Set(
                 "yPos",
                 (
-                    f"float64(eval(str(SETTING('/_vectors/grid1/v/vectors{pid}_lite/yPos'))))"
+                    f"float64(eval(str(SETTING('/_vectors/grid1/vectors/vectors{pid}_lite/yPos'))))"
                     if z_order
                     else f"1 - {cum_k_scale_vsz} + DISP_vecY0/{n_graphs}"
                 ),
@@ -918,8 +923,8 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
                 Set("angle", "degrees(arctan2(bin2_u_Wind, bin2_v_Wind)) - 90")
             elif disp_vec.bin:  # Vabs and Vdir should be defined
                 Set("xPos", f"{disp_vec.bin}t0st{pid}{disp_vec.shift}")
-                Set("length", f"{disp_vec.bin}Vabs{fpix(pid)}*DISPscale_page_vectors")
-                Set("angle", f"{disp_vec.bin}Vdir{fpix(pid)} - 90")
+                Set("length", f"{disp_vec.bin}Vabs{pid}*DISPscale_page_vectors")
+                Set("angle", f"{disp_vec.bin}Vdir{pid} - 90")
             else:
                 Set(
                     "xPos",
@@ -943,7 +948,7 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
         Set("xData", "vf.dt64s2vsz(int32(array(DISPtime[0], 'M8[s]')))")
         Set(
             "yData",
-            f"zeros(2) + float64(eval(str(SETTING('/_vectors/grid1/v/vectors{pid}_lite/yPos'))))",
+            f"zeros(2) + float64(eval(str(SETTING('/_vectors/grid1/vectors/vectors{pid}_lite/yPos'))))",
         )
         Set("hide", False)
         Set("yAxis", "y[0,1]")
@@ -1100,7 +1105,7 @@ def pg_1d(
     :param graphs: device names in order. Will be used as result graphs names. w* graphs not used if param not
         "Vabs" or "t"
     :param param: str, one of params from global ``disp_param``, but if it is 'Vabs' then for w* graphs 'P' is
-    used instead if contains '&' then will be splitted and pasted with different color on each graph relative
+    used instead if contains ';' then will be splitted and pasted with different color on each graph relative
     to default axis for 1st param
     :param i_show_legend: dict {x, {VeuszParameterName: VeuszParameterValue}}, show legend only for this
     graphs, hide key if id not listed
@@ -1114,6 +1119,8 @@ def pg_1d(
         },
         scale_height={'_i38': 1.4}
         )
+    Note: ';' for multiple variables is selected because for valid ops (&+-...) graph_name could not contain
+    variables names due to Veusz looks at variables in them - bug
     """
     pg_name = f"_zoom!{param}" if zoom else f"_{param}"
     print(f"Page {pg_name}", end=": ")
@@ -1309,7 +1316,7 @@ def pg_1d(
             Set("Background/transparency", 10)
             To("..")
 
-    b_dense = disp_dtime_range_s / cur_graph_width > 100000
+    b_dense = disp_dtime_range_s / cur_graph_width > 10000
 
     Add("grid", name="grid1", autoadd=False)
     To("grid1")
@@ -1514,7 +1521,7 @@ def pg_1d(
         return axis_name
 
     # Different colors for each param on common graph
-    params = param.split("&")
+    params = param.split(";")
     clr_param_bins = {  # for use with Current/Wind as `clr_param_bins[bin if pid != "_Wind" else pid]`
         "": (("yellow", "cyan") if b_dense and not zoom else ("red", "#0088ff"))
         if "bin2_" in use_bins
@@ -1535,6 +1542,7 @@ def pg_1d(
     # param_w = param ?
     keys_shown = set()
     for ii, (pid, scaling) in enumerate(zip(graphs, scale_heights)):
+
         # binB - packet start interval
         binB = "binB"
         # binAB - intermediate average interval
@@ -1576,11 +1584,8 @@ def pg_1d(
                 graph_name = params_cur[0]
 
         y_axis_name = f"y{graph_name}"
-        # +change graph_name to can reference in Veusz (due to Veusz looks at variables and ops &+-... - bug)
         graph_name = "{}{}".format(
-            graph_name.replace("&", ";")
-            if "&" in graph_name
-            else graph_name.removesuffix("_Wind"),
+            graph_name if ";" in graph_name else graph_name.removesuffix("_Wind"),
             pid,
         )
         print(graph_name, end=",")
@@ -1590,7 +1595,7 @@ def pg_1d(
         Add("graph", name=graph_name, autoadd=False)
         To(graph_name)
 
-        # Set colorful axis_label for multiple params ("u&v" to "{\\color{black}{u}}, {\\color{red}{v}}")
+        # Set colorful axis_label for multiple params ("u;v" to "{\\color{black}{u}}, {\\color{red}{v}}")
         axis_label = (
             ",\u2009".join(
                 [
@@ -1605,7 +1610,7 @@ def pg_1d(
                     )
                 ]
             )
-            if "&" in param
+            if ";" in param
             else None
         )
 
@@ -1658,32 +1663,51 @@ def pg_1d(
             To("..")
 
         if pid in i_show_legend:
-            _ = f"legend{'_z' if zoom else ''}"
-            Add("key", name=_, autoadd=False)
-            To(_)
-            if len(use_bins) == 1:
-                Set("hide", True)
+            leg_len_single = 4  # cm
+            for leg_len_added, (sfx_max, title, exclude) in enumerate([
+                ("", "%{{vf.c1(I['averaging bin'])}}%", f"Vabsbin_max{pid}"),
+                (
+                    "max",
+                    "%{{vf.c1(vf.str_dt(DATA('dt'), LANG({'default': 'en', 'ru': 'ru'})) + "
+                    '" {data} {max} {per} {bin}".format_map(I))}}%',
+                    f"Vabsbin2{pid}, <❬|V|❭D>bin2, Vabsbin{pid}, Vabs{pid}",
+                ),
+            ]):
+                # leg_max
+                Add(
+                    "key",
+                    name=(_ := "_".join(["legend"] + [sfx_max] + (["z"] if zoom else []))),
+                    autoadd=False,
+                )
+                To(_)
+                if len(use_bins) == 1:
+                    Set("hide", True)
+                if "title" not in keys_shown:
+                    Set("title", title)
+                Set("exclude", exclude)
+
+                Set(
+                    "horzManual",
+                    0.02 - (leg_len_added / cur_graph_width)
+                    if zoom
+                    # 1.532685e-6*disp_dtime_range_s + (-4.057 if b_wide_labels else -3.6)  # right edge
+                    # right edge minus legend width
+                    else (
+                        (cur_graph_width - (leg_len_single * ((4.5 if b_wide_labels else 2) - leg_len_added)))
+                        / cur_graph_width
+                    ),
+                )  # if (len(i_show_legend) > 1 or i_show_legend[pid].get('vertManual') > 0) else -0.01
+                #     move one low legend to the lower left
+
+                Set("Background/transparency", 20)
+                Set("horzPosn", "manual")
+                Set("vertPosn", "manual")
+                for k, v in i_show_legend[pid].items():
+                    Set(k, v)
+                To("..")
             if "title" not in keys_shown:
                 keys_shown.add("title")
-                Set("title", "%{{vf.c1(I['averaging bin'])}}%")
-            Set(
-                "horzManual",
-                0.02
-                if zoom
-                # 1.532685e-6*disp_dtime_range_s + (-4.057 if b_wide_labels else -3.6)  # right edge
-                else (
-                    (cur_graph_width - (9 if b_wide_labels else 3))
-                    / cur_graph_width  # right edge minus legend width
-                ),
-            )  # if (len(i_show_legend) > 1 or i_show_legend[pid].get('vertManual') > 0) else -0.01
-            #     move one low legend to the lower left
 
-            Set("Background/transparency", 20)
-            Set("horzPosn", "manual")
-            Set("vertPosn", "manual")
-            for k, v in i_show_legend[pid].items():
-                Set(k, v)
-            To("..")
         if ii == 0:
             Add("axis-function", name="x_show_up", autoadd=False)
             To("x_show_up")
@@ -1730,7 +1754,7 @@ def pg_1d(
             # Clip binned parameters and express in defined terms (if needed)
             if bin and param[1:4] in ("abs", "dir"):  # already clipped
                 y_data = (
-                    f"{bin}{param}{fpix(pid)}"
+                    f"{bin}{param}{pid}"
                     if pid != "_Wind"  # "Wind" suffix in dict values olnly
                     else param_expr_dict[param.removesuffix("Wind")]
                 )
@@ -1776,8 +1800,8 @@ def pg_1d(
             Set("xAxis", x_name)
             Set("yAxis", axis_name or f"y{param}")
             # Add key value (if xy has no key then for possibility to easy switch it on in GUI)
-            if pid not in i_show_legend or bin not in keys_shown:
-                if pid in i_show_legend:
+            if (not (b_key_shown := pid in i_show_legend)) or bin not in keys_shown:
+                if b_key_shown:
                     keys_shown.add(f"{bin[:-1]}{w_opt}")
                 Set(
                     "key",
@@ -1801,6 +1825,7 @@ def pg_1d(
                         ]
                     ),
                 )
+
 
         if params_cur[0] == "P":
             Add("label", name="l_mean_P", autoadd=False)
@@ -1928,7 +1953,7 @@ def pg_1d(
                     "marker", "none" if len(params) > 1 else "linehorz"
                 )  # marker can make all lines black
                 Set("markerSize", "0.01pt" if zoom else "0.1pt")
-                Set("MarkerLine/color", "#ffaa00")  # "color", "darkred"
+                Set("MarkerLine/color", "red")  # "color", "darkred", "#ffaa00"
                 # Add transparency if dencity of points higher than 1/pixel:
                 # ~0 for disp_dtime_range_s <= 1D, and 99 old: 95 for 1 Month, always <= 99 + account for graph width
                 if zoom:
@@ -1938,7 +1963,7 @@ def pg_1d(
                         / (disp_dtime_range_s + 20000)
                         * cfg_plot.graph_width_standard
                         / (415 - cfg_plot.grid_horMargins_sum)
-                    ).item()
+                    )
                     transparency = int(value) if value > 0 else 0
                     Set("PlotLine/color", "red" if p_clr == "yellow" else p_clr)
                     Set("PlotLine/width", "0.25pt")
@@ -1954,7 +1979,7 @@ def pg_1d(
                         * (disp_dtime_range_s - 500)
                         / (disp_dtime_range_s + 20000)
                         * min(cfg_plot.graph_width_standard / cur_graph_width, 1)
-                    ).item()  # 0.1 px line of transparency 99% is invisible so make its max transparency 30%
+                    )  # 0.1 px line of transparency 99% is invisible so make its max transparency 30%
                     transparency = (int(value) if value > 0 else 0)
 
                     # - int(1/(5/30 if pid in cus.USE_bursts else 15/60 if pid in ids_w else 1))
@@ -1976,6 +2001,44 @@ def pg_1d(
                     Set("MarkerLine/color", p_clr_dot if b_dense else "black")
                 Set("MarkerLine/hide", False)
                 To("..")
+
+
+        # Peak envilope line(s)
+        if binAB:
+            for lim in ("min", "max") if param in "uv" else ("max",) if param == "Vabs" else ():
+                Add("xy", name=(_ := f"{param}bin_{lim}{pid}"), autoadd=False)
+                To(_)
+                Set("marker", "dot")
+                Set("markerSize", "0.5pt")
+                Set("color", "blue")
+                Set(
+                    "xData",
+                    (
+                        f"f(lambda t: vf.stretch_time(t, binB_t0st{pid}) if '{pid}' in USE_bursts else "
+                        f"t + bin/2, bin_t0st{pid})"
+                    ),
+                )
+                Set(
+                    "yData",
+                    (
+                        f"maximum.reduceat(absolute(u[iprobe.{pid}, sl_(iu{pid})] + "
+                        f"1j*v[iprobe.{pid}, sl_(iu{pid})]), int32(bin_t0i{pid})[:-1])"
+                        if param == "Vabs"
+                        else f"bin_{param}_{lim}{pid}"
+                    ),
+                )
+                Set("key", "%{{vf.str_dt(DATA('bin'), LANG({'default': 'en', 'ru': 'ru'}))}}%")
+                Set("xAxis", "x")
+                Set("yAxis", "yVabs")
+                Set("PlotLine/color", "blue")
+                Set("PlotLine/width", "0.25pt")
+                Set("PlotLine/style", "dashed")
+                Set("PlotLine/transparency", 50)
+                Set("MarkerLine/color", "blue")
+                Set("MarkerLine/width", "0.25pt")
+                Set("MarkerLine/hide", False)
+                To("..")
+
 
         if param == "Vdir":
             Add("xy", name="autorange", autoadd=False)
@@ -2285,9 +2348,7 @@ def pg_progress(graphs, clr_by="probe", aspect=1, b_dt_big=True, cfg_plot=None):
         )
 
         _ = (
-            format_TickLabels(
-                disp_dtime_range_s, st_fmt=imax_time_unit_char, compact=True
-            )
+            format_TickLabels(disp_dtime_range_s, st_fmt=imax_time_unit_char, compact=True)
             if b_dt_big
             else "%Vg"
         )
@@ -2627,8 +2688,8 @@ def pg_progress(graphs, clr_by="probe", aspect=1, b_dt_big=True, cfg_plot=None):
                 Set(
                     f"{x}Data",
                     f"append(nanmean({u}{fpix(pid)}[sl_([iu{pid}[0,0], searchsorted("
-                    f"{t_name}{t0sfx}{'' if b_one_table else pid}, "
-                    f"({bin}t0st{pid}[0] - USE_timeShift_s))])])*{bin[:-1]}/(1{mul}), {bin}{u}_cum{pid})",
+                    f"{t_name}{t0sfx}{'' if b_one_table else pid}, ({bin}t0st{pid}[0] - USE_timeShift_s))])]"
+                    f") * {bin[:-1]}{f'/(1{t_mul})' if t_mul else ''}, {bin}{u}_cum{pid})",
                 )
             Set("hide", n_graphs > 1)
             Set("xAxis", "x_km")
@@ -2735,7 +2796,7 @@ x*k - margin_chars*0.004*length*sign([x - x_prev]),
 *array([DATA(f'bin_u_cum_{i}')[-2:] for i in DISPdevices_info]).T,
 atleast_2d(Progress_x_lims).T,
 diff(Progress_x_lims),
-int32([[len(w) for w in DATA('disp_devices_info_keys')]]) - len('\color{#660000}{st.\bold{}}'),
+int32([[len(w) for w in DATA('disp_devices_info_keys')]]) - len(r'\color{#660000}{st.\bold{}}'),
 SETTING('/_Vprogress/grid_diagram/map0/y_km/datascale')
 )""",
     )
@@ -2983,7 +3044,7 @@ if __name__ in ("__main__", "builtins"):
         pg_vectors(ids_order, scale_height=graphs_scale_height, cfg_plot=cfg_plot)
 
     for param in (
-        ["Vabs"] + (["u&v", "Vdir"] if ids_i or device_wind else []) + ["t"]
+        ["Vabs"] + (["u;v", "Vdir"] if ids_i or device_wind else []) + ["t"]
     ):  # u-shore v-shore
         pg_1d(
             ids_order, param=param, scale_height=graphs_scale_height, cfg_plot=cfg_plot

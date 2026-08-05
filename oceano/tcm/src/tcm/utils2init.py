@@ -763,7 +763,7 @@ def ini2dict(arg_source: Union[Mapping[str, Any], str, PurePath, None] = None):
     """
 
     config, arg_source, arg_ext = cfgfile2dict(arg_source)
-    # Preserve non-dict scalar keys (e.g. +force_reprocess=True from Hydra CLI)
+    # Preserve non-dict scalar keys (e.g. +some_flag=True from Hydra CLI)
     # as-is — only pre-allocate {} for dict sections that the loop below fills.
     cfg = {key: (val if not hasattr(val, "items") else {}) for key, val in config.items()}
     oname = "..."

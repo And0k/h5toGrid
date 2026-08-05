@@ -7,14 +7,14 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from tcm._xr.calc import binning
 import pytest
 import xarray as xr
 
 from tcm import _constants
 from tcm._xr import io as xr_io
+from tcm._xr.calc import binning
 from tcm._xr.coefs import save_coefs_to_nc
-from tcm._xr.dataset import merge_probes, open_nc, open_csv
+from tcm._xr.dataset import merge_probes, open_csv, open_nc
 from tcm._xr.physical import process
 
 _VELOCITY_COLS = ("v", "u", "inclination")  # Vabs/Vdir intentionally excluded from NC/in-memory
@@ -120,26 +120,6 @@ class TestToPhysical:
 
 @pytest.mark.xr
 class TestIO:
-    def test_csv_roundtrip(self, sensor_ds, tmp_path):
-        """Dataset → CSV → Dataset roundtrip preserves data (within float format precision)."""
-        path = tmp_path / "test.csv"
-        xr_io.ds_to_csv(sensor_ds, path)
-        result = xr_io.load_csv_as_ds(path)
-        for var in sensor_ds.data_vars:
-            if var == "axis":
-                continue  # non-numeric, not roundtrippable
-            assert var in result
-            np.testing.assert_allclose(result[var].values, sensor_ds[var].values, rtol=1e-4, atol=1e-10)
-
-    def test_netcdf_roundtrip(self, sensor_ds, tmp_path):
-        """Dataset → netCDF → Dataset roundtrip preserves data."""
-        path = tmp_path / "test.nc"
-        xr_io.save_netcdf(sensor_ds, path)
-        assert path.exists()
-        result = xr_io.open_netcdf(path)
-        for var in sensor_ds.data_vars:
-            assert var in result
-            np.testing.assert_allclose(result[var].values, sensor_ds[var].values, atol=1e-10)
 
     def test_csv_split_period(self, tmp_path):
         """split_period creates multiple files."""

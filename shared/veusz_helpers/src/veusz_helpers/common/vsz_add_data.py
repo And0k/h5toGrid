@@ -173,7 +173,9 @@ def load_tcm_config(path_in: Path) -> dict:
             }
 
 
-def _cf_to_dt_ns(raw: np.ndarray, units: Union[str, bytes] = "seconds since 1970-01-01", int=False) -> np.ndarray:
+def _cf_to_dt_ns(
+    raw: np.ndarray, units: Union[str, bytes] = "seconds since 1970-01-01", int=False
+) -> np.ndarray:
     """float64 seconds OR legacy int64 ns → datetime64[ns] (for h5py read).
 
     Backward-compatible: inspects dtype to handle both CF-float64 and
@@ -312,37 +314,37 @@ def veusz_load_hdf5(
                         continue
 
                 print(end=", " if i < len(device_ids) else ". ")
-                index = _cf_to_dt_ns(h[grp_dev[device_id]["table"]][time_var_name], int=True)
+                t_ns = _cf_to_dt_ns(h[grp_dev[device_id]["table"]][time_var_name], int=True)
                 # todo: check this to replace code below:
                 # i_ranges[device_id] = search_time_range_indexes(index, time_range, time_shift_s)
                 if any(np.isfinite(time_range)):
                     time_range_raw_cur = np.int64(time_range) + (
-                        index[-1] if have_timedelta else -1e9 * time_shift_s
+                        t_ns[-1] if have_timedelta else -1e9 * time_shift_s
                     )
 
-                    i_ranges[device_id] = np.searchsorted(index, time_range_raw_cur).tolist()
+                    i_ranges[device_id] = np.searchsorted(t_ns, time_range_raw_cur).tolist()
                     try:
-                        time_range_raw = index[i_ranges[device_id]]
+                        time_range_raw = t_ns[i_ranges[device_id]]
                     except (IndexError, TypeError):  # `TypeError: Indexing elements must be in increasing
                     # order` in addition and before IndexError if both indexes not increasing and above limit
-                        _ = min(i_ranges[device_id][-1], len(index) - 1)
+                        _ = min(i_ranges[device_id][-1], len(t_ns) - 1)
                         if _ <= i_ranges[device_id][0]:
                             raise IndexError(
                                 "Required time range {} is after the data range {}".format(
-                                    time_range, _cf_to_dt_ns(index[[0, -1]])
+                                    time_range, _cf_to_dt_ns(t_ns[[0, -1]])
                                 )
                             )
                         try:
-                            time_range_raw = index[[i_ranges[device_id][0], _]]
+                            time_range_raw = t_ns[[i_ranges[device_id][0], _]]
                         except IndexError:
                             raise IndexError(
                                 "Required time range: {}, data range: {}".format(
-                                    time_range, _cf_to_dt_ns(index[[0, -1]])
+                                    time_range, _cf_to_dt_ns(t_ns[[0, -1]])
                                 )
                             )
                 else:
-                    time_range_raw = index[[0, -1]]
-                    i_ranges[device_id] = [0, len(index)]
+                    time_range_raw = t_ns[[0, -1]]
+                    i_ranges[device_id] = [0, len(t_ns)]
 
                 time_raw_min = np.fmin(time_range_raw[0], time_raw_min)
                 time_raw_max = np.fmax(time_range_raw[-1], time_raw_max)

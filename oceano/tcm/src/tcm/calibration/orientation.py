@@ -81,7 +81,7 @@ def zeroing_rotation(
         only helps by averaging out noise, all samples should reflect the same true orientation.
     :param accel_calibration: the accelerometer's ellipsoid fit (see `calibration.calibrate`), *before*
         any previous zeroing rotation — folding this twice would double-rotate.
-    :return (R, angular_spread):
+    :return (R, incl_rad, angular_spread):
         R: (3, 3) rotation matrix;
         angular_spread: Standard deviation (degrees) of inclination angles relative to the empirical zenith
         inclination: (degrees) from absolute to the empirical zenith

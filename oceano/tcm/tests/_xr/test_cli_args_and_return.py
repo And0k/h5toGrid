@@ -79,9 +79,9 @@ class TestCliOverrideParsing:
                 id="list-override-ids",
             ),
             pytest.param(
-                ["+force_reprocess=True"],
-                lambda cfg: cfg.force_reprocess is True,
-                id="force-reprocess-bool",
+                ["out.overwrite_db=splice"],
+                lambda cfg: cfg.out.overwrite_db == "splice",
+                id="overwrite-db-splice",
             ),
         ],
     )
@@ -114,14 +114,14 @@ class TestCliOverrideFullPropagation:
         ("extra_args", "check"),
         [
             pytest.param(
-                ["+force_reprocess=True"],
-                lambda cfg: cfg.get("force_reprocess") is True,
-                id="force-reprocess",
+                ["out.overwrite_db=splice"],
+                lambda cfg: cfg["out"].get("overwrite_db") == "splice",
+                id="overwrite-db-splice",
             ),
             pytest.param(
-                ["+force_reprocess=False"],
-                lambda cfg: cfg.get("force_reprocess") is False,
-                id="force-reprocess-false",
+                ["out.overwrite_db=null"],
+                lambda cfg: cfg["out"].get("overwrite_db") is None,
+                id="overwrite-db-null",
             ),
         ],
     )
@@ -149,28 +149,27 @@ class TestCliOverrideFullPropagation:
         cfg_dc = mock_proc.call_args[0][0]
         assert check(cfg_dc), (
             f"Override {extra_args} did not reach run_processing: "
-            f"cfg.get('force_reprocess') = {cfg_dc.get('force_reprocess')!r}"
+            f"cfg['out'].get('overwrite_db') = {cfg_dc.get('out', {}).get('overwrite_db')!r}"
         )
 
 
 @pytest.mark.xr
 class TestMainInitPreservesExtraKeys:
-    """``main_init`` → ``ini2dict`` must preserve extra top-level keys (e.g. ``+force_reprocess``).
+    """``main_init`` → ``ini2dict`` must preserve structured config overrides.
 
     Regression: ``ini2dict`` pre-allocates ``cfg = {key: {} for key in config}``
     then skips non-dict values via ``hasattr(sec, 'items')`` → ``continue``.
-    Boolean keys like ``force_reprocess=True`` survive as ``{}`` (empty dict),
-    which is falsy — causing ``bool(cfg.get('force_reprocess', False))`` → ``False``.
+    Now ``out.overwrite_db`` is a structured config field (no ``+`` prefix needed).
     """
 
-    def test_force_reprocess_survives_main_init(self, _raw_with_csv, monkeypatch, mocker):
-        """force_reprocess=True from CLI must be True AFTER main_init converts cfg to dict."""
+    def test_overwrite_db_survives_main_init(self, _raw_with_csv, monkeypatch, mocker):
+        """out.overwrite_db=splice from CLI must be 'splice' AFTER main_init converts cfg to dict."""
         project_dir, raw_dir = _raw_with_csv
         monkeypatch.chdir(project_dir)
         monkeypatch.setattr(
             sys,
             "argv",
-            ["prog", str(raw_dir / "*i*.txt"), "+force_reprocess=True"],
+            ["prog", str(raw_dir / "*i*.txt"), "out.overwrite_db=splice"],
         )
 
         # Capture cfg AFTER main_init by patching _process_and_persist
@@ -178,15 +177,15 @@ class TestMainInitPreservesExtraKeys:
         orig_pap = processing._process_and_persist
 
         def _spy_pap(*args, **kwargs):
-            captured["force_reprocess"] = kwargs.get("force_reprocess")
+            captured["overwrite_db"] = kwargs.get("overwrite_db")
             return orig_pap(*args, **kwargs)
 
         mocker.patch.object(processing, "_process_and_persist", side_effect=_spy_pap)
         cli.call_in_raw_dir(processing.run)
 
-        assert captured.get("force_reprocess") is True, (
-            f"force_reprocess was stripped by main_init/ini2dict — "
-            f"expected True, got {captured.get('force_reprocess')!r}"
+        assert captured.get("overwrite_db") == "splice", (
+            f"overwrite_db was stripped by main_init/ini2dict — "
+            f"expected 'splice', got {captured.get('overwrite_db')!r}"
         )
 
 

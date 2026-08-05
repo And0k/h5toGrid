@@ -2,25 +2,27 @@
 I/O helpers for the xarray-native pipeline.
 """
 from __future__ import annotations
+
 import fnmatch
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Union
+from typing import Any
 
 import pandas as pd
 import xarray as xr
 
-from tcm import _constants, csv_load, utils2init
-from tcm._xr import storage, filters, dataset
+from tcm import _constants, utils2init
+from tcm._xr import dataset, filters, nc_utils
 
 lf = utils2init.LoggingStyleAdapter(__name__)
 
 def load_raw(
-    path: Optional[Union[str, Path]] = None,
+    path: str | Path | None = None,
     tbl: str = "",
     text_type: str = "i",
-    cfg_in: Optional[Mapping[str, Any]] = None,
-    chunk_time: Optional[int] = None,
-) -> tuple[Optional[xr.Dataset], Optional[Dict[str, Any]]]:
+    cfg_in: Mapping[str, Any] | None = None,
+    chunk_time: int | None = None,
+) -> tuple[xr.Dataset | None, dict[str, Any] | None]:
     """Load raw inclinometer data from any supported format.
 
     Auto-detects format by file extension and dispatches to the
@@ -125,7 +127,7 @@ def load_raw(
     # numpy cannot handle datetime64[ns, UTC] (pandas extension dtype);
     # .values on tz-aware coords returns an object array of datetime objects,
     # which crashes .astype("datetime64[ns]") in filters/binning/storage.
-    ds = storage._strip_tz_datetime(ds)
+    ds = nc_utils.strip_tz_datetime(ds)
 
     if cfg_in:  # apply raw-col DROP + hole check
         ds = filters.filter_global_minmax(ds, cfg_in)
@@ -139,55 +141,13 @@ def load_raw(
     return ds, coefs
 
 
-
-# --------------------------------------------------------------------------- #
-# CSV → Dataset
-# --------------------------------------------------------------------------- #
-
-def load_csv_as_ds(
-    path: Union[str, Path],
-    *,
-    index_col: str = "Time",
-    parse_dates: bool = True,
-    chunk_time: Optional[int] = None,
-) -> xr.Dataset:
-    """
-    Load a CSV/TSV file into an :class:`xarray.Dataset`.
-
-    Parameters
-    ----------
-    path
-        CSV/TSV file path.
-    index_col
-        Column to use as the time index (default ``"Time"`` — matches TSV output convention).
-    parse_dates
-        Passed to :func:`pandas.read_csv`.
-    chunk_time
-        If given, chunk the ``time`` dimension into blocks of this size.
-
-    Returns
-    -------
-    xr.Dataset
-    """
-    df = pd.read_csv(path, sep="\t", index_col=0, parse_dates=[0] if parse_dates else None)
-    df.index.name = "time"  # normalise to xr-standard dimension name
-    ds = xr.Dataset.from_dataframe(df)
-    if chunk_time is not None:
-        ds = ds.chunk({"time": chunk_time})
-    return ds
-
-
-# --------------------------------------------------------------------------- #
-# Dataset → CSV
-# --------------------------------------------------------------------------- #
-
 def ds_to_csv(
     ds: xr.Dataset,
-    path: Union[str, Path],
+    path: str | Path,
     *,
-    split_period: Optional[str] = None,
-    text_date_format: Optional[str] = None,
-    text_columns: Optional[list] = None,
+    split_period: str | None = None,
+    text_date_format: str | None = None,
+    text_columns: list | None = None,
     float_format: str = "%.5g",
     sep: str = "\t",
 ) -> list[Path]:
@@ -276,7 +236,7 @@ def ds_to_csv(
     return written
 
 
-def _write_large_csv(df: "pd.DataFrame", path: Path, csv_kwargs: dict, chunk_size: int = 100_000) -> None:
+def _write_large_csv(df: pd.DataFrame, path: Path, csv_kwargs: dict, chunk_size: int = 100_000) -> None:
     """Write large DataFrame to CSV with tqdm progress bar."""
     from tqdm import tqdm
 
@@ -295,76 +255,14 @@ def _write_large_csv(df: "pd.DataFrame", path: Path, csv_kwargs: dict, chunk_siz
 
 
 # --------------------------------------------------------------------------- #
-# Dataset → netCDF
-# --------------------------------------------------------------------------- #
-
-def save_netcdf(
-    ds: xr.Dataset,
-    path: Union[str, Path],
-    *,
-    engine: str = _constants.nc_engine,
-) -> Path:
-    """
-    Persist a Dataset to netCDF.
-
-    Parameters
-    ----------
-    ds
-        Dataset to write.
-    path
-        Output path (``.nc``).
-    engine
-        Backend engine for :meth:`xarray.Dataset.to_netcdf`.
-
-    Returns
-    -------
-    Path
-        Written file path.
-    """
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    ds = storage._drop_battery(ds)
-    ds = storage._downcast_float32(ds)
-    enc = {**storage._force_epoch(ds), **storage._compression_encoding(ds)}
-    ds.to_netcdf(path, engine=engine, encoding=enc)
-    return path
-
-
-def open_netcdf(
-    path: Union[str, Path],
-    *,
-    chunk_time: Optional[int] = None,
-    engine: str = _constants.nc_engine,
-) -> xr.Dataset:
-    """
-    Open a netCDF file as a (possibly chunked) Dataset.
-
-    Parameters
-    ----------
-    path
-        Path to the ``.nc`` file.
-    chunk_time
-        If given, chunk the ``time`` dimension.
-    engine
-        Backend engine.
-
-    Returns
-    -------
-    xr.Dataset
-    """
-    chunks = {"time": chunk_time} if chunk_time else None
-    return xr.open_dataset(path, engine=engine, chunks=chunks)
-
-
-# --------------------------------------------------------------------------- #
 # Legacy HDF5 bridge
 # --------------------------------------------------------------------------- #
 
 def open_hdf5(
-    path: Union[str, Path],
+    path: str | Path,
     table: str = "incl*",
-    chunk_time: Optional[int] = None,
-) -> tuple[xr.Dataset, Optional[Dict[str, Any]]]:
+    chunk_time: int | None = None,
+) -> tuple[xr.Dataset, dict[str, Any] | None]:
     """Load HDF5 table and coefs into an xarray Dataset via pandas.
 
     Reads data from matching tables and attempts to extract coefs from

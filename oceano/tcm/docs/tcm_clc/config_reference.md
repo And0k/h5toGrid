@@ -139,11 +139,12 @@ those scalar defaults are silently ignored — no warning about "not redefined".
 | `split_period` | `str` | `''` | No | Pandas offset string to split output blocks (e.g. `'1D'`). |
 | `text_path` | `str` | `'text_output'` | **Yes** | Text output directory. |
 | `text_date_format` | `str` | `'%Y-%m-%d %H:%M:%S.%f'` | No | Date format in text files. |
-| `text_columns` | `List[str]` | `[]` | No | Column filter; empty = all calculated columns. |
+| `text_columns` | `List[str]` | `[]` | No | Column filter; empty = all available columns (see §Column order for per-output availability). Columns not present in a given output are silently skipped. |
 | `b_all_to_one_col` | `bool` | `False` | No | Concatenate columns; if true, probes are stacked row‑wise instead. |
 | `b_overwrite_text` | `bool` | `True` | No | Overwrite existing text files. |
 | `b_split_by_time_ranges` | `bool` | `False` | No | Split output by `time_ranges`. |
 | `b_del_temp_db` | `bool` | `False` | No | Delete temporary HDF5 after processing. |
+| `overwrite_db` | `str \| None` | `None` | No | NC overwrite mode. `None` — extend-only (append new data, error if no new data + settings differ). `"export"` — block NC writes, export TSV only. `"splice"` — always reprocess/splice, never trim. `"trim"` — trim-only, never reprocess existing data. See [`overwrite_db` behavior](#overwrite_db-behavior). |
 
 ## `filter` — Process-stage NaN-out thresholds
 
@@ -201,7 +202,6 @@ typed despike overrides (mirrors `_dask_legacy/incl_calibr_hy.ConfigFilter`):
 | `dask_scheduler` | `str` | `''` | `'synchronous'`, `'threads'`, `'processes'`, `'distributed'`. |
 | `sleep_s` | `float` | `0.5` | Sleep between probes to manage memory. |
 | `verbose` | `str` | `'INFO'` | Log level. |
-| `force_reprocess` | `bool` | `False` | Override time-range containment for **processed** NC writes (noAvg/binned). Does NOT affect coef persistence (always overwrites in-place). Accepted via `+force_reprocess=True`. |
 | `use_h5` | `str` | `'auto'` | Control binary (NC/HDF5) I/O. Values: `auto` — enable if `h5py`/`netCDF4` available, skip silently otherwise. `off` — disable; skipped NC operations are logged. `require` — enable if available, **error** if unavailable. `prefer` — enable if available, **warn** and fall back otherwise. Resolved at startup via `policy.IOPolicy.resolve()`. |
 
 ## Decision tables and behavior tuning
@@ -225,7 +225,7 @@ For example, `program.return_='<saved_raw>'` to verify raw data ingestion.
 > **noh5 note**: `<saved_raw>` persists coefs to NC when h5py is available, or to
 > the run YAML in noh5 mode. Raw data cannot be saved to NC without pytables, but
 > coef changes ARE written regardless. Coefficients always overwrite in-place;
-> `force_reprocess` does NOT affect coef persistence — it only controls whether
+> `out.overwrite_db` does NOT affect coef persistence — it only controls whether
 > processed outputs (noAvg/binned) are re-generated when the time range is already
 > covered. See [Updating Coefficients via Zeroing](../README.md#updating-coefficients-via-zeroing)
 > for the coef persistence matrix.
@@ -301,6 +301,25 @@ Pressure, Temp, Battery, ...               ← remaining sensor variables
 `Vabs = hypot(v, u)`, `Vdir = degrees(arctan2(u, v))` — exact inverse of
 `polar2dekart`.  The on-the-fly computation is in `physical.add_vabs_vdir()`.
 
+#### Available `text_columns` values
+
+`text_columns` filters which columns appear in TSV output.  Empty (default)
+writes **all available** columns for the given output type.  Columns listed
+but absent from a particular output are silently skipped.
+
+| Column | Per-probe TSV | Combined TSV | Notes |
+|--------|:---:|:---:|-------|
+| `v` | ✓ | ✓ | North velocity component |
+| `u` | ✓ | ✓ | East velocity component |
+| `Vabs` | ✓ | — | On-the-fly from `v`/`u`; requires `kVabs ≠ None` |
+| `Vdir` | ✓ | — | On-the-fly from `v`/`u`; requires `kVabs ≠ None` |
+| `inclination` | ✓ | — | Sensor tilt angle (degrees) |
+| `Pressure` | ✓ | ✓ | When `P_t` coefficients provided |
+| `Temp` | ✓ | ✓ | Temperature (if present in raw data) |
+
+Example: `text_columns: [v, u, Vabs, Vdir]` — produces four columns in
+per-probe TSV; in combined TSV only `v` and `u` appear (Vabs/Vdir skipped).
+
 For combined multi-probe TSV, each probe's columns are interleaved per-probe:
 `v_i01, u_i01, v_i02, u_i02, ...` (axis=1 concatenation; no inclination).
 When `b_all_to_one_col=True`, probes are stacked row-wise instead.
@@ -368,19 +387,27 @@ differently:
 Time-range containment uses ``ex_ns.min()``/``ex_ns.max()`` (not ``[0]``/``[-1]``)
 because time may be unsorted when multiple stems are appended in discovery order.
 
-#### `_run_params` attribute
+#### `/param_spans/{tbl}` interval table
 
-Every processed NC group written by `store_processed_incremental` stores a
-``_run_params`` JSON history dict.  Each processing run appends a new entry
-under an ISO-timestamp key — previous entries are preserved for audit.
-When the latest entry already matches the current params, no duplicate is
-recorded.
+Every processed NC file written by `store_processed_incremental` stores
+processing parameters as an HDF5 sibling group ``/param_spans/{tbl}`` (not as
+attributes on the data group).  Each processing run appends a new interval;
+duplicate params are not recorded.
 
-On re-run with data already covered, only the **latest** history entry is
+The interval table has:
+
+- coord ``start`` (``datetime64[ns]``) — interval boundaries
+- var ``params`` (str) — sorted key=value text per interval
+- var ``meta`` (str JSON) — metadata per interval
+
+Interval *i* covers ``[start[i], start[i+1])`` or ``[start[i], ∞)`` if last.
+Written **after** the data write so the NC file already exists.
+
+On re-run with data already covered, only the **latest** interval entry is
 compared to the current value (ignoring ``input.time_ranges`` lines) — a
 mismatch raises ``ValueError`` with a unified diff.
 
-The attribute is built by ``_build_filter_params_text()`` (``processing.py``)
+The params text is built by ``_build_filter_params_text()`` (``processing.py``)
 and contains **all** resolved parameters that affect processed output, sorted
 by key:
 
@@ -395,22 +422,27 @@ so changing only the time window (e.g. narrowing ``time_ranges``) does NOT
 trigger a ``ValueError``; only filter or coefficient changes do.  The full
 (including ``input.time_ranges``) text is still stored for diagnostic purposes.
 
-**Example** ``_run_params`` value (JSON history with two entries)::
+**Example** ``/param_spans/{tbl}`` with two intervals:
 
-    {"2024-01-15T10:00:00+00:00": "coef.Ag=[[1. 0. 0.]\n [0. 1. 0.]\n [0. 0. 1.]]\ncoef.Az=0.0\nfilter.max.Ax=5\nfilter.min.Ax=-5\ninput.dt_min_binning_proc=1.0\ninput.time_ranges=[2024-01-01, 2024-01-02]",
-     "2024-02-01T09:30:00+00:00": "coef.Ag=[[1. 0. 0.]\n [0. 1. 0.]\n [0. 0. 1.]]\ncoef.Az=0.0\nfilter.max.Ax=5\nfilter.min.Ax=-5\ninput.dt_min_binning_proc=1.0\ninput.time_ranges=[2024-01-01, 2024-01-03]"}
+| `start` | `params` |
+|---|---|
+| `2024-01-15T10:00:00` | `coef.Ag=[[1. 0. 0.] ...]` · `filter.max.Ax=5` · `input.time_ranges=[…]` |
+| `2024-02-01T09:30:00` | `coef.Ag=[[1. 0. 0.] ...]` · `filter.max.Ax=5` · `input.time_ranges=[…]` |
 
-#### `force_reprocess` + `time_ranges` behavior
+#### `overwrite_db` behavior
 
-| `force_reprocess` | Params changed? | `time_ranges` vs existing | Behavior |
+| `overwrite_db` | Params changed? | `time_ranges` vs existing | Behavior |
 |:---:|:---:|:---:|---|
-| `False` | No | subset | **Skip NC** — export TSV only |
-| `False` | No | extends | **Append** — append new tail only |
-| `False` | Yes | any | **Error** — ``ValueError`` |
-| `True` | No | subset | **Trim** — delete outside ``time_ranges``, no reprocessing |
-| `True` | Yes | subset | **Splice** — keep outside, replace inside with reprocessed |
-| `True` | any | extends | **Splice** — keep outside, replace/append inside |
-| `True` | same | None | **Splice** — normal force reprocess |
+| `None` | No | subset | **Skip NC** — export TSV only |
+| `None` | No | extends | **Append** — append new tail only |
+| `None` | Yes | extends | **Append + warn** — keep existing, append new |
+| `None` | Yes | contained | **Error** — suggest `out.overwrite_db=splice` |
+| `"splice"` | — | subset | **Splice** — keep outside, replace inside with reprocessed |
+| `"splice"` | — | extends | **Splice** — keep outside, replace/append inside |
+| `"splice"` | — | None | **Splice** — reprocess all from source |
+| `"trim"` | — | subset | **Trim** — delete outside `time_ranges`, no reprocessing |
+| `"trim"` | — | extends | **Trim + append** — trim existing, process/append new |
+| `"export"` | — | any | **Export only** — block NC writes, export TSV |
 
 #### Absent text files
 

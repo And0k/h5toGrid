@@ -6,13 +6,12 @@ from datetime import datetime
 import h5py
 import numpy as np
 import pytest
+from tcm._xr.nc_utils import strip_tz_datetime
 import xarray as xr
 
 from tcm import _constants
 from tcm._xr.storage import (
     _read_nc_group_as_dataset,
-    _read_nc_group_h5py,
-    _strip_tz_datetime,
     _write_dataset_to_nc_group,
     _LogDecision,
     append_to_nc,
@@ -313,7 +312,8 @@ class TestNcIncrementalAppend:
         nc_path = tmp_path / "test.raw.nc"
         append_to_nc(ds_late, nc_path, "incl_01")
         append_to_nc(ds_early, nc_path, "incl_01")
-        result = _read_nc_group_h5py(nc_path, "incl_01")
+        with h5py.File(str(nc_path), "r") as f:
+            result = _read_nc_group_as_dataset(f, "incl_01")
         # Early data (prepended) should be at the start
         np.testing.assert_array_equal(result["time"][:20], ds_early["time"].values)
         # Late data should follow — all 30 values intact
@@ -355,7 +355,8 @@ class TestNcIncrementalAppend:
         append_to_nc(ds1, nc_path, "incl_01")
         append_to_nc(ds2, nc_path, "incl_01")
         # Verify via h5py: last value of ds1 matches first value before ds2 region
-        result = _read_nc_group_h5py(nc_path, "incl_01")
+        with h5py.File(str(nc_path), "r") as f:  # Read all variables from /incl_01/ group into an xr.Dataset
+            result = _read_nc_group_as_dataset(f, "incl_01")
         # ds1 values: time[0]..time[49], ds2 values: time[50]..time[79]
         t1_last = ds1["time"].values[-1]
         t2_first = ds2["time"].values[0]
@@ -597,7 +598,7 @@ class TestStripTzDatetime:
             coords={"time": pd.date_range("2024-01-01", periods=2, tz="UTC")},
         )
         assert ds["time"].dtype.tz is not None
-        result = _strip_tz_datetime(ds)
+        result = strip_tz_datetime(ds)
         assert result["time"].dtype == np.dtype("datetime64[ns]")
 
     def test_naive_unchanged(self):
@@ -606,14 +607,14 @@ class TestStripTzDatetime:
             {"x": ("time", [1.0, 2.0])},
             coords={"time": xr.date_range("2024-01-01", periods=2, freq="s")},
         )
-        result = _strip_tz_datetime(ds)
+        result = strip_tz_datetime(ds)
         assert result["time"].dtype == np.dtype("datetime64[ns]")
         np.testing.assert_array_equal(result["time"].values, ds["time"].values)
 
     def test_no_time_coord(self):
         """Dataset without time coord passes through unchanged."""
         ds = xr.Dataset({"x": ("dim", [1, 2, 3])})
-        result = _strip_tz_datetime(ds)
+        result = strip_tz_datetime(ds)
         assert result.equals(ds)
 
     def test_preserves_data_values(self):
@@ -625,7 +626,7 @@ class TestStripTzDatetime:
             {"val": ("time", np.arange(5, dtype=float))},
             coords={"time": times_utc},
         )
-        result = _strip_tz_datetime(ds)
+        result = strip_tz_datetime(ds)
         # Values should be the same epoch nanoseconds — use pd.DatetimeIndex
         # to get int64 from tz-aware source (numpy .astype(int64) fails on
         # tz-aware object arrays)

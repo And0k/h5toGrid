@@ -9,11 +9,11 @@ import h5py
 import numpy as np
 import pandas as pd
 import pytest
+from tcm._xr.nc_utils import strip_tz_datetime
 import xarray as xr
 
 from tcm import _constants
 from tcm._xr.storage import (
-    _strip_tz_datetime,
     incremental_skip,
     open_processed_grouped,
     store_processed,
@@ -157,7 +157,7 @@ class TestStoreProcessedH5pyFallback:
         requires, causing ``AttributeError: 'NoneType' has no attribute
         'dimensions'`` on the next ``xr.open_dataset(engine=_constants.nc_engine)``.
         """
-        from tcm._xr.storage import _h5py_extend_group, _dt_ns_to_cf
+        from tcm._xr.storage import _h5py_extend_group, dt_ns_to_cf
 
         path = tmp_path / "proc.nc"
         ds1 = _sample_ds(10)
@@ -169,7 +169,7 @@ class TestStoreProcessedH5pyFallback:
             n_before = d.sizes["time"]
         # Simulate _h5py_extend_group (the resize-only path, no rebuild)
         extra = _sample_ds(3, start="2024-01-02")
-        time_cf = _dt_ns_to_cf(extra["time"].values.astype("datetime64[ns]"))
+        time_cf = dt_ns_to_cf(extra["time"].values.astype("datetime64[ns]"))
         var_arrays = {"time": time_cf, "Ax": extra["Ax"].values, "Ay": extra["Ay"].values}
         _h5py_extend_group(path, "g", 3, var_arrays)
         # netCDF4 must still be able to open the file
@@ -504,20 +504,20 @@ class TestStripTzDatetime:
     def test_strips_utc_from_time_coord(self):
         """UTC timezone is removed from time coordinate."""
         ds = _sample_ds_tz_utc()
-        result = _strip_tz_datetime(ds)
+        result = strip_tz_datetime(ds)
         # After strip: numpy DateTime64DType has no .tz attr
         assert not hasattr(result.coords["time"].dtype, "tz") or result.coords["time"].dtype.tz is None
 
     def test_preserves_naive_datetime(self):
         """Already-tz-naive coords pass through unchanged."""
         ds = _sample_ds()
-        result = _strip_tz_datetime(ds)
+        result = strip_tz_datetime(ds)
         np.testing.assert_array_equal(result.coords["time"].values, ds.coords["time"].values)
 
     def test_values_identical_after_strip(self):
         """Stripping tz preserves nanosecond timestamps."""
         ds = _sample_ds_tz_utc()
-        result = _strip_tz_datetime(ds)
+        result = strip_tz_datetime(ds)
         # Compare via int64 view (both should be same ns-since-epoch)
         expected_ns = ds.coords["time"].values.astype("datetime64[ns]").astype(np.int64)
         result_ns = result.coords["time"].values.astype("datetime64[ns]").astype(np.int64)
@@ -568,26 +568,23 @@ class TestStoreWithTzAwareDatetime:
 
 @pytest.mark.xr
 class TestRunParamsAttr:
-    """store_processed_incremental stores _run_params attr on NC group."""
+    """store_processed_incremental stores param_spans on NC file."""
 
     def test_run_params_written(self, tmp_path):
-        """_run_params attribute is written to the group as JSON history."""
-        from tcm._xr.storage import _get_latest_params, store_processed_incremental
+        """param_spans written to /param_spans/{group}."""
+        from tcm._xr.store_params import get_latest_params, read_param_spans
+        from tcm._xr.storage import store_processed_incremental
 
         path = tmp_path / "proc.nc"
         ds = _sample_ds(50)
         store_processed_incremental(ds, path, group="i_p01", filter_params="filter.max.g=1.0")
-        with h5py.File(path, "r") as f:
-            stored = f["i_p01"].attrs.get("_run_params", "")
-            # h5py returns bytes for string attrs
-            if isinstance(stored, bytes):
-                stored = stored.decode()
-            assert _get_latest_params(stored) == "filter.max.g=1.0", (
-                f"_run_params latest mismatch: expected 'filter.max.g=1.0', got {_get_latest_params(stored)!r}"
-            )
+        params = read_param_spans(path, "i_p01")
+        assert get_latest_params(params) == "filter.max.g=1.0", (
+            f"param_spans latest mismatch: expected 'filter.max.g=1.0', got {get_latest_params(params)!r}"
+        )
 
     def test_run_params_warn_on_diff(self, tmp_path):
-        """When stored _run_params differ (ignoring time_ranges) and not force_reprocess, raise ValueError."""
+        """When stored settings differ (ignoring time_ranges) and force_reprocess=False, raise ValueError."""
         from tcm._xr.storage import store_processed_incremental
 
         path = tmp_path / "proc.nc"
@@ -605,7 +602,7 @@ class TestRunParamsAttr:
             )
 
     def test_run_params_no_warn_when_same(self, tmp_path, caplog):
-        """Same _run_params on re-run → no warning (skip is silent)."""
+        """Same settings on re-run → no warning (skip is silent)."""
         import logging
 
         from tcm._xr.storage import store_processed_incremental
@@ -621,10 +618,9 @@ class TestRunParamsAttr:
         )
 
     def test_run_params_history_preserved(self, tmp_path):
-        """Each write appends a new entry — previous entries are preserved."""
-        import json
-
-        from tcm._xr.storage import _get_latest_params, store_processed_incremental
+        """Each write appends a new interval — previous intervals are preserved."""
+        from tcm._xr.store_params import get_latest_params, read_param_spans
+        from tcm._xr.storage import store_processed_incremental
 
         path = tmp_path / "proc.nc"
         ds_a = _sample_ds(50)
@@ -632,127 +628,35 @@ class TestRunParamsAttr:
         params_a = "filter.max.g=1.0\ncoef.Ax=1.0"
         params_b = "filter.max.g=1.0\ncoef.Ax=2.0"
 
-        # First write
         store_processed_incremental(ds_a, path, group="i_p01", filter_params=params_a)
-        # Force-reprocess with different params (extends time range)
         store_processed_incremental(ds_b, path, group="i_p01", filter_params=params_b, force_reprocess=True)
 
-        with h5py.File(path, "r") as f:
-            raw = f["i_p01"].attrs.get("_run_params", "")
-            if isinstance(raw, bytes):
-                raw = raw.decode()
-        history = json.loads(raw)
-        assert len(history) == 2, f"Expected 2 history entries, got {len(history)}"
-        # Latest entry matches params_b
-        assert _get_latest_params(raw) == params_b
-        # Both entries present
-        assert params_a in history.values()
-        assert params_b in history.values()
+        params = read_param_spans(path, "i_p01")
+        assert params.sizes.get("interval", 0) == 2, (
+            f"Expected 2 param_spans intervals, got {params.sizes.get('interval', 0)}"
+        )
+        assert get_latest_params(params) == params_b
+        assert params_a in params["params"].values
+        assert params_b in params["params"].values
 
     def test_run_params_no_duplicate_when_unchanged(self, tmp_path):
-        """Same params on force-reprocess → no duplicate entry in history."""
-        import json
-
-        from tcm._xr.storage import _get_latest_params, store_processed_incremental
+        """Same params on force-reprocess → no duplicate interval."""
+        from tcm._xr.store_params import get_latest_params, read_param_spans
+        from tcm._xr.storage import store_processed_incremental
 
         path = tmp_path / "proc.nc"
         ds_a = _sample_ds(50)
         ds_b = _sample_ds(50, start="2024-02-01")
         params = "filter.max.g=1.0\ncoef.Ax=1.0"
 
-        # First write
         store_processed_incremental(ds_a, path, group="i_p01", filter_params=params)
-        # Force-reprocess with same params (different data)
         store_processed_incremental(ds_b, path, group="i_p01", filter_params=params, force_reprocess=True)
 
-        with h5py.File(path, "r") as f:
-            raw = f["i_p01"].attrs.get("_run_params", "")
-            if isinstance(raw, bytes):
-                raw = raw.decode()
-        history = json.loads(raw)
-        assert len(history) == 1, f"Expected 1 entry (dedup), got {len(history)}"
-        assert _get_latest_params(raw) == params
-
-
-@pytest.mark.xr
-class TestRunParamsHistoryHelpers:
-    """Standalone tests for _get_latest_params and _append_run_params."""
-
-    def test_get_latest_empty(self):
-        from tcm._xr.storage import _get_latest_params
-
-        assert _get_latest_params("") == ""
-
-    def test_get_latest_non_json_returns_empty(self):
-        """Non-JSON input returns empty (no legacy compat)."""
-        from tcm._xr.storage import _get_latest_params
-
-        assert _get_latest_params("filter.max.g=1.0\ncoef.Ax=1.0") == ""
-
-    def test_get_latest_json_single_entry(self):
-        import json
-
-        from tcm._xr.storage import _get_latest_params
-
-        params = "filter.max.g=2.0"
-        history = json.dumps({"2024-01-15T10:00:00+00:00": params})
-        assert _get_latest_params(history) == params
-
-    def test_get_latest_json_multi_entry_returns_last(self):
-        import json
-
-        from tcm._xr.storage import _get_latest_params
-
-        history = json.dumps({
-            "2024-01-15T10:00:00+00:00": "old_params",
-            "2024-06-01T12:00:00+00:00": "new_params",
-        }, sort_keys=True)
-        assert _get_latest_params(history) == "new_params"
-
-    def test_append_run_params_first_time(self):
-        import json
-
-        from tcm._xr.storage import _append_run_params
-
-        result = _append_run_params("params_v1")
-        records = json.loads(result)
-        assert len(records) == 1
-        assert "params_v1" in records.values()
-
-    def test_append_run_params_preserves_existing(self):
-        import json
-
-        from tcm._xr.storage import _append_run_params
-
-        # Pre-seed with a known older entry to avoid same-second key collision
-        old_history = json.dumps({"2024-01-01T00:00:00+00:00": "params_v1"})
-        result = _append_run_params("params_v2", old_history)
-        records = json.loads(result)
-        assert len(records) == 2
-        assert records["2024-01-01T00:00:00+00:00"] == "params_v1"
-        assert "params_v2" in records.values()
-
-    def test_append_run_params_ignores_non_json_history(self):
-        """Non-JSON history is discarded — starts fresh."""
-        import json
-
-        from tcm._xr.storage import _append_run_params
-
-        result = _append_run_params("new_params", "not_valid_json{{{")
-        records = json.loads(result)
-        assert len(records) == 1
-        assert "new_params" in records.values()
-
-    def test_append_run_params_dedup_when_unchanged(self):
-        """Same params as latest entry → history returned unchanged."""
-        import json
-
-        from tcm._xr.storage import _append_run_params
-
-        history = json.dumps({"2024-01-01T00:00:00+00:00": "same_params"})
-        result = _append_run_params("same_params", history)
-        assert result == history  # identical — no new entry
-        assert len(json.loads(result)) == 1
+        stored = read_param_spans(path, "i_p01")
+        assert stored.sizes.get("interval", 0) == 1, (
+            f"Expected 1 interval (dedup), got {stored.sizes.get('interval', 0)}"
+        )
+        assert get_latest_params(stored) == params
 
 
 # ---------------------------------------------------------------------------

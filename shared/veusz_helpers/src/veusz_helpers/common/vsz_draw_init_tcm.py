@@ -380,8 +380,9 @@ def vsz_draw_init_tcm(
                             )
                             SetData2DExpression(
                                 f"iu{pid}",
-                                f"vf.min_range_2d(atleast_2d(vf.i_positive(vf.i_use({t_name}_w, USEtime{pid}, "
-                                f"t_shift_s=USE_timeShift_s), {t_name}_w.size)), iUseAuto{pid})",
+                                f"vf.min_range_2d(atleast_2d(vf.i_positive(vf.i_use({t_name}_w, "
+                                f"USEtime{pid}, t_shift_s=USE_timeShift_s, t_units='{t_orig_units}'), "
+                                f"{t_name}_w.size)), iUseAuto{pid})",
                                 linked=True,
                             )
                         SetDataExpression(
@@ -397,8 +398,9 @@ def vsz_draw_init_tcm(
                         )
                         SetData2DExpression(
                             f"iu{pid}",
-                            f"vf.min_range_2d(atleast_2d(vf.i_positive(vf.i_use({t_name}{t_sfx}, USEtime{pid}, "
-                            f"t_shift_s=USE_timeShift_s), {t_name}{t_sfx}.size)), iUseAuto{pid})",
+                            f"vf.min_range_2d(atleast_2d(vf.i_positive(vf.i_use({t_name}{t_sfx}, "
+                            f"USEtime{pid}, t_shift_s=USE_timeShift_s, t_units='{t_orig_units}'), "
+                            f"{t_name}{t_sfx}.size)), iUseAuto{pid})",
                             linked=True,
                         )
                         # SetData2DExpression(
@@ -442,8 +444,8 @@ def vsz_draw_init_tcm(
                     SetData2DExpression(
                         f"{bin}iu_cmn{pid}",
                         (
-                            f"[searchsorted({bin}{t_name}{t_sfx}, "
-                            "vf.vsz2dt64s(time_span_i_common).astype(int)*1E9) + int32([0, -1])]"
+                            f"[searchsorted({bin}{t_name}{t_sfx}, vf.vsz2dt64s(time_span_i_common)"
+                            f".astype(int){f'/(1{t_mul})' if t_mul else ''}) + int32([0, -1])]"
                         ),
                         linked=True,
                     )
@@ -463,7 +465,7 @@ def vsz_draw_init_tcm(
                     )
                     SetDataExpression(
                         f"{bin}Vdir{pid}",
-                        f"vf.wrap_dir(degrees(arctan2({bin}u{pid}, {bin}v{fpix(pid)})[sl_({bin}iu{pid})]), disp_central_dir)",
+                        f"vf.wrap_dir(degrees(arctan2({bin}u{fpix(pid)}, {bin}v{fpix(pid)})[sl_({bin}iu{pid})]), disp_central_dir)",
                         linked=True,
                     )
                 SetDataExpression(

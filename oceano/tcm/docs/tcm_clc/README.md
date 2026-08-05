@@ -178,8 +178,9 @@ subsequent runs — only missing configs are created, and stale ones (whose
   processes each YAML independently.  No data is lost: output NC uses incremental
   append (overlapping time ranges are skipped), so both runs write to the same
   file without row duplication.  However, coefs are written twice (last YAML wins),
-  and if `+force_reprocess=True` is set, the second run overwrites the first run's
-  processed data.  Remove the obsolete copy to avoid redundant work.
+   and if `out.overwrite_db=splice` is set, the second run overwrites the first run's
+   processed data.  Remove the obsolete copy to avoid redundant work.
+
 - **Stale configs** (whose `input.path` references a deleted file) are warned
   about but **never auto-deleted**.  When a source file is renamed or moved,
   the old YAML becomes stale and a new one is generated — the old one remains
@@ -419,37 +420,70 @@ python scripts/tcm_clc.py "260624.raw.nc" \
 > run YAML in noh5 mode. In noh5 mode, raw data cannot be saved to NC (no pytables),
 > but coef changes ARE written to the YAML.
 
-### `force_reprocess`
+### `overwrite_db`
 
-By default, the pipeline skips re-processing if the output NC already covers the
-input time range (incremental update). Pass `+force_reprocess=True` to override
-this containment check:
+Controls how the pipeline handles existing processed output when re-running.
+The field is **structured** (a proper Hydra config key), not a dynamic override —
+no `+` prefix:
 
 ```bash
-python scripts/tcm_clc.py "_raw/i*.txt" +force_reprocess=True
+python scripts/tcm_clc.py "_raw/i*.txt" out.overwrite_db=splice
 ```
 
-`force_reprocess` affects **processed** NC writes only (`*.proc_noAvg.nc`,
-`*.proc_Avg.nc`) — it does NOT affect coefficient persistence (coefs always
-overwrite in-place). Use it when filter parameters, coefficients, or input
-window changed and you need to re-bin existing data.
+Four modes:
+
+| Mode | Description |
+|:---:|---|
+| `None` (default) | **Extend-only** — append new data to existing NC; never reprocess or trim |
+| `"splice"` | **Always reprocess** — keep data outside `time_ranges`, replace inside with freshly processed |
+| `"trim"` | **Trim-only** — delete data outside `time_ranges`, never reprocess existing data |
+| `"export"` | **Export-only** — block NC writes entirely, export TSV only |
+
+Mode details:
+
+- **`None`** (default): the pipeline checks whether existing NC already covers the
+  requested `time_ranges`. If so, it skips NC writes and exports TSV only.
+  If `time_ranges` extends beyond existing data, only the new tail is appended.
+  If processing parameters changed and `time_ranges` is a subset of existing data,
+  an error is raised suggesting `out.overwrite_db=splice`.
+
+- **`"splice"`**: existing data outside `time_ranges` is preserved; data inside
+  `time_ranges` is deleted and reprocessed from source. Works for subset, extends,
+  or `None` (full reprocess) time ranges.
+
+- **`"trim"`**: data outside `time_ranges` is deleted; existing data inside is
+  kept as-is (no reprocessing). If `time_ranges` extends beyond existing data,
+  only the extension is processed and appended.
+
+- **`"export"`**: all NC writes are blocked; only TSV text files are exported.
+  Useful for generating text output from existing NC without modifying it.
 
 **Re-run decision matrix**:
 
-| `force_reprocess` | Coefs/params changed? | Behavior |
-|:---:|:---:|---|
-| `False` (default) | No | **Skip** NC write, export TSV only |
-| `False` (default) | Yes | **Error** — `ValueError` with unified diff showing what changed |
-| `True` | No | **Re-write** — delete existing group, write fresh |
-| `True` | Yes | **Re-write** — delete existing group, write fresh |
+| `overwrite_db` | Params changed? | `time_ranges` vs existing | Behavior |
+|:---:|:---:|:---:|---|
+| `None` | No | subset | **Skip NC** — export TSV only |
+| `None` | No | extends | **Append** — append new tail only |
+| `None` | Yes | extends | **Append + warn** — keep existing, append new |
+| `None` | Yes | contained | **Error** — suggest `out.overwrite_db=splice` |
+| `"splice"` | — | subset | **Splice** — keep outside, replace inside with reprocessed |
+| `"splice"` | — | extends | **Splice** — keep outside, replace/append inside |
+| `"splice"` | — | None | **Splice** — reprocess all from source |
+| `"trim"` | — | subset | **Trim** — delete outside `time_ranges`, no reprocessing |
+| `"trim"` | — | extends | **Trim + append** — trim existing, process/append new |
+| `"export"` | — | any | **Export only** — block NC writes, export TSV |
 
-When coefs/params changed and `force_reprocess=False`, the pipeline compares
-stored `_run_params` to the current values (ignoring `input.time_ranges` lines)
+When processing parameters changed and `overwrite_db=None`, the pipeline
+compares stored `/param_spans/{tbl}` interval table to the current values
 and raises `ValueError` with a unified diff — so you see exactly what changed
-and need to pass `+force_reprocess=True` to proceed.
+and need to pass `out.overwrite_db=splice` to proceed.
 
-See `config_reference.md` (§`_run_params` attribute) for the full field list
-and (§`force_reprocess` + `time_ranges` behavior) for the decision table.
+The `/param_spans/{tbl}` dataset (an `xr.Dataset` with `start` coordinate and
+`params`/`meta` variables) records the history of parameter changes per table.
+Each span tracks when a given set of processing parameters was active, replacing
+the legacy `_run_params` JSON attribute. See `config_reference.md`
+(§`/param_spans/{tbl}` interval table) for the full field list and (§`overwrite_db` + `time_ranges`
+behavior) for the decision table.
 
 ## Time Correction
 

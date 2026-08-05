@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional
 
 import numpy as np
+import tcm._xr.nc_utils
 import xarray as xr
 from omegaconf import DictConfig, OmegaConf
 from tqdm.dask import TqdmCallback
@@ -168,30 +169,19 @@ def _build_filter_params_text(cfg_in: dict, cfg_filter: dict, coefs: dict | None
 
 
 # ---------------------------------------------------------------------------
-# Trim fast-path helpers — used by run_processing when force_reprocess
-# but coefs unchanged and time_ranges ⊆ existing data.
+# Trim fast-path helpers — used by run_processing for overwrite_db="trim"
+# and by _export_tsv_from_nc for overwrite_db=False.
 # ---------------------------------------------------------------------------
 
 
 def _read_run_params(nc_path: str | Path, tbl: str) -> str:
-    """Read the latest stored ``_run_params`` entry from *tbl* in *nc_path*.
+    """Read the latest stored param_spans entry from *tbl* in *nc_path*.
 
-    The on-disk attribute is a JSON history dict ``{ISO-date: params, ...}``.
-    Returns only the most recent params text, or ``""`` when the file/group
-    is missing or lacks the attr.
+    Returns ``""`` when the file/group is missing.
     """
-    nc_path = Path(nc_path)
-    if not nc_path.exists():
-        return ""
-    try:
-        with _constants._h5py.File(str(nc_path), "r") as f:
-            if tbl in f:
-                val = f[tbl].attrs.get("_run_params", "")
-                raw = val.decode() if isinstance(val, bytes) else val
-                return storage._get_latest_params(raw)
-    except (OSError, KeyError):
-        pass
-    return ""
+    from tcm._xr.store_params import get_latest_params, read_param_spans
+
+    return get_latest_params(read_param_spans(nc_path, tbl))
 
 
 def _time_ranges_in_nc(nc_path: str | Path, tbl: str, time_ranges: list) -> bool:
@@ -706,7 +696,7 @@ def run_processing(cfg: DictConfig):
     # and passed to _process_and_persist for storage attrs.
     cfg_filter = cfg.get("filter") or {}
     run_params_text = _build_filter_params_text(cfg_in, cfg_filter, coefs=coefs_merged)
-    force_reprocess = bool(cfg.get("force_reprocess", False))
+    overwrite_db = cfg["out"].get("overwrite_db")
 
     # ── Phase 3: Save coefs
     # Two triggers: (a) coefs changed (zeroing/azimuth), (b) raw NC being created for the first time.
@@ -819,19 +809,29 @@ def run_processing(cfg: DictConfig):
         lf.info("return_={} — stopping {} now", return_, pcid)
         return
 
-    # ── Trim fast-path: force_reprocess + params unchanged + time_ranges ⊆ existing
-    # When only time_ranges changed (shrank), there is no need to reprocess —
-    # just trim all NC files to the new window and export TSV.
-    if force_reprocess and run_params_text:
-        raw_nc = cfg["out"].get("raw_db_path")
-        stored_rp = _read_run_params(raw_nc, tbl) if raw_nc else ""
-        if stored_rp and storage._strip_time_ranges(stored_rp) == storage._strip_time_ranges(run_params_text):
-            tr = cfg_in.get("time_ranges")
-            if tr and _time_ranges_in_nc(raw_nc, tbl, tr):
-                _trim_all_nc(cfg, pcid, tr)
-                _export_tsv_from_nc(cfg, pcid)
-                lf.info("Trimmed {} to time_ranges — no reprocessing", pcid)
-                return
+    # ── overwrite_db mode dispatch (export-only / trim / splice or extend)
+    raw_nc_dispatch = cfg["out"].get("raw_db_path")
+    tr_dispatch = cfg_in.get("time_ranges")
+
+    if overwrite_db == "export":
+        # Export-only: block all NC writes, just export TSV from existing data
+        if raw_nc_dispatch:
+            _export_tsv_from_nc(cfg, pcid)
+            lf.info("Export-only (overwrite_db=export) TSV for {}", pcid)
+        return
+
+    if overwrite_db == "trim":
+        if tr_dispatch and raw_nc_dispatch and _time_ranges_in_nc(raw_nc_dispatch, tbl, tr_dispatch):
+            _trim_all_nc(cfg, pcid, tr_dispatch)
+            _export_tsv_from_nc(cfg, pcid)
+            lf.info("Trimmed {} to time_ranges (overwrite_db=trim)", pcid)
+            return  # no reprocess
+        if not tr_dispatch:
+            lf.warning("overwrite_db=trim but no time_ranges — skipping {}", pcid)
+            return
+        # time_ranges extends existing → fall through to _process_and_persist (append new data)
+
+    # overwrite_db == "splice" or None → fall through to _process_and_persist
 
     # ── tick adapter for _process_and_persist (PROC, NC×n_bins, TSV×n_bins)
     def _tick(stage: Stage, _bin_i: int = 0, _n_bin: int = 1) -> None:
@@ -850,7 +850,7 @@ def run_processing(cfg: DictConfig):
         has_nc=_has_nc,
         has_tsv=_has_tsv,
         run_params_text=run_params_text,
-        force_reprocess=force_reprocess,
+        overwrite_db=overwrite_db,
     )
 
 
@@ -892,7 +892,7 @@ def _process_and_persist(
     has_nc: bool = False,
     has_tsv: bool = False,
     run_params_text: str | None = None,
-    force_reprocess: bool = False,
+    overwrite_db: str | None = None,
 ) -> None:
     """Apply physical conversion + binning, persist results.
 
@@ -990,7 +990,7 @@ def _process_and_persist(
                     noavg_path,
                     group=pcid,
                     filter_params=run_params_text,
-                    force_reprocess=force_reprocess,
+                    force_reprocess=overwrite_db == "splice",
                 )
                 # Phase-stopping: return after noAvg save
                 if return_ == schema.Return.SAVED_NOAVG:
@@ -1003,7 +1003,7 @@ def _process_and_persist(
                     avg_path,
                     group=f"{pcid}bin{bin_s}s",
                     filter_params=run_params_text,
-                    force_reprocess=force_reprocess,
+                    force_reprocess=overwrite_db == "splice",
                 )
             else:
                 # Fallback: no PathLayout resolved paths
@@ -1017,9 +1017,9 @@ def _process_and_persist(
                 fmt = _text_date_fmt(cfg_out, bin_s)
 
                 suffix_csv = f"bin{bin_s}s" if bin_s else ""
-                # TSV source: read from NC after splice when force_reprocess
+                # TSV source: read from NC after splice when overwrite_db="splice"
                 # (spliced data may include head/tail not in ds_out)
-                if force_reprocess:
+                if overwrite_db == "splice":
                     nc_tsv_path = avg_path if bin_s > 0 and avg_path else noavg_path
                     nc_tsv_group = f"{pcid}bin{bin_s}s" if bin_s > 0 else pcid
                     try:
@@ -1135,7 +1135,8 @@ def _combine_probes(pcids: list[str], cfg: dict) -> None:
 
 
 def _combined_group_is_current(
-    nc_path: Path,
+    combined_path: Path,
+    per_probe_path: Path,
     combined_grp: str,
     pcids: list[str],
     bin_s: int,
@@ -1144,38 +1145,57 @@ def _combined_group_is_current(
 
     Uses h5netcdf for readability (catches corrupted dimension scales) and
     h5py for time-range comparison (lightweight — no full data load).
+
+    Parameters
+    ----------
+    combined_path
+        File containing the combined group (e.g. ``.proc.nc``).
+    per_probe_path
+        File containing per-probe groups (e.g. ``.proc_Avg.nc``).
+        May be the same as *combined_path* when both live in one file.
+    combined_grp
+        NetCDF group name of the combined output.
+    pcids
+        Probe identifiers whose per-probe groups must be covered.
+    bin_s
+        Bin interval in seconds — used to construct per-probe group names.
     """
-    if not nc_path.exists():
+    if not combined_path.exists():
         return False
 
     # 1. Readability check — h5netcdf validates dimension-scale metadata
     import gc
 
     try:
-        ds = xr.open_dataset(nc_path, group=combined_grp, engine=_constants.nc_engine)
+        ds = xr.open_dataset(combined_path, group=combined_grp, engine=_constants.nc_engine)
         ds.close()
         del ds
         gc.collect()
     except (ValueError, AttributeError, KeyError, OSError):
         return False
 
-    # 2. Time-range coverage check via h5py (reads only time datasets)
+    # 2. Time-range coverage check via h5py (reads only time datasets).
+    #    Combined group lives in *combined_path*; per-probe groups live in
+    #    *per_probe_path* — they are typically different files.
     _h5py = _constants._h5py
     if _h5py is None:
         return True
     try:
-        with _h5py.File(str(nc_path), "r") as f:
+        # Read combined time range from the combined file
+        with _h5py.File(str(combined_path), "r") as f:
             if combined_grp not in f or "time" not in f[combined_grp]:
                 return False
             td_c = f[combined_grp]["time"]
             if td_c.shape[0] == 0:
                 return False
-            c_vals = storage._cf_to_dt_ns(
+            c_vals = storage.cf_to_dt_ns(
                 td_c[:],
                 td_c.attrs.get("units", ""),
             ).astype(np.int64)
             combined_min, combined_max = c_vals[0], c_vals[-1]
 
+        # Read per-probe time ranges from the per-probe source file
+        with _h5py.File(str(per_probe_path), "r") as f:
             for pcid in pcids:
                 grp_name = f"{pcid}bin{bin_s}s" if bin_s > 0 else pcid
                 if grp_name not in f or "time" not in f[grp_name]:
@@ -1183,7 +1203,7 @@ def _combined_group_is_current(
                 td = f[grp_name]["time"]
                 if td.shape[0] == 0:
                     return False
-                t_vals = storage._cf_to_dt_ns(
+                t_vals = storage.cf_to_dt_ns(
                     td[:],
                     td.attrs.get("units", ""),
                 ).astype(np.int64)
@@ -1217,7 +1237,7 @@ def _merge_groups_to_combined(
     # Quick metadata check — avoids loading per-probe data when the combined
     # group is already valid.  Old groups with corrupted dimension scales will
     # fail the h5netcdf readability test → rewrite.
-    if _combined_group_is_current(out_path, combined_grp, pcids, bin_s):
+    if _combined_group_is_current(out_path, nc_path, combined_grp, pcids, bin_s):
         lf.debug("Combined group {} is current — skipping", combined_grp)
         return
 
@@ -1245,9 +1265,9 @@ def _merge_groups_to_combined(
     # coordinates (like "probe") natively, producing correct dimension-scale
     # metadata.  _write_dataset_to_nc_group (h5py-only) can produce malformed
     # byte-string dimension scales that h5netcdf misinterprets on read.
-    combined = storage._strip_tz_datetime(combined)
-    combined = storage._downcast_float32(combined)
-    enc = {**storage._force_epoch(combined), **storage._compression_encoding(combined)}
+    combined = tcm._xr.nc_utils.strip_tz_datetime(combined)
+    combined = tcm._xr.nc_utils.downcast_float32(combined)
+    enc = {**tcm._xr.nc_utils.force_epoch(combined), **tcm._xr.nc_utils.compression_encoding(combined)}
     combined.to_netcdf(out_path, group=combined_grp, mode="a", engine=_constants.nc_engine, encoding=enc)
     lf.info("Combined {} to {} (probe dim with {} probes)", label, out_path.name, len(groups_to_merge))
 

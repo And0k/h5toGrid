@@ -1,21 +1,25 @@
-"""Tests for force_reprocess + time_ranges behavior redesign.
+"""Tests for out.overwrite_db + time_ranges behavior redesign.
 
-Covers the behavior matrix from .kilocode/plans/force-reprocess.md:
+Covers the behavior matrix from .kilo plans:
 
-    | # | force_reprocess | Coefs  | time_ranges | Expected                              |
-    |---|----------------|--------|-------------|---------------------------------------|
-    | 1 | True           | same   | subset      | trim all NC, TSV from NC, no reproc   |
-    | 2 | True           | changed| subset      | splice, TSV from NC                   |
-    | 3 | True           | any    | extends     | splice, TSV from NC                   |
-    | 4 | False          | changed| any         | ValueError                            |
-    | 5 | False          | same   | subset      | NC unchanged, TSV from ds_out         |
-    | 6 | False          | same   | extends     | append tail, TSV from ds_out          |
-    | 7 | True           | same   | None        | normal processing (no trim)           |
-    | 8 | False          | same   | None        | skip NC, TSV all data from ds_out     |
+    | # | overwrite_db | Coefs  | time_ranges | Expected                              |
+    |---|-------------|--------|-------------|---------------------------------------|
+    | 1 | "trim"      | same   | subset      | trim all NC, TSV from NC, no reproc   |
+    | 2 | "splice"    | changed| subset      | splice, TSV from NC                   |
+    | 3 | "splice"    | any    | extends     | splice, TSV from NC                   |
+    | 4 | None        | changed| any         | ValueError                            |
+    | 5 | None        | same   | subset      | NC unchanged, TSV from ds_out         |
+    | 6 | None        | same   | extends     | append tail, TSV from ds_out          |
+    | 7 | "splice"    | same   | None        | reprocess all from source             |
+    | 8 | None        | same   | None        | skip NC, TSV all data from ds_out     |
 
 Tests exercise storage primitives (splice_group, trim_group_to_range,
-store_processed_incremental) and processing helpers (_read_coef_params,
+store_processed_incremental) and processing helpers (_read_run_params,
 _time_ranges_in_nc) directly — no full pipeline orchestration needed.
+
+Mapping: overwrite_db="splice" → force_reprocess=True in storage calls.
+overwrite_db="trim" is handled at run_processing level (trim_group_to_range).
+overwrite_db=None → force_reprocess=False in storage calls.
 """
 
 from __future__ import annotations
@@ -61,26 +65,14 @@ _RUN_A = "filter.min.Ax=-5\nfilter.max.Ax=5\ninput.time_ranges=[2024-01-01, 2024
 _RUN_B = "filter.min.Ax=-5\nfilter.max.Ax=5\ninput.time_ranges=[2024-01-01, 2024-01-02]\ncoef.Ax=2.0"
 
 
-def _run_history(params: str) -> str:
-    """Wrap *params* in a single-entry JSON history dict (mimics ``_append_run_params``)."""
-    import json
-    from datetime import datetime, timezone
-
-    return json.dumps({datetime.now(timezone.utc).isoformat(timespec="seconds"): params}, sort_keys=True)
-
-
 def _assert_latest_run_params(nc_path, group, expected):
-    """Assert that the latest entry in the JSON ``_run_params`` history equals *expected*."""
-    import json
+    """Assert that the latest param_spans entry equals *expected*."""
+    from tcm._xr.store_params import get_latest_params, read_param_spans
 
-    from tcm._xr.storage import _get_latest_params
-
-    with h5py.File(nc_path, "r") as f:
-        raw = f[group].attrs.get("_run_params", "")
-        if isinstance(raw, bytes):
-            raw = raw.decode()
-    assert _get_latest_params(raw) == expected, (
-        f"Latest run params mismatch: expected {expected!r}, got {_get_latest_params(raw)!r}"
+    params = read_param_spans(nc_path, group)
+    actual = get_latest_params(params)
+    assert actual == expected, (
+        f"Latest param_spans mismatch: expected {expected!r}, got {actual!r}"
     )
 
 
@@ -144,18 +136,6 @@ class TestSpliceGroup:
             assert result.sizes["time"] == 70  # 20 head + 50 new
             # Verify head preserved from original
             np.testing.assert_array_equal(result["time"].values[:20], ds_orig["time"].values[:20])
-
-    def test_splice_preserves_attrs(self, tmp_path):
-        """splice_group preserves _run_params attr from ds_new."""
-        ds_orig = _make_ds(50, start="2024-01-01")
-        nc_path = tmp_path / "test.nc"
-        _write_dataset_to_nc_group(ds_orig, nc_path, "g")
-
-        ds_new = _make_ds(30, start="2024-01-01 00:00:10", filter_params=_RUN_A)
-        splice_group(nc_path, "g", ds_new)
-
-        with h5py.File(nc_path, "r") as f:
-            assert f["g"].attrs["_run_params"] == _RUN_A
 
     def test_splice_full_replace(self, tmp_path):
         """Splice when new covers entire existing → full replacement."""
@@ -276,7 +256,10 @@ class TestTrimGroupToRange:
 
 @pytest.mark.xr
 class TestRunParamsAttr:
-    """Verify _run_params storage and error-on-change logic."""
+    """Verify _run_params storage and error-on-change logic.
+
+    Mapping: force_reprocess=True corresponds to overwrite_db="splice".
+    """
 
     def test_run_params_stored(self, tmp_path):
         """_run_params attr is written to the NC group as JSON history."""
@@ -296,7 +279,7 @@ class TestRunParamsAttr:
             assert existing.sizes["time"] == 50
 
     def test_error_when_coefs_changed(self, tmp_path):
-        """ValueError when coefs changed and not force_reprocess (case 4)."""
+        """ValueError when coefs changed and not force_reprocess (overwrite_db=None, case 4)."""
         ds = _make_ds(50)
         path = tmp_path / "test.nc"
         store_processed_incremental(ds, path, group="g", filter_params=_RUN_A)
@@ -363,14 +346,13 @@ class TestTrimFastPathHelpers:
     """Test _read_run_params and _time_ranges_in_nc from processing.py."""
 
     def test_read_run_params(self, tmp_path):
-        """Read stored _run_params from NC group (JSON history → latest entry)."""
+        """Read stored param_spans from NC file."""
+        from tcm._xr.storage import store_processed_incremental
         from tcm.processing import _read_run_params
 
         ds = _make_ds(50, filter_params=_RUN_A)
         nc_path = tmp_path / "test.nc"
-        _write_dataset_to_nc_group(ds, nc_path, "g")
-        with h5py.File(nc_path, "a") as f:
-            f["g"].attrs["_run_params"] = _run_history(_RUN_A)
+        store_processed_incremental(ds, nc_path, group="g", filter_params=_RUN_A)
 
         assert _read_run_params(nc_path, "g") == _RUN_A
 
@@ -423,10 +405,14 @@ class TestTrimFastPathHelpers:
 
 @pytest.mark.xr
 class TestBehaviorMatrix:
-    """Parametrized tests covering the full force_reprocess × coefs × time_ranges matrix.
+    """Parametrized tests covering the full overwrite_db × coefs × time_ranges matrix.
 
     Each case uses store_processed_incremental + splice_group/trim_group_to_range
     to verify the expected storage behavior.
+
+    Mapping: overwrite_db="splice" → force_reprocess=True.
+    overwrite_db="trim" is handled at run_processing level.
+    overwrite_db=None → force_reprocess=False.
     """
 
     @pytest.mark.parametrize(
@@ -435,44 +421,47 @@ class TestBehaviorMatrix:
             (True, True, "subset", "case 1: trim — coefs unchanged, tr ⊆ existing"),
             (True, False, "subset", "case 2: splice — coefs changed, tr ⊆ existing"),
             (True, None, "extends", "case 3: splice — extends beyond existing"),
-            (False, False, "any", "case 4: error — coefs changed without force"),
+            (False, False, "contained", "case 4: error — no new data, coefs changed"),
             (False, True, "subset", "case 5: skip — coefs same, tr ⊆ existing"),
             (False, True, "extends", "case 6: write — extends (new data)"),
-            (True, True, None, "case 7: normal — force but no time_ranges"),
+            (True, True, None, "case 7: reprocess all from source — force but no time_ranges"),
             (False, True, None, "case 8: skip — no force, data covered"),
+            (False, False, "extends", "case 9: warn — extends, coefs changed, keep existing"),
         ],
         ids=[
             "case1-trim-coefs-same-tr-subset",
             "case2-splice-coefs-changed-tr-subset",
             "case3-splice-tr-extends",
-            "case4-error-coefs-changed-no-force",
+            "case4-error-coefs-changed-contained",
             "case5-skip-coefs-same-tr-subset",
             "case6-write-tr-extends",
-            "case7-normal-force-no-tr",
+            "case7-reprocess-all-force-no-tr",
             "case8-skip-no-force-data-covered",
+            "case9-warn-extends-coefs-changed",
         ],
     )
     def test_behavior(self, tmp_path, force_reprocess, coef_same, time_ranges, expected_desc):
-        """Verify expected behavior for the given force_reprocess/coefs/time_ranges combo."""
-        # Setup: 100s of existing data with run params A
+        """Verify expected behavior for the given overwrite_db/coefs/time_ranges combo."""
+        # Setup: 100s of existing data with run params A via store_processed_incremental
         ds_orig = _make_ds(100, start="2024-01-01", filter_params=_RUN_A)
         path = tmp_path / "test.nc"
-        _write_dataset_to_nc_group(ds_orig, path, "g")
-        with h5py.File(path, "a") as f:
-            f["g"].attrs["_run_params"] = _run_history(_RUN_A)
+        store_processed_incremental(ds_orig, path, group="g", filter_params=_RUN_A)
 
         run_p = _RUN_A if coef_same else _RUN_B
 
-        # New data: subset (50s starting at 25s) or extends (50s starting at 80s)
+        # New data: subset (50s starting at 25s), extends (50s starting at 80s),
+        # contained (same 50s starting at 0s), or None (reuse ds_orig)
         if time_ranges == "subset":
             ds_new = _make_ds(50, start="2024-01-01 00:00:25", seed=99)
         elif time_ranges == "extends":
             ds_new = _make_ds(50, start="2024-01-01 00:01:20", seed=99)
+        elif time_ranges == "contained":
+            ds_new = _make_ds(50, start="2024-01-01", seed=99)
         else:
             ds_new = _make_ds(50, start="2024-01-01", seed=99)
 
-        if not force_reprocess and not coef_same:
-            # Case 4: error — coefs changed (within same time_ranges)
+        if not force_reprocess and not coef_same and time_ranges == "contained":
+            # Case 4: error — data contained, coefs changed
             with pytest.raises(ValueError, match="Coefficients/params changed"):
                 store_processed_incremental(
                     ds_new, path, group="g", filter_params=run_p, force_reprocess=False,
@@ -526,6 +515,12 @@ class TestBehaviorMatrix:
                 assert result.sizes["time"] == 100, (
                     f"{expected_desc}: expected unchanged 100 rows, got {result.sizes['time']}"
                 )
+            elif not coef_same and time_ranges == "extends":
+                # Case 9: extends + changed coefs → warn, keep existing, append new
+                # Original 100s (0..99) + new starts at 80s → append 30s → 130
+                assert result.sizes["time"] == 130, (
+                    f"{expected_desc}: expected 130 rows after append, got {result.sizes['time']}"
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -538,7 +533,7 @@ class TestTrimIntegration:
     """Verify the trim fast-path works end-to-end with trim_group_to_range."""
 
     def test_case1_trim_all_nc_files(self, tmp_path):
-        """Case 1: force_reprocess + coefs same + subset → trim all NC, no reprocessing."""
+        """Case 1: overwrite_db="trim" + coefs same + subset → trim all NC, no reprocessing."""
         # Simulate: raw NC, noavg NC, and avg NC all have 100s of data
         raw_path = tmp_path / "test.raw.nc"
         noavg_path = tmp_path / "test.proc_noAvg.nc"
@@ -546,9 +541,7 @@ class TestTrimIntegration:
 
         ds = _make_ds(100, start="2024-01-01", filter_params=_RUN_A)
         for p in (raw_path, noavg_path, avg_path):
-            _write_dataset_to_nc_group(ds, p, "i_p01")
-            with h5py.File(p, "a") as f:
-                f["i_p01"].attrs["_run_params"] = _run_history(_RUN_A)
+            store_processed_incremental(ds, p, group="i_p01", filter_params=_RUN_A)
 
         # Trim all to [10s, 60s]
         t_start = np.datetime64("2024-01-01T00:00:10")

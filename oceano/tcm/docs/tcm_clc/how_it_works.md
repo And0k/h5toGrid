@@ -13,7 +13,8 @@ tcm/
                               _combine_probes(), _merge_groups_to_combined()
                               process_inmemory(), _dt_bins, _dt_min_save, _output_nc_paths,
                               _text_date_fmt, _build_filter_params_text,
-                              _read_run_params, _time_ranges_in_nc, _trim_all_nc, _export_tsv_from_nc,
+                              _read_run_params (reads latest from ``/param_spans/{tbl}``),
+                              _time_ranges_in_nc, _trim_all_nc, _export_tsv_from_nc,
                               _load_raw_nc_if_covered
     schema.py               ← Hydra structured config dataclasses + ConfigStore registration
     policy.py               ← h5 availability policy (IOPolicy), based on user preferences and H5_AVAILABLE
@@ -621,7 +622,7 @@ manual review.
 
 Uses `tcm.metadata` — local extraction of `get_path_in_parents`,
 `load_file_meta`, `extract_devices_info` from `veusz_helpers.common.metadata`.
-The original module's `func_vsz` dependency (Veusz registry access at import
+The original module's `vsz_func` dependency (Veusz registry access at import
 time) made it unusable in the frozen distribution.
 
 ### `get_existed_cfgs(dir_cfgs)` → `{pcid: [stems, …]}`
@@ -728,13 +729,14 @@ part of the per-text-file config sweep.
    absent but whose raw NC has a matching log entry are **not** marked stale.
    Helpers: ``_load_raw_nc_if_covered``, ``_source_file_in_nc_log``,
    ``config_yaml._raw_nc_has_source``.
-8. **Trim fast-path** (``force_reprocess=True`` + coefs unchanged +
-   ``time_ranges`` ⊆ existing): trim all NC files (raw, noavg, bins) to
-   ``time_ranges`` via ``trim_group_to_range``, re-export TSV from NC,
-   and return — no reprocessing needed.  Helpers: ``_read_run_params``,
+8. **Trim fast-path** (``out.overwrite_db="trim"`` + ``time_ranges`` ⊆ existing):
+   trim all NC files (raw, noavg, bins) to ``time_ranges`` via
+   ``trim_group_to_range``, re-export TSV from NC, and return — no
+   reprocessing needed.  When ``time_ranges`` extends existing, falls through
+   to step 9 (append new data).  Helpers: ``_read_run_params``,
    ``_time_ranges_in_nc``, ``_trim_all_nc``, ``_export_tsv_from_nc``.
 9. Process + persist via `_process_and_persist()` — passes `coef_zeroing_matrix`
-   + `run_params_text` + `force_reprocess`
+   + `run_params_text` + `overwrite_db`
    to `_xr.physical.process()`
 
 ### Phase-stopping (`program.return_`)
@@ -807,6 +809,14 @@ chunk's estimate.  Since frequency is estimated independently per chunk
 Filtering is split into two distinct stages by namespace (see `config_reference.md` §Stage classification):
 
 1. **Load-stage** (`input.min`/`input.max` + `input.time_ranges`) — rows **dropped**. Applied in `_xr/io.py::load_raw()` for **all** sources (NC/HDF5: `apply_load_time_ranges` + `filter_global_minmax`; CSV: `filter_global_minmax` only, time_ranges applied by `time_corr`).
+
+   **Range mask end-bound semantics**: `input.time_ranges` end values are
+   **inclusive** in the config (user specifies `"2026-07-20T09:55:05"` meaning
+   "through that second").  Internally, `make_range_mask` converts to
+   **exclusive**: whole-second ends get +1 s (`< 09:55:06` includes all
+   sub-second data within that second), sub-second ends get +1 ns.  This
+   prevents boundary data loss from CF float64 round-trip precision drift
+   (~200 ns at current epoch) when re-reading NC files.
 
 2. **Process-stage** (`filter.min`/`filter.max`) — values → NaN, rows **preserved**. Applied in `_xr/physical.py::process()` via `filter_local()`. `bad_p_at_bursts_starts_period` NaN-out in `calc_pressure()`. `g_minus_1`/`h_minus_1` NaN-out in `calc_velocity()`.
 
@@ -943,27 +953,30 @@ On re-processing the same input data, each NC output type handles idempotency di
 | `*.raw.nc` | `nc_incremental_update` (log dedup) | **SKIP** — same fileName + mtime detected via log table |
 | `*.proc_Avg.nc` (per-probe binned) | `store_processed_incremental` (time-range check) | **SKIP** — new time range ⊂ existing range |
 | `*.proc_noAvg.nc` (per-probe no-avg) | `store_processed_incremental` (time-range check) | **SKIP** — new time range ⊂ existing range |
-| `*.proc.nc` (combined) | `_combine_probes` → `to_netcdf(mode="a")` | **Always delete+rewrite** — re-reads per-probe groups, re-concatenates |
+| `*.proc.nc` (combined) | `_combine_probes` → `to_netcdf(mode="a")` | **SKIP** — `_combined_group_is_current` checks combined covers per-probe ranges |
 
 `store_processed_incremental` only checks time-range containment, not data content.
-If coefficients change (detected via the latest ``_run_params`` JSON history entry
-vs current, ignoring ``input.time_ranges`` lines), a **ValueError** is raised
-showing a unified diff.  Each processing run appends a new dated entry to the
-history; duplicate params are not recorded.  Delete the group or pass
-`+force_reprocess=True` to force re-processing.
-See `config_reference.md` (§`_run_params` attribute) for the full field list.
+If coefficients change (detected via the latest ``/param_spans/{tbl}`` interval
+entry vs current, ignoring ``input.time_ranges`` lines), a **ValueError** is
+raised showing a unified diff.  Each processing run appends a new dated interval
+to the table; duplicate params are not recorded.  Delete the group or re-run with
+`out.overwrite_db=splice` to force re-processing.
+See `config_reference.md` (§`/param_spans/{tbl}` interval table) for the full field list.
 
-| `force_reprocess` | Params changed? | `time_ranges` vs existing | Behavior |
+| `overwrite_db` | Params changed? | `time_ranges` vs existing | Behavior |
 |:---:|:---:|:---:|---|
-| `False` | No | subset | **Skip NC** — export TSV only |
-| `False` | No | extends | **Append** — append new tail only |
-| `False` | Yes | any | **Error** — ``ValueError`` |
-| `True` | No | subset | **Trim** — delete outside ``time_ranges``, no reprocessing |
-| `True` | Yes | subset | **Splice** — keep outside, replace inside with reprocessed |
-| `True` | any | extends | **Splice** — keep outside, replace/append inside |
-| `True` | same | None | **Splice** — normal force reprocess |
+| `None` | No | subset | **Skip NC** — export TSV only |
+| `None` | No | extends | **Append** — append new tail only |
+| `None` | Yes | extends | **Append + warn** — keep existing, append new |
+| `None` | Yes | contained | **Error** — suggest `out.overwrite_db=splice` |
+| `"splice"` | — | subset | **Splice** — keep outside, replace inside with reprocessed |
+| `"splice"` | — | extends | **Splice** — keep outside, replace/append inside |
+| `"splice"` | — | None | **Splice** — reprocess all from source |
+| `"trim"` | — | subset | **Trim** — delete outside `time_ranges`, no reprocessing |
+| `"trim"` | — | extends | **Trim + append** — trim existing, process/append new |
+| `"export"` | — | any | **Export only** — block NC writes, export TSV |
 
-`force_reprocess=True` uses :func:`splice_group` which keeps data outside
+`overwrite_db="splice"` triggers :func:`splice_group` which keeps data outside
 ``[ds_new.time.min(), ds_new.time.max()]`` intact (head + tail) and replaces
 the overlapping portion with reprocessed results.  TSV is read from NC after
 splice (not from in-memory ``ds_out``) to include the preserved head/tail.
@@ -972,12 +985,16 @@ splice (not from in-memory ``ds_out``) to include the preserved head/tail.
 
 `store_processed_incremental()` in `_xr/storage.py` checks if the target group
 already has data covering the time range before writing. Skips if new data is
-fully contained in existing range — avoids duplicates on re-run. See
-`config_reference.md` (§Incremental append positions) for the position-aware
+fully contained in existing range — avoids duplicates on re-run.  When
+`filter_params` is provided, the function appends a new interval to
+`/param_spans/{group}` **after** the data write (not as HDF5 attributes on the
+data group).  On skip, the latest stored entry is compared to current params —
+a `ValueError` is raised if they differ (unless `overwrite_db="splice"`).
+See `config_reference.md` (§Incremental append positions) for the position-aware
 append strategy decision table and `config_reference.md` (§Log-based dedup)
 for the log-based skip/resume/new-file decision table.
 
-Two new primitives support the ``force_reprocess`` + ``time_ranges`` redesign:
+Two primitives support the ``overwrite_db`` + ``time_ranges`` design:
 
 - ``splice_group(nc_path, tbl, ds_new)`` — replaces the overlapping portion
   of *tbl* with *ds_new*, preserving head/tail outside the new time range.
@@ -1088,9 +1105,12 @@ encoding.
 combined result to `*.proc.nc` via ``to_netcdf(engine="netcdf4", mode="a")``.
 On re-run:
 
-1. **Skip** — `_combined_group_is_current()` checks if the existing combined
-   group is readable (h5netcdf validates dimension-scale metadata) and covers
-   all per-probe time ranges.  If so, no write occurs.
+1. **Skip** — `_combined_group_is_current(combined_path, per_probe_path, ...)`
+   checks if the existing combined group is readable (h5netcdf validates
+   dimension-scale metadata) and its time range covers all per-probe groups.
+   Per-probe groups are read from *per_probe_path* (``.proc_Avg.nc``),
+   **not** from *combined_path* (``.proc.nc``) — the two files are
+   separate.  If everything is current, no write occurs.
 2. **Delete + fresh write** — when the combined group is missing, unreadable,
    or its time range no longer covers all per-probe groups, it is deleted via
    ``delete_h5py_group()`` before writing.  Combined groups use ``to_netcdf``
@@ -1102,6 +1122,10 @@ dimension scales (`make_scale`/`attach_scale`) are re-attached so
 `xr.open_dataset(engine="netcdf4")` can read the group back.
 Before the combine step, `ensure_dim_scales()` repairs scales across all
 groups in a file — defensive against files corrupted by older runs.
+It performs a **read-only pre-check** first: only opens in write mode
+when scales are actually missing.  This prevents HDF5 metadata bloat
+from redundant `attach_scale` calls (+736 bytes per file per call when
+the scale was already attached).
 The safety guard ``dset.shape[0] == n_time`` prevents attaching the ``time``
 scale to datasets with a different first-axis length (e.g. a ``probe``
 coordinate with 2 elements).
