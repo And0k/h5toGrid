@@ -5,7 +5,7 @@ from logging import warning
 from operator import add
 from typing import Optional
 
-import func_vsz as fv
+import vsz_func as vf
 import numpy as np
 from dataclasses import replace
 
@@ -190,7 +190,7 @@ def common_point_for_all(pids, n_curly_braces=1):
         return ""
     else:
         if "{" in out_:
-            out_ = out_.format_map(fv.I)
+            out_ = out_.format_map(vf.I)
         return insert_with_curly_braces(  # include depth in `pattern` argument
             *(  # `pattern`, `words`
                 (f"{{}}.\u2009{out_}: {out_b}{{}}", ["st", "m"])  # point
@@ -220,7 +220,7 @@ def add_label_Title(
     """
     Adds text + inclinometer (and param2) ranges
     :param sentences: texts or expression returning texts. in Veusz each will be formatted with I variable
-    (see func_vsz.py) of current Veusz language and then each item 1st letter will be capitaliced
+    (see vsz_func.py) of current Veusz language and then each item 1st letter will be capitaliced
     :param split_before_date:
     :param split_params: slit before ``text2`` to make rows more narrow
     :param text2: same as ``text`` but will be inserted after "{text} {time_range}, "
@@ -233,7 +233,7 @@ def add_label_Title(
     """
     Add("label", name="Title", autoadd=False)
     To("Title")
-    label_texts_to_join = [f""" %{{{{v.c1({s}.format_map(I))}}}}%""" for s in sentences]
+    label_texts_to_join = [f""" %{{{{vf.c1({s}.format_map(I))}}}}%""" for s in sentences]
     if WidthGrade > WidthGrades["VeryNarrow"]:
         sep = (
             r"\\"
@@ -260,20 +260,20 @@ def add_label_Title(
         # round to nearest minutes if need:
         fmt_labels = format_TickLabels(disp_dtime_range_s)
         s_time = (
-            f"v.vsz2dt64s({str_vsz_time_range} + 30).astype('M8[m]')"
+            f"vf.vsz2dt64s({str_vsz_time_range} + 30).astype('M8[m]')"
             if fmt_labels[-1].endswith("%M")
-            else f"v.vsz2dt64s({str_vsz_time_range})"
+            else f"vf.vsz2dt64s({str_vsz_time_range})"
         )
-        label_texts_to_join += [sep, f"%{{{{v.str_time_range(*f({s_time}.tolist))}}}}%"]
-        # %{{f(lambda t0,t1: f"{t0:%d.%m.%Y %H:%M} – {(f'{t1:%d.%m.%Y} ' if t0.date() != t1.date() else '')}{t1:%H:%M}'{str_zone}'", *f(v.vsz2dt64s(DATA('time_span__')).tolist))}}%
+        label_texts_to_join += [sep, f"%{{{{vf.str_time_range(*f({s_time}.tolist))}}}}%"]
+        # %{{f(lambda t0,t1: f"{t0:%d.%m.%Y %H:%M} – {(f'{t1:%d.%m.%Y} ' if t0.date() != t1.date() else '')}{t1:%H:%M}'{str_zone}'", *f(vf.vsz2dt64s(DATA('time_span__')).tolist))}}%
         if text2:
             if param2_trange:
                 s_time2 = (
-                    f"v.vsz2dt64s(DATA('{param2_trange}') + 30).astype('M8[m]')"
+                    f"vf.vsz2dt64s(DATA('{param2_trange}') + 30).astype('M8[m]')"
                     if fmt_labels[-1].endswith("%M")
-                    else f"v.vsz2dt64s(DATA('{param2_trange}'))"
+                    else f"vf.vsz2dt64s(DATA('{param2_trange}'))"
                 )
-                s_time2 = f"{sep}%{{{{v.str_time_range(*f({s_time2}.tolist))}}}}%"
+                s_time2 = f"{sep}%{{{{vf.str_time_range(*f({s_time2}.tolist))}}}}%"
             else:
                 s_time2 = ""
             label_texts_to_join += [
@@ -284,7 +284,7 @@ def add_label_Title(
     sep = r"\\" if (WidthGrade != WidthGrades["VeryWide"]) else " "
     str_title = "".join(
         label_texts_to_join
-        + ([rf""".{sep}%{{{{v.c1({text_add}.format_map(I))}}}}%"""] if text_add else [])
+        + ([rf""".{sep}%{{{{vf.c1({text_add}.format_map(I))}}}}%"""] if text_add else [])
     )
     Set("label", str_title)
     label_Title_format(
@@ -571,7 +571,7 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
     )
 
     t = common_point_for_all(graphs)
-    _, __ = ('v.pl(f"', '")') if len(graphs) > 1 else ('f"', '"')
+    _, __ = ('vf.pl(f"', '")') if len(graphs) > 1 else ('f"', '"')
     sentences = ([f'"{t}. "'] if t else []) + [
         _ + "{{current velocity}} {{by {info_incl['device']}}}" + __
     ]
@@ -686,7 +686,7 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
                 "label",
                 "".join(
                     [
-                        "%{{v.c1('{{{nature}}}'.format_map(info_",
+                        "%{{vf.c1('{{{nature}}}'.format_map(info_",
                         dev,
                         ").format_map(I))}}%",
                     ]
@@ -716,7 +716,7 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
         To(f"Leg_{dev}")
         Set(
             "label",
-            ("%{{(rf'{" if disp_split_leg else "%{{v.c1(rf'{{nature}}\\\\{")
+            ("%{{(rf'{" if disp_split_leg else "%{{vf.c1(rf'{{nature}}\\\\{")
             + f"{prefix.title()}_leg_v:g}}\u2009{{{{units}}}}'.format_map(info_{dev}))}}}}%",
         )
         Set("hide", False)
@@ -753,8 +753,6 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
         )
         Set("length", f"{prefix.title()}_leg_v * {prefix}scale_page_vectors")
         Set("angle", f"zeros(size({prefix.title()}_leg_v))")
-        Set("xPos2", "bin2_v")
-        Set("yPos2", "bin2_u")
         Set("xAxis", "xL")
         Set("yAxis", "yL")
         Set("Line/color", "blue" if is_wind else "black")
@@ -794,10 +792,10 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
     To("..")
 
     # cum_k_scale = 0
-    for ii, pid in enumerate(fv.xy_or_y(["_Wind"], graphs, use_x_if=device_wind)):
+    for ii, pid in enumerate(vf.xy_or_y(["_Wind"], graphs, use_x_if=device_wind)):
         is_wind = pid == "_Wind"
         # cum_k_scale += k_scale
-        cum_k_scale_vsz = "DISP_vecY0_distribute*" + fv.xy_sel(
+        cum_k_scale_vsz = "DISP_vecY0_distribute*" + vf.xy_sel(
             "1",
             f"sum(list(Disp_vectors_scale_height.values())[:{ii}])",
             use_x_if=device_wind,
@@ -835,7 +833,7 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
             Set("hide", True)
             Set(
                 "xPos",
-                f"v.dt64s2vsz({t_name}{t0sfx}{'' if b_one_table else pid}[sl_(iu{pid})]{t_mul}) "
+                f"vf.dt64s2vsz({t_name}{t0sfx}{'' if b_one_table else pid}[sl_(iu{pid})]{t_mul}) "
                 "+ USE_timeShift_s",
             )
             Set(
@@ -847,8 +845,6 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
                 f"absolute(u{pid}+1j*v{pid})[sl_(iu{pid})]*DISPscale_page_vectors",
             )
             Set("angle", f"degrees(arctan2(u{pid}, v{pid})[sl_(iu{pid})])-90")
-            Set("xPos2", "bin2_u")
-            Set("yPos2", "bin2_v")
             Set("yAxis", "y[0,1]")
             Set("Line/color", "black")
             Set("Line/width", "0.5pt")
@@ -922,16 +918,16 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
                 Set("angle", "degrees(arctan2(bin2_u_Wind, bin2_v_Wind)) - 90")
             elif disp_vec.bin:  # Vabs and Vdir should be defined
                 Set("xPos", f"{disp_vec.bin}t0st{pid}{disp_vec.shift}")
-                Set("length", f"{disp_vec.bin}Vabs{pid}*DISPscale_page_vectors")
-                Set("angle", f"{disp_vec.bin}Vdir{pid} - 90")
+                Set("length", f"{disp_vec.bin}Vabs{fpix(pid)}*DISPscale_page_vectors")
+                Set("angle", f"{disp_vec.bin}Vdir{fpix(pid)} - 90")
             else:
                 Set(
                     "xPos",
-                    f"v.dt64s2vsz({t_name}{pid_for_time}[sl_(*iu{pid})]{t_mul}) + "
+                    f"vf.dt64s2vsz({t_name}{pid_for_time}[sl_(*iu{pid})]{t_mul}) + "
                     f"USE_timeShift_s{disp_vec.shift}",
                 )
-                Set("length", f"absolute(u{pid} + v{pid})*DISPscale_page_vectors")
-                Set("angle", f"degrees(arctan2(u{pid}, v{pid})) - 90")
+                Set("length", f"absolute(u{fpix(pid)} + v{fpix(pid)})*DISPscale_page_vectors")
+                Set("angle", f"degrees(arctan2(u{fpix(pid)}, v{fpix(pid)})) - 90")
             Set("yAxis", "y[0,1]")
             Set("Line/color", disp_vec.color)
             Set("Line/width", disp_vec.width)
@@ -944,7 +940,7 @@ def pg_vectors(graphs, scale_height=None, cfg_plot=None):
         Set("marker", "none")
         Set("markerSize", "2pt")
         Set("color", "darkred")
-        Set("xData", "v.dt64s2vsz(int32(array(DISPtime[0], 'M8[s]')))")
+        Set("xData", "vf.dt64s2vsz(int32(array(DISPtime[0], 'M8[s]')))")
         Set(
             "yData",
             f"zeros(2) + float64(eval(str(SETTING('/_vectors/grid1/v/vectors{pid}_lite/yPos'))))",
@@ -1029,7 +1025,7 @@ def get_param_expr_dict(bin="", prefix="", suffix="", wrap_dir="disp_central_dir
     v = f"{prefix}{bin}v{suffix}"
     return {
         "Vabs": f"absolute(1j*{u} + {v})",
-        "Vdir": f"v.wrap_dir(degrees(arctan2({u}, {v})), {wrap_dir})"
+        "Vdir": f"vf.wrap_dir(degrees(arctan2({u}, {v})), {wrap_dir})"
         if wrap_dir
         else f"degrees(arctan2({u}, {v})) % 360",
         "u": u,
@@ -1251,7 +1247,7 @@ def pg_1d(
         )  # 0.06 /scale_height.get(pid, 1)
 
         t = common_point_for_all(graphs, n_curly_braces=2)
-        _, __ = ('v.pl(f"', '")') if len(graphs) > 1 else ('f"', '"')
+        _, __ = ('vf.pl(f"', '")') if len(graphs) > 1 else ('f"', '"')
         split_before_date = n_graphs_w and WidthGrade < WidthGrades["Narrow"]
         sentences = ([f'f"{t}. "'] if t else []) + [
             "".join(
@@ -1669,7 +1665,7 @@ def pg_1d(
                 Set("hide", True)
             if "title" not in keys_shown:
                 keys_shown.add("title")
-                Set("title", "%{{v.c1(I['averaging bin'])}}%")
+                Set("title", "%{{vf.c1(I['averaging bin'])}}%")
             Set(
                 "horzManual",
                 0.02
@@ -1710,7 +1706,7 @@ def pg_1d(
             Set(
                 "label",
                 "Данные, записанные в интервалах, растянуты между началами интервалов"
-                if fv.lang == "ru"
+                if vf.lang == "ru"
                 else "Data recorded in intervals is shown stretched between starts of the intervals",
             )
             Set("xAxis", "xL")
@@ -1730,17 +1726,17 @@ def pg_1d(
             :param bin: bin with "_" suffix or ""
             :param axis_name: yAxis Veusz parameter name. If None (default) then sets to ``f'y{param}'``
             """
-            param_expr_dict = get_param_expr_dict(bin=bin, suffix=pid)
+            param_expr_dict = get_param_expr_dict(bin=bin, suffix=fpix(pid))
             # Clip binned parameters and express in defined terms (if needed)
             if bin and param[1:4] in ("abs", "dir"):  # already clipped
                 y_data = (
-                    f"{bin}{param}{pid}"
+                    f"{bin}{param}{fpix(pid)}"
                     if pid != "_Wind"  # "Wind" suffix in dict values olnly
                     else param_expr_dict[param.removesuffix("Wind")]
                 )
             else:
                 if param in ("P", "Temp"):
-                    y_data = f"{bin}{param}{pid}"
+                    y_data = f"{bin}{param}{fpix(pid)}"
                 else:
                     y_data = param_expr_dict[
                         param
@@ -1752,13 +1748,13 @@ def pg_1d(
             half_bin_add = f" + {bin.removesuffix('_')}/2" if bin else ""
             x_data = (
                 (
-                    f"f(lambda t: v.stretch_time(t, {binB}_t0st{pid_for_time}) if '{pid_for_time}' in "
+                    f"f(lambda t: vf.stretch_time(t, {binB}_t0st{pid_for_time}) if '{pid_for_time}' in "
                     f"USE_bursts else t{half_bin_add}, "
                     + (  # function
                         f"{bin}t0st{pid_for_time}"
                         if bin
                         else (
-                            f"v.dt64s2vsz({t_name}{t0sfx}[sl_(*iu{pid_for_time})]{only_finite}{t_mul}) + "
+                            f"vf.dt64s2vsz({t_name}{t0sfx}[sl_(*iu{pid_for_time})]{only_finite}{t_mul}) + "
                             "USE_timeShift_s"
                         )
                     )
@@ -1798,7 +1794,7 @@ def pg_1d(
                         #         ]) + [", 'M8[s]').item))[1:]}}%"]
                         # ) if use_bins.get(bin, None) != 0 else
                         [
-                            "%{{v.str_dt(DATA('",
+                            "%{{vf.str_dt(DATA('",
                             bin[:-1] or "dt",
                             w_opt,
                             "'), LANG({'default': 'en', 'ru': 'ru'}))}}%",
@@ -2045,7 +2041,7 @@ def pg_1d(
                 Set("marker", "none")
                 Set("markerSize", "2pt")
                 Set("color", "darkred")
-                Set("xData", "v.dt64s2vsz(int32(array(DISPtime[0], 'M8[s]')))")
+                Set("xData", "vf.dt64s2vsz(int32(array(DISPtime[0], 'M8[s]')))")
                 Set(
                     "yData",
                     f"mean_P{pid}" if pid.startswith(("_p", "_w")) else "zeros(2)",
@@ -2245,8 +2241,8 @@ def pg_progress(graphs, clr_by="probe", aspect=1, b_dt_big=True, cfg_plot=None):
                 SetDataExpression(
                     f"{bin}{u}_cum{pid}",
                     (
-                        "append(0, cumsum(f(lambda x: v.rep2mean(x, isfinite(x)), "
-                        f"{bin}{u}{pid}[sl_({bin}iu_cmn{pid})])*{bin[:-1]})"
+                        "append(0, cumsum(f(lambda x: vf.rep2mean(x, isfinite(x)), "
+                        f"{bin}{u}{fpix(pid)}[sl_({bin}iu_cmn{pid})])*{bin[:-1]})"
                         f"{scale_wind_more_str if pid == '_Wind' else ''})"
                     ),
                     linked=True,
@@ -2261,14 +2257,14 @@ def pg_progress(graphs, clr_by="probe", aspect=1, b_dt_big=True, cfg_plot=None):
 
         SetDataExpression(
             f"disp_{bin}i{pid}",
-            "(lambda t: v.i_whole_time_intervals(t, asscalar(diff(t[[0,-1]])/Progress_lbl_dt))[1:-1] if "
+            "(lambda t: vf.i_whole_time_intervals(t, asscalar(diff(t[[0,-1]])/Progress_lbl_dt))[1:-1] if "
             "isinstance(Progress_lbl_dt, (int, float)) else flatnonzero(diff(int8(array(t[:-1]+1230768000, "
             f"'M8[s]').astype(f'M8[{{Progress_lbl_dt}}]')))))({bin}t0st{pid}[sl_({bin}iu_cmn{pid})]) + 1",
             linked=True,
         )
         # re_dt = '(?P<dt>\d+)\.(?P<dtp>\d*)(?P<dt_u>[YMWDhms])'
         #   f"""
-        #   v.i_whole_time_intervals({bin}t0st{pid}, asscalar(diff({bin}t0st{pid}[[0,-1]])/Progress_lbl_dt))[1:-1] if isinstance(Progress_lbl_dt, (int, float)) else flatnonzero(f(lambda k, kp, unit:
+        #   vf.i_whole_time_intervals({bin}t0st{pid}, asscalar(diff({bin}t0st{pid}[[0,-1]])/Progress_lbl_dt))[1:-1] if isinstance(Progress_lbl_dt, (int, float)) else flatnonzero(f(lambda k, kp, unit:
         #       f(lambda arr: arr
         #       diff(int8(array({bin}t0st{pid}[:-1]+1230768000, 'M8[s]').astype(f"M8[{{(kp or k).lstrip('0')}}{{unit}}]")))
         #   ) / 10**len(kp.rstrip('0')),
@@ -2351,7 +2347,7 @@ def pg_progress(graphs, clr_by="probe", aspect=1, b_dt_big=True, cfg_plot=None):
     )
 
     if n_graphs > 1:
-        _ = 'v.pl(f"'
+        _ = 'vf.pl(f"'
         __ = '")'
     else:
         _ = 'f"'
@@ -2425,7 +2421,7 @@ def pg_progress(graphs, clr_by="probe", aspect=1, b_dt_big=True, cfg_plot=None):
         To("labelsUnits")
         Set(
             "label",
-            "%{{'' if isinstance(Progress_lbl_dt, (int, float)) else f\"{v.str_date_unit(DATA('time_span_i'))} {'(hours)' if 'h' in Progress_lbl_dt else ''}\"}}%",
+            "%{{'' if isinstance(Progress_lbl_dt, (int, float)) else f\"{vf.str_date_unit(DATA('time_span_i'))} {'(hours)' if 'h' in Progress_lbl_dt else ''}\"}}%",
         )
         Set(
             "label",
@@ -2446,7 +2442,7 @@ def pg_progress(graphs, clr_by="probe", aspect=1, b_dt_big=True, cfg_plot=None):
         To("l_devices_header")
         Set(
             "label",
-            "%{{{{v.c1(', '.join([{}]))}}}}%".format(
+            "%{{{{vf.c1(', '.join([{}]))}}}}%".format(
                 "".join(
                     [
                         s
@@ -2547,7 +2543,7 @@ def pg_progress(graphs, clr_by="probe", aspect=1, b_dt_big=True, cfg_plot=None):
     To("..")
 
     for pid, clr in zip(graphs, colors_local):
-        param_expr_dict = get_param_expr_dict(bin=bin, suffix=pid)
+        param_expr_dict = get_param_expr_dict(bin=bin, suffix=fpix(pid))
         t0sfx = "" if use_bins[bin0name] else pid
         if pid == "_Wind":
             bin = "bin2_"
@@ -2584,9 +2580,6 @@ def pg_progress(graphs, clr_by="probe", aspect=1, b_dt_big=True, cfg_plot=None):
         Set("arrowright", "none")
         Set("arrowSize", "1pt")
         Set("mode", "point-to-point")
-        # Set('hide', clr_by != 'dir')
-        # Set('length', f'{bin}Vabs{pid}*DISPscale_vec' if pid!='_Wind' else '{}{}'.format(param_expr_dict['Vabs'], scale_wind_more_str))
-        # Set('angle', f'{bin}Vdir{pid}-90' if pid!='_Wind' else (param_expr_dict['Vdir'] + ' - 90'))
         for x, u in ("xu", "yv"):
             Set(f"{x}Pos", f"{bin}{u}_cum{pid}[int32(disp_{bin}i{pid})]")
             Set(
@@ -2633,7 +2626,7 @@ def pg_progress(graphs, clr_by="probe", aspect=1, b_dt_big=True, cfg_plot=None):
             for x, u in ("xu", "yv"):
                 Set(
                     f"{x}Data",
-                    f"append(nanmean({u}{pid}[sl_([iu{pid}[0,0], searchsorted("
+                    f"append(nanmean({u}{fpix(pid)}[sl_([iu{pid}[0,0], searchsorted("
                     f"{t_name}{t0sfx}{'' if b_one_table else pid}, "
                     f"({bin}t0st{pid}[0] - USE_timeShift_s))])])*{bin[:-1]}/(1{mul}), {bin}{u}_cum{pid})",
                 )
@@ -2684,8 +2677,8 @@ def pg_progress(graphs, clr_by="probe", aspect=1, b_dt_big=True, cfg_plot=None):
         for x, u in ("xu", "yv"):
             Set(
                 f"{x}Data",
-                "append(0, cumsum(f(lambda x: v.rep2mean(x, isfinite(x)), "
-                f"{u}{pid}[sl_(iu{pid})])))*{bin.removesuffix('_')}",
+                "append(0, cumsum(f(lambda x: vf.rep2mean(x, isfinite(x)), "
+                f"{u}{fpix(pid)}[sl_(iu{pid})])))*{bin.removesuffix('_')}",
             )
         Set("hide", True)
         Set("xAxis", "x_km")
@@ -2713,7 +2706,8 @@ def pg_progress(graphs, clr_by="probe", aspect=1, b_dt_big=True, cfg_plot=None):
             Set(f"{x}Pos", f"{bin}{u}_cum{pid}[int32(disp_{bin}i{pid})]")
             Set(
                 f"{x}Pos2",
-                f"{bin}{u}_cum{pid}[int32(disp_{bin}i{pid}) + (1 if (disp_{bin}i{pid}[-1] +1) < {bin}{u}_cum{pid}.shape[0] else append(ones((len(disp_{bin}i{pid})-1,),int32), 0) )]",
+                f"{bin}{u}_cum{pid}[int32(disp_{bin}i{pid}) + (1 if (disp_{bin}i{pid}[-1] +1) < {bin}{u}_cum"
+                f"{pid}.shape[0] else append(ones((len(disp_{bin}i{pid})-1,),int32), 0) )]",
             )
         Set("xAxis", "x_km")
         Set("yAxis", "y_km")
@@ -2782,7 +2776,7 @@ SETTING('/_Vprogress/grid_diagram/map0/y_km/datascale')
     To("x_km")
     Set(
         "function",
-        f"f(lambda x: t*diff(x) + x[0], v.max_range(Progress_x_lims, float32([{lim_str['x']['min']}, "
+        f"f(lambda x: t*diff(x) + x[0], vf.max_range(Progress_x_lims, float32([{lim_str['x']['min']}, "
         f"{lim_str['x']['max']}])*SETTING('/{pg_name}/grid_diagram/map0/x_km/datascale')))",
     )
     Set("min", -7.5)
@@ -2801,7 +2795,7 @@ SETTING('/_Vprogress/grid_diagram/map0/y_km/datascale')
     To("y_km")
     Set(
         "function",
-        f"t*diff(v.max_range(Progress_x_lims, float32([{lim_str['x']['min']}, "
+        f"t*diff(vf.max_range(Progress_x_lims, float32([{lim_str['x']['min']}, "
         f"{lim_str['x']['max']}])*SETTING('/{pg_name}/grid_diagram/map0/x_km/datascale'))) / SETTING('/{pg_name}/grid_diagram/map0/aspect') + fmin(Progress_y_min, {lim_str['y']['min']}*SETTING('/{pg_name}/grid_diagram/map0/y_km/datascale'))",
     )
     Set(

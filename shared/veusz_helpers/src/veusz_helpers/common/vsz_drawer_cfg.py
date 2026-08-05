@@ -2,7 +2,7 @@
 from itertools import compress, takewhile
 import numpy as np
 from logging import warning
-import func_vsz as fv
+import vsz_func as vf
 from enum import IntEnum
 import builtins
 from dataclasses import dataclass
@@ -21,7 +21,7 @@ AddCustom(
 AddCustom(
     "definition",
     "fDisp_date_u(ax, t_span_var, **kwargs)",
-    "v.str_date_unit_with_suffix([f(lambda l: l if l!='Auto' else t, SETTING(f'{ax}/{lim:s}')) for lim, t in zip(('min', 'max'), DATA(t_span_var))] if ax else DATA(t_span_var), str_zone=DISPdevice_info['zone'], lang=LANG({'default': 'en', 'ru': 'ru'}), next_fmt=kwargs.pop('next_fmt', 0), **kwargs)",
+    "vf.str_date_unit_with_suffix([f(lambda l: l if l!='Auto' else t, SETTING(f'{ax}/{lim:s}')) for lim, t in zip(('min', 'max'), DATA(t_span_var))] if ax else DATA(t_span_var), str_zone=DISPdevice_info['zone'], lang=LANG({'default': 'en', 'ru': 'ru'}), next_fmt=kwargs.pop('next_fmt', 0), **kwargs)",
 )
 
 # Custom Definitions
@@ -240,7 +240,7 @@ str_pids = (  # """f'{si}{ki[int(ki.startswith("i")):]}'""" if b_one_point else 
 st = (
     ""
     if b_one_point
-    else "v.c1((f'{{st}}.{p}' if len(p) < 10 else f'{{{p}}}').format_map(I)).replace(' ', r'\\\\'), "
+    else "vf.c1((f'{{st}}.{p}' if len(p) < 10 else f'{{{p}}}').format_map(I)).replace(' ', r'\\\\'), "
 )
 _ = "".join(
     [
@@ -257,7 +257,7 @@ _ = "".join(
         ")" if b_one_point and b_one_depth_dev else ") + '}}'",  # if bd else ''
         "]) for k_, (p, b, bd, s, *kw) in DISPdevices_info.items() ",
         " for k in ([k_, k_.replace('i_p', 'p')] if k_.startswith('i_p') else [k_])}, ",  # need?
-        "'_Wind': v.c1(I['wind'])}",  # adds same params for pressure data of ``ip``-probes
+        "'_Wind': vf.c1(I['wind'])}",  # adds same params for pressure data of ``ip``-probes
     ]
 )
 if WidthGrade == WidthGrades["VeryNarrow"]:  # replace ":{small whitespace}" with ",newline"
@@ -265,7 +265,7 @@ if WidthGrade == WidthGrades["VeryNarrow"]:  # replace ":{small whitespace}" wit
 AddCustom("definition", "DISPdevice", _)
 
 colors = (
-    fv.colors_of_hue_range(len(ids_order), exclude_range=[210, 270])
+    vf.colors_of_hue_range(len(ids_order), exclude_range=[210, 270])
     if len(ids_order) > 1
     else ["black"]
 )
@@ -285,13 +285,13 @@ def disp_devices_info_key(k, p, b, bd, s, *kw):
     """
     p_out = (
         "" if b_one_point
-        else fv.c1((
+        else vf.c1((
             fr"{{st}}.\bold{{{{{p}}}}}" if len(p) < 10
             else f"{{{p}}}"
-        ).format_map(fv.I))
+        ).format_map(vf.I))
     )
-    # .removeprefix("{st}.".format_map(fv.I))
-    d_out = "" if b is None or b_one_depth_dev else rf"\\^{(b - bd):.0f}{fv.I['m']}"
+    # .removeprefix("{st}.".format_map(vf.I))
+    d_out = "" if b is None or b_one_depth_dev else rf"\\^{(b - bd):.0f}{vf.I['m']}"
 
     if p_out or d_out:  # not use pid
         str_pid = ""
@@ -312,7 +312,7 @@ def disp_devices_info_key(k, p, b, bd, s, *kw):
         "".join((
             p_out,
             d_out,
-            # ('' if b is None or b_one_depth_sea else f"{b:.0f}{fv.I['m']}"),
+            # ('' if b is None or b_one_depth_sea else f"{b:.0f}{vf.I['m']}"),
             str_pid,
         ))
     )
@@ -463,8 +463,8 @@ if ids_i or ids_w:
         )  # [::-1]
         SetData2DExpressionXYZ(
             f"Dim_DataP_{t}",
-            f"v.dim_bug_cor(time_span_{t})",
-            f"v.dim_bug_cor(-grD_ext_{t} if all(diff(grD_ext_{t})) else int32([{num_names_prev}, len(grD_ext_{t}) + {num_names_prev}]))  # if can not use depth then use devices list index",
+            f"vf.dim_bug_cor(time_span_{t})",
+            f"vf.dim_bug_cor(-grD_ext_{t} if all(diff(grD_ext_{t})) else int32([{num_names_prev}, len(grD_ext_{t}) + {num_names_prev}]))  # if can not use depth then use devices list index",
             "0",
             linked=True,
         )
@@ -479,19 +479,18 @@ if ids_i or ids_w:
         # need 2d with max freq (from noAvg DB where data is not combined to one table)
         SetData2DExpression(
             "iu_i_min",
-            "v.min_range_2d(array([DATA(f'iu_{i}')[0, :] for i in DISPdevices_info]))",
+            "vf.min_range_2d(array([DATA(f'iu_{i}')[0, :] for i in DISPdevices_info]))",
             linked=True,
         )
     # needed to draw 2d and progressive vector zabor. Todo: create only if needed
-    for u in "uv":
-        SetData2DExpression(
-            f"{bin_use_2d}{u}_2d",
-            f"zeros_like(Dim_DataP_i[0,0]) + array([DATA(f'{bin_use_2d}{u}_{{i}}')"
-            f"{'[sl_(iu_i_min)]' if bin_use_2d == '' else ''} for i in DISPdevices_info])",
-            linked=True,
-        )
-
-
+    if fpix is identity:  # `{bin_use_2d}{u}` already 2D
+        for u in "uv":
+            SetData2DExpression(
+                f"{bin_use_2d}{u}{'_2d' if fpix is identity else ''}",
+                f"zeros_like(Dim_DataP_i[0,0]) + array([DATA(f'{bin_use_2d}{u}_{{i}}')"
+                f"{'[sl_(iu_i_min)]' if bin_use_2d == '' else ''} for i in DISPdevices_info])",
+                linked=True,
+            )
 
 
 ## Prepare progressive diagrams
@@ -503,13 +502,13 @@ lim_str = None
 #
 if b_draw_progressive_vector:
     # AddCustom('definition', 'shift_or_extend_lims',
-    #     'lambda lim, x, e=append(-5, 5), scale=1: f((lambda dl: v.max_range(lim + dl[0], x*scale) if dl[0]
-    # else v.max_range(lim + dl[1], x*scale) if dl[1] else lim), v.max_range(lim, (x + e)*scale) - lim)'
+    #     'lambda lim, x, e=append(-5, 5), scale=1: f((lambda dl: vf.max_range(lim + dl[0], x*scale) if dl[0]
+    # else vf.max_range(lim + dl[1], x*scale) if dl[1] else lim), vf.max_range(lim, (x + e)*scale) - lim)'
     # )
 
     SetDataExpression(
         "disp_months",
-        "v.dt64s2vsz(array(arange(*array(DISPtime[0], 'M8[M]') + [0, 1], timedelta64(1, 'M'), dtype='M8[M]'), 'M8[s]'))",
+        "vf.dt64s2vsz(array(arange(*array(DISPtime[0], 'M8[M]') + [0, 1], timedelta64(1, 'M'), dtype='M8[M]'), 'M8[s]'))",
         linked=True,
     )
     DatasetPlugin(
@@ -548,13 +547,13 @@ if b_draw_progressive_vector:
         for u in "uv":
             SetData2DExpression(
                 f"{bin_use_2d}{u}_cum2d",
-                f"column_stack((zeros(len(DISPdevices_info)), cumsum({bin_use_2d}{u}_2d, axis=1)*"
-                f"{bin_use_2d[:-1]}))",
+                f"column_stack((zeros(len(DISPdevices_info)), cumsum("
+                f"{bin_use_2d}{u}{'_2d' if fpix is identity else ''}, axis=1)*{bin_use_2d[:-1]}))",
                 linked=True,
             )
         SetDataExpression(
             "bin_t0st_i",
-            "v.dt64s2vsz(1E-9*bin_t_ns[sl_({bin_use_2d}iu_cmn{pid})]) + USE_timeShift_s  "
+            "vf.dt64s2vsz(1E-9*bin_t_ns[sl_({bin_use_2d}iu_cmn{pid})]) + USE_timeShift_s  "
             "# Veusz 3.6.2 bug: can not use lambda as it blind to arguments",  # lambda:
             # ("(lambda d: array([min(d), max(d)]))(hstack("
             # "[DATA(f'bin_t_ns_{i}')[DATA(f'bin_iu_{i}')[[0, -1]]] for i in DISPdevices_info]))")
@@ -564,7 +563,7 @@ if b_draw_progressive_vector:
         for key, op in [("", ""), ("_nx", "/2")]:
             SetDataExpression(
                 f"disp_bin_i{key}",
-                "v.i_whole_time_intervals(bin_t0st_i, ediff1d(bin_t0st_i[[0,-1]]).item()/"
+                "vf.i_whole_time_intervals(bin_t0st_i, ediff1d(bin_t0st_i[[0,-1]]).item()/"
                 f"Progress_lbl_dt{op})[1:-1] if isinstance(Progress_lbl_dt, (int, float)) else "
                 "flatnonzero(diff(int8(array(bin_t0st_i[:-1]+1230768000, 'M8[s]')"
                 ".astype(f'M8[{{{}}}]')))) + 1".format(
@@ -585,7 +584,7 @@ if b_draw_progressive_vector:
         SetDataExpression(
             "disp_pgs3d_lines_i",
             (
-                "v.i_whole_time_intervals("
+                "vf.i_whole_time_intervals("
                 f"1E-9*t_ns + USE_timeShift_s, 1E-9*asscalar(diff(t_ns{t0sfx}[[0,-1]])/Progress_lbl_dt))"
                 "[1:-1] if isinstance(Progress_lbl_dt, (int, float)) else flatnonzero(diff( "
                 f"int8(array(1E-9*t_ns{t0sfx}[:-1] + USE_timeShift_s, 'M8[s]').astype("
@@ -596,7 +595,7 @@ if b_draw_progressive_vector:
 
     if b_draw_progressive_zabor:
         for u in "uv":
-            if bin_use_2d:  # else already created
+            if fpix is identity and bin_use_2d:  # else already created
                 SetData2DExpression(
                     f"{u}_2d",
                     f"zeros_like(Dim_DataP_i[0,0]) + array([DATA(f'{u}_{{i}}')[sl_({bin_use_2d}iu_cmn{pid})] "
@@ -606,8 +605,8 @@ if b_draw_progressive_vector:
             SetData2DExpression(
                 f"{u}_cum2d",
                 (
-                    "column_stack((zeros(len(DISPdevices_info)), cumsum(apply_along_axis("
-                    f"lambda x: v.rep2mean(x, isfinite(x)), 1, {u}_2d), axis=1)*dt))"
+                    "column_stack((zeros(len(DISPdevices_info)), cumsum(apply_along_axis(lambda x: "
+                    f"vf.rep2mean(x, isfinite(x)), 1, {u}{'_2d' if fpix is identity else ''}), axis=1)*dt))"
                 ),
                 linked=True,
             )
@@ -626,15 +625,16 @@ if b_draw_progressive_vector:
         )
         SetData2DExpression(
             "zb_shift_2d",
-            "column_stack([i+zeros((u_2d.shape[0], r+2)) for i, r in enumerate(int32(zb_i_en - zb_i_st).T)])*Zabor_shift",
+            f"column_stack([i+zeros((u{'_2d' if fpix is identity else ''}.shape[0], r+2)) for i, r in "
+            "enumerate(int32(zb_i_en - zb_i_st).T)])*Zabor_shift",
             linked=True,
         )
         for u in "uv":
             SetData2DExpression(
                 f"zb2d_{u}_cum",
                 (
-                    f"hstack([column_stack([zeros({u}_2d.shape[0]), cumsum({u}_2d[:, slice(*se)], axis=1),"
-                    " nan+z_i])*dt for se in int32([zb_i_st, zb_i_en]).T])"
+                    f"hstack([column_stack([zeros({u}{'_2d' if fpix is identity else ''}.shape[0]), cumsum("
+                    f"{u}_2d[:, slice(*se)], axis=1), nan+z_i])*dt for se in int32([zb_i_st, zb_i_en]).T])"
                 ),
                 linked=True,
             )

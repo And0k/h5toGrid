@@ -6,7 +6,7 @@ import re
 from calendar import monthrange
 from datetime import datetime
 
-import func_vsz as fv
+import vsz_func as vf
 
 
 def add_months(t: np.timedelta64, months: int):
@@ -289,7 +289,7 @@ def _meta_array_to_dict(
         zip(
             "pbdscrtT",
             [
-                p.format_map(fv.I) if p is not None else None,
+                p.format_map(vf.I) if p is not None else None,
                 b,
                 None if None in (b, bd) else round(b - bd, 1),
                 s,

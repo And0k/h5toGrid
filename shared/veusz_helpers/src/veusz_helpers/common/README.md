@@ -99,7 +99,7 @@ The .vsz filename structure `{yymmdd_HHMM}@{device_ids}.vsz` enables automated d
 
 - vsz_drawer - visualization module for creating plots and graphs in Veusz
 - vsz_drawer_cfg - configuration module for drawer parameters and settings
-- func_vsz - support module with various utility functions for Veusz operations
+- vsz_func - support module with various utility functions for Veusz operations
 
 ## Data Format Support
 

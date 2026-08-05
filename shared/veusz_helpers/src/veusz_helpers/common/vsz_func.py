@@ -1225,7 +1225,7 @@ def in_ranges(arr, fun, st_ends, where_no_fun_out=None):
     and fun() will not be executed.
     Example:
     # index of max dens in pres_range before imin_ddens
-    v.in_ranges(dens, nanargmax, st_ends)
+    vf.in_ranges(dens, nanargmax, st_ends)
     """
     if where_no_fun_out is None:
         where_no_fun_out = np.nan
@@ -1351,7 +1351,7 @@ def bad_top_by_diff(
     :param p: _description_, defaults to None
     :param speed: _description_, defaults to 1
     Example:
-    # v.bad_bot_by_diff(CTD_Sal_f, lambda x: (x<-0.1)| (x>5), CTDends, i_st=CTDstarts, p_range=1, p=CTD_Pres, speed=CTDspeedDown_MA)
+    # vf.bad_bot_by_diff(CTD_Sal_f, lambda x: (x<-0.1)| (x>5), CTDends, i_st=CTDstarts, p_range=1, p=CTD_Pres, speed=CTDspeedDown_MA)
     # lambda x: (x<-0.001)|(x>0.01)
     """
     x_len = x.size

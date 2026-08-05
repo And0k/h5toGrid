@@ -22,11 +22,11 @@ except ImportError as e:
 import statsmodels.api as sm
 
 
-import func_vsz as fv
+import vsz_func as vf
 
 # # from runpy import run_path
-# # fv = type("Namespace", (object,), run_path(
-# #     r"C:/Work/Python/AB_SIO_RAS/h5toGrid/shared/veusz_helpers/func_vsz.py"
+# # vf = type("Namespace", (object,), run_path(
+# #     r"C:/Work/Python/AB_SIO_RAS/h5toGrid/shared/veusz_helpers/vsz_func.py"
 # #     ))()
 
 pd.set_option("display.max_columns", None)  # for better debug display
@@ -405,22 +405,22 @@ def save_stat(
         device_to_column = {}
 
     df = (stats_out_df  # FutureWarning: DataFrame.applymap has been deprecated. Use DataFrame.map instead
-        .map(fv.fmt_3_digits_after_dot).reset_index()  # applymap
-        .rename(columns={"index": fv.c1(fv.I["notation"]), **device_to_column})
+        .map(vf.fmt_3_digits_after_dot).reset_index()  # applymap
+        .rename(columns={"index": vf.c1(vf.I["notation"]), **device_to_column})
         .set_index(stats_out_df.index.map(notation_to_parameter))
         .loc[list(notation_to_parameter.values())]
     )
-    df.index.name = fv.c1(fv.I['parameter'])
+    df.index.name = vf.c1(vf.I['parameter'])
     df.to_csv(Path(path_base).with_suffix(f".{out_file_add_str}stats.csv"), sep="\t")
 
     # Save correlation parameters
 
     df = (
-        corr_stats_df.map(fv.fmt_3_digits_after_dot)  # applymap
+        corr_stats_df.map(vf.fmt_3_digits_after_dot)  # applymap
         .reset_index()
         .rename(
             columns={
-                "index": fv.c1(fv.I["notation"]),
+                "index": vf.c1(vf.I["notation"]),
                 **{
                     f"{dev1}-{dev2}": f"{col1}-{col2}"
                     for (dev1, col1), (dev2, col2) in combinations(
@@ -432,7 +432,7 @@ def save_stat(
         .set_index(corr_stats_df.index.map(notation_to_parameter_corr))
         .loc[list(notation_to_parameter_corr.values())]
     )
-    df.index.name = fv.c1(fv.I["parameter"])
+    df.index.name = vf.c1(vf.I["parameter"])
     df.to_csv(
         Path(path_base).with_suffix(f".{out_file_add_str}stats_corr.csv"), sep="\t"
     )
@@ -534,9 +534,9 @@ if __name__ == "__main__":
 
     # DISPdevices_info = {
     #     'GMX': ['буй\\\\GMX500', 1, 1, '⯯', 54.953351, 20.44482],
-    #     'CM': [fv.c1('{CMEMS}'.format_map(fv.I)), 1, 0, '⯯', latitude_CM, longitude_CM],
-    #     'D6': [fv.c1('{Д6}'.format_map(fv.I)), 1, 0, '⯯', 54.953351, 20.44482],
-    #     'Ryb': [fv.c1('{Рыбное}'.format_map(fv.I)), 1, 0, '⯯', 54.953351, 20.44482]
+    #     'CM': [vf.c1('{CMEMS}'.format_map(vf.I)), 1, 0, '⯯', latitude_CM, longitude_CM],
+    #     'D6': [vf.c1('{Д6}'.format_map(vf.I)), 1, 0, '⯯', 54.953351, 20.44482],
+    #     'Ryb': [vf.c1('{Рыбное}'.format_map(vf.I)), 1, 0, '⯯', 54.953351, 20.44482]
     #     }
 
 

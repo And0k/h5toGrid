@@ -19,7 +19,7 @@ import hydra
 import numpy as np
 import pandas as pd
 
-from veusz_helpers.common import func_vsz as fv
+from . import vsz_func as vf
 
 from utils import cfg_dataclasses as cfg_d
 from utils.init import LoggingStyleAdapter, dir_create_if_need, FakeContextIfOpen, set_field_if_no
@@ -472,7 +472,7 @@ def main(**kwargs) -> None:
                 # Loop filter
                 p = df_raw["Pres"].values
                 i_st = np.abs(p - cfg["filter"]["loop_filter_use_start_depth"]).argmin()
-                b_down = fv.loop_filt(p, i_st=i_st.item())
+                b_down = vf.loop_filt(p, i_st=i_st.item())
                 n_down = b_down.sum()
                 lf.info(
                     "loop filter removed {:.2g}%, remains {} rows".format(

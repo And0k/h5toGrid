@@ -12,7 +12,7 @@ import statsmodels.api as sm  # .stats.api as sms
 # Custom functions
 from scripts import stat_wind
 import plot
-import func_vsz as fv
+import vsz_func as vf
 
 def time_cols_to_dt64(_yyyy__, _mm__, _dd__, _HH__, _MM__, _SS__, time_add_s=0):
     date0 = np.datetime64(datetime(year=_yyyy__[0], month=_mm__[0], day=_dd__[0]), "s")
@@ -121,14 +121,14 @@ def process_adv(data, config):
 
     # Compute bin averages
     if config.get("dt_bin"):
-        bin_edges = fv.i_whole_time_intervals(data["time"][mask], config["dt_bin"])
+        bin_edges = vf.i_whole_time_intervals(data["time"][mask], config["dt_bin"])
         bin = {
-            "u": fv.bin_avg(out["u"], bin_edges),
-            "v": fv.bin_avg(out["v"], bin_edges),
+            "u": vf.bin_avg(out["u"], bin_edges),
+            "v": vf.bin_avg(out["v"], bin_edges),
         }
         bin["|V|"] = np.hypot(bin["u"], bin["v"])
         bin["Vdir"] = np.degrees(np.arctan2(bin["u"], bin["v"]))
-        # fv.bin_avg(direction, bin_edges) # fv.bin_avg(speed, bin_edges)
+        # vf.bin_avg(direction, bin_edges) # vf.bin_avg(speed, bin_edges)
     else:
         bin = out
 
@@ -137,7 +137,7 @@ def process_adv(data, config):
     stat["mean_speed"] = np.hypot(
         stat["mean_u"], stat["mean_v"]
     )  # np.sqrt(mean_u**2 + mean_v**2)
-    stat["mean_direction"] = fv.wrap_dir(
+    stat["mean_direction"] = vf.wrap_dir(
         np.degrees(np.arctan2(stat["mean_u"], stat["mean_v"]))
     )
     # Additional
@@ -158,7 +158,7 @@ def to_polar(df: pd.DataFrame):
         df[f"|V|_{device}"] = np.hypot(
             df[f"u_{device}"].values, df[f"v_{device}"].values
         )
-        df[f"Vdir_{device}"] = fv.wrap_dir(
+        df[f"Vdir_{device}"] = vf.wrap_dir(
             np.degrees(np.arctan2(df[f"u_{device}"], df[f"v_{device}"]))
         )
         del df[f"u_{device}"]
@@ -176,7 +176,7 @@ def to_polar_dfs(dfs: Mapping[str, pd.DataFrame], b_device_in_col_suffix=False):
                 to_polar(df)
             else:
                 dfs[k]["|V|"] = np.hypot(df["u"], df["v"])
-                dfs[k]["Vdir"] = fv.wrap_dir(np.degrees(np.arctan2(df["u"], df["v"])))
+                dfs[k]["Vdir"] = vf.wrap_dir(np.degrees(np.arctan2(df["u"], df["v"])))
 
                 # # Checked Ok
                 # complex_vector = df["u"] + 1j * df["v"]
@@ -915,7 +915,7 @@ if __name__ == "__main__":
                 plot.vs_freq(
                     Vabs,
                     axes,
-                    legend_title=("TCM {#}").format_map(fv.I),
+                    legend_title=("TCM {#}").format_map(vf.I),
                     b_log_x=b_log_x,
                     b_gray=b_gray,
                     path_dir=path_raw_adv.parent,

@@ -46,8 +46,7 @@ def vsz_draw_init_tcm(
         use_bins,
         use_bins_w,
         bin0name,
-        bin_burst_name,
-        b_one_table,
+        bin_burst_name
     """
     format_model_part = lambda model: "" if model in ["i", ""] else f"_{model}"
     if b_old_format_in_h5:
@@ -376,29 +375,29 @@ def vsz_draw_init_tcm(
                             _w = "_w"
                             SetData2DExpression(
                                 f"iUseAuto{pid}",
-                                f"[flatnonzero(isfinite({bin0}P{pid}))[[0,-1]]]",
+                                f"[flatnonzero(isfinite({bin0}P{fpix(pid)}))[[0,-1]]]",
                                 linked=True,
                             )
                             SetData2DExpression(
                                 f"iu{pid}",
-                                f"v.min_range_2d(atleast_2d(v.i_positive(v.i_use({t_name}_w, USEtime{pid}, "
+                                f"vf.min_range_2d(atleast_2d(vf.i_positive(vf.i_use({t_name}_w, USEtime{pid}, "
                                 f"t_shift_s=USE_timeShift_s), {t_name}_w.size)), iUseAuto{pid})",
                                 linked=True,
                             )
                         SetDataExpression(
                             f"mean_P{pid}",
-                            f"nanmean({bin_max_w}P{pid}[sl_({bin_max_w}iu{pid if _w else ids_ip[ip]})])",
+                            f"nanmean({bin_max_w}P{fpix(pid)}[sl_({bin_max_w}iu{pid if _w else ids_ip[ip]})])",
                             linked=True,
                         )
                     else:
                         SetData2DExpression(
                             f"iUseAuto{pid}",
-                            f"[flatnonzero(isfinite({bin}u{pid}))[[0,-1]]]",
+                            f"[flatnonzero(isfinite({bin}u{fpix(pid)}))[[0,-1]]]",
                             linked=True,
                         )
                         SetData2DExpression(
                             f"iu{pid}",
-                            f"v.min_range_2d(atleast_2d(v.i_positive(v.i_use({t_name}{t_sfx}, USEtime{pid}, "
+                            f"vf.min_range_2d(atleast_2d(vf.i_positive(vf.i_use({t_name}{t_sfx}, USEtime{pid}, "
                             f"t_shift_s=USE_timeShift_s), {t_name}{t_sfx}.size)), iUseAuto{pid})",
                             linked=True,
                         )
@@ -410,7 +409,7 @@ def vsz_draw_init_tcm(
                         # )
                         SetDataExpression(
                             f"time_span{pid}",
-                            f"around(v.dt64s2vsz({bin}{t_name}{t_sfx}[sl_(iu{pid})][[0, -1]]{t_mul} + "
+                            f"around(vf.dt64s2vsz({bin}{t_name}{t_sfx}[sl_(iu{pid})][[0, -1]]{t_mul} + "
                             "USE_timeShift_s) / 60) * 60",
                             linked=True,
                         )
@@ -444,7 +443,7 @@ def vsz_draw_init_tcm(
                         f"{bin}iu_cmn{pid}",
                         (
                             f"[searchsorted({bin}{t_name}{t_sfx}, "
-                            "v.vsz2dt64s(time_span_i_common).astype(int)*1E9) + int32([0, -1])]"
+                            "vf.vsz2dt64s(time_span_i_common).astype(int)*1E9) + int32([0, -1])]"
                         ),
                         linked=True,
                     )
@@ -453,18 +452,18 @@ def vsz_draw_init_tcm(
                     # Time for individual devices
                     SetDataExpression(
                         f"{bin}t0st{pid}",
-                        f"v.dt64s2vsz({bin}{t_name}{t_sfx}[sl_({bin}iu{pid})]{t_mul}) + USE_timeShift_s",
+                        f"vf.dt64s2vsz({bin}{t_name}{t_sfx}[sl_({bin}iu{pid})]{t_mul}) + USE_timeShift_s",
                         linked=True,
                     )
 
                     SetDataExpression(
                         f"{bin}Vabs{pid}",
-                        f"absolute({bin}u{pid}+1j*{bin}v{pid})[sl_({bin}iu{pid})]",
+                        f"absolute({bin}u{fpix(pid)}+1j*{bin}v{fpix(pid)})[sl_({bin}iu{pid})]",
                         linked=True,
                     )
                     SetDataExpression(
                         f"{bin}Vdir{pid}",
-                        f"v.wrap_dir(degrees(arctan2({bin}u{pid}, {bin}v{pid})[sl_({bin}iu{pid})]), disp_central_dir)",
+                        f"vf.wrap_dir(degrees(arctan2({bin}u{pid}, {bin}v{fpix(pid)})[sl_({bin}iu{pid})]), disp_central_dir)",
                         linked=True,
                     )
                 SetDataExpression(
@@ -488,7 +487,7 @@ def vsz_draw_init_tcm(
     )
     SetDataExpression(
         "disp_time_span",
-        "v.dt64s2vsz(array(DISPtime[0], 'M8[s]')) if len(DISPtime)>0 else time_span_i",
+        "vf.dt64s2vsz(array(DISPtime[0], 'M8[s]')) if len(DISPtime)>0 else time_span_i",
         linked=True,
     )
     # Burst data
@@ -504,7 +503,7 @@ def vsz_draw_init_tcm(
         )
         SetDataExpression(
             f"binB_t0st{pid}",
-            f"v.dt64s2vsz(binB_{t_name}{t_sfx}[sl_(binB_iu{pid})]{t_mul} + USE_timeShift_s)",
+            f"vf.dt64s2vsz(binB_{t_name}{t_sfx}[sl_(binB_iu{pid})]{t_mul} + USE_timeShift_s)",
             linked=True,
         )
         SetDataExpression(
@@ -547,5 +546,4 @@ def vsz_draw_init_tcm(
         use_bins_w,
         bin0name,
         bin_burst_name,
-        b_one_table,
     )

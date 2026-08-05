@@ -1,6 +1,6 @@
 
 # Required functions to be imported (source module not specified):
-# import fv  # used as configuration object with lang attribute
+# import vf  # used as configuration object with lang attribute
 # get_param_expr_dict, is_antisymmetric, label_Title_format, label_xUnits_add
 
 
@@ -129,7 +129,7 @@ def pg_2d(params, ids_i_2d, cfg_plot):
         if iparam == 0:
             Set(
                 "label",
-                "%{{v.c1(r'{depth},\\\\{m}'.format_map(I) if all(diff(DATA('grD_ext_i'))) else "
+                "%{{vf.c1(r'{depth},\\\\{m}'.format_map(I) if all(diff(DATA('grD_ext_i'))) else "
                 "r'{device}\\\\{index}'.format_map(I))}}%",
             )
         Set("linkedaxis", "yP")
@@ -200,7 +200,7 @@ def pg_2d(params, ids_i_2d, cfg_plot):
             Set("marker", "none")
             Set("markerSize", "2pt")
             Set("color", "darkred")
-            Set("xData", "v.dt64s2vsz(int32(array(DISPtime[0], 'M8[s]')))")
+            Set("xData", "vf.dt64s2vsz(int32(array(DISPtime[0], 'M8[s]')))")
             Set("yData", "DISP_vecY0 + zeros(2)")
             Set("hide", False)
             Set("yAxis", "y[0,1]")
@@ -234,7 +234,7 @@ def pg_2d(params, ids_i_2d, cfg_plot):
         To("Title")
         Set(
             "label",
-            "%{{v.c1(v.pl(I[info_incl['device']]))}}% %{{v.pl('{at} {depth}'.format_map(I))}}%, %{{I['m']}}% "
+            "%{{vf.c1(vf.pl(I[info_incl['device']]))}}% %{{vf.pl('{at} {depth}'.format_map(I))}}%, %{{I['m']}}% "
             + ",\u2009".join([
                 (r"\\" if WidthGrade == WidthGrades["Narrow"] else "\u2009")
                 + k[1:].replace("_", "+")  # display names of combined devices joined by '+'
@@ -300,7 +300,7 @@ def pg_progress_3d(graphs, aspect=2, b_zabor=False, cfg_plot=None):
         pg_name = "Vprogress3D_zabor"
         str_xy_scale = ""
         dist_units = (
-            "м" if fv.lang == "ru" else "m"
+            "м" if vf.lang == "ru" else "m"
         )  # Veusz can not use "%{{I['m']}}%" in 3D graphs
         cum_u = "zb2d_u_cum"
         cum_v = "zb2d_v_cum"
@@ -325,7 +325,7 @@ def pg_progress_3d(graphs, aspect=2, b_zabor=False, cfg_plot=None):
     grid_rigtMargin = grid_horMargins_sum - grid_leftMargin
     map_bottomMargin = 0.8
 
-    clr_param = "%{{v.c1(I['depth'])}}%"
+    clr_param = "%{{vf.c1(I['depth'])}}%"
     clr_unit = "%{{I['m']}}%"
 
     Add("page", name=pg_name, autoadd=False)
@@ -337,9 +337,9 @@ def pg_progress_3d(graphs, aspect=2, b_zabor=False, cfg_plot=None):
     To("Title")
     Set(
         "label",
-        "%{{v.c1('{progressive vector diagram}'.format_map(I))}}%. %{{v.c1(v.pl(I['current'])) + "
+        "%{{vf.c1('{progressive vector diagram}'.format_map(I))}}%. %{{vf.c1(vf.pl(I['current'])) + "
         "' {{by {device}}}'.format_map(info_incl).format_map(I)}}%\u2009"
-        "%{{v.str_time_range(*f(v.vsz2dt64s(DATA('time_span_i')).tolist))}}%",
+        "%{{vf.str_time_range(*f(vf.vsz2dt64s(DATA('time_span_i')).tolist))}}%",
     )
     Set("xPos", [0.5])
     Set("yPos", [0.00436])
@@ -411,7 +411,7 @@ def pg_progress_3d(graphs, aspect=2, b_zabor=False, cfg_plot=None):
     To("..")
     Add("axis3d", name="z", autoadd=False)
     To("z")
-    Set("label", "z, {}".format("м" if fv.lang == "ru" else "m"))
+    Set("label", "z, {}".format("м" if vf.lang == "ru" else "m"))
     Set("autoRange", "exact")
     Set("direction", "z")
     Set("Line/transparency", 70.0)
@@ -460,7 +460,7 @@ def pg_progress_3d(graphs, aspect=2, b_zabor=False, cfg_plot=None):
     Set("markerSize", 3.0)
 
     minmax = lambda cum_var_str: (
-        "f(lambda mm: v.round_ceil_signed(mm, int(v.power_ceil(abs(diff(mm))))), "
+        "f(lambda mm: vf.round_ceil_signed(mm, int(vf.power_ceil(abs(diff(mm))))), "
         f"f(lambda d: [nanmin(d), nanmax(d)], DATA('{cum_var_str}')))"
     )
     if b_zabor:
@@ -468,7 +468,7 @@ def pg_progress_3d(graphs, aspect=2, b_zabor=False, cfg_plot=None):
         Set(
             "xData",
             (
-                f"[*v.shift_or_extend_lims([-Zabor_shift, Zabor_shift*zb_i_st.size], "
+                f"[*vf.shift_or_extend_lims([-Zabor_shift, Zabor_shift*zb_i_st.size], "
                 f"{minmax(cum_u)}, scale=1), nan, "
                 "*[k for i in range(0, Zabor_shift*zb_i_st.size, Zabor_shift) for k in [i, i, nan, i, i, nan]]]"
             ),
@@ -476,7 +476,7 @@ def pg_progress_3d(graphs, aspect=2, b_zabor=False, cfg_plot=None):
         Set(
             "yData",
             (
-                f"[0, 0, nan, *[*v.shift_or_extend_lims([-Zabor_shift, Zabor_shift], "
+                f"[0, 0, nan, *[*vf.shift_or_extend_lims([-Zabor_shift, Zabor_shift], "
                 f"{minmax(cum_v)}, scale=1), nan, 0, 0, nan]*zb_i_st.size]"
             ),
         )
@@ -485,14 +485,14 @@ def pg_progress_3d(graphs, aspect=2, b_zabor=False, cfg_plot=None):
         Set(
             "xData",
             (
-                "[*v.shift_or_extend_lims(Progress_x_lims, "
+                "[*vf.shift_or_extend_lims(Progress_x_lims, "
                 f"{minmax(cum_u)}, scale={str_xy_scale or '1'}), nan, 0, 0, nan, 0, 0]"
             ),
         )
         Set(
             "yData",
             (
-                f"[0, 0, nan, *v.shift_or_extend_lims(Progress_y_min + float32([0, diff(Progress_x_lims) / 2]), "
+                f"[0, 0, nan, *vf.shift_or_extend_lims(Progress_y_min + float32([0, diff(Progress_x_lims) / 2]), "
                 f"{minmax(cum_v)}, scale={str_xy_scale or '1'}), nan, 0, 0]"
             ),
         )
@@ -597,11 +597,11 @@ def pg_progress_3d(graphs, aspect=2, b_zabor=False, cfg_plot=None):
     )
     Set(
         "xData",
-        "tile([*v.shift_or_extend_lims([-Zabor_shift, Zabor_shift*zb_i_st.size], "
+        "tile([*vf.shift_or_extend_lims([-Zabor_shift, Zabor_shift*zb_i_st.size], "
         f"{minmax(cum_u)}, scale={str_xy_scale or '1'}), nan, {str_pos}], z_i.size)",
     )
     str_pos = (
-        "*v.shift_or_extend_lims([-Zabor_shift, Zabor_shift], "
+        "*vf.shift_or_extend_lims([-Zabor_shift, Zabor_shift], "
         f"{minmax(cum_v)}, scale={str_xy_scale or '1'}), nan"
     )
     repeat_str = lambda s: f"*[{s}]*zb_i_st.size" if b_zabor else s

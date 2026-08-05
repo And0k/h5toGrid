@@ -16,7 +16,7 @@ from itertools import dropwhile
 from pathlib import Path
 from time import strptime
 from collections.abc import Callable, Iterable
-import func_vsz as fv
+import vsz_func as vf
 import metadata
 import numpy as np
 import vsz_add_data  # namespace will be updated in runtime by definitions of Veusz functions
@@ -26,7 +26,8 @@ NaT = np.datetime64("NaT")
 cruise_dir = None
 wind_mean_uv = None  # todo: collect all statistics into one var
 sfx_db = [".h5", ".nc"]
-
+def identity(x):
+    return x
 
 def exec_module_into_globals(name: str, g: dict) -> None:
     """
@@ -184,7 +185,7 @@ def get_fun_load_end_ext(probe, db, parent=None, time_range=tuple(), time_shift_
             probe_data["st_expr"] = "".join([
                 "'{}{}'.format(",
                 "LANG({{'ru': '{}', 'default': '{}'}}), ".format(
-                    fv.translit_en_ru(cruise["vessel"]), cruise["vessel"]
+                    vf.translit_en_ru(cruise["vessel"]), cruise["vessel"]
                 ),
                 "(lambda st: st if len(st) > 4 and st.startswith('{num}') else f'{num}{{st}}')".format_map(
                     cruise
@@ -214,9 +215,9 @@ def get_fun_load_end_ext(probe, db, parent=None, time_range=tuple(), time_shift_
         )
         # AddCustom('definition', 'import_file(path, module_name)',
         #     "( lambda spec: (lambda mod: ( spec.loader.exec_module(mod), mod, warning(f'loading {mod}'))[1] )(util.module_from_spec(spec)) )(util.spec_from_file_location(module_name, (lambda fpy: fpy(next(dropwhile(lambda p: not fpy(p).is_file(), path.parents))))(lambda p: (p / module_name).with_suffix('.py'))))")
-        # AddCustom('definition', 'v', "import_file(Path(argv1), 'func_vsz')")
+        # AddCustom('definition', 'vf', "import_file(Path(argv1), 'vsz_func')")
         # AddCustom('definition', 'I',
-        #     "type('ClassI', (dict,), {'__getitem__': lambda self, key: self.get(key, key)})({n: LANG({'default': n, 'ru': u}) for n, u in v.en2ru.items()})")
+        #     "type('ClassI', (dict,), {'__getitem__': lambda self, key: self.get(key, key)})({n: LANG({'default': n, 'ru': u}) for n, u in vf.en2ru.items()})")
         AddCustom(
             "definition",
             "DISPinfo__",
@@ -226,7 +227,7 @@ def get_fun_load_end_ext(probe, db, parent=None, time_range=tuple(), time_shift_
         AddCustom(
             "definition",
             "fDisp_date_u(ax, t_span_var, **kwargs)",
-            "v.str_date_unit_with_suffix([f(lambda l: l if l!='Auto' else t, SETTING(f'{ax}/{lim:s}')) for lim, t in zip(('min', 'max'), DATA(f'{t_span_var}'))], str_zone=DISPinfo__['zone'], lang=LANG({'default': 'en', 'ru': 'ru'}), **kwargs)",
+            "vf.str_date_unit_with_suffix([f(lambda l: l if l!='Auto' else t, SETTING(f'{ax}/{lim:s}')) for lim, t in zip(('min', 'max'), DATA(f'{t_span_var}'))], str_zone=DISPinfo__['zone'], lang=LANG({'default': 'en', 'ru': 'ru'}), **kwargs)",
         )
         """ Old code
                 device_model = device.replace('_', ' ')
@@ -319,8 +320,8 @@ if __name__ in ("__main__", "builtins"):
     AddCustom("import", "logging", "warning")  # type: ignore
     AddCustom("import", "pathlib", "Path")  # type: ignore
     AddCustom("import", "sys", "argv")  # type: ignore
-    AddCustom("import", "v", "*") # type: ignore
-    AddCustom("import", "v", "I") # type: ignore
+    AddCustom("import", "vf", "*") # type: ignore
+    AddCustom("import", "vf", "I") # type: ignore
 
 
     # Common info in Custom Definitions
@@ -600,11 +601,13 @@ if __name__ in ("__main__", "builtins"):
         if db.suffix == ".h5":
             t_name = "t_ns"
             t_orig_name = "index"
+            t_orig_units = "ns"
             t_mul = " * 1e-9"
             group_data = "/table/"
         else:
             t_name = "t_s"
             t_orig_name = "time"
+            t_orig_units = "s"
             t_mul = ""
             group_data = "/"
 
@@ -802,6 +805,13 @@ if __name__ in ("__main__", "builtins"):
     #%% Prepare TCM drawer or load other device specific drawer
     models = set()  # to define drawers `~drawer@{model}.vsz`
     if b_device_is_tcm and b_db_ok and not b_use_db_raw:
+        b_one_table = db.stem.endswith('.proc')  # still may load other db with separate table for each device
+        if b_one_table and db.suffix != ".h5":
+            AddCustom("import", "types", "SimpleNamespace")
+            cus.iprobe = 'SimpleNamespace(**{f"_{k}": i for i, k in enumerate(DATA("probe"))})'
+            fpix = lambda pid: f"[iprobe.{pid}]"
+        else:
+            fpix = identity
 
         # Load processed TCM data to draw with default drawer `vsz_drawer.py`
 
@@ -823,7 +833,6 @@ if __name__ in ("__main__", "builtins"):
             use_bins_w,
             bin0name,
             bin_burst_name,
-            b_one_table
         ) = vsz_draw_init_tcm(
             probes,
             meta_arrays,
@@ -834,10 +843,6 @@ if __name__ in ("__main__", "builtins"):
             # b_old_format_in_h5 = True
         )
 
-        if b_one_table and db.suffix != ".h5":
-            fpix = lambda pid: f"[iprobe[{pid}]]"
-        else:
-            fpix = lambda pid: pid
 
         # Load data that contains wind or useful for wave gauges P_a data
         if device_wind or ids_w or ids_p:

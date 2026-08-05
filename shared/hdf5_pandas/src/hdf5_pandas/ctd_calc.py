@@ -483,9 +483,9 @@ def bad_bot_filter(
     scripts_path = Path(drive_d + "Work/Python/AB_SIO_RAS/h5toGrid/shared/veusz_helpers")
     sys.path.append(str(Path(scripts_path).parent.resolve()))
     try:
-        import func_vsz as v
+        import vsz_func as vf
     except ImportError:  # old path:
-        from veusz_helpers import func_vsz as v
+        from veusz_helpers import vsz_func as vf
 
     def bad_bot_by_diff(
         pres: np.ndarray,
@@ -505,7 +505,7 @@ def bad_bot_filter(
         zabor.vsz files:
         ```
         bad_bot_by_diff(x, fun, i_en, i_st=None, dp_en=None, p=None, speed=1)
-        CTD_SigmaTh_fbot = v.bad_bot_by_diff(
+        CTD_SigmaTh_fbot = vf.bad_bot_by_diff(
             CTD_SigmaTh, lambda dxPerdv: dxPerdv < -0.2, CTDends,
             i_st=CTDstarts, dp_en=1, p=CTD_Pres, speed=CTDspeedDown_MA
         )
@@ -537,7 +537,7 @@ def bad_bot_filter(
             speed_down[bad] = 0.005  # to find 1st ddens < min_ddens_per_dv*speed, default -0.2*0.005 = -0.001
 
         i_en = imax + 1  # slice end to include end of run
-        dens_filt = v.bad_bot_by_diff(
+        dens_filt = vf.bad_bot_by_diff(
             dens,
             lambda dx_per_dv: dx_per_dv < min_ddens_per_dv,
             i_en,
@@ -553,11 +553,11 @@ def bad_bot_filter(
     ):
         # Max dens criteria
         st_ends = np.column_stack((imin, imax + 1))
-        i_st = v.i_before(pres, pres_range, st_ends)
+        i_st = vf.i_before(pres, pres_range, st_ends)
         # index of max dens in pres_range before imin_ddens
         st_ends[:, 0] = i_st
         try:  # imax_dens
-            return i_st + v.in_ranges(dens, np.nanargmax, st_ends)
+            return i_st + vf.in_ranges(dens, np.nanargmax, st_ends)
         except ValueError:
             return i_st
 
@@ -742,7 +742,7 @@ def get_runs_parameters(
 
     log.update({
         **dict([  # flatten pairs # pd.DataFrame(, index=log_update['_st'].index).rename_axis('Date0')
-            (k, v.values)
+            (k, vf.values)
             for st_en in zip(log_update["_st"].items(), log_update["_en"].items())
             for k, v in st_en
         ])
@@ -1032,7 +1032,7 @@ def add_adcp_params(df: MutableMapping[str, Sequence], params_to_calc: Sequence[
         ]:
             scripts_path = Path(drive_d + path)
             sys.path.append(str(Path(scripts_path).parent.resolve()))
-        # from veusz_helpers import func_vsz as v
+        # from veusz_helpers import vsz_func as vf
         from tcm.tcm.incl_h5clc_hy import polar2dekart
 
         df[["v", "u"]] = pd.concat(polar2dekart(df["Vabs"], df["Vdir"]), axis=1)

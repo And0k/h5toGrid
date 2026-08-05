@@ -57,9 +57,9 @@ degs  = [utm_to_degrees(e, n) for e, n in (
 ]) for k_, (p, b, bd, s, *kw) in DISPdevices_info.items()  for k in (
     [k_, k_.replace('ip', 'p')] if k_.startswith('ip') else [k_])
 },
-'_Wind': v.c1(I['wind'])
+'_Wind': vf.c1(I['wind'])
 }
 
 
 
-{**{f'_{k}': ''.join([, f" {(b - bd):.0f}{I['m']}" , '^{\color{blue}{' + ','.join([fr'{si}{ki[int(ki.startswith("i")):]}' for ki, si in zip(k.split('_'), ([''] if k.startswith('p') else s.split(',')))]) + '}}']) for k_, (p, b, bd, s, *kw) in DISPdevices_info.items()  for k in ([k_, k_.replace('ip', 'p')] if k_.startswith('ip') else [k_])}, '_Wind': v.c1(I['wind'])}
+{**{f'_{k}': ''.join([, f" {(b - bd):.0f}{I['m']}" , '^{\color{blue}{' + ','.join([fr'{si}{ki[int(ki.startswith("i")):]}' for ki, si in zip(k.split('_'), ([''] if k.startswith('p') else s.split(',')))]) + '}}']) for k_, (p, b, bd, s, *kw) in DISPdevices_info.items()  for k in ([k_, k_.replace('ip', 'p')] if k_.startswith('ip') else [k_])}, '_Wind': vf.c1(I['wind'])}

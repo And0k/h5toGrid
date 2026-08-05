@@ -22,7 +22,7 @@ except ImportError as e:
 import statsmodels.api as sm
 
 
-import func_vsz as fv
+import vsz_func as vf
 # import sys
 # from importlib import import_module
 import stat_wind
@@ -200,9 +200,9 @@ if __name__ == "__main__":
 
     # DISPdevices_info = {
     #     'GMX': ['буй\\\\GMX500', 1, 1, '⯯', 54.953351, 20.44482],
-    #     'CM': [fv.c1('{CMEMS}'.format_map(fv.I)), 1, 0, '⯯', latitude_CM, longitude_CM],
-    #     'D6': [fv.c1('{Д6}'.format_map(fv.I)), 1, 0, '⯯', 54.953351, 20.44482],
-    #     'Ryb': [fv.c1('{Рыбное}'.format_map(fv.I)), 1, 0, '⯯', 54.953351, 20.44482]
+    #     'CM': [vf.c1('{CMEMS}'.format_map(vf.I)), 1, 0, '⯯', latitude_CM, longitude_CM],
+    #     'D6': [vf.c1('{Д6}'.format_map(vf.I)), 1, 0, '⯯', 54.953351, 20.44482],
+    #     'Ryb': [vf.c1('{Рыбное}'.format_map(vf.I)), 1, 0, '⯯', 54.953351, 20.44482]
     #     }
 
 

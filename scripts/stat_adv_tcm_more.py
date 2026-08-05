@@ -25,7 +25,7 @@ from mpl_toolkits.axes_grid1.axes_size import Fixed, Scaled
 # Custom functions
 from scripts import stat_wind
 import plot
-import func_vsz as fv
+import vsz_func as vf
 from scripts.stat_adv_tcm import fit_angular_regression, fit_regression
 
 # Matplotlib settings
@@ -106,7 +106,7 @@ if b_plot_source:
         fig, axes = plt.subplots(nrows=n_rows, sharex=True)
         for i_dev, dev in enumerate(devs):
             for i_prm, (str_prm, str_unit) in enumerate(
-                [(str_abs, "{m}/{s}".format_map(fv.I)), (str_dir, "°")]
+                [(str_abs, "{m}/{s}".format_map(vf.I)), (str_dir, "°")]
             ):
                 i_plot = i_prm * len(devs) + i_dev  # i_dev * n_params + i_prm
                 ax = axes[i_plot]
@@ -194,7 +194,7 @@ for st, df in dfs.items():
             axes=axes[i_prm],
             col_clr=col_clr,
             str_unit=str_unit,
-            clr_units="{m}/{s}".format_map(fv.I),
+            clr_units="{m}/{s}".format_map(vf.I),
             lang=lang,
         )
 

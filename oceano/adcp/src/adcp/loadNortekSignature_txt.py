@@ -14,9 +14,9 @@ for path in ['/Work/_Python3/And0K/veusz_helpers', '/Work/_Python3/And0K/tcm']:
     scripts_path = Path(drive_d + path)
     sys.path.append(str(Path(scripts_path).parent.resolve()))
 try:
-    import func_vsz as fv
+    import vsz_func as vf
 except ImportError:  # old path:
-    from veusz_helpers import func_vsz as fv
+    from veusz_helpers import vsz_func as vf
 from tcm.incl_h5clc_hy import polar2dekart
 
 
@@ -212,7 +212,7 @@ def save_2d_for_surfer(
                 # to Excel time
                 time_coord_converted = (dar.coords['time'] - np.datetime64('1899-12-30T00:00:00')
                                         ).astype('M8[ns]').values.astype('f8') / (24 * 3600E9)
-                str_dt = fv.str_dt(dt.astype('m8[s]') if isinstance(dt, np.timedelta64) else np.timedelta64(dt, 's'))
+                str_dt = vf.str_dt(dt.astype('m8[s]') if isinstance(dt, np.timedelta64) else np.timedelta64(dt, 's'))
             dar['time'] = time_coord_converted  # changes dar.coords['time']
             xr.Dataset({name: dar}).to_netcdf(
                 path_base.parent / f'{path_base.stem}_{name}_dt={str_dt}{f",dz={dz}" if dz else ""}.nc',

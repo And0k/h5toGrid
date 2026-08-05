@@ -17,7 +17,7 @@ import gsw
 from hdf5_pandas import h5
 from vsz_loader import veusz_load_hdf5_ctd_profile
 from utils.logging_config import setup_logging
-from veusz_helpers.common import func_vsz as fv
+from . import vsz_func as vf
 from get_datasets import d_utils as ds_utils
 
 l = setup_logging(__name__, console_format_args={"name": False, "funcName": False, "datefmt": "%H:%M:%S"})
@@ -257,8 +257,8 @@ for sfx, df in [("up", df_up), ("down", df_down)]:
     Solubility = mmol2mg(gsw.O2sol_SP_pt(df[col_S], df["pt"]))
 
     # bad:
-    # Solubility2 = mmol2mg(1e-3*fv.oxygen_solubility_scor(df[col_T], df[col_S], df[col_P]))
-    # Solubility3 = fv.oxygen_solubility(df[col_T], df[col_S])
+    # Solubility2 = mmol2mg(1e-3*vf.oxygen_solubility_scor(df[col_T], df[col_S], df[col_P]))
+    # Solubility3 = vf.oxygen_solubility(df[col_T], df[col_S])
 
     df[col_DO_cor] = df["O2ppm"] * 100 / Solubility
     df["dDO"] = df[col_DO_cor] - df[col_DO]

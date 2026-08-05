@@ -2,7 +2,9 @@ import sys
 import pytest
 from pathlib import Path
 import numpy as np
-from veusz_helpers.common import vsz_loader, metadata, vsz_add_data, func_vsz
+from veusz_helpers.common import vsz_loader, metadata, vsz_add_data
+
+from . import vsz_func
 
 @pytest.mark.parametrize(
     "basename,expected_time_start,expected_time_end,expected_devices,comment",
@@ -184,7 +186,7 @@ def test_bool2ranges():
     """Test converting boolean array to ranges."""
     # Simple test case
     b_ok = np.array([True, True, False, False, True, True, True])
-    result = func_vsz.bool2ranges(b_ok, min_range=1)
+    result = vsz_func.bool2ranges(b_ok, min_range=1)
 
     # Should return indices of edges where True/False changes
     expected = np.array([0, 2, 4, 7])  # Start of first True, end of first True, start of second True, end of second True

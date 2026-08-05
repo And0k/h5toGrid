@@ -14,7 +14,7 @@ import netCDF4
 import numpy as np
 import xarray as xr
 from utils.logging_config import setup_logging
-from veusz_helpers.common import func_vsz as fv
+from . import vsz_func as vf
 
 l = setup_logging(__name__)
 
@@ -591,7 +591,7 @@ def save_nc_for_surfer(
         #     None  # we set value after creating of ds because dt and time should have same units
         # )
 
-        str_dt = fv.str_dt(
+        str_dt = vf.str_dt(
             dt.astype("m8[s]") if isinstance(dt, np.timedelta64) else np.timedelta64(dt, "s"),
             lang="en"
         )

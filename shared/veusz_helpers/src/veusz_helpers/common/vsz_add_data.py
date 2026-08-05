@@ -20,7 +20,7 @@ import re
 import h5py
 
 import metadata
-import func_vsz as fv
+import vsz_func as vf
 
 l = logging.getLogger(__name__)
 
@@ -551,7 +551,7 @@ def veusz_load_hdf5_tcm_raw(
     # Add time which should be used by all functions used for ~drawer@i.vsz as veusz_load_csv_tcm_raw give it
     if file.suffix != ".h5":  # for legacy expressions
         SetDataExpression("_t_ns__", "1E9*_t_s__", linked=True)
-    SetDataExpression("time__", f"v.dt64s2vsz(_{t_name}__[v.sl(iu__)]{t_mul}) + USE_timeShift_s", linked=True)
+    SetDataExpression("time__", f"vf.dt64s2vsz(_{t_name}__[vf.sl(iu__)]{t_mul}) + USE_timeShift_s", linked=True)
 
     return (
         existed_devs,
@@ -689,7 +689,7 @@ def veusz_load_csv_tcm_raw(
     # Convertion variables to that used with hdf5 drawers
     SetDataExpression(
         "time__",
-        "(lambda x: v.rep2mean(x, ediff1d(x, to_end=0)!=0))(fdate([_y, _m, _d]) + 3600*_H + 60*_M + _S) + "
+        "(lambda x: vf.rep2mean(x, ediff1d(x, to_end=0)!=0))(fdate([_y, _m, _d]) + 3600*_H + 60*_M + _S) + "
         "USE_timeShift_s",
         linked=True,
     )
@@ -1019,7 +1019,7 @@ def veusz_load_hdf5_cmems(file, time_range, time_shift_s: int = 0, load_map=Fals
     SetData2DExpression(
         "iu_Wind",
         (
-            "atleast_2d(v.i_positive(v.i_use(timeUnix_Wind, USEtime_Wind, 1230768000 - 599616000 + "
+            "atleast_2d(vf.i_positive(vf.i_use(timeUnix_Wind, USEtime_Wind, 1230768000 - 599616000 + "
             "Wind_timeShift_s, t_units='s'), timeUnix_Wind.size))"
         ),
         linked=True,
@@ -1215,7 +1215,7 @@ def veusz_load_hdf5_ecmwf(file, time_range, time_shift_s: int = 0, load_map=Fals
     SetData2DExpression(
         "iu_Wind",
         (
-            f"atleast_2d(v.i_positive(v.i_use({var_prefix}{var_time}{var_suffix}, "
+            f"atleast_2d(vf.i_positive(vf.i_use({var_prefix}{var_time}{var_suffix}, "
             f"USEtime_Wind, Wind_timeShift_s, t_units='s'), {var_prefix}{var_time}{var_suffix}.size))"
         ),
         linked=True,
@@ -1223,7 +1223,7 @@ def veusz_load_hdf5_ecmwf(file, time_range, time_shift_s: int = 0, load_map=Fals
     SetDataExpression(
         "time_Wind",
         "".join(
-            ["v.dt64s2vsz("]
+            ["vf.dt64s2vsz("]
             + ([f"{t_shift_to_unix} + "] if t_shift_to_unix != 0 else [])
             + ([f"{time_scaler[0]}*"] if time_scaler[0] != 1 else [])
             + [var_prefix, var_time, var_suffix]
@@ -1480,7 +1480,7 @@ def veusz_load_meteo(
                 if coords_to_path and coords:
                     # Check the distance to probe
                     coords_wind = list(coords_to_path.keys())
-                    (dx, dy, dist_m, bearing) = fv.dx_dy_dist_bearing(
+                    (dx, dy, dist_m, bearing) = vf.dx_dy_dist_bearing(
                         *coords[::-1],
                         *np.fliplr(coords_wind).T,
                     ).T
@@ -1551,7 +1551,7 @@ def veusz_load_meteo(
             SetData2DExpression(
                 "iu_Wind",
                 (
-                    "atleast_2d(v.i_positive(v.i_use(stimeUTC_Wind, USEtime_Wind, 1230768000 +"
+                    "atleast_2d(vf.i_positive(vf.i_use(stimeUTC_Wind, USEtime_Wind, 1230768000 +"
                     " Wind_timeShift_s, t_units='s'), stimeUTC_Wind.size))"
                 ),
                 linked=True,
@@ -1571,18 +1571,18 @@ def veusz_load_meteo(
         bin = "bin2_"
         SetDataExpression(
             f"{bin}i0st{pid}",
-            f"v.i_whole_time_intervals(time{pid}, WIND_bin_average_s)",
+            f"vf.i_whole_time_intervals(time{pid}, WIND_bin_average_s)",
             linked=True,
         )
         SetDataExpression(f"{bin}t0st{pid}", f"time{pid}[int32({bin}i0st{pid})]", linked=True)
         SetDataExpression(
             f"{bin}u{pid}",
-            f"v.bin_avg(u{pid}[sl_(iu{pid})], {bin}i0st{pid})",
+            f"vf.bin_avg(u{pid}[sl_(iu{pid})], {bin}i0st{pid})",
             linked=True,
         )
         SetDataExpression(
             f"{bin}v{pid}",
-            f"v.bin_avg(v{pid}[sl_(iu{pid})], {bin}i0st{pid})",
+            f"vf.bin_avg(v{pid}[sl_(iu{pid})], {bin}i0st{pid})",
             linked=True,
         )
         SetDataExpression(f"{bin}iu{pid}", "None", linked=True)  # to plot all wind?
