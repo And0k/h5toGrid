@@ -20,8 +20,8 @@ class Worker:
     def busy(self) -> bool:
         return self._thr is not None and self._thr.is_alive()
 
-    def scan(self, original_argv: list[str]) -> None:
-        self._spawn(self._scan, original_argv)
+    def scan(self, original_argv: list[str], data_path: str) -> None:
+        self._spawn(self._scan, original_argv, data_path)
 
     def run(self, data_path: str, stems: list[str]) -> None:
         self._spawn(self._run, data_path, stems)
@@ -35,16 +35,22 @@ class Worker:
         self._thr.start()
 
     def _setup(self, original_argv: list[str]) -> None:
-        """Clear GlobalHydra and reset sys.argv to the original CLI args.
+        """Clear GlobalHydra and reset sys.argv to the non-path CLI args.
 
-        ``call_in_raw_dir`` extracts the data path from sys.argv via
-        ``parse_data_path`` and inserts ``--config-dir`` — so we must give
-        it the full original argv each time.
+        The data path is fed to ``call_in_raw_dir`` as an ``input.path``
+        override (OmegaConf merge), never via ``sys.argv`` — Hydra's ANTLR
+        override parser chokes on ``@``/``:``/``,`` in Windows paths.  Strip
+        the positional path from *original_argv* so only ``key=value`` and
+        flag overrides remain: those survive rescans after the GUI path
+        field changes, the stale positional does not.
         """
         from hydra.core.global_hydra import GlobalHydra
 
+        from tcm.cli import parse_data_path
+
         GlobalHydra.instance().clear()
-        sys.argv = list(original_argv)
+        _, remaining = parse_data_path(list(original_argv))
+        sys.argv = remaining
         set_runtime(self.rt)
         set_tqdm_class(GuiTqdm)
 
@@ -79,7 +85,7 @@ class Worker:
 
         return wrapped
 
-    def _scan(self, original_argv: list[str]) -> None:
+    def _scan(self, original_argv: list[str], data_path: str) -> None:
         from tcm import cli, processing
 
         self._setup(original_argv)
@@ -89,6 +95,7 @@ class Worker:
             res = cli.call_in_raw_dir(
                 self._wrap(processing.run),
                 config_name="config",
+                input={"path": data_path},
                 program={"return_": "<cfg_from_args>"},
                 exit_on_error=False,
             )

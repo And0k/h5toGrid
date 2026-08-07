@@ -10,11 +10,12 @@ thread.  No custom CLI parsing — Hydra handles all config keys natively via
 |------|---------|
 | `app.py` | Tk root, layout §1–5, 300 ms polling, argv prefill |
 | `worker.py` | Background thread: `call_in_raw_dir` for Scan and Run |
-| `coef_sheet.py` | tksheet treeview: type-aware widgets (checkbox/dropdown/align), node + metadata bg; row-geometry-free styling via `_row_map()` |
-| `_path_field.py` | 1×1 tksheet as path field — frame-anchored hover button, column-width tracking via `<Configure>`, inward `editor_place` during edit |
+| `coef_sheet.py` | tksheet treeview: type-aware widgets (checkbox/dropdown/align), node + metadata bg; row-geometry-free styling via `_row_map()`; floated `PathField` hover-edit on browse rows |
+| `_path_field.py` | 1×1 tksheet for display + `ttk.Entry` overlay for editing — frame-anchored hover button, column-width tracking via `<Configure>` |
 | `_browse_button.py` | `BrowseOverlay` (widget core + `pending` state), `BrowseButtonManager` (sheet-edit policy + injectable `editor_place`), `SheetHoverBinder` (MT motion → overlay show/hide with pending-aware veto), `bind_hover_browse` (Entry legacy) |
 | `_cell_spec.py` | Hydra dataclass → ``CellSpec`` (bool/enum/text/number/date) for cell rendering |
-| `const.py` | Centralized colors & styles: `DEFAULT_FG`, `BLUE_FG`, `FG_DEFAULT`, `FUNC_COLOR`, `FRAME_BG_FALLBACK`, `ENTRY_BG_FALLBACK`, `TAG_COLORS`; resolved-theme helpers `resolved_frame_bg()`, `resolved_entry_bg()`; `tk_color_to_hex` / `tk_color_to_rgb` / `tk_font_family` |
+| `_help.py` | Auto-extract config-cell help from ``config_reference.md`` tables (``HelpEntry``, ``help_for_path``, ``parse_reference``); index-stripping for arrays (``Ag[0]`` → ``Ag``); ``lru_cache``-memoized loader |
+| `const.py` | Centralized colors & styles; resolved-theme helpers; `widget_meta` registry (``MetaValue = str | Callable[[], str]``); ``STR`` chrome content table (i18n surface); callable-resolving ``get_widget_meta`` |
 | `cli_cfg.py` | `CFG_DEFAULTS` (config-tree defaults) + `COEF_SHAPES` (auto-derived) + `COEFS_TYPE` — all derived from `Config` via `get_type_hints`, no per-section imports |
 | `progress_bridge.py` | `GuiTqdm` (tqdm replacement) + module-level runtime injection |
 | `log_bridge.py` | `install()` once at App startup → root logger captures GUI-thread AND worker logs → `QueueHandler` (consecutive dedup + emit-time text freeze) → `ScrolledText` drain |
@@ -29,14 +30,15 @@ thread.  No custom CLI parsing — Hydra handles all config keys natively via
 Browse / Enter input.path
   → app._clear_log (flush queue + clear ScrolledText)
   → worker._scan (thread)
-    → call_in_raw_dir(processing.run, return_="<cfg_from_args>")
-      → processing.run: discovery → gen_metadata → process_loading_yaml
-        → run_processing: main_init → return DictConfig (early exit)
-        → collected [(stem, yaml_path, DictConfig)]
-      → return (processed_pcids, failed_pcids, last_cfg, collected)
-    → result_queue.put(("scan_ok", result))
-  → app._poll_results → _on_scan_ok
-    → one tab per config (stem) with ConfigSheet (clean snapshot taken)
+    → call_in_raw_dir(processing.run,
+        input={path: live-path-field}, return_="<cfg_from_args>")
+       → processing.run: discovery → gen_metadata → process_loading_yaml
+         → run_processing: main_init → return DictConfig (early exit)
+         → collected [(stem, yaml_path, DictConfig)]
+       → return (processed_pcids, failed_pcids, last_cfg, collected)
+     → result_queue.put(("scan_ok", result))
+   → app._poll_results → _on_scan_ok
+     → one tab per config (stem) with ConfigSheet (clean snapshot taken)
 ```
 
 ### Run
@@ -77,7 +79,7 @@ Click Run while processing → PauseGate
 | `_runtime` is module-level, not `threading.local` | `TqdmCallback` creates `GuiTqdm` in dask worker threads |
 | `return_="<cfg_from_args>"` for Scan | pipeline does discovery + gen_metadata, returns configs without processing |
 | `input.yaml_path` for Run | documented regex filter, skip discovery, only selected configs |
-| `_run` uses minimal `sys.argv` | YAML files are sole config source; `original_argv` overrides not re-applied |
+| `_run` / `_scan` use minimal `sys.argv` | launch-time positional path stripped via `parse_data_path`; data path fed as `input.path` override, `key=value` overrides preserved for scan only — YAML files for run are the sole config source |
 | `PauseGate` in log + tqdm, not pipeline | pipeline code untouched; pause on next tick |
 | `COEF_SHAPES` auto-derived in `cli_cfg.py` | `infer_coef_shapes()` walks `ConfigInCoefs_InclProc` fields: shape from default value structure (when not `None`) or `Annotated` metadata; `P_t` annotated `(3,3)` since default is `None` |
 | `cli_cfg` derives section types from `Config` | single `Config` import + `get_type_hints()` → `_SECTION_TYPES` dict; `COEFS_TYPE` extracted from `Config.input.coefs` field; no per-section imports needed |
@@ -94,7 +96,7 @@ Click Run while processing → PauseGate
 | `_fg_default` — theme foreground color | resolved once from `TFrame` foreground via `const.tk_color_to_hex`; applied explicitly (never `fg=None`, which is a per-key merge no-op in tksheet 7.x) |
 | `_apply_edit_value` / `_apply_default_fg` use `overwrite=False` | edit-time restylers pass only `fg` to `highlight_cells`; `overwrite=False` preserves the `bg` that `_apply_styles` set (input.row data cells keep button-face after edits) |
 | **Input row styling** | node label: button-face bg + normal black `FG_DEFAULT` (never blue/gray toggle); all data cells: button-face bg via `highlight_cells` across `total_columns()`.  Other rows: button-face bg + `BLUE_FG`/`_fg_default` node fg as before |
-| **PathField styling** | `ENTRY_BG_FALLBACK` (white) bg + `FG_DEFAULT` (black) fg + **bold** font (sheet-wide, 1×1 cell); entry-field silhouette distinct from the gray coef_sheet cells |
+| **PathField styling** | `ENTRY_BG_FALLBACK` (white) bg + `FG_DEFAULT` (black) fg + **bold** font (sheet-wide, 1×1 cell); right-aligned (`align="e"`): long paths show filename at the right edge; entry-field silhouette distinct from the gray coef_sheet cells; **editing via `ttk.Entry` overlay** (veto tksheet's `tk.Text`), `justify="right"` |
 | **Blue node labels** → subtree unchanged | `_node_at_default(id)` recurs: every leaf value matches its config dataclass default; `const.BLUE_FG = "#0055CC"` on index canvas |
 | `_on_end_edit` → cascade toggle | Gray/clear fg per cell **+** walk ancestral tree labels (blue/standard); `_fg_default` used for clear side (not `fg=None`) |
 | dirty tracking via `_data_snapshot` | `tuple(tuple(str(val) for val in row) for row in sheet)` covers ALL editable cells (not just coefs); `is_dirty` compares current vs snap |
@@ -110,13 +112,107 @@ Click Run while processing → PauseGate
 | metadata row bg up to last date cell | all cells from col 0 through last `meta_date_cols` entry share the bg |
 | ordering `_apply_open()` → `_row_map()` → `_apply_styles()` → `_apply_default_fg()` | invariant: build tree → set open states → compute row map → apply styles → gray defaults → redraw |
 | `date` independent of `max_col` | coefs parent has `max_col=0`; styling in dedicated section before `max_col` loop |
-| PathField = 1×1 Sheet, not Entry | cell-behavior parity: double-click/keypress edit, Enter commit, Esc undo; Entry can't grow these |
+| PathField = 1×1 Sheet for display, `ttk.Entry` for editing | Display: cell-behavior parity (right-align, overflow).  Edit: `ttk.Entry` is inherently single-line (no wrapping), native horizontal scroll, cursor always visible.  tksheet's `tk.Text` editor cannot disable wrapping (`table_wrap` is display-only).  Veto via `return None` from `begin_edit_cell` callback |
 | `SheetHoverBinder` extracted from ConfigSheet | three MT binds + churn veto reusable by PathField and any future sheet-hover site |
 | `_hover_resolve` uses `_iid_of_row` cache | O(1) lookup on every `<Motion>` event; rebuilt in `load()` (stable between loads) |
-| `_hover_resolve` publishes status for ALL rows | not just browse rows; `_clear_status` is a separate `<Leave>` bind |
+| `_hover_resolve` publishes status for ALL rows | not just browse rows; status clears at `<Leave>` |
 | `_hover_resolve` handles identify_row API drift | tries `identify_row(event)` first (7.x), falls back to `identify_row(event.y)` (older) |
+| tree column hover on RI canvas | `_on_tree_motion` bound to `self.sh.RI`; shows section-level help; separate from MT data-cell hover |
+| `_status_source` tracks hover canvas | `"tree"` (RI) / `"data"` (MT) — re-publishes status on source change for same row |
+| `_any_hovering` property | combines `_path_hovering`, `_nb_hovering`, `_chrome_hovering` — single guard against poll clobbering |
+| `_bind_chrome_hover` wires status to Run/progress/labels | `<Motion>`/`<Leave>` on all registered chrome widgets; skips `_path_field` + `nb` (own handlers) |
+| **Floated PathField on browse rows** | one reusable `PathField` for text + separate `BrowseOverlay` for button; intent-delayed (120 ms); focus strictly opt-in; full edit parity free; button stays at sheet right edge while field text stops at button's left edge; `_do_field_hide` vetoes hide during `f._editing`; `_on_field_edit_end` → `_restore_hover_placement` (show button first, `update_idletasks`, then `f.place` at shortened width) |
+| `_field_iid` survives hide | `_hide_hover_field` keeps `_field_iid` — `PathField._notify` queues via `after_idle`, so a commit in flight still writes to its row; `_hover_btn` (browse button) is hidden separately |
+
+## Help system architecture
+
+Two independent help sources — one per widget category:
+
+| Source | Widgets | Key derivation | i18n mechanism |
+|---|---|---|---|
+| `STR` (``const.py``) | Chrome widgets (`self._path_lbl`, `_path_field`, `_cfg_lbl`, `_run_btn`, `_status_lbl`) + dynamic tabs | Attribute name → role → ``STR["{role}.tooltip"]`` / ``STR["{role}.status"]`` | Replace ``STR`` dict wholesale at build for target language |
+| ``_help.py`` (``config_reference.md``) | Config cells (``_meta[iid]["path"]`` keys) | ``help_for_path(strip_index(path)).short`` | Replace ``config_reference_<lang>.md`` |
+
+### Chrome widgets: auto-registration
+
+``App._register_chrome_help()`` runs once at the end of ``_build()``.  It walks
+``vars(self)`` for all ``tk.Misc`` instances whose attribute name (minus the
+leading ``_``) has entries in ``STR``.  For each match:
+
+* ``tooltip`` = ``STR["{role}.tooltip"]`` (static string).
+* ``status``  = ``STR["{role}.status"]`` (static string) **or** a bound method
+  (``self._run_btn_status`` for Run) returning the live caption.  Dynamic
+  ``status`` is stored as a ``Callable[[], str]`` in ``widget_meta``; the
+  ``get_widget_meta`` resolver invokes it at hover-time, so it sees the current
+  application state (busy/paused) and the current language (``STR``)
+  simultaneously.
+
+Widgets with no matching STR keys get no help — the loop skips them.
+
+Dynamic tabs (created per config in ``_add_page``) don't have `self._*` names,
+so the auto-role loop can't find them.  ``_add_page`` calls
+``set_widget_meta(frame, status=STR["tab.status"].format(path=rel))`` directly
+using the STR template (``{path}`` = yaml path relative to the data directory).
+Tab hover is wired via ``<Motion>`` / ``<Leave>`` bindings on ``self.nb`` that
+use ``nb.identify(x, y)`` + ``nb.index(f"@{x},{y}")`` to find the tab frame
+and read its status from ``widget_meta``.
+
+### MetaValue: callable status support
+
+``widget_meta`` stores ``MetaValue = str | Callable[[], str]``.  The
+``get_widget_meta`` getter resolves callables at read time:
+
+```python
+val = widget_meta.get(widget, {}).get(key, default)
+return val() if callable(val) else val
+```
+
+Static ``str`` values pass through unchanged.  Dynamic status callables are
+never stored pre-resolved — they close over ``STR`` and/or ``self``, so each
+hover-time read reflects the live state and language.
+
+### Config cells: doc-driven hover (no widget_meta needed)
+
+Config cells have ``_meta[iid]["path"]`` (dotted Hydra path) — that IS the
+help key.  ``coef_sheet._publish_status`` calls ``help_for_path(path)``,
+which returns a ``HelpEntry(short, body)`` parsed once from the tables in
+``config_reference.md``:
+
+1. Parser walks lines, tracking code-fence state and ``## `section` `` headings
+   (``input``, ``input.coefs``, ``out``, ``filter``, ``program``).
+2. Inside a config-group section, every markdown table row whose first cell is
+   a backtick-quoted identifier (``| `field` | … | description |``) emits
+   ``HelpEntry(path="{section}.{field}", short=<last cell>)``.
+3. CamelCase field names (``Ag``, ``Cg``, ``Rz``) parse identically to
+   lowercase Hydra names.
+4. ``_DOC_PATH`` resolves to ``config_reference.md`` at
+   ``{tcm_root.parent}/docs/tcm_clc/config_reference.md``; absent file →
+   empty cache → no hover text (graceful degradation).
+5. Array indices stripped at lookup time: ``Ag[0]`` / ``Ag[1][2]`` → ``Ag``.
+
+Fallback chain in ``_publish_status``:
+``hover_status[ident]`` → ``help_for_path(candidate).short`` → ``key`` / ``label`` / ``path``.
+No ``set_widget_meta`` calls on config cells — the entire chain is read-only
+from the parsed doc.
+
+**Tree column vs data cells**: the tree column renders on tksheet's RI (Row
+Index) canvas, which is separate from the MT canvas.  ``_on_tree_motion``
+(bound to ``RI``) always resolves the section-level path as-is (e.g.
+``help_for_path("input")`` → "Data source & parameters").  ``_publish_status``
+(bound to ``MT``) tries relocated-field paths FIRST for parent rows:
+
+| Row | Candidate order (first match wins) | Result |
+|---|---|---|
+| ``input`` node (data cell) | ``input.path``, ``input`` | "File path, glob, or regex pattern…" |
+| ``input.coefs`` parent (date cell) | ``input.coefs.date``, ``input.coefs.path``, ``input.coefs`` | "Overall calibration date" |
+| ``input.coefs.Ag`` | ``input.coefs.Ag.path``, ``input.coefs.Ag`` | "Accelerometer scale matrix…" |
+
+``_status_source`` (``"tree"`` / ``"data"`` / ``None``) tracks which canvas owns
+the current status so moving between tree column and data cell on the SAME row
+triggers a re-publish.
 
 ## Type-aware cell rendering (full mode)
+
 
 When `Shift` is held at startup, `ConfigSheet.load()` receives the full
 `Config` dataclass as `config_root`.  Each cell's type is resolved via
@@ -146,7 +242,8 @@ the target row, regardless of which column the user clicked.
 | Site | Trigger | Target |
 |------|---------|--------|
 | `_path_field.py` §1 — data path | `SheetHoverBinder` motion policy | PathField's single cell `(0, 0)` via `set_cell_data` + `_notify` |
-| `coef_sheet.py` — config tree | `_on_begin_edit_cell` for rows with `meta["browse"] = True` (`input`, `coefs_path`) | tksheet cell `(row, 0)` via `set_cell_data` |
+| `coef_sheet.py` — in-sheet edit | `_on_begin_edit_cell` for rows with `meta["browse"] = True` (`input`, `coefs_path`) | tksheet cell `(row, 0)` via `set_cell_data` |
+| `coef_sheet.py` — hover-edit | intent-delayed `PathField` (text) + separate `BrowseOverlay` (button at right edge) over browse rows | `_hover_write` → `set_cell_data` + `_apply_edit_value` + `coefs_path` notify |
 
 ### Create / destroy lifecycle
 
@@ -187,14 +284,74 @@ default focus-change behavior.
 
 ## PathField (`_path_field.py`)
 
-A 1×1 tksheet posing as the top-level path field.  Visually an Entry
-(white `ENTRY_BG_FALLBACK` background, bold font, headers/index/grid
-hidden), contractually a cell — double-click/keypress edit, Enter
-commit, Esc undo, all native tksheet.  Normal black `FG_DEFAULT`
-foreground (not `BLUE_FG`).  Reuses the floating-button stack with
-PathField-specific placement: frame-anchored hover button
-(geometry-managed, no canvas arithmetic) and inward `editor_place`
-during edit.
+A 1×1 tksheet for **display** + a `ttk.Entry` overlay for **editing**.
+
+**Display mode**: column=4096, `align="e"`, `xview_moveto(1.0)` — long
+paths show the filename at the right edge.  White `ENTRY_BG_FALLBACK`
+background, bold font, all chrome hidden.  Normal black `FG_DEFAULT`
+foreground (not `BLUE_FG`).
+
+**Edit mode**: `_on_begin_edit` returns `None` to **veto** tksheet's
+built-in `tk.Text` editor, then places a `ttk.Entry` filling the
+PathField frame (`relx=0, rely=0, relwidth=1, relheight=1`).
+The Entry has `justify="right"` so the cursor starts at the filename
+end.  Enter commits, Esc cancels — same contract as a tksheet cell.
+
+### Why `ttk.Entry` instead of tksheet's `tk.Text` editor
+
+tksheet's editor is a `tk.Text` widget that defaults to `wrap="char"`.
+There is no tksheet API to set `wrap="none"` on the editor.  Options
+tried and rejected:
+
+| Approach | Problem |
+|----------|---------|
+| `table_wrap=""` on Sheet | Controls display rendering only, not the editor widget |
+| `after(ms)` callback to set `wrap="none"` | Races with tksheet's `update_idletasks` / redraw; unreliable |
+| Monkey-patch `MT.open_text_editor` | `wrap="none"` + right-justify: `see("insert")` can't scroll right-justified content past the left edge |
+| Constrain column + left-align during edit | `wrap="char"` still wraps regardless of alignment |
+
+`ttk.Entry` is inherently single-line — no wrapping, native horizontal
+scroll, cursor always visible.  Vetoing the tksheet editor via
+`return None` from the `begin_edit_cell` callback is the documented
+tksheet mechanism for custom editor implementations.
+
+### Edit lifecycle
+
+```
+_double-click / keypress_
+  → tksheet fires begin_edit_cell
+  → _on_begin_edit:
+      _editing = True
+      _pre_edit = get()           # snapshot for Esc-undo
+      _ov.hide()                  # hide browse overlay
+      _on_begin_edit_cb()         # coef_sheet: cancel hide, hide btn, expand field
+      constrain column to frame   # display column is 4096; edit needs frame-width
+      _open_entry()               # ttk.Entry fills PathField frame
+      return None                 # VETO tksheet's tk.Text editor
+
+_Enter_ → _commit_entry:
+      read Entry value
+      destroy Entry
+      _editing = False
+      _on_end_edit_cb()           # coef_sheet: _restore_hover_placement
+      set_cell_data(0, 0, value)  # if not cancel
+      restore column to 4096
+      _scroll_to_right()          # filename visible again
+      _notify(value)              # if changed
+
+_Escape_ → _commit_entry(cancel=True):
+      destroy Entry
+      _editing = False
+      _on_end_edit_cb()           # coef_sheet: _restore_hover_placement
+      restore column, scroll right
+      no _notify (pre_edit == current)
+```
+
+### `<Configure>` guard
+
+`_on_configure` only calls `_scroll_to_right()` when `_editing` is
+`False`.  During edit the column is constrained — scrolling right would
+move the editor off-screen.
 
 ### Geometry: frame-anchored hover + column tracking
 
@@ -205,37 +362,108 @@ with zero bindings.  The column width is kept in sync with the frame
 via `<Configure>` → `column_width(0, event.width - 2)`, so the editor
 spans the field exactly and its right border stays visible.
 
-The during-edit button uses an injectable `editor_place` lambda passed
-to `BrowseButtonManager`, also anchored inward (`anchor="e", x=-2`) so
-it occupies the same strip as the hover button — no glyph jump on
-hover → edit → hover transitions.
-
 After edit ends (`_on_end_edit`), `_ov.schedule_show(_place_kw())`
 re-arms the hover button immediately — pointer is over the field by
 construction, so no mouse move is needed.
 
-### Design decision: why not Entry?
+### `cancel_edit()` public API
 
-An Entry can't grow cell-behavior parity (double-click/keypress edit, Enter
-commit, Esc undo).  A 1×1 Sheet with headers/index hidden is visually an
-Entry and contractually a cell — tksheet has no "detached cell" primitive,
-but this is indistinguishable from one, and everything built for the config
-tree drops in.
+Destroys the Entry if open (no-op otherwise).  Used by
+`ConfigSheet._hide_hover_field` and `_show_hover_field` to hand off
+between rows cleanly.
 
-### Build-verify traps (all degrade silently via `suppress`)
+## Floated PathField in ConfigSheet (`coef_sheet.py`)
 
-| Trap | Status |
-|------|--------|
-| `show_header`/`show_index` as `set_options` keys vs constructor kwargs | Constructor kwargs work in 7.6; `set_options` keys tested as fallback |
-| `set_height` existence | Fallback: size PathField from the app's geometry manager |
-| `attach(0, 0)` vs `(row, col, iid=None)` signature | Compatible — `iid` is optional in `BrowseButtonManager.attach` |
-| Single-click-to-edit | One extra `<Button-1>` bind if double-click feels wrong for a field |
-| `column_width(col, w)` runtime method | Verified in tksheet 7.6 source; fallback: `set_options(column_width=…) + redraw()` |
+One reusable `PathField` instance (text surface) + a separate `BrowseOverlay`
+(button at the sheet's right edge) float over browse rows
+(`input`, `coefs_path`) on hover, replacing the former single `BrowseOverlay`.
 
-### Esc-cancel is silent by construction
+### Intent-delayed show / hide
 
-`_pre_edit` snapshot compare swallows unchanged values — the `_on_end_edit`
-handler only fires `_notify` when the value actually changed.
+```
+<Motion> on browse row → _schedule_field_show (120 ms)
+  → _show_hover_field: cancel_edit, _field_iid = iid, .set(val), place, lift
+<Motion> off browse row → _schedule_field_hide (120 ms)
+  → _do_field_hide: editing veto OR pointer-in-field veto → _hide_hover_field
+<Leave> → schedule_field_hide + clear status UNLESS pointer is inside the field
+<MouseWheel> → immediate _hide_hover_field
+load() / _tree_shape_changed / _on_begin_edit_cell → immediate _hide_hover_field
+```
+
+`_do_field_hide` checks `f._editing` **before** the pointer-in-field
+test — during Entry editing the field must stay mapped regardless of
+pointer position (the Entry fills the PathField frame but the pointer
+may drift outside its bounds).  After edit ends, `_on_field_edit_end`
+→ `_restore_hover_placement` immediately shrinks the field back to
+hover width and re-shows the browse button.
+
+### Status bar preservation
+
+When the pointer transitions from MT to the floated field, `<Leave>` fires
+on MT but `_on_sheet_leave` checks `_pointer_in_field()` first — if the
+pointer landed on the field, the status bar text is preserved (the pointer
+is still conceptually on the same row).
+
+### Focus is opt-in
+
+`place` / `set` / `lift` never focus.  `startup_focus=False` (pinned in
+`PathField.__init__`) prevents the sheet from stealing focus on creation.
+The first focus arrives only from the user's click, which then enters
+native click-to-edit via tksheet's normal edit binding.
+
+### Full edit parity (free)
+
+Because the surface IS a `PathField`, all its capabilities arrive for free:
+Enter commit → `_hover_write` (set_cell_data + `_apply_edit_value` +
+`coefs_path` notify).  Esc undo → `_commit_entry(cancel=True)`.  Browse
+button → separate `BrowseOverlay` at the sheet's right edge (Shift toggles
+dir/file).  PathField's own internal browse overlay is suppressed — only
+the reparented button is active.  Editing uses `ttk.Entry` overlay (not
+tksheet's `tk.Text`) — same `justify="right"` behavior as the top path
+field.
+
+### In-sheet edit fallback
+
+A click landing before the 120 ms intent window edits in place through
+tksheet's native cell editor + `BrowseButtonManager` (the existing
+`_on_begin_edit_cell` / `_on_end_edit_cell` pipeline).  Both paths
+converge at `_hover_write` / `_on_end_edit_cell` for the commit.
+
+### Commit-race closure
+
+`_hide_hover_field` deliberately keeps `_field_iid` — `PathField._notify`
+queues through `after_idle`, so a commit already queued when the field is
+hidden still writes to its row.
+
+### Edit lifecycle on the overlay
+
+When the user clicks the floated PathField to edit:
+
+1. `_on_begin_edit` (PathField) fires → sets `_editing = True` → calls
+   `_on_begin_edit_cb` → `ConfigSheet._on_field_edit_start`:
+   cancels pending hide job, hides browse button, expands field to
+   full width (`_field_full_width_kw`), forces geometry via
+   `update_idletasks`.
+2. PathField constrains column to frame width, opens `ttk.Entry`,
+   returns `None` (vetoes tksheet editor).
+3. Enter/Esc → `_commit_entry` → `_editing = False` → calls
+   `_on_end_edit_cb` → `ConfigSheet._on_field_edit_end` →
+   `_restore_hover_placement`: shrinks field to hover width
+   (`_field_place_kw`), re-shows browse button.
+4. `_commit_entry` continues: restores column to 4096, scrolls right.
+
+`_do_field_hide` vetoes hide while `_editing` is `True` — prevents
+`<Leave>` (armed when pointer stepped onto Entry) from unmapping the
+field mid-edit.
+
+### Width rule
+
+Field text area ends where the browse button starts — `browse_button_width`
+(measured once, cached as `_btn_w_cache`) is subtracted from the data strip
+width.  Minimum 50 px fallback.  The browse button itself is a separate
+`BrowseOverlay` parented to `self.sh` and placed at the sheet's right edge
+(same position as the old hover overlay).  Implemented in `_field_place_kw`
++ `_btn_place_kw`.
 
 ## SheetHoverBinder (`_browse_button.py`)
 
@@ -263,16 +491,15 @@ own MT handlers (a replacing `<MouseWheel>` bind kills scrolling).
 
 ### ConfigSheet usage
 
-```python
-self._hover_binder = SheetHoverBinder(self.sh, self._hover_ov, self._hover_resolve)
-# Status-bar clear on leave — separate bind (binder handles overlay hide)
-self.sh.MT.bind("<Leave>", lambda _: self._clear_status(), add="+")
-```
+ConfigSheet no longer uses `SheetHoverBinder` directly — it owns the
+hover lifecycle through intent-delayed `PathField` floats
+(`_schedule_field_show` / `_schedule_field_hide`).  `SheetHoverBinder`
+remains in `_path_field.py` for the top-level path field's own hover
+button.
 
 `_hover_resolve` uses `_iid_of_row` cache (rebuilt in `load()`) and
-publishes status for any row (not just browse rows).  `_clear_status`
-is a separate `<Leave>` binding — the binder's `<Leave>` only handles
-overlay hide.
+publishes status for any row (not just browse rows).  `_on_sheet_leave`
+triggers `_schedule_field_hide` (pointer-check vetoes over field).
 
 `Ctrl+C` on the log `ScrolledText` calls `copy_rich` from
 [`_rtf_clipboard.py`](`_rtf_clipboard.py`), which walks all tag boundaries,
@@ -342,15 +569,27 @@ aggressive clearing of "Ready", "Done …", and hover hints during idle
 and inter-probe gaps, while still wiping stale stage text from the
 previous probe.
 
-Decision matrix:
+Decision matrix (``_any_hovering`` = ``_path_hovering`` or ``_nb_hovering`` or
+``_chrome_hovering is not None``):
 
-| `progress_stage.tot` | `_clear_status` | `_path_hovering` | Action |
+| `progress_stage.tot` | `_clear_status` | `_any_hovering` | Action |
 |---|---|---|---|
 | `> 0` | any | `False` | show `desc` |
 | `> 0` | any | `True` | preserve (hover active) |
 | `0` | `True` | `False` | **clear** — flag consumed |
 | `0` | `True` | `True` | preserve — flag deferred |
 | `0` | `False` | any | **preserve** — no-op |
+
+### Chrome widget hover bindings
+
+``_bind_chrome_hover`` (called once at end of ``_build``) adds
+``<Motion>``/``<Leave>`` bindings to every widget registered by
+``_register_chrome_help`` — Run button, progress bars, labels.  Widgets with
+their own dedicated hover handling (``_path_field``, ``nb``) are skipped.
+
+``_on_chrome_hover`` reads ``get_widget_meta(w, "status")`` (static string or
+live callable) and writes to ``self._status``.  ``_on_chrome_leave`` clears
+``_chrome_hovering`` so the poll cycle can resume writing status.
 
 ## CLI integration
 
@@ -360,8 +599,13 @@ GUI accepts CLI args: first positional = data path (prefills GUI entry, auto-sca
 `call_in_raw_dir`, `parse_data_path`, `hydra_main`)
 Example: `python -m tcm_gui "D:/data/_raw/@i_p1.TXT" "input.ids=[i90]"`.
 
-`App.__init__` stores `self._original_argv`.  For **Scan**, Worker resets
-`sys.argv = list(original_argv)` so Hydra composes with launch-time overrides.
-For **Run**, Worker uses a minimal `sys.argv` (script name only) —
-the YAML files are the sole config source, `original_argv` overrides are not
-re-applied.
+`App.__init__` stores `self._original_argv`.  Both **Scan** and **Run** feed
+the **live path-field value** to `call_in_raw_dir` as `input.path` (OmegaConf
+merge — bypasses Hydra's ANTLR parser, the documented safe channel for paths
+carrying `@`/`:`/`,` as in `D:/data/_raw/@i_p1.TXT`).  `Worker._setup` strips
+the positional path from `original_argv` via `cli.parse_data_path`, so only
+the launch-time `key=value` overrides remain in `sys.argv` and survive
+rescans after a GUI browse selection.  Without this, the stale startup
+positional would leak into Hydra's override parser (the `@`-crash guarded by
+`TestGuiAtSignFilename`).  For **Run**, `original_argv` is `["__main__"]`:
+the user-edited YAML files are the sole config source.

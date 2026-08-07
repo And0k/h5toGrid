@@ -610,6 +610,12 @@ def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs
     for probe_i, (pcid, stems) in enumerate(cfgs.items(), start=1):
         for cfg_i, stem in enumerate(stems, start=1):
             stem_idx += 1
+            # Re-resolve per-stem path: ``yaml_path`` from the pre-filter pass
+            # holds only the *last-iterated* stem — leaking it here would log
+            # and return the wrong filename for every probe (see GH bug: log
+            # "from {yaml_path.name}" and ``collected`` both referenced a
+            # single stale variable). Bind fresh from the real stem.
+            yaml_path = dir_cfgs / f"{stem}.yaml"
             # Reuse cached config from pre-filter pass
             cfg_dc = loaded_cfgs[stem]
 

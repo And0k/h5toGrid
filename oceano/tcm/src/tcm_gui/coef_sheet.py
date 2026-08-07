@@ -8,7 +8,8 @@ import operator
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from tkinter import TclError, ttk
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, Final
 
 import numpy as np
 from tksheet import Sheet
@@ -19,7 +20,8 @@ from tcm_gui.cli_cfg import COEF_SHAPES, COEFS_TYPE, NO_DEFAULT, default_for_pat
 from . import const
 from ._browse_button import BrowseButtonManager, BrowseOverlay
 from ._cell_spec import NUMBER_SPEC, CellSpec, as_bool, enum_values, schema_type, spec_for_path
-from .const import get_widget_meta
+from ._help import help_for_path
+from ._path_field import PathField
 
 _l = logging.getLogger(__name__)
 
@@ -29,6 +31,7 @@ _COEF_FIELDS = [f.name for f in dataclasses.fields(COEFS_TYPE) if f.name not in 
 _1D_WITH_DATES = {"kVabs"}  # единственное 1D с датами → parent+child
 _SUB = "₁₂₃₄₅₆₇₈₉"
 _DATE_COL = 2  # sheet col: 0=tree 1=₁ 2=₂/date 3=₃…
+_INTENT_MS: Final[int] = 120  # hover-intent delay for floated PathField (ms)
 
 
 class ConfigSheet:
@@ -92,7 +95,22 @@ class ConfigSheet:
         self.on_hover_status: Callable[[str], None] | None = None
         self.hover_status: dict[str, str] = {}
         self._status_iid: Any = None
-        self._hover_iid: Any = None
+        # Track which canvas owns the current status: "tree" (RI) or "data" (MT).
+        # Moving between tree column and data cell on the SAME row must re-publish.
+        self._status_source: str | None = None
+
+        # ── floated PathField: hover-edit surface for browse rows ──
+        # One reusable instance — reposition + .set() per hover; created
+        # lazily on first browse hover.  Focus is opt-in by construction.
+        self._field_iid: Any = None  # commit target; survives hide (after_idle commits)
+        self._field_row: int = 0  # hit_row for expand-on-edit
+        self._field_y: int = 0  # fallback_y for expand-on-edit
+        self._field_pending: tuple[Any, int, int] | None = None
+        self._field_show_job: str | None = None
+        self._field_hide_job: str | None = None
+        self._hover_field: PathField | None = None
+        self._hover_btn: BrowseOverlay | None = None
+        self._stretch_job: str | None = None
 
         # Row-space caches — rebuilt on load and expand/collapse.
         self._loading = False
@@ -104,15 +122,6 @@ class ConfigSheet:
         self._iid_by_int: dict[int, Any] = {}
         self._row_space: str = "unknown"  # "display" | "internal" | "unknown"
 
-        self._hover_ov = BrowseOverlay(
-            self.sh,
-            self._hover_write,
-            self._hover_read,
-            dir_title="Browse data path",
-            files_title="Browse data files",
-            leave_hides=True,
-        )
-
         mt = self.sh.MT
         mt.bind("<Motion>", self._on_sheet_motion, add="+")
         mt.bind("<Leave>", self._on_sheet_leave, add="+")
@@ -120,6 +129,13 @@ class ConfigSheet:
             mt.bind(ev, self._on_sheet_wheel, add="+")
         mt.bind("<Button-1>", self._redirect_overflow_click, add="+")
         mt.bind("<Double-Button-1>", self._redirect_overflow_double, add="+")
+        self.sh.bind("<Configure>", self._stretch_last_col, add="+")
+        # Tree column (index canvas / RI): hover shows section-level status.
+        # MT <Motion> only fires for data cells; the tree column renders on RI.
+        ri = getattr(self.sh, "RI", None)
+        if ri is not None:
+            ri.bind("<Motion>", self._on_tree_motion, add="+")
+            ri.bind("<Leave>", self._on_sheet_leave, add="+")
         # Open-state oracle: hook both public Sheet.item and internal MT.item.
         self._sh_item_orig = self.sh.item
         self._mt_item_orig: Callable | None = None
@@ -144,8 +160,8 @@ class ConfigSheet:
             self._return_enum = return_enum
 
             self._meta.clear()
-            self._hover_ov.hide()  # rows are about to die
-            self._hover_iid = self._status_iid = None
+            self._hide_hover_field()  # rows are about to die
+            self._status_iid = None
             self._publish_status(None)
 
             self.sh.del_rows(rows=list(range(self.sh.total_rows())))
@@ -569,8 +585,8 @@ class ConfigSheet:
         if self._loading:
             return
 
-        self._hover_ov.hide()
-        self._hover_iid = self._status_iid = None
+        self._hide_hover_field()
+        self._status_iid = None
         self._publish_status(None)
 
         self._rebuild_row_caches()
@@ -674,7 +690,7 @@ class ConfigSheet:
     def _on_begin_edit_cell(self, event) -> str | None:
         """Detach any previous browse button; attach for path-type rows.
         Browse rows always edit col 0 — overflow clicks rerouted here."""
-        self._hover_ov.hide()
+        self._hide_hover_field()
         iid = self._iid_at_row(event.row)
         m = self._meta.get(iid, {})
         ri = self._internal_row(iid) if m.get("browse") else None
@@ -747,6 +763,32 @@ class ConfigSheet:
             return int(mt.col_positions[0] - mt.canvasx(0)) + 1
         return None
 
+    def _stretch_last_col(self, _event=None) -> None:
+        """Stretch the last column to fill the sheet's visible width.
+
+        Debounced via ``after_idle`` to avoid re-entrant column-position
+        updates during redraw (which corrupt ``allow_cell_overflow``).
+        Skipped during ``load()`` — the final ``_apply_styles`` redraw
+        handles it.
+        """
+        if self._loading:
+            return
+        if (job := getattr(self, "_stretch_job", None)) is not None:
+            self.sh.after_cancel(job)
+        self._stretch_job = self.sh.after_idle(self._do_stretch_last_col)
+
+    def _do_stretch_last_col(self) -> None:
+        self._stretch_job = None
+        mt = self.sh.MT
+        with suppress(AttributeError, TypeError, IndexError, TclError):
+            nc = len(mt.col_positions) - 1
+            if nc < 1:
+                return
+            used = mt.col_positions[-1] - mt.col_positions[0]
+            target = max(mt.winfo_width(), used)
+            if mt.col_positions[-1] < target:
+                self.sh.column_width(nc - 1, width=target - mt.col_positions[-2], redraw=True)
+
     def _raw_col(self, event) -> int | None:
         # API drift: identify_col may take an event object or bare x.
         for arg in (event, event.x):
@@ -758,23 +800,68 @@ class ConfigSheet:
     # ── sheet-hover overlay ──────────────────────────────────────────
 
     def _on_sheet_leave(self, _event) -> None:
-        """Pointer left the sheet — hide overlay and clear status bar."""
-        self._hover_ov.schedule_hide()
-        self._hover_iid = self._status_iid = None
-        self._publish_status(None)
+        """``<Leave>`` also fires when the pointer steps onto the field —
+        the delayed hide's pointer check decides; status preserved if the
+        pointer merely moved onto the field (same row)."""
+        self._schedule_field_hide()
+        if not self._pointer_in_field():
+            self._status_iid = None
+            self._status_source = None
+            self._publish_status(None)
 
     def _on_sheet_wheel(self, _event) -> None:
-        """Scroll changes row hit-testing — hide overlay and clear status."""
-        self._hover_ov.hide()
-        self._hover_iid = self._status_iid = None
+        """Scroll changes row hit-testing — immediate hide, clear status."""
+        self._hide_hover_field()
+        self._status_iid = None
+        self._status_source = None
         self._publish_status(None)
 
+    def _on_tree_motion(self, event) -> None:
+        """Hover over tree column (index canvas) — show section-level status.
+
+        The tree column renders on tksheet's RI canvas, which is separate from
+        the MT canvas where ``_on_sheet_motion`` handles data-cell hovers.
+        Tree-column hover always shows the section-level help text (e.g.
+        "Data source & parameters" for the ``input`` node) — NOT the relocated
+        field text (``input.path``) which belongs to the data cells.
+        """
+        if (hit := self._hover_resolve(event)) is None:
+            self._status_iid = None
+            self._status_source = None
+            self._publish_status(None)
+            return
+
+        iid, _row, _y = hit
+        # Re-publish when source changes (tree ↔ data on same row).
+        if iid == self._status_iid and self._status_source == "tree":
+            return
+
+        self._status_iid = iid
+        self._status_source = "tree"
+        m = self._meta.get(iid, {})
+        path = str(m.get("path") or "")
+        # Section-level: resolve the path as-is (no `.path` suffix).
+        if path and (h := help_for_path(path)) and h.short:
+            self.on_hover_status(h.short)
+        elif self.on_hover_status is not None:
+            self.on_hover_status(str(m.get("key") or m.get("label") or path or ""))
+
     def _publish_status(self, iid: Any) -> None:
-        """Status text for the hovered element.
+        """Status text for the hovered element (data cells on MT canvas).
 
         Override via :attr:`hover_status`, keyed by meta ``key``/``path``/``label``.
-        Fallback chain: ``hover_status[ident]`` → ``widget_meta[path]["status"]``
-        → ``key`` → ``label`` → ``path``.
+        Fallback chain: ``hover_status[ident]`` → ``help_for_path(path).short``
+        (from ``config_reference.md``) → ``key`` → ``label`` → ``path``.
+
+        Data cells on parent rows: the ``input`` node row displays ``input.path``
+        in its data cell, and the ``coefs`` parent row shows the calibration
+        date.  ``_meta[iid]["path"]`` is the section name (``input``, ``input.coefs``)
+        rather than the field path.  For data-cell hover, the relocated field
+        path is tried FIRST (``input.path``, ``input.coefs.date``), so the status
+        describes the editable value, not the section.
+
+        Tree-column hover is handled separately by ``_on_tree_motion`` which
+        always uses the section-level path.
         """
         if self.on_hover_status is None:
             return
@@ -790,42 +877,36 @@ class ConfigSheet:
             self.on_hover_status(txt)
             return
 
-        # Centralized widget_meta registry — keyed by Hydra config path
-        if (path := str(m.get("path") or "")) and (meta_status := get_widget_meta(path, "status")):
-            self.on_hover_status(meta_status)
-            return
+        # Doc-driven help: ``config_reference.md`` → short tooltip per field.
+        # Array indices stripped by ``help_for_path`` (``Ag[0]`` → ``Ag``).
+        # Data-cell priority: relocated field first, then section-level.
+        # ``input`` row: ``input.path`` (relocated) → "File path, glob…"
+        # ``coefs`` parent with date: ``input.coefs.date`` → "Overall calibration date"
+        # ``Ag`` child with date: ``input.coefs.dates`` (parent) → "Per-component dates"
+        if path := str(m.get("path") or ""):
+            candidates: list[str] = []
+            if m.get("has_date"):
+                # Date field on this row (e.g. ``input.coefs.date``)
+                candidates.append(f"{path}.date")
+                candidates.append(f"{path}.dates")
+                # Parent-level dates for child rows (e.g. Ag → input.coefs.dates)
+                if (par := m.get("parent")) and (pp := self._meta.get(par, {}).get("path")):
+                    candidates.append(f"{pp}.dates")
+                    candidates.append(f"{pp}.date")
+            # Relocated data field on input parent row (and similar)
+            candidates.append(f"{path}.path")
+            # Section / field-level (the path as-is)
+            candidates.append(path)
+            for candidate in candidates:
+                if (h := help_for_path(candidate)) and h.short:
+                    self.on_hover_status(h.short)
+                    return
 
         self.on_hover_status(str(m.get("key") or m.get("label") or m.get("path") or ""))
 
-    def _hover_place_kw(self, hit_row: int, fallback_y: int) -> dict[str, Any]:
-        """place() kwargs: right edge of the visible row strip.
-
-        ``hit_row`` is the same index consumed by ``MT.identify_row``.
-        """
-        mt = self.sh.MT
-
-        with suppress(AttributeError, TypeError, IndexError, TclError):
-            y1, y2 = mt.row_positions[hit_row], mt.row_positions[hit_row + 1]
-            return {
-                "in_": mt,
-                "x": mt.winfo_width(),
-                "y": y1 - mt.canvasy(0),
-                "anchor": "ne",
-                "height": y2 - y1,
-            }
-
-        h = getattr(mt, "row_height", None) or getattr(mt, "default_row_height", 20)
-        return {
-            "in_": mt,
-            "x": mt.winfo_width(),
-            "y": fallback_y,
-            "anchor": "ne",
-            "height": h,
-        }
-
     def _hover_write(self, text: str) -> None:
         """Write path to column 0 of the hovered row + restyle."""
-        iid = self._hover_iid
+        iid = self._field_iid
         if iid is None:
             return
 
@@ -841,7 +922,7 @@ class ConfigSheet:
 
     def _hover_read(self) -> str:
         """Read column 0 of the hovered row (for dialog initialdir)."""
-        iid = self._hover_iid
+        iid = self._field_iid
         if iid is None:
             return ""
 
@@ -851,37 +932,265 @@ class ConfigSheet:
 
         return ""
 
-    def _on_sheet_motion(self, event) -> None:
-        """Hover: status text for any visible row; browse button on browse rows."""
-        if (hit := self._hover_resolve(event)) is None:
-            self._hover_ov.schedule_hide()
-            self._hover_iid = None
+    # ── floated PathField — hover-edit surface for browse rows ─────
 
+    # No-op overlay — replaces PathField's internal BrowseOverlay so its
+    # SheetHoverBinder never creates a second button.
+    _NULL_OV = SimpleNamespace(
+        visible=False,
+        pending=False,
+        show=lambda **_kw: None,
+        hide=lambda: None,
+        schedule_show=lambda _kw, **_a: None,
+        schedule_hide=lambda **_a: None,
+        cancel_show=lambda: None,
+        cancel_hide=lambda: None,
+    )
+
+    def _ensure_hover_field(self) -> PathField:
+        """The single PathField instance for the text surface + a separate
+        ``BrowseOverlay`` button at the sheet's right edge.  Both are
+        created lazily on first browse hover.  Focus is opt-in."""
+        if self._hover_field is None:
+            f = PathField(
+                self.sh,
+                on_commit=self._hover_write,
+                on_begin_edit=self._on_field_edit_start,
+                on_end_edit=self._on_field_edit_end,
+                dir_title="Browse data path",
+                files_title="Browse data files",
+            )
+            # Neuter PathField's own browse overlay — we use a separate one.
+            # Replace overlay + binder so SheetHoverBinder never creates a
+            # second button.
+            f._ov.hide()
+            f._ov = self._NULL_OV
+            f._binder._ov = self._NULL_OV
+            f._binder._last = None
+            for ev in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                f.sh.MT.bind(ev, lambda _e: self._hide_hover_field(), add="+")
+            self._hover_field = f
+            self._hover_btn = BrowseOverlay(
+                self.sh,
+                self._hover_write,
+                self._hover_read,
+                dir_title="Browse data path",
+                files_title="Browse data files",
+            )
+        return self._hover_field
+
+    def _show_hover_field(self, iid: Any, hit_row: int, fallback_y: int) -> None:
+        f = self._ensure_hover_field()
+        f.cancel_edit()  # stale editor from the previous row → Esc
+        self._field_iid = iid
+        self._field_row = hit_row  # stored for expand-on-edit
+        self._field_y = fallback_y
+        val = self._hover_read()
+        f.set(val)
+        f.place(**self._field_place_kw(hit_row, fallback_y, val))
+        f.lift()
+        if self._hover_btn is not None:
+            self._hover_btn.show(**self._btn_place_kw(hit_row, fallback_y))
+
+    def _field_place_kw(self, hit_row: int, fallback_y: int, val: str) -> dict[str, Any]:
+        """Text surface: from col 0, top-aligned, row-matching height.
+
+        Width ends where the browse button starts.  Height is read from
+        ``MT.row_positions`` so the field matches the sheet's actual rows
+        regardless of index-label chrome.
+        """
+        mt = self.sh.MT
+        with suppress(AttributeError, TypeError, IndexError, TclError):
+            y1, y2 = mt.row_positions[hit_row], mt.row_positions[hit_row + 1]
+            x0 = self._col0_widget_x() or 0
+            btn_w = self._hover_btn_w()
+            return {
+                "in_": mt,
+                "x": x0,
+                "anchor": "nw",
+                "y": y1 - mt.canvasy(0),
+                "width": max(mt.winfo_width() - x0 - btn_w, 50),
+                "height": y2 - y1,
+            }
+        return {"in_": mt, "x": 0, "y": fallback_y, "anchor": "nw", "width": 320}
+
+    def _field_full_width_kw(self) -> dict[str, Any]:
+        """Full row width (no button subtraction) — used when editing starts."""
+        mt = self.sh.MT
+        with suppress(AttributeError, TypeError, IndexError, TclError):
+            y1, y2 = mt.row_positions[self._field_row], mt.row_positions[self._field_row + 1]
+            x0 = self._col0_widget_x() or 0
+            return {
+                "in_": mt,
+                "x": x0,
+                "anchor": "nw",
+                "y": y1 - mt.canvasy(0),
+                "width": mt.winfo_width() - x0,
+                "height": y2 - y1,
+            }
+        return {"in_": mt, "x": 0, "y": self._field_y, "anchor": "nw", "width": 320}
+
+    def _btn_place_kw(self, hit_row: int, fallback_y: int) -> dict[str, Any]:
+        """Browse button: right edge of the visible row, top-aligned with text field."""
+        mt = self.sh.MT
+        with suppress(AttributeError, TypeError, IndexError, TclError):
+            y1 = mt.row_positions[hit_row]
+            return {
+                "in_": mt,
+                "x": mt.winfo_width(),
+                "y": y1 - mt.canvasy(0),
+                "anchor": "ne",
+            }
+        return {"in_": mt, "x": mt.winfo_width(), "y": fallback_y, "anchor": "ne"}
+
+    def _hover_btn_w(self) -> int:
+        """Pixel width of the hover browse button.
+
+        Uses the actual rendered width (``winfo_width``) when the button
+        exists and has been placed; falls back to ``winfo_reqwidth`` of a
+        temporary button otherwise.
+        """
+        if self._hover_btn is not None and self._hover_btn._button is not None:
+            with suppress(TclError):
+                btn = self._hover_btn._button
+                btn.update_idletasks()
+                w = btn.winfo_width()
+                if w > 1:
+                    return w
+        if not hasattr(self, "_btn_w_cache"):
+            from ._browse_button import browse_button_width
+
+            self._btn_w_cache = browse_button_width(self.sh)
+        return self._btn_w_cache
+
+    def _on_field_edit_start(self) -> None:
+        """User clicked the overlay field to edit — hide button, expand field.
+
+        Cancels any pending hide (armed by ``<Leave>`` when the pointer
+        stepped onto the Entry) and forces geometry so ``PathField``
+        reads the correct ``winfo_width()`` for its column constraint.
+        """
+        self._cancel_field_hide_job()
+        if self._hover_btn is not None:
+            self._hover_btn.hide()
+        if (f := self._hover_field) is not None and f.winfo_ismapped():
+            f.place(**self._field_full_width_kw())
+            f.update_idletasks()
+
+    def _on_field_edit_end(self) -> None:
+        """Entry edit finished — restore hover width, re-show button."""
+        self._restore_hover_placement()
+
+    def _restore_hover_placement(self) -> None:
+        if (f := self._hover_field) is not None and f.winfo_ismapped() and not f._editing:
+            val = self._hover_read()
+            f.place(**self._field_place_kw(self._field_row, self._field_y, val))
+            f.update_idletasks()
+            if self._hover_btn is not None:
+                self._hover_btn.show(**self._btn_place_kw(self._field_row, self._field_y))
+
+    def _schedule_field_show(self, iid: Any, hit_row: int, fallback_y: int) -> None:
+        self._cancel_field_hide_job()
+        if self._field_show_job is not None:
+            self.sh.after_cancel(self._field_show_job)
+        self._field_pending = (iid, hit_row, fallback_y)
+        self._field_show_job = self.sh.after(_INTENT_MS, self._do_field_show)
+
+    def _do_field_show(self) -> None:
+        self._field_show_job = None
+        if self._field_pending is not None:
+            self._show_hover_field(*self._field_pending)
+
+    def _schedule_field_hide(self) -> None:
+        """Delayed hide — vetoed when the pointer has moved onto the field
+        itself (MT fires ``<Leave>`` at exactly that crossing)."""
+        if self._field_show_job is not None:
+            self.sh.after_cancel(self._field_show_job)
+            self._field_show_job = self._field_pending = None
+        field_mapped = self._hover_field is not None and self._hover_field.winfo_ismapped()
+        btn_visible = self._hover_btn is not None and self._hover_btn.visible
+        if self._field_hide_job is None and (field_mapped or btn_visible):
+            self._field_hide_job = self.sh.after(_INTENT_MS, self._do_field_hide)
+
+    def _do_field_hide(self) -> None:
+        self._field_hide_job = None
+        if (f := self._hover_field) is not None and f._editing:
+            return  # don't hide while editing — Entry fills the PathField
+        if not self._pointer_in_field():
+            self._hide_hover_field()
+
+    def _hide_hover_field(self) -> None:
+        """Immediate teardown: cancel jobs, unmap field + button.
+
+        Deliberately keeps ``_field_iid`` — PathField commits via
+        ``after_idle``, so a commit already queued must still land on its row.
+        """
+        for attr in ("_field_show_job", "_field_hide_job"):
+            if (job := getattr(self, attr)) is not None:
+                self.sh.after_cancel(job)
+                setattr(self, attr, None)
+        self._field_pending = None
+        if (f := self._hover_field) is not None and f.winfo_ismapped():
+            f.place_forget()
+        if self._hover_btn is not None:
+            self._hover_btn.hide()
+
+    def _cancel_field_hide_job(self) -> None:
+        job, self._field_hide_job = self._field_hide_job, None
+        if job is not None:
+            self.sh.after_cancel(job)
+
+    def _pointer_in_field(self) -> bool:
+        """True when the pointer is inside the floated PathField or its browse button."""
+        if (f := self._hover_field) is not None and f.winfo_ismapped():
+            with suppress(TclError):
+                x, y = f.winfo_pointerxy()
+                if 0 <= x - f.winfo_rootx() < f.winfo_width() and 0 <= y - f.winfo_rooty() < f.winfo_height():
+                    return True
+        if (btn := self._hover_btn) is not None and btn.visible and btn._button is not None:
+            with suppress(TclError):
+                b = btn._button
+                x, y = b.winfo_pointerxy()
+                if 0 <= x - b.winfo_rootx() < b.winfo_width() and 0 <= y - b.winfo_rooty() < b.winfo_height():
+                    return True
+        return False
+
+    def _on_sheet_motion(self, event) -> None:
+        """Hover: status text for any visible row; floated field on browse rows."""
+        if (hit := self._hover_resolve(event)) is None:
+            self._schedule_field_hide()
             if self._status_iid is not None:
                 self._status_iid = None
+                self._status_source = None
                 self._publish_status(None)
             return
 
         iid, row, y = hit
 
-        if iid != self._status_iid:
+        # Re-publish when row OR source (tree ↔ data) changes.
+        if iid != self._status_iid or self._status_source != "data":
             self._status_iid = iid
+            self._status_source = "data"
             self._publish_status(iid)
 
         if not self._meta.get(iid, {}).get("browse"):
-            self._hover_ov.schedule_hide()
-            self._hover_iid = None
+            self._schedule_field_hide()
             return
 
-        if iid == self._hover_iid:
-            if self._hover_ov.visible:
-                self._hover_ov.cancel_hide()
-                return
-            if self._hover_ov.pending:
-                return
+        f = self._hover_field
+        if iid == self._field_iid and (
+            (f is not None and f.winfo_ismapped()) or self._field_show_job is not None
+        ):
+            self._cancel_field_hide_job()  # motion over target vetoes pending hide
+            # During editing the field is at full width — don't shrink it back.
+            if f is not None and f.winfo_ismapped() and not f._editing:
+                val = self._hover_read()
+                f.place(**self._field_place_kw(row, y, val))
+                if self._hover_btn is not None:
+                    self._hover_btn.show(**self._btn_place_kw(row, y))
+            return
 
-        self._hover_iid = iid
-        self._hover_ov.schedule_show(self._hover_place_kw(row, y))
+        self._schedule_field_show(iid, row, y)
 
     # ── row-space resolution ────────────────────────────────────────
 
@@ -1117,6 +1426,8 @@ class ConfigSheet:
                     sh.align_cells(r, col, align="w", redraw=False)
 
                 elif spec.kind == "text":
+                    # Left-align to preserve allow_cell_overflow (extends RIGHT).
+                    # The floated overlay PathField shows the right-aligned end.
                     sh.align_cells(r, col, align="w", redraw=False)
 
                 else:

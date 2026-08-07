@@ -1,7 +1,8 @@
-"""Tests for const.py: UI scaling, named fonts, and widget_meta registry.
+"""Tests for const.py: UI scaling, widget_meta registry, and STR content dict.
 
 Covers :func:`apply_ui_scale`, :func:`set_widget_meta`, :func:`get_widget_meta`,
-and the :data:`widget_meta` dictionary.
+the :data:`widget_meta` dictionary, callable-resolving ``get_widget_meta``,
+and the :data:`STR` i18n content table.
 """
 
 from __future__ import annotations
@@ -172,3 +173,81 @@ class TestWidgetMeta:
         assert get_widget_meta("input.path", "status") == "String status", (
             "widget_meta: mixed keys — string status mismatch"
         )
+
+    def test_callable_status_resolved_at_read_time(self):
+        """get_widget_meta resolves a ``Callable[[], str]`` status live."""
+        from tcm_gui.const import get_widget_meta, set_widget_meta
+
+        state = {"n": 0}
+
+        def counter() -> str:
+            state["n"] += 1
+            return f"status-{state['n']}"
+
+        btn = MagicMock(spec=tk.Button)
+        set_widget_meta(btn, status=counter)
+        assert get_widget_meta(btn, "status") == "status-1", "callable status should be invoked once per read"
+        assert get_widget_meta(btn, "status") == "status-2", (
+            "second read should invoke callable again (live state)"
+        )
+
+    def test_callable_tooltip_resolved(self):
+        """``Callable`` value also works for ``tooltip`` — resolved at read time."""
+        from tcm_gui.const import get_widget_meta, set_widget_meta
+
+        lbl = MagicMock(spec=tk.Label)
+        set_widget_meta(lbl, tooltip=lambda: "live tooltip")
+        assert get_widget_meta(lbl, "tooltip") == "live tooltip", (
+            "callable tooltip should be resolved at read"
+        )
+
+    def test_string_status_passthrough_unchanged(self):
+        """Plain ``str`` status is returned verbatim — no invocation."""
+        from tcm_gui.const import get_widget_meta, set_widget_meta
+
+        lbl = MagicMock(spec=tk.Label)
+        set_widget_meta(lbl, status="static text")
+        assert get_widget_meta(lbl, "status") == "static text", "string status should pass through unchanged"
+
+    def test_missing_callable_field_returns_default(self):
+        """Default returned when a callable-stored widget lacks the queried key."""
+        from tcm_gui.const import get_widget_meta, set_widget_meta
+
+        btn = MagicMock(spec=tk.Button)
+        set_widget_meta(btn, tooltip="btn tip")  # only tooltip, no status
+        assert get_widget_meta(btn, "status", "fallback") == "fallback", (
+            "missing callable key should return default string"
+        )
+
+
+# ── STR content dict (i18n surface) ─────────────────────────────────────────
+
+
+class TestSTR:
+    """``STR`` dict provides the stable i18n key surface for chrome widgets."""
+
+    def test_has_path_field_keys(self):
+        from tcm_gui.const import STR
+
+        assert "path_field.tooltip" in STR, "path_field.tooltip missing from STR"
+        assert "path_field.status" in STR, "path_field.status missing from STR"
+
+    def test_has_run_keys(self):
+        from tcm_gui.const import STR
+
+        for key in ("run.tooltip", "run.start", "run.pause", "run.resume"):
+            assert key in STR, f"{key} missing from STR"
+
+    def test_has_tab_template(self):
+        from tcm_gui.const import STR
+
+        assert "tab.status" in STR, "tab.status template missing from STR"
+        assert "{path}" in STR["tab.status"], (
+            f"tab.status must contain {{path}} for format(); got {STR['tab.status']!r}"
+        )
+
+    def test_all_values_are_strings(self):
+        from tcm_gui.const import STR
+
+        non_str = {k: type(v).__name__ for k, v in STR.items() if not isinstance(v, str)}
+        assert not non_str, f"STR values must all be str (content layer); non-str keys: {non_str}"

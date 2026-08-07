@@ -64,7 +64,7 @@ h5netcdf = ">=1.8.1,<2"
 
 
 [dependency-groups]
-bin-optim = ["tksheet>=7.6.0,<8"]
+tk-gui = ["tksheet>=7.6.0,<8"]
 
 
 [tool.pixi.feature.noh5.dependencies]
@@ -220,7 +220,8 @@ exp= { features = ["experimental"], solve-group = "default" }
 manage = { features = ["arc", "manage"], solve-group = "default" }
 noh5 = { features = ["noh5"], solve-group = "noh5" }
 noh5-tcm = { features = ["noh5", "tcm"], solve-group = "noh5" }
-bin-optim-tcm = { features = ["noh5", "bin-optim", "tcm", "test"], solve-group = "noh5" }
+noh5-tcm-gui = { features = ["noh5", "tcm", "tk-gui"], solve-group = "noh5" }
+bin-optim-tcm = { features = ["noh5", "bin-optim", "tcm", "test", "tk-gui"], solve-group = "noh5" }
 
 [tool.pixi.tasks]
 test = "pytest tests/"

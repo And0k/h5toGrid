@@ -64,6 +64,15 @@ def browse_button_height(parent) -> int:
         b.destroy()
 
 
+def browse_button_width(parent) -> int:
+    """Pixel width of the browse button — callers subtract from available space."""
+    b = ttk.Button(parent, text=_LBL_DIR, width=4)
+    try:
+        return b.winfo_reqwidth()
+    finally:
+        b.destroy()
+
+
 class BrowseOverlay:
     """Host-agnostic floating browse button.
 
@@ -230,6 +239,7 @@ class BrowseButtonManager:
         on_path_changed: Callable[[str], None],
         on_edit_restyler: Callable[[Any, int, str], None] | None = None,
         editor_place: Callable[[Any], dict[str, Any]] | None = None,
+        host=None
     ) -> None:
         self._sheet = sheet
         self.notify_path_changed = on_path_changed
@@ -239,9 +249,13 @@ class BrowseButtonManager:
         self._target_iid: Any = None
         self._retries = 0
         self._retry_job: str | None = None
-        self._ov = BrowseOverlay(sheet, self._write_cell, self._read_cell)
-        self._editor_place = editor_place or (lambda ed: {
-            "in_": ed, "relx": 1.0, "x": 0, "rely": 0, "y": 0, "height": ed.winfo_height()})
+        # Natural height + vertical centering: the glyph is never clipped by a
+        # short row — the button floats above the canvas and overflows the row
+        # symmetrically.  Only a parent *frame* clips, hence the host override.
+        self._ov = BrowseOverlay(host or sheet, self._write_cell, self._read_cell)
+        self._editor_place = editor_place or (
+            lambda ed: {"in_": ed, "relx": 1.0, "x": 0, "rely": 0.5, "y": 0}
+        )
 
     def attach(self, row: int, col: int, iid: Any = None) -> None:
         self.detach()

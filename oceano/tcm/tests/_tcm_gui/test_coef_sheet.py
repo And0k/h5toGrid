@@ -399,8 +399,12 @@ class TestCoefsPathChildRow:
         # __new__ bypasses __init__ — set row-cache + hover fields manually
         cs._int_row_of = {}
         cs._vis = ()
-        cs._hover_ov = MagicMock()
-        cs._hover_iid = None
+        cs._field_iid = None
+        cs._field_pending = None
+        cs._field_show_job = None
+        cs._field_hide_job = None
+        cs._hover_field = None
+        cs._hover_btn = None
         cs._iid_of_row = {}
         cs.on_hover_status = None
         cs.hover_status = {}
@@ -596,8 +600,8 @@ class TestBrowseButtonLifecycle:
             "detach() must be called for ALL rows (cleans up previous button)"
         )
 
-    def test_begin_edit_hides_hover_overlay(self):
-        """``_on_begin_edit_cell`` must hide the hover overlay (edit takes over)."""
+    def test_begin_edit_hides_hover_field(self):
+        """``_on_begin_edit_cell`` must hide the hovered PathField (edit takes over)."""
         cs, mock_sh = TestCoefsPathChildRow._make_loaded_sheet()
         cs._mgr = MagicMock()
 
@@ -605,13 +609,14 @@ class TestBrowseButtonLifecycle:
         cs._iid_at_row = MagicMock(return_value=input_iid)
         mock_sh.get_cell_data.return_value = ""
 
+        cs._hide_hover_field = MagicMock()
         event = MagicMock()
         event.row = 0
         event.column = 0
         cs._on_begin_edit_cell(event)
 
-        cs._hover_ov.hide.assert_called_once(), (
-            "hover overlay must be hidden when edit begins (handoff)"
+        cs._hide_hover_field.assert_called_once(), (
+            "hover field must be hidden when edit begins (handoff)"
         )
 
     def test_f3_stale_retry_cancelled(self):

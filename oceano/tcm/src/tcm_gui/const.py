@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import tkinter as tk
 import tkinter.font as tkfont
+from collections.abc import Callable
 from contextlib import suppress
 from tkinter import ttk
 from typing import Final
@@ -61,17 +62,25 @@ def apply_ui_scale(root: tk.Tk) -> None:
 
 # ── widget metadata registry ─────────────────────────────────────────────────
 # Tkinter widgets have no built-in metadata store (no ``widget.tooltip=``).
-# This dict is the central registry for status-bar captions, future tooltip
-# text, and translation keys — keyed by widget instance.
+# This dict is the central runtime registry for status-bar captions, future
+# tooltip text, and translation keys — keyed by widget instance.
 #
 # Alternative key for non-widget rows (e.g. tksheet treeview items that lack
 # a real tk widget): the ``path`` string from the row's meta dict.  Both keys
 # coexist in the same dict — lookup tries widget first, then string identifier.
+#
+# Field values are either:
+#   * ``str``         — static (tooltip text, fixed status caption);
+#   * ``Callable[[]]``— dynamic status, evaluated at read time so it sees the
+#                       current state (busy / paused) AND the current language
+#                       (via STR); stored as the binding, never pre-resolved.
 
-widget_meta: dict[tk.Widget | str, dict[str, str]] = {}
+MetaValue = str | Callable[[], str]
+
+widget_meta: dict[tk.Widget | str, dict[str, MetaValue]] = {}
 
 
-def set_widget_meta(widget: tk.Widget | str, /, **kwargs: str) -> None:
+def set_widget_meta(widget: tk.Widget | str, /, **kwargs: MetaValue) -> None:
     """Attach metadata (help, tooltip, translation_key) to a widget or string id.
 
     String ids are used for tksheet treeview rows that have no real tk widget
@@ -81,11 +90,39 @@ def set_widget_meta(widget: tk.Widget | str, /, **kwargs: str) -> None:
 
 
 def get_widget_meta(widget: tk.Widget | str, key: str, default: str = "") -> str:
-    """Retrieve a metadata value for *key* ("" if widget or key absent).
+    """Retrieve a metadata value for *key* (``default`` if widget or key absent).
 
-    Lookup order: widget instance → string identifier → *default*.
+    Lookup order: widget instance → string identifier → *default*.  ``MetaValue``
+    may be ``str`` or ``Callable[[], str]`` — the latter is invoked at read time so
+    dynamic statuses reflect current widget/application state.
     """
-    return widget_meta.get(widget, {}).get(key, default)
+    val = widget_meta.get(widget, {}).get(key, default)
+    return val() if callable(val) else val
+
+
+# ── chrome help content (i18n substitution point) ────────────────────────────
+# Stable string keys for chrome widgets (everything that is NOT a config cell).
+# At build for another language, replace this dict wholesale with the same keys
+# → localized strings; App auto-registration (``_register_chrome_help``) then
+# reads already-translated values at startup.  Config-cell help comes from a
+# different source (``config_reference.md``) and is resolved by ``_help.py``.
+
+STR: dict[str, str] = {
+    "path_lbl.tooltip": "Data search path",
+    "path_field.tooltip": "Data search path",
+    "path_field.status": "Changing data path rescans and resets all config tabs below",
+    "cfg_lbl.status": "Current configuration state",
+    "run.tooltip": "Run button",
+    "run.start": "Start processing",
+    "run.pause": "Pause processing",
+    "run.resume": "Resume processing",
+    "status_lbl.status": "Application status messages",
+    "nb.status": "Configuration tabs — one per data file / deployment",
+    "log.status": "Processing log — color-coded by severity (debug/info/warning/error)",
+    "prog_all.status": "Overall progress across all configurations",
+    "prog_stage.status": "Current stage progress within the active configuration",
+    "tab.status": "Configuration: {path}",  # template — _add_page formats {path}
+}
 
 
 # ── log level → ScrolledText tag colors ──────────────────────────────────────

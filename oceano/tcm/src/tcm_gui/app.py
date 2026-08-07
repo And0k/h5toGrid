@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-
-from collections.abc import Sequence
 import ctypes
 import sys
 import tkinter as tk
+from collections.abc import Sequence
 from pathlib import Path, PurePath
 from queue import Empty
 from tkinter import ttk
@@ -14,7 +13,7 @@ from tkinter.scrolledtext import ScrolledText
 
 from omegaconf import OmegaConf
 
-from tcm import schema, cli, config_yaml, format, incl_calc
+from tcm import cli, config_yaml, format, incl_calc, paths, schema
 from tcm_gui.cli_cfg import default_cfg
 
 from ._browse_button import BrowseButtonManager
@@ -23,10 +22,12 @@ from ._rtf_clipboard import copy_rich
 from .coef_sheet import ConfigSheet
 from .const import (
     FUNC_COLOR,
+    STR,
     TAG_COLORS,
     apply_ui_scale,
     get_widget_meta,
     set_widget_meta,
+    widget_meta,
 )
 from .log_bridge import drain, install
 from .runtime import Runtime
@@ -80,6 +81,7 @@ class App:
 
         # watch Shift globally on root (Windows doesn't send Shift to widgets)
         self._full_mode = _shift_at_startup()
+        self._chrome_hovering: tk.Widget | None = None  # generic chrome hover guard
 
         self._build()
         # Prefill path entry from CLI args — only when user explicitly provided one.
@@ -94,6 +96,11 @@ class App:
             self._add_page("(default)", default_cfg())
         self._poll()
 
+    @property
+    def _any_hovering(self) -> bool:
+        """True when any hover guard is active — suppresses poll status clobber."""
+        return self._path_hovering or self._nb_hovering or self._chrome_hovering is not None
+
     # ── layout ──────────────────────────────────────────────────────
 
     def _build(self) -> None:
@@ -106,12 +113,10 @@ class App:
         f0 = ttk.Frame(r)
         f0.grid(row=0, column=0, sticky="ew", padx=4, pady=2)
         f0.columnconfigure(1, weight=1)
-        self._path_lbl = ttk.Label(f0, text="Data search path")
+        self._path_lbl = ttk.Label(f0, text=STR["path_lbl.tooltip"])
         self._path_lbl.grid(row=0, column=0, padx=(0, 4))
-        set_widget_meta(self._path_lbl, tooltip="Path field label")
         self._path_field = PathField(f0, on_commit=self._on_path_changed)
         self._path_field.grid(row=0, column=1, sticky="ew")
-        set_widget_meta(self._path_field, status=self._HOVER_MSG, tooltip="Data search path")
         # Status message on hover — rebind on the Sheet's MT canvas
         self._path_hovering = False
         self._path_field.sh.MT.bind("<Enter>", lambda _: self._on_path_hover_in(), add="+")
@@ -121,11 +126,15 @@ class App:
         self._cfg_state = tk.StringVar(value="Default configuration")
         self._cfg_lbl = ttk.Label(r, textvariable=self._cfg_state)
         self._cfg_lbl.grid(row=1, column=0, sticky="w", padx=8, pady=(0, 0))
-        set_widget_meta(self._cfg_lbl, status="Current configuration state")
 
         # §3 Notebook — full width, below the configuration label
         self.nb = ttk.Notebook(r)
         self.nb.grid(row=2, column=0, sticky="nsew", padx=4, pady=(0, 2))
+        # Tab hover: show config-file status when pointer is over a tab label.
+        # Tab frames store their status in widget_meta (set by _add_page);
+        # _on_nb_motion reads it for the tab under the pointer.
+        self.nb.bind("<Motion>", self._on_nb_motion, add="+")
+        self.nb.bind("<Leave>", self._on_nb_leave, add="+")
 
         # §4 Run + overall progress (config-level)
         f2 = ttk.Frame(r)
@@ -133,8 +142,6 @@ class App:
         f2.columnconfigure(2, weight=1)
         self._run_btn = ttk.Button(f2, text="Run", command=self._on_run)
         self._run_btn.grid(row=0, column=0, padx=(0, 4))
-        set_widget_meta(self._run_btn, status="Start / pause / resume processing", tooltip="Run button")
-        set_widget_meta(f2, status="Run controls and overall progress")
         self._prog_all_lbl = tk.StringVar(value="")
         ttk.Label(f2, textvariable=self._prog_all_lbl).grid(row=0, column=1, padx=(0, 4))
         self._prog_all = ttk.Progressbar(f2, mode="determinate")
@@ -155,24 +162,124 @@ class App:
         self._status = tk.StringVar(value="Ready")
         self._status_lbl = ttk.Label(f4, textvariable=self._status)
         self._status_lbl.grid(row=0, column=0, padx=(0, 4))
-        set_widget_meta(self._status_lbl, status="Application status messages")
         self._prog_stage = ttk.Progressbar(f4, mode="determinate")
         self._prog_stage.grid(row=0, column=1, sticky="ew")
 
-    # ── §1 entry hover status message ────────────────────────────────
+        # One pass: bind every chrome ``self._*`` widget to its help text / status
+        # from STR.  No per-widget ``set_widget_meta`` calls above — role is derived
+        # from the attribute name (without the leading underscore).  Widgets absent
+        # from the registry get no help ("не ко всему").  Help is opt-in via STR.
+        self._register_chrome_help()
+        self._bind_chrome_hover()
 
-    # Canonical hover hint — also stored in widget_meta by _build() for the
-    # centralized registry (future tooltip popups read the same value).
-    _HOVER_MSG = "Changing data path rescans and resets all config tabs below"
+    def _bind_chrome_hover(self) -> None:
+        """Add <Motion>/<Leave> hover bindings to all chrome widgets with status.
+
+        After ``_register_chrome_help`` populates ``widget_meta``, this method
+        wires hover-to-status for every registered widget.  Widgets that already
+        have dedicated hover handlers (``_path_field``, ``nb``) are skipped —
+        their handlers are more specific (path hovering guard, notebook identify).
+        """
+        # Widgets with their own hover handling — skip to avoid conflicts.
+        _skip = {self._path_field, self.nb}
+        for w in widget_meta:
+            if not isinstance(w, tk.Misc) or w in _skip:
+                continue
+            if "status" not in widget_meta[w]:
+                continue
+            w.bind("<Motion>", self._on_chrome_hover, add="+")
+            w.bind("<Leave>", self._on_chrome_leave, add="+")
+
+    def _on_chrome_hover(self, event: tk.Event) -> None:
+        """Generic chrome hover: show widget's status text."""
+        w = event.widget
+        if status := get_widget_meta(w, "status"):
+            self._chrome_hovering = w
+            self._status.set(status)
+
+    def _on_chrome_leave(self, _event: tk.Event) -> None:
+        """Generic chrome leave: clear hover flag."""
+        self._chrome_hovering = None
+
+    def _register_chrome_help(self) -> None:
+        """Bind chrome widgets to help text / status in one pass.
+
+        Role = attribute name without the leading underscore.  ``tooltip`` is a
+        static ``str`` from STR; ``status`` is either a static ``str`` from STR
+        or a bound method returning the live caption (Run button: busy/paused).
+        Dynamic ``status`` callables are resolved by :func:`get_widget_meta`
+        at hover time — one read sees current state AND current language (STR).
+        Widgets whose role has no STR entries get no binding → no help ("не ко всему").
+        """
+        for attr, w in vars(self).items():
+            if not isinstance(w, tk.Misc):
+                continue
+            role = attr.lstrip("_")
+            tooltip = STR.get(f"{role}.tooltip")
+            status: object
+            if role == "run_btn":
+                # Dynamic: reflected busy / paused at hover time, not registration.
+                status = self._run_btn_status
+            else:
+                status = STR.get(f"{role}.status")
+            if tooltip is None and status is None:
+                continue
+            kwargs: dict[str, object] = {}
+            if tooltip is not None:
+                kwargs["tooltip"] = tooltip
+            if status is not None:
+                kwargs["status"] = status
+            set_widget_meta(w, **kwargs)
+
+    def _run_btn_status(self) -> str:
+        """Dynamic Run button status: reflects busy / paused state, read live."""
+        if not self.wk.busy:
+            return STR["run.start"]
+        return STR["run.resume"] if self.rt.pause_gate.paused else STR["run.pause"]
 
     def _on_path_hover_in(self) -> None:
         """Mouse enters Entry — show status hint from widget_meta registry."""
         self._path_hovering = True
-        self._status.set(get_widget_meta(self._path_field, "status", self._HOVER_MSG))
+        self._status.set(get_widget_meta(self._path_field, "status"))
 
     def _on_path_hover_out(self) -> None:
         """Mouse leaves Entry — clear hover flag (status restored by poll)."""
         self._path_hovering = False
+
+    # ── §3 notebook tab hover ────────────────────────────────────────
+
+    _nb_hovering: bool = False  # guards against poll clobbering tab status
+
+    def _on_nb_motion(self, event: tk.Event) -> None:
+        """Pointer over notebook — show config-file status when over a tab label.
+
+        ``identify(x, y)`` returns ``"tab"`` (top edge of tab) or ``"label"``
+        (deeper in tab strip) when the pointer is over a tab; ``"client"`` or
+        ``""`` otherwise.  The 3-arg Tcl form ``identify tab x y`` returns the
+        integer tab index directly.
+        """
+        try:
+            tab_idx = self.nb.tk.call(str(self.nb), "identify", "tab", event.x, event.y)
+        except (tk.TclError, AttributeError):
+            return
+        # 3-arg form returns int index or "" when not over a tab.
+        if tab_idx == "" or tab_idx is None:
+            if self._nb_hovering:
+                self._nb_hovering = False
+            return
+        tabs = self.nb.tabs()
+        tab_idx_int = int(tab_idx)
+        if tab_idx_int >= len(tabs):
+            return
+        frame = self.nb.nametowidget(tabs[tab_idx_int])
+        status = get_widget_meta(frame, "status")
+        if not self._nb_hovering:
+            self._nb_hovering = True
+        self._status.set(status)
+
+    def _on_nb_leave(self, _event: tk.Event) -> None:
+        """Pointer left the notebook — clear tab hover flag."""
+        self._nb_hovering = False
 
     @staticmethod
     def _fmt_multi(paths: tuple[str, ...]) -> str:
@@ -193,17 +300,36 @@ class App:
         self._scan()
 
     def _scan(self) -> None:
-        if self._path_field.get().strip():
+        path = self._path_field.get().strip()
+        if path:
             self._clear_log()
-            self.wk.scan(self._original_argv)
+            # Live path field — not the stale startup argv — drives the scan,
+            # so a GUI browse selection of ``_raw`` rescans that directory.
+            self.wk.scan(self._original_argv, path)
 
     # ── §2 page management ──────────────────────────────────────────
 
-    def _add_page(self, stem: str, cfg: dict) -> None:
+    def _add_page(self, stem: str, cfg: dict, yaml_path: Path | None = None) -> None:
         frame = ttk.Frame(self.nb)
         self.nb.add(frame, text=stem)
         self._tab_of[stem] = frame
-        set_widget_meta(frame, status=f"Configuration tab: {stem}")
+        # Dynamic widgets (per-config tabs) live outside App attr names, so the
+        # autorole loop in _register_chrome_help can't see them — bind here.
+        # Format: "Configuration cfg_proc/run/stem.yaml" relative to the
+        # ``_raw`` anchor that ``processing.run`` actually uses — NOT the raw
+        # field text, which may point *into* ``_raw`` (e.g. ``_raw/<cruise>``)
+        # while configs live directly under ``_raw/cfg_proc/``. Mismatch makes
+        # ``relative_to`` raise → fallback to bare filename (loss of context).
+        if yaml_path is not None and (field := self._path_field.get().strip()):
+            anchor = paths.find_dir_raw_absolute(Path(field).absolute())
+            try:
+                rel = Path(yaml_path).relative_to(anchor)
+                status_text = STR["tab.status"].format(path=rel)
+            except ValueError:
+                status_text = STR["tab.status"].format(path=yaml_path.name)
+        else:
+            status_text = STR["tab.status"].format(path=stem)
+        set_widget_meta(frame, status=status_text)
 
         cs = ConfigSheet(frame)
         cs.sh.pack(fill="both", expand=True, padx=2, pady=2)
@@ -309,7 +435,7 @@ class App:
         cur_o, tot_o, desc_o = self.rt.progress_overall.snapshot()
         if tot > 0:
             self._prog_stage.config(maximum=tot, value=cur)
-            if not self._path_hovering:
+            if not self._any_hovering:
                 self._status.set(desc or "")
         else:
             self._prog_stage.config(value=0)
@@ -317,7 +443,7 @@ class App:
             # probe start via progress_stage.clear_and_reset) so stale text is
             # wiped exactly once; otherwise leave _status alone — explicit
             # setters own it ("Ready", "Done …", hover hints).
-            if not self._path_hovering and self.rt.progress_stage.consume_clear():
+            if not self._any_hovering and self.rt.progress_stage.consume_clear():
                 self._status.set("")
         if tot_o > 0:
             self._prog_all.config(maximum=tot_o, value=cur_o)
@@ -357,7 +483,7 @@ class App:
             if prog and prog.get("return_") == schema.Return.CFG_FROM_ARGS:
                 prog["return_"] = str(schema.Return.END)
             self._yaml_paths[stem] = Path(yp)
-            self._add_page(stem, cfg)
+            self._add_page(stem, cfg, yaml_path=Path(yp))
         self._cfg_scanned = True
         self._cfg_was_dirty = False
         self._cfg_state.set("Generated configuration for processing found data")
@@ -472,9 +598,7 @@ if sys.platform == "win32":
     )
     shell32.ExtractIconExW.restype = ctypes.c_uint
 
-    shell32.SetCurrentProcessExplicitAppUserModelID.argtypes = (
-        ctypes.wintypes.LPCWSTR,
-    )
+    shell32.SetCurrentProcessExplicitAppUserModelID.argtypes = (ctypes.wintypes.LPCWSTR,)
     shell32.SetCurrentProcessExplicitAppUserModelID.restype = HRESULT
 
     user32.SendMessageW.argtypes = (
