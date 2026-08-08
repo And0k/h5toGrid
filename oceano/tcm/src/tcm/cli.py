@@ -24,6 +24,12 @@ from omegaconf import DictConfig, MissingMandatoryValue, OmegaConf
 
 from tcm import policy, schema
 
+# Optional GUI bridge for scan progress — no-op when GUI is not installed.
+try:
+    from tcm_gui import progress_bridge as _pb
+except ImportError:
+    _pb = None  # type: ignore[assignment]
+
 # ---------------------------------------------------------------------------
 # argparse compatibility for Python 3.14 — must run before Hydra builds parser
 # ---------------------------------------------------------------------------
@@ -607,9 +613,12 @@ def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs
         "" if n_cfgs == 1 else "s",
     )
     stem_idx = 0
+    _rt = _pb.get_runtime() if _pb else None
     for probe_i, (pcid, stems) in enumerate(cfgs.items(), start=1):
         for cfg_i, stem in enumerate(stems, start=1):
             stem_idx += 1
+            if _rt:
+                _rt.progress_stage.set(stem_idx - 1, n_cfgs, f"Composing {stem}\u2026")
             # Re-resolve per-stem path: ``yaml_path`` from the pre-filter pass
             # holds only the *last-iterated* stem — leaking it here would log
             # and return the wrong filename for every probe (see GH bug: log

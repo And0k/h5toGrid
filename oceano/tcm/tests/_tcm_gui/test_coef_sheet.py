@@ -238,13 +238,16 @@ class TestApplyStyles:
         mock_sh.total_columns.return_value = 6
         mock_sh.total_rows.return_value = 0
         _kids: dict[Any, list[str]] = {}
+        _items: dict[str, dict] = {}
 
         def _insert(**kw):
             iid = f"iid_{kw.get('text', 'x')}"
             _kids.setdefault(kw.get("parent") or "", []).append(iid)
+            _items[iid] = {"values": kw.get("values", ())}
             return iid
 
         mock_sh.insert.side_effect = _insert
+        mock_sh.item.side_effect = lambda iid, **_kw: _items.get(iid, {})
         mock_sh.get_children.side_effect = lambda parent="": list(_kids.get(parent or "", ()))
         mock_sh.get_cell_data.return_value = ""
         mock_sh.tag_names.return_value = []
@@ -266,6 +269,7 @@ class TestApplyStyles:
         # __new__ bypasses __init__ — set row-cache fields manually
         cs._int_row_of = {}
         cs._vis = ()
+        cs._col_resize = MagicMock()
 
         cs._build_coefs(cfg)
         # Open every constructed node so all rows receive styling.
@@ -273,72 +277,69 @@ class TestApplyStyles:
             m["open"] = True
         return cs, mock_sh
 
-    @patch("tcm_gui.coef_sheet.ttk")
     @patch("tcm_gui.const.tk_color_to_hex", return_value="#F0F0F0")
-    def test_node_column_gets_bg(self, mock_resolve, mock_ttk):
+    def test_node_column_gets_bg(self, mock_resolve):
         """Index canvas (tree column) gets bg: global option + per-cell highlight."""
-        mock_ttk.Style.return_value.lookup.return_value = "#F0F0F0"
         cs, mock_sh = self._make_loaded_sheet()
         cs._apply_styles()
 
         # Global fallback (newer builds / later-expanded rows)
         mock_sh.set_options.assert_any_call(index_background="#F0F0F0")
         # Per-cell highlight on the index canvas (7.6.x draw path)
-        index_calls = [
-            c for c in mock_sh.highlight_cells.call_args_list
-            if c.kwargs.get("canvas") == "index"
-        ]
+        index_calls = [c for c in mock_sh.highlight_cells.call_args_list if c.kwargs.get("canvas") == "index"]
         assert len(index_calls) > 0, (
             f"expected highlight_cells(canvas='index') calls, got: {mock_sh.highlight_cells.call_args_list}"
         )
 
-    @patch("tcm_gui.coef_sheet.ttk")
     @patch("tcm_gui.const.tk_color_to_hex", return_value="#F0F0F0")
-    def test_coef_cells_right_aligned(self, mock_resolve, mock_ttk):
+    def test_coef_cells_right_aligned(self, mock_resolve):
         """Coef data cells are right-aligned (number type)."""
-        mock_ttk.Style.return_value.lookup.return_value = "#F0F0F0"
         cs, mock_sh = self._make_loaded_sheet()
         cs._apply_styles()
 
         # align_cells is called positionally: align_cells(r, c, align="e", redraw=False)
         # OR align_cells(r, c, "e", redraw=False) — check both patterns
         right_align_calls = [
-            c for c in mock_sh.align_cells.call_args_list
-            if c.kwargs.get("align") == "e"
-            or (len(c.args) >= 3 and c.args[2] == "e")
+            c
+            for c in mock_sh.align_cells.call_args_list
+            if c.kwargs.get("align") == "e" or (len(c.args) >= 3 and c.args[2] == "e")
         ]
         assert len(right_align_calls) > 0, (
             f"expected right-aligned coef cells, got calls: {mock_sh.align_cells.call_args_list}"
         )
 
-    @patch("tcm_gui.coef_sheet.ttk")
     @patch("tcm_gui.const.tk_color_to_hex", return_value="#F0F0F0")
-    def test_date_cells_right_aligned(self, mock_resolve, mock_ttk):
+    def test_date_cells_right_aligned(self, mock_resolve):
         """Date cells (coefs parent with has_date) are right-aligned (``e``).
 
         See :func:`_apply_styles` section 3 and the CellSpec.kind table in
         how_gui_works.md — ``"date"`` is right-aligned, not left.
         """
-        mock_ttk.Style.return_value.lookup.return_value = "#F0F0F0"
         cs, mock_sh = self._make_loaded_sheet()
         cs._apply_styles()
 
         right_align_calls = [
-            c for c in mock_sh.align_cells.call_args_list
+            c
+            for c in mock_sh.align_cells.call_args_list
             if c.kwargs.get("align") == "e" or (len(c.args) >= 3 and c.args[2] == "e")
         ]
         # coefs node has has_date=True → date column should be right-aligned
         assert len(right_align_calls) > 0, "expected right-aligned date cells"
 
-    @patch("tcm_gui.coef_sheet.ttk")
     @patch("tcm_gui.const.tk_color_to_hex", return_value="#F0F0F0")
-    def test_header_highlighted(self, mock_resolve, mock_ttk):
-        """Header colors set via set_options (global header_fg/header_bg)."""
-        mock_ttk.Style.return_value.lookup.return_value = "#F0F0F0"
-        cs, mock_sh = self._make_loaded_sheet()
+    def test_header_highlighted(self, mock_resolve):
+        """Node labels styled with BLUE_FG via highlight_cells on index canvas."""
+        from tcm_gui.cli_cfg import default_for_path
+
+        ag_default = default_for_path("input.coefs.Ag")
+        cfg = {"input": {"path": "/data", "coefs": {"Ag": ag_default}}}
+        cs, mock_sh = self._make_loaded_sheet(cfg)
         cs._apply_styles()
 
-        mock_sh.set_options.assert_any_call(header_fg="#0055CC", header_bg="#F0F0F0")
+        # Node labels use BLUE_FG on index canvas for at-default nodes
+        index_calls = [c for c in mock_sh.highlight_cells.call_args_list if c.kwargs.get("canvas") == "index"]
+        blue_calls = [c for c in index_calls if c.kwargs.get("fg") == "#0055CC"]
+        assert len(blue_calls) > 0, f"expected BLUE_FG on index canvas, got: {index_calls}"
 
 
 # ── coefs_path as child row of input ────────────────────────────────────────
@@ -399,6 +400,7 @@ class TestCoefsPathChildRow:
         # __new__ bypasses __init__ — set row-cache + hover fields manually
         cs._int_row_of = {}
         cs._vis = ()
+        cs._col_resize = MagicMock()
         cs._field_iid = None
         cs._field_pending = None
         cs._field_show_job = None
@@ -459,9 +461,7 @@ class TestCoefsPathChildRow:
         assert len(input_insert) == 1
         values = input_insert[0].kwargs.get("values")
         assert values[0] == "/data", f"input values[0] should be '/data', got {values[0]!r}"
-        assert all(v == "" for v in values[1:]), (
-            f"input values[1:] should all be empty, got {values[1:]!r}"
-        )
+        assert all(v == "" for v in values[1:]), f"input values[1:] should all be empty, got {values[1:]!r}"
 
     def test_input_node_has_browse_flag(self):
         """``input`` node meta carries ``browse: True`` for the browse button."""
@@ -569,8 +569,9 @@ class TestBrowseButtonLifecycle:
         event.value = "1.0"
         cs._on_end_edit_cell(event)
 
-        cs._mgr.detach.assert_called_once(), (
-            "detach() must be called for non-path rows too (prevents ghost button)"
+        (
+            cs._mgr.detach.assert_called_once(),
+            ("detach() must be called for non-path rows too (prevents ghost button)"),
         )
 
     def test_begin_edit_attaches_only_for_browse_rows(self):
@@ -593,11 +594,10 @@ class TestBrowseButtonLifecycle:
         event.column = 0
         cs._on_begin_edit_cell(event)
 
-        cs._mgr.attach.assert_not_called(), (
-            "attach() must NOT be called for non-browse rows like Ag"
-        )
-        cs._mgr.detach.assert_called_once(), (
-            "detach() must be called for ALL rows (cleans up previous button)"
+        cs._mgr.attach.assert_not_called(), ("attach() must NOT be called for non-browse rows like Ag")
+        (
+            cs._mgr.detach.assert_called_once(),
+            ("detach() must be called for ALL rows (cleans up previous button)"),
         )
 
     def test_begin_edit_hides_hover_field(self):
@@ -615,9 +615,7 @@ class TestBrowseButtonLifecycle:
         event.column = 0
         cs._on_begin_edit_cell(event)
 
-        cs._hide_hover_field.assert_called_once(), (
-            "hover field must be hidden when edit begins (handoff)"
-        )
+        cs._hide_hover_field.assert_called_once(), ("hover field must be hidden when edit begins (handoff)")
 
     def test_f3_stale_retry_cancelled(self):
         """F3 — ``attach()`` cancels any pending retry from a previous cycle.
@@ -639,8 +637,9 @@ class TestBrowseButtonLifecycle:
 
             mgr.attach(1, 0)
 
-        mock_sh.after_cancel.assert_any_call(first_job), (
-            "attach() must cancel the previous retry (F3 — prevents L1)"
+        (
+            mock_sh.after_cancel.assert_any_call(first_job),
+            ("attach() must cancel the previous retry (F3 — prevents L1)"),
         )
 
     def test_f3_attach_resets_existing_overlay(self):
@@ -669,8 +668,9 @@ class TestBrowseButtonLifecycle:
             mock_sh.get_text_editor_widget.return_value = None
             mgr.attach(1, 0)
 
-        mock_btn.destroy.assert_called_once(), (
-            "attach() must destroy the previous button (F3 — idempotent reset)"
+        (
+            mock_btn.destroy.assert_called_once(),
+            ("attach() must destroy the previous button (F3 — idempotent reset)"),
         )
 
     def test_write_cell_targets_col0(self):
@@ -688,14 +688,17 @@ class TestBrowseButtonLifecycle:
         # Simulate write_cell directly
         mgr._write_cell("/selected/path")
 
-        mock_sh.set_cell_data.assert_called_once_with(5, 0, "/selected/path"), (
-            "write_cell must write to column 0 regardless of edit column"
+        (
+            mock_sh.set_cell_data.assert_called_once_with(5, 0, "/selected/path"),
+            ("write_cell must write to column 0 regardless of edit column"),
         )
-        restyler.assert_called_once_with("test_iid", 0, "/selected/path"), (
-            "restyler must be called with (iid, 0, text)"
+        (
+            restyler.assert_called_once_with("test_iid", 0, "/selected/path"),
+            ("restyler must be called with (iid, 0, text)"),
         )
-        mock_sh.after_idle.assert_called_once_with(mock_sh.close_text_editor), (
-            "editor must be closed after write"
+        (
+            mock_sh.after_idle.assert_called_once_with(mock_sh.close_text_editor),
+            ("editor must be closed after write"),
         )
 
     def test_read_cell_reads_col0(self):
@@ -711,7 +714,8 @@ class TestBrowseButtonLifecycle:
 
         result = mgr._read_cell()
 
-        mock_sh.get_cell_data.assert_called_with(3, 0), (
-            "read_cell must read column 0 regardless of edit column"
+        (
+            mock_sh.get_cell_data.assert_called_with(3, 0),
+            ("read_cell must read column 0 regardless of edit column"),
         )
         assert result == "/data/coefs"

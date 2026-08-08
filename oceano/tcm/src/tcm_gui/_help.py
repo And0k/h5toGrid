@@ -26,6 +26,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from tcm import _constants
+from tcm._md_parse import split_table_row
 
 _l = logging.getLogger(__name__)
 
@@ -139,7 +140,7 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
 
             if (fm := _FIELD_ROW.match(line)) and (field := fm.group(1)):
                 path = f"{section}.{field}"
-                cells = _split_row_cells(line)
+                cells = split_table_row(line)
                 short = cells[-1].strip() if cells else ""
                 entries[path] = HelpEntry(path, short, "")
                 pending.append(path)
@@ -149,26 +150,6 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
 
     _scan(text.splitlines())
     return entries
-
-
-# Cell separator: a ``|`` not preceded by ``\`` (markdown table escape).
-# ``\|`` inside a cell is a literal pipe — kept intact after splitting.
-_CELL_SEP = re.compile(r"(?<!\\)\|")
-
-
-def _split_row_cells(row: str) -> list[str]:
-    """Split a markdown table row (``| a | b | c |``) into cells.
-
-    A ``\\|`` inside a cell is an escaped pipe (literal in the rendered cell)
-    — kept intact; only unescaped ``|`` separates columns.  Also strips the
-    leading/trailing row-edge pipes.
-    """
-    inner = row.strip()
-    inner = inner.removeprefix("|")
-    inner = inner.removesuffix("|")
-    parts = _CELL_SEP.split(inner)
-    # Restore escaped pipes → literal pipes (markdown render would do the same)
-    return [p.replace(r"\|", "|") for p in parts]
 
 
 # ── loader & resolver ─────────────────────────────────────────────────────────

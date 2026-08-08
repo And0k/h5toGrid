@@ -275,6 +275,7 @@ class TestOnEndEditGrayToggle:
         # __new__ bypasses __init__ — set row-cache fields manually
         cs._int_row_of = {}
         cs._vis = ()
+        cs._col_resize = MagicMock()
 
         cs._build_coefs(cfg)
 

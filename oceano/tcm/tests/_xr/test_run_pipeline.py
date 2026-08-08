@@ -354,7 +354,7 @@ class TestBinaryInputSkipsDiscovery:
         mock_proc.assert_called_once()
         assert mock_proc.call_args[0][0].input.tables == ["incl_p05"]
 
-    @pytest.mark.parametrize("ext", [".nc", ".nc4", ".h5", ".hdf5"])
+    @pytest.mark.parametrize("ext", sorted(processing._EXT_BINARY), ids=str)
     def test_callable_for_all_binary_exts(self, tmp_path, mocker, ext):
         """Every binary extension triggers the direct path."""
         cfg = self._cfg(tmp_path, ["incl63"])

@@ -419,12 +419,17 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
     cli.safe_cfg_dir(dir_cfgs)
     cfgs_existed = config_yaml.get_existed_cfgs(dir_cfgs)
 
+    # Scan progress — update progress_stage so the GUI overlay shows activity.
+    _rt = progress_bridge.get_runtime()
+
     # ── Config generation (skipped when yaml_path provided) ──────────────
     if (yaml_path := OmegaConf.select(cfg, "input.yaml_path", default=None)) is None:
         # Step 1: regenerate on stale configs OR new source files missing configs.
         stale = config_yaml.find_stale_cfgs(cfgs_existed, dir_cfgs)
         regenerate = bool(stale) or not cfgs_existed
         if not regenerate:
+            if _rt:
+                _rt.progress_stage.set(0, 3, "Discovering files\u2026")
             try:  # lightweight: check for source files lacking config
                 from tcm import csv_load
 
@@ -437,6 +442,8 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
             except (FileNotFoundError, OSError):
                 pass  # discovery fails → skip regeneration check
         if regenerate:
+            if _rt:
+                _rt.progress_stage.set(1, 3, "Generating configs\u2026")
             reason = (
                 f"regenerating {len(stale)} stale config(s): {', '.join(stale)}"
                 if stale
@@ -533,6 +540,9 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
             cfgs_to_run = filtered
 
     # Step 3: process each config; early-exit (CFG_FROM_ARGS) returns before data load.
+    n_cfgs_total = sum(len(s) for s in cfgs_to_run.values())
+    if _rt:
+        _rt.progress_stage.set(0, max(n_cfgs_total, 1), "Composing configs\u2026")
     processed_pcids, failed_pcids, last_cfg, collected = cli.process_loading_yaml(
         run_processing,
         base_cfg=cfg,

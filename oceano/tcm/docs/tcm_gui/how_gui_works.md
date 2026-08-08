@@ -8,17 +8,19 @@ thread.  No custom CLI parsing — Hydra handles all config keys natively via
 
 | File | Purpose |
 |------|---------|
-| `app.py` | Tk root, layout §1–5, 300 ms polling, argv prefill |
+| `app.py` | Tk root, layout §1–6, 300 ms polling, argv prefill, `_initial_scan` flag (immediate overlay show), `_prog_floater` overlay (400 ms delay for run), z-order `<Motion>` bind; manual `ttk.Frame` + `tk.Text` + `ttk.Scrollbar` log container (replaces `ScrolledText` for ttk-styled scrollbar); `_log_autoscroll` flag + `<MouseWheel>`/`<Button-4/5>` bindings for scroll-aware auto-follow |
+| `md_label.py` | `MarkdownLabel` (`tk.Text` subclass): Tk renderer for Markdown AST from `_md_parse`; font scaling (`fit_to_height`), dynamic width (`_fit_width` via font metrics, `wrap="none"` → `wrap="word"`), auto-height (`_fit_height` on `<Configure>`), table tab-stop alignment |
+| `_md_parse.py` | Pure Markdown parser (zero Tk dependency): `parse_inline()`, `parse_markdown()`, `split_table_row()`; AST types `Heading`/`Paragraph`/`CodeBlock`/`Table`/`Inline` |
 | `worker.py` | Background thread: `call_in_raw_dir` for Scan and Run |
 | `coef_sheet.py` | tksheet treeview: type-aware widgets (checkbox/dropdown/align), node + metadata bg; row-geometry-free styling via `_row_map()`; floated `PathField` hover-edit on browse rows |
 | `_path_field.py` | 1×1 tksheet for display + `ttk.Entry` overlay for editing — frame-anchored hover button, column-width tracking via `<Configure>` |
 | `_browse_button.py` | `BrowseOverlay` (widget core + `pending` state), `BrowseButtonManager` (sheet-edit policy + injectable `editor_place`), `SheetHoverBinder` (MT motion → overlay show/hide with pending-aware veto), `bind_hover_browse` (Entry legacy) |
 | `_cell_spec.py` | Hydra dataclass → ``CellSpec`` (bool/enum/text/number/date) for cell rendering |
 | `_help.py` | Auto-extract config-cell help from ``config_reference.md`` tables (``HelpEntry``, ``help_for_path``, ``parse_reference``); index-stripping for arrays (``Ag[0]`` → ``Ag``); ``lru_cache``-memoized loader |
-| `const.py` | Centralized colors & styles; resolved-theme helpers; `widget_meta` registry (``MetaValue = str | Callable[[], str]``); ``STR`` chrome content table (i18n surface); callable-resolving ``get_widget_meta`` |
+| `const.py` | Centralized colors & styles; `apply_ui_scale` (DPI + named fonts); `apply_theme_defaults` (Windows dark/light registry → all `FUNC_COLOR`, `TAG_COLORS`, `FG_DEFAULT`, `DEFAULT_FG`, `BLUE_FG`, `FRAME_BG_FALLBACK`, `ENTRY_BG_FALLBACK`, `CELL_NON_DATA_BG`, `THEME`); `_apply_ttk_dark` (clam theme + ttk.Style dark configure + `App.Vertical.TScrollbar` scrollbar style); `_opt_into_dark_titlebar` (`DwmSetWindowAttribute(DWMWA_USE_IMMERSIVE_DARK_MODE)` via `GetAncestor(GA_ROOT)` for real toplevel HWND); `widget_meta` registry; `STR` i18n surface; `get_widget_meta` (callable-resolving) |
 | `cli_cfg.py` | `CFG_DEFAULTS` (config-tree defaults) + `COEF_SHAPES` (auto-derived) + `COEFS_TYPE` — all derived from `Config` via `get_type_hints`, no per-section imports |
 | `progress_bridge.py` | `GuiTqdm` (tqdm replacement) + module-level runtime injection |
-| `log_bridge.py` | `install()` once at App startup → root logger captures GUI-thread AND worker logs → `QueueHandler` (consecutive dedup + emit-time text freeze) → `ScrolledText` drain |
+| `log_bridge.py` | `install()` once at App startup → root logger captures GUI-thread AND worker logs → `QueueHandler` (consecutive dedup + emit-time text freeze) → `tk.Text` drain |
 | `_rtf_clipboard.py` | `Ctrl+C` on log → RTF + plain text on clipboard (colors preserved) |
 | `runtime.py` | Shared state: queues, `ProgressState` (with one-shot `clear_and_reset`/`consume_clear`), `PauseGate`, persistent `queue_handler` reference |
 
@@ -28,7 +30,7 @@ thread.  No custom CLI parsing — Hydra handles all config keys natively via
 
 ```
 Browse / Enter input.path
-  → app._clear_log (flush queue + clear ScrolledText)
+  → app._clear_log (flush queue + clear tk.Text log)
   → worker._scan (thread)
     → call_in_raw_dir(processing.run,
         input={path: live-path-field}, return_="<cfg_from_args>")
@@ -46,7 +48,7 @@ Browse / Enter input.path
 ```
 Edit coefs in tabs → tab title gets "*" (dirty indicator, polled 300ms)
   → click Run
-    → app._clear_log (flush queue + clear ScrolledText)
+    → app._clear_log (flush queue + clear tk.Text log)
     → app._write_coefs per tab (skips tabs where is_dirty == False)
       → config_yaml.update_coefs_in_run_yaml(yaml_path, patch)
       → cs.mark_clean() → removes "*"
@@ -75,7 +77,7 @@ Click Run while processing → PauseGate
 | Decision | Why |
 |---|---|
 | `hydra_main` in thread, not Compose API | logging, resolvers, runtime state require `@hydra.main` |
-| `QueueHandler` installed once at App startup; re-attached in `_wrap` after Hydra `dictConfig` | Hydra's ``logging.config.dictConfig`` replaces **all** root handlers with ``[console, file]`` each worker task, removing the ``QueueHandler`` from root.  ``_wrap.wrapped`` (running *after* dictConfig) re-adds it so both worker-thread and GUI-main-thread logs (e.g. ``_reload_coefs`` triggered by treeview interaction) reach the ScrolledText.  ``reset_dedup()`` per task prevents the first record of a new task from being swallowed as a "duplicate" of the previous task's tail |
+| `QueueHandler` installed once at App startup; re-attached in `_wrap` after Hydra `dictConfig` | Hydra's ``logging.config.dictConfig`` replaces **all** root handlers with ``[console, file]`` each worker task, removing the ``QueueHandler`` from root.  ``_wrap.wrapped`` (running *after* dictConfig) re-adds it so both worker-thread and GUI-main-thread logs (e.g. ``_reload_coefs`` triggered by treeview interaction) reach the log ``tk.Text`` widget.  ``reset_dedup()`` per task prevents the first record of a new task from being swallowed as a "duplicate" of the previous task's tail |
 | `_runtime` is module-level, not `threading.local` | `TqdmCallback` creates `GuiTqdm` in dask worker threads |
 | `return_="<cfg_from_args>"` for Scan | pipeline does discovery + gen_metadata, returns configs without processing |
 | `input.yaml_path` for Run | documented regex filter, skip discovery, only selected configs |
@@ -86,26 +88,27 @@ Click Run while processing → PauseGate
 | `meta_date_cols` explicitly, not `as_date` | metadata dates override alignment; `as_date` only in edit validation |
 | `_meta[iid]["path"]` — dotted Hydra path | `_ins()` computes `parent_path + "." + text`; array children override with explicit correct paths (e.g. `input.coefs.Ag[0]`, not doubled `input.coefs.Ag.Ag[0]`) |
 | `_meta[iid]["parent"]` backlink | set in `_ins()` from `parent_iid`; enables `_node_at_default` recursive walk |
-| **Two-row system** — internal vs display | `_row_map()` → **internal** rows (all items, even collapsed) for cell-API calls ;  `_walk(visible=True)` → **display** rows (collapsed items compressed out) for event decoding |
+| **Two-row system** — internal vs display | `_row_map()` → **internal** rows (all items, even collapsed) for cell-API calls ;  `_walk(visible=True)` → **display** rows (collapsed items compressed out) for event decoding.  `_on_begin_edit_cell` always converts display→internal via `_internal_row(iid)` before `get_cell_data` — prevents reading wrong cell when ancestors are collapsed |
 | `_row_map()` → `get_row_from_iid` / fallback walk | When `get_row_from_iid` fails, walks ALL items (depth-first) — used for API calls that don't know about collapse |
 | `_walk(visible=True)` → visible-only DFS | `sh.get_children` with `_is_open` check (tksheet `MT.treeview` truth, `_meta["open"]` fallback); collapsed subtrees yield no rows; feeds `_vis` in `_rebuild_row_caches`, used by `_iid_at_row` + `_apply_styles` node-fg updates |
 | open-state bookkeeping ; `_item_hook` wraps `sh.item()` | tksheet 7.6's getter doesn't expose `"open"` key; every `open_` set call (ours + tksheet arrow toggles) is recorded in `_meta[iid]["open"]` |
 | `_iid_at_row(r)` = visible-only lookup | `self._vis[r]` — O(1) indexing into the display-row tuple built by `_rebuild_row_caches`; ignores collapsed children |
 | gray foreground for default values | `_apply_default_fg()` → `_default_for_cell(iid,m,j)` → `CFG_DEFAULTS` via `default_for_path`; works for ALL config sections (input, out, filter, program), not just coefs |
 | `_default_for_cell` rejects dict results | non-leaf paths (e.g. `"input"`) return `NO_DEFAULT`; `input`-type cells append `.path` to resolve the input.path field |
-| `_fg_default` — theme foreground color | resolved once from `TFrame` foreground via `const.tk_color_to_hex`; applied explicitly (never `fg=None`, which is a per-key merge no-op in tksheet 7.x) |
+| `_fg_default` — theme foreground color | `const.FG_DEFAULT` (set by `apply_theme_defaults`); applied explicitly (never `fg=None`, which is a per-key merge no-op in tksheet 7.x) |
 | `_apply_edit_value` / `_apply_default_fg` use `overwrite=False` | edit-time restylers pass only `fg` to `highlight_cells`; `overwrite=False` preserves the `bg` that `_apply_styles` set (input.row data cells keep button-face after edits) |
 | **Input row styling** | node label: button-face bg + normal black `FG_DEFAULT` (never blue/gray toggle); all data cells: button-face bg via `highlight_cells` across `total_columns()`.  Other rows: button-face bg + `BLUE_FG`/`_fg_default` node fg as before |
-| **PathField styling** | `ENTRY_BG_FALLBACK` (white) bg + `FG_DEFAULT` (black) fg + **bold** font (sheet-wide, 1×1 cell); right-aligned (`align="e"`): long paths show filename at the right edge; entry-field silhouette distinct from the gray coef_sheet cells; **editing via `ttk.Entry` overlay** (veto tksheet's `tk.Text`), `justify="right"` |
+| **PathField styling** | `const.ENTRY_BG_FALLBACK` bg + `const.FG_DEFAULT` fg + **bold** font (sheet-wide, 1×1 cell); right-aligned (`align="e"`): long paths show filename at the right edge; entry-field silhouette distinct from the gray coef_sheet cells; **editing via `ttk.Entry` overlay** (veto tksheet's `tk.Text`), `justify="right"` |
 | **Blue node labels** → subtree unchanged | `_node_at_default(id)` recurs: every leaf value matches its config dataclass default; `const.BLUE_FG = "#0055CC"` on index canvas |
 | `_on_end_edit` → cascade toggle | Gray/clear fg per cell **+** walk ancestral tree labels (blue/standard); `_fg_default` used for clear side (not `fg=None`) |
 | dirty tracking via `_data_snapshot` | `tuple(tuple(str(val) for val in row) for row in sheet)` covers ALL editable cells (not just coefs); `is_dirty` compares current vs snap |
 | `"*"` on tab title (300 ms poll) | visual feedback for unsaved edits; removed by `mark_clean()` after write |
 | `_write_coefs` skips clean tabs | avoids redundant timestamped backups identical to existing YAML |
-| `_clear_log` on scan/run start | prevents cross-operation message accumulation in ScrolledText |
+| `_clear_log` on scan/run start | prevents cross-operation message accumulation in log ``tk.Text`` widget |
+| `_log_autoscroll` flag + scroll bindings | persistent flag (not `yview()` threshold — `see("end")` yields ~0.91–0.98, never 1.0); starts `True`, cleared by `<MouseWheel>`/`<Button-4/5>` when `after_idle` check finds `yview()[1] < 0.90`, restored when user scrolls back to bottom; `_poll_logs` calls `see("end")` only when flag is `True` |
 | `_clear_status` one-shot flag (not blanket clear) | original `_poll_progress` set `_status.set("")` every 300 ms when `tot == 0`, wiping "Ready", "Done …", and hover hints.  `clear_and_reset()` (worker, at probe start) + `consume_clear()` (GUI, once) replaces continuous clearing with a single event per probe boundary.  `_path_hovering` guard defers consumption while hover is active |
 | `QueueHandler` consecutive dedup | drops equivalent records (same msg at same call site), registered by `funcName+msg` key.  **freezes** the rendered text onto the `LogRecord` (`rec.msg = text; rec.args = ()`) at emit time so deferred `drain`-time `getMessage()` cannot be corrupted by the mutable `Message` reused across log calls in `LoggingStyleAdapter`.  Mirrors Hydra's `job_logging/colorlog` formatter, which renders `record.getMessage()` once synchronously. |
-| `Ctrl+C` → RTF + plain on clipboard | `_rtf_clipboard.copy_rich` serializes tag-colored `ScrolledText`; pywin32 absent → plain fallback |
+| `Ctrl+C` → RTF + plain on clipboard | `_rtf_clipboard.copy_rich` serializes tag-colored log ``tk.Text`` widget; pywin32 absent → plain fallback |
 | `config.Config` + `config.Return` passed to `load()` | structured-config root + `StrEnum` for `program.return_` dropdown |
 | `_cell_spec_for` → bool/enum/text/number | walks dataclass tree via `spec_for_path`; `bool` → checkbox, `Enum` → dropdown, `str`/`Path` → left-align |
 | node column bg = header bg | `highlight_cells(canvas="index")` in `_apply_styles`; `resolved_frame_bg()` (TFrame background) for all rows including `input` |
@@ -123,6 +126,45 @@ Click Run while processing → PauseGate
 | `_bind_chrome_hover` wires status to Run/progress/labels | `<Motion>`/`<Leave>` on all registered chrome widgets; skips `_path_field` + `nb` (own handlers) |
 | **Floated PathField on browse rows** | one reusable `PathField` for text + separate `BrowseOverlay` for button; intent-delayed (120 ms); focus strictly opt-in; full edit parity free; button stays at sheet right edge while field text stops at button's left edge; `_do_field_hide` vetoes hide during `f._editing`; `_on_field_edit_end` → `_restore_hover_placement` (show button first, `update_idletasks`, then `f.place` at shortened width) |
 | `_field_iid` survives hide | `_hide_hover_field` keeps `_field_iid` — `PathField._notify` queues via `after_idle`, so a commit in flight still writes to its row; `_hover_btn` (browse button) is hidden separately |
+
+## Dark / light theme architecture
+
+Three layers cooperate to render the entire GUI in a consistent dark or light
+palette.  `const.apply_theme_defaults(root)` runs once at startup (before any
+widget is created) and orchestrates all three.
+
+Startup flow:
+```
+App.__init__
+  → apply_ui_scale(root)          # DPI + named fonts
+  → apply_theme_defaults(root)    # detect theme → mutate globals → ttk.Style → root.bg
+  → _build()                      # widgets created with correct const values
+    → PathField(sheet uses ENTRY_BG_FALLBACK at construction)
+    → ConfigSheet created on scan
+      → __init__: change_theme("dark") if THEME == "dark"
+```
+
+| Layer | What it styles | Mechanism |
+|---|---|---|
+| **const globals** | Log tags, per-cell highlights, log ``tk.Text`` bg/fg, `MarkdownLabel` bg/fg, `tk.Frame`/`tk.Label` bg/fg | `_DARK` / `_LIGHT` palettes → `setattr` on module globals (`FUNC_COLOR`, `DEFAULT_FG`, `BLUE_FG`, `FG_DEFAULT`, `FRAME_BG_FALLBACK`, `ENTRY_BG_FALLBACK`, `CELL_NON_DATA_BG`, `THEME`) + `TAG_COLORS.update()` |
+| **ttk.Style** | All `ttk.Frame`, `ttk.Label`, `ttk.Button`, `ttk.Entry`, `ttk.Notebook`, `ttk.Progressbar` | `_apply_ttk_dark(root)` → switches to ``clam`` theme (native themes ``vista``/``xpnative`` ignore ``Style().configure()`` for rendering), then ``ttk.Style().configure()`` with bg/fg from const globals + ``style.map()`` for active/selected states; root window ``bg`` set directly |
+| **tksheet** | Sheet canvas (table, header, index, scrollbars, selection) | `ConfigSheet.__init__` calls `self.sh.change_theme("dark")` when `const.THEME == "dark"` + `scrollbar_theme_inheritance="clam"` so tksheet's canvas scrollbars match the `App.Vertical.TScrollbar` ttk style; `PathField` uses explicit `table_bg`/`table_fg` from const at construction (no `change_theme` needed — headers/index/scrollbars hidden) |
+
+### Widget-specific notes
+
+| Widget | bg/fg source |
+|---|---|
+| `tk.Text` + `ttk.Scrollbar` (log) | `bg=const.ENTRY_BG_FALLBACK`, `fg=const.FG_DEFAULT`, `insertbackground=const.FG_DEFAULT`; manual container replaces `ScrolledText` to get a real `ttk.Scrollbar` |
+| Log scrollbar | `ttk.Scrollbar` with `style="App.Vertical.TScrollbar"` — matches tksheet via shared `clam` theme inheritance |
+| `MarkdownLabel` (status) | `background=const.FRAME_BG_FALLBACK`, `foreground=const.FG_DEFAULT` |
+| `tk.Frame` + `tk.Label` (prog_floater) | `bg=const.FRAME_BG_FALLBACK`, `fg=const.FG_DEFAULT` |
+| `ConfigSheet` (tksheet) | `change_theme("dark")` + `scrollbar_theme_inheritance="clam"` in `__init__`; `_apply_styles` uses `const.resolved_frame_bg()` + `const.FG_DEFAULT` |
+| `PathField` (1×1 tksheet) | `table_bg=const.ENTRY_BG_FALLBACK`, `table_fg=const.FG_DEFAULT` — set at construction |
+| `ttk.Entry` (PathField editor) | inherits from `ttk.Style("TEntry")` dark configuration |
+| Root window + title bar | `root.configure(bg=...)` + `GetAncestor(winfo_id(), GA_ROOT)` to get real toplevel HWND (Tk's `winfo_id()` returns a child widget, not the DWM-controlled frame) + `DwmSetWindowAttribute(DWMWA_USE_IMMERSIVE_DARK_MODE=TRUE)` via `ctypes.WinDLL("dwmapi")` (Win32 only, Win11 22000+) |
+| `ttk.Notebook` + tabs | `style.configure("TNotebook.Tab", ...)` + `style.map` for selected state |
+| `ttk.Button` (Run) | `style.configure("TButton", ...)` + `style.map` for active/pressed |
+| **Scrollbars** | Log `ttk.Scrollbar` + tksheet internal scrollbars | `App.Vertical.TScrollbar` ttk style configured in `_apply_ttk_dark` (dark) / default clam (light); tksheet uses `scrollbar_theme_inheritance="clam"` so its canvas scrollbars inherit the same ttk theme; log uses manual `ttk.Frame` + `tk.Text` + `ttk.Scrollbar` instead of `ScrolledText` (which uses an unstyled classic `tk.Scrollbar`) |
 
 ## Help system architecture
 
@@ -501,7 +543,7 @@ button.
 publishes status for any row (not just browse rows).  `_on_sheet_leave`
 triggers `_schedule_field_hide` (pointer-check vetoes over field).
 
-`Ctrl+C` on the log `ScrolledText` calls `copy_rich` from
+`Ctrl+C` on the log `tk.Text` widget calls `copy_rich` from
 [`_rtf_clipboard.py`](`_rtf_clipboard.py`), which walks all tag boundaries,
 maps each tag's `foreground` to an 8-bit RGB via `winfo_rgb`, and emits a
 single `{\cfN …}` segment per slice into an RTF `\\colortbl`.
@@ -549,18 +591,48 @@ Two code paths activate `GuiTqdm`:
 `physical.py` and `io.py` import `get_tqdm_class` with `try/except ImportError`
 fallback (same pattern as `processing.py`'s `progress_bridge` import).
 
+### Status bar layout (§6)
+
+Two independent overlays on `root`, both at the bottom edge:
+
+```
+root (no f4 — removed)
+│
+├── place(rely=1.0, relx=0.0, anchor="sw")  ← bottom-left
+│   └── _status_lbl (MarkdownLabel)
+│       wrap="none" by default; switches to wrap="word" only if
+│       content exceeds window width (_fit_width via font metrics).
+│       Width contracts to text width.  Height auto-grows via _fit_height.
+│
+└── place(relx=1.0, rely=1.0, anchor="se")  ← bottom-right, hidden by default
+    └── _prog_floater (tk.Frame, bg=match root)
+        ├── _prog_stage_text (tk.Label, anchor="e", right-aligned)
+        └── _prog_stage (ttk.Progressbar, length=220)
+```
+
+**Z-order competition**: `<Motion>` on root → `_status_lbl.lift()`.
+`_prog_floater.lift()` on each `tot > 0` poll update.  Last `lift()` wins.
+
+**Show delay**: `_prog_floater` is shown via `root.after(400, _show_prog_floater)`
+— avoids flashing for very short operations.  Cancelled if `tot` drops to 0
+before the delay fires.
+
 ### Status bar text — one-shot clear signal
 
 The status `StringVar` is **not** owned by `_poll_progress`.  Explicit setters
 control it:
 
-| Setter | When | Text |
-|--------|------|------|
-| `App.__init__` | startup | `"Ready"` |
-| `_on_run_done` | run completion | `"Done — {pct}% ({ok}/{n} ok)"` |
-| `_on_path_hover_in` | mouse enters path field | hover hint |
-| `_poll_progress` (`tot > 0`) | active `GuiTqdm` | stage `desc` |
-| `_poll_progress` (clear flag) | probe boundary | `""` (one-shot) |
+| Setter | When | Widget | Text |
+|--------|------|--------|------|
+| `_fit_status_font` | startup, no CLI args | `_status_lbl` | `"Ready"` |
+| `_fit_status_font` | startup, CLI args | `_prog_floater` | `"Loading…"` (immediate, no delay) |
+| `_on_path_changed` | browse button / Enter | `_prog_floater` | `"Loading…"` (immediate, no delay) |
+| `processing.run` | scan phases | `_prog_floater` | "Discovering…", "Generating…", "Composing {stem}…" |
+| `process_loading_yaml` | per-config | `_prog_floater` | "Composing {stem}…" (via `_pb`) |
+| `_on_scan_ok` | scan completion | `_status_lbl` | `"Ready"` |
+| `_on_run_done` | run completion | `_status_lbl` | `"Done — {pct}% ({ok}/{n} ok)"` |
+| `_on_path_hover_in` | mouse enters path field | `_status_lbl` | hover hint |
+| `_poll_progress` (clear flag) | probe boundary | `_status_lbl` | `""` (one-shot) |
 
 `_poll_progress` only writes `""` when `progress_stage.consume_clear()`
 returns `True` — a one-shot flag set by `ProgressState.clear_and_reset()`
@@ -569,13 +641,14 @@ aggressive clearing of "Ready", "Done …", and hover hints during idle
 and inter-probe gaps, while still wiping stale stage text from the
 previous probe.
 
-Decision matrix (``_any_hovering`` = ``_path_hovering`` or ``_nb_hovering`` or
-``_chrome_hovering is not None``):
+Decision matrix for `_status_lbl` clearing (``_any_hovering`` = ``_path_hovering``
+or ``_nb_hovering`` or ``_chrome_hovering is not None``).  Stage `desc` is
+written to `_prog_stage_text` (overlay) unconditionally — `_any_hovering`
+only gates `_status_lbl` clearing.
 
-| `progress_stage.tot` | `_clear_status` | `_any_hovering` | Action |
+| `progress_stage.tot` | `_clear_status` | `_any_hovering` | Action on `_status_lbl` |
 |---|---|---|---|
-| `> 0` | any | `False` | show `desc` |
-| `> 0` | any | `True` | preserve (hover active) |
+| `> 0` | any | any | no-op — `desc` goes to overlay |
 | `0` | `True` | `False` | **clear** — flag consumed |
 | `0` | `True` | `True` | preserve — flag deferred |
 | `0` | `False` | any | **preserve** — no-op |

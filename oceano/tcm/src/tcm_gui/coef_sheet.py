@@ -7,7 +7,7 @@ import logging
 import operator
 from collections.abc import Callable, Mapping
 from contextlib import suppress
-from tkinter import TclError, ttk
+from tkinter import TclError
 from types import SimpleNamespace
 from typing import Any, Final
 
@@ -29,9 +29,121 @@ _l = logging.getLogger(__name__)
 # Exclude `dates` / `date` which are handled as tree-level metadata, not row items.
 _COEF_FIELDS = [f.name for f in dataclasses.fields(COEFS_TYPE) if f.name not in ("dates", "date")]
 _1D_WITH_DATES = {"kVabs"}  # единственное 1D с датами → parent+child
-_SUB = "₁₂₃₄₅₆₇₈₉"
 _DATE_COL = 2  # sheet col: 0=tree 1=₁ 2=₂/date 3=₃…
 _INTENT_MS: Final[int] = 120  # hover-intent delay for floated PathField (ms)
+_RESIZE_ZONE: Final[int] = 8  # px from cell boundary to activate resize cursor
+_RESIZE_CURSOR: Final[str] = "sb_h_double_arrow"
+
+
+class CellBoundaryColumnResize:
+    """Column resizing from selected cell boundaries, without a visible header.
+
+    ``resize_cells`` contains ``(row, column)`` tksheet-internal coordinates.
+    A cell enables the boundary immediately to its RIGHT, i.e. ``(row, column)``
+    enables resizing column ``column`` (the left column of that boundary).
+
+    The resize operation changes the complete column, exactly as normal tksheet
+    column resizing does — via :meth:`Sheet.column_width`.
+    """
+
+    def __init__(
+        self,
+        sheet: Sheet,
+        resize_cells: set[tuple[int, int]] = frozenset(),
+        on_complete: Callable | None = None,
+    ):
+        self.sheet = sheet
+        self.mt = sheet.MT
+        self.resize_cells: set[tuple[int, int]] = set(resize_cells)
+        self._on_complete = on_complete
+
+        self._col: int | None = None  # column being resized
+        self._x0: int | None = None  # press x
+        self._w0: int | None = None  # original width
+
+        self._cursor_on = False
+
+        self.mt.bind("<Motion>", self._on_motion, add="+")
+        self.mt.bind("<Leave>", self._on_leave, add="+")
+        self.mt.bind("<ButtonPress-1>", self._on_press, add="+")
+        self.mt.bind("<B1-Motion>", self._on_drag, add="+")
+        self.mt.bind("<ButtonRelease-1>", self._on_release, add="+")
+
+    # -- public API -----------------------------------------------------------
+
+    def set_resize_cells(self, cells: set[tuple[int, int]]) -> None:
+        self.resize_cells = set(cells)
+        self._reset_cursor()
+
+    # -- hit testing ----------------------------------------------------------
+
+    def _boundary_col_at(self, x: int, y: int) -> int | None:
+        """Return the resizeable column for a boundary under the cursor, or ``None``.
+
+        Column boundaries are global — any row with data in that column makes
+        the boundary resizeable.  This avoids row-space ambiguity between
+        ``identify_row`` (display) and ``_row_map`` (internal).
+        """
+        if not self.resize_cells:
+            return None
+        positions = self.sheet.get_column_widths(canvas_positions=True)
+        cx = self.mt.canvasx(x)
+        # Collect unique right-boundaries from resize cells: column c → positions[c+1]
+        boundaries = {c: positions[c + 1] for _, c in self.resize_cells if c + 1 < len(positions)}
+        for c, bx in boundaries.items():
+            if abs(cx - bx) <= _RESIZE_ZONE:
+                return c
+        return None
+
+    # -- mouse handlers -------------------------------------------------------
+
+    def _on_motion(self, event) -> None:
+        if self._col is not None:
+            return
+        (self._set_cursor if self._boundary_col_at(event.x, event.y) is not None else self._reset_cursor)()
+
+    def _on_leave(self, _event) -> None:
+        if self._col is None:
+            self._reset_cursor()
+
+    def _on_press(self, event) -> str | None:
+        if (col := self._boundary_col_at(event.x, event.y)) is None:
+            return None
+        self._col, self._x0, self._w0 = col, event.x, self.sheet.column_width(col)
+        self._set_cursor()
+        # Deselect so the selection box doesn't lag during drag.
+        with suppress(AttributeError, TclError):
+            self.sheet.deselect()
+        return "break"
+
+    def _on_drag(self, event) -> str | None:
+        if self._col is None:
+            return None
+        self.sheet.column_width(self._col, width=self._w0 + event.x - self._x0)
+        # Force immediate visual update (redraw=True alone may not repaint fast enough).
+        self.sheet.refresh()
+        return "break"
+
+    def _on_release(self, _event) -> str | None:
+        if self._col is None:
+            return None
+        self._col = self._x0 = self._w0 = None
+        self._set_cursor()
+        if self._on_complete:
+            self._on_complete()
+        return "break"
+
+    # -- cursor ---------------------------------------------------------------
+
+    def _set_cursor(self) -> None:
+        if not self._cursor_on:
+            self.mt.configure(cursor=_RESIZE_CURSOR)
+            self._cursor_on = True
+
+    def _reset_cursor(self) -> None:
+        if self._cursor_on:
+            self.mt.configure(cursor="")
+            self._cursor_on = False
 
 
 class ConfigSheet:
@@ -55,21 +167,33 @@ class ConfigSheet:
         self.sh = Sheet(
             parent,
             treeview=True,
+            show_header=False,
             show_horizontal_grid=False,
             show_vertical_grid=False,
             allow_cell_overflow=True,
+            scrollbar_theme_inheritance="clam",
         )
+        # Apply dark theme to tksheet when system theme is dark.
+        if const.THEME == "dark":
+            self.sh.change_theme("dark")
 
-        bg = const.resolved_frame_bg(self.sh)
-        self.sh.set_options(header_bg=bg)
+        # Cell-boundary column resize — registered BEFORE enable_bindings
+        # so resize handlers fire before tksheet's internal click/drag handlers.
+        self._col_resize = CellBoundaryColumnResize(self.sh, on_complete=self._after_column_resize)
+
         self.sh.enable_bindings(["all"])
         self.sh.edit_validation(self._on_edit)
         self.sh.extra_bindings(
             [
                 ("begin_edit_cell", self._on_begin_edit_cell),
                 ("end_edit_cell", self._on_end_edit_cell),
+                # Block selection on non-editable cells — fires inside tksheet's pipeline.
+                ("cell_select", self._on_cell_select),
             ]
         )
+        # Override rc-menu "Insert column/row" to append at end (idx=None → end).
+        self.sh.popup_menu_add_command("Insert column", self._insert_col_at_end)
+        self.sh.popup_menu_add_command("Insert row", lambda e=None: self.sh.insert_row())
 
         self._meta: dict[Any, dict] = {}
         self._nv = 6
@@ -89,10 +213,10 @@ class ConfigSheet:
         self._mgr: BrowseButtonManager | None = None
 
         # ── sheet-hover policy ────────────────────────────────────
-        # Status-bar hook — injected by App: ``cs.on_hover_status = statusbar.set``.
-        # Per-element override in ``hover_status`` keyed by meta ``key``/``path``
-        # (survives reload, unlike iids); fallback: key → label → Hydra path.
-        self.on_hover_status: Callable[[str], None] | None = None
+        # Status-bar hook — injected by App: ``cs.on_hover_status = lambda msg, md: ...``.
+        # Second arg ``md``: True when msg is Markdown (from config_reference.md),
+        # False for plain strings (STR labels, Hydra paths).
+        self.on_hover_status: Callable[[str, bool], None] | None = None
         self.hover_status: dict[str, str] = {}
         self._status_iid: Any = None
         # Track which canvas owns the current status: "tree" (RI) or "data" (MT).
@@ -168,7 +292,7 @@ class ConfigSheet:
             self.sh.enable_bindings(["all"])
 
             self._nv = self._calc_nv(cfg, full)
-            self.sh.headers(list(_SUB[: self._nv]))
+            self.sh.headers([""] * self._nv)
 
             (self._build_full if full else self._build_coefs)(cfg)
             self._apply_open()
@@ -184,6 +308,7 @@ class ConfigSheet:
             self._loading = False
 
         self._take_snapshot()
+        self._stretch_last_col()
 
     def get_edited_coefs(self) -> dict[str, Any]:
         """Read leaf values → coefs dict for YAML write-back."""
@@ -246,8 +371,9 @@ class ConfigSheet:
             if max_col == 0:
                 continue
 
-            vals = self.sh.item(iid).get("values") or ()
-            parts.append((iid, tuple(str(vals[j]) if j < len(vals) else "" for j in range(max_col))))
+            with suppress(ValueError):
+                vals = self.sh.item(iid).get("values") or ()
+                parts.append((iid, tuple(str(vals[j]) if j < len(vals) else "" for j in range(max_col))))
 
         return tuple(parts)
 
@@ -308,7 +434,7 @@ class ConfigSheet:
                 "time_ranges",
                 [any2str(x) for x in tr] + [""] * (self._nv - len(tr)),
                 "",
-                meta={"is_string": True, "max_col": len(tr)},
+                meta={"is_string": True, "max_col": self._nv},
             )
 
         coefs_path = any2str(inp.get("coefs_path", ""))
@@ -527,7 +653,7 @@ class ConfigSheet:
                     key,
                     [any2str(x) for x in value] + [""] * (self._nv - len(value)),
                     "",
-                    meta={"is_string": True, "max_col": len(value)},
+                    meta={"is_string": True, "max_col": self._nv},
                 )
         else:
             self._ins_leaf(par, key, value)
@@ -689,18 +815,30 @@ class ConfigSheet:
 
     def _on_begin_edit_cell(self, event) -> str | None:
         """Detach any previous browse button; attach for path-type rows.
-        Browse rows always edit col 0 — overflow clicks rerouted here."""
+        Browse rows always edit col 0 — overflow clicks rerouted here.
+        Non-data cells (beyond max_col) are rejected — except the date cell."""
         self._hide_hover_field()
-        iid = self._iid_at_row(event.row)
-        m = self._meta.get(iid, {})
-        ri = self._internal_row(iid) if m.get("browse") else None
+        # Unconditional detach — prevents ghost buttons from a previous edit.
         if self._mgr is not None:
             self._mgr.detach()
-            if ri is not None:
-                self._mgr.attach(ri, 0, iid=iid)
+        iid = self._iid_at_row(event.row)
+        m = self._meta.get(iid, {})
+        # Determine editable column limit: explicit max_col > len > scalar=1 > _nv.
+        raw = m.get("max_col", m.get("len"))
+        max_col = int(raw) if raw is not None else (1 if m.get("type") == "scalar" else self._nv)
+        # Date cell is always editable (handled by _on_edit validation).
+        is_date = event.column == _DATE_COL - self.DATA_COL_BASE and m.get("has_date")
+        if not is_date and event.column >= max_col:
+            return None
+        ri = self._internal_row(iid) if m.get("browse") else None
+        if self._mgr is not None and ri is not None:
+            self._mgr.attach(ri, 0, iid=iid)
         if ri is not None:
             return self.sh.get_cell_data(ri, 0)  # overflow click edits the path itself
-        return self.sh.get_cell_data(event.row, event.column)
+        # Use internal row — display row ≠ data-model row when ancestors collapsed.
+        if (int_row := self._internal_row(iid)) is not None:
+            return self.sh.get_cell_data(int_row, event.column)
+        return None
 
     def _on_end_edit_cell(self, event) -> None:
         """Detach browse button (any row); reroute overflow edits to col 0;
@@ -727,6 +865,44 @@ class ConfigSheet:
         self._apply_end_edit_style(event, col=c)
 
     # ── overflow-click redirect ───────────────────────────────────
+
+    def _after_column_resize(self) -> None:
+        """Called after a column resize drag ends — update last-column stretch and scrollbars."""
+        self._stretch_last_col()
+
+    def _insert_col_at_end(self, _event=None) -> None:
+        """Append a column and make it editable for string-list rows (e.g. time_ranges)."""
+        self.sh.insert_column()
+        self._nv += 1
+        for m in self._meta.values():
+            if m.get("is_string") and m.get("max_col") is not None:
+                m["max_col"] = self._nv
+        self._apply_styles()
+
+    def _on_cell_select(self, event) -> None:
+        """Deselect non-editable cells — fires inside tksheet's selection pipeline.
+
+        ``event`` is an ``EventDataDict``.  The actually selected cell is in
+        ``event['selected']`` which may be a ``Selected(row=…, column=…)``
+        namedtuple or a plain tuple depending on the triggering action.
+        """
+        sel = event.get("selected") if isinstance(event, dict) else None
+        if sel is None:
+            return
+        r = getattr(sel, "row", sel[0] if isinstance(sel, (tuple, list)) and len(sel) > 1 else None)
+        c = getattr(sel, "column", sel[1] if isinstance(sel, (tuple, list)) and len(sel) > 1 else None)
+        if r is None or c is None:
+            return
+        iid = self._iid_at_row(r)
+        if iid is None:
+            return
+        m = self._meta.get(iid, {})
+        raw = m.get("max_col", m.get("len"))
+        max_col = int(raw) if raw is not None else (1 if m.get("type") == "scalar" else self._nv)
+        is_date = c == _DATE_COL - self.DATA_COL_BASE and m.get("has_date")
+        if not is_date and c >= max_col:
+            self.sh.after(1, self.sh.deselect)
+
     def _redirect_overflow_click(self, event) -> None:
         """Single-click in a path row's overflow cells → selection box follows
         to col 0. Bound add="+" → post-correction after tksheet's handler;
@@ -766,16 +942,15 @@ class ConfigSheet:
     def _stretch_last_col(self, _event=None) -> None:
         """Stretch the last column to fill the sheet's visible width.
 
-        Debounced via ``after_idle`` to avoid re-entrant column-position
-        updates during redraw (which corrupt ``allow_cell_overflow``).
-        Skipped during ``load()`` — the final ``_apply_styles`` redraw
-        handles it.
+        Debounced via ``after`` to allow tksheet to settle its column positions
+        after a Configure event (``after_idle`` fires too early in some builds).
+        Skipped during ``load()``.
         """
         if self._loading:
             return
         if (job := getattr(self, "_stretch_job", None)) is not None:
             self.sh.after_cancel(job)
-        self._stretch_job = self.sh.after_idle(self._do_stretch_last_col)
+        self._stretch_job = self.sh.after(20, self._do_stretch_last_col)
 
     def _do_stretch_last_col(self) -> None:
         self._stretch_job = None
@@ -784,10 +959,22 @@ class ConfigSheet:
             nc = len(mt.col_positions) - 1
             if nc < 1:
                 return
-            used = mt.col_positions[-1] - mt.col_positions[0]
-            target = max(mt.winfo_width(), used)
-            if mt.col_positions[-1] < target:
-                self.sh.column_width(nc - 1, width=target - mt.col_positions[-2], redraw=True)
+            # Always resize last column to fill the visible width.
+            cur_w = mt.col_positions[-1] - mt.col_positions[-2]
+            new_w = mt.winfo_width() - mt.col_positions[-2]
+            if new_w > 0 and abs(cur_w - new_w) > 1:
+                self.sh.column_width(nc - 1, width=new_w, redraw=True)
+
+        # Auto-hide scrollbars when content fits within the visible area.
+        # 2-px margin prevents oscillation: showing the scrollbar reduces
+        # winfo_width/height, which could otherwise immediately re-trigger show.
+        with suppress(AttributeError, TclError):
+            if len(mt.row_positions) > 1 and (vis_h := mt.winfo_height()) > 10:
+                total_h = mt.row_positions[-1]
+                (self.sh.hide if total_h <= vis_h + 2 else self.sh.show)("y_scrollbar")
+            if len(mt.col_positions) > 1 and (vis_w := mt.winfo_width()) > 10:
+                total_w = mt.col_positions[-1]
+                (self.sh.hide if total_w <= vis_w + 2 else self.sh.show)("x_scrollbar")
 
     def _raw_col(self, event) -> int | None:
         # API drift: identify_col may take an event object or bare x.
@@ -842,9 +1029,9 @@ class ConfigSheet:
         path = str(m.get("path") or "")
         # Section-level: resolve the path as-is (no `.path` suffix).
         if path and (h := help_for_path(path)) and h.short:
-            self.on_hover_status(h.short)
+            self.on_hover_status(h.short, True)
         elif self.on_hover_status is not None:
-            self.on_hover_status(str(m.get("key") or m.get("label") or path or ""))
+            self.on_hover_status(str(m.get("key") or m.get("label") or path or ""), False)
 
     def _publish_status(self, iid: Any) -> None:
         """Status text for the hovered element (data cells on MT canvas).
@@ -867,14 +1054,14 @@ class ConfigSheet:
             return
 
         if iid is None:
-            self.on_hover_status("")
+            self.on_hover_status("", False)
             return
 
         m = self._meta.get(iid, {})
         ident = str(m.get("key") or m.get("path") or m.get("label") or "")
 
         if (txt := self.hover_status.get(ident)) is not None:
-            self.on_hover_status(txt)
+            self.on_hover_status(txt, False)
             return
 
         # Doc-driven help: ``config_reference.md`` → short tooltip per field.
@@ -899,10 +1086,10 @@ class ConfigSheet:
             candidates.append(path)
             for candidate in candidates:
                 if (h := help_for_path(candidate)) and h.short:
-                    self.on_hover_status(h.short)
+                    self.on_hover_status(h.short, True)
                     return
 
-        self.on_hover_status(str(m.get("key") or m.get("label") or m.get("path") or ""))
+        self.on_hover_status(str(m.get("key") or m.get("label") or m.get("path") or ""), False)
 
     def _hover_write(self, text: str) -> None:
         """Write path to column 0 of the hovered row + restyle."""
@@ -1279,12 +1466,6 @@ class ConfigSheet:
 
     # ── styling ─────────────────────────────────────────────────────
 
-    def _style_header(self, bg: str, fg: str) -> None:
-        """Color header row and top-left corner."""
-        sh = self.sh
-        sh.set_options(header_fg=fg, header_bg=bg)
-        sh.highlight_cells(row=0, column=0, canvas="topleft", bg=bg, redraw=False)
-
     def _apply_open(self) -> None:
         """Re-apply desired open states stored in meta during construction."""
         for iid, m in list(self._meta.items()):
@@ -1333,24 +1514,24 @@ class ConfigSheet:
 
     def _apply_styles(self) -> None:
         sh = self.sh
-        style = ttk.Style()
 
         bg = const.resolved_frame_bg(sh)
-        self._fg_default = const.tk_color_to_hex(sh, style.lookup("TFrame", "foreground") or const.FG_DEFAULT)
+        self._fg_default = const.FG_DEFAULT
 
         with suppress(AttributeError, TypeError):
             sh.set_options(index_background=bg)
 
-        self._style_header(bg, const.BLUE_FG)
-
         row_of = self._row_map()
         first_data_col = self.DATA_COL_BASE - 1  # tksheet 0-based
+        total_cols = sh.total_columns()
+        resize_cells: set[tuple[int, int]] = set()
 
         for iid, m in self._meta.items():
             if (r := row_of.get(iid)) is None:
                 continue
 
             is_input = m.get("type") == "input"
+            is_browse = is_input or m.get("browse")
 
             # ── 1) node label — treeview column = "index" canvas ──
             # Input row: button-face bg + normal black fg; other rows: blue/black fg
@@ -1367,9 +1548,10 @@ class ConfigSheet:
                 redraw=False,
             )
 
-            # ── 1b) input.row data cells: paint all columns button-face ──
-            if is_input:
-                for col in range(first_data_col, sh.total_columns()):
+            # ── 1b) browse/input rows: paint ALL columns uniform ──
+            # Prevents colour mismatch between col-0 and overflow columns.
+            if is_browse:
+                for col in range(first_data_col, total_cols):
                     sh.highlight_cells(row=r, column=col, bg=bg, redraw=False)
 
             date_cols = tuple(int(c) for c in (m.get("meta_date_cols") or ()))
@@ -1395,6 +1577,12 @@ class ConfigSheet:
                         )
 
             max_col = int(m.get("max_col") or 0)
+
+            # ── 4) build resize cells: non-browse data cells only ──
+            # Browse rows use overflow — no column boundaries needed.
+            if max_col > 0 and not is_browse:
+                for col in range(max_col):
+                    resize_cells.add((r, col))
 
             for meta_col in range(1, max_col + 1):
                 col = meta_col - self.DATA_COL_BASE
@@ -1434,6 +1622,7 @@ class ConfigSheet:
                     # number / date — right-align
                     sh.align_cells(r, col, align="e", redraw=False)
 
+        self._col_resize.set_resize_cells(resize_cells)
         sh.redraw()
 
     # ── default-value foreground coloring ─────────────────────────────

@@ -251,3 +251,89 @@ class TestSTR:
 
         non_str = {k: type(v).__name__ for k, v in STR.items() if not isinstance(v, str)}
         assert not non_str, f"STR values must all be str (content layer); non-str keys: {non_str}"
+
+
+# ── Theme detection ─────────────────────────────────────────────────────────
+
+
+class TestThemeDetection:
+    """``_detect_windows_theme`` returns 'dark' or 'light'; ``apply_theme_defaults`` mutates colors."""
+
+    def test_detect_returns_valid_theme(self):
+        from tcm_gui.const import _detect_windows_theme
+
+        result = _detect_windows_theme()
+        assert result in ("dark", "light"), f"_detect_windows_theme()={result!r}, expected 'dark' or 'light'"
+
+    def test_apply_sets_func_color(self, _tk_root):
+        if _tk_root is None:
+            pytest.skip("Tk unavailable")
+        from tcm_gui import const
+        from tcm_gui.const import apply_theme_defaults, _DARK, _LIGHT
+
+        theme = apply_theme_defaults(_tk_root)
+        palette = _DARK if theme == "dark" else _LIGHT
+        assert const.FUNC_COLOR == palette["FUNC_COLOR"], (
+            f"FUNC_COLOR={const.FUNC_COLOR!r} ≠ {palette['FUNC_COLOR']!r} for theme={theme}"
+        )
+
+    def test_apply_sets_tag_colors(self, _tk_root):
+        if _tk_root is None:
+            pytest.skip("Tk unavailable")
+        from tcm_gui import const
+        from tcm_gui.const import apply_theme_defaults, _DARK, _LIGHT
+
+        theme = apply_theme_defaults(_tk_root)
+        palette = _DARK if theme == "dark" else _LIGHT
+        for key in ("debug", "info", "warning", "error", "critical"):
+            assert const.TAG_COLORS[key] == palette[key], (
+                f"TAG_COLORS[{key!r}]={const.TAG_COLORS[key]!r} ≠ {palette[key]!r} for theme={theme}"
+            )
+
+    def test_apply_sets_background_fallbacks(self, _tk_root):
+        if _tk_root is None:
+            pytest.skip("Tk unavailable")
+        from tcm_gui import const
+        from tcm_gui.const import _GLOBAL_KEYS, apply_theme_defaults, _DARK, _LIGHT
+
+        theme = apply_theme_defaults(_tk_root)
+        palette = _DARK if theme == "dark" else _LIGHT
+        for key in _GLOBAL_KEYS:
+            actual = getattr(const, key)
+            expected = palette[key]
+            assert actual == expected, f"const.{key}={actual!r} ≠ {expected!r} for theme={theme}"
+
+    def test_apply_sets_theme_var(self, _tk_root):
+        if _tk_root is None:
+            pytest.skip("Tk unavailable")
+        from tcm_gui import const
+        from tcm_gui.const import apply_theme_defaults
+
+        theme = apply_theme_defaults(_tk_root)
+        assert const.THEME == theme, f"THEME={const.THEME!r} ≠ detected {theme!r}"
+
+    def test_apply_dark_configures_ttk_style(self, _tk_root, monkeypatch):
+        if _tk_root is None:
+            pytest.skip("Tk unavailable")
+        from tkinter import ttk
+
+        from tcm_gui import const
+        from tcm_gui.const import apply_theme_defaults
+
+        # Force dark mode regardless of actual system theme.
+        monkeypatch.setattr(const, "_detect_windows_theme", lambda: "dark")
+        apply_theme_defaults(_tk_root)
+        style = ttk.Style()
+        # Dark mode switches to "clam" (native themes ignore style configure).
+        assert style.theme_use() == "clam", (
+            f"ttk theme={style.theme_use()!r}, expected 'clam' for dark mode"
+        )
+        assert style.lookup("TFrame", "background") == const.FRAME_BG_FALLBACK, (
+            f"TFrame bg={style.lookup('TFrame', 'background')!r} ≠ {const.FRAME_BG_FALLBACK!r}"
+        )
+        assert style.lookup("TEntry", "fieldbackground") == const.ENTRY_BG_FALLBACK, (
+            f"TEntry fieldbg={style.lookup('TEntry', 'fieldbackground')!r} ≠ {const.ENTRY_BG_FALLBACK!r}"
+        )
+        assert style.lookup("TLabel", "foreground") == const.FG_DEFAULT, (
+            f"TLabel fg={style.lookup('TLabel', 'foreground')!r} ≠ {const.FG_DEFAULT!r}"
+        )
