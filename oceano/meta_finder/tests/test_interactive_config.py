@@ -1,5 +1,8 @@
 """Test interactive configuration mode functionality."""
 
+import builtins
+import sys
+
 import pytest
 from pathlib import Path
 from meta_finder.config import Config
@@ -60,7 +63,7 @@ class TestInteractiveConfig:
         """
         # Mock input to provide simulated user responses using iterator
         inputs = iter(user_input.splitlines())
-        monkeypatch.setattr("builtins.input", lambda prompt: next(inputs))
+        monkeypatch.setattr(builtins, "input", lambda prompt: next(inputs))
 
         # Call the interactive prompt method
         result = Config._prompt_interactive()
@@ -247,10 +250,10 @@ class TestInteractiveConfig:
         """
         # Mock sys.argv to include --interactive flag
         test_args = ["script_name", "--interactive"]
-        monkeypatch.setattr("sys.argv", test_args)
+        monkeypatch.setattr(sys, "argv", test_args)
 
         # Mock input to provide responses (use wildcard for all defaults)
-        monkeypatch.setattr("builtins.input", lambda prompt: "*")
+        monkeypatch.setattr(builtins, "input", lambda prompt: "*")
 
         # Create config from args
         config = Config.from_args()
@@ -270,12 +273,12 @@ class TestInteractiveConfig:
         """
         # Mock sys.argv to include --interactive flag
         test_args = ["script_name", "--interactive"]
-        monkeypatch.setattr("sys.argv", test_args)
+        monkeypatch.setattr(sys, "argv", test_args)
 
         # Mock input to provide specific values then wildcard
         # Skip first two fields (top_search_dirs, cruise_dir) with empty strings
         inputs = iter(["", "", "true", "false", "*"])
-        monkeypatch.setattr("builtins.input", lambda prompt: next(inputs))
+        monkeypatch.setattr(builtins, "input", lambda prompt: next(inputs))
 
         # Create config from args
         config = Config.from_args()

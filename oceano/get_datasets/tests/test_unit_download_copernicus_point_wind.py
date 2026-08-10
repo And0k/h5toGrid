@@ -83,9 +83,9 @@ def test_download_history_manager_load_history(setup_unit_test_environment):
 
 
 # Unit tests for interp_to_point (mocking xarray and safe_netcdf_atomic)
-@patch('xarray.open_dataset')
-@patch('d_utils.safe_netcdf_atomic')
-@patch('d_utils.interp_angle') # Patch interp_angle directly
+@patch.object(xr, 'open_dataset')
+@patch.object(d_utils, 'safe_netcdf_atomic')
+@patch.object(d_utils, 'interp_angle') # Patch interp_angle directly
 def test_interp_to_point(mock_interp_angle, mock_safe_netcdf_atomic, mock_open_dataset, setup_unit_test_environment):
     test_base_path, _ = setup_unit_test_environment
     dummy_nc_file = test_base_path / "dummy_input.nc"
@@ -168,9 +168,9 @@ def test_interp_to_point(mock_interp_angle, mock_safe_netcdf_atomic, mock_open_d
     assert result_path.name.startswith(f"dummy_input-to_{lon}E_{lat}N")
     assert result_path.suffix == ".nc"
 
-@patch('xarray.open_dataset')
-@patch('d_utils.safe_netcdf_atomic')
-@patch('d_utils.interp_angle') # Patch interp_angle directly
+@patch.object(xr, 'open_dataset')
+@patch.object(d_utils, 'safe_netcdf_atomic')
+@patch.object(d_utils, 'interp_angle') # Patch interp_angle directly
 def test_interp_to_point_angular_vars(mock_interp_angle, mock_safe_netcdf_atomic, mock_open_dataset, setup_unit_test_environment):
     test_base_path, _ = setup_unit_test_environment
     dummy_nc_file = test_base_path / "dummy_angular_input.nc"

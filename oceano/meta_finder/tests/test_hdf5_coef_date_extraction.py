@@ -9,6 +9,8 @@ import sys
 import numpy as np
 from datetime import datetime
 
+import meta_finder.hdf5_processor as _hdf5_proc
+
 dev_id = "i7"
 dev_id_to_norm = "i07"
 
@@ -20,7 +22,7 @@ def test_extract_coef_date_from_hdf5(mocker):
     from meta_finder.hdf5_processor import extract_coef_date_from_hdf5
 
     # Mock HDF5 file operations
-    mock_tables = mocker.patch('meta_finder.hdf5_processor.tables')
+    mock_tables = mocker.patch.object(_hdf5_proc, "tables")
     mock_file = mocker.MagicMock()
     mock_date_node = mocker.MagicMock()
 
@@ -53,7 +55,7 @@ def test_extract_coef_date_different_scenarios(mocker, date_values, expected_res
     from meta_finder.hdf5_processor import extract_coef_date_from_hdf5
 
     # Mock HDF5 file operations
-    mock_tables = mocker.patch('meta_finder.hdf5_processor.tables')
+    mock_tables = mocker.patch.object(_hdf5_proc, "tables")
     mock_file = mocker.MagicMock()
     mock_date_node = mocker.MagicMock()
 
@@ -97,7 +99,7 @@ def test_extract_all_coef_dates_from_hdf5_files(mocker):
             h5_files = [dummy_h5]
 
             # Mock the file operations
-            mock_tables = mocker.patch('meta_finder.hdf5_processor.tables')
+            mock_tables = mocker.patch.object(_hdf5_proc, "tables")
             mock_file = mocker.MagicMock()
             mock_date_node = mocker.MagicMock()
 
@@ -139,7 +141,7 @@ def test_extract_time_range_from_hdf5_index(mocker):
     from meta_finder.hdf5_processor import extract_time_range_from_hdf5_index
 
     # Mock the _convert_timestamps function to return predictable values
-    mock_convert_timestamps = mocker.patch('meta_finder.hdf5_processor._convert_timestamps',
+    mock_convert_timestamps = mocker.patch.object(_hdf5_proc, "_convert_timestamps",
                                           side_effect=lambda time_values, attrs, start_idx, end_idx: ("2020-01-01 10:00:00", "2020-01-01 11:00:00"))
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -157,7 +159,7 @@ def test_extract_time_range_from_hdf5_index(mocker):
         }
 
         # Mock the file operations
-        mock_tables = mocker.patch('meta_finder.hdf5_processor.tables')
+        mock_tables = mocker.patch.object(_hdf5_proc, "tables")
         mock_file = mocker.MagicMock()
         mock_table = mocker.MagicMock()
         mock_cols = mocker.MagicMock()

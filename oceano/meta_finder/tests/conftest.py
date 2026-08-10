@@ -3,6 +3,8 @@ import pytest
 from pathlib import Path
 import shutil
 
+import meta_finder.logging_config as _log_cfg
+
 
 # Set the environment variable at the module level, before any imports that might trigger logging
 os.environ['META_FINDER_TEST_MODE'] = '1'
@@ -74,7 +76,7 @@ def mock_setup_logging(mocker, test_output_dir):
         )
 
     # Mock the setup_logging function in the module where it's used
-    mocker.patch('meta_finder.logging_config.setup_logging', side_effect=patched_setup_logging)
+    mocker.patch.object(_log_cfg, "setup_logging", side_effect=patched_setup_logging)
     return patched_setup_logging  # Return for potential use in tests if needed
 
 

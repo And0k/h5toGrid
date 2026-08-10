@@ -5,6 +5,8 @@ from unittest.mock import patch, MagicMock
 import sys
 import os
 
+import get_datasets.download_copernicus as _dc
+
 # No need to add src directory to path anymore as files have been moved
 
 from get_datasets.download_copernicus import main
@@ -32,8 +34,8 @@ class TestDownloadCopernicus:
                 assert isinstance(coords['lat'], float)
                 assert isinstance(coords['lon'], float)
 
-    @patch('get_datasets.download_copernicus.cm')
-    @patch('get_datasets.download_copernicus.DownloadHistoryManager')
+    @patch.object(_dc, 'cm')
+    @patch.object(_dc, 'DownloadHistoryManager')
     def test_main_with_points_config(self, mock_history_manager, mock_copernicus):
         """Test main function with points configuration"""
         # Mock the copernicusmarine library
@@ -65,7 +67,7 @@ class TestDownloadCopernicus:
         mock_cfg.get.return_value = None
 
         # Mock the OmegaConf container
-        with patch('get_datasets.download_copernicus.OmegaConf') as mock_omegaconf:
+        with patch.object(_dc, 'OmegaConf') as mock_omegaconf:
             mock_omegaconf.to_container.return_value = {'projects': {'abp56_tchain': {}}}
 
             # Call main with the mock config
@@ -78,8 +80,8 @@ class TestDownloadCopernicus:
                 # but we're primarily testing that the logic paths work
                 pass
 
-    @patch('get_datasets.download_copernicus.cm')
-    @patch('get_datasets.download_copernicus.DownloadHistoryManager')
+    @patch.object(_dc, 'cm')
+    @patch.object(_dc, 'DownloadHistoryManager')
     def test_main_with_bbox_config(self, mock_history_manager, mock_copernicus):
         """Test main function with bbox configuration"""
         # Mock the copernicusmarine library
@@ -116,7 +118,7 @@ class TestDownloadCopernicus:
         mock_cfg.get.return_value = None
 
         # Mock the OmegaConf container
-        with patch('get_datasets.download_copernicus.OmegaConf') as mock_omegaconf:
+        with patch.object(_dc, 'OmegaConf') as mock_omegaconf:
             mock_omegaconf.to_container.return_value = {'projects': {'abp56_tchain': {}}}
 
             # Call main with the mock config

@@ -1,3 +1,4 @@
+import builtins
 import io  # Added for StringIO
 import json
 from pathlib import Path
@@ -7,6 +8,7 @@ import pytest
 import xarray as xr
 
 from get_datasets import d_utils, manager
+import get_datasets.utils_refactored as _utils
 
 
 @pytest.fixture
@@ -29,8 +31,8 @@ def set_current_test_name(request):
     # pytest.current_test_name = request.node.name # Removed this line as it's not a standard pytest attribute
     pass # No operation needed if not setting a global
 
-@patch('with_manager.manager.Path')
-@patch('builtins.open', new_callable=MagicMock) # Mock builtins.open
+@patch.object(manager, 'Path')
+@patch.object(builtins, 'open', new_callable=MagicMock) # Mock builtins.open
 def test_download_history_manager_init(mock_open, mock_path, setup_unit_test_environment):
     test_base_path, history_file = setup_unit_test_environment
     mock_path.return_value = history_file
@@ -43,8 +45,8 @@ def test_download_history_manager_init(mock_open, mock_path, setup_unit_test_env
     assert manager.history_file == history_file
     print(f"Loaded {len(manager.history_entries)} history entries.")
 
-@patch('with_manager.manager.Path')
-@patch('builtins.open', new_callable=MagicMock) # Mock builtins.open
+@patch.object(manager, 'Path')
+@patch.object(builtins, 'open', new_callable=MagicMock) # Mock builtins.open
 def test_download_history_manager_log_download(mock_open, mock_path, setup_unit_test_environment):
     test_base_path, history_file = setup_unit_test_environment
     mock_path.return_value = history_file
@@ -74,8 +76,8 @@ def test_download_history_manager_log_download(mock_open, mock_path, setup_unit_
     print(f"Saved {len(manager.history_entries)} history entries to {history_file}.")
     print(f"Download logged: {manager.history_entries[0]}")
 
-@patch('with_manager.manager.Path')
-@patch('builtins.open', new_callable=MagicMock) # Mock builtins.open
+@patch.object(manager, 'Path')
+@patch.object(builtins, 'open', new_callable=MagicMock) # Mock builtins.open
 def test_download_history_manager_load_history(mock_open, mock_path, setup_unit_test_environment):
     test_base_path, history_file = setup_unit_test_environment
     mock_path.return_value = history_file
@@ -99,8 +101,8 @@ def test_download_history_manager_load_history(mock_open, mock_path, setup_unit_
     print(f"Loaded {len(manager.history_entries)} history entries.")
 
 
-@patch('utils_refactored.safe_netcdf_atomic')
-@patch('utils_refactored.interp_angle') # Patch interp_angle directly
+@patch.object(_utils, 'safe_netcdf_atomic')
+@patch.object(_utils, 'interp_angle') # Patch interp_angle directly
 def test_interp_to_point(mock_interp_angle, mock_safe_netcdf_atomic, setup_unit_test_environment):
     test_base_path, _ = setup_unit_test_environment
     # Use the provided original CMEMS file instead of a dummy file
@@ -117,8 +119,8 @@ def test_interp_to_point(mock_interp_angle, mock_safe_netcdf_atomic, setup_unit_
     assert result_path.name.startswith(f"dummy_input-to_{lon}E_{lat}N")
     assert result_path.suffix == ".nc"
 
-@patch('utils_refactored.safe_netcdf_atomic')
-@patch('utils_refactored.interp_angle') # Patch interp_angle directly
+@patch.object(_utils, 'safe_netcdf_atomic')
+@patch.object(_utils, 'interp_angle') # Patch interp_angle directly
 def test_interp_to_point_angular_vars(mock_interp_angle, mock_safe_netcdf_atomic, setup_unit_test_environment):
     test_base_path, _ = setup_unit_test_environment
     # Use the provided original CMEMS file for angular vars test as well

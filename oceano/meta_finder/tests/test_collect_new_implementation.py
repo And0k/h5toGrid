@@ -10,6 +10,8 @@ import logging
 
 import pytest
 
+import meta_finder.collect as _collect
+
 from meta_finder.collect import (
     get_all_data_files_for_device_dir,
     add_all_data_paths,
@@ -164,7 +166,7 @@ def test_get_prioritized_data_sources_for_time_extraction():
     assert first_meta["averaging_interval"] == 2
 
 
-@patch('meta_finder.collect.extract_time_info_from_text_file')
+@patch.object(_collect, 'extract_time_info_from_text_file')
 def test_extract_time_metadata_from_prioritized_sources(mock_extract):
     """Test extraction of time metadata from prioritized sources."""
     # Mock the time extraction function to return specific values
@@ -196,7 +198,7 @@ def test_update_device_metadata_with_time_info():
     }
 
     # Mock time info to add
-    with patch('meta_finder.collect.extract_time_metadata_from_prioritized_sources') as mock_extract:
+    with patch.object(_collect, 'extract_time_metadata_from_prioritized_sources') as mock_extract:
         mock_extract.return_value = {
             "time_st": "2023-05-08 12:00:00",
             "time_en": "2023-05-08 14:00:00",
@@ -204,7 +206,7 @@ def test_update_device_metadata_with_time_info():
             "bursts_t": 2
         }
 
-        with patch('meta_finder.collect.get_prioritized_data_sources_for_time_extraction') as mock_get_prioritized:
+        with patch.object(_collect, 'get_prioritized_data_sources_for_time_extraction') as mock_get_prioritized:
             mock_get_prioritized.return_value = {"i03": []}
 
             update_device_metadata_with_time_info(devices_data)

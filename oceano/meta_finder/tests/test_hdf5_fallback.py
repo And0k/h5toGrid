@@ -7,6 +7,8 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 import numpy as np
 
+import meta_finder.hdf5_processor as _hdf5_proc
+
 from meta_finder import config
 from meta_finder.hdf5_processor import extract_time_range_from_hdf5_table
 from meta_finder.hdf5_processor import find_hdf5_files
@@ -80,7 +82,7 @@ def test_find_hdf5_files(common_test_data_setup):
     assert h5_files['raw'][0].name == "raw_test.h5", "should find correct raw file as per: correct file mapping"
 
 
-@patch('meta_finder.hdf5_processor.tables')
+@patch.object(_hdf5_proc, 'tables')
 def test_extract_time_range_from_hdf5_table(mock_tables):
     """Test extracting time range from HDF5 table."""
 
@@ -162,7 +164,7 @@ def test_extract_time_range_from_hdf5_table(mock_tables):
     assert burst_dt == "-", "should return default burst_dt value as per: HDF5 files use default burst values"
 
 
-@patch('meta_finder.hdf5_processor.tables')
+@patch.object(_hdf5_proc, 'tables')
 def test_extract_time_ranges_from_hdf5_combined(mock_tables):
     """Test extracting time ranges from combined HDF5 table with multiple devices."""
 
