@@ -6,94 +6,48 @@ All fields are defined in `tcm/schema.py` via the `Config` dataclass and registe
 
 Every run YAML starts with `# @package _global_` so Hydra merges it into the top-level Config.
 
+> **Behavior tuning & decision tables** (phase-stopping, time correction modes,
+> column order, `overwrite_db`, azimuth calibration, YAML examples) are in
+> [config_tuning.md](config_tuning.md).  Implementation internals live in
+> [how_it_works.md](how_it_works.md).
+
 ## `input` — Data source & parameters
 
 | Field | Type | Default | Required | Purpose |
 |-------|------|---------|----------|---------|
-| `path` | `str` | — | **Yes** | File path, glob, or regex pattern (CLI input). Interpreted as glob or regex automatically (see [Pattern interpretation](#pattern-interpretation)). **Inside per‑probe YAMLs** this field always stores the **resolved absolute path** to the concrete data file — never the user's glob/regex. When the CLI value is not a directory, it acts as a **filter**: only YAMLs whose stored resolved `input.path` filename matches the CLI pattern are processed. Re‑running with a different CLI pattern limits processing to YAMLs whose resolved paths match. |
-| `tables` | `List[str]` | `['incl*']` | No | HDF5 table names (regex allowed). For CSV, set to the raw table name derived from pcid. |
-| `ids` | `List[str]` | `None` | No | Restrict processing to specific probe IDs (e.g. `[i01, i_p02]`). |
-| `yaml_path` | `str` | `None` | No | **Filter + skip-generation**: glob/regex pattern matched against run YAML stems in `cfg_proc/run/`. Accepts both bare stems (`@i_01`) and full filenames (`@i_01.yaml`). When set (any non‑`None` value), **config generation is skipped entirely** — only existing YAMLs matching the pattern are processed. `"*"` matches all. See [Config filtering](#config-filtering). |
-| `prefix` | `str` | `'I*[_0]'` | No | Filename prefix for CSV discovery. |
-| `text_type` | `str` | `None` | No | Column layout variant: `i`, `p`, `b`, `d`, `w`. Auto‑derived from filename model. See [Text type → column layout](#text-type--column-layout). |
-| `text_line_regex` | `str` | `None` | No | Override regex for raw text correction. |
-| `coefs` | `ConfigInCoefs_InclProc` | defaults (see [§coefs](#inputcoefs--calibration-coefficients)) | **Yes** | Calibration coefficients. **Auto‑loaded** from coefficient file; user edits per‑probe. |
-| `coefs_path` | `str` | `tcm/cfg/coef/calibration.h5` | No | Path to HDF5 coefficients file or YAML export dir. The sibling `cfg/coef/yaml_export/` dir is **always** appended as a silent fallback (noh5 / `dist/tcm_clc_txt` packaging). |
-| `date_to_from` | `List[Any]` | `None` | No | Time shift: `[real_time, raw_time]` — two points to linearly map timestamps. |
-| `dt_from_utc` | `int` | `0` | No | UTC offset in seconds. |
-| `min_date` | `str` | `None` | No | **Sugar** — folded into `time_ranges` at compose. Not in structured schema. |
-| `max_date` | `str` | `None` | No | **Sugar** — folded into `time_ranges` at compose. Not in structured schema. |
-| `time_ranges` | `List[str]` | `None` | No | **Source of truth** for time window. Explicit intervals `[start, end, …]`. **Auto‑populated** from first/last data row on initial generation. |
-| `min` | `Dict[str, float]` | `{}` | No | **Load-stage DROP**: raw-column lower bounds. Rows with `col < min[col]` are **dropped**. `M` shorthand expanded to `Mx`/`My`/`Mz` at compose. |
-| `max` | `Dict[str, float]` | `{}` | No | **Load-stage DROP**: raw-column upper bounds. Same expansion as `min`. |
-| `corr_time_mode` | `[bool, str, None]` | `True` | No | Time correction mode (moved from `filter`). See [Time correction modes](#time-correction-modes). |
-| `corr_time_outlier_threshold_s` | `float` | `0.6` | No | Spike/backward threshold for `_correct_time()` (**seconds**; moved from `filter`). |
-| `dt_interp_between` | `float` | `1.5` | No | Gap threshold for interpolation between bursts (**seconds**; moved from `filter`). |
-| `coordinates` | `List[float]` | `None` | No | `[Lat, Lon]` for magnetic declination. |
-| `time_ranges_zeroing` | `List[str]` | `[]` | No | Intervals for tilt zeroing (``Rz`` rotation). |
-| `time_ranges_azimuth` | `List[str]` | `[]` | No | Intervals for tilt direction azimuth (``azimuth_shift_deg`` from mag+accel unit vectors). |
-| `azimuth_add` | `float` | `0` | No | Manual azimuth offset (degrees). |
-| `max_incl_of_fit_deg` | `float` | `None` | No | Inclination (deg) where Vabs curve flattens; used in calibration. |
-| `calc_version` | `str` | `'trigonometric(incl)'` | No | Vabs calculation variant. |
-| `dt_hole_warning` | `int` | `600` | No | Warn if max data gap > this (**seconds**). `None` disables. |
-| `fs_rounding` | `int` | `100` | No | Frequency estimation rounding target (0 disables). |
-| `tables_log` | `List[str]` | `['{}/logFiles']` | No | NC log group name template (overrides hardcoded `"logFiles"`). |
-
-### Pattern interpretation
-
-`input.path` is automatically classified as **glob** or **regex**:
-
-| Condition | Mode | Example input | Effective regex |
-|-----------|------|---------------|-----------------|
-| Invalid regex (compilation fails) | glob | `*[0bdp]*.txt` | `.*?[0bdp].*?\.txt` |
-| Valid regex, extension dot **unescaped** | glob | `file?.txt` | `file.\.txt` |
-| Valid regex with `|` or `(...)` wrapper | regex | `(a\|b).txt` | `(a\|b).txt` |
-| Valid regex, extension dot **escaped** (`\.`) | regex | `i.*\.txt` | `i.*\.txt` |
-| `path` is a directory | default regex `i.*\.txt` | `_raw/` | `i.*\.txt` |
-
-The "extension dot" is the last `.` before a suffix containing no further dots.
-Glob conversion: `*` → `.*?`, `?` → `.`, all dots → `\.` (all case-insensitive).
-
-**Directory mode**: when `path` points to a directory, the default regex `i.*\.txt`
-matches any inclinometer `.txt` file. Corrected `@`-prefixed files are always found
-independently — `@?i.*\.txt` and `i.*\.txt` produce identical results because the
-`@` prefix is stripped before pattern matching.
-
-See `how_it_works.md` (§Discovery) for the implementation in `csv_load._pattern_to_regex()`.
-
-### Config filtering
-
-Two parameters control which run YAMLs are processed, both using the same
-glob/regex auto-detection as `input.path` discovery.  The key distinction:
-**CLI values** may be patterns; **YAML stored values** are always resolved
-absolute paths to concrete data files.
-
-| Parameter | Source | Filters against | When set | Config generation |
-|-----------|--------|-----------------|----------|-------------------|
-| `input.path` (not directory) | CLI pattern (glob/regex/concrete) | YAML's resolved `input.path` **filename** | After generation, only YAMLs whose resolved path filename matches are kept | **Runs normally** — generates configs for source files matching the pattern |
-| `input.yaml_path` | CLI pattern (glob/regex) | YAML **filename stem** or **full name** (matches both `stem` and `stem.yaml`) | Only existing YAMLs whose stem matches are processed | **Skipped entirely** — no new configs are created |
-
-When both are set, both filters apply (AND logic): a config must match both
-`input.path` and `yaml_path` to be included.
-
-**Dry-run**: combine with `program.return_=<cfg_from_args>` to list matching
-configs without processing any data:
-
-```bash
-# List all configs (no generation, no processing)
-python scripts/tcm_clc.py "_raw" input.yaml_path="*" program.return_=<cfg_from_args>
-
-# List configs matching a data file pattern (generation runs, then filter)
-python scripts/tcm_clc.py "_raw/@i_p5*.TXT" program.return_=<cfg_from_args>
-
-# List configs matching a YAML stem pattern (no generation)
-python scripts/tcm_clc.py "_raw" input.yaml_path="*@i_p5*" program.return_=<cfg_from_args>
-```
+| `path` | `str` | — | **Yes** | Absolute path to the data file (auto-resolved from CLI glob/regex). Supports glob (`*i*.txt`) and regex (`i.*\.txt`) patterns — the pipeline detects which automatically. Re-run with a narrower pattern to process only matching probes. |
+| `tables` | `List[str]` | `['incl*']` | No | Data groups to read — accepts regex (`incl*` matches all inclinometer groups). Auto-derived from filename for CSV. |
+| `ids` | `List[str]` | `None` | No | Process only these probe IDs (e.g. `[i01, i_p02]`). Re-run a single problematic probe without touching others. |
+| `yaml_path` | `str` | `None` | No | Filter existing configs by YAML filename pattern (`*` = all). When set, **no new configs are generated** — only existing YAMLs matching the pattern are processed. Combine with `program.return_=<cfg_from_args>` for a dry-run. |
+| `prefix` | `str` | `'I*[_0]'` | No | Filename prefix filter for CSV file discovery. |
+| `text_type` | `str` | `None` | No | Column layout variant (`i`, `p`, `b`, `d`, `w`). Auto-detected from file header; override here if detection fails. |
+| `text_line_regex` | `str` | `None` | No | Custom regex for raw text line parsing. Only needed when auto-detection fails on unusual file formats. |
+| `coefs` | `ConfigInCoefs_InclProc` | defaults (see [§coefs](#inputcoefs--calibration-coefficients)) | **Yes** | Calibration coefficients — the heart of measurement accuracy. Auto-loaded on first run; edit here to fine-tune a specific probe. |
+| `coefs_path` | `str` | `tcm/cfg/coef/calibration.h5` | No | Path to coefficient source file (HDF5 or YAML directory). Falls back to bundled `cfg/coef/yaml_export/` silently when missing. |
+| `date_to_from` | `List[Any]` | `None` | No | Two-point time correction `[real_time, raw_time]`. Maps raw instrument timestamps to real-world time via linear interpolation. |
+| `dt_from_utc` | `int` | `0` | No | UTC offset in seconds. Set to your timezone to convert instrument time to UTC. |
+| `min_date` | `str` | `None` | No | Convenience shorthand for `time_ranges` — automatically merged. |
+| `max_date` | `str` | `None` | No | Convenience shorthand for `time_ranges` — automatically merged. |
+| `time_ranges` | `List[str]` | `None` | No | Time window for processing `[start, end, …]` in ISO format. Auto-populated from data on first run — narrow it to focus on specific periods. |
+| `min` | `Dict[str, float]` | `{}` | No | Hard lower bounds on raw sensor values. Rows outside bounds are **removed entirely** (not just NaN'd). `M` expands to `Mx`/`My`/`Mz`. |
+| `max` | `Dict[str, float]` | `{}` | No | Hard upper bounds on raw sensor values. Same `M` expansion as `min`. |
+| `corr_time_mode` | `[bool, str, None]` | `True` | No | Integer-second timestamp handling: `True` = snap to sub-second grid, `None` = mask-only, `"delete_inversions"` = clean but keep timestamps. |
+| `corr_time_outlier_threshold_s` | `float` | `0.6` | No | Spike detection sensitivity (seconds). Lower = stricter. Samples deviating more than this from neighbors are flagged. |
+| `dt_interp_between` | `float` | `1.5` | No | Minimum gap (seconds) to distinguish a real data hole from jitter within a burst. |
+| `coordinates` | `List[float]` | `None` | No | Station `[Lat, Lon]` for magnetic declination — enables true-north velocity directions. |
+| `time_ranges_zeroing` | `List[str]` | `[]` | No | Time intervals where the instrument was level. Pipeline computes a zeroing rotation to remove sensor misalignment. |
+| `time_ranges_azimuth` | `List[str]` | `[]` | No | Time intervals where the instrument was tilted in a known direction. Pipeline calibrates azimuth correction from this data. |
+| `azimuth_add` | `float` | `0` | No | Manual azimuth fine-tuning (degrees), added on top of the data-calibrated shift. |
+| `max_incl_of_fit_deg` | `float` | `None` | No | Inclination angle (degrees) above which the velocity curve flattens — used to calibrate the kVabs polynomial for extreme tilts. |
+| `calc_version` | `str` | `'trigonometric(incl)'` | No | Velocity calculation method. `trigonometric(incl)` is standard; other variants are experimental. |
+| `dt_hole_warning` | `int` | `600` | No | Alert threshold for data gaps (seconds). Gaps larger than this trigger a warning. `None` disables. |
+| `fs_rounding` | `int` | `100` | No | Round estimated sampling frequency to the nearest multiple of this value. 0 = exact estimation. |
+| `tables_log` | `List[str]` | `['{}/logFiles']` | No | NC log group name template. Default `{}/logFiles` works for standard layouts. |
 
 ## `input.coefs` — Calibration coefficients
 
-Copied from global file (`calibration.h5` or YAML export) into each per‑probe YAML.
-User edits these to update a probe's calibration.
+Loaded from the coefficient file and copied into each per-probe YAML on first run.
+Edit these to update a probe's calibration — changes are persisted automatically.
 
 | Field | Type | Default | Physical meaning |
 |-------|------|---------|------------------|
@@ -101,79 +55,60 @@ User edits these to update a probe's calibration.
 | `Cg` | 3‑float | `[10, 10, 10]` | Accelerometer bias vector |
 | `Ah` | 3×3 float | Identity | Magnetometer scale matrix: `H = Ah @ (Mxyz − Ch)` |
 | `Ch` | 3‑float | `[10, 10, 10]` | Magnetometer bias vector |
-| `Rz` | 3×3 float | Identity | Combined alignment/rotation matrix applied after `Ag`/`Ah` |
-| `kVabs` | 6‑float | `[10, −10, −10, −3, 3, 70]` | Polynomial: `Vabs(inclination)` |
-| `P` | 2‑float | `[0, 1]` | Auxiliary sensor #1 linear: `y = P[0] + P[1]·x` |
-| `PBattery` | 2‑float | `[0, 1]` | Battery linear correction |
+| `Rz` | 3×3 float | Identity | Sensor-to-instrument alignment rotation applied after calibration |
+| `kVabs` | 6‑float | `[10, −10, −10, −3, 3, 70]` | Velocity polynomial: `Vabs(inclination)` |
+| `P` | 2‑float | `[0, 1]` | Auxiliary sensor #1 linear correction: `y = P[0] + P[1]·x` |
+| `PBattery` | 2‑float | `[0, 1]` | Battery voltage linear correction |
 | `PTemp` | 2‑float | `[0, 1]` | Temperature linear correction |
-| `azimuth_shift_deg` | `float` | `180` | Correction converting tilt direction from sensor to geographic coordinates (degrees). Default `180` compensates the magnetometer sign inversion applied at load time (``invert_magnetometer`` in ``csv_load.py`` → ``Mxyz`` negated in ``format_loaded.py``).  See [Azimuth calibration](#azimuth-calibration). |
-| `g0xyz` | 3‑float | `None` | Alternative gravity vector for zeroing (overrides `Rz` if set) |
+| `azimuth_shift_deg` | `float` | `180` | Azimuth correction (degrees) — converts tilt direction from sensor to geographic coordinates. Default `180°` compensates magnetometer sign inversion at load time. See [Azimuth calibration](config_tuning.md#azimuth-calibration). |
+| `g0xyz` | 3‑float | `None` | User-defined gravity reference vector. When set, overrides `Rz` with a computed rotation. |
 | `dates` | `Dict[str, str]` | `{}` | Per‑component calibration dates |
 | `date` | `str` | `None` | Overall calibration date |
 
-### Coefficient loading priority
-
-1. `input.coefs` in YAML (highest — user edits live here)
-2. File at `input.coefs_path` (HDF5 or YAML directory)
-3. Sibling `cfg/coef/yaml_export/` directory (silent noh5 fallback)
-4. Dataclass defaults (lowest)
-
-When the HDF5 file is missing (e.g. `dist/tcm_clc_txt` packaging), the chain
-falls through to `yaml_export/{tbl}.yaml` silently — no user intervention needed.
-
-Pressure probes (`p`‑type) use `P_t` (2‑D polynomial) instead of the legacy
-scalar `P`/`PBattery`/`PTemp` triples. When `P_t` is loaded or overridden,
-those scalar defaults are silently ignored — no warning about "not redefined".
+Pressure probes (`p`‑type) use `P_t` (2‑D polynomial) instead of the scalar
+`P`/`PBattery`/`PTemp` triples. When `P_t` is present, those scalars are silently ignored.
 
 ## `out` — Output configuration
 
 | Field | Type | Default | Required | Purpose |
 |-------|------|---------|----------|---------|
-| `db_path` | `str` | `None` | No | `.proc.nc` path — combined multi-probe output (probe dimension). |
-| `avg_db_path` | `str` | `None` | No | `.proc_Avg.nc` path — per-probe binned output. |
-| `not_joined_db_path` | `str` | `None` | No | `.proc_noAvg.nc` path — per-probe non-averaged output. |
-| `raw_db_path` | `str` | `None` | No | `.raw.nc` path — raw data + coefficients. |
-| `table` | `str` | `''` | No | Output table name override. When non-empty, overrides the pcid derived from `input.path` for text-file suffixes. The raw value is also used as HDF5 table name (not the derived pcid). |
-| `dt_bins` | `List[int]` | `[0, 2, 600, 3600, 7200]` | **Yes** | Averaging bins (seconds → timedelta). `0` = no averaging.  **noh5 dist** default: `[0, 3600]` (no-avg + 1h only). |
-| `dt_bins_min_save_text` | `int` | `1` | No | Minimum bin size to save text output. Bin=0 skipped when >0.  **noh5 dist** default: `0` (no-avg TSV enabled). |
-| `split_period` | `str` | `''` | No | Pandas offset string to split output blocks (e.g. `'1D'`). |
-| `text_path` | `str` | `'text_output'` | **Yes** | Text output directory. |
-| `text_date_format` | `str` | `'%Y-%m-%d %H:%M:%S.%f'` | No | Date format in text files. |
-| `text_columns` | `List[str]` | `[]` | No | Column filter; empty = all available columns (see §Column order for per-output availability). Columns not present in a given output are silently skipped. |
-| `b_all_to_one_col` | `bool` | `False` | No | Concatenate columns; if true, probes are stacked row‑wise instead. |
-| `b_overwrite_text` | `bool` | `True` | No | Overwrite existing text files. |
-| `b_split_by_time_ranges` | `bool` | `False` | No | Split output by `time_ranges`. |
-| `b_del_temp_db` | `bool` | `False` | No | Delete temporary HDF5 after processing. |
-| `overwrite_db` | `str \| None` | `None` | No | NC overwrite mode. `None` — extend-only (append new data, error if no new data + settings differ). `"export"` — block NC writes, export TSV only. `"splice"` — always reprocess/splice, never trim. `"trim"` — trim-only, never reprocess existing data. See [`overwrite_db` behavior](#overwrite_db-behavior). |
+| `db_path` | `str` | `None` | No | Combined multi-probe output (`.proc.nc`) — all probes merged along a `probe` dimension. |
+| `avg_db_path` | `str` | `None` | No | Per-probe binned output (`.proc_Avg.nc`) — one group per probe per bin size. |
+| `not_joined_db_path` | `str` | `None` | No | Per-probe full-resolution output (`.proc_noAvg.nc`) — every sample preserved. |
+| `raw_db_path` | `str` | `None` | No | Raw data archive (`.raw.nc`) — unprocessed readings + calibration coefficients for later reprocessing. |
+| `table` | `str` | `''` | No | Override output table name. When non-empty, replaces the auto-derived pcid for text-file suffixes and HDF5 group names. |
+| `dt_bins` | `List[int]` | `[0, 2, 600, 3600, 7200]` | **Yes** | Time averaging bins (seconds). `0` = full resolution. Multiple values produce separate outputs (e.g. `[0, 600, 3600]` = full + 10 min + 1 h). |
+| `dt_bins_min_save_text` | `int` | `1` | No | Minimum bin size (seconds) for TSV export. Bin=0 skipped when >0. Set to 0 to include full-resolution data in text output. |
+| `split_period` | `str` | `''` | No | Split output into time blocks (e.g. `'1D'` = daily files). Empty = single continuous output. |
+| `text_path` | `str` | `'text_output'` | **Yes** | Directory for TSV output files. Created automatically if missing. |
+| `text_date_format` | `str` | `'%Y-%m-%d %H:%M:%S.%f'` | No | Date format string for TSV timestamps. |
+| `text_columns` | `List[str]` | `[]` | No | Filter which columns appear in TSV output. Empty = all available. Columns listed but absent from a particular output are silently skipped. |
+| `b_all_to_one_col` | `bool` | `False` | No | Multi-probe layout: `False` = interleave columns (`v_i01, u_i01, …`), `True` = stack rows. |
+| `b_overwrite_text` | `bool` | `True` | No | Overwrite existing TSV files. Set `False` to keep previous exports. |
+| `b_split_by_time_ranges` | `bool` | `False` | No | Split output by `time_ranges` boundaries — each interval gets its own file. |
+| `b_del_temp_db` | `bool` | `False` | No | Delete temporary HDF5 files after processing. |
+| `overwrite_db` | `str \| None` | `None` | No | NC overwrite strategy. `None` = append-only (safe). `"splice"` = replace overlapping, keep rest. `"trim"` = delete outside `time_ranges`. `"export"` = TSV only, no NC writes. See [`overwrite_db` behavior](config_tuning.md#overwrite_db-behavior). |
 
-## `filter` — Process-stage NaN-out thresholds
+## `filter` — Process-stage quality thresholds
 
-`filter` is **process-stage**: values exceeding thresholds are set to NaN
-(rows **preserved**, not dropped).  Contrast with `input.min`/`max` which
-is **load-stage DROP** (rows removed).  Same key names may appear in both
-namespaces — semantically distinct.
+`filter` is **process-stage**: values exceeding thresholds become NaN (rows
+**kept**, not dropped).  Contrast with `input.min`/`max` — **load-stage DROP**
+that removes entire rows.  Same key names may appear in both namespaces with
+different semantics.
 
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
 | `min` | `Dict[str, float]` | `{}` | Lower bounds: values with `\|col\| < min[col]` set to NaN. |
-| `max` | `Dict[str, float]` | `{'g_minus_1': 1, 'h_minus_1': 8}` | Upper bounds. `M` shorthand expanded to `Mx`/`My`/`Mz`. |
-| `bad_p_at_bursts_starts_period` | `str` | `''` | Pandas offset alias (e.g. `'1h'`) for pressure burst NaN-out — nulls first 2 points per burst period. Empty disables. |
+| `max` | `Dict[str, float]` | `{'g_minus_1': 1, 'h_minus_1': 8}` | Upper bounds. `M` expands to `Mx`/`My`/`Mz`. |
+| `bad_p_at_bursts_starts_period` | `str` | `''` | Pressure burst cleanup period (e.g. `'1h'`). Nulls first 2 samples per burst to remove startup artifacts. Empty disables. |
 
-`g_minus_1 = ∥Gxyz∥ − 1` (gravity magnitude deviation), `h_minus_1 = ∥Hxyz∥ − 1` (magnetic magnitude deviation).
-
-### Stage classification: `input` vs `filter`
-
-| Stage | Namespace | Action | Operates on |
-|-------|-----------|--------|-------------|
-| **Load** (DROP) | `input.min` / `input.max` | Rows removed | Raw columns (`Ax`…`Mz`, `P_counts`) |
-| **Load** (window) | `input.time_ranges` | Rows outside window removed | `time` coordinate |
-| **Process** (NaN-out) | `filter.min` / `filter.max` | Values → NaN, rows kept | Computed columns (`g_minus_1`, `h_minus_1`) |
-| **Process** (pressure) | `filter.bad_p_at_bursts_starts_period` | First-2 per burst → NaN | `Pressure` |
+`g_minus_1 = ∥Gxyz∥ − 1` (gravity magnitude deviation),
+`h_minus_1 = ∥Hxyz∥ − 1` (magnetic magnitude deviation).
 
 ### Calibration filter extensions (`filter/calib`)
 
 When the calibration entry point uses `filter: calib`, the filter group adds
-typed despike overrides (mirrors `_dask_legacy/incl_calibr_hy.ConfigFilter`):
+typed despike overrides:
 
 | Field | Type | Purpose |
 |-------|------|---------|
@@ -182,7 +117,7 @@ typed despike overrides (mirrors `_dask_legacy/incl_calibr_hy.ConfigFilter`):
 | `std_smooth_sigma` | `float` | Apex despike smoothing sigma |
 | `A` | `ConfigFilterChannel` | Per-axis overrides for accelerometer |
 | `M` | `ConfigFilterChannel` | Per-axis overrides for magnetometer |
-| `no_works_noise` | `Dict[str, float]` | Noise threshold per channel (`is_works()` — reserved, wire deferred) |
+| `no_works_noise` | `Dict[str, float]` | Noise threshold per channel |
 
 ## `proc` — Per-entry-point processing parameters (optional)
 
@@ -198,340 +133,8 @@ typed despike overrides (mirrors `_dask_legacy/incl_calibr_hy.ConfigFilter`):
 
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
-| `return_` | `str` | `'<end>'` | Controls how far the pipeline runs before stopping. See [Phase-stopping](#phase-stopping). |
-| `dask_scheduler` | `str` | `''` | `'synchronous'`, `'threads'`, `'processes'`, `'distributed'`. |
-| `sleep_s` | `float` | `0.5` | Sleep between probes to manage memory. |
-| `verbose` | `str` | `'INFO'` | Log level. |
-| `use_h5` | `str` | `'auto'` | Control binary (NC/HDF5) I/O. Values: `auto` — enable if `h5py`/`netCDF4` available, skip silently otherwise. `off` — disable; skipped NC operations are logged. `require` — enable if available, **error** if unavailable. `prefer` — enable if available, **warn** and fall back otherwise. Resolved at startup via `policy.IOPolicy.resolve()`. |
-
-## Decision tables and behavior tuning
-
-### Phase-stopping
-
-`program.return_` controls how far the pipeline runs before stopping:
-
-| Value | Stops after | Output produced |
-|-------|-------------|-----------------|
-| `'<end>'` (default) | Full processing | All NC + TSV |
-| `'<saved_raw>'` | Coef persistence + raw NC save | `*.raw.nc` with coefs + log |
-| `'<saved_noavg>'` | noAvg NC write | `*.proc_noAvg.nc` with per-probe groups |
-| `'<saved_all>'` | All NC writes | `*.proc_noAvg.nc` + `*.proc.nc` (no combined output) |
-| `'<cfg_from_args>'` | Config composition | Config dict returned |
-| `'<gen_names_and_log>'` | Config generation | YAML files written |
-
-**Typical use**: debug partial output without waiting for full processing.
-For example, `program.return_='<saved_raw>'` to verify raw data ingestion.
-
-> **noh5 note**: `<saved_raw>` persists coefs to NC when h5py is available, or to
-> the run YAML in noh5 mode. Raw data cannot be saved to NC without pytables, but
-> coef changes ARE written regardless. Coefficients always overwrite in-place;
-> `out.overwrite_db` does NOT affect coef persistence — it only controls whether
-> processed outputs (noAvg/binned) are re-generated when the time range is already
-> covered. See [Updating Coefficients via Zeroing](../README.md#updating-coefficients-via-zeroing)
-> for the coef persistence matrix.
-
-### Time correction modes
-
-`filter.corr_time_mode` controls how the pipeline handles integer-second timestamps:
-
-| Value | Behavior |
-|-------|----------|
-| `True` (default) | **Snap-to-grid**: detects sampling frequency from data, assigns regular sub-second timestamps (e.g. 100 ms at 10 Hz). Backward jumps, spikes, and overlong runs removed first (outlier + trim steps), then the clean subset is snapped. |
-| `None` / `False` | **Mask-only**: removes backward/spike samples via `b_ok` mask but does NOT snap. For integer-second N Hz data, N-1 samples per second are removed → collapses to 1 Hz. |
-| `"delete_inversions"` | Runs full outlier pipeline (trim + spike + backward removal) but timestamps unchanged. Non-monotone positions masked. |
-
-**Config fields affecting time correction** (from `cfg.filter`):
-
-| Field | Default | Effect on `_correct_time` |
-|-------|---------|---------------------------|
-| `corr_time_mode` | `True` | Snap-to-grid vs mask-only vs delete_inversions |
-| `dt_interp_between` | `1.5s` | Minimum gap to detect a real hole (vs jitter within a segment) |
-| `corr_time_outlier_threshold_s` | `0.6s` | Spike/backward detection threshold |
-
-**Edge-row detection**: When data has ≤ 2 time values (config generation mode),
-`time_corr()` skips `_correct_time()` entirely regardless of mode, avoiding
-misleading "freq unknown → defaulting to 1Hz" warnings.
-
-**Diagnostics**: `save_time_corr_diagnostics()` and `plot_time_corr_diagnostics()`
-produce NPZ arrays (accumulated across chunks) with action bitmask per sample:
-
-| Bit | Constant | Meaning |
-|-----|----------|---------|
-| `0x01` | `ACT_TRIM` | Overlong run, sample dropped |
-| `0x02` | `ACT_SPIKE` | Bilateral outlier, dropped |
-| `0x04` | `ACT_BACKWARD` | HWM backward section, dropped |
-| `0x08` | `ACT_HOLE` | Data gap > dt_hole starts here |
-| `0x10` | `ACT_ALARM` | Segment snap RMS exceeds threshold |
-| `0x20` | `ACT_NOT_MONO` | Non-monotone after snap, masked |
-| `0x40` | `ACT_OUT_OF_RANGE` | Excluded by time_ranges |
-
-### Filter expansion
-
-`cfg.filter.max` and `cfg.filter.min` support `M` as a shorthand for `Mx`,
-`My`, `Mz`. If `M` is set but `Mx`/`My`/`Mz` are not, the value is copied
-to all three axes.
-
-```yaml
-# Equivalent configurations:
-filter:
-  max: {M: 5}           # → Mx=5, My=5, Mz=5
-
-# Explicit (overrides M expansion):
-filter:
-  max: {Mx: 5, My: 4, Mz: 6}
-```
-
-### Column order
-
-Output columns are ordered to match legacy convention:
-
-```text
-v, u, inclination                          ← persisted in NC (velocity/direction group)
-Pressure, Temp, Battery, ...               ← remaining sensor variables
-```
-
-**Vabs/Vdir save policy** (implemented in `_xr/physical.py`):
-
-| Output | Vabs/Vdir | inclination |
-|--------|-----------|-------------|
-| NC files (`*.proc_noAvg.nc`, `*.proc_Avg.nc`, `*.proc.nc`) | **not saved** | saved |
-| Per-probe TSV | computed on-the-fly from `v`/`u` | saved |
-| Combined TSV (`@joined.tsv`) | **not saved** | **not saved** |
-
-`Vabs = hypot(v, u)`, `Vdir = degrees(arctan2(u, v))` — exact inverse of
-`polar2dekart`.  The on-the-fly computation is in `physical.add_vabs_vdir()`.
-
-#### Available `text_columns` values
-
-`text_columns` filters which columns appear in TSV output.  Empty (default)
-writes **all available** columns for the given output type.  Columns listed
-but absent from a particular output are silently skipped.
-
-| Column | Per-probe TSV | Combined TSV | Notes |
-|--------|:---:|:---:|-------|
-| `v` | ✓ | ✓ | North velocity component |
-| `u` | ✓ | ✓ | East velocity component |
-| `Vabs` | ✓ | — | On-the-fly from `v`/`u`; requires `kVabs ≠ None` |
-| `Vdir` | ✓ | — | On-the-fly from `v`/`u`; requires `kVabs ≠ None` |
-| `inclination` | ✓ | — | Sensor tilt angle (degrees) |
-| `Pressure` | ✓ | ✓ | When `P_t` coefficients provided |
-| `Temp` | ✓ | ✓ | Temperature (if present in raw data) |
-
-Example: `text_columns: [v, u, Vabs, Vdir]` — produces four columns in
-per-probe TSV; in combined TSV only `v` and `u` appear (Vabs/Vdir skipped).
-
-For combined multi-probe TSV, each probe's columns are interleaved per-probe:
-`v_i01, u_i01, v_i02, u_i02, ...` (axis=1 concatenation; no inclination).
-When `b_all_to_one_col=True`, probes are stacked row-wise instead.
-
-### Text type → column layout
-
-`text_type` determines which columns are read from raw CSV files:
-
-| `text_type` | Columns read |
-|-------------|-------------|
-| `i`, `b`, `""` | `[Ax, Ay, Az, Mx, My, Mz, Battery, Temp]` |
-| `p`, `d` | `[Ax, Ay, Az, Mx, My, Mz, P_counts, Battery, Temp]` |
-| `w` | `[Battery, Temp]` (no inertial sensors) |
-
-The column layout is auto-detected from the file header via
-`csv_load.format_parts_select_raw(file_path)` and falls back to
-`format_parts_select(text_type)` when auto-detection fails.
-`text_type` is derived from the filename model (first character of pcid),
-and can be overridden via `input.text_type` in YAML or CLI.
-
-### Incremental append positions
-
-When appending data to an existing NC group, `_time_range_overlap()` classifies
-the position of new data relative to existing data:
-
-| Position | Condition | Write strategy |
-|----------|-----------|----------------|
-| `AFTER` | `new_min > ex_max` | h5py `resize()` — O(1), no re-read |
-| `BEFORE` | `new_max < ex_min` | `_prepend_nc_group()` — h5py resize + chunkwise shift, O(chunk) memory |
-| `CONTAINED` | `new_min >= ex_min && new_max <= ex_max` | skip (no write) |
-| `OVERLAP_TAIL` | `new_max > ex_max && new_min <= ex_max` | trim new via `ex_ns[-1]` + `_append_to_nc_group()`, O(new) memory |
-| `OVERLAP_HEAD` | `new_min < ex_min && new_max <= ex_max` | trim new + `_prepend_nc_group()`, O(chunk) memory |
-
-**Key behavior**: existing data is never modified. On overlap, the new data's
-overlapping portion is trimmed and a warning is logged.
-
-### Log-based dedup
-
-`check_file_vs_log(cur, existing_log)` returns a 3-way decision controlling
-how a source file is appended:
-
-| Decision | Condition | Action |
-|----------|-----------|--------|
-| `SKIP` | same `fileName`, `cur.fileChangeTime ≤ existing` | Skip entirely — file not modified |
-| `RESUME` | same `fileName`, `cur.fileChangeTime > existing` | Append only tail after existing last time — file was updated |
-| `NEW_FILE` | no matching `fileName` in log | Full position compare + append (see [Incremental append positions](#incremental-append-positions)) |
-
-**RESUME details**: when the same source file was updated (newer mtime),
-only data after the existing last timestamp is appended. The log is updated
-with two rows: original start and new tail end (both with the new
-`fileChangeTime`).
-
-### Re-run behavior
-
-On re-processing the same input data, each NC output type handles idempotency
-differently:
-
-| Output | Dedup mechanism | Re-run effect |
-|--------|----------------|---------------|
-| `*.raw.nc` | Log table (`check_file_vs_log`) | **SKIP** — same fileName + mtime → no write |
-| `*.proc.nc` (binned) | `store_processed_incremental` (time-range containment) | **SKIP** — new range ⊂ existing → no write |
-| `*.proc_noAvg.nc` | `store_processed_incremental` (time-range containment) | **SKIP** — new range ⊂ existing → no write |
-| Combined groups | `_combine_probes` → `store_processed(mode="a")` | **Overwrite** — always rewrites from per-probe groups |
-
-Time-range containment uses ``ex_ns.min()``/``ex_ns.max()`` (not ``[0]``/``[-1]``)
-because time may be unsorted when multiple stems are appended in discovery order.
-
-#### `/param_spans/{tbl}` interval table
-
-Every processed NC file written by `store_processed_incremental` stores
-processing parameters as an HDF5 sibling group ``/param_spans/{tbl}`` (not as
-attributes on the data group).  Each processing run appends a new interval;
-duplicate params are not recorded.
-
-The interval table has:
-
-- coord ``start`` (``datetime64[ns]``) — interval boundaries
-- var ``params`` (str) — sorted key=value text per interval
-- var ``meta`` (str JSON) — metadata per interval
-
-Interval *i* covers ``[start[i], start[i+1])`` or ``[start[i], ∞)`` if last.
-Written **after** the data write so the NC file already exists.
-
-On re-run with data already covered, only the **latest** interval entry is
-compared to the current value (ignoring ``input.time_ranges`` lines) — a
-mismatch raises ``ValueError`` with a unified diff.
-
-The params text is built by ``_build_filter_params_text()`` (``processing.py``)
-and contains **all** resolved parameters that affect processed output, sorted
-by key:
-
-| Prefix | Source | Config section | Fields |
-|--------|--------|----------------|--------|
-| `filter.` | Process-stage NaN-out thresholds | `filter` (`ConfigFilter_InclProc`) | `min.<var>`, `max.<var>`, `bad_p_at_bursts_starts_period` |
-| `input.` | Load-stage window / thresholds | `input` (`ConfigIn_InclProc`) | `time_ranges`, `min.<var>`, `max.<var>`, `dt_min_binning_proc` |
-| `coef.` | Prepared coefficients | `coefs` dict (post `prepare_coefs()`) | All keys except `dates`, `Rz` |
-
-The comparison on skip strips ``input.time_ranges`` lines before comparing —
-so changing only the time window (e.g. narrowing ``time_ranges``) does NOT
-trigger a ``ValueError``; only filter or coefficient changes do.  The full
-(including ``input.time_ranges``) text is still stored for diagnostic purposes.
-
-**Example** ``/param_spans/{tbl}`` with two intervals:
-
-| `start` | `params` |
-|---|---|
-| `2024-01-15T10:00:00` | `coef.Ag=[[1. 0. 0.] ...]` · `filter.max.Ax=5` · `input.time_ranges=[…]` |
-| `2024-02-01T09:30:00` | `coef.Ag=[[1. 0. 0.] ...]` · `filter.max.Ax=5` · `input.time_ranges=[…]` |
-
-#### `overwrite_db` behavior
-
-| `overwrite_db` | Params changed? | `time_ranges` vs existing | Behavior |
-|:---:|:---:|:---:|---|
-| `None` | No | subset | **Skip NC** — export TSV only |
-| `None` | No | extends | **Append** — append new tail only |
-| `None` | Yes | extends | **Append + warn** — keep existing, append new |
-| `None` | Yes | contained | **Error** — suggest `out.overwrite_db=splice` |
-| `"splice"` | — | subset | **Splice** — keep outside, replace inside with reprocessed |
-| `"splice"` | — | extends | **Splice** — keep outside, replace/append inside |
-| `"splice"` | — | None | **Splice** — reprocess all from source |
-| `"trim"` | — | subset | **Trim** — delete outside `time_ranges`, no reprocessing |
-| `"trim"` | — | extends | **Trim + append** — trim existing, process/append new |
-| `"export"` | — | any | **Export only** — block NC writes, export TSV |
-
-#### Absent text files
-
-When the text file referenced by ``input.path`` no longer exists on disk, the
-pipeline can still load from ``*.raw.nc`` via the **raw NC fast-path** — provided:
-
-1. ``*.raw.nc`` exists and its time range covers ``time_ranges``, AND
-2. the NC's ``/{tbl}/logFiles`` group contains a ``fileName`` entry matching
-   the source file (``{parent_dir_name}/{stem}`` format, first 255 chars).
-
-When both conditions hold, configs are **not** marked stale and the pipeline
-loads ``ds_raw`` + coefs from ``*.raw.nc`` as if the text file were present.
-Phase 4 (raw NC save) is skipped since the data already resides in the NC.
-
-If neither the text file nor a matching raw NC log entry exists, the config is
-marked stale and ``FileNotFoundError`` is raised during processing (caught by
-``process_loading_yaml``).
-
-## Per-file run YAMLs (`@package _global_`)
-
-Each source file gets its own YAML at `cfg_proc/run/{source_stem}.yaml`, starting with
-`# @package _global_` so Hydra merges it into the top-level Config.
-
-```yaml
-# @package _global_
-input:
-  path: "/abs/path/to/@i_01.txt"
-  tables: ["incl01"]
-  coefs:
-    Ag: [[1,0,0],[0,1,0],[0,0,1]]
-out:
-  dt_bins: [0, 2, 600]
-  text_path: "text_output"
-filter: {}
-```
-
-Override any top-level field (`input`, `out`, `filter`, `program`). The `# @package _global_`
-directive tells Hydra to merge this YAML's contents at the Config root rather than under a
-`run` namespace.
-
-## Minimal viable config
-
-Auto‑generated, user edits `coefs` and `time_ranges`:
-
-```yaml
-# @package _global_
-input:
-  path: "/abs/path/to/@i_01.txt"
-  tables: ["incl01"]
-  coefs:
-    Ag: [[1,0,0],[0,1,0],[0,0,1]]
-    Cg: [0,0,0]
-    Ah: [[1,0,0],[0,1,0],[0,0,1]]
-    Ch: [0,0,0]
-    kVabs: [1,0,0,0,0,0]
-    Rz: [[1,0,0],[0,1,0],[0,0,1]]
-out:
-  dt_bins: [0, 2, 600]
-  text_path: "text_output"
-filter: {}
-```
-
-**Required user edits** after initial generation:
-- `input.coefs` — replace defaults with actual calibration values
-- `input.time_ranges` — optionally restrict processing window
-
-### Azimuth calibration
-
-`azimuth_shift_deg` is the correction converting the **tilt direction** (azimuth
-of the inclinometer's lean) from sensor coordinates to geographic coordinates.
-The `Vdir` formula computes the tilt azimuth via `G × H` (gravity × magnetic
-field) cross product, then adds `azimuth_shift_deg` to get degrees from North.
-
-Default is `180°` to compensate the magnetometer sign inversion applied at load
-time (``invert_magnetometer`` in ``csv_load.py`` → ``Mxyz`` negated).
-
-| `azimuth_shift_deg` | Tilt direction reported as |
-|---|---|
-| `0` | North |
-| `90` | East |
-| `180` (default) | South |
-| `270` | West |
-
-**Manual**: set the value directly in `input.coefs.azimuth_shift_deg`.
-
-**From data** (`time_ranges_azimuth`): record data while the instrument is tilted
-in a known direction, then set `input.time_ranges_azimuth` to that interval. The
-pipeline computes the shift via `orientation.azimuth_shift()` and writes it to
-the coefficients (YAML in noh5, NC in full env).
-
-**Corrections** applied on top: `azimuth_add` (manual offset) and magnetic
-declination from `coordinates` + `data_date`.
+| `return_` | `str` | `'<end>'` | Pipeline exit point. Run partial processing for debugging (e.g. `'<saved_raw>'` to verify data ingestion). See [Phase-stopping](config_tuning.md#phase-stopping). |
+| `dask_scheduler` | `str` | `''` | Dask execution backend: `'synchronous'` for debugging, `'threads'` for production. |
+| `sleep_s` | `float` | `0.5` | Pause (seconds) between probes. Increase if memory pressure is high during multi-probe runs. |
+| `verbose` | `str` | `'INFO'` | Console log verbosity. `'DEBUG'` for troubleshooting, `'INFO'` for normal runs. |
+| `use_h5` | `str` | `'auto'` | Binary I/O policy. `auto` = use if available, skip silently. `off` = disable NC/HDF5. `require` = error if unavailable. `prefer` = warn and fall back. |

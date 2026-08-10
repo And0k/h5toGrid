@@ -42,7 +42,7 @@ i90: INKL_090.TXT
 14:49:48|prep_cfg_for_probe|Coefs for i64: paths=[calibration.h5, yaml_export], date=2025-06-23 12:50:24
 ```
 
-Для каждого датчика при генерации конфига читаются первая и последняя строки CSV для получения диапазона времени (2 значения → `time_ranges`). Затем загружаются калибровочные коэффициенты. `paths` — цепочка источников (см. [config_reference.md §Coefficient loading priority](config_reference.md#coefficient-loading-priority)). `date` — дата калибровки из найденного набора коэффициентов.
+Для каждого датчика при генерации конфига читаются первая и последняя строки CSV для получения диапазона времени (2 значения → `time_ranges`). Затем загружаются калибровочные коэффициенты. `paths` — цепочка источников (см. [how_it_works.md §Coefficient loading](how_it_works.md#coefficient-loading)). `date` — дата калибровки из найденного набора коэффициентов.
 
 Аналогично для i67 и i90 — каждый со своим диапазоном и датой.
 
@@ -56,7 +56,7 @@ i90: INKL_090.TXT
 14:50:04|correct_raw_files|Corrected 1 file for i67
 ```
 
-Файл `I_067.TXT` — «сырой» (без `@`). Запущена коррекция: чтение построчно, фильтрация строк, не проходящих по regex столбцов (см. `text_line_regex` в [config_reference.md §Text type → column layout](config_reference.md#text-type--column-layout)). Удалено 2 бракованные строки, результат записан как `@i_67.TXT`.
+Файл `I_067.TXT` — «сырой» (без `@`). Запущена коррекция: чтение построчно, фильтрация строк, не проходящих по regex столбцов (см. `text_line_regex` в [config_tuning.md §Text type → column layout](config_tuning.md#text-type--column-layout)). Удалено 2 бракованные строки, результат записан как `@i_67.TXT`.
 
 ```
 14:50:04|rep_in_file|preliminary correcting csv file INKL_090.TXT by removing irregular rows, writing to @i_90.TXT

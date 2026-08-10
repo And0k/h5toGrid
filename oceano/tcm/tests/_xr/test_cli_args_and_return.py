@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+from hydra.core.hydra_config import HydraConfig
+
 from tcm import cli, processing
 from tcm._constants import RAW_DIR_NAME
 from tcm.schema import Return
@@ -92,7 +94,7 @@ class TestCliOverrideParsing:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(sys, "argv", ["prog", str(raw_dir / "*I*.txt")] + extra_args)
 
-        mock_run = mocker.patch("tcm.processing.run")
+        mock_run = mocker.patch.object(processing, "run")
         cli.call_in_raw_dir(processing.run)
 
         cfg = mock_run.call_args[0][0]
@@ -142,7 +144,7 @@ class TestCliOverrideFullPropagation:
             ["prog", str(raw_dir / "*i*.txt")] + extra_args,
         )
 
-        mock_proc = mocker.patch("tcm.processing.run_processing")
+        mock_proc = mocker.patch.object(processing, "run_processing")
         cli.call_in_raw_dir(processing.run)
 
         mock_proc.assert_called_once()
@@ -243,7 +245,7 @@ class TestReturnCfgFromArgs:
             ],
         )
 
-        mock_proc = mocker.patch("tcm.processing.run_processing")
+        mock_proc = mocker.patch.object(processing, "run_processing")
         result = cli.call_in_raw_dir(processing.run)
 
         mock_proc.assert_called_once()
@@ -284,7 +286,7 @@ class TestReturnCfgFromArgs:
             ],
         )
 
-        mocker.patch("tcm.processing.run_processing")
+        mocker.patch.object(processing, "run_processing")
         cli.call_in_raw_dir(processing.run)
 
         # Config was NOT regenerated — user marker preserved
@@ -312,7 +314,7 @@ class TestReturnSavedRaw:
             ],
         )
 
-        mock_proc = mocker.patch("tcm.processing.run_processing")
+        mock_proc = mocker.patch.object(processing, "run_processing")
         cli.call_in_raw_dir(processing.run)
 
         mock_proc.assert_called()
@@ -349,7 +351,7 @@ class TestDuplicateYamlBehaviour:
             ],
         )
 
-        mock_proc = mocker.patch("tcm.processing.run_processing")
+        mock_proc = mocker.patch.object(processing, "run_processing")
         cli.call_in_raw_dir(processing.run)
 
         # Both YAMLs resolved to pcid i01, but process_loading_yaml iterates ALL stems
@@ -384,7 +386,7 @@ class TestDuplicateYamlBehaviour:
             ],
         )
 
-        mock_proc = mocker.patch("tcm.processing.run_processing")
+        mock_proc = mocker.patch.object(processing, "run_processing")
         cli.call_in_raw_dir(processing.run)
 
         # Only the real config is processed; ghost is skipped
@@ -437,7 +439,7 @@ class TestLogFileNaming:
         mock_hydra_cfg = mocker.MagicMock()
         mock_hydra_cfg.run.dir = str(run_dir)
         mock_hydra_cfg.job.name = "processing"
-        mocker.patch("hydra.core.hydra_config.HydraConfig.get", return_value=mock_hydra_cfg)
+        mocker.patch.object(HydraConfig, "get", return_value=mock_hydra_cfg)
 
         cfg = {"program": {"return_": "<end>"}}
         cli._setup_file_handler(cfg)
@@ -461,7 +463,7 @@ class TestLogFileNaming:
         mock_hydra_cfg = mocker.MagicMock()
         mock_hydra_cfg.run.dir = str(run_dir)
         mock_hydra_cfg.job.name = "processing"
-        mocker.patch("hydra.core.hydra_config.HydraConfig.get", return_value=mock_hydra_cfg)
+        mocker.patch.object(HydraConfig, "get", return_value=mock_hydra_cfg)
 
         cfg = {"program": {"return_": "<cfg_from_args>"}}
         cli._setup_file_handler(cfg)
@@ -484,7 +486,7 @@ class TestLogFileNaming:
         mock_hydra_cfg = mocker.MagicMock()
         mock_hydra_cfg.run.dir = str(run_dir)
         mock_hydra_cfg.job.name = "processing"
-        mocker.patch("hydra.core.hydra_config.HydraConfig.get", return_value=mock_hydra_cfg)
+        mocker.patch.object(HydraConfig, "get", return_value=mock_hydra_cfg)
 
         root = logging.getLogger()
         # Add a stale FileHandler

@@ -10,7 +10,8 @@ from __future__ import annotations
 import itertools
 import tkinter as tk
 
-from tcm_gui.const import tk_font_family, tk_color_to_rgb
+from tcm_gui.const import tk_font_family
+from tcm_gui.theme import tk_color_to_rgb
 
 
 def _esc(text: str) -> str:

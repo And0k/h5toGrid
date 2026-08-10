@@ -11,6 +11,10 @@ from enum import Enum
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import tcm_gui.coef_sheet as coef_sheet
+import tcm_gui.theme as theme
+from tkinter import ttk
+
 from tcm_gui._cell_spec import BOOL_SPEC, NUMBER_SPEC, TEXT_SPEC
 
 # ── lightweight fixtures ────────────────────────────────────────────────────
@@ -46,7 +50,7 @@ class _FakeConfig:
 class TestResolveBg:
     def test_hex_passthrough(self):
         """Already-hex color passes through unchanged."""
-        from tcm_gui.const import tk_color_to_hex
+        from tcm_gui.theme import tk_color_to_hex
 
         mock_widget = MagicMock()
         mock_widget.winfo_rgb.return_value = (0xF0 * 257, 0xF0 * 257, 0xF0 * 257)
@@ -54,7 +58,7 @@ class TestResolveBg:
 
     def test_system_color_converted(self):
         """'SystemButtonFace' → hex via winfo_rgb."""
-        from tcm_gui.const import tk_color_to_hex
+        from tcm_gui.theme import tk_color_to_hex
 
         mock_widget = MagicMock()
         # Windows SystemButtonFace ≈ #F0F0F0 → (0xF0*257, 0xF0*257, 0xF0*257)
@@ -67,7 +71,7 @@ class TestResolveBg:
         """TclError → return original string."""
         from tkinter import TclError
 
-        from tcm_gui.const import tk_color_to_hex
+        from tcm_gui.theme import tk_color_to_hex
 
         mock_widget = MagicMock()
         mock_widget.winfo_rgb.side_effect = TclError("bad color")
@@ -83,7 +87,7 @@ class TestCellSpecFor:
         """Create a ConfigSheet with a mocked Sheet — no Tk needed."""
         from tcm_gui.coef_sheet import ConfigSheet
 
-        with patch("tcm_gui.coef_sheet.Sheet"):
+        with patch.object(coef_sheet, "Sheet"):
             cs = ConfigSheet.__new__(ConfigSheet)
         cs.sh = MagicMock()
         cs._meta = {}
@@ -148,7 +152,7 @@ class TestInsPathTracking:
     def _make_sheet():
         from tcm_gui.coef_sheet import ConfigSheet
 
-        with patch("tcm_gui.coef_sheet.Sheet"):
+        with patch.object(coef_sheet, "Sheet"):
             cs = ConfigSheet.__new__(ConfigSheet)
         cs.sh = MagicMock()
         # Make insert return incrementing iids
@@ -253,7 +257,7 @@ class TestApplyStyles:
         mock_sh.tag_names.return_value = []
         mock_sh.winfo_rgb.return_value = (61680, 61680, 61680)  # #F0F0F0
 
-        with patch("tcm_gui.coef_sheet.Sheet", return_value=mock_sh):
+        with patch.object(coef_sheet, "Sheet", return_value=mock_sh):
             cs = ConfigSheet.__new__(ConfigSheet)
         cs.sh = mock_sh
         cs._meta = {}
@@ -277,7 +281,7 @@ class TestApplyStyles:
             m["open"] = True
         return cs, mock_sh
 
-    @patch("tcm_gui.const.tk_color_to_hex", return_value="#F0F0F0")
+    @patch.object(theme, "tk_color_to_hex", return_value="#F0F0F0")
     def test_node_column_gets_bg(self, mock_resolve):
         """Index canvas (tree column) gets bg: global option + per-cell highlight."""
         cs, mock_sh = self._make_loaded_sheet()
@@ -291,7 +295,7 @@ class TestApplyStyles:
             f"expected highlight_cells(canvas='index') calls, got: {mock_sh.highlight_cells.call_args_list}"
         )
 
-    @patch("tcm_gui.const.tk_color_to_hex", return_value="#F0F0F0")
+    @patch.object(theme, "tk_color_to_hex", return_value="#F0F0F0")
     def test_coef_cells_right_aligned(self, mock_resolve):
         """Coef data cells are right-aligned (number type)."""
         cs, mock_sh = self._make_loaded_sheet()
@@ -308,7 +312,7 @@ class TestApplyStyles:
             f"expected right-aligned coef cells, got calls: {mock_sh.align_cells.call_args_list}"
         )
 
-    @patch("tcm_gui.const.tk_color_to_hex", return_value="#F0F0F0")
+    @patch.object(theme, "tk_color_to_hex", return_value="#F0F0F0")
     def test_date_cells_right_aligned(self, mock_resolve):
         """Date cells (coefs parent with has_date) are right-aligned (``e``).
 
@@ -326,7 +330,7 @@ class TestApplyStyles:
         # coefs node has has_date=True → date column should be right-aligned
         assert len(right_align_calls) > 0, "expected right-aligned date cells"
 
-    @patch("tcm_gui.const.tk_color_to_hex", return_value="#F0F0F0")
+    @patch.object(theme, "tk_color_to_hex", return_value="#F0F0F0")
     def test_header_highlighted(self, mock_resolve):
         """Node labels styled with BLUE_FG via highlight_cells on index canvas."""
         from tcm_gui.cli_cfg import default_for_path
@@ -384,7 +388,7 @@ class TestCoefsPathChildRow:
         mock_sh.tag_names.return_value = []
         mock_sh.winfo_rgb.return_value = (61680, 61680, 61680)
 
-        with patch("tcm_gui.coef_sheet.Sheet", return_value=mock_sh):
+        with patch.object(coef_sheet, "Sheet", return_value=mock_sh):
             cs = ConfigSheet.__new__(ConfigSheet)
         cs.sh = mock_sh
         cs._meta = {}
@@ -518,7 +522,7 @@ class TestBrowseButtonLifecycle:
         mock_sh.get_text_editor_widget.return_value = None
 
         mock_btn = MagicMock()
-        with patch("tcm_gui._browse_button.ttk.Button", return_value=mock_btn):
+        with patch.object(ttk, "Button", return_value=mock_btn):
             mgr = BrowseButtonManager(mock_sh, MagicMock())
             mgr.attach(0, 0)
             mock_sh.get_text_editor_widget.return_value = mock_editor
@@ -629,7 +633,7 @@ class TestBrowseButtonLifecycle:
         mock_sh.after.side_effect = lambda ms, cb=None, *_a: f"job_{id(cb)}" if cb else "job"
         mock_sh.get_text_editor_widget.return_value = None
 
-        with patch("tcm_gui._browse_button.ttk.Button"):
+        with patch.object(ttk, "Button"):
             mgr = BrowseButtonManager(mock_sh, MagicMock())
             mgr.attach(0, 0)
             first_job = mgr._retry_job
@@ -655,7 +659,7 @@ class TestBrowseButtonLifecycle:
         mock_sh.get_text_editor_widget.return_value = None
 
         mock_btn = MagicMock()
-        with patch("tcm_gui._browse_button.ttk.Button", return_value=mock_btn):
+        with patch.object(ttk, "Button", return_value=mock_btn):
             mgr = BrowseButtonManager(mock_sh, MagicMock())
 
             mock_editor_1 = MagicMock()

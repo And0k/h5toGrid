@@ -14,6 +14,9 @@ import xarray as xr
 from omegaconf import DictConfig
 
 from tcm import _constants, schema, policy
+import tcm.cli as _cli
+from tcm._xr import io as _xr_io
+import tcm.processing as _processing
 
 
 
@@ -158,12 +161,12 @@ def _mock_pipeline(cfg, env, mocker, pcid="i_01"):
         timedelta(seconds=int(b)) for b in (cfg_t["out"].get("dt_bins") or [0])
     ]
 
-    mocker.patch("tcm.processing.cli.main_init", return_value=cfg_t)
-    mocker.patch(
-        "tcm.processing.xr_io.load_raw",
+    mocker.patch.object(_cli, "main_init", return_value=cfg_t)
+    mocker.patch.object(
+        _xr_io, "load_raw",
         return_value=(env.synthetic_ds, None),
     )
-    mocker.patch("tcm.processing.get_coefs_from_cfg", return_value=env.coefs)
+    mocker.patch.object(_processing, "get_coefs_from_cfg", return_value=env.coefs)
 
 
 @pytest.fixture()

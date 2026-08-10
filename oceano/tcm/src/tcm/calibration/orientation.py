@@ -1,4 +1,8 @@
 """
+Turns a calibrated-but-unaligned sensor reading (from `calibrate.py` — "on the sphere," but not
+pointed at anything meaningful yet) into an actual tilt and compass heading, using two one-time
+reference recordings: the instrument held level ("zero tilt"), and pointed at north.
+
 Orientation reference calibration: the rotation between the sensor's own axes and a world-aligned
 frame, from known reference events — built on top of `calibration.py`'s ellipsoid fit, which only
 gets each sensor's own reading onto its own calibrated unit sphere, not aligned to anything external.

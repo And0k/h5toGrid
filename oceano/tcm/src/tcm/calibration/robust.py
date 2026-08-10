@@ -1,4 +1,9 @@
 """
+The calibration fit from `calibrate.py`, wrapped with automatic bad-point rejection and a set of
+diagnostics that answer "can I trust this fit, and where/why not" — `autocalibrate` for the fit +
+rejection loop, `uncertainty_at`/`expected_direction_error`/`coverage_at` for the diagnostics,
+`field_autocalibrate` for calibrating from in-service data instead of a dedicated rotation.
+
 Robust, self-assessing calibration: outlier rejection tied to the calibration goal itself (not a
 generic per-axis filter), an iterative fit that logs quality at every stage, and diagnostics that
 separate *where* coverage is thin from *when* something went wrong at an otherwise well-covered
@@ -372,7 +377,7 @@ def expected_direction_error(raw: np.ndarray, field_magnitude: float,
     systematic_deg = np.degrees(ANGULAR_ERROR_FACTOR * np.abs(unc["local_mean_residual"]))
     total_deg = np.sqrt(precision_deg ** 2 + systematic_deg ** 2)
 
-    def sumomentsarize(label, indices):
+    def summary(label, indices):
         worst = indices[np.argmax(total_deg[indices])]
         tilt, azimuth = _direction_to_tilt_azimuth_deg(evaluate_at[:, worst])
         dominant = "thin coverage" if precision_deg[worst] >= systematic_deg[worst] else "a local model mismatch"
@@ -388,9 +393,9 @@ def expected_direction_error(raw: np.ndarray, field_magnitude: float,
         )
 
     n_query = query_directions.shape[1]
-    sumomentsarize("whole sphere", np.arange(n_query))
+    summary("whole sphere", np.arange(n_query))
     if target_directions is not None:
-        sumomentsarize("stated target region", np.arange(n_query, evaluate_at.shape[1]))
+        summary("stated target region", np.arange(n_query, evaluate_at.shape[1]))
 
     worst_overall = np.argmax(total_deg[:n_query])
     result = {"precision_deg": precision_deg[:n_query], "systematic_deg": systematic_deg[:n_query],
@@ -498,3 +503,86 @@ def anomalous_time_windows(raw: np.ndarray, calibration: cal.SensorCalibration, 
     flagged.sort(key=lambda item: -abs(item["z_score"]))
     lf.debug("anomalous time windows: {}/{}", len(flagged), len(window_bounds))
     return flagged
+
+
+MIN_FIELD_SAMPLES = 200                             # below this, even a full-sphere fit is unreliable
+MIN_FIELD_DIRECTION_SPREAD_DEG = 15.                # below this, treat coverage as effectively a point
+
+
+def field_autocalibrate(raw: np.ndarray, field_magnitude: float,
+                         tilt_reference_cos: np.ndarray | None = None, max_iterations: int = 5,
+                         mad_threshold: float = 4.) -> dict:
+    """
+    Autocalibration from field/operational data rather than a dedicated multi-position rotation
+    session — for deployments where a deliberate calibration rotation is not practical, and the only
+    available signal is whatever orientations the instrument happened to pass through in use.
+
+    Differs from `autocalibrate` in two ways implemented here (a third, planned, is not yet available
+    — see `tilt_reference_cos` below): (1) refuses outright, rather than silently returning a poor fit,
+    when the data cannot support one — too few samples, or too little orientation spread; (2) reports
+    `expected_direction_error` restricted to the data's *own* achieved directions, not the whole
+    sphere, since field coverage is whatever the deployment happened to produce, not a designed
+    envelope — see `expected_direction_error`'s `target_directions`.
+
+    The orientation-spread check works on raw samples directly, not on directions from a preliminary
+    fit of this same data: that fit is exactly what is in question when coverage is marginal, and an
+    unstable fit on narrow data can spuriously *spread out* what were actually narrow directions,
+    producing a false pass on the very check meant to catch that case.
+
+    Deliberately NOT the obvious "center raw, normalize, take pairwise angle" approach: that discards
+    exactly the quantity the check needs. Centering removes the common direction and leaves each
+    sample's own tangential deviation from *its own* centroid; normalizing then keeps only that
+    deviation's azimuthal direction, which — even for a genuinely tight cluster, even with zero noise —
+    points differently for different samples around the cluster, so pairwise angles between these
+    direction-only residuals come out large (order 90-180 deg) regardless of true angular spread; the
+    magnitude that would have distinguished "tight" from "wide" was exactly what got thrown away.
+    Verified directly: a 5-point cluster spanning under 20 deg true pairwise separation produces
+    centered-and-normalized pairwise angles up to 164 deg, noiseless.
+
+    Used here instead: the *magnitude* of each sample's deviation from the centroid, in raw units,
+    converted to an angle via `field_magnitude` — the same delta/field_magnitude ~ radians idea
+    `expected_direction_error` uses for its own precision term. To leading order in small deviations
+    (raw ~ bias + field_magnitude * direction, so raw - raw.mean() ~ field_magnitude * (direction -
+    mean_direction) for a coherent cluster), this magnitude is directly proportional to the true
+    angular deviation, without the normalization step that discards it. A high percentile (90th, not
+    max) of this magnitude across samples, so one unusually far sample cannot single-handedly decide
+    the outcome.
+
+    :param raw: (3, N) raw samples from field/operational conditions.
+    :param field_magnitude: known reference magnitude.
+    :param tilt_reference_cos: NOT YET SUPPORTED — the planned optional quadrupole-correction step
+        (fold in an independent tilt reference, the way field data — unlike a lab rotation rig — often
+        has one for free) has no implementation in this codebase yet (`fit_tilt_quadrupole_correction`
+        does not exist here). Passing anything other than None raises `NotImplementedError` rather than
+        silently skipping it.
+    :param max_iterations, mad_threshold: passed to `autocalibrate`.
+    :return: on refusal, {"status": "insufficient data", "reason": ..., plus whichever of n_samples /
+        spread_deg triggered it}. On success, {"status": "ok", "calibration", "history" (from
+        `autocalibrate`), "expected_error" (from `expected_direction_error`, restricted to this data's
+        own directions)}.
+    """
+    if tilt_reference_cos is not None:
+        raise NotImplementedError("field_autocalibrate: tilt_reference_cos quadrupole correction has no "
+                                   "implementation in this codebase yet (fit_tilt_quadrupole_correction "
+                                   "does not exist here) — pass None, or port that function in first.")
+
+    if raw.shape[1] < MIN_FIELD_SAMPLES:
+        lf.warning("field_autocalibrate: only {} samples (need >= {}); refusing to calibrate",
+                    raw.shape[1], MIN_FIELD_SAMPLES)
+        return {"status": "insufficient data", "reason": "too few samples", "n_samples": raw.shape[1]}
+
+    raw_centered = raw - raw.mean(1, keepdims=True)
+    deviation = np.linalg.norm(raw_centered, axis=0)                    # raw units, magnitude preserved
+    spread_deg = np.degrees(np.percentile(deviation, 90) / field_magnitude)
+    if spread_deg < MIN_FIELD_DIRECTION_SPREAD_DEG:
+        lf.warning("field_autocalibrate: orientation spread only {:.1f} deg (need >= {:.1f}); "
+                    "refusing to calibrate", spread_deg, MIN_FIELD_DIRECTION_SPREAD_DEG)
+        return {"status": "insufficient data", "reason": "orientation range too narrow",
+                "spread_deg": float(spread_deg)}
+
+    calibration, history = autocalibrate(raw, field_magnitude, max_iterations=max_iterations,
+                                          mad_threshold=mad_threshold, weighted=True)
+    target_directions = cal.to_unit_vector(raw, calibration)
+    _, expected_error = expected_direction_error(raw, field_magnitude, target_directions=target_directions,
+                                                   weighted=True)
+    return {"status": "ok", "calibration": calibration, "history": history, "expected_error": expected_error}

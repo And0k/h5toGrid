@@ -481,9 +481,9 @@ and need to pass `out.overwrite_db=splice` to proceed.
 The `/param_spans/{tbl}` dataset (an `xr.Dataset` with `start` coordinate and
 `params`/`meta` variables) records the history of parameter changes per table.
 Each span tracks when a given set of processing parameters was active, replacing
-the legacy `_run_params` JSON attribute. See `config_reference.md`
-(§`/param_spans/{tbl}` interval table) for the full field list and (§`overwrite_db` + `time_ranges`
-behavior) for the decision table.
+the legacy `_run_params` JSON attribute. See `config_tuning.md`
+(§`/param_spans/{tbl}` interval table) for the full field list and (§`overwrite_db` behavior)
+for the decision table.
 
 ## Time Correction
 
@@ -497,7 +497,7 @@ Three modes (set via `filter.corr_time_mode`):
 - **Mask-only** — removes bad timestamps but keeps original values
 - **Delete inversions** — removes anomalies only
 
-See `docs/tcm_clc/config_reference.md` for mode details and config fields.
+See `docs/tcm_clc/config_tuning.md` for mode details and config fields.
 
 ## Input Data Requirements
 
@@ -622,7 +622,8 @@ Full log includes DEBUG-level detail (per-stem checks, snap RMS, segment counts,
 | File | Audience | Content |
 |------|----------|---------|
 | `docs/tcm_clc/how_it_works.md` | Programmers | Internal architecture, code references, data flow |
-| `docs/tcm_clc/config_reference.md` | All users | Complete config field reference, decision tables, tuning examples |
+| `docs/tcm_clc/config_reference.md` | All users | Config field reference (GUI hover source) |
+| `docs/tcm_clc/config_tuning.md` | All users | Decision tables, behavior tuning, YAML examples |
 | `docs/calibration/calibration_wiki.md` | Programmers | Ellipsoid fitting method, calibration math |
 | `docs/tcm_clc/build_tcm_clc_txt[Ru].md` | Builders | noh5 distribution build instructions (Russian) |
 | `docs/tcm_clc/readme_noh5[Ru].md` | End users | Russian version of this guide (noh5 distribution) |

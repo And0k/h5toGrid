@@ -8,9 +8,9 @@ import sys
 from pathlib import Path
 
 import pytest
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
-from tcm import _constants, cli, processing
+from tcm import _constants, cli, config_yaml, processing
 from tcm.schema import Return
 
 # ---------------------------------------------------------------------------
@@ -48,10 +48,10 @@ def make_cfg():
 
 def _mock_config_yaml(mocker, *, existed=None, stale=None, save_ret=None):
     """Patch all config_yaml functions run() calls."""
-    mocker.patch("tcm.config_yaml.get_existed_cfgs", return_value=existed or {})
-    mocker.patch("tcm.config_yaml.find_stale_cfgs", return_value=set())
-    mocker.patch("tcm.config_yaml.save_config_to_yaml", return_value=save_ret or {})
-    mocker.patch("tcm.config_yaml.sync_yamls_devmeta_and_hydra")
+    mocker.patch.object(config_yaml, "get_existed_cfgs", return_value=existed or {})
+    mocker.patch.object(config_yaml, "find_stale_cfgs", return_value=set())
+    mocker.patch.object(config_yaml, "save_config_to_yaml", return_value=save_ret or {})
+    mocker.patch.object(config_yaml, "sync_yamls_devmeta_and_hydra")
 
 
 # ---------------------------------------------------------------------------
@@ -103,9 +103,9 @@ class TestRunPipeline:
             "tcm.config_yaml.get_existed_cfgs",
             side_effect=[{}, {"i01": ["@i_01"], "i02": ["@i_02"]}],
         )
-        mocker.patch("tcm.config_yaml.find_stale_cfgs", return_value=set())
-        mocker.patch("tcm.config_yaml.save_config_to_yaml", return_value={})
-        mock_sync = mocker.patch("tcm.config_yaml.sync_yamls_devmeta_and_hydra")
+        mocker.patch.object(config_yaml, "find_stale_cfgs", return_value=set())
+        mocker.patch.object(config_yaml, "save_config_to_yaml", return_value={})
+        mock_sync = mocker.patch.object(config_yaml, "sync_yamls_devmeta_and_hydra")
 
         def _load_matching_stem(yaml_path):
             """Return config with input.path stem matching the YAML stem."""
@@ -115,8 +115,8 @@ class TestRunPipeline:
                 "out": {"dt_bins": [0]},
                 "filter": {},
             })
-        mocker.patch("tcm.processing.OmegaConf.load", side_effect=_load_matching_stem)
-        mock_proc = mocker.patch("tcm.processing.run_processing")
+        mocker.patch.object(OmegaConf, "load", side_effect=_load_matching_stem)
+        mock_proc = mocker.patch.object(processing, "run_processing")
 
         run_dir.mkdir(parents=True)
         for stem in ("@i_01", "@i_02"):
@@ -153,8 +153,8 @@ class TestRunPipeline:
                 "out": {"dt_bins": [0]},
                 "filter": {},
             })
-        mocker.patch("tcm.processing.OmegaConf.load", side_effect=_load_matching_stem)
-        mock_proc = mocker.patch("tcm.processing.run_processing")
+        mocker.patch.object(OmegaConf, "load", side_effect=_load_matching_stem)
+        mock_proc = mocker.patch.object(processing, "run_processing")
 
         processing.run(cfg)
         assert mock_proc.call_count == expected_count
@@ -163,7 +163,7 @@ class TestRunPipeline:
         """No configs + no files → no processing, no crash."""
         cfg = make_cfg(project_dir)
         _mock_config_yaml(mocker)
-        mock_proc = mocker.patch("tcm.processing.run_processing")
+        mock_proc = mocker.patch.object(processing, "run_processing")
 
         processing.run(cfg)
         mock_proc.assert_not_called()
@@ -179,10 +179,10 @@ class TestRunPipeline:
         raw_dir = project_dir / _constants.RAW_DIR_NAME
         run_dir = raw_dir / "cfg_proc" / "run"
 
-        mocker.patch("tcm.config_yaml.get_existed_cfgs", side_effect=[{}, {"i01": ["@i_01"]}])
-        mocker.patch("tcm.config_yaml.find_stale_cfgs", return_value=set())
-        mocker.patch("tcm.config_yaml.save_config_to_yaml", return_value={})
-        mock_sync = mocker.patch("tcm.config_yaml.sync_yamls_devmeta_and_hydra")
+        mocker.patch.object(config_yaml, "get_existed_cfgs", side_effect=[{}, {"i01": ["@i_01"]}])
+        mocker.patch.object(config_yaml, "find_stale_cfgs", return_value=set())
+        mocker.patch.object(config_yaml, "save_config_to_yaml", return_value={})
+        mock_sync = mocker.patch.object(config_yaml, "sync_yamls_devmeta_and_hydra")
 
         def _load_matching_stem(yaml_path):
             yaml_stem = Path(yaml_path).stem.rsplit("@", 1)[-1]
@@ -191,8 +191,8 @@ class TestRunPipeline:
                 "out": {"dt_bins": [0]},
                 "filter": {},
             })
-        mocker.patch("tcm.processing.OmegaConf.load", side_effect=_load_matching_stem)
-        mocker.patch("tcm.processing.run_processing")
+        mocker.patch.object(OmegaConf, "load", side_effect=_load_matching_stem)
+        mocker.patch.object(processing, "run_processing")
 
         run_dir.mkdir(parents=True)
         (run_dir / "@i_01.yaml").write_text("input:\n  path: dummy\n")
@@ -235,7 +235,7 @@ class TestRunPipeline:
             "tcm.processing.OmegaConf.load",
             side_effect=[cfg_for_real, cfg_for_ghost],
         )
-        mock_proc = mocker.patch("tcm.processing.run_processing")
+        mock_proc = mocker.patch.object(processing, "run_processing")
 
         with caplog.at_level("WARNING", logger="tcm.processing"):
             processing.run(cfg)
@@ -304,8 +304,8 @@ class TestRunPipeline:
                 "out": {"dt_bins": [0]},
                 "filter": {},
             })
-        mocker.patch("tcm.processing.OmegaConf.load", side_effect=_load_stem)
-        mock_proc = mocker.patch("tcm.processing.run_processing")
+        mocker.patch.object(OmegaConf, "load", side_effect=_load_stem)
+        mock_proc = mocker.patch.object(processing, "run_processing")
 
         processing.run(cfg)
         assert mock_proc.call_count == expected, (
@@ -341,10 +341,10 @@ class TestBinaryInputSkipsDiscovery:
     def test_skip_discovery_for_nc(self, tmp_path, mocker):
         """NC path → no ``config_yaml`` calls; one ``run_processing`` per table."""
         cfg = self._cfg(tmp_path, ["incl_p05"])
-        mock_get = mocker.patch("tcm.config_yaml.get_existed_cfgs")
-        mock_save = mocker.patch("tcm.config_yaml.save_config_to_yaml")
-        mock_sync = mocker.patch("tcm.config_yaml.sync_yamls_devmeta_and_hydra")
-        mock_proc = mocker.patch("tcm.processing.run_processing")
+        mock_get = mocker.patch.object(config_yaml, "get_existed_cfgs")
+        mock_save = mocker.patch.object(config_yaml, "save_config_to_yaml")
+        mock_sync = mocker.patch.object(config_yaml, "sync_yamls_devmeta_and_hydra")
+        mock_proc = mocker.patch.object(processing, "run_processing")
 
         processing.run(cfg)
 
@@ -359,7 +359,7 @@ class TestBinaryInputSkipsDiscovery:
         """Every binary extension triggers the direct path."""
         cfg = self._cfg(tmp_path, ["incl63"])
         cfg.input.path = cfg.input.path.replace(".nc", ext)
-        mocker.patch("tcm.processing.run_processing")
+        mocker.patch.object(processing, "run_processing")
         for name in ("get_existed_cfgs", "save_config_to_yaml",
                     "sync_yamls_devmeta_and_hydra"):
             mocker.patch(f"tcm.config_yaml.{name}")
@@ -368,10 +368,10 @@ class TestBinaryInputSkipsDiscovery:
     def test_one_run_processing_per_table(self, tmp_path, mocker):
         """Multiple tables in one binary file → one ``run_processing`` each."""
         cfg = self._cfg(tmp_path, ["incl63", "incl64"])
-        mocker.patch("tcm.config_yaml.get_existed_cfgs")
-        mocker.patch("tcm.config_yaml.save_config_to_yaml")
-        mocker.patch("tcm.config_yaml.sync_yamls_devmeta_and_hydra")
-        mock_proc = mocker.patch("tcm.processing.run_processing")
+        mocker.patch.object(config_yaml, "get_existed_cfgs")
+        mocker.patch.object(config_yaml, "save_config_to_yaml")
+        mocker.patch.object(config_yaml, "sync_yamls_devmeta_and_hydra")
+        mock_proc = mocker.patch.object(processing, "run_processing")
 
         processing.run(cfg)
 
@@ -406,7 +406,7 @@ class TestMainEndToEnd:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(sys, "argv", ["prog", str(raw_dir / "*I*.txt")])
 
-        mock_run = mocker.patch("tcm.processing.run")
+        mock_run = mocker.patch.object(processing, "run")
         cli.call_in_raw_dir(processing.run)
 
         mock_run.assert_called_once()
@@ -439,7 +439,7 @@ class TestMainEndToEnd:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(sys, "argv", ["prog", str(raw_dir / "*I*.txt")] + extra_args)
 
-        mock_run = mocker.patch("tcm.processing.run")
+        mock_run = mocker.patch.object(processing, "run")
         cli.call_in_raw_dir(processing.run)
 
         cfg = mock_run.call_args[0][0]
@@ -452,7 +452,7 @@ class TestMainEndToEnd:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(sys, "argv", ["prog", "no_raw_here.txt"])
 
-        mock_run = mocker.patch("tcm.processing.run")
+        mock_run = mocker.patch.object(processing, "run")
         cli.call_in_raw_dir(processing.run)
         cfg = mock_run.call_args[0][0]
         # Path resolved without _raw/ — find_dir_raw_absolute falls back to parent
@@ -467,7 +467,7 @@ class TestMainEndToEnd:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(sys, "argv", ["prog", str(no_raw / "i_01.txt")])
 
-        mock_run = mocker.patch("tcm.processing.run")
+        mock_run = mocker.patch.object(processing, "run")
         with caplog.at_level("WARNING", logger="tcm.processing"):
             cli.call_in_raw_dir(processing.run)
 

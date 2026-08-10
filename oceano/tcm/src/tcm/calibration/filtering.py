@@ -1,4 +1,9 @@
 """
+Removes spikes from raw sensor channels before they reach calibration fitting — a few bad points can
+otherwise pull an ellipsoid fit noticeably off, so this runs first in the pipeline. `despike_channels`
+is the one function here; it forward+backward filters each of the 3 channels independently and reports
+which samples it dropped.
+
 Channel filtering — per-channel despiking for calibration.
 
 Extracted from ``tcm._dask_legacy.incl_calibr_hy.filter_channes``

@@ -451,9 +451,20 @@ Discovery is performed by `config_yaml.gen_metadata()` which calls `csv_load.sea
 
 ### Path pattern classification
 
-`_pattern_to_regex(name)` in `csv_load.py` classifies `input.path` into glob or regex.
-The decision table for pattern interpretation is in
-`config_reference.md` (§Pattern interpretation). Implementation:
+`_pattern_to_regex(name)` in `csv_load.py` classifies `input.path` into glob or regex:
+
+| Condition | Mode | Example input | Effective regex |
+|-----------|------|---------------|-----------------|
+| Invalid regex (compilation fails) | glob | `*[0bdp]*.txt` | `.*?[0bdp].*?\.txt` |
+| Valid regex, extension dot **unescaped** | glob | `file?.txt` | `file.\.txt` |
+| Valid regex with `|` or `(...)` wrapper | regex | `(a\|b).txt` | `(a\|b).txt` |
+| Valid regex, extension dot **escaped** (`\.`) | regex | `i.*\.txt` | `i.*\.txt` |
+| `path` is a directory | default regex `i.*\.txt` | `_raw/` | `i.*\.txt` |
+
+The "extension dot" is the last `.` before a suffix containing no further dots.
+Glob conversion: `*` → `.*?`, `?` → `.`, all dots → `\.` (all case-insensitive).
+
+Implementation:
 
 1. Tries `re.compile(name)` — on failure → glob via `_glob_to_regex()`
 2. On success, checks for explicit regex markers: `|` in the pattern or
@@ -741,7 +752,7 @@ part of the per-text-file config sweep.
 
 ### Phase-stopping (`program.return_`)
 
-Controls how far the pipeline runs before stopping. See `config_reference.md`
+Controls how far the pipeline runs before stopping. See `config_tuning.md`
 (§Phase-stopping) for the complete decision table with return values.
 
 `<cfg_from_args>` causes `main_init` to return the raw `DictConfig` before
@@ -773,8 +784,22 @@ The correction pipeline (`_correct_time`):
 5. `_find_hole_edges` — segment boundaries on clean subset
 6. `_snap_to_grid` — `g(k) = origin + k·dt_step` per segment
 
-Three modes are available via `filter.corr_time_mode` — see `config_reference.md`
-(§Time correction) for the mode decision table, config fields, and examples.
+Three modes are available via `filter.corr_time_mode` — see `config_tuning.md`
+(§Time correction modes) for the mode decision table and config fields.
+
+**Diagnostics bitmask** — `save_time_corr_diagnostics()` and
+`plot_time_corr_diagnostics()` produce NPZ arrays (accumulated across chunks)
+with action bitmask per sample:
+
+| Bit | Constant | Meaning |
+|-----|----------|---------|
+| `0x01` | `ACT_TRIM` | Overlong run, sample dropped |
+| `0x02` | `ACT_SPIKE` | Bilateral outlier, dropped |
+| `0x04` | `ACT_BACKWARD` | HWM backward section, dropped |
+| `0x08` | `ACT_HOLE` | Data gap > dt_hole starts here |
+| `0x10` | `ACT_ALARM` | Segment snap RMS exceeds threshold |
+| `0x20` | `ACT_NOT_MONO` | Non-monotone after snap, masked |
+| `0x40` | `ACT_OUT_OF_RANGE` | Excluded by time_ranges |
 
 ### Diagnostics under chunked CSV loading
 
@@ -806,7 +831,7 @@ chunk's estimate.  Since frequency is estimated independently per chunk
 
 ### Filter stages (load vs process)
 
-Filtering is split into two distinct stages by namespace (see `config_reference.md` §Stage classification):
+Filtering is split into two distinct stages by namespace:
 
 1. **Load-stage** (`input.min`/`input.max` + `input.time_ranges`) — rows **dropped**. Applied in `_xr/io.py::load_raw()` for **all** sources (NC/HDF5: `apply_load_time_ranges` + `filter_global_minmax`; CSV: `filter_global_minmax` only, time_ranges applied by `time_corr`).
 
@@ -824,8 +849,7 @@ Filtering is split into two distinct stages by namespace (see `config_reference.
 
 `cfg.input.min`/`max` (load-stage DROP) and `cfg.filter.min`/`max` (process-stage NaN-out)
 both support `M` as a shorthand for `Mx`, `My`, `Mz`. Expansion runs at compose time via
-`_xr/filters.expand_m_shorthand()`. The expansion logic and defaults are in `config_reference.md`
-(§Filter expansion).
+`_xr/filters.expand_m_shorthand()` — see `config_tuning.md` (§Filter expansion) for examples.
 
 ### Processing pipeline stages
 
@@ -860,16 +884,16 @@ Rough per-chunk memory for CSV (float64, 6 data columns):
 
 ### Column order
 
-Output columns are ordered to match legacy convention — see `config_reference.md`
-(§Column order) for the exact ordering specification, including the Vabs/Vdir
-save policy (computed on-the-fly for per-probe TSV only; never persisted in NC
+Output columns follow legacy ordering — see `config_tuning.md`
+(§Column order) for the full specification including Vabs/Vdir save policy
+(computed on-the-fly for per-probe TSV only; never persisted in NC
 or combined TSV; `inclination` excluded from combined TSV).
 
 ### Text type → column layout
 
 `csv_load.format_parts_select_raw(file_path)` auto-detects columns from the
 file header. `format_parts_select(text_type)` is the fallback. The column
-variants per `text_type` are documented in `config_reference.md`
+variants per `text_type` are documented in `config_tuning.md`
 (§Text type → column layout).
 
 ### Output persistence
@@ -961,7 +985,7 @@ entry vs current, ignoring ``input.time_ranges`` lines), a **ValueError** is
 raised showing a unified diff.  Each processing run appends a new dated interval
 to the table; duplicate params are not recorded.  Delete the group or re-run with
 `out.overwrite_db=splice` to force re-processing.
-See `config_reference.md` (§`/param_spans/{tbl}` interval table) for the full field list.
+See `config_tuning.md` (§`/param_spans/{tbl}` interval table) for the full field list.
 
 | `overwrite_db` | Params changed? | `time_ranges` vs existing | Behavior |
 |:---:|:---:|:---:|---|
@@ -990,8 +1014,8 @@ fully contained in existing range — avoids duplicates on re-run.  When
 `/param_spans/{group}` **after** the data write (not as HDF5 attributes on the
 data group).  On skip, the latest stored entry is compared to current params —
 a `ValueError` is raised if they differ (unless `overwrite_db="splice"`).
-See `config_reference.md` (§Incremental append positions) for the position-aware
-append strategy decision table and `config_reference.md` (§Log-based dedup)
+See `config_tuning.md` (§Incremental append positions) for the position-aware
+append strategy decision table and `config_tuning.md` (§Log-based dedup)
 for the log-based skip/resume/new-file decision table.
 
 Two primitives support the ``overwrite_db`` + ``time_ranges`` design:
@@ -1064,7 +1088,7 @@ is **trimmed** (existing data always preserved) and a warning is logged.
 
 `_time_range_overlap(new_min, new_max, ex_min, ex_max)` classifies where
 new data lands relative to existing. The position classification and write
-strategy are documented in `config_reference.md` (§Incremental append positions).
+strategy are documented in `config_tuning.md` (§Incremental append positions).
 
 All write strategies are **O(1) in existing data size** — no full-dataset
 read or `xr.concat` is ever used:
@@ -1137,7 +1161,7 @@ catches both `RuntimeError` and `OSError` gracefully (warning + continue).
 
 `check_file_vs_log(cur, existing_log)` in `_xr/storage.py` returns a 3-way
 decision (SKIP, RESUME, NEW_FILE). The decision table is in
-`config_reference.md` (§Log-based dedup).
+`config_tuning.md` (§Log-based dedup).
 
 **RESUME mode** (`_resume_append()`): when the same source file was updated
 (newer mtime), only data after the existing last timestamp is appended.

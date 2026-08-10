@@ -1,7 +1,7 @@
 # Calibration Wiki: Theory and Method
 
-Technical reference for the algorithms in `moments.py`, `calibration.py`, `orientation.py`, and
-`robust_calibration.py`. Every construction used in the code is derived or cited here.
+Technical reference for the algorithms in `moments.py`, `calibrate.py`, `orientation.py`, and
+`robust.py`. Every construction used in the code is derived or cited here.
 
 ## 1. Notation
 
@@ -30,7 +30,7 @@ eigenvector for the largest eigenvalue gives the shape parameters, and back-subs
 gives the linear and constant terms. `calibrate.fit_quadric_form` implements this directly;
 `calibrate._extract_quadric_from_S` isolates the S-to-parameters step so it can be called on an
 arbitrary (e.g. perturbed) `S`, independent of how `S` was built from data (used by
-`robust_calibration.moment_condition_sensitivity`, Section 9.3).
+`robust.moment_condition_sensitivity`, Section 9.3).
 
 Given `M`, `n`, `d`, the calibration parameters follow from `Q = M`, `Q_inv = Q^-1`:
 
@@ -308,10 +308,10 @@ thing as angular density, and a local-density measure computed directly on raw (
 would be equally subject to this dependency as a moment-matching approach naively assuming raw
 normalization already gives directions.
 
-`calibration.weighted_fit_quadric` resolves this the standard way for this class of problem
+`calibrate.weighted_fit_quadric` resolves this the standard way for this class of problem
 (iteratively re-weighted least squares, i.e. IRLS): run the existing *unweighted* fit first (no
 weights, no assumption about directions whatsoever), then use that fit -- not a raw-normalization guess
--- to map samples to directions (`calibration._estimate_directions`) before computing weights.
+-- to map samples to directions (`calibrate._estimate_directions`) before computing weights.
 Concretely, `sqrtm(Q) @ (s + Q^-1 n)` is proportional to the true direction with a fixed,
 direction-independent scalar factor (the same one appearing in `calibrate`'s `A`), so normalizing each
 column recovers the direction without needing `d`. Convergence of this scheme is an empirical property
@@ -398,7 +398,7 @@ has a meaningful fixed heading of its own or reports drag/flow direction instead
 
 ### 9.1 Outlier rejection
 
-`robust_calibration.radial_residuals` gives `(calibrated radius)/field_magnitude - 1` per sample --
+`robust.radial_residuals` gives `(calibrated radius)/field_magnitude - 1` per sample --
 approximately zero for a sample that truly lies on the calibrated ellipsoid, regardless of direction,
 and directly tied to what the calibration is trying to achieve (unlike a per-axis sigma-clip on raw
 X/Y/Z, which has no notion of the ellipsoid model and can accept or reject points for reasons unrelated
@@ -451,7 +451,7 @@ joint latent-variable estimation over all orientations, world vectors, and senso
 (e.g. Bayesian MAP or a factor graph over `SO(3) x S^2`) rather than the independent per-sensor
 ellipsoid fit used throughout this codebase.
 
-`robust_calibration.moment_condition_sensitivity` implements a minimal alternative covering only the
+`robust.moment_condition_sensitivity` implements a minimal alternative covering only the
 tilt/direction term (`alpha`): perturb each of the 55 conditions in the achieved `S` in turn, and
 measure how much the resulting calibrated direction moves at a reference set of test points. No ground
 truth is needed for this because it is a local-sensitivity (Jacobian) question, not an absolute-accuracy
@@ -470,6 +470,47 @@ condition-versus-condition trade-off this mechanism is meant to resolve; the mec
 more when the 55 conditions are in genuine mutual tension (coverage too sparse or too structured to hit
 all of them well simultaneously), which was not true of the cases tested here. It is retained as
 correctly-implemented infrastructure, not as a verified improvement.
+
+### 9.4 Field autocalibration and the raw-spread check
+
+`robust.field_autocalibrate` calibrates from in-service data rather than a dedicated rotation session.
+Sections 9.1-9.3's diagnostics all assume a calibration already exists; this is about deciding whether
+data can support computing one at all, without circularity -- the same bootstrap concern as Section
+9.1's outlier rejection, one level earlier: a preliminary fit is exactly what is in question when
+coverage is marginal, so the check cannot depend on one.
+
+Refuses outright below `MIN_FIELD_SAMPLES = 200` samples or `MIN_FIELD_DIRECTION_SPREAD_DEG = 15` degrees
+of orientation spread, rather than returning a fit that happens to be unreliable with no signal that it
+is. The spread check works on raw samples directly, but a first implementation -- center the raw
+samples, normalize, take the pairwise angle between the resulting unit vectors -- turned out to fail
+independently of the circularity concern it was meant to avoid. Verified directly: a 5-point cluster
+spanning under 20 degrees true pairwise separation produces centered-and-normalized pairwise angles up
+to 163.6 degrees, *noiseless*. Mechanism: centering removes the common direction and leaves each
+sample's own deviation from *its own* centroid; normalizing then discards that deviation's magnitude and
+keeps only its azimuthal direction, which points differently for different samples around even a
+genuinely tight cluster -- the quantity that would have distinguished "tight" from "wide" is exactly
+what the normalization step throws away.
+
+The working check instead takes the *magnitude* of each sample's deviation from the centroid, in raw
+units, and converts to an angle via `field_magnitude` rather than normalizing the deviation away -- the
+same delta/field_magnitude ~ radians relation Section 9.2's `expected_direction_error` uses for its own
+precision term. To leading order for a coherent cluster, `raw - raw.mean()` ~ `field_magnitude *
+(direction - mean_direction)`, so this magnitude is directly proportional to true angular deviation
+without discarding it. A high percentile (90th, not max) of this magnitude across samples, so that one
+unusually far sample cannot single-handedly decide the outcome.
+
+On success, `expected_direction_error`'s `target_directions` (Section 9.2) is set to the data's own
+achieved directions rather than left at the whole-sphere default -- appropriate here specifically
+because in-service coverage is whatever the deployment happened to produce, not a designed envelope. Do
+not confuse this with `weighted_fit_quadric`'s `target_directions` (Section 4.4): that would change what
+the *fit itself* optimizes for; this changes only what is *reported*, and `field_autocalibrate`
+deliberately uses just the latter -- the fit it calls (`autocalibrate`, unmodified) still targets the
+whole sphere. See `calibration.md`, "Choosing a target region", for the user-facing version of this
+distinction.
+
+An optional quadrupole correction via an independent tilt reference (`tilt_reference_cos`) is part of
+the intended design but has no implementation yet; passing anything other than `None` raises
+`NotImplementedError` explicitly rather than silently skipping the step.
 
 ## 10. Test geometry generators
 

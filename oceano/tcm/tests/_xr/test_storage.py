@@ -13,6 +13,7 @@ from tcm._xr.nc_utils import strip_tz_datetime
 import xarray as xr
 
 from tcm import _constants
+from tcm._constants import _h5py
 from tcm._xr.storage import (
     incremental_skip,
     open_processed_grouped,
@@ -682,7 +683,7 @@ class TestEnsureDimScalesOSError:
         def _raise_os(*a, **kw):
             raise OSError("Unable to synchronously open file (Win32 lock)")
 
-        mocker.patch("tcm._xr.storage._h5py.File", side_effect=_raise_os)
+        mocker.patch.object(_h5py, "File", side_effect=_raise_os)
         with caplog.at_level(logging.WARNING, logger="tcm._xr.storage"):
             ensure_dim_scales(path)  # must NOT raise
         assert any("ensure_dim_scales failed" in r.message for r in caplog.records), (

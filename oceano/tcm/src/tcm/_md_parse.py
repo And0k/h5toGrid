@@ -7,6 +7,7 @@ splitting).  Supported constructs:
 * paragraphs, ``#``–``######`` headings
 * ``**bold**``, ``__bold__``, ``*italic*``, ``_italic_``
 * `` `inline code` ``
+* ``{#name}colored text{/}`` — color tag (name resolved by renderer's color map)
 * ``` ``` fenced code blocks ```
 * Markdown tables (pipe-delimited)
 * ``[text](url)`` links → plain text (no click handling)
@@ -19,11 +20,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Literal, TypeAlias
+from typing import TypeAlias
 
 # ── type aliases ─────────────────────────────────────────────────────────────
 
-Tag = Literal["plain", "bold", "italic", "code"]
+Tag = str
 Span: TypeAlias = tuple[str, Tag]
 Inline: TypeAlias = tuple[Span, ...]
 
@@ -69,9 +70,10 @@ _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 # Code fence toggle: ``` or ~~~.
 _FENCE = re.compile(r"^\s*(```|~~~)")
 
-# Inline patterns: escape sequences, inline code, links, bold, italic.
+# Inline patterns: escape sequences, color tags, inline code, links, bold, italic.
 _INLINE = re.compile(
     r"(?P<esc>\\[\\`*_{}\[\]()#+\-.!>~|])"
+    r"|(?P<color>\{#(?P<color_name>[a-z_]+)\}(?P<color_text>.*?)\{/\})"
     r"|(?P<code>`[^`]+`)"
     r"|(?P<link>\[(?P<link_text>[^\]]*)\]\([^)]*\))"
     r"|(?P<bold>\*\*(?P<bold_ast>.+?)\*\*|(?<!\w)__(?P<bold_und>.+?)__(?!\w))"
@@ -126,6 +128,9 @@ def parse_inline(text: str) -> Inline:
 
         if esc := m.group("esc"):
             out.append((esc[1], "plain"))
+
+        elif m.group("color"):
+            out.append((m.group("color_text"), m.group("color_name")))
 
         elif code := m.group("code"):
             out.append((code[1:-1], "code"))

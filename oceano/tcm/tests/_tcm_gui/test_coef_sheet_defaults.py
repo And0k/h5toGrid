@@ -13,11 +13,12 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import tcm_gui.coef_sheet as coef_sheet
 import pytest
 
 from tcm_gui.cli_cfg import NO_DEFAULT, default_for_path
 from tcm_gui.coef_sheet import ConfigSheet
-from tcm_gui.const import DEFAULT_FG
+from tcm_gui.theme import DEFAULT_FG
 
 
 # -- _default_for_path -----------------------------------------------------------
@@ -93,7 +94,7 @@ class TestDefaultForCell:
 
     @staticmethod
     def _make_sheet():
-        with patch("tcm_gui.coef_sheet.Sheet"):
+        with patch.object(coef_sheet, "Sheet"):
             cs = ConfigSheet.__new__(ConfigSheet)
         cs.sh = MagicMock()
         cs._meta = {}
@@ -159,7 +160,7 @@ class TestArrayChildPaths:
 
     @staticmethod
     def _make_sheet():
-        with patch("tcm_gui.coef_sheet.Sheet"):
+        with patch.object(coef_sheet, "Sheet"):
             cs = ConfigSheet.__new__(ConfigSheet)
         cs.sh = MagicMock()
         cs.sh.insert.side_effect = lambda **kw: f"iid_{kw.get('text', 'x')}"
@@ -261,7 +262,7 @@ class TestOnEndEditGrayToggle:
         mock_sh.get_children.side_effect = lambda parent="": list(_kids.get(parent or "", ()))
         mock_sh.winfo_rgb.return_value = (61680, 61680, 61680)
 
-        with patch("tcm_gui.coef_sheet.Sheet", return_value=mock_sh):
+        with patch.object(coef_sheet, "Sheet", return_value=mock_sh):
             cs = ConfigSheet.__new__(ConfigSheet)
         cs.sh = mock_sh
         cs._meta = {}

@@ -1,4 +1,11 @@
 """
+Fits a magnetometer or accelerometer's bias + gain (the "ellipsoid calibration") from raw samples taken
+at multiple orientations. Most callers just want `calibrate(raw, field_magnitude)` — it returns a
+`SensorCalibration(bias, a2d)` such that `a2d @ (raw - bias)` lands calibrated readings on a sphere of
+radius `field_magnitude`; `to_unit_vector` does that projection directly. Everything below this point
+is about *why* the fit is built the way it is and how it corrects for a rotation that did not sample
+every direction equally — not needed just to call it.
+
 Li-Griffiths [1] specific ellipsoid fitting, plus the sample-weighting correction from `moments.py` for
 calibration rotations that sample the response sphere unevenly.
 

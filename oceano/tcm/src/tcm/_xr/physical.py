@@ -309,7 +309,7 @@ def process(
     _bar_cls = get_tqdm_class() or tqdm  # GuiTqdm when GUI active, else terminal tqdm
     pbar = _bar_cls(
         dt_bins_remaining,
-        desc=f"[{pcid}] bins",
+        desc=f"{pcid} bins",
         unit="bin",
         leave=False,
         disable=not show_progress,

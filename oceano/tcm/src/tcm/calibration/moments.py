@@ -1,4 +1,12 @@
 """
+Computes per-sample weights that correct `calibrate.py`'s ellipsoid fit for a calibration rotation
+that covered some directions on the sphere more densely than others — used internally by
+`calibrate.weighted_fit_quadric`; most callers never call anything in this module directly. The
+weights matter because an unweighted fit implicitly trusts over-sampled directions more just for
+having more points there, biasing the result exactly the way any statistic is biased by uneven
+sampling. Everything below is the "why" and the math; skip to `solve_optimal_weights` for where the
+actual optimization happens if the theory is not what's needed right now.
+
 Sample-weighting scheme for Li-Griffiths ellipsoid fitting under non-uniform angular coverage.
 
 Multi-position rotation calibration (rotate about a fixed axis, reposition, repeat) samples the

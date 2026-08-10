@@ -91,7 +91,9 @@ class TestRealReference:
             ("input", "Data source"),
             ("input.coefs", "Calibration coefficients"),
             ("out", "Output configuration"),
-            ("filter", "NaN-out"),  # "Process-stage NaN-out thresholds"
+            # Real doc subtitle: "Process-stage quality thresholds" — values exceeding
+            # become NaN (body explains); subtitle was reworded from older "NaN-out".
+            ("filter", "quality thresholds"),
             ("program", "Runtime flags"),
         ):
             e = help_for_path(section)

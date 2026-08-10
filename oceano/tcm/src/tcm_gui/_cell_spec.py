@@ -171,7 +171,7 @@ def parse_float(v: str) -> float | None:
         return None
 
 
-def as_date(s: str) -> bool:
+def as_date(s: str) -> datetime | None:
     """Create datetime if s is an ISO date string or looks like an naive European dd.mm.yyyy"""
     try:
         return datetime.fromisoformat(s)

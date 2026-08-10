@@ -14,6 +14,7 @@ import xarray as xr
 from omegaconf import DictConfig
 
 from tcm import _constants, config_yaml as cfg_mod, csv_load, policy, schema
+from tcm._xr import physical as _physical
 from tcm._constants import RAW_DIR_NAME
 from tcm.schema import Return
 from tcm.config_yaml import (
@@ -23,6 +24,9 @@ from tcm.config_yaml import (
     update_coefs_in_run_yaml,
 )
 from tcm.processing import run_processing
+import tcm.cli as _cli
+from tcm._xr import io as _xr_io
+import tcm.processing as _processing
 
 
 @pytest.fixture()
@@ -282,7 +286,7 @@ class TestPipelineIntegration:
         ]
 
         mock_pipeline(pipeline_env.cfg, pipeline_env, mocker)
-        mock_process = mocker.patch("tcm._xr.physical.process", wraps=None)
+        mock_process = mocker.patch.object(_physical, "process", wraps=None)
         mock_process.return_value = [pipeline_env.synthetic_ds]
 
         run_processing(pipeline_env.cfg)
@@ -378,12 +382,12 @@ class TestCoefPersistence:
                 cfg_t["out"][k] = v
         cfg_t["out"]["dt_bins"] = [pd.Timedelta(seconds=0)]
 
-        mocker.patch("tcm.processing.cli.main_init", return_value=cfg_t)
-        mocker.patch(
-            "tcm.processing.xr_io.load_raw",
+        mocker.patch.object(_cli, "main_init", return_value=cfg_t)
+        mocker.patch.object(
+            _xr_io, "load_raw",
             return_value=(env.synthetic_ds, None),
         )
-        mocker.patch("tcm.processing.get_coefs_from_cfg", return_value=env.coefs)
+        mocker.patch.object(_processing, "get_coefs_from_cfg", return_value=env.coefs)
 
         run_processing(env.cfg)
 
@@ -452,12 +456,12 @@ class TestCoefPersistence:
                 cfg_t["out"][k] = v
         cfg_t["out"]["dt_bins"] = [pd.Timedelta(seconds=0)]
 
-        mocker.patch("tcm.processing.cli.main_init", return_value=cfg_t)
-        mocker.patch(
-            "tcm.processing.xr_io.load_raw",
+        mocker.patch.object(_cli, "main_init", return_value=cfg_t)
+        mocker.patch.object(
+            _xr_io, "load_raw",
             return_value=(env.synthetic_ds, None),
         )
-        mocker.patch("tcm.processing.get_coefs_from_cfg", return_value=env.coefs)
+        mocker.patch.object(_processing, "get_coefs_from_cfg", return_value=env.coefs)
         # Mock save_coefs_to_nc to raise ImportError (h5py not available)
         mocker.patch.object(xr_coefs_mod, "save_coefs_to_nc", side_effect=ImportError("no h5py"))
 

@@ -1,6 +1,28 @@
 """
-Switchable Fibonacci / HEALPix sampling, automatic grid choice,
-Voronoi patch rendering and Mollweide / 3D sphere plotting.
+Draws "how well did the calibration rotation cover the sphere" plots — a colored map (flat Mollweide
+or 3-D globe) showing a value (point density, calibration uncertainty, etc.) at every point on the
+unit sphere. Called from :mod:`visualization` (`coverage_heatmap`) and :mod:`run`; `plot_coverage` is
+also usable standalone for a quick look at any per-direction quantity.
+
+Two unrelated things a caller needs to pick between:
+
+Sampling grid — where the plotted values live *before* rendering: `"fibonacci"` (near-uniform,
+low-discrepancy, no dependency — see `fibonacci_sphere_vectors`, same construction as
+`moments.fibonacci_sphere`, duplicated here to keep this module's plotting code independent of the
+core math modules) or `"healpix"` (equal-area pixels, requires the optional `hpgeom` package —
+`HPGEOM_AVAILABLE` is checked before every use, functions raise plainly if it's missing).
+
+Rendering method — how sample values become a picture: `render_spherical_voronoi` computes the exact
+Voronoi tessellation of the sphere and paints each site's own cell (every point on the sphere is
+covered by exactly one site's color, boundaries are exact) — best for genuinely showing *ownership*
+of the whole sphere by a modest number of samples (thousands, not millions: `SphericalVoronoi` is not
+cheap). `make_map_from_samples` instead assigns each cell of a regular lon/lat (or HEALPix) grid the
+value of its single nearest sample by dot product — a *nearest-neighbor* fill, not an interpolation
+(no smoothing between samples, no output for a query point that has no samples anywhere near it) —
+cheaper and fine for a dense/large sample set where visual smoothness is not the point.
+
+`plot_coverage` is the one function most callers want: given a sampling grid + optional per-point
+`values`, it picks a sensible rendering path and returns a ready-to-show ``(fig, ax)``.
 """
 
 import numpy as np
@@ -22,8 +44,13 @@ from scipy.spatial import SphericalVoronoi
 # -------------------------
 def pix2ang_hpgeom(nside, ipix):
     """
-    Adapter: return (theta, phi) for pixel indices ipix using hpgeom.
-    ipix can be array-like.
+    HEALPix pixel index(es) -> sky coordinates. Thin wrapper so the rest of this module calls one
+    stable name regardless of which `hpgeom` version's argument spelling is installed.
+
+    :param nside: HEALPix resolution parameter (higher = finer pixels; must be a power of 2).
+    :param ipix: int or array-like of pixel indices.
+    :return: (theta, phi) each same shape as `ipix` — theta = colatitude from +Z in [0, pi], phi =
+        longitude in [0, 2*pi), both radians.
     """
     if not HPGEOM_AVAILABLE:
         raise RuntimeError("hpgeom not available")
@@ -34,9 +61,14 @@ def pix2ang_hpgeom(nside, ipix):
 
 def boundaries_hpgeom(nside, ipix, step=1):
     """
-    Adapter: return boundaries for pixels ipix.
-    Expected return shape: (n_vertices, len(ipix), 3) or list of vertex arrays.
-    We'll normalize to (n_vertices, npix, 3) to match earlier code.
+    3-D corner points of each HEALPix pixel's boundary, for drawing pixels as filled polygons (see
+    `plot_healpix_on_sphere_hpgeom`).
+
+    :param nside: HEALPix resolution parameter.
+    :param ipix: array-like of pixel indices to get boundaries for.
+    :param step: vertices per pixel edge (1 = corners only, higher = denser polygon for pixels drawn
+        large enough that a straight-edge approximation of their curved boundary would look faceted).
+    :return: (n_vertices, len(ipix), 3) unit-vector corner points, `n_vertices = 4 * step`.
     """
     if not HPGEOM_AVAILABLE:
         raise RuntimeError("hpgeom not available")
@@ -48,7 +80,17 @@ def boundaries_hpgeom(nside, ipix, step=1):
 # Existing utilities (Fibonacci, grid, Voronoi) reused
 # -------------------------
 def fibonacci_sphere_vectors(n: int) -> np.ndarray:
-    """Return unit vectors shape (3, n) for near-uniform Fibonacci sampling."""
+    """
+    `n` points spread near-uniformly over the unit sphere (golden-angle spiral construction) — the
+    default `"fibonacci"` sampling grid for `plot_coverage`.
+
+    Same construction as `moments.fibonacci_sphere`, kept as a separate copy so this plotting module
+    has no import dependency on the core math package (see module docstring) — if the two ever need
+    to change, change them together.
+
+    :param n: number of points.
+    :return: (3, n) unit vectors.
+    """
     i = np.arange(n) + 0.5
     incl = np.arccos(1 - 2 * i / n)        # theta (0..pi)
     az = np.pi * (1 + 5 ** 0.5) * i       # golden angle times i
@@ -58,12 +100,41 @@ def fibonacci_sphere_vectors(n: int) -> np.ndarray:
     return np.vstack([x, y, z])           # shape (3, n)
 
 def choose_lonlat_res_for_fibonacci(N, alpha=4, lon_max=4096, lat_max=2048):
+    """
+    Auto-pick a lon/lat grid size that roughly matches `N` Fibonacci samples' own resolution — enough
+    grid cells that `make_map_from_samples` doesn't waste most samples on duplicate cells (grid too
+    coarse) or leave most cells empty/aliased (grid far finer than the data can actually resolve),
+    without the caller having to work out a cell count by hand for every `N`.
+
+    :param N: number of samples the grid will receive values from (`fibonacci_sphere_vectors`'s `n`).
+    :param alpha: target grid cells per sample; higher = finer grid for the same `N`.
+    :param lon_max, lat_max: hard caps so a very large `N` doesn't request an unreasonably huge grid.
+    :return: (n_lon, n_lat) grid resolution, each clamped to at least a usable minimum (64, 32).
+    """
     M = int(np.ceil(alpha * N))
     n_lon = int(min(lon_max, max(64, int(np.round(np.sqrt(M * 2))))))
     n_lat = int(min(lat_max, max(32, int(np.ceil(M / n_lon)))))
     return n_lon, n_lat
 
 def make_map_from_samples(vecs, values, target="grid", grid_lon_res=720, grid_lat_res=360, healpix_nside=None):
+    """
+    Fill a regular lon/lat grid or HEALPix map from scattered `(vecs, values)` samples by
+    nearest-neighbor assignment: each output cell gets the `values` entry of whichever input `vecs`
+    is closest by dot product (equivalently, smallest angular distance) — cheap (one matrix multiply
+    plus argmax, no tree), but a real caveat to know before reading the picture: this is *not*
+    interpolation. There is no smoothing between samples, and a cell far from every sample still gets
+    some (nearest, however distant) sample's value with no indication of that distance — coverage
+    gaps read as a same-colored region, not as missing data, unless the caller checks separately.
+
+    :param vecs: (3, N) unit vectors — the samples' own directions.
+    :param values: (N,) value at each sample.
+    :param target: `"grid"` for a regular lon/lat grid, `"healpix"` for a HEALPix map (requires
+        `hpgeom`, see module docstring).
+    :param grid_lon_res, grid_lat_res: grid resolution, `target="grid"` only.
+    :param healpix_nside: HEALPix resolution, `target="healpix"` only.
+    :return: `target="grid"`: (lon, lat, map_vals) with `map_vals` shape (grid_lat_res, grid_lon_res).
+        `target="healpix"`: `healpix_map`, shape (12 * healpix_nside**2,).
+    """
     vecs = np.asarray(vecs)
     values = np.asarray(values)
     if target == "grid":
@@ -100,7 +171,10 @@ def make_map_from_samples(vecs, values, target="grid", grid_lon_res=720, grid_la
 # -------------------------
 def render_spherical_voronoi(vecs, values, projection="mollweide", cmap="viridis", edgecolor=None,
                               norm=None, ax=None):
-    """Render Voronoi patches colored by *values*.
+    """Render Voronoi patches colored by *values* — exact tessellation of the whole sphere into one
+    cell per site, unlike `make_map_from_samples`'s nearest-neighbor grid fill (see module docstring
+    for when to reach for which). Best for a modest site count (thousands); `SphericalVoronoi`'s cost
+    grows faster than the grid approach's for very large N.
 
     Parameters
     ----------
@@ -179,6 +253,18 @@ def render_spherical_voronoi(vecs, values, projection="mollweide", cmap="viridis
 # HEALPix plotting via hpgeom boundaries (3D)
 # -------------------------
 def plot_healpix_on_sphere_hpgeom(healpix_map, nside, cmap="viridis", title=None, elev=30, azim=60):
+    """
+    Render a HEALPix map as filled pixel polygons on a 3-D globe (`boundaries_hpgeom` for the pixel
+    outlines) — the HEALPix-grid counterpart of `render_spherical_voronoi`'s Fibonacci/Voronoi
+    rendering; called by `plot_coverage` for `method="healpix", plot_mode` other than `"mollweide"`.
+
+    :param healpix_map: (12 * nside**2,) value per HEALPix pixel (see `make_map_from_samples`).
+    :param nside: HEALPix resolution matching `healpix_map`.
+    :param cmap: colormap name.
+    :param title: optional plot title.
+    :param elev, azim: initial 3-D view angle (degrees).
+    :return: (fig, ax).
+    """
     if not HPGEOM_AVAILABLE:
         raise RuntimeError("hpgeom not installed")
     npix = hg.nside2npix(nside)
@@ -210,6 +296,31 @@ def plot_healpix_on_sphere_hpgeom(healpix_map, nside, cmap="viridis", title=None
 def plot_coverage(method="fibonacci", n_or_nside=1024, values=None,
                   plot_mode="mollweide", grid_res=None, alpha_grid=4,
                   patch_based=False, cmap="viridis", edgecolor=None):
+    """
+    One-call entry point: build a sampling grid, optionally fill it with `values`, and render a
+    coverage map. For a quick look at any per-direction quantity, this is normally the only function
+    in this module a caller needs; the pieces it wires together (grid choice, rendering method) are
+    documented individually below and in the module docstring if finer control is needed.
+
+    :param method: `"fibonacci"` (default, no extra dependency) or `"healpix"` (needs `hpgeom`) — see
+        module docstring.
+    :param n_or_nside: `method="fibonacci"`: number of sample points. `method="healpix"`: HEALPix
+        `nside`.
+    :param values: (N,) value per grid point, N matching `method`'s point count; None (default) =
+        `(z + 1) / 2` — a smooth placeholder gradient from south to north pole, useful for sanity-
+        checking the grid/rendering itself before real data is available.
+    :param plot_mode: `"mollweide"` (default, flat all-sky map) or `"sphere"` (3-D globe).
+    :param grid_res: `method="fibonacci"` only, `patch_based=False` only: explicit (lon_res, lat_res)
+        for `make_map_from_samples`; None (default) = auto-chosen by `choose_lonlat_res_for_fibonacci`.
+    :param alpha_grid: `grid_res=None` only: passed through as `choose_lonlat_res_for_fibonacci`'s
+        `alpha` (grid density relative to point count).
+    :param patch_based: `method="fibonacci"` only: True renders exact Voronoi cells
+        (`render_spherical_voronoi`) instead of a nearest-neighbor grid fill — see module docstring
+        for the trade-off; ignored (grid fill always used) for `method="healpix"`.
+    :param cmap, edgecolor: passed through to whichever rendering function is used.
+    :return: (fig, ax) or, for `render_spherical_voronoi`/`plot_healpix_on_sphere_hpgeom`, whatever
+        those return (same `(fig, ax)` shape) — None if `method="healpix"` and `hpgeom` is missing.
+    """
     vecs = None
     if method == "fibonacci":
         vecs = fibonacci_sphere_vectors(int(n_or_nside))
@@ -279,6 +390,18 @@ def plot_coverage(method="fibonacci", n_or_nside=1024, values=None,
 # Helper plotting functions reused (pcolormesh / sphere)
 # -------------------------
 def plot_mollweide_from_grid(lon, lat, map_vals, cmap="viridis", title=None):
+    """
+    Flat all-sky map of a regular lon/lat grid (from `make_map_from_samples`) via
+    :meth:`~matplotlib.axes.Axes.pcolormesh` on a Mollweide projection — the `plot_mode="mollweide"`
+    rendering path for `method="fibonacci", patch_based=False` in `plot_coverage`.
+
+    :param lon: (n_lon,) grid longitudes, radians (cell centers).
+    :param lat: (n_lat,) grid latitudes, radians (cell centers).
+    :param map_vals: (n_lat, n_lon) value per grid cell.
+    :param cmap: colormap name.
+    :param title: optional plot title.
+    :return: (fig, ax).
+    """
     lon_edges = np.concatenate([lon, [lon[0] + 2*np.pi/len(lon)]])
     lat_step = lat[1] - lat[0]
     lat_edges = np.linspace(lat[0] - lat_step/2, lat[-1] + lat_step/2, len(lat)+1)
@@ -292,6 +415,19 @@ def plot_mollweide_from_grid(lon, lat, map_vals, cmap="viridis", title=None):
     return fig, ax
 
 def plot_sphere_from_grid(lon, lat, map_vals, cmap="viridis", title=None, elev=30, azim=60):
+    """
+    3-D-globe counterpart of `plot_mollweide_from_grid`: same regular lon/lat grid, rendered as a
+    colored surface on a sphere instead of a flat projection — the `plot_mode="sphere"` rendering
+    path for `method="fibonacci", patch_based=False` in `plot_coverage`.
+
+    :param lon: (n_lon,) grid longitudes, radians.
+    :param lat: (n_lat,) grid latitudes, radians.
+    :param map_vals: (n_lat, n_lon) value per grid cell.
+    :param cmap: colormap name.
+    :param title: optional plot title.
+    :param elev, azim: initial 3-D view angle (degrees).
+    :return: (fig, ax).
+    """
     Lon, Lat = np.meshgrid(lon, lat)
     X = np.cos(Lat) * np.cos(Lon)
     Y = np.cos(Lat) * np.sin(Lon)

@@ -10,21 +10,23 @@ from pathlib import Path, PurePath
 from queue import Empty
 from tkinter import ttk
 
-
+import yaml
 from omegaconf import OmegaConf
 
 from tcm import cli, config_yaml, format, incl_calc, paths, schema
 from tcm_gui.cli_cfg import default_cfg
+import tcm_gui.theme
+
+# Chrome i18n strings — loaded once from str.yaml (sibling of this module).
+STR: dict[str, str] = yaml.safe_load((Path(__file__).with_name("str.yaml")).read_text(encoding="utf-8"))
 
 from ._browse_button import BrowseButtonManager
 from ._path_field import PathField
 from ._rtf_clipboard import copy_rich
 from .coef_sheet import ConfigSheet
-from . import const
 from .const import (
-    STR,
-    apply_theme_defaults,
-    apply_ui_scale,
+    UIScale,
+    configure_ui,
     get_widget_meta,
     set_widget_meta,
     widget_meta,
@@ -32,16 +34,11 @@ from .const import (
 from .log_bridge import drain, install
 from .md_label import MarkdownLabel
 from .runtime import Runtime
+from .theme import apply_theme_defaults
 from .worker import Worker
 
+from ._browse_button import _is_shift_pressed
 from ._help import help_for_path
-
-
-def _shift_at_startup() -> bool:
-    try:
-        return bool(ctypes.windll.user32.GetAsyncKeyState(0x10) & 0x8000)
-    except (AttributeError, OSError):
-        return False
 
 
 class App:
@@ -53,7 +50,8 @@ class App:
             shell32.SetCurrentProcessExplicitAppUserModelID(self.APP_ID)
 
         self.root = tk.Tk()
-        apply_ui_scale(self.root)  # global DPI + named fonts — before any widget
+        self.ui = UIScale(self.root)
+        configure_ui(self.root)
         self._theme = apply_theme_defaults(self.root)  # dark/light log colors
         self.root.title("TCM")
         self.root.geometry("1100x800")
@@ -84,8 +82,9 @@ class App:
         self._cfg_was_dirty = False  # True while any page has unsaved edits
 
         # watch Shift globally on root (Windows doesn't send Shift to widgets)
-        self._full_mode = _shift_at_startup()
+        self._full_mode = _is_shift_pressed()
         self._chrome_hovering: tk.Widget | None = None  # generic chrome hover guard
+        self._browse_hovering: bool = False  # browse button Shift-hint hover guard
 
         self._build()
         self._status_font_fitted = False  # one-shot flag for _fit_status_font
@@ -105,7 +104,12 @@ class App:
     @property
     def _any_hovering(self) -> bool:
         """True when any hover guard is active — suppresses poll status clobber."""
-        return self._path_hovering or self._nb_hovering or self._chrome_hovering is not None
+        return (
+            self._path_hovering
+            or self._nb_hovering
+            or self._chrome_hovering is not None
+            or self._browse_hovering
+        )
 
     # ── layout ──────────────────────────────────────────────────────
 
@@ -121,7 +125,12 @@ class App:
         f0.columnconfigure(1, weight=1)
         self._path_lbl = ttk.Label(f0, text=STR["path_lbl.tooltip"])
         self._path_lbl.grid(row=0, column=0, padx=(0, 4))
-        self._path_field = PathField(f0, on_commit=self._on_path_changed)
+        self._path_field = PathField(
+            f0,
+            on_commit=self._on_path_changed,
+            on_status=self._on_browse_status,
+            status_hint=STR["browse_btn.status"],
+        )
         self._path_field.grid(row=0, column=1, sticky="ew")
         # Status message on hover — rebind on the Sheet's MT canvas
         self._path_hovering = False
@@ -165,12 +174,13 @@ class App:
             height=10,
             state="disabled",
             wrap="word",
-            bg=const.ENTRY_BG_FALLBACK,
-            fg=const.FG_DEFAULT,
-            insertbackground=const.FG_DEFAULT,
+            bg=tcm_gui.theme.ENTRY_BG_FALLBACK,
+            fg=tcm_gui.theme.FG_DEFAULT,
+            insertbackground=tcm_gui.theme.FG_DEFAULT,
             borderwidth=0,
             highlightthickness=0,
         )
+        self.ui.set_font(self._log)  # same scaled font as status label
         self._log.grid(row=0, column=0, sticky="nsew")
         self._log_vbar = ttk.Scrollbar(
             _log_frame,
@@ -185,22 +195,24 @@ class App:
         self._log.bind("<MouseWheel>", self._on_log_scroll, add="+")
         self._log.bind("<Button-4>", self._on_log_scroll, add="+")  # Linux scroll up
         self._log.bind("<Button-5>", self._on_log_scroll, add="+")  # Linux scroll down
-        for lvl, clr in const.TAG_COLORS.items():
+        for lvl, clr in tcm_gui.theme.TAG_COLORS.items():
             self._log.tag_configure(lvl, foreground=clr)
-        self._log.tag_configure("func", foreground=const.FUNC_COLOR)
+        self._log.tag_configure("func", foreground=tcm_gui.theme.FUNC_COLOR)
         self._log.bind("<Control-c>", lambda _: (copy_rich(self._log), "break")[1])
 
         # §6 GUI status — MarkdownLabel overlaid bottom-left, dynamic width.
         self._status_lbl = MarkdownLabel(
             r,
-            background=const.FRAME_BG_FALLBACK,
-            foreground=const.FG_DEFAULT,
+            font=self.ui.font(),
+            background=tcm_gui.theme.FRAME_BG_FALLBACK,
+            foreground=tcm_gui.theme.FG_DEFAULT,
+            colors=tcm_gui.theme.TAG_COLORS,
         )
-        self._status_lbl.place(rely=1.0, relx=0.0, anchor="sw", x=4, y=-4)
+        self._status_lbl.place(rely=1.0, relx=0.0, anchor="sw", x=4, y=0)
 
         # §6b Stage progress — overlaid bottom-right, shown only when active.
         # Text label sits above the bar inside a transparent-background frame.
-        _bg = const.FRAME_BG_FALLBACK
+        _bg = tcm_gui.theme.FRAME_BG_FALLBACK
         self._prog_floater = tk.Frame(r, bg=_bg, bd=0, highlightthickness=0)
         self._prog_stage_text = tk.Label(
             self._prog_floater,
@@ -208,7 +220,7 @@ class App:
             anchor="e",
             justify="right",
             bg=_bg,
-            fg=const.FG_DEFAULT,
+            fg=tcm_gui.theme.FG_DEFAULT,
             bd=0,
             highlightthickness=0,
             padx=4,
@@ -243,15 +255,15 @@ class App:
                 continue
             if "status" not in widget_meta[w]:
                 continue
-        w.bind("<Motion>", self._on_chrome_hover, add="+")
-        w.bind("<Leave>", self._on_chrome_leave, add="+")
+            w.bind("<Motion>", self._on_chrome_hover, add="+")
+            w.bind("<Leave>", self._on_chrome_leave, add="+")
 
     def _on_chrome_hover(self, event: tk.Event) -> None:
         """Generic chrome hover: show widget's status text."""
         w = event.widget
         if status := get_widget_meta(w, "status"):
             self._chrome_hovering = w
-            self._status_lbl.set_text(status, markdown=False)
+            self._status_lbl.set_text(status)
 
     def _on_chrome_leave(self, _event: tk.Event) -> None:
         """Generic chrome leave: clear hover flag."""
@@ -294,38 +306,42 @@ class App:
         return STR["run.resume"] if self.rt.pause_gate.paused else STR["run.pause"]
 
     def _fit_status_font(self) -> None:
-        """Cap status label font to fit within the progress bar row.
+        """Mark status label font as ready for auto-sizing.
 
         Called from ``_poll`` until the progress bar has real geometry.
-        After scaling, sets initial content and shows the progress
+        After marking ready, sets initial content and shows the progress
         overlay immediately when a CLI scan is pending.
+
+        Does NOT resize fonts — the status label auto-grows vertically
+        for multi-line content, so constraining to a single-row pixel
+        budget is wrong.
         """
         bar_h = self._prog_stage.winfo_reqheight()
         if bar_h <= 4:
             return  # not yet laid out — retry on next poll
         self._status_font_fitted = True
-        self._status_lbl.fit_to_height(bar_h)
-        # Set initial content or re-render with scaled font.
-        cur = self._status_lbl._current
-        self._status_lbl._current = None
-        if cur:
-            self._status_lbl.set_text(cur[1], markdown=(cur[0] == "md"))
-        elif self._initial_scan:
-            # Scan pending — show progress overlay immediately, skip "Ready".
-            if not self._prog_floater.winfo_ismapped():
+        self._status_lbl.mark_font_ready()
+        # Re-render cached content with scaled font.
+        if not self._status_lbl.rerender():
+            if self._initial_scan and not self._prog_floater.winfo_ismapped():
                 self._prog_floater.place(relx=1.0, rely=1.0, anchor="se", x=-8, y=-4)
                 self._prog_stage_text.config(text="Loading\u2026")
-        else:
-            self._status_lbl.set_plain("Ready")
+            elif not self._initial_scan:
+                self._status_lbl.set_text("Ready", raw=True)
 
     def _on_path_hover_in(self) -> None:
         """Mouse enters Entry — show status hint from widget_meta registry."""
         self._path_hovering = True
-        self._status_lbl.set_text(get_widget_meta(self._path_field, "status"), markdown=False)
+        self._status_lbl.set_text(get_widget_meta(self._path_field, "status"))
 
     def _on_path_hover_out(self) -> None:
         """Mouse leaves Entry — clear hover flag (status restored by poll)."""
         self._path_hovering = False
+
+    def _on_browse_status(self, text: str) -> None:
+        """Browse button hover: show Shift hint, guard against poll clobber."""
+        self._browse_hovering = bool(text)
+        self._status_lbl.set_text(text)
 
     # ── §3 notebook tab hover ────────────────────────────────────────
 
@@ -356,7 +372,7 @@ class App:
         status = get_widget_meta(frame, "status")
         if not self._nb_hovering:
             self._nb_hovering = True
-        self._status_lbl.set_text(status, markdown=False)
+        self._status_lbl.set_text(status, raw=True)
 
     def _on_nb_leave(self, _event: tk.Event) -> None:
         """Pointer left the notebook — clear tab hover flag."""
@@ -380,7 +396,7 @@ class App:
         """PathField committed a new path — trigger scan with immediate overlay."""
         self._initial_scan = True
         # Show progress overlay immediately (skip "Ready" → "Loading…" transition).
-        self._status_lbl.set_text("", markdown=False)
+        self._status_lbl.set_text("", raw=True)
         if self._prog_floater.winfo_ismapped():
             self._prog_floater.lift()
         else:
@@ -420,15 +436,17 @@ class App:
             status_text = STR["tab.status"].format(path=stem)
         set_widget_meta(frame, status=status_text)
 
-        cs = ConfigSheet(frame)
+        cs = ConfigSheet(frame, status_hint=STR["browse_btn.status"])
         cs.sh.pack(fill="both", expand=True, padx=2, pady=2)
         cs._mgr = BrowseButtonManager(
             cs.sh,
             on_path_changed=lambda path: self._set_coefs_and_reload(stem, path),
             on_edit_restyler=cs._apply_edit_value,
+            on_status=self._on_browse_status,
+            status_hint=STR["browse_btn.status"],
         )
         cs.load(cfg, full=self._full_mode, config_root=schema.Config, return_enum=schema.Return)
-        cs.on_hover_status = lambda msg, md=False: self._status_lbl.set_text(msg, markdown=md)
+        cs.on_hover_status = lambda msg, md=False: self._status_lbl.set_text(msg, raw=not md)
         self._pages[stem] = cs
 
     def _set_coefs_and_reload(self, stem: str, coefs_path: str) -> None:
@@ -448,7 +466,7 @@ class App:
         if self.wk.busy:
             gate = self.rt.pause_gate
             (gate.resume if gate.paused else gate.pause)()
-            self._run_btn.config(text="Pause" if gate.paused else "Resume")
+            self._run_btn.config(text="Resume" if gate.paused else "Pause")
             return
         stems = list(self._pages)
         if not stems:
@@ -511,7 +529,7 @@ class App:
         elif not any_dirty and self._cfg_was_dirty:
             self._cfg_was_dirty = False
             if self._cfg_scanned:
-                self._cfg_state.set("Generated configuration for processing found data")
+                self._cfg_state.set("Generated configurations for processing found data")
 
     def _on_log_scroll(self, _event: tk.Event) -> None:
         """Disable auto-scroll when user scrolls up; re-enable at bottom."""
@@ -536,7 +554,9 @@ class App:
         cur_o, tot_o, desc_o = self.rt.progress_overall.snapshot()
         if tot > 0:
             self._prog_stage.config(maximum=tot, value=cur)
-            self._prog_stage_text.config(text=desc or "")
+            # Only update stage text while stage is running; keep "Done" message at 100%
+            if cur < tot:
+                self._prog_stage_text.config(text=desc or "")
             if self._prog_floater.winfo_ismapped():
                 self._prog_floater.lift()
             elif self._prog_show_job is None:
@@ -555,7 +575,7 @@ class App:
             # wiped exactly once; otherwise leave _status alone — explicit
             # setters own it ("Ready", "Done …", hover hints).
             if not self._any_hovering and self.rt.progress_stage.consume_clear():
-                self._status_lbl.set_text("", markdown=False)
+                self._status_lbl.set_text("", raw=True)
         if tot_o > 0:
             self._prog_all.config(maximum=tot_o, value=cur_o)
             self._prog_all_lbl.set(desc_o or "")
@@ -610,21 +630,25 @@ class App:
         # Clear scan progress so _prog_floater hides on next poll.
         self.rt.progress_stage.set(0, 0, "")
         # Scan done — show "Ready" now.
-        self._status_lbl.set_plain("Ready")
-        self._cfg_state.set("Generated configuration for processing found data")
+        self._status_lbl.set_text("Ready", raw=True)
+        self._cfg_state.set("Generated configurations for processing found data")
 
     def _on_run_done(self, result) -> None:
         self._run_btn.config(text="Run")
         processed, failed = result[0], result[1]
         n = len(processed) + len(failed)
         pct = round(100 * len(processed) / n) if n else 100
-        self._status_lbl.set_text(f"Done — {pct}% ({len(processed)}/{n} ok)", markdown=False)
-        # Reset both progress bars on completion
-        self._prog_stage.config(value=0)
+        # Show completion in the stage progress floater (bottom-right) instead of status label (bottom-left)
+        self._prog_stage_text.config(text=f"Done — {pct}% ({len(processed)}/{n} ok)")
+        self._prog_stage.config(value=self._prog_stage["maximum"])  # show 100%
+        if not self._prog_floater.winfo_ismapped():
+            self._prog_floater.place(relx=1.0, rely=1.0, anchor="se", x=-8, y=-4)
+        self._prog_floater.lift()
+        # Reset overall progress bar only; keep stage progress visible with completion text
         self._prog_all.config(value=0)
         self._prog_all_lbl.set("")
         self.rt.progress_overall.set(0, 0, "")
-        self.rt.progress_stage.set(0, 0, "")
+        # Don't reset progress_stage — keep completion text visible in floater
 
     def _clear_log(self) -> None:
         """Flush pending queue records and clear the ScrolledText widget."""

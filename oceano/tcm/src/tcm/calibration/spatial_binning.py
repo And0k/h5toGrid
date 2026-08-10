@@ -1,4 +1,9 @@
 """
+Collapses a large, unevenly-distributed raw sample set down to one averaged point per patch of sky
+(`bin_avg_3d`) — an optional pre-processing step for calibration fits done on very dense data, so a
+heavily over-sampled region doesn't dominate a fit the way `moments.py`'s weighting scheme corrects
+for more precisely, at lower cost for the common case of just wanting fewer, more evenly-spread points.
+
 3-D spatial bin averaging on the unit sphere.
 
 Replaces ``tcm._dask_legacy.incl_calibr_hy.bin_avg_3d_partial`` —

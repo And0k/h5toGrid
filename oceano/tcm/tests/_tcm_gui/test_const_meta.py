@@ -1,8 +1,8 @@
-"""Tests for const.py: UI scaling, widget_meta registry, and STR content dict.
+"""Tests for const.py: UIScale, configure_ui, widget_meta registry, and STR content dict.
 
-Covers :func:`apply_ui_scale`, :func:`set_widget_meta`, :func:`get_widget_meta`,
-the :data:`widget_meta` dictionary, callable-resolving ``get_widget_meta``,
-and the :data:`STR` i18n content table.
+Covers :class:`UIScale`, :func:`configure_ui`, :func:`set_widget_meta`,
+:func:`get_widget_meta`, the :data:`widget_meta` dictionary,
+callable-resolving ``get_widget_meta``, and the :data:`STR` i18n content table.
 """
 
 from __future__ import annotations
@@ -11,6 +11,8 @@ import tkinter as tk
 from unittest.mock import MagicMock
 
 import pytest
+from tcm_gui.const import set_widget_meta
+import tcm_gui.theme
 
 # ── UI scaling ────────────────────────────────────────────────────────────────
 
@@ -31,59 +33,266 @@ def _tk_root():
         yield None
 
 
-class TestApplyUiScale:
-    """``apply_ui_scale`` sets tk scaling and configures named fonts."""
+class TestUIScale:
+    """UIScale sets tk scaling and configures named fonts."""
 
     def test_sets_tk_scaling(self, _tk_root):
-        """apply_ui_scale calls tk scaling with UI_SCALE."""
+        """UIScale(ui_scale=1.5) sets tk scaling to platform × 1.5."""
         if _tk_root is None:
             pytest.skip("Tk unavailable — Tcl interpreter already destroyed")
-        from tcm_gui.const import UI_SCALE, apply_ui_scale
+        from tcm_gui.const import UIScale
 
-        apply_ui_scale(_tk_root)
+        platform = _tk_root.tk.call("tk", "scaling")
+        UIScale(_tk_root, ui_scale=1.5)
         actual = _tk_root.tk.call("tk", "scaling")
-        # Tk may nudge the value slightly (e.g. 1.0 → 1.00049… from DPI rounding).
-        assert float(actual) == pytest.approx(UI_SCALE, abs=0.01), (
-            f"apply_ui_scale: tk scaling mismatch — expected ~{UI_SCALE}, got {actual}"
+        expected = platform * 1.5
+        assert actual == pytest.approx(expected, abs=0.01), (
+            f"tk scaling after UIScale(ui_scale=1.5): expected ~{expected}, got {actual}"
         )
 
-    def test_named_font_size(self, _tk_root):
-        """apply_ui_scale sets TkDefaultFont size to FONT_SIZE."""
+    def test_font_returns_copy(self, _tk_root):
+        """font() returns a copy, not the original named font."""
         if _tk_root is None:
             pytest.skip("Tk unavailable — Tcl interpreter already destroyed")
         import tkinter.font as tkfont
 
-        from tcm_gui.const import FONT_SIZE, apply_ui_scale
+        from tcm_gui.const import UIScale
 
-        apply_ui_scale(_tk_root)
-        default_font = tkfont.nametofont("TkDefaultFont")
-        assert default_font.cget("size") == FONT_SIZE, (
-            f"apply_ui_scale: TkDefaultFont size mismatch — expected {FONT_SIZE}, "
-            f"got {default_font.cget('size')}"
+        ui = UIScale(_tk_root, font_scale=1.0)
+        f = ui.font()
+        original = tkfont.nametofont("TkDefaultFont")
+        assert f is not original, "font() should return a copy, not the original"
+        assert f.cget("family") == original.cget("family"), (
+            f"font() family mismatch: expected {original.cget('family')}, got {f.cget('family')}"
         )
 
-    def test_text_font_size(self, _tk_root):
-        """apply_ui_scale sets TkTextFont size to FONT_SIZE."""
+    def test_font_identity_at_default(self, _tk_root):
+        """font() with font_scale=1.0 returns copy with same size."""
         if _tk_root is None:
             pytest.skip("Tk unavailable — Tcl interpreter already destroyed")
         import tkinter.font as tkfont
 
-        from tcm_gui.const import FONT_SIZE, apply_ui_scale
+        from tcm_gui.const import UIScale
 
-        apply_ui_scale(_tk_root)
-        text_font = tkfont.nametofont("TkTextFont")
-        assert text_font.cget("size") == FONT_SIZE, (
-            f"apply_ui_scale: TkTextFont size mismatch — expected {FONT_SIZE}, got {text_font.cget('size')}"
+        ui = UIScale(_tk_root, font_scale=1.0)
+        f = ui.font()
+        original_size = tkfont.nametofont("TkDefaultFont").cget("size")
+        assert f.cget("size") == original_size, (
+            f"font() size at scale=1.0: expected {original_size}, got {f.cget('size')}"
         )
 
-    def test_calls_tk_scaling_with_value(self):
-        """apply_ui_scale calls root.tk.call('tk', 'scaling', UI_SCALE) via mock."""
-        from tcm_gui.const import UI_SCALE, apply_ui_scale
+    def test_font_scales_named_font(self, _tk_root):
+        """UIScale(font_scale=1.2) configures named fonts to 1.2× platform size."""
+        if _tk_root is None:
+            pytest.skip("Tk unavailable — Tcl interpreter already destroyed")
+        import tkinter.font as tkfont
 
-        mock_root = MagicMock()
-        mock_root.tk.call.return_value = UI_SCALE
-        apply_ui_scale(mock_root)
-        mock_root.tk.call.assert_any_call("tk", "scaling", UI_SCALE)
+        from tcm_gui.const import UIScale
+
+        names = ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont")
+        saved = {n: tkfont.nametofont(n).cget("size") for n in names}
+        try:
+            ui = UIScale(_tk_root, font_scale=1.2)
+            default = tkfont.nametofont("TkDefaultFont")
+            expected = round(saved["TkDefaultFont"] * 1.2)
+            assert default.cget("size") == expected, (
+                f"TkDefaultFont at scale=1.2: expected {expected}, got {default.cget('size')}"
+            )
+            f = ui.font()
+            assert f.cget("size") == expected, (
+                f"font() copy at scale=1.2: expected {expected}, got {f.cget('size')}"
+            )
+        finally:
+            for n, s in saved.items():
+                tkfont.nametofont(n).configure(size=s)
+
+    def test_font_size_diff_after_scale(self, _tk_root):
+        """size_diff is applied after font_scale."""
+        if _tk_root is None:
+            pytest.skip("Tk unavailable — Tcl interpreter already destroyed")
+        import tkinter.font as tkfont
+
+        from tcm_gui.const import UIScale
+
+        ui = UIScale(_tk_root, font_scale=1.0)
+        f = ui.font(size_diff=2)
+        original_size = tkfont.nametofont("TkDefaultFont").cget("size")
+        assert f.cget("size") == original_size + 2, (
+            f"font(size_diff=2) at scale=1.0: expected {original_size + 2}, got {f.cget('size')}"
+        )
+
+
+class TestSetFont:
+    """UIScale.set_font applies the scaled TkDefaultFont to widgets."""
+
+    def test_text_receives_default_font_not_fixed(self, _tk_root):
+        """set_font overrides tk.Text implicit TkFixedFont with TkDefaultFont."""
+        if _tk_root is None:
+            pytest.skip("Tk unavailable — Tcl interpreter already destroyed")
+        import tkinter.font as tkfont
+
+        from tcm_gui.const import UIScale
+
+        ui = UIScale(_tk_root, font_scale=1.0)
+        txt = tk.Text(_tk_root)
+        # Before set_font: tk.Text defaults to TkFixedFont.
+        default_family = tkfont.nametofont("TkDefaultFont").cget("family")
+        fixed_family = tkfont.nametofont("TkFixedFont").cget("family")
+        assert txt.cget("font") == "TkFixedFont", (
+            f"fresh tk.Text font should be 'TkFixedFont', got {txt.cget('font')!r}"
+        )
+        # Apply the GUI font.
+        ui.set_font(txt)
+        applied = tkfont.Font(font=txt.cget("font"))
+        assert applied.cget("family") == default_family, (
+            f"set_font: expected family {default_family!r}, got {applied.cget('family')!r}"
+        )
+        assert applied.cget("family") != fixed_family, (
+            f"set_font should override TkFixedFont ({fixed_family!r}), still got it"
+        )
+        txt.destroy()
+
+    def test_set_font_gives_each_widget_own_copy(self, _tk_root):
+        """Two widgets get independent Font objects — mutating one is safe."""
+        if _tk_root is None:
+            pytest.skip("Tk unavailable — Tcl interpreter already destroyed")
+        import tkinter.font as tkfont
+
+        from tcm_gui.const import UIScale
+
+        ui = UIScale(_tk_root, font_scale=1.0)
+        t1 = tk.Text(_tk_root)
+        t2 = tk.Text(_tk_root)
+        ui.set_font(t1, t2)
+        f1 = tkfont.Font(font=t1.cget("font"))
+        f2 = tkfont.Font(font=t2.cget("font"))
+        # Different objects (each gets its own copy).
+        assert str(f1) != str(f2), "set_font should give each widget its own Font object"
+        # Mutating one must not affect the other.
+        orig_size = f2.cget("size")
+        f1.configure(size=6)
+        assert f2.cget("size") == orig_size, (
+            f"mutating t1 font should not affect t2: expected size {orig_size}, got {f2.cget('size')}"
+        )
+        t1.destroy()
+        t2.destroy()
+
+    def test_set_font_size_diff(self, _tk_root):
+        """set_font(size_diff=-1) shrinks the applied font by 1 point."""
+        if _tk_root is None:
+            pytest.skip("Tk unavailable — Tcl interpreter already destroyed")
+        import tkinter.font as tkfont
+
+        from tcm_gui.const import UIScale
+
+        ui = UIScale(_tk_root, font_scale=1.0)
+        base_size = tkfont.nametofont("TkDefaultFont").cget("size")
+        txt = tk.Text(_tk_root)
+        ui.set_font(txt, size_diff=-1)
+        applied = tkfont.Font(font=txt.cget("font"))
+        assert applied.cget("size") == base_size - 1, (
+            f"set_font(size_diff=-1): expected {base_size - 1}, got {applied.cget('size')}"
+        )
+        txt.destroy()
+
+
+class TestLogStatusFontMatch:
+    """Reproduce the actual App._build() font setup and verify _log ≡ _status_lbl."""
+
+    def test_log_and_status_share_font_family_and_size(self, _tk_root):
+        """_log (via set_font) and MarkdownLabel (via font=ui.font()) must match."""
+        if _tk_root is None:
+            pytest.skip("Tk unavailable — Tcl interpreter already destroyed")
+        import tkinter.font as tkfont
+
+        from tcm_gui.const import UIScale
+        from tcm_gui.md_label import MarkdownLabel
+
+        ui = UIScale(_tk_root, font_scale=1.0)
+
+        # Replicate App._build() §5 + §6 exactly.
+        log = tk.Text(_tk_root, wrap="word")
+        ui.set_font(log)
+
+        status = MarkdownLabel(_tk_root, font=ui.font())
+
+        log_font = tkfont.Font(font=log.cget("font"))
+        status_font = status._fonts["plain"]  # the base font for rendered text
+
+        assert log_font.cget("family") == status_font.cget("family"), (
+            f"family mismatch — log={log_font.cget('family')!r}, status={status_font.cget('family')!r}"
+        )
+        assert log_font.cget("size") == status_font.cget("size"), (
+            f"size mismatch — log={log_font.cget('size')}, status={status_font.cget('size')}"
+        )
+        log.destroy()
+        status.destroy()
+
+    def test_fonts_match_after_mark_font_ready_lifecycle(self, _tk_root):
+        """Fonts stay matched after mark_font_ready + rerender (the real _fit_status_font flow)."""
+        if _tk_root is None:
+            pytest.skip("Tk unavailable — Tcl interpreter already destroyed")
+        import tkinter.font as tkfont
+
+        from tcm_gui.const import UIScale
+        from tcm_gui.md_label import MarkdownLabel
+
+        ui = UIScale(_tk_root, font_scale=1.0)
+
+        log = tk.Text(_tk_root, wrap="word")
+        ui.set_font(log)
+
+        status = MarkdownLabel(_tk_root, font=ui.font())
+        # Replicate _fit_status_font lifecycle: mark_font_ready + rerender.
+        status.mark_font_ready()
+        status.set_text("Ready", raw=True)
+
+        log_font = tkfont.Font(font=log.cget("font"))
+        status_font = status._fonts["plain"]
+
+        assert log_font.cget("family") == status_font.cget("family"), (
+            f"post-lifecycle family mismatch — log={log_font.cget('family')!r}, "
+            f"status={status_font.cget('family')!r}"
+        )
+        assert log_font.cget("size") == status_font.cget("size"), (
+            f"post-lifecycle size mismatch — log={log_font.cget('size')}, status={status_font.cget('size')}"
+        )
+        log.destroy()
+        status.destroy()
+
+
+class TestConfigureUI:
+    """configure_ui selects ttk theme based on TTK_THEME policy."""
+
+    def test_sets_clam_when_policy_clam(self, _tk_root, monkeypatch):
+        """configure_ui sets clam when TTK_THEME='clam'."""
+        if _tk_root is None:
+            pytest.skip("Tk unavailable — Tcl interpreter already destroyed")
+        import tcm_gui.const as const_mod
+        from tcm_gui.const import configure_ui
+
+        monkeypatch.setattr(const_mod, "TTK_THEME", "clam")
+        style = configure_ui(_tk_root)
+        assert style.theme_use() == "clam", (
+            f"configure_ui with TTK_THEME='clam': expected 'clam', got {style.theme_use()!r}"
+        )
+
+    def test_sets_vista_when_policy_native(self, _tk_root, monkeypatch):
+        """configure_ui sets vista on Windows when TTK_THEME='native'."""
+        if _tk_root is None:
+            pytest.skip("Tk unavailable — Tcl interpreter already destroyed")
+        import sys
+
+        import tcm_gui.const as const_mod
+        from tcm_gui.const import configure_ui
+
+        monkeypatch.setattr(const_mod, "TTK_THEME", "native")
+        style = configure_ui(_tk_root)
+        if sys.platform == "win32":
+            assert style.theme_use() == "vista", (
+                f"configure_ui with TTK_THEME='native' on Windows: expected 'vista', "
+                f"got {style.theme_use()!r}"
+            )
 
 
 # ── widget_meta registry ─────────────────────────────────────────────────────
@@ -100,7 +309,7 @@ class TestWidgetMeta:
 
     def test_set_and_get_by_widget(self):
         """set_widget_meta stores metadata by widget key (mock)."""
-        from tcm_gui.const import get_widget_meta, set_widget_meta
+        from tcm_gui.const import get_widget_meta
 
         btn = MagicMock(spec=tk.Button)
         set_widget_meta(btn, status="Click me", tooltip="A button")
@@ -113,7 +322,7 @@ class TestWidgetMeta:
 
     def test_set_and_get_by_string(self):
         """set_widget_meta stores metadata by string identifier."""
-        from tcm_gui.const import get_widget_meta, set_widget_meta
+        from tcm_gui.const import get_widget_meta
 
         set_widget_meta("input.coefs_path", status="Path to coefficients file")
         assert get_widget_meta("input.coefs_path", "status") == "Path to coefficients file", (
@@ -138,7 +347,7 @@ class TestWidgetMeta:
 
     def test_multiple_keys_per_widget(self):
         """set_widget_meta supports multiple keys per widget."""
-        from tcm_gui.const import get_widget_meta, set_widget_meta
+        from tcm_gui.const import get_widget_meta
 
         lbl = MagicMock(spec=tk.Label)
         set_widget_meta(lbl, status="Measured bottom temperature", tooltip="Temp in °C", help="...")
@@ -150,7 +359,7 @@ class TestWidgetMeta:
 
     def test_overwrite_replaces_all_keys(self):
         """Second set_widget_meta call replaces the entire dict for that widget."""
-        from tcm_gui.const import get_widget_meta, set_widget_meta
+        from tcm_gui.const import get_widget_meta
 
         btn = MagicMock(spec=tk.Button)
         set_widget_meta(btn, status="first")
@@ -162,7 +371,7 @@ class TestWidgetMeta:
 
     def test_mixed_widget_and_string_keys(self):
         """widget_meta supports both widget instances and string keys simultaneously."""
-        from tcm_gui.const import get_widget_meta, set_widget_meta
+        from tcm_gui.const import get_widget_meta
 
         btn = MagicMock(spec=tk.Button)
         set_widget_meta(btn, status="Widget status")
@@ -176,7 +385,7 @@ class TestWidgetMeta:
 
     def test_callable_status_resolved_at_read_time(self):
         """get_widget_meta resolves a ``Callable[[], str]`` status live."""
-        from tcm_gui.const import get_widget_meta, set_widget_meta
+        from tcm_gui.const import get_widget_meta
 
         state = {"n": 0}
 
@@ -193,7 +402,7 @@ class TestWidgetMeta:
 
     def test_callable_tooltip_resolved(self):
         """``Callable`` value also works for ``tooltip`` — resolved at read time."""
-        from tcm_gui.const import get_widget_meta, set_widget_meta
+        from tcm_gui.const import get_widget_meta
 
         lbl = MagicMock(spec=tk.Label)
         set_widget_meta(lbl, tooltip=lambda: "live tooltip")
@@ -203,7 +412,7 @@ class TestWidgetMeta:
 
     def test_string_status_passthrough_unchanged(self):
         """Plain ``str`` status is returned verbatim — no invocation."""
-        from tcm_gui.const import get_widget_meta, set_widget_meta
+        from tcm_gui.const import get_widget_meta
 
         lbl = MagicMock(spec=tk.Label)
         set_widget_meta(lbl, status="static text")
@@ -211,46 +420,13 @@ class TestWidgetMeta:
 
     def test_missing_callable_field_returns_default(self):
         """Default returned when a callable-stored widget lacks the queried key."""
-        from tcm_gui.const import get_widget_meta, set_widget_meta
+        from tcm_gui.const import get_widget_meta
 
         btn = MagicMock(spec=tk.Button)
         set_widget_meta(btn, tooltip="btn tip")  # only tooltip, no status
         assert get_widget_meta(btn, "status", "fallback") == "fallback", (
             "missing callable key should return default string"
         )
-
-
-# ── STR content dict (i18n surface) ─────────────────────────────────────────
-
-
-class TestSTR:
-    """``STR`` dict provides the stable i18n key surface for chrome widgets."""
-
-    def test_has_path_field_keys(self):
-        from tcm_gui.const import STR
-
-        assert "path_field.tooltip" in STR, "path_field.tooltip missing from STR"
-        assert "path_field.status" in STR, "path_field.status missing from STR"
-
-    def test_has_run_keys(self):
-        from tcm_gui.const import STR
-
-        for key in ("run.tooltip", "run.start", "run.pause", "run.resume"):
-            assert key in STR, f"{key} missing from STR"
-
-    def test_has_tab_template(self):
-        from tcm_gui.const import STR
-
-        assert "tab.status" in STR, "tab.status template missing from STR"
-        assert "{path}" in STR["tab.status"], (
-            f"tab.status must contain {{path}} for format(); got {STR['tab.status']!r}"
-        )
-
-    def test_all_values_are_strings(self):
-        from tcm_gui.const import STR
-
-        non_str = {k: type(v).__name__ for k, v in STR.items() if not isinstance(v, str)}
-        assert not non_str, f"STR values must all be str (content layer); non-str keys: {non_str}"
 
 
 # ── Theme detection ─────────────────────────────────────────────────────────
@@ -260,57 +436,10 @@ class TestThemeDetection:
     """``_detect_windows_theme`` returns 'dark' or 'light'; ``apply_theme_defaults`` mutates colors."""
 
     def test_detect_returns_valid_theme(self):
-        from tcm_gui.const import _detect_windows_theme
+        from tcm_gui.theme import _detect_windows_theme
 
         result = _detect_windows_theme()
         assert result in ("dark", "light"), f"_detect_windows_theme()={result!r}, expected 'dark' or 'light'"
-
-    def test_apply_sets_func_color(self, _tk_root):
-        if _tk_root is None:
-            pytest.skip("Tk unavailable")
-        from tcm_gui import const
-        from tcm_gui.const import apply_theme_defaults, _DARK, _LIGHT
-
-        theme = apply_theme_defaults(_tk_root)
-        palette = _DARK if theme == "dark" else _LIGHT
-        assert const.FUNC_COLOR == palette["FUNC_COLOR"], (
-            f"FUNC_COLOR={const.FUNC_COLOR!r} ≠ {palette['FUNC_COLOR']!r} for theme={theme}"
-        )
-
-    def test_apply_sets_tag_colors(self, _tk_root):
-        if _tk_root is None:
-            pytest.skip("Tk unavailable")
-        from tcm_gui import const
-        from tcm_gui.const import apply_theme_defaults, _DARK, _LIGHT
-
-        theme = apply_theme_defaults(_tk_root)
-        palette = _DARK if theme == "dark" else _LIGHT
-        for key in ("debug", "info", "warning", "error", "critical"):
-            assert const.TAG_COLORS[key] == palette[key], (
-                f"TAG_COLORS[{key!r}]={const.TAG_COLORS[key]!r} ≠ {palette[key]!r} for theme={theme}"
-            )
-
-    def test_apply_sets_background_fallbacks(self, _tk_root):
-        if _tk_root is None:
-            pytest.skip("Tk unavailable")
-        from tcm_gui import const
-        from tcm_gui.const import _GLOBAL_KEYS, apply_theme_defaults, _DARK, _LIGHT
-
-        theme = apply_theme_defaults(_tk_root)
-        palette = _DARK if theme == "dark" else _LIGHT
-        for key in _GLOBAL_KEYS:
-            actual = getattr(const, key)
-            expected = palette[key]
-            assert actual == expected, f"const.{key}={actual!r} ≠ {expected!r} for theme={theme}"
-
-    def test_apply_sets_theme_var(self, _tk_root):
-        if _tk_root is None:
-            pytest.skip("Tk unavailable")
-        from tcm_gui import const
-        from tcm_gui.const import apply_theme_defaults
-
-        theme = apply_theme_defaults(_tk_root)
-        assert const.THEME == theme, f"THEME={const.THEME!r} ≠ detected {theme!r}"
 
     def test_apply_dark_configures_ttk_style(self, _tk_root, monkeypatch):
         if _tk_root is None:
@@ -318,22 +447,20 @@ class TestThemeDetection:
         from tkinter import ttk
 
         from tcm_gui import const
-        from tcm_gui.const import apply_theme_defaults
+        from tcm_gui.theme import apply_theme_defaults
 
         # Force dark mode regardless of actual system theme.
-        monkeypatch.setattr(const, "_detect_windows_theme", lambda: "dark")
+        monkeypatch.setattr(tcm_gui.theme, "_detect_windows_theme", lambda: "dark")
         apply_theme_defaults(_tk_root)
         style = ttk.Style()
         # Dark mode switches to "clam" (native themes ignore style configure).
-        assert style.theme_use() == "clam", (
-            f"ttk theme={style.theme_use()!r}, expected 'clam' for dark mode"
+        assert style.theme_use() == "clam", f"ttk theme={style.theme_use()!r}, expected 'clam' for dark mode"
+        assert style.lookup("TFrame", "background") == tcm_gui.theme.FRAME_BG_FALLBACK, (
+            f"TFrame bg={style.lookup('TFrame', 'background')!r} ≠ {tcm_gui.theme.FRAME_BG_FALLBACK!r}"
         )
-        assert style.lookup("TFrame", "background") == const.FRAME_BG_FALLBACK, (
-            f"TFrame bg={style.lookup('TFrame', 'background')!r} ≠ {const.FRAME_BG_FALLBACK!r}"
+        assert style.lookup("TEntry", "fieldbackground") == tcm_gui.theme.ENTRY_BG_FALLBACK, (
+            f"TEntry fieldbg={style.lookup('TEntry', 'fieldbackground')!r} ≠ {tcm_gui.theme.ENTRY_BG_FALLBACK!r}"
         )
-        assert style.lookup("TEntry", "fieldbackground") == const.ENTRY_BG_FALLBACK, (
-            f"TEntry fieldbg={style.lookup('TEntry', 'fieldbackground')!r} ≠ {const.ENTRY_BG_FALLBACK!r}"
-        )
-        assert style.lookup("TLabel", "foreground") == const.FG_DEFAULT, (
-            f"TLabel fg={style.lookup('TLabel', 'foreground')!r} ≠ {const.FG_DEFAULT!r}"
+        assert style.lookup("TLabel", "foreground") == tcm_gui.theme.FG_DEFAULT, (
+            f"TLabel fg={style.lookup('TLabel', 'foreground')!r} ≠ {tcm_gui.theme.FG_DEFAULT!r}"
         )

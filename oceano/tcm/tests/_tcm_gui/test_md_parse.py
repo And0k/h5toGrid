@@ -123,6 +123,34 @@ class TestParseInline:
     def test_empty_string(self):
         assert parse_inline("") == (), f"empty: {parse_inline('')!r}"
 
+    def test_color_tag_simple(self):
+        result = parse_inline("{#error}err{/}")
+        assert result == (("err", "error"),), f"color tag: {result!r}"
+
+    def test_color_tag_in_sentence(self):
+        result = parse_inline("before {#error}err{/} after")
+        assert result == (
+            ("before ", "plain"),
+            ("err", "error"),
+            (" after", "plain"),
+        ), f"color in sentence: {result!r}"
+
+    def test_color_tag_adjacent(self):
+        result = parse_inline("{#debug}d{/}{#error}e{/}")
+        assert result == (
+            ("d", "debug"),
+            ("e", "error"),
+        ), f"adjacent colors: {result!r}"
+
+    def test_color_tag_with_bold(self):
+        """Color tags and bold coexist as separate spans."""
+        result = parse_inline("{#error}err{/} **bold**")
+        assert result == (
+            ("err", "error"),
+            (" ", "plain"),
+            ("bold", "bold"),
+        ), f"color + bold: {result!r}"
+
     def test_cache_returns_same_object(self):
         """Same input → same cached object (identity check)."""
         a = parse_inline("hello **world**")
@@ -300,7 +328,8 @@ class TestMarkdownLabelRendering:
     """Verify tags are applied correctly and text is not duplicated."""
 
     @pytest.fixture(autouse=True, scope="class")
-    def _tk_root(self, request):
+    @classmethod
+    def _tk_root(cls, request):
         """Single Tk root for the entire class — skips if Tcl broken."""
         import tkinter as tk
 
@@ -324,13 +353,13 @@ class TestMarkdownLabelRendering:
     def test_no_text_duplication(self):
         """``**bold**`` renders as 'bold', not 'boldbold' (Tk insert tag bug)."""
         lbl = self._make_label()
-        lbl.set_markdown("**bold** and *italic* and `code`")
+        lbl.set_text("**bold** and *italic* and `code`")
         content = lbl.get("1.0", "end-1c")
         assert content == "bold and italic and code", f"duplication detected: {content!r}"
 
     def test_bold_tag_applied(self):
         lbl = self._make_label()
-        lbl.set_markdown("**bold text**")
+        lbl.set_text("**bold text**")
         pos = lbl.get("1.0", "end-1c").index("bold")
         assert "bold" in lbl.tag_names(f"1.{pos}"), (
             f"bold tag missing at 'bold' span: {lbl.tag_names(f'1.{pos}')!r}"
@@ -338,7 +367,7 @@ class TestMarkdownLabelRendering:
 
     def test_italic_tag_applied(self):
         lbl = self._make_label()
-        lbl.set_markdown("*italic text*")
+        lbl.set_text("*italic text*")
         pos = lbl.get("1.0", "end-1c").index("italic")
         assert "italic" in lbl.tag_names(f"1.{pos}"), (
             f"italic tag missing at 'italic' span: {lbl.tag_names(f'1.{pos}')!r}"
@@ -346,11 +375,47 @@ class TestMarkdownLabelRendering:
 
     def test_code_tag_applied(self):
         lbl = self._make_label()
-        lbl.set_markdown("`code`")
+        lbl.set_text("`code`")
         pos = lbl.get("1.0", "end-1c").index("code")
         assert "code" in lbl.tag_names(f"1.{pos}"), (
             f"code tag missing at 'code' span: {lbl.tag_names(f'1.{pos}')!r}"
         )
+
+    def test_color_tag_rendered(self):
+        """{#name}text{/} applies color map foreground."""
+        colors = {"error": "#CC0000", "debug": "#808080"}
+        lbl = self._make_label(colors=colors)
+        lbl.set_text("{#error}err{/} plain {#debug}dbg{/}")
+        content = lbl.get("1.0", "end-1c")
+
+        pos_err = content.index("err")
+        tags_err = lbl.tag_names(f"1.{pos_err}")
+        assert "error" in tags_err, f"'error' tag missing at colored span: {tags_err!r}"
+
+        pos_plain = content.index("plain")
+        tags_plain = lbl.tag_names(f"1.{pos_plain}")
+        assert "error" not in tags_plain, f"'error' tag leaked to plain span: {tags_plain!r}"
+
+        pos_dbg = content.index("dbg")
+        tags_dbg = lbl.tag_names(f"1.{pos_dbg}")
+        assert "debug" in tags_dbg, f"'debug' tag missing at colored span: {tags_dbg!r}"
+
+    def test_color_tag_without_map(self):
+        """Without colors dict, {#name} tags are applied but not configured."""
+        lbl = self._make_label()
+        lbl.set_text("{#error}err{/}")
+        content = lbl.get("1.0", "end-1c")
+        pos = content.index("err")
+        tags = lbl.tag_names(f"1.{pos}")
+        assert "error" in tags, f"'error' tag should still be applied: {tags!r}"
+
+    def test_color_tag_foreground_value(self):
+        """Color map value is set as the tag's foreground."""
+        colors = {"error": "#CC0000"}
+        lbl = self._make_label(colors=colors)
+        lbl.set_text("{#error}err{/}")
+        fg = lbl.tag_cget("error", "foreground")
+        assert fg == "#CC0000", f"error tag foreground: expected #CC0000, got {fg!r}"
 
     def test_fonts_visually_distinct(self):
         """Bold/italic/code fonts have distinct properties."""
@@ -362,15 +427,44 @@ class TestMarkdownLabelRendering:
     def test_plain_text_no_tags(self):
         """Plain text has only 'normal' tag, no inline markup."""
         lbl = self._make_label()
-        lbl.set_plain("hello world")
+        lbl.set_text("hello world", raw=True)
         tags = lbl.tag_names("1.0")
         assert "normal" in tags, f"normal tag missing: {tags!r}"
         assert "bold" not in tags, f"unexpected bold tag: {tags!r}"
 
+    def test_default_parses_markdown(self):
+        """Default path parses ``**bold**`` — regression for STR chrome status (app.py:248).
+
+        ``set_text`` no longer takes ``markdown=False`` (legacy): it parses by
+        default, so chrome hover status from ``STR["{role}.status"]`` honors
+        ``**bold**`` without callers passing any flag.
+        """
+        lbl = self._make_label()
+        lbl.set_text("Changing path **resets tabs**")
+        content = lbl.get("1.0", "end-1c")
+        assert content == "Changing path resets tabs", f"default parse should strip ** markers: {content!r}"
+        pos = content.index("resets tabs")
+        assert "bold" in lbl.tag_names(f"1.{pos}"), (
+            f"bold tag missing in default-parse mode: {lbl.tag_names(f'1.{pos}')!r}"
+        )
+
+    def test_raw_bypasses_markdown_parsing(self):
+        """``raw=True`` inserts literal text — ``**`` survives uninterpreted.
+
+        Used at sites that interpolate untrusted content (filesystem paths in
+        ``tab.status`` after ``.format(path=...)``); prevents ``_``/``*``/``\\``
+        in the substitution from being reinterpreted as inline markup.
+        """
+        lbl = self._make_label()
+        lbl.set_text("path/with_underscøre **not bold**", raw=True)
+        content = lbl.get("1.0", "end-1c")
+        assert content == "path/with_underscøre **not bold**", f"raw should preserve literal **: {content!r}"
+        assert "bold" not in lbl.tag_names("1.0"), f"raw must not apply bold tag: {lbl.tag_names('1.0')!r}"
+
     def test_single_line_height(self):
         """Single-line text stays at height=1."""
         lbl = self._make_label()
-        lbl.set_plain("Ready")
+        lbl.set_text("Ready", raw=True)
         assert int(lbl.cget("height")) == 1, f"single-line height: {lbl.cget('height')}"
 
     def test_multi_line_height(self):
@@ -388,7 +482,7 @@ class TestMarkdownLabelRendering:
 
         lbl = MarkdownLabel(f)
         lbl.place(relx=0, rely=1.0, anchor="sw", relwidth=0.667)
-        lbl.set_markdown("line1\n\nline2\n\nline3")
+        lbl.set_text("line1\n\nline2\n\nline3")
         # Process after_idle (_fit_height) + Configure events.
         for _ in range(5):
             root.update()
@@ -397,3 +491,254 @@ class TestMarkdownLabelRendering:
         if lbl.winfo_width() <= 10:
             pytest.skip("no real widget width in headless env")
         assert h > 1, f"multi-line height: {h}"
+
+
+class TestHeightSufficient:
+    """Verify _fit_height sets widget height so last display line is fully visible.
+
+    Uses a real mapped window (not withdrawn) so dlineinfo and winfo_height
+    return accurate pixel values.  Tests at multiple fit_to_height values
+    to cover different UI_SCALE scenarios.
+    """
+
+    @pytest.fixture()
+    def _mapped_root(self):
+        import tkinter as tk
+
+        try:
+            root = tk.Tk()
+        except tk.TclError:
+            pytest.skip("Tk not available")
+        root.geometry("800x300")
+        root.update_idletasks()
+        yield root
+        root.destroy()
+
+    @staticmethod
+    def _assert_last_line_visible(lbl, root, label):
+        """Assert the last display line is fully within the widget."""
+        # Exhaust pending after_idle / Configure / after(50) callbacks.
+        for _ in range(10):
+            root.update_idletasks()
+            root.update()
+
+        last = lbl.index("end-1c")
+        dl = lbl.dlineinfo(last)
+        wh = lbl.winfo_height()
+        ww = lbl.winfo_width()
+        if ww <= 10:
+            pytest.skip("no real widget width in headless env")
+        assert dl, (
+            f"{label}: dlineinfo(last) is empty — last char not rendered. winfo_height={wh}, winfo_width={ww}"
+        )
+        dl_bottom = dl[1] + dl[3]
+        assert dl_bottom <= wh, (
+            f"{label}: last display line clipped — "
+            f"dl_bottom={dl_bottom} > winfo_height={wh}. "
+            f"dlineinfo={dl}, width={ww}"
+        )
+
+    @pytest.mark.parametrize(
+        "bar_h, text, raw",
+        [
+            pytest.param(22, "Ready", True, id="single-line-bar22"),
+            pytest.param(16, "Ready", True, id="single-line-bar16"),
+            pytest.param(14, "Ready", True, id="single-line-bar14"),
+            pytest.param(
+                22,
+                "**Source of truth** for time window. **Auto-populated** from data.",
+                False,
+                id="inline-bold-bar22",
+            ),
+            pytest.param(
+                16,
+                "**Source of truth** for time window. **Auto-populated** from data.",
+                False,
+                id="inline-bold-bar16",
+            ),
+            pytest.param(
+                14,
+                "**Source of truth** for time window. **Auto-populated** from data.",
+                False,
+                id="inline-bold-bar14",
+            ),
+            pytest.param(22, "line one\nline two\nline three", False, id="3lines-bar22"),
+            pytest.param(16, "line one\nline two\nline three", False, id="3lines-bar16"),
+            pytest.param(14, "line one\nline two\nline three", False, id="3lines-bar14"),
+            pytest.param(
+                16,
+                "# Heading\n\nParagraph text here.",
+                False,
+                id="heading-para-bar16",
+            ),
+            pytest.param(
+                14,
+                "# Heading\n\nParagraph text here.",
+                False,
+                id="heading-para-bar14",
+            ),
+        ],
+    )
+    def test_last_line_visible(self, _mapped_root, bar_h, text, raw):
+        import tkinter as tk
+
+        from tcm_gui.md_label import MarkdownLabel
+
+        root = _mapped_root
+        f = tk.Frame(root, width=800, height=30)
+        f.pack(fill="x")
+        f.pack_propagate(False)
+
+        lbl = MarkdownLabel(f)
+        lbl.place(relx=0, rely=1.0, anchor="sw", relwidth=1.0)
+        lbl.fit_to_height(bar_h)
+        lbl.set_text(text, raw=raw)
+        self._assert_last_line_visible(lbl, root, f"bar_h={bar_h}")
+
+    def test_wrapped_2row_height(self, _mapped_root):
+        """Wrapped text that spans 2 display lines must be fully visible.
+
+        Uses a narrow widget (180px) so _fit_width switches to wrap='word'
+        and the text wraps into multiple display lines.
+        """
+        import tkinter as tk
+
+        from tcm_gui.md_label import MarkdownLabel
+
+        root = _mapped_root
+        # Narrow frame — forces wrapping for medium-length text.
+        f = tk.Frame(root, width=180, height=200)
+        f.pack(fill="x")
+        f.pack_propagate(False)
+
+        lbl = MarkdownLabel(f)
+        lbl.place(relx=0, rely=1.0, anchor="sw", x=0, y=0)
+        lbl.fit_to_height(18)
+        lbl.set_text("Changing data path rescans and **resets all config tabs below**")
+        self._assert_all_display_lines_visible(lbl, root)
+
+    def test_wrapped_heading_and_paragraph(self, _mapped_root):
+        """Heading + wrapped paragraph at narrow width must be fully visible."""
+        import tkinter as tk
+
+        from tcm_gui.md_label import MarkdownLabel
+
+        root = _mapped_root
+        f = tk.Frame(root, width=160, height=200)
+        f.pack(fill="x")
+        f.pack_propagate(False)
+
+        lbl = MarkdownLabel(f)
+        lbl.place(relx=0, rely=1.0, anchor="sw", x=0, y=0)
+        lbl.fit_to_height(18)
+        lbl.set_text("# Status\n\nSource of truth for time window. Auto-populated from data.")
+        self._assert_all_display_lines_visible(lbl, root)
+
+    @staticmethod
+    def _assert_all_display_lines_visible(lbl, root):
+        """Assert every display line is within the widget bounds."""
+        for _ in range(10):
+            root.update_idletasks()
+            root.update()
+
+        wh = lbl.winfo_height()
+        ww = lbl.winfo_width()
+        if ww <= 10:
+            pytest.skip("no real widget width in headless env")
+
+        idx = "1.0"
+        for _ in range(200):
+            dl = lbl.dlineinfo(idx)
+            if dl is None:
+                break
+            bottom = dl[1] + dl[3]
+            assert bottom <= wh + 1, (
+                f"display line at {idx} clipped — "
+                f"bottom={bottom} > winfo_height={wh}. "
+                f"dlineinfo={dl}, width={ww}"
+            )
+            nxt = lbl.index(f"{idx} + 1 displayline")
+            if lbl.compare(nxt, "==", idx):
+                break
+            idx = nxt
+
+
+class TestFitWidth:
+    """Verify _fit_width measures inline spans with their actual fonts."""
+
+    @pytest.fixture()
+    def _mapped_root(self):
+        import tkinter as tk
+
+        try:
+            root = tk.Tk()
+        except tk.TclError:
+            pytest.skip("Tk not available")
+        root.geometry("1200x300")
+        root.update_idletasks()
+        yield root
+        root.destroy()
+
+    def test_code_span_not_clipped(self, _mapped_root):
+        """Inline code (Consolas) is wider than bold — width must account for it."""
+        import tkinter as tk
+
+        from tcm_gui.md_label import MarkdownLabel
+
+        root = _mapped_root
+        f = tk.Frame(root, width=1200, height=30)
+        f.pack(fill="x")
+        f.pack_propagate(False)
+
+        lbl = MarkdownLabel(f)
+        lbl.place(relx=0, rely=1.0, anchor="sw")
+        lbl.fit_to_height(18)
+        lbl.set_text("Polynomial: `Vabs(inclination)`")
+
+        # Exhaust pending callbacks.
+        for _ in range(10):
+            root.update_idletasks()
+            root.update()
+
+        ww = lbl.winfo_width()
+        if ww <= 10:
+            pytest.skip("no real widget width in headless env")
+
+        # The last character must be within the widget bounds.
+        last = lbl.index("end-1c")
+        bb = lbl.bbox(last)
+        assert bb is not None, f"last char invisible — widget too narrow: w={ww}"
+        # bbox x+width must fit within widget width.
+        assert bb[0] + bb[2] <= ww + 1, (
+            f"last char clipped: bbox right={bb[0] + bb[2]} > widget_w={ww}. "
+            f"code font (Consolas) wider than bold — _fit_width underestimates."
+        )
+
+    def test_bold_inline_sufficient(self, _mapped_root):
+        """Bold-only inline text — width must be sufficient."""
+        import tkinter as tk
+
+        from tcm_gui.md_label import MarkdownLabel
+
+        root = _mapped_root
+        f = tk.Frame(root, width=1200, height=30)
+        f.pack(fill="x")
+        f.pack_propagate(False)
+
+        lbl = MarkdownLabel(f)
+        lbl.place(relx=0, rely=1.0, anchor="sw")
+        lbl.fit_to_height(18)
+        lbl.set_text("**Source of truth** for time window")
+
+        for _ in range(10):
+            root.update_idletasks()
+            root.update()
+
+        ww = lbl.winfo_width()
+        if ww <= 10:
+            pytest.skip("no real widget width in headless env")
+
+        last = lbl.index("end-1c")
+        bb = lbl.bbox(last)
+        assert bb is not None, f"last char invisible — w={ww}"
+        assert bb[0] + bb[2] <= ww + 1, f"last char clipped: bbox right={bb[0] + bb[2]} > widget_w={ww}"

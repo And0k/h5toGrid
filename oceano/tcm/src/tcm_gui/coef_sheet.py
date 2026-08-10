@@ -12,16 +12,14 @@ from types import SimpleNamespace
 from typing import Any, Final
 
 import numpy as np
+import tcm_gui.theme
 from tksheet import Sheet
 
 from tcm_gui._cell_spec import any2str, as_date, parse_float
 from tcm_gui.cli_cfg import COEF_SHAPES, COEFS_TYPE, NO_DEFAULT, default_for_path
-
-from . import const
-from ._browse_button import BrowseButtonManager, BrowseOverlay
+from tcm_gui import _help, _path_field
+from ._browse_button import BrowseButtonManager, BrowseOverlay, _pointer_inside
 from ._cell_spec import NUMBER_SPEC, CellSpec, as_bool, enum_values, schema_type, spec_for_path
-from ._help import help_for_path
-from ._path_field import PathField
 
 _l = logging.getLogger(__name__)
 
@@ -163,7 +161,7 @@ class ConfigSheet:
     # Coef meta types — always numeric; skip Hydra path resolution for these.
     _COEF_TYPES = frozenset({"2d", "1d", "1d_flat", "scalar", "_coef_child"})
 
-    def __init__(self, parent) -> None:
+    def __init__(self, parent, status_hint: str = "") -> None:
         self.sh = Sheet(
             parent,
             treeview=True,
@@ -171,10 +169,11 @@ class ConfigSheet:
             show_horizontal_grid=False,
             show_vertical_grid=False,
             allow_cell_overflow=True,
-            scrollbar_theme_inheritance="clam",
+            scrollbar_theme_inheritance="default",
         )
+        self._status_hint = status_hint
         # Apply dark theme to tksheet when system theme is dark.
-        if const.THEME == "dark":
+        if tcm_gui.theme.THEME == "dark":
             self.sh.change_theme("dark")
 
         # Cell-boundary column resize — registered BEFORE enable_bindings
@@ -207,7 +206,7 @@ class ConfigSheet:
         # Snapshot of all editable cells for dirty tracking — populated at end of load()
         self._snap: tuple = ()
         # Normal (non-default) text color — "clear" side of gray/blue toggles
-        self._fg_default: str = const.FG_DEFAULT
+        self._fg_default: str = tcm_gui.theme.FG_DEFAULT
 
         # BrowseButtonManager — injected by App after construction
         self._mgr: BrowseButtonManager | None = None
@@ -232,7 +231,7 @@ class ConfigSheet:
         self._field_pending: tuple[Any, int, int] | None = None
         self._field_show_job: str | None = None
         self._field_hide_job: str | None = None
-        self._hover_field: PathField | None = None
+        self._hover_field: _path_field.PathField | None = None
         self._hover_btn: BrowseOverlay | None = None
         self._stretch_job: str | None = None
 
@@ -248,6 +247,7 @@ class ConfigSheet:
 
         mt = self.sh.MT
         mt.bind("<Motion>", self._on_sheet_motion, add="+")
+        mt.bind("<Enter>", self._on_sheet_motion, add="+")  # RI→MT transition
         mt.bind("<Leave>", self._on_sheet_leave, add="+")
         for ev in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
             mt.bind(ev, self._on_sheet_wheel, add="+")
@@ -285,8 +285,7 @@ class ConfigSheet:
 
             self._meta.clear()
             self._hide_hover_field()  # rows are about to die
-            self._status_iid = None
-            self._publish_status(None)
+            self._clear_status()
 
             self.sh.del_rows(rows=list(range(self.sh.total_rows())))
             self.sh.enable_bindings(["all"])
@@ -712,8 +711,7 @@ class ConfigSheet:
             return
 
         self._hide_hover_field()
-        self._status_iid = None
-        self._publish_status(None)
+        self._clear_status()
 
         self._rebuild_row_caches()
         with suppress(AttributeError, TclError):
@@ -901,43 +899,70 @@ class ConfigSheet:
         max_col = int(raw) if raw is not None else (1 if m.get("type") == "scalar" else self._nv)
         is_date = c == _DATE_COL - self.DATA_COL_BASE and m.get("has_date")
         if not is_date and c >= max_col:
-            self.sh.after(1, self.sh.deselect)
+            if self._is_date_only_row(m):
+                dc = _DATE_COL - self.DATA_COL_BASE
+                self.sh.after(1, lambda rr=r, dcc=dc: self.sh.select_cell(rr, dcc))
+            else:
+                self.sh.after(1, self.sh.deselect)
+
+    def _is_date_only_row(self, m: dict) -> bool:
+        """Row whose only editable data cell is the date column (max_col=0, has_date)."""
+        return bool(m.get("has_date") and m.get("max_col", self._nv) == 0)
 
     def _redirect_overflow_click(self, event) -> None:
-        """Single-click in a path row's overflow cells → selection box follows
-        to col 0. Bound add="+" → post-correction after tksheet's handler;
-        degrades to a no-op if ``select_cell`` misses in this build."""
+        """Single-click on a path row's overflow cells → selection box follows
+        to col 0.  On date-only rows → selection follows to the date cell.
+        Bound add="+" → post-correction after tksheet's handler."""
         if (hit := self._hover_resolve(event)) is None:
             return
         iid, *_ = hit
-        if (c := self._raw_col(event)) is None or c <= 0 or not self._meta.get(iid, {}).get("browse"):
+        c = self._raw_col(event)
+        if c is None:
             return
-        if (ri := self._internal_row(iid)) is not None:
+        m = self._meta.get(iid, {})
+        dc = _DATE_COL - self.DATA_COL_BASE
+        target = None
+        if m.get("browse") and c > 0:
+            target = 0
+        elif self._is_date_only_row(m) and c != dc:
+            target = dc
+        if target is not None and (ri := self._internal_row(iid)) is not None:
             with suppress(AttributeError, TclError, TypeError, ValueError):
-                self.sh.select_cell(ri, 0)
+                self.sh.select_cell(ri, target)
 
     def _redirect_overflow_double(self, event) -> None:
-        """Double-click in a path row's overflow cells → editor opens at col 0.
-        Post-correction replay: a synthetic double-click at col 0's x (same y)
-        re-enters tksheet's own still-installed binding. Nested dispatch ends at
-        the c <= 0 guard; a spurious commit to the overflow cell is absorbed by
-        the end-edit reroute. Core Tk only — no tksheet-private names."""
+        """Double-click on a path row's overflow cells → editor opens at col 0.
+        On date-only rows → editor opens at the date cell.
+        Post-correction replay: a synthetic double-click at the target col's x
+        (same y) re-enters tksheet's own still-installed binding."""
         if (hit := self._hover_resolve(event)) is None:
             return
         iid, *_ = hit
-        if (c := self._raw_col(event)) is None or c <= 0 or not self._meta.get(iid, {}).get("browse"):
+        c = self._raw_col(event)
+        if c is None:
             return
-        if (wx := self._col0_widget_x()) is not None:
+        m = self._meta.get(iid, {})
+        dc = _DATE_COL - self.DATA_COL_BASE
+        target_col = None
+        if m.get("browse") and c > 0:
+            target_col = 0
+        elif self._is_date_only_row(m) and c != dc:
+            target_col = dc
+        if target_col is not None and (wx := self._col_widget_x(target_col)) is not None:
             with suppress(TclError):
                 self.sh.MT.event_generate("<Double-Button-1>", x=wx, y=event.y, state=event.state)
 
-    def _col0_widget_x(self) -> int | None:
-        """Widget-space x just inside data col 0 — event coords are widget-space,
+    def _col_widget_x(self, col: int) -> int | None:
+        """Widget-space x just inside *col* — event coords are widget-space,
         ``col_positions`` canvas-space (same convention as ``_hover_place_kw``)."""
         mt = self.sh.MT
         with suppress(AttributeError, TypeError, IndexError, TclError):
-            return int(mt.col_positions[0] - mt.canvasx(0)) + 1
+            return int(mt.col_positions[col] - mt.canvasx(0)) + 1
         return None
+
+    def _col0_widget_x(self) -> int | None:
+        """Shortcut for :meth:`_col_widget_x` at data col 0."""
+        return self._col_widget_x(0)
 
     def _stretch_last_col(self, _event=None) -> None:
         """Stretch the last column to fill the sheet's visible width.
@@ -986,22 +1011,25 @@ class ConfigSheet:
 
     # ── sheet-hover overlay ──────────────────────────────────────────
 
+    def _clear_status(self) -> None:
+        """Reset hover status tracking and clear the status bar."""
+        self._status_iid = None
+        self._status_source = None
+        self._publish_status(None)
+
     def _on_sheet_leave(self, _event) -> None:
         """``<Leave>`` also fires when the pointer steps onto the field —
         the delayed hide's pointer check decides; status preserved if the
-        pointer merely moved onto the field (same row)."""
+        pointer merely moved onto the field (same row) or a show was pending."""
+        had_pending_show = self._field_show_job is not None
         self._schedule_field_hide()
-        if not self._pointer_in_field():
-            self._status_iid = None
-            self._status_source = None
-            self._publish_status(None)
+        if not self._pointer_in_field() and not had_pending_show:
+            self._clear_status()
 
     def _on_sheet_wheel(self, _event) -> None:
         """Scroll changes row hit-testing — immediate hide, clear status."""
         self._hide_hover_field()
-        self._status_iid = None
-        self._status_source = None
-        self._publish_status(None)
+        self._clear_status()
 
     def _on_tree_motion(self, event) -> None:
         """Hover over tree column (index canvas) — show section-level status.
@@ -1013,9 +1041,7 @@ class ConfigSheet:
         field text (``input.path``) which belongs to the data cells.
         """
         if (hit := self._hover_resolve(event)) is None:
-            self._status_iid = None
-            self._status_source = None
-            self._publish_status(None)
+            self._clear_status()
             return
 
         iid, _row, _y = hit
@@ -1028,7 +1054,7 @@ class ConfigSheet:
         m = self._meta.get(iid, {})
         path = str(m.get("path") or "")
         # Section-level: resolve the path as-is (no `.path` suffix).
-        if path and (h := help_for_path(path)) and h.short:
+        if path and (h := _help.help_for_path(path)) and h.short:
             self.on_hover_status(h.short, True)
         elif self.on_hover_status is not None:
             self.on_hover_status(str(m.get("key") or m.get("label") or path or ""), False)
@@ -1085,7 +1111,7 @@ class ConfigSheet:
             # Section / field-level (the path as-is)
             candidates.append(path)
             for candidate in candidates:
-                if (h := help_for_path(candidate)) and h.short:
+                if (h := _help.help_for_path(candidate)) and h.short:
                     self.on_hover_status(h.short, True)
                     return
 
@@ -1134,13 +1160,14 @@ class ConfigSheet:
         cancel_hide=lambda: None,
     )
 
-    def _ensure_hover_field(self) -> PathField:
+    def _ensure_hover_field(self) -> _path_field.PathField:
         """The single PathField instance for the text surface + a separate
         ``BrowseOverlay`` button at the sheet's right edge.  Both are
         created lazily on first browse hover.  Focus is opt-in."""
         if self._hover_field is None:
-            f = PathField(
+            f = _path_field.PathField(
                 self.sh,
+                align="e",  # floated field: always right-aligned
                 on_commit=self._hover_write,
                 on_begin_edit=self._on_field_edit_start,
                 on_end_edit=self._on_field_edit_end,
@@ -1157,12 +1184,20 @@ class ConfigSheet:
             for ev in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
                 f.sh.MT.bind(ev, lambda _e: self._hide_hover_field(), add="+")
             self._hover_field = f
+            # Status callback for browse button Shift hint — wraps
+            # on_hover_status(msg, md) into the on_status(text) signature.
+            _on_status = (
+                (lambda text: self.on_hover_status(text, True)) if self.on_hover_status is not None else None
+            )
+            _hint = self._status_hint
             self._hover_btn = BrowseOverlay(
                 self.sh,
                 self._hover_write,
                 self._hover_read,
                 dir_title="Browse data path",
                 files_title="Browse data files",
+                on_status=_on_status,
+                status_hint=_hint,
             )
         return self._hover_field
 
@@ -1178,6 +1213,11 @@ class ConfigSheet:
         f.lift()
         if self._hover_btn is not None:
             self._hover_btn.show(**self._btn_place_kw(hit_row, fallback_y))
+        # Publish status so the help text is visible even when the pointer
+        # went straight to the overlay without lingering on the tksheet cell.
+        self._status_iid = iid
+        self._status_source = "data"
+        self._publish_status(iid)
 
     def _field_place_kw(self, hit_row: int, fallback_y: int, val: str) -> dict[str, Any]:
         """Text surface: from col 0, top-aligned, row-matching height.
@@ -1329,27 +1369,18 @@ class ConfigSheet:
 
     def _pointer_in_field(self) -> bool:
         """True when the pointer is inside the floated PathField or its browse button."""
-        if (f := self._hover_field) is not None and f.winfo_ismapped():
-            with suppress(TclError):
-                x, y = f.winfo_pointerxy()
-                if 0 <= x - f.winfo_rootx() < f.winfo_width() and 0 <= y - f.winfo_rooty() < f.winfo_height():
-                    return True
-        if (btn := self._hover_btn) is not None and btn.visible and btn._button is not None:
-            with suppress(TclError):
-                b = btn._button
-                x, y = b.winfo_pointerxy()
-                if 0 <= x - b.winfo_rootx() < b.winfo_width() and 0 <= y - b.winfo_rooty() < b.winfo_height():
-                    return True
-        return False
+        f = self._hover_field
+        if f is not None and f.winfo_ismapped() and _pointer_inside(f):
+            return True
+        btn = self._hover_btn
+        return btn is not None and btn.visible and btn._button is not None and _pointer_inside(btn._button)
 
     def _on_sheet_motion(self, event) -> None:
         """Hover: status text for any visible row; floated field on browse rows."""
         if (hit := self._hover_resolve(event)) is None:
             self._schedule_field_hide()
             if self._status_iid is not None:
-                self._status_iid = None
-                self._status_source = None
-                self._publish_status(None)
+                self._clear_status()
             return
 
         iid, row, y = hit
@@ -1515,8 +1546,8 @@ class ConfigSheet:
     def _apply_styles(self) -> None:
         sh = self.sh
 
-        bg = const.resolved_frame_bg(sh)
-        self._fg_default = const.FG_DEFAULT
+        bg = tcm_gui.theme.resolved_frame_bg(sh)
+        self._fg_default = tcm_gui.theme.FG_DEFAULT
 
         with suppress(AttributeError, TypeError):
             sh.set_options(index_background=bg)
@@ -1541,9 +1572,9 @@ class ConfigSheet:
                 canvas="index",
                 bg=bg,
                 fg=(
-                    const.FG_DEFAULT
+                    tcm_gui.theme.FG_DEFAULT
                     if is_input
-                    else (const.BLUE_FG if self._node_at_default(iid) else self._fg_default)
+                    else (tcm_gui.theme.BLUE_FG if self._node_at_default(iid) else self._fg_default)
                 ),
                 redraw=False,
             )
@@ -1571,8 +1602,8 @@ class ConfigSheet:
                         sh.highlight_cells(
                             row=r,
                             column=col,
-                            fg=const.BLUE_FG,
-                            highlight_fg=const.BLUE_FG,
+                            fg=tcm_gui.theme.BLUE_FG,
+                            highlight_fg=tcm_gui.theme.BLUE_FG,
                             redraw=False,
                         )
 
@@ -1669,7 +1700,9 @@ class ConfigSheet:
                     and (dv := self._default_for_cell(iid, m, j)) is not NO_DEFAULT
                     and any2str(vals[j]) == any2str(dv)
                 ):
-                    sh.highlight_cells(row=r, column=j, fg=const.DEFAULT_FG, redraw=False, overwrite=False)
+                    sh.highlight_cells(
+                        row=r, column=j, fg=tcm_gui.theme.DEFAULT_FG, redraw=False, overwrite=False
+                    )
 
     def _apply_edit_value(self, iid: Any, col: int, value: str) -> None:
         """Restyle cell + ancestors after a committed value."""
@@ -1689,7 +1722,7 @@ class ConfigSheet:
         self.sh.highlight_cells(
             row=ri,
             column=col,
-            fg=const.DEFAULT_FG if match else self._fg_default,
+            fg=tcm_gui.theme.DEFAULT_FG if match else self._fg_default,
             redraw=False,
             overwrite=False,
         )
@@ -1701,9 +1734,9 @@ class ConfigSheet:
             if (nr := row_of.get(node)) is not None:
                 nm = self._meta.get(node, {})
                 if nm.get("type") == "input":
-                    node_fg = const.FG_DEFAULT
+                    node_fg = tcm_gui.theme.FG_DEFAULT
                 else:
-                    node_fg = const.BLUE_FG if self._node_at_default(node) else self._fg_default
+                    node_fg = tcm_gui.theme.BLUE_FG if self._node_at_default(node) else self._fg_default
                 self.sh.highlight_cells(
                     row=nr,
                     column=0,

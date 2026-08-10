@@ -8,10 +8,12 @@ import pytest
 from omegaconf import DictConfig
 
 from tcm.schema import ConfigIn_InclProc, Return
+from tcm.incl_calc import coefs as _coefs
 from tcm.incl_calc.coefs import get_coefs, get_coefs_from_cfg
+import tcm.processing as _processing
 from tcm.processing import run_processing
-
-_GET_COEFS_PATCH = "tcm.incl_calc.coefs.get_coefs"
+import tcm.cli as _cli
+from tcm import format as _format
 
 
 @pytest.mark.xr
@@ -20,13 +22,13 @@ class TestGetCoefsFromCfg:
 
     def test_fallback_to_class_default_coefs_path(self, mocker):
         """When cfg_in has no coefs_path, falls back to ConfigIn_InclProc.coefs_path."""
-        mock_get = mocker.patch(_GET_COEFS_PATCH, return_value={"Ag": np.eye(3)})
+        mock_get = mocker.patch.object(_coefs, "get_coefs", return_value={"Ag": np.eye(3)})
         get_coefs_from_cfg({}, "i_01")
         assert ConfigIn_InclProc.coefs_path in mock_get.call_args[0][0]
 
     def test_explicit_coefs_path_used_first(self, mocker):
         """When cfg_in has coefs_path, it appears before the class default."""
-        mock_get = mocker.patch(_GET_COEFS_PATCH, return_value={"Ag": np.eye(3)})
+        mock_get = mocker.patch.object(_coefs, "get_coefs", return_value={"Ag": np.eye(3)})
         get_coefs_from_cfg({"coefs_path": "/custom/path.h5", "coefs": {}}, "i_01")
         paths = mock_get.call_args[0][0]
         assert str(paths[0]) == "/custom/path.h5"
@@ -34,29 +36,29 @@ class TestGetCoefsFromCfg:
 
     def test_coefs_paths_is_list(self, mocker):
         """coefs_paths passed to get_coefs must always be a list, not a scalar."""
-        mock_get = mocker.patch(_GET_COEFS_PATCH, return_value={})
+        mock_get = mocker.patch.object(_coefs, "get_coefs", return_value={})
         get_coefs_from_cfg({"coefs_path": "/some/path.h5", "coefs": {}}, "i_01")
         assert isinstance(mock_get.call_args[0][0], list)
 
     def test_override_passed_as_coefs_ovr(self, mocker):
         """cfg_in.coefs is forwarded as coefs_ovr to get_coefs."""
         override = {"azimuth_shift_deg": 195.0}
-        mocker.patch(_GET_COEFS_PATCH, return_value=override)
+        mocker.patch.object(_coefs, "get_coefs", return_value=override)
         get_coefs_from_cfg({"coefs": override}, "i_01")
         # Already tested via mock — verify coefs_ovr keyword
-        mock_get = mocker.patch(_GET_COEFS_PATCH, return_value=override)
+        mock_get = mocker.patch.object(_coefs, "get_coefs", return_value=override)
         get_coefs_from_cfg({"coefs": override}, "i_01")
         assert mock_get.call_args[1]["coefs_ovr"] == override
 
     def test_override_replaces_value(self, mocker):
         """Override values replace loaded coefs (delegated to get_coefs)."""
-        mocker.patch(_GET_COEFS_PATCH, return_value={"azimuth_shift_deg": 195.0, "Ag": np.eye(3)})
+        mocker.patch.object(_coefs, "get_coefs", return_value={"azimuth_shift_deg": 195.0, "Ag": np.eye(3)})
         coefs = get_coefs_from_cfg({"coefs": {"azimuth_shift_deg": 195.0}}, "i_01")
         assert coefs["azimuth_shift_deg"] == 195.0
 
     def test_empty_coefs_returns_dict(self, mocker):
         """Empty coefs still returns a dict (not None)."""
-        mocker.patch(_GET_COEFS_PATCH, return_value={})
+        mocker.patch.object(_coefs, "get_coefs", return_value={})
         assert isinstance(get_coefs_from_cfg({}, "i_01"), dict)
 
     def test_yaml_export_dir_added_as_final_fallback(self, mocker):
@@ -65,7 +67,7 @@ class TestGetCoefsFromCfg:
         Lets the ``dist/tcm_clc_txt`` packaging (no bundled ``calibration.h5``)
         silently load from per-probe YAML exports.
         """
-        mock_get = mocker.patch(_GET_COEFS_PATCH, return_value={})
+        mock_get = mocker.patch.object(_coefs, "get_coefs", return_value={})
         get_coefs_from_cfg({}, "i_01")
         expected_yaml_dir = ConfigIn_InclProc.coefs_path.parent / "yaml_export"
         assert expected_yaml_dir in mock_get.call_args[0][0]
@@ -73,7 +75,7 @@ class TestGetCoefsFromCfg:
 
     def test_yaml_export_not_duplicated_with_explicit_path(self, mocker):
         """Explicit ``coefs_path`` already pointing at ``yaml_export`` dir → no duplicate append."""
-        mock_get = mocker.patch(_GET_COEFS_PATCH, return_value={})
+        mock_get = mocker.patch.object(_coefs, "get_coefs", return_value={})
         yaml_dir = ConfigIn_InclProc.coefs_path.parent / "yaml_export"
         get_coefs_from_cfg({"coefs_path": str(yaml_dir), "coefs": {}}, "i_01")
         assert mock_get.call_args[0][0].count(yaml_dir) == 1
@@ -170,8 +172,7 @@ class TestRunProcessingDispatch:
             "files": [{"path": "/f1.txt", "coefs": {}}, {"path": "/f2.txt", "coefs": {}}],
         })
         # main_init converts DictConfig → plain dict; return a minimal mock
-        mocker.patch(
-            "tcm.processing.cli.main_init",
+        mocker.patch.object(_cli, "main_init",
             return_value={
                 "input": {"path": Path("/dummy.txt"), "tables": ["incl*"]},
                 "out": {"dt_bins": [timedelta(0)], "dir": out_dir},
@@ -180,9 +181,9 @@ class TestRunProcessingDispatch:
                 "files": [{"path": Path("/f1.txt")}, {"path": Path("/f2.txt")}],
             },
         )
-        mocker.patch("tcm.processing.format.to_pcid_from_name", return_value="i_01")
-        mocker.patch("tcm.processing.get_coefs_from_cfg", return_value={})
-        mock_batch = mocker.patch("tcm.processing._load_batch", return_value=(None, None))
+        mocker.patch.object(_format, "to_pcid_from_name", return_value="i_01")
+        mocker.patch.object(_processing, "get_coefs_from_cfg", return_value={})
+        mock_batch = mocker.patch.object(_processing, "_load_batch", return_value=(None, None))
         run_processing(cfg)
         mock_batch.assert_called_once()
 

@@ -94,11 +94,15 @@ class BrowseOverlay:
         dir_title: str = "Coefficients directory",
         files_title: str = "Coefficient files",
         leave_hides: bool = False,
+        on_status: Callable[[str], None] | None = None,
+        status_hint: str = "",
     ) -> None:
         self._host = host
         self._write, self._read = write, read
         self._filetypes, self._dir_title, self._files_title = filetypes, dir_title, files_title
         self._leave_hides = leave_hides
+        self._on_status = on_status
+        self._status_hint = status_hint
         self._button: ttk.Button | None = None
         self._icon_job: str | None = None
         self._show_job: str | None = None
@@ -182,6 +186,9 @@ class BrowseOverlay:
         btn.bind("<Button-1>", lambda _e: (self._browse(), "break")[-1], add="+")
         if self._leave_hides:
             btn.bind("<Leave>", lambda _e: self.schedule_hide(), add="+")
+        if self._on_status is not None and self._status_hint:
+            btn.bind("<Enter>", lambda _e: self._on_status(self._status_hint), add="+")
+            btn.bind("<Leave>", lambda _e: self._on_status(""), add="+")
         return btn
 
     def _start_icon_polling(self) -> None:
@@ -239,7 +246,9 @@ class BrowseButtonManager:
         on_path_changed: Callable[[str], None],
         on_edit_restyler: Callable[[Any, int, str], None] | None = None,
         editor_place: Callable[[Any], dict[str, Any]] | None = None,
-        host=None
+        host=None,
+        on_status: Callable[[str], None] | None = None,
+        status_hint: str = "",
     ) -> None:
         self._sheet = sheet
         self.notify_path_changed = on_path_changed
@@ -252,7 +261,13 @@ class BrowseButtonManager:
         # Natural height + vertical centering: the glyph is never clipped by a
         # short row — the button floats above the canvas and overflows the row
         # symmetrically.  Only a parent *frame* clips, hence the host override.
-        self._ov = BrowseOverlay(host or sheet, self._write_cell, self._read_cell)
+        self._ov = BrowseOverlay(
+            host or sheet,
+            self._write_cell,
+            self._read_cell,
+            on_status=on_status,
+            status_hint=status_hint,
+        )
         self._editor_place = editor_place or (
             lambda ed: {"in_": ed, "relx": 1.0, "x": 0, "rely": 0.5, "y": 0}
         )

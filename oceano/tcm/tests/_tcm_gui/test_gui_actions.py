@@ -103,7 +103,7 @@ class TestGuiScan:
             sys, "argv",
             ["prog", path_str, f'program.return_="{Return.CFG_FROM_ARGS}"'],
         )
-        mock_proc = mocker.patch("tcm.processing.run_processing")
+        mock_proc = mocker.patch.object(processing, "run_processing")
         result = cli.call_in_raw_dir(processing.run, exit_on_error=False)
 
         assert result is not None
@@ -120,7 +120,7 @@ class TestGuiScan:
             sys, "argv",
             ["prog", path_str, f'program.return_="{Return.CFG_FROM_ARGS}"'],
         )
-        mocker.patch("tcm.processing.run_processing")
+        mocker.patch.object(processing, "run_processing")
         result = cli.call_in_raw_dir(processing.run, exit_on_error=False)
 
         processed, failed, last_cfg, collected = result
@@ -139,7 +139,7 @@ class TestGuiScan:
         path_str = str(raw_dir / "*i*.txt")
 
         monkeypatch.setattr(sys, "argv", ["prog"])
-        mocker.patch("tcm.processing.run_processing")
+        mocker.patch.object(processing, "run_processing")
         result = cli.call_in_raw_dir(
             processing.run,
             overrides={
@@ -222,7 +222,7 @@ class TestGuiCoefWriteBack:
         tmp_path, raw_dir, csv_file, run_dir = gui_project
         yaml_path = run_dir / "@i_01.yaml"
 
-        mock_update = mocker.patch("tcm.config_yaml.update_coefs_in_run_yaml")
+        mock_update = mocker.patch.object(config_yaml, "update_coefs_in_run_yaml")
 
         # Simulate what App._write_coefs does
         from tcm_gui.app import App
@@ -243,7 +243,7 @@ class TestGuiCoefWriteBack:
         tmp_path, raw_dir, csv_file, run_dir = gui_project
         yaml_path = run_dir / "@i_01.yaml"
 
-        mock_update = mocker.patch("tcm.config_yaml.update_coefs_in_run_yaml")
+        mock_update = mocker.patch.object(config_yaml, "update_coefs_in_run_yaml")
 
         from tcm_gui.app import App
 
@@ -262,7 +262,7 @@ class TestGuiCoefWriteBack:
 
     def test_write_coefs_no_edits_skips(self, gui_project, mocker):
         """No edits → no call to ``update_coefs_in_run_yaml``."""
-        mock_update = mocker.patch("tcm.config_yaml.update_coefs_in_run_yaml")
+        mock_update = mocker.patch.object(config_yaml, "update_coefs_in_run_yaml")
 
         from tcm_gui.app import App
 
@@ -288,7 +288,7 @@ class TestGuiRun:
         monkeypatch.chdir(tmp_path)
 
         monkeypatch.setattr(sys, "argv", ["prog"])
-        mock_proc = mocker.patch("tcm.processing.run_processing")
+        mock_proc = mocker.patch.object(processing, "run_processing")
         result = cli.call_in_raw_dir(
             processing.run,
             overrides={
@@ -309,8 +309,8 @@ class TestGuiRun:
         monkeypatch.chdir(tmp_path)
 
         monkeypatch.setattr(sys, "argv", ["prog"])
-        mock_save = mocker.patch("tcm.config_yaml.save_config_to_yaml")
-        mocker.patch("tcm.processing.run_processing")
+        mock_save = mocker.patch.object(config_yaml, "save_config_to_yaml")
+        mocker.patch.object(processing, "run_processing")
 
         cli.call_in_raw_dir(
             processing.run,
@@ -362,7 +362,7 @@ class TestGuiFullCycle:
 
         # --- Step 1: Scan ---
         monkeypatch.setattr(sys, "argv", ["prog"])
-        mock_proc = mocker.patch("tcm.processing.run_processing")
+        mock_proc = mocker.patch.object(processing, "run_processing")
         scan_result = cli.call_in_raw_dir(
             processing.run,
             overrides={
@@ -423,7 +423,7 @@ class TestGuiSysArgvIsolation:
         monkeypatch.setattr(sys, "argv", list(original_argv))
         monkeypatch.chdir(tmp_path)
 
-        mocker.patch("tcm.processing.run_processing")
+        mocker.patch.object(processing, "run_processing")
         cli.call_in_raw_dir(
             processing.run,
             overrides={
@@ -444,7 +444,7 @@ class TestGuiSysArgvIsolation:
         monkeypatch.setattr(sys, "argv", ["__main__.py"])
         monkeypatch.chdir(tmp_path)
 
-        mocker.patch("tcm.processing.run_processing")
+        mocker.patch.object(processing, "run_processing")
         # Call 1: scan (Worker._setup resets sys.argv before each call)
         sys.argv = ["__main__.py"]
         cli.call_in_raw_dir(
@@ -479,7 +479,7 @@ class TestGuiSysArgvIsolation:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(sys, "argv", ["__main__.py"])
 
-        mocker.patch("tcm.processing.run_processing")
+        mocker.patch.object(processing, "run_processing")
         # Pass path as str — exactly what Tk Entry.get() returns
         result = cli.call_in_raw_dir(
             processing.run,
@@ -520,7 +520,7 @@ class TestGuiAtSignFilename:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(sys, "argv", ["__main__.py"])
 
-        mocker.patch("tcm.processing.run_processing")
+        mocker.patch.object(processing, "run_processing")
         result = cli.call_in_raw_dir(
             processing.run,
             overrides={
@@ -542,7 +542,7 @@ class TestGuiAtSignFilename:
         monkeypatch.setattr(sys, "argv", ["__main__.py"])
 
         # First: generate config via scan
-        mocker.patch("tcm.processing.run_processing")
+        mocker.patch.object(processing, "run_processing")
         cli.call_in_raw_dir(
             processing.run,
             overrides={
@@ -582,7 +582,7 @@ class TestGuiCfgProcAutoCreation:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(sys, "argv", ["__main__.py"])
 
-        mocker.patch("tcm.processing.run_processing")
+        mocker.patch.object(processing, "run_processing")
         result = cli.call_in_raw_dir(
             processing.run,
             overrides={
@@ -612,7 +612,7 @@ class TestGuiGlobalHydraClear:
         # Simulate Worker._setup: clear GlobalHydra before each call
         from hydra.core.global_hydra import GlobalHydra
 
-        mocker.patch("tcm.processing.run_processing")
+        mocker.patch.object(processing, "run_processing")
 
         # Call 1: scan
         GlobalHydra.instance().clear()
@@ -655,7 +655,7 @@ class TestGuiCwdStability:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(sys, "argv", ["__main__.py"])
 
-        mocker.patch("tcm.processing.run_processing")
+        mocker.patch.object(processing, "run_processing")
         cli.call_in_raw_dir(
             processing.run,
             overrides={
@@ -677,7 +677,7 @@ class TestGuiRunWithNoConfigs:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(sys, "argv", ["__main__.py"])
 
-        mocker.patch("tcm.processing.run_processing")
+        mocker.patch.object(processing, "run_processing")
         result = cli.call_in_raw_dir(
             processing.run,
             overrides={
@@ -783,7 +783,7 @@ class TestGuiCliArgs:
         from hydra.core.global_hydra import GlobalHydra
         GlobalHydra.instance().clear()
 
-        mocker.patch("tcm.processing.run_processing")
+        mocker.patch.object(processing, "run_processing")
         # call_in_raw_dir extracts path from sys.argv, applies overrides
         result = cli.call_in_raw_dir(
             processing.run,
@@ -801,7 +801,7 @@ class TestGuiCliArgs:
 
         from hydra.core.global_hydra import GlobalHydra
 
-        mocker.patch("tcm.processing.run_processing")
+        mocker.patch.object(processing, "run_processing")
 
         # Step 1: scan — path in sys.argv, call_in_raw_dir extracts it
         GlobalHydra.instance().clear()
@@ -857,7 +857,7 @@ class TestFakeSheetDirtyTracking:
     )
     def test_write_coefs_respects_dirty_flag(self, coefs, dates, path, dirty, expect_write, mocker):
         """_write_coefs calls update_coefs_in_run_yaml only when is_dirty is True."""
-        mock_update = mocker.patch("tcm.config_yaml.update_coefs_in_run_yaml")
+        mock_update = mocker.patch.object(config_yaml, "update_coefs_in_run_yaml")
         from tcm_gui.app import App
 
         app = App.__new__(App)
@@ -1143,13 +1143,21 @@ class TestRtfClipboard:
     @classmethod
     def _tk_root(cls):
         """One root per class — `tk.Tk()` N times in one process exhausts Tcl's
-        `tcl_findLibrary` lookup on Windows pixi."""
+        `tcl_findLibrary` lookup on Windows pixi.
+
+        If a previous module's Tk root exhausted that lookup (see
+        ``test_const_meta.py`` for the same pattern), ``tk.Tk()`` raises
+        ``TclError`` — yield ``None`` so dependent tests skip instead of erroring.
+        """
         import tkinter as tk
 
-        root = tk.Tk()
-        root.withdraw()
-        yield root
-        root.destroy()
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            yield root
+            root.destroy()
+        except tk.TclError:
+            yield None
 
     @pytest.fixture()
     def _tk_text(self, _tk_root):
@@ -1157,6 +1165,8 @@ class TestRtfClipboard:
         and inherited cheaply across the class."""
         import tkinter as tk
 
+        if _tk_root is None:
+            pytest.skip("Tk unavailable — Tcl interpreter already destroyed")
         w = tk.Text(_tk_root, font=("Consolas", 11))
         w.tag_configure("err", foreground="red")
         w.tag_configure("info", foreground="#0070A0")

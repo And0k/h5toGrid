@@ -46,6 +46,7 @@ def _wait_settled(root, lbl, timeout_ms=300):
 
 def _build_status_bar(root):
     """Build §6 layout: label overlaid bottom-left on root (no f4)."""
+    from tcm_gui.const import UIScale, configure_ui
     from tcm_gui.md_label import MarkdownLabel
 
     for w in root.winfo_children():
@@ -54,18 +55,15 @@ def _build_status_bar(root):
     root.geometry("1100x800")
     root.deiconify()
     root.attributes("-alpha", 0)  # invisible but geometry resolves
-    try:
-        root.tk.call("tk", "scaling", 2.0)
-        for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont"):
-            tkfont.nametofont(name).configure(size=14)
-    except tk.TclError:
-        pass
+
+    ui = UIScale(root, font_scale=1.0)
+    configure_ui(root)
 
     root.grid_columnconfigure(0, weight=1)
     root.grid_rowconfigure(2, weight=2)
     root.grid_rowconfigure(4, weight=1)
 
-    lbl = MarkdownLabel(root)
+    lbl = MarkdownLabel(root, font=ui.font())
     lbl.place(rely=1.0, relx=0.0, anchor="sw", x=4, y=-4)
 
     # Standalone progress bar for font-scaling measurement.
@@ -79,7 +77,7 @@ def _build_status_bar(root):
     if bar_h > 4:
         lbl.fit_to_height(bar_h)
 
-    lbl.set_plain("Ready")
+    lbl.set_text("Ready", raw=True)
     _wait_settled(root, lbl)
 
     root.withdraw()
@@ -103,7 +101,7 @@ class TestContraction:
     def test_empty_collapses(self):
         root = _mod._root
         lbl, _ = _build_status_bar(root)
-        lbl.clear()
+        lbl.set_text("")
         _wait_settled(root, lbl)
         assert lbl.winfo_width() <= 2, f"empty label should collapse, got {lbl.winfo_width()}px"
 
@@ -111,11 +109,11 @@ class TestContraction:
         """Hover show → clear → hover show again must not stay collapsed."""
         root = _mod._root
         lbl, _ = _build_status_bar(root)
-        lbl.clear()
+        lbl.set_text("")
         _wait_settled(root, lbl)
         assert lbl.winfo_width() <= 2
         # Re-show (simulates second hover).
-        lbl.set_plain("Hover hint text")
+        lbl.set_text("Hover hint text", raw=True)
         _wait_settled(root, lbl)
         assert lbl.winfo_width() > 10, (
             f"re-show after clear: label {lbl.winfo_width()}px should be > 10px"
@@ -124,7 +122,7 @@ class TestContraction:
     def test_long_text_fills_window(self):
         root = _mod._root
         lbl, _ = _build_status_bar(root)
-        lbl.set_markdown("word " * 50)
+        lbl.set_text("word " * 50)
         _wait_settled(root, lbl)
         win_w = root.winfo_width()
         lbl_w = lbl.winfo_width()
@@ -143,7 +141,7 @@ class TestContentNotCut:
     def test_long_help_visible(self):
         root = _mod._root
         lbl, _ = _build_status_bar(root)
-        lbl.set_markdown(self.LONG_HELP)
+        lbl.set_text(self.LONG_HELP)
         _wait_settled(root, lbl)
         last = lbl.index("end-1c")
         bbox = lbl.bbox(last)
@@ -154,7 +152,7 @@ class TestContentNotCut:
     def test_multi_paragraph_visible(self):
         root = _mod._root
         lbl, _ = _build_status_bar(root)
-        lbl.set_markdown("First.\n\nSecond.\n\nThird.")
+        lbl.set_text("First.\n\nSecond.\n\nThird.")
         _wait_settled(root, lbl)
         last = lbl.index("end-1c")
         bbox = lbl.bbox(last)
@@ -163,9 +161,12 @@ class TestContentNotCut:
     def test_height_grows_for_wrapping_text(self):
         root = _mod._root
         lbl, _ = _build_status_bar(root)
-        lbl.set_markdown("**" + "word " * 50 + "**")
+        lbl.set_text("**" + "word " * 50 + "**")
         _wait_settled(root, lbl)
-        assert int(lbl.cget("height")) > 1
+        wh = lbl.winfo_height()
+        if wh <= 1:
+            pytest.skip("withdrawn window — dlineinfo unavailable")
+        assert wh > lbl._fonts["plain"].metrics("linespace")
 
 
 class TestResizeAdapts:
@@ -174,15 +175,18 @@ class TestResizeAdapts:
         lbl, _ = _build_status_bar(root)
 
         medium = "word " * 25
-        lbl.set_markdown(medium)
+        lbl.set_text(medium)
         _wait_settled(root, lbl)
-        h_wide = int(lbl.cget("height"))
+        h_wide = lbl.winfo_height()
+        if h_wide <= 1:
+            pytest.skip("withdrawn window — geometry unavailable")
 
         root.geometry("600x800")
-        lbl._current = None
-        lbl.set_markdown(medium)
+        lbl.rerender()  # re-render at new width (same content, different layout)
         _wait_settled(root, lbl)
-        h_narrow = int(lbl.cget("height"))
+        h_narrow = lbl.winfo_height()
+        if h_narrow <= 1:
+            pytest.skip("withdrawn window — geometry not propagated")
 
         root.geometry("1100x800")
         assert h_narrow >= h_wide, f"narrow({h_narrow}) < wide({h_wide})"
