@@ -9,13 +9,11 @@
 # resolved by MarkdownLabel's color map at render time.
 # For strings that use .format(), escape as {{#name}}text{{/}}.
 
+# ── Chrome widget tooltips / hover status ─────────────────────────────────
 path_lbl.tooltip: "Data search path"
 path_field.tooltip: "Data search path"
 path_field.status: "Changing data path rescans and **resets all config tabs below**"
-cfg_lbl.status: "Current configuration state"
-cfg_lbl.default: "Default configuration"
-cfg_lbl.processing: "Processing configurations"
-cfg_lbl.scanned: "Generated configurations for processing found data"
+overall_lbl.status: "Current configuration state"
 run.tooltip: "Run button"
 run.start: "Start processing"
 run.pause: "Pause processing"
@@ -28,3 +26,22 @@ prog_all.status: "Overall progress across all configurations"
 prog_stage.status: "Current stage progress within the active configuration"
 tab.status: "Configuration: `{path}`"  # template — _add_page formats {path}
 browse_btn.status: "Hold **Shift** to select files instead of directory"
+empty_area.synced: "Editable — coefs, dates, path **sync to YAML on Run**"
+empty_area.unsaved: "No YAML config — provide a data path above to generate configs that persist edits"
+
+# ── Button labels ─────────────────────────────────────────────────────────
+run_btn.text: "Run"
+run_btn.pause: "Pause"
+run_btn.resume: "Resume"
+
+# ── Status / progress text ────────────────────────────────────────────────
+status.ready: "Ready"
+status.loading: "Loading\u2026"
+status.starting: "Starting\u2026"
+
+# ── Completion template (format: pct, ok, n) ──────────────────────────────
+overall_lbl.done_detail: " - Done {pct}% ({ok}/{n} ok)"
+
+# ── Error prefixes (log queue) ────────────────────────────────────────────
+error.scan: "Scan: {p}"
+error.run: "Run: {p}"

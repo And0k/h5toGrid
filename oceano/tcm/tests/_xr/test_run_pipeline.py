@@ -392,7 +392,7 @@ def _clear_hydra():
     GlobalHydra.instance().clear()
     yield
     GlobalHydra.instance().clear()
-    sys.modules.pop("scripts.tcm_clc", None)
+    sys.modules.pop("scripts.tcm_proc", None)
 
 
 @pytest.mark.xr
@@ -400,7 +400,7 @@ class TestMainEndToEnd:
     """main() → @hydra.main → run(cfg)."""
 
     def test_composes_and_calls_run(self, tmp_path, monkeypatch, mocker):
-        """Reproduces: python -m scripts.tcm_clc D:/data/_raw/*i*.txt"""
+        """Reproduces: python -m scripts.tcm_proc D:/data/_raw/*i*.txt"""
         raw_dir = tmp_path / _constants.RAW_DIR_NAME
         raw_dir.mkdir()
         monkeypatch.chdir(tmp_path)

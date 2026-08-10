@@ -7,8 +7,12 @@ import sys
 import threading
 from functools import wraps
 
+from .const import load_str
 from .progress_bridge import GuiTqdm, set_runtime, set_tqdm_class
 from .runtime import Runtime
+
+# Chrome i18n strings — same source as app.STR, loaded via shared loader.
+_STR: dict[str, str] = load_str()
 
 
 class Worker:
@@ -111,7 +115,7 @@ class Worker:
         # are the sole config source.  Data path passed via overrides.
         self._setup(["__main__"])
         # Show a sliver on overall bar immediately (non-zero total → bar visible)
-        self.rt.progress_overall.set(0, 1, "Starting…")
+        self.rt.progress_overall.set(0, 1, _STR["status.starting"])
         self.rt.progress_stage.set(0, 0, "")
         try:
             res = cli.call_in_raw_dir(

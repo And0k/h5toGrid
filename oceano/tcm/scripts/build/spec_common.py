@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-  # noqa: UP009 — spec files expect this header
 """Shared PyInstaller spec utilities for tcm builds.
 
-Imported by ``tcm_clc_txt.spec`` and ``tcm_gui.spec`` to avoid
+Imported by ``tcm_proc.spec`` and ``tcm_gui.spec`` to avoid
 duplicating binary filters, data collectors, and version loading.
 """
 

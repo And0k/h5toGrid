@@ -2,16 +2,17 @@
 
 Optional Tkinter frontend wrapping `tcm.cli.call_in_raw_dir` in a background
 thread.  No custom CLI parsing — Hydra handles all config keys natively via
-`sys.argv` (see [CLI usage](../tcm_clc/README.md#quick-start)).
+`sys.argv` (see [CLI usage](../tcm_cli/README.md#quick-start)).
 
 ## Architecture
 
 | File | Purpose |
 |------|---------|
-| `app.py` | Tk root, layout §1–6, 300 ms polling, argv prefill, `_initial_scan` flag (immediate overlay show), `_prog_floater` overlay (400 ms delay for run), z-order `<Motion>` bind; manual `ttk.Frame` + `tk.Text` + `ttk.Scrollbar` log container (replaces `ScrolledText` for ttk-styled scrollbar); `_log_autoscroll` flag + `<MouseWheel>`/`<Button-4/5>` bindings for scroll-aware auto-follow |
+| `app.py` | Tk root, layout §1–6, 300 ms polling, argv prefill, `_initial_scan` flag (immediate overlay show), `_prog_floater` overlay (400 ms delay for run), z-order `<Motion>` bind; manual `ttk.Frame` + `tk.Text` + `ttk.Scrollbar` log container (replaces `ScrolledText` for ttk-styled scrollbar); `_log_autoscroll` flag + `<MouseWheel>`/`<Button-4/5>` bindings for scroll-aware auto-follow; `_cfg_state: ScanStage` enum drives dual-purpose label at row=1; Run button floats via `place(in_=self.nb)` |
 | `md_label.py` | `MarkdownLabel` (`tk.Text` subclass): Tk renderer for Markdown AST from `_md_parse`; `_current` holds parsed `Block` tuple (not raw text) — `set_text(text, raw=False)` parses Markdown by default so `STR["{role}.status"]` with `**bold**` renders bold; `raw=True` bypasses parsing for paths/keys that interpolate untrusted content (e.g. `tab.status` after `.format(path=...)`); `rerender()` replays `_render` without reparse; `mark_font_ready()` (enables auto-sizing without resizing), `fit_to_height` (rescales + enables), dynamic width (`_fit_width` via font metrics, `wrap="none"` → `wrap="word"`), auto-height (`_fit_height` on `<Configure>`), table tab-stop alignment |
 | `_md_parse.py` | Pure Markdown parser (zero Tk dependency): `parse_inline()`, `parse_markdown()`, `split_table_row()`; AST types `Heading`/`Paragraph`/`CodeBlock`/`Table`/`Inline` |
 | `worker.py` | Background thread: `call_in_raw_dir` for Scan and Run |
+| `states.py` (tcm) | `ScanStage(StrEnum)` — scan lifecycle labels (`DEFAULT`, `SCAN`, `DONE`); `Stage(StrEnum)` — per-probe processing phase labels; value = display text |
 | `coef_sheet.py` | tksheet treeview: type-aware widgets (checkbox/dropdown/align), node + metadata bg; row-geometry-free styling via `_row_map()`; floated `PathField` hover-edit on browse rows |
 | `_path_field.py` | 1×1 tksheet for display + `ttk.Entry` overlay for editing — frame-anchored hover button, column-width tracking via `<Configure>` |
 | `_browse_button.py` | `BrowseOverlay` (widget core + `pending` state + `on_status`/`status_hint` hover-to-status-bar wiring), `BrowseButtonManager` (sheet-edit policy + injectable `editor_place`), `SheetHoverBinder` (MT motion → overlay show/hide with pending-aware veto), `bind_hover_browse` (Entry legacy) |
@@ -81,6 +82,10 @@ Click Run while processing → PauseGate
 | `QueueHandler` installed once at App startup; re-attached in `_wrap` after Hydra `dictConfig` | Hydra's ``logging.config.dictConfig`` replaces **all** root handlers with ``[console, file]`` each worker task, removing the ``QueueHandler`` from root.  ``_wrap.wrapped`` (running *after* dictConfig) re-adds it so both worker-thread and GUI-main-thread logs (e.g. ``_reload_coefs`` triggered by treeview interaction) reach the log ``tk.Text`` widget.  ``reset_dedup()`` per task prevents the first record of a new task from being swallowed as a "duplicate" of the previous task's tail |
 | `_runtime` is module-level, not `threading.local` | `TqdmCallback` creates `GuiTqdm` in dask worker threads |
 | `return_="<cfg_from_args>"` for Scan | pipeline does discovery + gen_metadata, returns configs without processing |
+| `ScanStage(StrEnum)` for cfg state labels | value = display text; same pattern as `Stage` for processing phases; drives `_overall_lbl` at row=1 via `progress_overall.desc` during scan, `_cfg_state` attr when idle |
+| `progress_overall.set()` at scan boundaries | `tick()` is per-probe (100-units math); scan-level uses direct `set()` same as `progress_stage` updates already in `processing.run()` |
+| Run button `place(in_=self.nb)` on root | floats at notebook bottom-right with scrollbar margin; `lift()` on `<Configure>` for z-order |
+| Dirty tabs → `*` on title only | cfg label shows scan lifecycle (`ScanStage`), not edit state; `*` on tab title is sufficient dirty indicator |
 | `input.yaml_path` for Run | documented regex filter, skip discovery, only selected configs |
 | `_run` / `_scan` use minimal `sys.argv` | launch-time positional path stripped via `parse_data_path`; data path fed as `input.path` override, `key=value` overrides preserved for scan only — YAML files for run are the sole config source |
 | `PauseGate` in log + tqdm, not pipeline | pipeline code untouched; pause on next tick |
@@ -197,7 +202,7 @@ Two independent help sources — one per widget category:
 
 | Source | Widgets | Key derivation | i18n mechanism |
 |---|---|---|---|
-| `STR` (``const.py``) | Chrome widgets (`self._path_lbl`, `_path_field`, `_cfg_lbl`, `_run_btn`, `_status_lbl`) + dynamic tabs | Attribute name → role → ``STR["{role}.tooltip"]`` / ``STR["{role}.status"]`` | Replace ``STR`` dict wholesale at build for target language |
+| `STR` (``const.py``) | Chrome widgets (`self._path_lbl`, `_path_field`, `_overall_lbl`, `_run_btn`, `_status_lbl`) + dynamic tabs | Attribute name → role → ``STR["{role}.tooltip"]`` / ``STR["{role}.status"]`` | Replace ``STR`` dict wholesale at build for target language |
 | ``_help.py`` (``config_reference.md``) | Config cells (``_meta[iid]["path"]`` keys) | ``help_for_path(strip_index(path)).short`` | Replace ``config_reference_<lang>.md`` |
 
 ### Chrome widgets: auto-registration
@@ -261,7 +266,7 @@ which returns a ``HelpEntry(short, body)`` parsed once from the tables in
 3. CamelCase field names (``Ag``, ``Cg``, ``Rz``) parse identically to
    lowercase Hydra names.
 4. ``_DOC_PATH`` resolves to ``config_reference.md`` at
-   ``{tcm_root.parent}/docs/tcm_clc/config_reference.md``; absent file →
+   ``{tcm_root.parent}/docs/tcm_cli/config_reference.md``; absent file →
    empty cache → no hover text (graceful degradation).
 5. Array indices stripped at lookup time: ``Ag[0]`` / ``Ag[1][2]`` → ``Ag``.
 
@@ -285,6 +290,47 @@ Index) canvas, which is separate from the MT canvas.  ``_on_tree_motion``
 ``_status_source`` (``"tree"`` / ``"data"`` / ``None``) tracks which canvas owns
 the current status so moving between tree column and data cell on the SAME row
 triggers a re-publish.
+
+## i18n architecture
+
+All user-visible strings are centralized in `str.yaml` (loaded once at startup
+into `app.STR` and `worker._STR`).  No hardcoded display text in app.py or
+worker.py — every label, button text, status message, and format template is
+read from `STR` at runtime.
+
+### String categories in `str.yaml`
+
+| Category | Key pattern | Example |
+|----------|-------------|---------|
+| Chrome tooltips / hover status | `{role}.tooltip`, `{role}.status` | `run.start: "Start processing"` |
+| Button labels | `run_btn.*` | `run_btn.pause: "Pause"` |
+| Status / progress text | `status.*` | `status.ready: "Ready"` |
+| Completion template | `overall_lbl.done_detail` | `" - Done {pct}% ({ok}/{n} ok)"` |
+| Error prefixes | `error.*` | `error.scan: "Scan: {p}"` |
+
+### Locale switching
+
+`:data:`LANG` in `const.py` controls language selection (same pattern as
+:data:`COLOR_MODE`):
+
+| Value | Behavior |
+|-------|----------|
+| `"auto"` (default) | Detect from OS locale via `locale.getdefaultlocale()` → two-letter code (e.g. `"ru"`). Falls back to `"en"`. |
+| `"en"`, `"ru"`, etc. | Explicit language code — loads `str_{lang}.yaml` |
+
+Resolution: `const.resolve_lang()` → cached two-letter code.
+Loading: `const.load_str()` → `str_{lang}.yaml` if exists, else `str.yaml`.
+Both `app.STR` and `worker._STR` call `load_str()` at import.
+
+To add a language: create `str_{lang}.yaml` with the same keys as `str.yaml`.
+
+### `states.py` enum values
+
+`ScanStage` and `Stage` in `tcm/states.py` are `StrEnum` whose values are the
+display text shown in progress bars and the overall label.  These are **code
+constants** — to translate them, either change the enum values directly or add
+a lookup layer in `str.yaml` keyed by `"{EnumName}.{value}"` with fallback to
+the enum value.
 
 ## Type-aware cell rendering (full mode)
 
@@ -626,7 +672,7 @@ Two independent progress bars + a status text line, all driven by
 
 ### Upper bar — config-level (overall)
 
-Stage-aware ticks via [`processing.Stage`](../tcm_clc/how_it_works.md#stage-context-stage_ctxpy)
+Stage-aware ticks via [`processing.Stage`](../tcm_cli/how_it_works.md#stage-context-stage_ctxpy)
 enum — load → coefs → proc → NC write (per bin) → TSV write (per bin).
 Each config occupies 100 units; active stages share the scale evenly.
 NC stages counted only when `use_h5` is `True`.  Ticks are emitted by
@@ -651,7 +697,23 @@ fallback (same pattern as `processing.py`'s `progress_bridge` import).
 Two independent overlays on `root`, both at the bottom edge:
 
 ```
-root (no f4 — removed)
+root
+│
+├── row=0: path field (§1)
+│
+├── row=1: overall status + progress bar (§2, dual-purpose)
+│   └── f1 (ttk.Frame)
+│       ├── _overall_lbl (ttk.Label, text=_cfg_state enum value)
+│       │   ScanStage.DEFAULT → "Default configuration"
+│       │   ScanStage.SCAN → "Processing configurations" (driven by progress_overall.desc)
+│       │   ScanStage.DONE → "Generated configurations for processing found data"
+│       └── _prog_all (ttk.Progressbar, length=220, grid-managed on demand)
+│
+├── row=2: notebook (§3, weight=2)
+│   └── _run_btn (ttk.Button, place(in_=self.nb, relx=1.0, rely=1.0, anchor="se"))
+│       floats at notebook bottom-right with scrollbar margin
+│
+├── row=3: log (§5, weight=1)
 │
 ├── place(rely=1.0, relx=0.0, anchor="sw")  ← bottom-left
 │   └── _status_lbl (MarkdownLabel)
@@ -669,7 +731,8 @@ root (no f4 — removed)
 ```
 
 **Z-order competition**: `<Motion>` on root → `_status_lbl.lift()`.
-`_prog_floater.lift()` on each `tot > 0` poll update.  Last `lift()` wins.
+`_prog_floater.lift()` on each `tot > 0` poll update.  `_run_btn.lift()`
+on root `<Configure>`.  Last `lift()` wins.
 
 **Show delay**: `_prog_floater` is shown via `root.after(400, _show_prog_floater)`
 — avoids flashing for very short operations.  Cancelled if `tot` drops to 0
@@ -726,7 +789,7 @@ live callable) and writes to ``self._status``.  ``_on_chrome_leave`` clears
 
 GUI accepts CLI args: first positional = data path (prefills GUI entry, auto-scans), then
 `key=value` = Hydra overrides passed verbatim via `sys.argv`
-(see [`cli.py` internals](../tcm_clc/how_it_works.md#entry-point) for
+(see [`cli.py` internals](../tcm_cli/how_it_works.md#entry-point) for
 `call_in_raw_dir`, `parse_data_path`, `hydra_main`)
 Example: `python -m tcm_gui "D:/data/_raw/@i_p1.TXT" "input.ids=[i90]"`.
 

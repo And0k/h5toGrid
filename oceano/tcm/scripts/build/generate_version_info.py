@@ -9,8 +9,8 @@ _DESCRIPTION = (
     "AB SIO RAS' TCM raw data processing CLI. "
     "Exports physical values (e.g. water velocity) to text"
 )
-_INTERNAL_NAME = "tcm_clc_txt.exe"
-_ORIGINAL_FILENAME = "tcm\\scripts\\tcm_clc.py"
+_INTERNAL_NAME = "tcm_proc.exe"
+_ORIGINAL_FILENAME = "tcm\\scripts\\tcm_proc.py"
 
 
 def main(

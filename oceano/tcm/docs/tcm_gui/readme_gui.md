@@ -89,6 +89,6 @@ overrides are not re-applied.
 
 ## See also
 
-- [Config field reference](../tcm_clc/config_reference.md) — all YAML fields
-- [Pipeline architecture](../tcm_clc/how_it_works.md) — internal design
+- [Config field reference](../tcm_cli/config_reference.md) — all YAML fields
+- [Pipeline architecture](../tcm_cli/how_it_works.md) — internal design
 - [GUI internals](how_gui_works.md) — programmer-facing architecture

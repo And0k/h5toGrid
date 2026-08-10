@@ -3,7 +3,7 @@
 ## Module Architecture
 
 ```
-scripts/tcm_clc.py          ← thin CLI entry point (calls cli.call_in_raw_dir(processing.run))
+scripts/tcm_proc.py          ← thin CLI entry point (calls cli.call_in_raw_dir(processing.run))
 tcm/
     cli.py                  ← parse_data_path, _build_hydra_argv, _prepare_overrides, safe_cfg_dir,
                               hydra_main, call_in_raw_dir, process_loading_yaml, main_init,
@@ -117,27 +117,27 @@ they serve different purposes (CLI CWD vs output path roots).
 
 ## Entry point
 
-`scripts/tcm_clc.py` — thin CLI caller using `@hydra.main`.
+`scripts/tcm_proc.py` — thin CLI caller using `@hydra.main`.
 
 ### CLI
 
 ```bash
 # ── text files (discovery via cfg_proc/run/*.yaml) ──
 # Process all discovered probes
-python scripts/tcm_clc.py "_raw/*i*.txt"
+python scripts/tcm_proc.py "_raw/*i*.txt"
 
 # Override any config field
-python scripts/tcm_clc.py "_raw/*i*.txt" 'input.ids=[i01,i_p02]'
-python scripts/tcm_clc.py "_raw/*i*.txt" out.text_path=./results filter.corr_time_mode=false
+python scripts/tcm_proc.py "_raw/*i*.txt" 'input.ids=[i01,i_p02]'
+python scripts/tcm_proc.py "_raw/*i*.txt" out.text_path=./results filter.corr_time_mode=false
 
 # Filter by data file (non-directory input.path → matches YAML's input.path)
-python scripts/tcm_clc.py "_raw/@i01.TXT"
+python scripts/tcm_proc.py "_raw/@i01.TXT"
 
 # Filter by YAML stem pattern (skip generation, use existing configs only)
-python scripts/tcm_clc.py "_raw" input.yaml_path="*@i_p5*"
+python scripts/tcm_proc.py "_raw" input.yaml_path="*@i_p5*"
 
 # Dry-run: list matching configs without processing
-python scripts/tcm_clc.py "_raw" input.yaml_path="*" program.return_=<cfg_from_args>
+python scripts/tcm_proc.py "_raw" input.yaml_path="*" program.return_=<cfg_from_args>
 
 # Drop-on-shortcut: Windows passes the raw path as sys.argv[1].
 # Commas, backslashes, quotes in the path are handled automatically —
@@ -1384,7 +1384,7 @@ to match the data.  This prevents `ValueError` in `init_input_cols` and
 1. `input.coefs` in YAML (highest priority)
 2. `coefs_path` (HDF5 `calibration.h5` or YAML directory)
 3. Sibling `cfg/coef/yaml_export/` directory — **always** appended as final fallback
-   (silently used in noh5 / `dist/tcm_clc_txt` packaging where the `.h5` file was pruned)
+   (silently used in noh5 / `dist/tcm_proc` packaging where the `.h5` file was pruned)
 
 The same chain is mirrored in `_xr/coefs.prep_cfg_for_probe()`.
 HDF5 paths are gated on `H5_AVAILABLE` (`tcm._constants`) — when h5py is not

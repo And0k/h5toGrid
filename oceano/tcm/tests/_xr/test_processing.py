@@ -64,7 +64,7 @@ class TestGetCoefsFromCfg:
     def test_yaml_export_dir_added_as_final_fallback(self, mocker):
         """yaml_export dir of the class-default coefs is appended as final fallback.
 
-        Lets the ``dist/tcm_clc_txt`` packaging (no bundled ``calibration.h5``)
+        Lets the ``dist/tcm_proc`` packaging (no bundled ``calibration.h5``)
         silently load from per-probe YAML exports.
         """
         mock_get = mocker.patch.object(_coefs, "get_coefs", return_value={})

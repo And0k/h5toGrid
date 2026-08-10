@@ -14,7 +14,7 @@ import netCDF4
 import numpy as np
 import xarray as xr
 from utils.logging_config import setup_logging
-from . import vsz_func as vf
+from veusz_helpers.common import vsz_func as vf
 
 l = setup_logging(__name__)
 

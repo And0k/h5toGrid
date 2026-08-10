@@ -74,7 +74,7 @@ _DIR_DEFAULT_REGEX = r"i.*\.txt"
 def _pattern_to_regex(name: str) -> str:
     """Interpret *name* as glob or regex, return a compiled regex string.
 
-    Rules (see docs/tcm_clc/how_it_works.md → "Path pattern interpretation"):
+    Rules (see docs/tcm_cli/how_it_works.md → "Path pattern interpretation"):
 
     - **Glob** if either: (a) *name* is not a valid regex, or (b) it is a
       valid regex but the dot before the file extension is **not** escaped

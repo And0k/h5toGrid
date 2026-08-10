@@ -2,16 +2,21 @@
 
 Places both RTF and plain text on the clipboard so apps like Word or Outlook
 preserve foreground colors while plain-text apps fall back automatically.
-Falls back to plain-text-only copy if ``pywin32`` is absent.
+Falls back to plain-text-only copy if ``pywin32`` is absent or the OS clipboard
+is momentarily locked by another viewer (:func:`copy_rich`).
 """
 
 from __future__ import annotations
+
+import logging
 
 import itertools
 import tkinter as tk
 
 from tcm_gui.const import tk_font_family
 from tcm_gui.theme import tk_color_to_rgb
+
+lf = logging.getLogger(__name__)
 
 
 def _esc(text: str) -> str:
@@ -90,7 +95,21 @@ def build_rtf(widget: tk.Text) -> str:
 
 
 def copy_rich(widget: tk.Text) -> None:
-    """Plain text + RTF onto the clipboard; falls back to plain elsewhere."""
+    """Plain text + RTF onto the clipboard; falls back to plain text elsewhere.
+
+    Hardened against two real-world clipboard failures observed in the field:
+
+    1. ``build_rtf`` raising *before* any clipboard op would otherwise empty
+       the OS clipboard but place nothing → user loses the prior clipboard
+       content.  Build the RTF payload first; only on success open +
+       ``EmptyClipboard`` + write.
+    2. ``win32clipboard.OpenClipboard`` raising ``pywintypes.error``
+       ("Отказано в доступе"/Access denied) when another viewer holds the
+       clipboard momentarily.  Retry ``OpenClipboard`` briefly, then fall back
+       to ``widget.clipboard_clear()`` + ``widget.clipboard_append`` so the
+       user still gets plain text — never an unhandled exception from a
+       ``<Control-c>`` binding.
+    """
     sel = widget.tag_ranges("sel")
     plain = (
         widget.get(widget.index(sel[0]), widget.index(sel[1]))
@@ -98,16 +117,42 @@ def copy_rich(widget: tk.Text) -> None:
         else widget.get("1.0", "end-1c")
     )
     try:
-        import win32clipboard as wcb  # pip install pywin32
-
-        CF_RTF = wcb.RegisterClipboardFormat("Rich Text Format")
-        wcb.OpenClipboard()
-        try:
-            wcb.EmptyClipboard()
-            wcb.SetClipboardData(wcb.CF_UNICODETEXT, plain)  # fallback target
-            wcb.SetClipboardData(CF_RTF, build_rtf(widget).encode("ascii"))
-        finally:
-            wcb.CloseClipboard()
+        import win32clipboard as wcb  # pywin32
     except ImportError:
         widget.clipboard_clear()
         widget.clipboard_append(plain)
+        return
+
+    # Compute RTF payload BEFORE touching the OS clipboard — a failed build
+    # leaves the user's prior clipboard intact rather than emptying it.
+    try:
+        CF_RTF = wcb.RegisterClipboardFormat("Rich Text Format")
+        rtf_bytes = build_rtf(widget).encode("ascii")
+    except Exception:  # noqa: BLE001 — never crash <Control-c>; fall back.
+        lf.warning("RTF build failed; copying plain text only: {}", exc_info=True)
+        widget.clipboard_clear()
+        widget.clipboard_append(plain)
+        return
+
+    # OpenClipboard can raise pywintypes.error ("Access denied") when another
+    # viewer holds the clipboard; retry briefly before degrading to Tk plain.
+    import time
+
+    for attempt in range(20):
+        try:
+            wcb.OpenClipboard()
+            break
+        except Exception:  # noqa: BLE001 — pywintypes.error "Access denied".
+            time.sleep(0.05)
+    else:
+        lf.warning("OpenClipboard stayed locked after retries; copying plain text only")
+        widget.clipboard_clear()
+        widget.clipboard_append(plain)
+        return
+
+    try:
+        wcb.EmptyClipboard()
+        wcb.SetClipboardData(wcb.CF_UNICODETEXT, plain)  # fallback target
+        wcb.SetClipboardData(CF_RTF, rtf_bytes)
+    finally:
+        wcb.CloseClipboard()

@@ -7,19 +7,19 @@ the full :class:`tcm.schema.Config`.
 Usage::
 
     # Process all discovered probes
-    python scripts/tcm_clc.py "_raw/*i*.txt"
+    python scripts/tcm_proc.py "_raw/*i*.txt"
 
     # Specific probes only
-    python scripts/tcm_clc.py "_raw/*i*.txt" 'input.ids=[i01,i_p02]'
+    python scripts/tcm_proc.py "_raw/*i*.txt" 'input.ids=[i01,i_p02]'
 
     # Override any config field
-    python scripts/tcm_clc.py "_raw/*i*.txt" out.text_path=./results
+    python scripts/tcm_proc.py "_raw/*i*.txt" out.text_path=./results
 
     # Config-generation-only (scan) — writes processing-cfg_from_args.log
-    python scripts/tcm_clc.py "_raw/*i*.txt" 'program.return_=<cfg_from_args>'
+    python scripts/tcm_proc.py "_raw/*i*.txt" 'program.return_=<cfg_from_args>'
 
-For the legacy dask-dataframe pipeline, use ``tcm._dask_legacy.scripts.tcm_clc``.
-Full user guide: :file:`docs/tcm_clc/README.md`.
+For the legacy dask-dataframe pipeline, use ``tcm._dask_legacy.scripts.tcm_proc``.
+Full user guide: :file:`docs/tcm_cli/README.md`.
 """
 from tcm import cli, processing
 

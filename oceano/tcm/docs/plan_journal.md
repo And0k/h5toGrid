@@ -107,7 +107,7 @@ def _run_log(tmp: Path, fn) -> journal.Reader:
     """Emit fn()'s records through a hydra-formatted file → Reader over it."""
     log_dir = tmp / "cfg_proc" / "log" / "2026-07-29_14-15-03"
     log_dir.mkdir(parents=True)
-    fh = logging.FileHandler(log_dir / "tcm_clc.log", encoding="utf-8")
+    fh = logging.FileHandler(log_dir / "tcm_proc.log", encoding="utf-8")
     fh.setFormatter(_FMT)
     fh.addFilter(stage_ctx.StageContextFilter())
     _LOG.addHandler(fh)
@@ -240,7 +240,7 @@ running = min(int(cur_o / 100), n - 1)      # desc_o → подпись этой
 
 ## 8. Факты среды (проверено документацией)
 
-- Лог: `{data_dir}/cfg_proc/log/{timestamp}/tcm_clc.log`; файл — `asctime|name|levelname|message` (simple), консоль — colorlog `funcName|message`; консоль INFO, файл DEBUG. `data_dir` = результат `paths.find_dir_raw_absolute(path_in)`.
+- Лог: `{data_dir}/cfg_proc/log/{timestamp}/tcm_proc.log`; файл — `asctime|name|levelname|message` (simple), консоль — colorlog `funcName|message`; консоль INFO, файл DEBUG. `data_dir` = результат `paths.find_dir_raw_absolute(path_in)`.
 - Hydra `dictConfig` каждый воркер-таск заменяет root-хендлеры; `worker._wrap.wrapped` пере-прикрепляет QueueHandler + `reset_dedup()`.
 - Этапы: 1 load, 2 coefs, 3 proc, 4+ NC/TSV per bin, combine (sn=0, не per-probe).
 - stem → pcid: `format.stem_to_pcid`; страница keyed by stem, записи — by pcid.

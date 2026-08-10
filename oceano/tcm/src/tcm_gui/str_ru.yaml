@@ -1,0 +1,45 @@
+# Chrome help content (i18n substitution point) — Russian.
+# Stable string keys for chrome widgets (everything that is NOT a config cell).
+# To switch locale: replace str.yaml with this file (or symlink).
+# Config-cell help comes from a different source (config_reference.md) and is resolved by _help.py.
+#
+# Color markup: {#name}text{/} — name is a key in theme.TAG_COLORS,
+# resolved by MarkdownLabel's color map at render time.
+# For strings that use .format(), escape as {{#name}}text{{/}}.
+
+# ── Chrome widget tooltips / hover status ─────────────────────────────────
+path_lbl.tooltip: "Путь поиска данных"
+path_field.tooltip: "Путь поиска данных"
+path_field.status: "Смена пути пересканирует и **сбрасывает все вкладки конфигураций**"
+overall_lbl.status: "Текущее состояние конфигурации"
+run.tooltip: "Кнопка запуска"
+run.start: "Начать обработку"
+run.pause: "Приостановить обработку"
+run.resume: "Продолжить обработку"
+status_lbl.status: "Статусные сообщения приложения"
+nb.status: "Вкладки конфигураций — по одной на файл / развёртку"
+# keep chrome status strings single-paragraph as _fit_status_font() caps the label to one row
+log.status: "Журнал обработки — цветовая маркировка по уровню ({#debug}отладка{/}/{#info}инфо{/}/{#warning}предупрежд{/}/{#error}ошибка{/})"
+prog_all.status: "Общий прогресс по всем конфигурациям"
+prog_stage.status: "Прогресс текущего этапа в активной конфигурации"
+tab.status: "Конфигурация: `{path}`"  # template — _add_page formats {path}
+browse_btn.status: "Удерживайте **Shift** для выбора файлов вместо папки"
+empty_area.synced: "Редактируемо — коэф., даты, путь **синхронизируются в YAML при запуске**"
+empty_area.unsaved: "Нет YAML-конфигурации — укажите путь выше для генерации конфигураций"
+
+# ── Button labels ─────────────────────────────────────────────────────────
+run_btn.text: "Запуск"
+run_btn.pause: "Пауза"
+run_btn.resume: "Продолжить"
+
+# ── Status / progress text ────────────────────────────────────────────────
+status.ready: "Готово"
+status.loading: "Загрузка\u2026"
+status.starting: "Запуск\u2026"
+
+# ── Completion template (format: pct, ok, n) ──────────────────────────────
+overall_lbl.done_detail: " — Готово {pct}% ({ok}/{n} ок)"
+
+# ── Error prefixes (log queue) ────────────────────────────────────────────
+error.scan: "Сканирование: {p}"
+error.run: "Запуск: {p}"

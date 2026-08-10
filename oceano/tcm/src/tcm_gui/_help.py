@@ -1,7 +1,7 @@
 """Resolve Hydra config paths to help text auto-extracted from ``config_reference.md``.
 
 Single source of truth for non-chrome (config-cell) tooltips: the existing
-field tables in ``docs/tcm_clc/config_reference.md``.  No dotted-path headings
+field tables in ``docs/tcm_cli/config_reference.md``.  No dotted-path headings
 need to be authored — the parser walks the table rows under each
 ``## ``{section}```` heading (``input``, ``input.coefs``, ``out``, ``filter``,
 ``program``) and emits one ``HelpEntry`` per row, keyed by
@@ -32,8 +32,8 @@ _l = logging.getLogger(__name__)
 
 # Resolved once at import: ``tcm/__file__`` → ``src/tcm``; two parents up is
 # the project root in dev and ``_internal`` in pyinstaller ``--onedir`` dist,
-# both of which carry ``docs/tcm_clc/config_reference.md`` as a sibling.
-_DOC_PATH: Path = _constants.PROJECT_ROOT.parent.parent / "docs" / "tcm_clc" / "config_reference.md"
+# both of which carry ``docs/tcm_cli/config_reference.md`` as a sibling.
+_DOC_PATH: Path = _constants.PROJECT_ROOT.parent.parent / "docs" / "tcm_cli" / "config_reference.md"
 
 # Sections whose ``## ``{section}```` heading opens table-driven field scanning.
 # ``filter/calib`` and decision-table sections are excluded — those fields are

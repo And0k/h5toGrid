@@ -9,23 +9,23 @@ from __future__ import annotations
 
 import contextlib
 import re
-from datetime import datetime, timedelta, timezone
-from enum import StrEnum
+from collections.abc import Callable, Mapping
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Dict, Mapping, Optional
+from typing import Any
 
 import numpy as np
-import tcm._xr.nc_utils
 import xarray as xr
 from omegaconf import DictConfig, OmegaConf
 from tqdm.dask import TqdmCallback
 
-
-from tcm import _constants, cli, config_yaml, format, paths, stage_ctx, utils2init, policy, schema
+import tcm._xr.nc_utils
+from tcm import _constants, cli, config_yaml, format, paths, policy, schema, stage_ctx, utils2init
 from tcm._xr import coefs as xr_coefs
 from tcm._xr import dataset, physical, storage
 from tcm._xr import io as xr_io
 from tcm.incl_calc.coefs import get_coefs_from_cfg
+from tcm.states import ScanStage, Stage
 
 try:
     from tcm_gui import progress_bridge
@@ -56,17 +56,6 @@ _EXT_BINARY = _constants._EXT_NC | _constants._EXT_HDF5
 # scale; active stages share it evenly (NC only when ``io()`` is truthy,
 # TSV only when ``text_path`` set).  Bottom bar (dask TqdmCallback) covers
 # substages continuously within a stage.
-
-
-class Stage(StrEnum):
-    """Per-probe phase labels (value = upper-bar description text)."""
-
-    LOAD = "load"  # xr_io.load_raw / _load_batch
-    COEFS = "coefs"  # prepare_coefs + save
-    PROC = "proc"  # physical.process (calc + binning)
-    NC = "NC"  # store_processed_incremental (per bin), use_h5 only
-    TSV = "TSV"  # xr_io.ds_to_csv (per bin), text_path only
-    COMBINE = "combine"  # _combine_probes (post-loop, not per-probe)
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +322,7 @@ def _export_tsv_from_nc(cfg: dict, pcid: str) -> None:
             continue
         fmt = _text_date_fmt(cfg_out, bin_s)
         suffix_csv = f"bin{bin_s}s" if bin_s else ""
-        ts = datetime.fromtimestamp(int(ds_tsv["time"].values[0]) // 1_000_000_000, timezone.utc).strftime(
+        ts = datetime.fromtimestamp(int(ds_tsv["time"].values[0]) // 1_000_000_000, UTC).strftime(
             "%y%m%d_%H%M"
         )
         csv_name = f"{ts}{suffix_csv}@{pcid}.tsv"
@@ -388,8 +377,8 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
     ``result`` is the **full** per-probe config (all fields, not just non-defaults) — unlike YAMLs on disk
     which strip defaults.
 
-    See also: :doc:`how_it_works </tcm_clc/how_it_works>`, :doc:`config_reference
-    </tcm_clc/config_reference>`.
+    See also: :doc:`how_it_works </tcm_cli/how_it_works>`, :doc:`config_reference
+    </tcm_cli/config_reference>`.
     """
     if (path_in := cfg.input.path) is None:
         raise ValueError("cfg.input.path must be provided")
@@ -421,6 +410,8 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
 
     # Scan progress — update progress_stage so the GUI overlay shows activity.
     _rt = progress_bridge.get_runtime()
+    if _rt:
+        _rt.progress_overall.set(0, 1, ScanStage.SCAN)
 
     # ── Config generation (skipped when yaml_path provided) ──────────────
     if (yaml_path := OmegaConf.select(cfg, "input.yaml_path", default=None)) is None:
@@ -550,6 +541,8 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
         cfgs=cfgs_to_run,
         n_cfgs_existed=len(cfgs_existed),
     )
+    if _rt:
+        _rt.progress_overall.set(1, 1, ScanStage.DONE)
     if cfg["program"]["return_"] == schema.Return.CFG_FROM_ARGS:
         return processed_pcids, failed_pcids, last_cfg, collected
 
@@ -680,13 +673,16 @@ def run_processing(cfg: DictConfig):
     # ── Phase 1b: extract coefs from .raw.h5 if .raw.nc absent (legacy HDF5 auto-migrate)
     if (raw_nc_path := cfg["out"].get("raw_db_path")) and policy.io():
         raw_nc_path = Path(raw_nc_path)
-        if not raw_nc_path.exists():
-            if (h5_path := raw_nc_path.with_suffix("").with_suffix(".raw.h5")).exists():
-                from tcm.incl_calc.coefs import load_coefs
+        # Collapse existence checks: both must hold before importing the legacy coefs loader.
+        if (
+            not raw_nc_path.exists()
+            and (h5_path := raw_nc_path.with_suffix("").with_suffix(".raw.h5")).exists()
+        ):
+            from tcm.incl_calc.coefs import load_coefs
 
-                if h5_coefs := load_coefs(h5_path, tbl):
-                    coefs = {**h5_coefs, **{k: v for k, v in coefs.items() if v is not None}}
-                    lf.info("Auto-migrate: extracted coefs from {}", h5_path)
+            if h5_coefs := load_coefs(h5_path, tbl):
+                coefs = {**h5_coefs, **{k: v for k, v in coefs.items() if v is not None}}
+                lf.info("Auto-migrate: extracted coefs from {}", h5_path)
 
     # Prepare coefs: zeroing rotation, azimuth correction
     lf.debug("Preparing coefs for {}...", pcid)
@@ -794,7 +790,9 @@ def run_processing(cfg: DictConfig):
             # Mirror tcm.h5.file_name_and_time_to_record (no tables dependency):
             file_meta = {
                 "fileName": f"{src_path.parent.name}/{src_path.stem}"[-255:],
-                "fileChangeTime": datetime.fromtimestamp(src_path.stat().st_mtime),
+                # Naive local mtime mirrors tcm.h5.file_name_and_time_to_record; storage
+                # comparisons rely on the same naive convention — UTC would shift records.
+                "fileChangeTime": datetime.fromtimestamp(src_path.stat().st_mtime),  # noqa: DTZ006
             }
             storage.nc_incremental_update(ds_raw, Path(raw_nc_path), tbl, file_meta)
 
@@ -864,9 +862,7 @@ def run_processing(cfg: DictConfig):
     )
 
 
-def _load_batch(
-    cfg: Dict[str, Dict[str, Any]], pcid: str
-) -> tuple[Optional[xr.Dataset], Optional[Dict[str, Any]]]:
+def _load_batch(cfg: dict[str, dict[str, Any]], pcid: str) -> tuple[xr.Dataset | None, dict[str, Any] | None]:
     """Iterate ``cfg.files``, load each, concatenate progressively to limit peak memory."""
 
     ds_raw = None
@@ -897,8 +893,8 @@ def _process_and_persist(
     cfg: Mapping[str, Mapping[str, Any]],
     pcid: str,
     *,
-    coef_zeroing_matrix: "np.ndarray | None" = None,
-    tick: "Callable[[Stage, int, int], None] | None" = None,
+    coef_zeroing_matrix: np.ndarray | None = None,
+    tick: Callable[[Stage, int, int], None] | None = None,
     has_nc: bool = False,
     has_tsv: bool = False,
     run_params_text: str | None = None,
@@ -1038,9 +1034,9 @@ def _process_and_persist(
                         ds_tsv = ds_out
                 else:
                     ds_tsv = ds_out
-                ts = datetime.fromtimestamp(
-                    int(ds_tsv["time"].values[0]) // 1_000_000_000, timezone.utc
-                ).strftime("%y%m%d_%H%M")
+                ts = datetime.fromtimestamp(int(ds_tsv["time"].values[0]) // 1_000_000_000, UTC).strftime(
+                    "%y%m%d_%H%M"
+                )
                 csv_name = f"{ts}{suffix_csv}@{pcid}.tsv"
                 csv_out = Path(text_path) / csv_name
 
@@ -1127,9 +1123,9 @@ def _combine_probes(pcids: list[str], cfg: dict) -> None:
                 lf.debug("Combined group {} not found or malformed — skipping TSV", combined_group)
                 continue
 
-            ts = datetime.fromtimestamp(
-                int(ds_combined["time"].values[0]) // 1_000_000_000, timezone.utc
-            ).strftime("%y%m%d_%H%M")
+            ts = datetime.fromtimestamp(int(ds_combined["time"].values[0]) // 1_000_000_000, UTC).strftime(
+                "%y%m%d_%H%M"
+            )
             csv_name = f"{ts}bin{bin_s}s@{joined}.tsv"
             csv_out = Path(text_path) / csv_name
             # Combined TSV: exclude Vabs/Vdir/inclination (never saved to combined)
@@ -1291,7 +1287,7 @@ def process_inmemory(
     ds: xr.Dataset,
     coefs: dict,
     *,
-    coef_zeroing_matrix: "np.ndarray | None" = None,
+    coef_zeroing_matrix: np.ndarray | None = None,
     dt_bins: list[timedelta] | None = None,
     out_path: Path | None = None,
     out_csv_path: Path | None = None,

@@ -1,6 +1,6 @@
-# Сборка минимального дистрибутива `tcm_clc_txt`
+# Сборка минимального дистрибутива `tcm_proc`
 
-**tcm_clc_txt** — самодостаточный exe-файл для обработки данных инклинометров
+**tcm_proc** — самодостаточный exe-файл для обработки данных инклинометров
 (AB SIO RAS TCM) **без** зависимостей от HDF5 (h5py, pytables) и Intel MKL.
 Вместо MKL используется OpenBLAS.
 
@@ -70,7 +70,7 @@ pixi run -e noh5-tcm build-tcm-clc-txt
 Задача определена в `pyproject.toml` и устанавливает `BUILD_MODE=manual`:
 ```toml
 [tool.pixi.tasks.build-tcm-clc-txt]
-cmd = "python oceano/tcm/scripts/build/build_tcm_clc_txt.py"
+cmd = "python oceano/tcm/scripts/build/build_tcm_proc.py"
 env = { BUILD_MODE = "manual" }
 ```
 
@@ -80,21 +80,21 @@ env = { BUILD_MODE = "manual" }
 
 Или напрямую через скрипт-обёртку:
 ```bash
-pixi run -e noh5-tcm python oceano/tcm/scripts/build/build_tcm_clc_txt.py
+pixi run -e noh5-tcm python oceano/tcm/scripts/build/build_tcm_proc.py
 ```
 
-Скрипт-обёртка (`scripts/build/build_tcm_clc_txt.py`):
+Скрипт-обёртка (`scripts/build/build_tcm_proc.py`):
 1. Обновляет/читает `VERSION` (в `version.py`)
 2. Запускает `generate_version_info` — создаёт `version_info.txt` с Windows-ресурсами
 3. Вызывает PyInstaller с spec-файлом
 
-Результат: `dist/tcm_clc_txt/tcm_clc_txt.exe` + сопутствующие файлы.
+Результат: `dist/tcm_proc/tcm_proc.exe` + сопутствующие файлы.
 
 ### 2.3. Структура spec-файла
 
-`scripts/build/tcm_clc_txt.spec` — конфигурация PyInstaller. Ключевые моменты:
+`scripts/build/tcm_proc.spec` — конфигурация PyInstaller. Ключевые моменты:
 
--   **Точка входа:** `scripts/tcm_clc.py`
+-   **Точка входа:** `scripts/tcm_proc.py`
 -   **Явно добавленные DLL** (из `_ENV_LIB_BIN`):
     `openblas.dll`, `libcblas.dll`, `libblas.dll`, `liblapack.dll`,
     `libmpdec-4.dll`, `liblzma.dll`, `libexpat.dll`, `ffi-8.dll`,
@@ -195,7 +195,7 @@ cs.store(
 )
 ```
 
-**Результат:** в собранном `tcm_clc_txt.exe` выходные текстовые файлы
+**Результат:** в собранном `tcm_proc.exe` выходные текстовые файлы
 формируются с двумя настройками усреднения:
 
 | dt_bin | Описание | TSV-файл |
@@ -211,7 +211,7 @@ cs.store(
 ## 3. Сборка GUI (`tcm_gui`)
 
 **tcm_gui** — самодостаточный exe-файл с Tkinter-интерфейсом для обработки
-данных инклинометров. В отличие от `tcm_clc_txt`, GUI включает:
+данных инклинометров. В отличие от `tcm_proc`, GUI включает:
 - Графический интерактивный редактор коэффициентов (`tksheet`)
 - Визуальный контроль прогресса обработки
 - Поддержку HDF5 (чтение/запись через `h5py`)
@@ -264,11 +264,11 @@ pixi run -e bin-optim-tcm python oceano/tcm/scripts/build/build_tcm_gui.py
 ### 3.3. Структура spec-файла
 
 `scripts/build/tcm_gui.spec` — конфигурация PyInstaller для GUI.
-Ключевые отличия от `tcm_clc_txt.spec`:
+Ключевые отличия от `tcm_proc.spec`:
 
-| Параметр            | `tcm_clc_txt`                 | `tcm_gui`                          |
+| Параметр            | `tcm_proc`                 | `tcm_gui`                          |
 | ------------------- | ----------------------------- | ---------------------------------- |
-| Точка входа         | `scripts/tcm_clc.py`          | `src/tcm_gui/__main__.py`          |
+| Точка входа         | `scripts/tcm_proc.py`          | `src/tcm_gui/__main__.py`          |
 | `console`           | `True`                        | **`False`** (оконное приложение)   |
 | tkinter             | Исключён                      | **Включён**                        |
 | `h5py`              | Исключён                      | **Включён**                        |
@@ -291,7 +291,7 @@ GUI показывает полные умолчания конфигураци�
 
 ### 3.5. Windows file properties
 
-Оба дистрибутива (`tcm_clc_txt.exe` и `tcm_gui.exe`) имеют
+Оба дистрибутива (`tcm_proc.exe` и `tcm_gui.exe`) имеют
 Windows file properties (версия, описание, копирайт), генерируемые
 из `scripts/build/version_info.template` через `generate_version_info.py`.
 Параметризованные поля шаблона:
@@ -299,5 +299,5 @@ Windows file properties (версия, описание, копирайт), ге
 | Поле                 | CLI значение                          | GUI значение                          |
 | -------------------- | ------------------------------------- | ------------------------------------- |
 | `FileDescription`    | `AB SIO RAS' TCM raw data processing CLI...` | `AB SIO RAS' TCM inclinometer data processor GUI...` |
-| `InternalName`       | `tcm_clc_txt.exe`                     | `tcm_gui.exe`                         |
-| `OriginalFilename`   | `tcm\scripts\tcm_clc.py`              | `tcm_gui\__main__.py`                 |
+| `InternalName`       | `tcm_proc.exe`                     | `tcm_gui.exe`                         |
+| `OriginalFilename`   | `tcm\scripts\tcm_proc.py`              | `tcm_gui\__main__.py`                 |

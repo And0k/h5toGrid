@@ -69,13 +69,13 @@ configs without processing any data:
 
 ```bash
 # List all configs (no generation, no processing)
-python scripts/tcm_clc.py "_raw" input.yaml_path="*" program.return_=<cfg_from_args>
+python scripts/tcm_proc.py "_raw" input.yaml_path="*" program.return_=<cfg_from_args>
 
 # List configs matching a data file pattern (generation runs, then filter)
-python scripts/tcm_clc.py "_raw/@i_p5*.TXT" program.return_=<cfg_from_args>
+python scripts/tcm_proc.py "_raw/@i_p5*.TXT" program.return_=<cfg_from_args>
 
 # List configs matching a YAML stem pattern (no generation)
-python scripts/tcm_clc.py "_raw" input.yaml_path="*@i_p5*" program.return_=<cfg_from_args>
+python scripts/tcm_proc.py "_raw" input.yaml_path="*@i_p5*" program.return_=<cfg_from_args>
 ```
 
 ## Pattern interpretation

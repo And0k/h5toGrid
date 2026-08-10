@@ -217,6 +217,7 @@ class ConfigSheet:
         # False for plain strings (STR labels, Hydra paths).
         self.on_hover_status: Callable[[str, bool], None] | None = None
         self.hover_status: dict[str, str] = {}
+        self._empty_area_hint: str = ""  # shown on hover below last row
         self._status_iid: Any = None
         # Track which canvas owns the current status: "tree" (RI) or "data" (MT).
         # Moving between tree column and data cell on the SAME row must re-publish.
@@ -1381,6 +1382,8 @@ class ConfigSheet:
             self._schedule_field_hide()
             if self._status_iid is not None:
                 self._clear_status()
+            if self._empty_area_hint and self.on_hover_status is not None:
+                self.on_hover_status(self._empty_area_hint, False)
             return
 
         iid, row, y = hit

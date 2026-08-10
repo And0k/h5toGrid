@@ -223,7 +223,7 @@ def prep_cfg_for_probe(
     cfg_in = {**cfg_in_common.copy(), **cfg_in_for_probes.get(pcid, {})}
 
     # Build coefs_paths: explicit coefs_path → class default → yaml_export dir.
-    # The yaml_export fallback lets ``dist/tcm_clc_txt`` packaging (without the
+    # The yaml_export fallback lets ``dist/tcm_proc`` packaging (without the
     # bundled ``calibration.h5`` file) load coefs silently from exported YAMLs.
     cfg_in["coefs"] = get_coefs_from_cfg(cfg_in, pcid)
 

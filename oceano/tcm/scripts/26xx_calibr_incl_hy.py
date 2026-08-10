@@ -63,7 +63,7 @@ if st(10, "Magnetometer and accelerometer calibration of devices listed in cfg_p
     )
 
     # run._hydra_main
-    # Uses the same loading infrastructure as tcm_clc.py (load_raw → open_nc/open_hdf5).
+    # Uses the same loading infrastructure as tcm_proc.py (load_raw → open_nc/open_hdf5).
     # run.run_calibration(z
     #     path=path_db_raw,
     #     tables=tables_raw,

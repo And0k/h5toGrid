@@ -226,14 +226,14 @@ bin-optim-tcm = { features = ["noh5", "bin-optim", "tcm", "test", "tk-gui"], sol
 [tool.pixi.tasks]
 test = "pytest tests/"
 test-all = "hatch run test:*"
-start = "python oceano/tcm/scripts/tcm_clc.py"
+start = "python oceano/tcm/scripts/tcm_proc.py"
 
 [tool.pixi.tasks.build-tcm-clc-txt]
-cmd = "python oceano/tcm/scripts/build/build_tcm_clc_txt.py"
+cmd = "python oceano/tcm/scripts/build/build_tcm_proc.py"
 env = { BUILD_MODE = "manual" }
 
 [tool.pixi.tasks.build-tcm-clc-txt-auto]
-cmd = "python oceano/tcm/scripts/build/build_tcm_clc_txt.py"
+cmd = "python oceano/tcm/scripts/build/build_tcm_proc.py"
 
 [tool.pixi.tasks.build-tcm-gui]
 cmd = "python oceano/tcm/scripts/build/build_tcm_gui.py"

@@ -15,7 +15,7 @@ Two entry points
       run_calibration("experiment.raw.nc", tables=["incl63", "incl64"])
 
 * ``python -m tcm.calibration.run "_raw/*i*.txt"`` — CLI via
-  :func:`_hydra_main` (same pattern as ``scripts/tcm_clc.py``).
+  :func:`_hydra_main` (same pattern as ``scripts/tcm_proc.py``).
 
 Structured configs
 ------------------

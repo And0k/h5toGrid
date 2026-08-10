@@ -1,4 +1,4 @@
-# Описание журнала работы tcm_clc (noh5-режим)
+# Описание журнала работы tcm_proc (noh5-режим)
 
 Разбор INFO/WARNING сообщений из лога обработки. Для понимания сокращений см. [README.md](README.md), [config_reference.md](config_reference.md), [how_it_works.md](how_it_works.md). Отладочные (DEBUG) сообщения здесь не рассматриваются — они в файле `cfg_proc/log/{timestamp}/processing.log`.
 

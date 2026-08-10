@@ -2,7 +2,7 @@
 
 Run from the project root::
 
-    pixi run python oceano/tcm/docs/tcm_clc/examples.py [data_pattern]
+    pixi run python oceano/tcm/docs/tcm_cli/examples.py [data_pattern]
 
 All examples assume a data directory with ``_raw/`` containing CSV/NC/HDF5 files
 and ``cfg_proc/`` containing Hydra config files (``config.yaml``, ``run/*.yaml``).
@@ -47,7 +47,7 @@ def resolve_configs(data_pattern: str) -> dict[str, dict[str, Any]]:
     ----------
     data_pattern
         Glob/regex matching data files (same as the first positional CLI arg
-        to ``tcm_clc.py``), e.g. ``"_raw/*i*.txt"``.
+        to ``tcm_proc.py``), e.g. ``"_raw/*i*.txt"``.
 
     Returns
     -------

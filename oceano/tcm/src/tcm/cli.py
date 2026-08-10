@@ -1,6 +1,6 @@
 """CLI argument parsing for the tcm processing pipeline.
 
-Extracted from ``scripts/tcm_clc.py`` to keep the entry point as a thin caller.
+Extracted from ``scripts/tcm_proc.py`` to keep the entry point as a thin caller.
 Hydra handles all config keys (``input.path``, ``input.ids``, ``out.*``, etc.)
 natively via ``compose`` — this module only handles pre-Hydra setup.
 """
@@ -383,14 +383,14 @@ def _print_usage_error(data_dir: Path | None, path_in: Path | None) -> None:
         f"Error: {head}\n{body}\n"
         f"{'─' * 60}\n"
         f"Usage:\n"
-        f"  tcm_clc_txt <path_to_data> [options]\n\n"
+        f"  tcm_proc <path_to_data> [options]\n\n"
         f"Examples:\n"
-        f'  tcm_clc_txt "_raw/*i*.txt"\n'
-        f"  tcm_clc_txt \"_raw\" 'input.ids=[i01,i_p02]' out.text_path=./results\n"
-        f"  tcm_clc_txt --help           ← list all options\n"
-        f"  tcm_clc_txt --cfg job        ← show the composed config without running\n\n"
+        f'  tcm_proc "_raw/*i*.txt"\n'
+        f"  tcm_proc \"_raw\" 'input.ids=[i01,i_p02]' out.text_path=./results\n"
+        f"  tcm_proc --help           ← list all options\n"
+        f"  tcm_proc --cfg job        ← show the composed config without running\n\n"
         f"See --help for all config fields, or the user guide:\n"
-        f"  docs/tcm_clc/README.md\n"
+        f"  docs/tcm_cli/README.md\n"
         f"{'─' * 60}",
         file=sys.stderr,
     )

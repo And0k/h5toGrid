@@ -1,4 +1,4 @@
-# tcm_clc — Inclinometer Data Processing Pipeline
+# tcm_proc — Inclinometer Data Processing Pipeline
 
 CLI tool for processing inclinometer survey data from raw CSV/HDF5 files to
 velocity, inclination, direction, and pressure outputs.
@@ -7,16 +7,16 @@ velocity, inclination, direction, and pressure outputs.
 
 ```bash
 # Process all probes in a data directory (_raw is just an recommended name — use any path)
-python scripts/tcm_clc.py "D:/data/experiment/_raw"
+python scripts/tcm_proc.py "D:/data/experiment/_raw"
 
 # Process specific probes only from any txt files that contains `i`
-python scripts/tcm_clc.py "_raw/*i*.txt" 'input.ids=[i01,i_p02]'
+python scripts/tcm_proc.py "_raw/*i*.txt" 'input.ids=[i01,i_p02]'
 
 # Override any other field described in the config_reference.md, for example:
-python scripts/tcm_clc.py "_raw/*i*.txt" filter.corr_time_mode=false out.text_path=./results
+python scripts/tcm_proc.py "_raw/*i*.txt" filter.corr_time_mode=false out.text_path=./results
 
 # List overrides — wrap in single quotes to protect brackets from the shell:
-python scripts/tcm_clc.py "_raw" \
+python scripts/tcm_proc.py "_raw" \
   'input.time_ranges=["2024-01-01T00:00:00","2024-01-02T00:00:00"]'
 
 ```
@@ -28,14 +28,14 @@ The first positional argument is a **path to scan**: directory, glob, or regex.
 A plain directory scans for `i*.txt` (case-insensitive default); wildcards like
 `*i*.txt` use glob rules; escaped dots like `i.\\.txt`, alternation with `|`,
 or patterns wrapped in `(...)` trigger regex interpretation
-(see ``_pattern_to_regex`` in `docs/tcm_clc/how_it_works.md`).
+(see ``_pattern_to_regex`` in `docs/tcm_cli/how_it_works.md`).
 The name `_raw` is just a convention — your data can live anywhere.
 
 > **Regex quoting**: any regex pattern (containing `|`, `(`, `)`, `\`, `[`, …)
 > **must** be quoted — these characters are shell metacharacters and will break
 > the command or silently alter the pattern otherwise.  Glob patterns with
 > commas are auto-reassembled, but shell metacharacters cannot be recovered.
-> Example: ``python scripts/tcm_clc.py "(i|v)_chain.txt"``
+> Example: ``python scripts/tcm_proc.py "(i|v)_chain.txt"``
 
 **Hydra CLI flags** (``--help``, ``--cfg``, ``--info``, ``--hydra-help``,
 ``--version``, ``--shell-completion``) work **without** a data path — no
@@ -43,10 +43,10 @@ The name `_raw` is just a convention — your data can live anywhere.
 and exit before the processing pipeline starts.  For example:
 
 ```bash
-tcm_clc_txt --help           # all config fields and overrides
-tcm_clc_txt --cfg job        # show the composed config without running
-tcm_clc_txt --info           # Hydra internals (plugins, search path, defaults)
-tcm_clc_txt --hydra-help     # Hydra-specific flags only
+tcm_proc --help           # all config fields and overrides
+tcm_proc --cfg job        # show the composed config without running
+tcm_proc --info           # Hydra internals (plugins, search path, defaults)
+tcm_proc --hydra-help     # Hydra-specific flags only
 ```
 
 ### Common workflows
@@ -59,11 +59,11 @@ then re-run:
 
 ```bash
 # Phase 1: generate configs (auto-detected from data)
-python scripts/tcm_clc.py "_raw/i*.txt"
+python scripts/tcm_proc.py "_raw/i*.txt"
 
 # Edit cfg_proc/run/@i_01.yaml — replace default coefs with actual values
 # Then re-run to process:
-python scripts/tcm_clc.py "_raw/i*.txt"
+python scripts/tcm_proc.py "_raw/i*.txt"
 ```
 
 **Re-process with tweaked coefficients**: edit the probe's YAML, re-run.
@@ -152,7 +152,7 @@ on the CLI or in per-probe YAML files:
 | `filter` | Data quality thresholds | `min`, `max`, `corr_time_mode` |
 | `program` | Runtime behavior | `return_`, `verbose` |
 
-For the full field reference, see `docs/tcm_clc/config_reference.md`.
+For the full field reference, see `docs/tcm_cli/config_reference.md`.
 
 ### Per-probe YAMLs
 
@@ -190,7 +190,7 @@ subsequent runs — only missing configs are created, and stale ones (whose
   If so, no new YAML is created.  This prevents duplicates when the same probe
   has differently-formatted filenames (e.g. `i_090` vs `i90`).
 - **Generating only configs** (no processing):
-  `python scripts/tcm_clc.py "_raw/i*.txt" 'program.return_="<cfg_from_args>"'`.
+  `python scripts/tcm_proc.py "_raw/i*.txt" 'program.return_="<cfg_from_args>"'`.
 
 Hand-editable:
 
@@ -220,7 +220,7 @@ declination correction.
 3. `tcm/cfg/coef/yaml_export/` directory (bundled distribution fallback)
 4. Defaults from the configuration dataclass
 
-When the HDF5 file is missing (e.g. `dist/tcm_clc_txt` packaging without `calibration.h5`),
+When the HDF5 file is missing (e.g. `dist/tcm_proc` packaging without `calibration.h5`),
 coefficients are loaded automatically from the `yaml_export/` directory — no extra
 configuration needed.
 
@@ -251,7 +251,7 @@ After loading, the pipeline applies:
 
 Ellipsoid fitting — deriving new calibration coefficients from raw measurements
 — is handled by the `calibration/` package (`run.py` → `run_calibration`).
-See `docs/calibration/calibration_wiki.md` for the method and `docs/tcm_clc/how_it_works.md`
+See `docs/calibration/calibration_wiki.md` for the method and `docs/tcm_cli/how_it_works.md`
 for integration details. Requires the **full** environment (scipy, matplotlib, h5py).
 
 ### Updating Coefficients via Zeroing
@@ -288,12 +288,12 @@ Coefs saved to ...//incl01: 12 datasets (2 overwritten)
 
 ```bash
 # From text CSV — generates config, computes Rz, proceeds with processing
-python scripts/tcm_clc.py "_raw/*i*.txt" \
+python scripts/tcm_proc.py "_raw/*i*.txt" \
   'input.time_ranges_zeroing=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
   'input.time_ranges=["2026-06-25T17:23:30","2026-06-25T17:25:00"]'
 
 # From binary NC — specify tables
-python scripts/tcm_clc.py "260624.raw.nc" \
+python scripts/tcm_proc.py "260624.raw.nc" \
   'input.tables=["incl_p05"]' \
   'input.time_ranges_zeroing=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
   'input.time_ranges=["2026-06-25T17:23:30","2026-06-25T17:25:00"]'
@@ -395,19 +395,19 @@ Useful for debugging, discovery, or coef-only updates:
 
 **Discover-only** (generate configs, don't process):
 ```bash
-python scripts/tcm_clc.py "_raw/i*.txt" 'program.return_="<cfg_from_args>"'
+python scripts/tcm_proc.py "_raw/i*.txt" 'program.return_="<cfg_from_args>"'
 ```
 
 **Zeroing-only** (compute Rz, persist coefs, stop — no data processing):
 ```bash
 # Text CSV source — coefs saved to YAML (with backup) + raw NC if available
-python scripts/tcm_clc.py "_raw/*i*.txt" \
+python scripts/tcm_proc.py "_raw/*i*.txt" \
   'input.time_ranges_zeroing=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
   'input.time_ranges=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
   'program.return_="<saved_coefs>"'
 
 # Binary NC source
-python scripts/tcm_clc.py "260624.raw.nc" \
+python scripts/tcm_proc.py "260624.raw.nc" \
   'input.tables=["incl_p05"]' \
   'input.time_ranges_zeroing=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
   'input.time_ranges=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
@@ -427,7 +427,7 @@ The field is **structured** (a proper Hydra config key), not a dynamic override 
 no `+` prefix:
 
 ```bash
-python scripts/tcm_clc.py "_raw/i*.txt" out.overwrite_db=splice
+python scripts/tcm_proc.py "_raw/i*.txt" out.overwrite_db=splice
 ```
 
 Four modes:
@@ -497,7 +497,7 @@ Three modes (set via `filter.corr_time_mode`):
 - **Mask-only** — removes bad timestamps but keeps original values
 - **Delete inversions** — removes anomalies only
 
-See `docs/tcm_clc/config_tuning.md` for mode details and config fields.
+See `docs/tcm_cli/config_tuning.md` for mode details and config fields.
 
 ## Input Data Requirements
 
@@ -548,7 +548,7 @@ Only `nkl`/`ncl` (instrument model name) and `_` (separator) are consumed and ig
 pcid/table the pipeline assigns without processing:
 
 ```bash
-python scripts/tcm_clc.py "_raw/i*.txt" 'program.return_="<cfg_from_args>"'
+python scripts/tcm_proc.py "_raw/i*.txt" 'program.return_="<cfg_from_args>"'
 ```
 
 The log shows: `Coefs for i_p05: paths=[...], date=2023-08-13` — confirming
@@ -621,10 +621,10 @@ Full log includes DEBUG-level detail (per-stem checks, snap RMS, segment counts,
 
 | File | Audience | Content |
 |------|----------|---------|
-| `docs/tcm_clc/how_it_works.md` | Programmers | Internal architecture, code references, data flow |
-| `docs/tcm_clc/config_reference.md` | All users | Config field reference (GUI hover source) |
-| `docs/tcm_clc/config_tuning.md` | All users | Decision tables, behavior tuning, YAML examples |
+| `docs/tcm_cli/how_it_works.md` | Programmers | Internal architecture, code references, data flow |
+| `docs/tcm_cli/config_reference.md` | All users | Config field reference (GUI hover source) |
+| `docs/tcm_cli/config_tuning.md` | All users | Decision tables, behavior tuning, YAML examples |
 | `docs/calibration/calibration_wiki.md` | Programmers | Ellipsoid fitting method, calibration math |
-| `docs/tcm_clc/build_tcm_clc_txt[Ru].md` | Builders | noh5 distribution build instructions (Russian) |
-| `docs/tcm_clc/readme_noh5[Ru].md` | End users | Russian version of this guide (noh5 distribution) |
-| `_dask_legacy/docs/tcm_clc/README.md` | Programmers | Legacy HDF5/dask pipeline guide |
+| `docs/tcm_cli/build_tcm_proc[Ru].md` | Builders | noh5 distribution build instructions (Russian) |
+| `docs/tcm_cli/readme_noh5[Ru].md` | End users | Russian version of this guide (noh5 distribution) |
+| `_dask_legacy/docs/tcm_cli/README.md` | Programmers | Legacy HDF5/dask pipeline guide |

@@ -1256,3 +1256,313 @@ class TestRtfClipboard:
         # After copy_rich, clipboard contents should be the plain text
         result = _tk_text.clipboard_get()
         assert result == "hello"
+
+    # ── win32 real-path tests: exercise copy_rich with pywin32 ACTUALLY installed
+    # (the path Windows users hit). Skip if pywin32 missing OR no display.  These
+    # were missing from the suite — the existing tests only force the fallback —
+    # so a bug in the win32 path (a real one: see note in ``copy_rich``) went
+    # uncaught.  Configure the Text as ``App._log`` would: per-level tag colors
+    # from ``theme.TAG_COLORS`` plus the ``func`` tag, and verify RTF + plain text
+    # both land on the OS clipboard and Word sees the color runs.  ───────────────
+
+    @pytest.fixture()
+    def _log_text(self, _tk_text):
+        """``Text`` widget configured exactly like ``App._log`` (tags from theme)."""
+        import tcm_gui.theme
+
+        for lvl, clr in tcm_gui.theme.TAG_COLORS.items():
+            _tk_text.tag_configure(lvl, foreground=clr)
+        _tk_text.tag_configure("func", foreground=tcm_gui.theme.FUNC_COLOR)
+        # Fresh OS clipboard for each win32-path test so prior-test clipboard
+        # state doesn't bleed in (Tk clipboard_clear is a no-op on win32 RTF).
+        import win32clipboard as wcb
+
+        try:
+            wcb.OpenClipboard()
+            try:
+                wcb.EmptyClipboard()
+            finally:
+                wcb.CloseClipboard()
+        except Exception:  # noqa: BLE001 — best-effort; tests retry on contention.
+            pass
+        return _tk_text
+
+    @staticmethod
+    def _win32_clipboard_formats() -> list[int]:
+        """Enumerate current OS-clipboard format IDs via win32clipboard."""
+        import win32clipboard as wcb
+
+        wcb.OpenClipboard()
+        try:
+            fmts: list[int] = []
+            fmt = wcb.EnumClipboardFormats(0)
+            while fmt:
+                fmts.append(fmt)
+                fmt = wcb.EnumClipboardFormats(fmt)
+            return fmts
+        finally:
+            wcb.CloseClipboard()
+
+    @staticmethod
+    def _get_clipboard_format_data(fmt: int, widget=None) -> bytes | None:
+        """Read one clipboard format with a short retry on contention.
+
+        ``OpenClipboard`` raises ``pywintypes.error`` ("Access denied") when
+        another test (or Tk's idle clipboard-update for a left-over clipboard
+        viewer) still holds the OS clipboard — a brief retry + a Tk event
+        drain lets it release.  Test-only helper; app code is hardened
+        separately (see :func:`tcm_gui._rtf_clipboard.copy_rich`).
+        """
+        import time
+
+        import win32clipboard as wcb
+
+        for attempt in range(40):
+            if widget is not None:
+                widget.update()  # let Tk finish its pending clipboard propagation
+            try:
+                wcb.OpenClipboard()
+                try:
+                    return wcb.GetClipboardData(fmt)
+                finally:
+                    wcb.CloseClipboard()
+            except Exception:  # noqa: BLE001 — contention; retry.
+                time.sleep(0.05)
+        return None
+
+    def test_copy_rich_places_rtf_on_os_clipboard(self, _log_text):
+        """``copy_rich`` with pywin32 present → ``CF_RTF`` & ``CF_UNICODETEXT`` on OS clipboard.
+
+        Regression for the user-reported bug: Ctrl+C on ``App._log`` placed NO
+        RTF on the clipboard (Word/CopyQ showed plain text, never colors).
+        Root cause coverage in :mod:`_rtf_clipboard`.
+        Requires pywin32 + a display; skipped otherwise.
+        """
+        pytest.importorskip("win32clipboard")
+        import re
+
+        import win32clipboard as wcb
+
+        from tcm_gui._rtf_clipboard import copy_rich
+
+        # Two log records worth of segments, like log_bridge.drain would produce.
+        _log_text.insert("1.0", "12:00:00\u2502", "error")
+        _log_text.insert("end", "process.run\u2502", "func")
+        _log_text.insert("end", "disk full\n", "error")
+        _log_text.insert("end", "12:01:02\u2502", "info")
+        _log_text.insert("end", "cli.load\u2502", "func")
+        _log_text.insert("end", "found 1 file", "info")
+
+        # Mirror App._log initially selecting nothing — Ctrl+C copies whole log.
+        assert not _log_text.tag_ranges("sel"), "test premise: no selection → full text"
+
+        copy_rich(_log_text)
+
+        # CF_RTF must be on the OS clipboard, not just Tk's.
+        rtf_fmt = wcb.RegisterClipboardFormat("Rich Text Format")
+        rtf_raw = self._get_clipboard_format_data(rtf_fmt)
+        assert rtf_raw is not None, "CF_RTF missing from OS clipboard — Word will show no colors"
+        rtf = rtf_raw.decode("ascii", errors="replace") if isinstance(rtf_raw, bytes) else str(rtf_raw)
+        # Real RTF preamble + color table + color run for the err tag.
+        assert rtf.startswith("{\\rtf1"), f"bad RTF start: {rtf[:40]!r}"
+        assert "\\colortbl" in rtf, "no colortbl → Word renders monochrome"
+        assert "\\red" in rtf, "no \\red entry → palette empty"
+        assert re.search(r"\\cf\d+\s", rtf), "\\cfN run absent → colors never applied"
+        assert rtf.count("{") == rtf.count("}"), "unbalanced braces → RTF parse fails"
+
+        # CF_UNICODETEXT plain-text fallback must ALSO be present.
+        txt = self._get_clipboard_format_data(wcb.CF_UNICODETEXT)
+        assert txt is not None, "CF_UNICODETEXT plain-text fallback missing"
+        assert "disk full" in (txt if isinstance(txt, str) else txt.decode("utf-16-le", errors="replace"))
+
+        # And the box-drawing separator survives emoji-tier codepoints.
+        if isinstance(rtf_raw, bytes):
+            assert "\\u9474?" in rtf, "│ (U+2502 = 9474) must be escaped as \\u9474?"
+
+    def test_copy_rich_real_app_log_config(self, _tk_root):
+        """``copy_rich`` on a ``state='disabled'`` ``App._log`` stand-in.
+
+        The user's bug: Copy from the REAL ``App._log`` (a ``state='disabled'``
+        Text populated by ``log_bridge.drain``) places NO RTF on the clipboard,
+        even though the win32-clipboard path works in isolation
+        (:meth:`test_copy_rich_places_rtf_on_os_clipboard`).  This test
+        reproduces the exact ``App._log`` configuration to localise the bug:
+
+        - state='disabled' (only ``'normal'`` during ``drain()`` inserts)
+        - tags configured from ``theme.TAG_COLORS`` + ``FUNC_COLOR``
+        - mouse-style selection via ``sel`` tag (programmatic; the user
+          would drag-select with the mouse, which produces the same ``sel``
+          tag ranges)
+
+        Requires pywin32 + a display; skipped otherwise.
+        """
+        if _tk_root is None:
+            pytest.skip("Tk unavailable — Tcl interpreter already destroyed")
+        pytest.importorskip("win32clipboard")
+        import re
+        import tkinter as tk
+
+        import tcm_gui.theme
+        import win32clipboard as wcb
+
+        from tcm_gui._rtf_clipboard import copy_rich
+
+        log = tk.Text(
+            _tk_root,
+            state="disabled",  # App._log's state for the body of the GUI
+            wrap="word",
+            background=tcm_gui.theme.ENTRY_BG_FALLBACK,
+            foreground=tcm_gui.theme.FG_DEFAULT,
+        )
+        # Mirror App._build §5: configure per-level tags BEFORE inserting text
+        # (app.py:195-197).  Without this, tag_cget(t,'foreground') returns ''
+        # and build_rtf's palette filter skips the tag → empty colortbl.
+        for lvl, clr in tcm_gui.theme.TAG_COLORS.items():
+            log.tag_configure(lvl, foreground=clr)
+        log.tag_configure("func", foreground=tcm_gui.theme.FUNC_COLOR)
+        try:
+            # drain() enters 'normal' to insert, then restores 'disabled'.
+            log.config(state="normal")
+            log.insert("end", "12:00:00\u2502", "error")
+            log.insert("end", "process.run\u2502", "func")
+            log.insert("end", "disk full\n", "error")
+            log.insert("end", "12:01:02\u2502", "info")
+            log.insert("end", "cli.load\u2502", "func")
+            log.insert("end", "found 1 file", "info")
+            log.config(state="disabled")
+
+            # User drag-selects the first two lines.
+            log.tag_add("sel", "1.0", "2.0")
+            assert log.tag_ranges("sel"), "test premise: selection present"
+
+            copy_rich(log)
+
+            rtf_fmt = wcb.RegisterClipboardFormat("Rich Text Format")
+            rtf_raw = self._get_clipboard_format_data(rtf_fmt)
+            assert rtf_raw is not None, (
+                "CF_RTF missing after Ctrl+C on disabled App._log — "
+                "Word shows no colors. See _rtf_clipboard.copy_rich."
+            )
+            rtf = rtf_raw.decode("ascii", errors="replace") if isinstance(rtf_raw, bytes) else str(rtf_raw)
+            assert rtf.startswith("{\\rtf1"), f"bad RTF start: {rtf[:40]!r}"
+            assert "\\colortbl" in rtf, "disabled Text → missing colortbl"
+            assert re.search(r"\\cf\d+\s", rtf), "disabled Text → no \\cfN run"
+            assert "disk full" in rtf, "selected text not in RTF"
+        finally:
+            log.destroy()
+
+    def test_copy_rich_fires_when_log_disabled_no_focus(self, _tk_root):
+        """Root-scoped ``<Control-c>`` fires ``copy_rich`` even when disabled
+        ``_log`` cannot take keyboard focus — the user's reported bug.
+
+        Before the fix, ``<Control-c>`` was bound on ``_log`` itself; because
+        ``App._log`` is ``state='disabled'`` it can never receive focus, so the
+        binding never fired and the user got Tk's default ``<<Copy>>`` — plain
+        text only, no RTF colors.  This test reproduces the user's real flow:
+        ``_log`` is disabled, has a ``sel`` range from mouse drag, another
+        widget has focus.  Invoke ``App._on_copy_rich`` (the root-level handler)
+        and assert RTF + plain text both land on the clipboard.  This is the
+        exact user-reported-scenario regression.
+
+        Requires pywin32 + a display; skipped otherwise.
+        """
+        if _tk_root is None:
+            pytest.skip("Tk unavailable — Tcl interpreter already destroyed")
+        pytest.importorskip("win32clipboard")
+        import re
+        import tkinter as tk
+
+        import win32clipboard as wcb
+
+        import tcm_gui.theme
+        from tcm_gui._rtf_clipboard import copy_rich
+
+        # Stand in for App with just the slice the binding touches.
+        from tcm_gui.app import App
+
+        class _AppStub:
+            def __init__(self, log):
+                self._log = log
+
+            _on_copy_rich = App._on_copy_rich
+
+        log = tk.Text(
+            _tk_root,
+            state="disabled",
+            wrap="word",
+            background=tcm_gui.theme.ENTRY_BG_FALLBACK,
+            foreground=tcm_gui.theme.FG_DEFAULT,
+        )
+        for lvl, clr in tcm_gui.theme.TAG_COLORS.items():
+            log.tag_configure(lvl, foreground=clr)
+        log.tag_configure("func", foreground=tcm_gui.theme.FUNC_COLOR)
+        try:
+            log.config(state="normal")
+            log.insert("end", "12:00:00\u2502", "error")
+            log.insert("end", "process.run\u2502", "func")
+            log.insert("end", "disk full\n", "error")
+            log.config(state="disabled")
+
+            # User has drag-selected text on the disabled log → 'sel' tag is set.
+            log.tag_add("sel", "1.0", "2.0")
+            assert log.tag_ranges("sel"), "test premise: log has selection"
+
+            # Confirm the *bug premise*: a disabled Text widget can never take
+            # keyboard focus — focus_set + update leaves focus_get returning the
+            # root, not the log.  So a widget-scoped ``<Control-c>`` binding (the
+            # pre-fix binding) would never fire.  Root-level binding fires for
+            # any focused widget.
+            log.focus_set()
+            _tk_root.update()
+            assert _tk_root.focus_get() is not log, (
+                "disabled Text must NOT receive focus — the bug premise.  "
+                f"focus_get={_tk_root.focus_get()!r}"
+            )
+
+            # Directly invoke the root-level handler as Tk would on real Ctrl+C.
+            from tcm_gui.app import App
+
+            stub = type("_AppStub", (), {"_log": log, "_on_copy_rich": App._on_copy_rich})()
+            ret = stub._on_copy_rich(None)
+            assert ret == "break", (
+                f"with log sel present, _on_copy_rich must return 'break' "
+                f"to suppress default <<Copy>> — got {ret!r}"
+            )
+
+            rtf_fmt = wcb.RegisterClipboardFormat("Rich Text Format")
+            rtf_raw = self._get_clipboard_format_data(rtf_fmt)
+            assert rtf_raw is not None, (
+                "CF_RTF missing — user sees no colors in Word (the live bug)"
+            )
+            rtf = rtf_raw.decode("ascii", errors="replace") if isinstance(rtf_raw, bytes) else str(rtf_raw)
+            assert rtf.startswith("{\\rtf1"), f"bad RTF start: {rtf[:40]!r}"
+            assert "\\colortbl" in rtf, "no colortbl → Word renders monochrome"
+            assert re.search(r"\\cf\d+\s", rtf), "\\cfN run absent → colors never applied"
+            assert "disk full" in rtf, "selected log text not in RTF"
+        finally:
+            log.destroy()
+
+    def test_copy_rich_falls_through_when_log_no_selection(self, _tk_root):
+        """``_on_copy_rich`` returns ``None`` (lets default ``<<Copy>>`` run)
+        when ``_log`` has no mouse selection — so the focused ttk.Entry keeps
+        normal copy behaviour (the 'fall through' half of the root binding).
+
+        Without this half, root-level ``<Control-c>`` would *always* intercept
+        and break the user's path-field copy etc.
+        """
+        if _tk_root is None:
+            pytest.skip("Tk unavailable — Tcl interpreter already destroyed")
+
+        import tkinter as tk
+
+        from tcm_gui.app import App
+
+        log = tk.Text(_tk_root, state="disabled")
+        log.pack()
+        try:
+            stub = type("_AppStub", (), {"_log": log, "_on_copy_rich": App._on_copy_rich})()
+            assert log.tag_ranges("sel") == (), "test premise: log has no selection"
+            ret = stub._on_copy_rich(None)
+            assert ret is None, f"no log sel → must return None (fall through); got {ret!r}"
+        finally:
+            log.destroy()

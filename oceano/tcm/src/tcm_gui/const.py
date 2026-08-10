@@ -16,12 +16,14 @@ Chrome i18n strings (:data:`STR`) are loaded from :file:`str.yaml` by :mod:`tcm_
 
 from __future__ import annotations
 
+import locale
 import logging
 import sys
 import tkinter as tk
 import tkinter.font as tkfont
 from collections.abc import Callable
 from contextlib import suppress
+from pathlib import Path
 from tkinter import ttk
 from typing import Final
 
@@ -39,6 +41,7 @@ UI_SCALE: Final[float] = 1.5  # application geometry multiplier
 FONT_SCALE: Final[float] = 1.0  # typography multiplier (1.0 = platform default)
 TTK_THEME: Final[str] = "native"  # "native" (platform default) or "clam"
 COLOR_MODE: Final[str] = "auto"  # "auto" (OS detection), "light", or "dark"
+LANG: Final[str] = "auto"  # "auto" (OS locale), or explicit: "en", "ru", etc.
 
 # Saved once on first UIScale() call — prevents compounding when multiple
 # UIScale instances are created (e.g. tests creating fresh roots).
@@ -131,6 +134,53 @@ def configure_ui(root: tk.Misc) -> ttk.Style:
     elif sys.platform == "win32":
         style.theme_use("vista")
     return style
+
+
+# ── i18n string loader ─────────────────────────────────────────────────────
+
+_LANG_RESOLVED: str | None = None  # cached resolved language code
+
+
+def _detect_lang() -> str:
+    """Detect two-letter language code from OS locale.
+
+    Uses ``locale.getdefaultlocale()`` → first two chars of the language
+    part (e.g. ``"ru_RU"`` → ``"ru"``).  Falls back to ``"en"``.
+    """
+    try:
+        loc = locale.getdefaultlocale()[0] or ""
+        return loc[:2].lower() if len(loc) >= 2 else "en"
+    except Exception:
+        return "en"
+
+
+def resolve_lang() -> str:
+    """Resolve language code from :data:`LANG` setting (cached).
+
+    ``"auto"`` → :func:`_detect_lang`.  Explicit value → lowercase, stripped.
+    """
+    global _LANG_RESOLVED
+    if _LANG_RESOLVED is None:
+        _LANG_RESOLVED = _detect_lang() if LANG == "auto" else LANG.strip().lower()[:2]
+    return _LANG_RESOLVED
+
+
+def load_str() -> dict[str, str]:
+    """Load the i18n string dict for the resolved language.
+
+    Looks for ``str_{lang}.yaml`` next to this module; falls back to
+    ``str.yaml`` when the locale file is absent.  Returns a plain dict
+    (same type as the previous ``yaml.safe_load`` in ``app.py``).
+    """
+    import yaml
+
+    base = Path(__file__).with_name("str")
+    lang = resolve_lang()
+    path = base.with_name(f"str_{lang}.yaml")
+    if not path.is_file():
+        path = base.with_suffix(".yaml")
+    _l.debug("i18n: loaded %s (lang=%s)", path.name, lang)
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
 # ── font helpers ────────────────────────────────────────────────────────────

@@ -1,8 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for tcm_clc_txt — HDF5-free inclinometer data processor.
+"""PyInstaller spec for tcm_proc — HDF5-free inclinometer data processor.
 
-Build (noh5-tcm): pixi run -e noh5-tcm pyinstaller tcm/scripts/build/tcm_clc_txt.spec
-Build (bin-optim-tcm): pixi run -e bin-optim-tcm pyinstaller tcm/scripts/build/tcm_clc_txt.spec
+Build (noh5-tcm): pixi run -e noh5-tcm pyinstaller tcm/scripts/build/tcm_proc.spec
+Build (bin-optim-tcm): pixi run -e bin-optim-tcm pyinstaller tcm/scripts/build/tcm_proc.spec
 
 Uses the 'noh5' pixi environment as primary target (OpenBLAS, no MKL).
 The spec is also valid in bin-optim-tcm (xarray/dask/scipy/numba included
@@ -85,7 +85,7 @@ added_files = [
 # ---------------------------------------------------------------------------
 
 a = Analysis(
-    [str(PROJECT_ROOT / "scripts" / "tcm_clc.py")],
+    [str(PROJECT_ROOT / "scripts" / "tcm_proc.py")],
     pathex=[str(PROJECT_ROOT), str(PROJECT_ROOT / "src")],
     binaries=[
         (os.path.join(_ENV_LIB_BIN, dll), ".")
@@ -302,7 +302,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="tcm_clc_txt",
+    name="tcm_proc",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -320,5 +320,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="tcm_clc_txt",
+    name="tcm_proc",
 )

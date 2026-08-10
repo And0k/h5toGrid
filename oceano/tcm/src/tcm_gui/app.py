@@ -10,17 +10,20 @@ from pathlib import Path, PurePath
 from queue import Empty
 from tkinter import ttk
 
-import yaml
 from omegaconf import OmegaConf
 
-from tcm import cli, config_yaml, format, incl_calc, paths, schema
-from tcm_gui.cli_cfg import default_cfg
 import tcm_gui.theme
+from tcm import cli, config_yaml, format, incl_calc, paths, schema
+from tcm.states import ScanStage
+from tcm_gui.cli_cfg import default_cfg
 
-# Chrome i18n strings — loaded once from str.yaml (sibling of this module).
-STR: dict[str, str] = yaml.safe_load((Path(__file__).with_name("str.yaml")).read_text(encoding="utf-8"))
+# Chrome i18n strings — loaded via const.load_str() (auto-detects OS locale).
+from .const import load_str
 
-from ._browse_button import BrowseButtonManager
+STR: dict[str, str] = load_str()
+
+from ._browse_button import BrowseButtonManager, _is_shift_pressed
+from ._help import help_for_path
 from ._path_field import PathField
 from ._rtf_clipboard import copy_rich
 from .coef_sheet import ConfigSheet
@@ -36,9 +39,6 @@ from .md_label import MarkdownLabel
 from .runtime import Runtime
 from .theme import apply_theme_defaults
 from .worker import Worker
-
-from ._browse_button import _is_shift_pressed
-from ._help import help_for_path
 
 
 class App:
@@ -77,9 +77,9 @@ class App:
         # extracts the data path via cli.parse_data_path(sys.argv) internally.
         self._original_argv = list(argv or sys.argv)
 
-        # Configuration label state — drives _cfg_lbl caption transitions
-        self._cfg_scanned = False  # True after first successful scan
-        self._cfg_was_dirty = False  # True while any page has unsaved edits
+        # Configuration state — drives _overall_lbl caption transitions
+        self._cfg_state = ScanStage.DEFAULT
+        self._cfg_detail = ""  # suffix appended to _cfg_state in label (e.g. " - Done 100%")
 
         # watch Shift globally on root (Windows doesn't send Shift to widgets)
         self._full_mode = _is_shift_pressed()
@@ -116,7 +116,7 @@ class App:
     def _build(self) -> None:
         r = self.root
         r.grid_rowconfigure(2, weight=2)  # notebook
-        r.grid_rowconfigure(4, weight=1)  # log
+        r.grid_rowconfigure(3, weight=1)  # log
         r.grid_columnconfigure(0, weight=1)
 
         # §1 input.path
@@ -137,10 +137,14 @@ class App:
         self._path_field.sh.MT.bind("<Enter>", lambda _: self._on_path_hover_in(), add="+")
         self._path_field.sh.MT.bind("<Leave>", lambda _: self._on_path_hover_out(), add="+")
 
-        # §2 Configuration status label — sits between path field and notebook tabs
-        self._cfg_state = tk.StringVar(value="Default configuration")
-        self._cfg_lbl = ttk.Label(r, textvariable=self._cfg_state)
-        self._cfg_lbl.grid(row=1, column=0, sticky="w", padx=8, pady=(0, 0))
+        # §2 Overall status label + progress bar (dual-purpose: scan state / progress)
+        f1 = ttk.Frame(r)
+        f1.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 0))
+        f1.columnconfigure(0, weight=1)  # label stretches; bar is fixed-width
+        self._overall_lbl = ttk.Label(f1, text=self._cfg_state)
+        self._overall_lbl.grid(row=0, column=0, sticky="w")
+        self._prog_all = ttk.Progressbar(f1, mode="determinate", length=220)
+        # _prog_all grid-managed on demand by _poll_progress (hidden by default)
 
         # §3 Notebook — full width, below the configuration label
         self.nb = ttk.Notebook(r)
@@ -151,22 +155,16 @@ class App:
         self.nb.bind("<Motion>", self._on_nb_motion, add="+")
         self.nb.bind("<Leave>", self._on_nb_leave, add="+")
 
-        # §4 Run + overall progress (config-level)
-        f2 = ttk.Frame(r)
-        f2.grid(row=3, column=0, sticky="ew", padx=4, pady=2)
-        f2.columnconfigure(2, weight=1)
-        self._run_btn = ttk.Button(f2, text="Run", command=self._on_run)
-        self._run_btn.grid(row=0, column=0, padx=(0, 4))
-        self._prog_all_lbl = tk.StringVar(value="")
-        ttk.Label(f2, textvariable=self._prog_all_lbl).grid(row=0, column=1, padx=(0, 4))
-        self._prog_all = ttk.Progressbar(f2, mode="determinate")
-        self._prog_all.grid(row=0, column=2, sticky="ew")
+        # §4 Run button — floats at notebook bottom-right, parented on root for z-order
+        self._run_btn = ttk.Button(r, text=STR["run_btn.text"], command=self._on_run)
+        self._run_btn.place(in_=self.nb, relx=1.0, rely=1.0, anchor="se", x=-24, y=-24)
+        r.bind("<Configure>", lambda _: self._run_btn.lift(), add="+")
 
         # §5 Log — tk.Text + ttk.Scrollbar in a ttk.Frame (ScrolledText uses a
         # classic tk.Scrollbar that can't be styled via ttk.Style; a manual
         # container gives us a real ttk.Scrollbar matching tksheet's scrollbars).
         _log_frame = ttk.Frame(r)
-        _log_frame.grid(row=4, column=0, sticky="nsew", padx=4, pady=2)
+        _log_frame.grid(row=3, column=0, sticky="nsew", padx=4, pady=2)
         _log_frame.grid_rowconfigure(0, weight=1)
         _log_frame.grid_columnconfigure(0, weight=1)
         self._log = tk.Text(
@@ -198,7 +196,15 @@ class App:
         for lvl, clr in tcm_gui.theme.TAG_COLORS.items():
             self._log.tag_configure(lvl, foreground=clr)
         self._log.tag_configure("func", foreground=tcm_gui.theme.FUNC_COLOR)
-        self._log.bind("<Control-c>", lambda _: (copy_rich(self._log), "break")[1])
+        # ``Ctrl+C`` is bound at the ROOT level (not on ``_log``): ``_log`` is
+        # ``state='disabled'`` so it can never take keyboard focus, meaning a
+        # widget-scoped ``<Control-c>`` binding would never fire and the user
+        # would get Tk's default ``<<Copy>>`` (plain text only) — never RTF
+        # colors.  The root handler checks for a ``_log`` selection first; if
+        # present it serialises colored RTF via :func:`copy_rich` and returns
+        # ``'break'`` to suppress the default.  Otherwise it falls through so
+        # the focused widget (e.g. ``_path_field`` ttk.Entry) keeps normal copy.
+        self.root.bind("<Control-c>", self._on_copy_rich, add="+")
 
         # §6 GUI status — MarkdownLabel overlaid bottom-left, dynamic width.
         self._status_lbl = MarkdownLabel(
@@ -325,9 +331,9 @@ class App:
         if not self._status_lbl.rerender():
             if self._initial_scan and not self._prog_floater.winfo_ismapped():
                 self._prog_floater.place(relx=1.0, rely=1.0, anchor="se", x=-8, y=-4)
-                self._prog_stage_text.config(text="Loading\u2026")
+                self._prog_stage_text.config(text=STR["status.loading"])
             elif not self._initial_scan:
-                self._status_lbl.set_text("Ready", raw=True)
+                self._status_lbl.set_text(STR["status.ready"], raw=True)
 
     def _on_path_hover_in(self) -> None:
         """Mouse enters Entry — show status hint from widget_meta registry."""
@@ -401,7 +407,7 @@ class App:
             self._prog_floater.lift()
         else:
             self._prog_floater.place(relx=1.0, rely=1.0, anchor="se", x=-8, y=-4)
-        self._prog_stage_text.config(text="Loading\u2026")
+        self._prog_stage_text.config(text=STR["status.loading"])
         self._scan()
 
     def _scan(self) -> None:
@@ -447,6 +453,7 @@ class App:
         )
         cs.load(cfg, full=self._full_mode, config_root=schema.Config, return_enum=schema.Return)
         cs.on_hover_status = lambda msg, md=False: self._status_lbl.set_text(msg, raw=not md)
+        cs._empty_area_hint = STR["empty_area.synced" if yaml_path is not None else "empty_area.unsaved"]
         self._pages[stem] = cs
 
     def _set_coefs_and_reload(self, stem: str, coefs_path: str) -> None:
@@ -466,7 +473,7 @@ class App:
         if self.wk.busy:
             gate = self.rt.pause_gate
             (gate.resume if gate.paused else gate.pause)()
-            self._run_btn.config(text="Resume" if gate.paused else "Pause")
+            self._run_btn.config(text=STR["run_btn.resume"] if gate.paused else STR["run_btn.pause"])
             return
         stems = list(self._pages)
         if not stems:
@@ -474,10 +481,13 @@ class App:
         for s, cs in self._pages.items():
             self._write_coefs(s, cs)
         self._clear_log()
-        self._run_btn.config(text="Pause")
+        self._cfg_detail = ""
+        self._run_btn.config(text=STR["run_btn.pause"])
         # Show a sliver on overall bar immediately — before the first stage tick
         self._prog_all.config(value=0, maximum=1)
-        self._prog_all_lbl.set("Starting…")
+        if not self._prog_all.winfo_ismapped():
+            self._prog_all.grid(row=0, column=1, sticky="e", padx=(8, 0))
+        self._overall_lbl.config(text=STR["status.starting"])
         self.wk.run(self._path_field.get(), stems)
 
     def _write_coefs(self, stem: str, cs: ConfigSheet) -> None:
@@ -511,25 +521,14 @@ class App:
         self.root.after(self.POLL, self._poll)
 
     def _poll_dirty_tabs(self) -> None:
-        """Append/remove '*' on tab titles to reflect unsaved edits; update cfg label."""
-        any_dirty = False
+        """Append/remove '*' on tab titles to reflect unsaved edits."""
         for stem, cs in self._pages.items():
-            if cs.is_dirty:
-                any_dirty = True
             if (frame := self._tab_of.get(stem)) is None:
                 continue
             current = self.nb.tab(frame, "text")
             desired = f"{stem}*" if cs.is_dirty else stem
             if current != desired:
                 self.nb.tab(frame, text=desired)
-        # Transition: any dirty → "Processing configurations"; all clean → restore scan caption
-        if any_dirty and not self._cfg_was_dirty:
-            self._cfg_was_dirty = True
-            self._cfg_state.set("Processing configurations")
-        elif not any_dirty and self._cfg_was_dirty:
-            self._cfg_was_dirty = False
-            if self._cfg_scanned:
-                self._cfg_state.set("Generated configurations for processing found data")
 
     def _on_log_scroll(self, _event: tk.Event) -> None:
         """Disable auto-scroll when user scrolls up; re-enable at bottom."""
@@ -547,6 +546,24 @@ class App:
         if drain(self.rt.log_queue, self._log) and self._log_autoscroll:
             self._log.see("end")
         self._log.config(state="disabled")
+
+    def _on_copy_rich(self, _event: tk.Event) -> str | None:
+        """Root-level ``<Control-c>`` → copy ``_log`` selection as RTF, else fall through.
+
+        ``_log`` is ``state='disabled'`` and so cannot receive keyboard focus, so
+        a widget-scoped ``<Control-c>`` binding would never fire (the user would
+        see Tk's default ``<<Copy>>`` — plain text only — never RTF colors).
+        This handler runs at root level so the binding fires regardless of which
+        widget has focus.  When ``_log`` carries a non-empty ``sel`` tag (mouse
+        drag on the disabled text): serve RTF + plain via :func:`copy_rich` and
+        return ``'break'`` to suppress the default ``<<Copy>>`` propagation.
+        Otherwise return ``None`` so the focused widget (e.g. ttk.Entry) keeps
+        its normal copy behaviour.
+        """
+        if self._log.tag_ranges("sel"):
+            copy_rich(self._log)
+            return "break"
+        return None
 
     def _poll_progress(self) -> None:
         # Snapshot both states once — avoids redundant lock acquisitions.
@@ -578,10 +595,14 @@ class App:
                 self._status_lbl.set_text("", raw=True)
         if tot_o > 0:
             self._prog_all.config(maximum=tot_o, value=cur_o)
-            self._prog_all_lbl.set(desc_o or "")
+            if not self._prog_all.winfo_ismapped():
+                self._prog_all.grid(row=0, column=1, sticky="e", padx=(8, 0))
+            self._overall_lbl.config(text=desc_o or "")
         else:
-            self._prog_all.config(value=0)  # null bar when inactive
-            self._prog_all_lbl.set("")  # clear label too
+            if self._prog_all.winfo_ismapped():
+                self._prog_all.grid_remove()
+            self._prog_all.config(value=0)
+            self._overall_lbl.config(text=f"{self._cfg_state}{self._cfg_detail}")
 
     def _show_prog_floater(self) -> None:
         """Delayed show of stage progress overlay."""
@@ -599,9 +620,12 @@ class App:
             return
         {
             "scan_ok": self._on_scan_ok,
-            "scan_error": lambda p: self._log_err(f"Scan: {p}"),
+            "scan_error": lambda p: self._log_err(STR["error.scan"].format(p=p)),
             "run_ok": self._on_run_done,
-            "run_error": lambda p: (self._log_err(f"Run: {p}"), self._run_btn.config(text="Run")),
+            "run_error": lambda p: (
+                self._log_err(STR["error.run"].format(p=p)),
+                self._run_btn.config(text=STR["run_btn.text"]),
+            ),
         }[kind](payload)
 
     def _on_scan_ok(self, result) -> None:
@@ -624,31 +648,32 @@ class App:
                 prog["return_"] = str(schema.Return.END)
             self._yaml_paths[stem] = Path(yp)
             self._add_page(stem, cfg, yaml_path=Path(yp))
-        self._cfg_scanned = True
-        self._cfg_was_dirty = False
+        self._cfg_state = ScanStage.DONE
+        self._cfg_detail = ""
         self._initial_scan = False
         # Clear scan progress so _prog_floater hides on next poll.
         self.rt.progress_stage.set(0, 0, "")
         # Scan done — show "Ready" now.
-        self._status_lbl.set_text("Ready", raw=True)
-        self._cfg_state.set("Generated configurations for processing found data")
+        self._status_lbl.set_text(STR["status.ready"], raw=True)
+        self._overall_lbl.config(text=self._cfg_state)
 
     def _on_run_done(self, result) -> None:
-        self._run_btn.config(text="Run")
+        self._run_btn.config(text=STR["run_btn.text"])
         processed, failed = result[0], result[1]
         n = len(processed) + len(failed)
         pct = round(100 * len(processed) / n) if n else 100
-        # Show completion in the stage progress floater (bottom-right) instead of status label (bottom-left)
-        self._prog_stage_text.config(text=f"Done — {pct}% ({len(processed)}/{n} ok)")
-        self._prog_stage.config(value=self._prog_stage["maximum"])  # show 100%
-        if not self._prog_floater.winfo_ismapped():
-            self._prog_floater.place(relx=1.0, rely=1.0, anchor="se", x=-8, y=-4)
-        self._prog_floater.lift()
-        # Reset overall progress bar only; keep stage progress visible with completion text
+        # Hide stage progress floater — completion shown in overall label
+        if self._prog_floater.winfo_ismapped():
+            self._prog_floater.place_forget()
+        self.rt.progress_stage.set(0, 0, "")
+        # Reset overall progress bar; show completion in overall label
+        if self._prog_all.winfo_ismapped():
+            self._prog_all.grid_remove()
         self._prog_all.config(value=0)
-        self._prog_all_lbl.set("")
+        self._cfg_state = ScanStage.DONE
+        self._cfg_detail = STR["overall_lbl.done_detail"].format(pct=pct, ok=len(processed), n=n)
+        self._overall_lbl.config(text=f"{self._cfg_state}{self._cfg_detail}")
         self.rt.progress_overall.set(0, 0, "")
-        # Don't reset progress_stage — keep completion text visible in floater
 
     def _clear_log(self) -> None:
         """Flush pending queue records and clear the ScrolledText widget."""
