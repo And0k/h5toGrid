@@ -48,6 +48,9 @@ _cv_probe_base = contextvars.ContextVar("probe_base", default=0)
 _cv_probe_total = contextvars.ContextVar("probe_total", default=0)
 _cv_n_active = contextvars.ContextVar("n_active", default=0)
 _cv_tick_idx = contextvars.ContextVar("tick_idx", default=0)
+# Intra-stage sub-step progress — set by set_work, advanced by advance().
+_cv_work_total = contextvars.ContextVar("work_total", default=0)
+_cv_work_done = contextvars.ContextVar("work_done", default=0)
 
 _ALL_CVS = (
     (_cv_probe_id, ""),
@@ -63,6 +66,8 @@ _ALL_CVS = (
     (_cv_probe_total, 0),
     (_cv_n_active, 0),
     (_cv_tick_idx, 0),
+    (_cv_work_total, 0),
+    (_cv_work_done, 0),
 )
 
 # Boundaries carry name=tcm.stage_ctx (framework event) and funcName of the
@@ -116,6 +121,8 @@ def set_stage(stage_num: int, stage_name: str, details: str = "", *args) -> None
     With *details* (printf fmt + args) the boundary record is emitted here
     at INFO: ``[## probe … stage N name] <rendered>``.  Without — the mark
     rides on the stage's next natural log record.  Clears the sublevel scope.
+    Also feeds :func:`progress_bridge.stage_desc` so the GUI bank tracks the
+    current stage for per-config progress fills.
     """
     _cv_stage_num.set(stage_num)
     _cv_stage_name.set(stage_name)
@@ -123,6 +130,8 @@ def set_stage(stage_num: int, stage_name: str, details: str = "", *args) -> None
     _cv_fresh.set(2)
     if details:
         _lf.info(details, *args, stacklevel=2)
+    if _pb:
+        _pb.stage_desc(stage_name)
 
 
 def set_sublevel(name: str, details: str = "", *args) -> None:
@@ -138,13 +147,60 @@ def set_sublevel(name: str, details: str = "", *args) -> None:
         _lf.debug(details, *args, stacklevel=2)
 
 
+def set_work(n: int) -> None:
+    """Declare sub-step count for the current stage.
+
+    Call after ``set_stage()`` once the step count is known (e.g. chunk
+    estimate for Load, bin count for Proc).  Resets the done counter.
+    Zero or negative → no-op (no sub-steps).
+    """
+    _cv_work_total.set(max(n, 0))
+    _cv_work_done.set(0)
+
+
+def advance() -> None:
+    """Advance one sub-step within the current stage.
+
+    No-op when ``_cv_work_total`` is 0 or ``_pb`` is None.
+    Updates ``progress_overall`` (fractional within the stage's allocation),
+    ``progress_stage`` (bottom bar), and ``progress_bank.inner`` (per-config
+    tab fill).
+
+    Formula::
+
+        overall = probe_base + tick_idx × stage_frac + done × stage_frac / work_total
+
+    For Load (tick_idx=0) this is identical to the old ``tick_load_chunk``.
+    For later stages ``tick_idx × stage_frac`` shifts the base correctly.
+    """
+    work_total = _cv_work_total.get()
+    if not work_total or not _pb:
+        return
+    done = _cv_work_done.get() + 1
+    _cv_work_done.set(done)
+    n_active = _cv_n_active.get()
+    if not n_active:
+        return
+    stage_frac = 100 / n_active
+    tick_base = _cv_tick_idx.get() * stage_frac
+    sub_frac = round(done * stage_frac / work_total)
+    base = _cv_probe_base.get()
+    total = _cv_probe_total.get()
+    if rt := _pb.get_runtime():
+        rt.progress_overall.set(base + tick_base + sub_frac, total, _build_prefix())
+        rt.progress_stage.set(done, work_total, _cv_stage_name.get() or "Loading")
+        if cfg_name := _pb.get_cfg():
+            rt.progress_bank.inner(cfg_name, done, work_total)
+
+
 def tick(stage_name: str = "") -> None:
     """Advance stage counter and update the overall progress bar.
 
     Optionally set stage context when *stage_name* is given (useful for
     the ``_tick`` callback inside ``_process_and_persist`` which combines
     stage change + progress in one call).  No log record is emitted —
-    pure state transition.
+    pure state transition.  Also feeds :func:`progress_bridge.stage_desc`
+    when a new stage name is given so the bank tracks stage boundaries.
     """
     idx = _cv_tick_idx.get() + 1
     _cv_tick_idx.set(idx)
@@ -153,6 +209,8 @@ def tick(stage_name: str = "") -> None:
         _cv_stage_name.set(stage_name)
         _cv_sub.set("")
         _cv_fresh.set(2)
+        if _pb:
+            _pb.stage_desc(stage_name)
     if _pb and (n_active := _cv_n_active.get()):
         frac = round(idx * 100 / n_active)
         base = _cv_probe_base.get()

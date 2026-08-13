@@ -60,6 +60,7 @@ class UseH5(StrEnum):
     REQUIRE = "require"
     """Enable if available; error if unavailable."""
 
+
 # ---------------------------------------------------------------------------
 # Structured configs
 # ---------------------------------------------------------------------------
@@ -120,9 +121,6 @@ class ConfigIn_InclProc:
     path: str | None = None
     tables: list[str] = field(default_factory=lambda: ["incl*"])
     ids: list[str] | None = None
-    yaml_path: str | None = (
-        None  # filter run YAMLs by stem pattern (glob/regex); ANY non‑None skips config generation
-    )
     prefix: str | None = "I*[_0]"
     text_type: str | None = None
     text_line_regex: str | None = None

@@ -251,23 +251,23 @@ class TestRunPipeline:
             pytest.param("input.path", r"i_(01|02).txt", 2, id="input.path-regex"),
             # input.path glob — extension dot unescaped triggers glob mode
             pytest.param("input.path", "*_01.txt", 1, id="input.path-glob"),
-            # input.yaml_path regex — matches stems @i_01, @i_02
+            # input.path .yaml suffix regex — matches stems @i_01, @i_02
             pytest.param("yaml_path", r"@i_(01|02)", 2, id="yaml_path-regex"),
-            # input.yaml_path regex with .yaml suffix — matches stems via stem+".yaml"
+            # input.path .yaml suffix regex with .yaml in pattern — Path.stem strips it
             pytest.param("yaml_path", r"@i_(01|02).yaml", 2, id="yaml_path-regex-yaml"),
-            # input.yaml_path glob — starts with * (invalid regex → glob mode)
+            # input.path .yaml suffix glob — starts with * (invalid regex → glob mode)
             pytest.param("yaml_path", "*_01", 1, id="yaml_path-glob"),
-            # input.yaml_path glob with .yaml suffix
+            # input.path .yaml suffix glob with .yaml in pattern
             pytest.param("yaml_path", "*_01.yaml", 1, id="yaml_path-glob-yaml"),
         ],
     )
     def test_filter_by_pattern(self, project_dir, mocker, filter_kind, pattern, expected):
-        """Regex/glob patterns in input.path or input.yaml_path filter correctly.
+        """Regex/glob patterns in input.path filter correctly.
 
         Creates 3 YAMLs (i01, i02, i03) and verifies that only those matching
         the pattern are processed.  YAMLs store resolved absolute paths (never
         the user's CLI pattern).  The filter matches the CLI pattern against
-        each YAML's resolved input.path filename (or stem for yaml_path).
+        each YAML's resolved input.path filename (or stem for .yaml suffix).
         """
         raw_dir = project_dir / _constants.RAW_DIR_NAME
         run_dir = raw_dir / "cfg_proc" / "run"
@@ -288,7 +288,8 @@ class TestRunPipeline:
         if filter_kind == "input.path":
             input_cfg["path"] = str(raw_dir / pattern)
         else:
-            input_cfg["yaml_path"] = pattern
+            # .yaml suffix → processing.run derives yaml_path from path_in.stem
+            input_cfg["path"] = str(run_dir / f"{pattern}.yaml")
 
         cfg = DictConfig({
             "input": input_cfg,

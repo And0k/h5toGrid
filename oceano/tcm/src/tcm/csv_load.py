@@ -54,6 +54,41 @@ def _compress_times(times: Iterable[Any], limit: int = 20, fmt="%Y-%m-%d %H:%M:%
     return show
 
 
+def estimate_n_chunks(
+    path: Path,
+    blocksize: int,
+    skiprows: int = 0,
+    *,
+    sample_bytes: int = 1_000_000,
+) -> int:
+    """Estimate ``pd.read_csv`` chunk count by sampling first *sample_bytes*.
+
+    Counts ``b'\\n'`` in the sample, extrapolates total data lines, divides by
+    *blocksize*.  O(1 MB) I/O regardless of file size — intended to seed the
+    progress bar before the real iteration begins.
+
+    Returns 1 when *blocksize* is falsy (no chunking) or 0 for empty files.
+    Falls back to 1 on any OS-level read error.
+    """
+    if not blocksize:
+        return 1
+    try:
+        file_size = path.stat().st_size
+        if file_size == 0:
+            return 0
+        n = min(file_size, sample_bytes)
+        with path.open("rb") as f:
+            newlines = f.read(n).count(b"\n")
+        if newlines == 0:
+            return 1
+        total_lines = round(file_size * newlines / n)
+        data_lines = max(0, total_lines - skiprows)
+        # Ceiling division: -(-a // b)
+        return max(1, -(-data_lines // blocksize))
+    except OSError:
+        return 1
+
+
 def _glob_to_regex(s: str) -> str:
     """Convert glob pattern to regex: * → .*?, ? → ., escape literal dots.
 

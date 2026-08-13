@@ -12,25 +12,44 @@ from types import SimpleNamespace
 from typing import Any, Final
 
 import numpy as np
-import tcm_gui.theme
 from tksheet import Sheet
 
+import tcm_gui.theme
+from tcm_gui import _help, _path_field
 from tcm_gui._cell_spec import any2str, as_date, parse_float
 from tcm_gui.cli_cfg import COEF_SHAPES, COEFS_TYPE, NO_DEFAULT, default_for_path
-from tcm_gui import _help, _path_field
-from ._browse_button import BrowseButtonManager, BrowseOverlay, _pointer_inside
+
+from ._browse_button import (
+    COEF_FILETYPES,
+    DATA_FILETYPES,
+    BrowseButtonManager,
+    BrowseOverlay,
+    _is_shift_pressed,
+    _pointer_inside,
+)
 from ._cell_spec import NUMBER_SPEC, CellSpec, as_bool, enum_values, schema_type, spec_for_path
+from ._i18n import STRINGS as _S
+from ._placeholder import CellPlaceholder
 
 _l = logging.getLogger(__name__)
+
 
 # Derive field order from dataclass declaration — single source of truth.
 # Exclude `dates` / `date` which are handled as tree-level metadata, not row items.
 _COEF_FIELDS = [f.name for f in dataclasses.fields(COEFS_TYPE) if f.name not in ("dates", "date")]
 _1D_WITH_DATES = {"kVabs"}  # единственное 1D с датами → parent+child
-_DATE_COL = 2  # sheet col: 0=tree 1=₁ 2=₂/date 3=₃…
+_DATE_COL = 2  # meta col: 1=₁ 2=₂/date 3=₃… (tksheet col = meta_col − DATA_COL_BASE)
+_DATE_FMT = "YYYY-MM-DDTHH:MM:SS"  # ISO 8601 — placeholder for empty date cells
+_DATE_PH_COL = _DATE_COL - 1  # 0-based tksheet col for date placeholder (=1, not tree col 0)
 _INTENT_MS: Final[int] = 120  # hover-intent delay for floated PathField (ms)
 _RESIZE_ZONE: Final[int] = 8  # px from cell boundary to activate resize cursor
 _RESIZE_CURSOR: Final[str] = "sb_h_double_arrow"
+
+
+def _safe_select(sheet: Any, row: int, col: int) -> None:
+    """select_cell that swallows IndexError — row may be stale after tree changes."""
+    with suppress(AttributeError, TclError, TypeError, ValueError, IndexError):
+        sheet.select_cell(row, col)
 
 
 class CellBoundaryColumnResize:
@@ -191,10 +210,11 @@ class ConfigSheet:
             ]
         )
         # Override rc-menu "Insert column/row" to append at end (idx=None → end).
-        self.sh.popup_menu_add_command("Insert column", self._insert_col_at_end)
-        self.sh.popup_menu_add_command("Insert row", lambda e=None: self.sh.insert_row())
+        self.sh.popup_menu_add_command(_S["sheet.insert_col"], self._insert_col_at_end)
+        self.sh.popup_menu_add_command(_S["sheet.insert_row"], lambda e=None: self.sh.insert_row())
 
         self._meta: dict[Any, dict] = {}
+        self._ph = CellPlaceholder()  # dim ISO-format hint for empty date cells
         self._nv = 6
         self._full = False
         self._cfg: dict = {}
@@ -235,6 +255,14 @@ class ConfigSheet:
         self._hover_field: _path_field.PathField | None = None
         self._hover_btn: BrowseOverlay | None = None
         self._stretch_job: str | None = None
+
+        # Shift key on toplevel → re-publish status for coefs_path hover so
+        # the status bar swaps dir↔file content on Shift toggle without
+        # requiring pointer motion.  Bound once with add="+".
+        root = self.sh.winfo_toplevel()
+        root.bind("<KeyPress-Shift_L>", self._on_shift_toggle, add="+")
+        root.bind("<KeyRelease-Shift_L>", self._on_shift_toggle, add="+")
+        root.bind("<KeyRelease-Shift_R>", self._on_shift_toggle, add="+")
 
         # Row-space caches — rebuilt on load and expand/collapse.
         self._loading = False
@@ -300,6 +328,7 @@ class ConfigSheet:
             self._rebuild_row_caches()
             self._apply_styles()
             self._apply_default_fg()
+            self._apply_date_placeholders()
             self.sh.redraw()
 
             # Geometry sync after redraw: row_positions may change.
@@ -339,14 +368,22 @@ class ConfigSheet:
         return out
 
     def get_edited_dates(self) -> dict[str, str]:
-        return {
-            m["key"]: d
-            for iid, m in self._meta.items()
-            if m.get("has_date")
-            and (vals := self.sh.item(iid).get("values") or ())
-            and len(vals) > 1
-            and (d := vals[1])  # date in values[1]
-        }
+        """Return non-empty date values from date-metadata rows.
+
+        Placeholder cells (dim ``YYYY-MM-DDTHH:MM:SS``) are treated as empty
+        via :meth:`CellPlaceholder.get` — the hint never leaks into YAML.
+        """
+        row_of = self._row_map()
+        out: dict[str, str] = {}
+        for iid, m in self._meta.items():
+            if not m.get("has_date"):
+                continue
+            if (r := row_of.get(iid)) is None:
+                continue
+            d = self._ph.get(self.sh, r, _DATE_PH_COL)
+            if d:
+                out[m["key"]] = d
+        return out
 
     def get_edited_input_path(self) -> str:
         for iid, m in self._meta.items():
@@ -829,6 +866,11 @@ class ConfigSheet:
         is_date = event.column == _DATE_COL - self.DATA_COL_BASE and m.get("has_date")
         if not is_date and event.column >= max_col:
             return None
+        # Clear placeholder so the user starts with an empty field.
+        if is_date and (int_row := self._internal_row(iid)) is not None:
+            if self._ph.has(int_row, event.column):
+                self._ph.clear(self.sh, int_row, event.column)
+                return ""
         ri = self._internal_row(iid) if m.get("browse") else None
         if self._mgr is not None and ri is not None:
             self._mgr.attach(ri, 0, iid=iid)
@@ -861,6 +903,10 @@ class ConfigSheet:
             c = 0
         if m.get("key") == "coefs_path" and val.strip() and self._mgr is not None:
             self.sh.after_idle(lambda p=val: self._mgr.notify_path_changed(p))
+        # Restore ISO-format placeholder if a date cell was committed empty.
+        is_date = c == _DATE_COL - self.DATA_COL_BASE and m.get("has_date")
+        if is_date and (int_row := self._internal_row(iid)) is not None:
+            self._ph.restore(self.sh, int_row, c, _DATE_FMT, tcm_gui.theme.DEFAULT_FG)
         self._apply_end_edit_style(event, col=c)
 
     # ── overflow-click redirect ───────────────────────────────────
@@ -900,9 +946,9 @@ class ConfigSheet:
         max_col = int(raw) if raw is not None else (1 if m.get("type") == "scalar" else self._nv)
         is_date = c == _DATE_COL - self.DATA_COL_BASE and m.get("has_date")
         if not is_date and c >= max_col:
-            if self._is_date_only_row(m):
+            if self._is_date_only_row(m) and (ir := self._internal_row(iid)) is not None:
                 dc = _DATE_COL - self.DATA_COL_BASE
-                self.sh.after(1, lambda rr=r, dcc=dc: self.sh.select_cell(rr, dcc))
+                self.sh.after(1, lambda rr=ir, dcc=dc: _safe_select(self.sh, rr, dcc))
             else:
                 self.sh.after(1, self.sh.deselect)
 
@@ -928,8 +974,7 @@ class ConfigSheet:
         elif self._is_date_only_row(m) and c != dc:
             target = dc
         if target is not None and (ri := self._internal_row(iid)) is not None:
-            with suppress(AttributeError, TclError, TypeError, ValueError):
-                self.sh.select_cell(ri, target)
+            _safe_select(self.sh, ri, target)
 
     def _redirect_overflow_double(self, event) -> None:
         """Double-click on a path row's overflow cells → editor opens at col 0.
@@ -1060,6 +1105,35 @@ class ConfigSheet:
         elif self.on_hover_status is not None:
             self.on_hover_status(str(m.get("key") or m.get("label") or path or ""), False)
 
+    def _coefs_status_hint(self) -> str:
+        """Mode-aware status hint for ``coefs_path`` browse button.
+
+        Shift held → ``file`` mode; default → ``dir`` mode.
+        Content from ``config_reference.md`` ``<mode>`` sections.
+        """
+        mode = "file" if _is_shift_pressed() else "dir"
+        if (h := _help.help_for_path("input.coefs_path", mode=mode)) and h.body:
+            return str(h.body)
+        return self._status_hint
+
+    def _on_shift_toggle(self, _event) -> None:
+        """Re-publish status when Shift is pressed/released while hovering coefs_path.
+
+        Gate: ``_status_iid`` is only set while the pointer is actively on a
+        row (cleared by ``_clear_status`` on leave/blank-area) — unlike
+        ``_field_iid`` which survives hide for deferred ``after_idle`` commits.
+        The ``_pointer_in_field`` branch covers the case where the pointer
+        stepped onto the browse button or floated PathField.
+        """
+        iid = self._status_iid
+        if iid is None:
+            return
+        if self._meta.get(iid, {}).get("key") != "coefs_path":
+            return
+        if not (self._pointer_in_field() or _pointer_inside(self.sh.MT)):
+            return
+        self._publish_status(iid)
+
     def _publish_status(self, iid: Any) -> None:
         """Status text for the hovered element (data cells on MT canvas).
 
@@ -1089,6 +1163,12 @@ class ConfigSheet:
 
         if (txt := self.hover_status.get(ident)) is not None:
             self.on_hover_status(txt, False)
+            return
+
+        # Mode-aware: coefs_path shows dir/file content from config_reference.md
+        # instead of the table-row short text.  Shift toggles mode.
+        if ident == "coefs_path" and (txt := self._coefs_status_hint()):
+            self.on_hover_status(txt, True)
             return
 
         # Doc-driven help: ``config_reference.md`` → short tooltip per field.
@@ -1172,8 +1252,11 @@ class ConfigSheet:
                 on_commit=self._hover_write,
                 on_begin_edit=self._on_field_edit_start,
                 on_end_edit=self._on_field_edit_end,
-                dir_title="Browse data path",
-                files_title="Browse data files",
+                dir_title="",  # files-only — no directory selection for per-probe paths
+                files_title=_S["dialog.data_files"],
+                filetypes=DATA_FILETYPES,
+                shift_swap=False,  # no Shift placeholder swap for per-probe fields
+                placeholder=_S.get("path_field.placeholder_probe", ""),  # per-probe data file hint
             )
             # Neuter PathField's own browse overlay — we use a separate one.
             # Replace overlay + binder so SheetHoverBinder never creates a
@@ -1184,19 +1267,27 @@ class ConfigSheet:
             f._binder._last = None
             for ev in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
                 f.sh.MT.bind(ev, lambda _e: self._hide_hover_field(), add="+")
+            # PathField <Leave>: pointer moved to sheet MT or button on the
+            # same row — re-publish row status instead of leaving it empty.
+            # True sheet leave is handled by _on_sheet_leave.
+            f.sh.MT.bind("<Leave>", self._on_field_leave, add="+")
             self._hover_field = f
             # Status callback for browse button Shift hint — wraps
             # on_hover_status(msg, md) into the on_status(text) signature.
-            _on_status = (
-                (lambda text: self.on_hover_status(text, True)) if self.on_hover_status is not None else None
-            )
+            # Button <Leave> re-publishes row status instead of clearing:
+            # the pointer typically moves to the PathField or MT area on
+            # the same row (both children of MT → no MT <Motion> fires),
+            # so clearing would leave the status empty until the next
+            # motion event.  True sheet leave is handled by _on_sheet_leave.
+            _on_status = self._hover_btn_status if self.on_hover_status is not None else None
             _hint = self._status_hint
             self._hover_btn = BrowseOverlay(
                 self.sh,
                 self._hover_write,
                 self._hover_read,
-                dir_title="Browse data path",
-                files_title="Browse data files",
+                dir_title="",  # files-only — no directory selection for per-probe paths
+                files_title=_S["dialog.data_files"],
+                filetypes=DATA_FILETYPES,
                 on_status=_on_status,
                 status_hint=_hint,
             )
@@ -1208,6 +1299,24 @@ class ConfigSheet:
         self._field_iid = iid
         self._field_row = hit_row  # stored for expand-on-edit
         self._field_y = fallback_y
+        # Reconfigure browse button for the current row type:
+        # coefs_path supports directories (YAML dirs) + coefs file types;
+        # other rows (path) are files-only with data file types.
+        is_coefs = self._meta.get(iid, {}).get("key") == "coefs_path"
+        if self._hover_btn is not None:
+            if is_coefs:
+                self._hover_btn._dir_title = _S["dialog.coefs_dir"]
+                self._hover_btn._files_title = _S["dialog.coefs_files"]
+                self._hover_btn._filetypes = COEF_FILETYPES
+                self._hover_btn._files_only = False
+                # Mode-aware status: Shift toggles dir/file content from config_reference.md.
+                self._hover_btn._status_hint = self._coefs_status_hint
+            else:
+                self._hover_btn._dir_title = ""
+                self._hover_btn._files_title = _S["dialog.data_files"]
+                self._hover_btn._filetypes = DATA_FILETYPES
+                self._hover_btn._files_only = True
+                self._hover_btn._status_hint = self._status_hint  # restore static hint
         val = self._hover_read()
         f.set(val)
         f.place(**self._field_place_kw(hit_row, fallback_y, val))
@@ -1290,6 +1399,35 @@ class ConfigSheet:
 
             self._btn_w_cache = browse_button_width(self.sh)
         return self._btn_w_cache
+
+    def _on_field_leave(self, _event) -> None:
+        """PathField ``<Leave>``: re-publish row status.
+
+        The pointer moved from the edit overlay to the sheet MT or browse
+        button on the same row.  Child-to-parent transition may not trigger
+        a sheet MT ``<Motion>``/``<Enter>``, so the ``iid == _status_iid``
+        guard in ``_on_sheet_motion`` would skip re-publish — leaving the
+        status empty if ``_on_sheet_leave`` cleared it at the MT→field
+        boundary.  True sheet leave is handled by :meth:`_on_sheet_leave`.
+        """
+        if self._status_iid is not None and self.on_hover_status is not None:
+            self._publish_status(self._status_iid)
+
+    def _hover_btn_status(self, text: str) -> None:
+        """Hover button status callback.
+
+        Non-empty *text* (button enter / Shift toggle) → publish directly.
+        Empty *text* (button leave) → re-publish the current row's status
+        instead of clearing: the pointer moved to the PathField or MT area
+        on the same row (both children of MT, so no MT ``<Motion>`` fires).
+        True sheet leave is handled by :meth:`_on_sheet_leave`.
+        """
+        if text:
+            self.on_hover_status(text, True)
+        elif self._status_iid is not None:
+            self._publish_status(self._status_iid)
+        else:
+            self.on_hover_status("", True)
 
     def _on_field_edit_start(self) -> None:
         """User clicked the overlay field to edit — hide button, expand field.
@@ -1383,7 +1521,7 @@ class ConfigSheet:
             if self._status_iid is not None:
                 self._clear_status()
             if self._empty_area_hint and self.on_hover_status is not None:
-                self.on_hover_status(self._empty_area_hint, False)
+                self.on_hover_status(self._empty_area_hint, True)
             return
 
         iid, row, y = hit
@@ -1526,25 +1664,38 @@ class ConfigSheet:
             sh.delete_checkbox(r, c)
 
     def _node_at_default(self, iid: Any) -> bool:
-        """True iff every value in the node's subtree matches its config default."""
+        """True iff every value in the node's subtree matches its config default.
+
+        A parent node (container: ``coefs``, 2D coef, 1D-with-dates) is at-default
+        ONLY when ALL its descendants are.  Therefore own-cells (the node's
+        ``max_col``) and child subtrees are BOTH checked; a node holding no own
+        cells defers entirely to its children.
+
+        ``len`` (array-shape metadata for ``1d`` parents) is deliberately NOT
+        treated as ``max_col`` — the parent carries date columns, not values;
+        the child row stores the cells.
+        """
         m = self._meta.get(iid, {})
 
-        max_col = int(m.get("max_col") or m.get("len") or 0)
+        # Own editable columns: max_col only — NOT len (which is shape metadata).
+        own_cols = int(m.get("max_col") or 0)
         if m.get("type") == "scalar":
-            max_col = 1
+            own_cols = 1
 
-        if max_col:
+        own_ok = True
+        if own_cols:
             vals = self.sh.item(iid).get("values") or ()
-            return all(
+            own_ok = all(
                 (dv := self._default_for_cell(iid, m, j)) is NO_DEFAULT
                 or any2str(vals[j] if j < len(vals) else "") == any2str(dv)
-                for j in range(max_col)
+                for j in range(own_cols)
             )
 
+        # Container check: parents are at-default iff every child subtree is.
         if kids := [k for k, km in self._meta.items() if km.get("parent") == iid]:
-            return all(self._node_at_default(k) for k in kids)
+            return own_ok and all(self._node_at_default(k) for k in kids)
 
-        return True
+        return own_ok
 
     def _apply_styles(self) -> None:
         sh = self.sh
@@ -1706,6 +1857,28 @@ class ConfigSheet:
                     sh.highlight_cells(
                         row=r, column=j, fg=tcm_gui.theme.DEFAULT_FG, redraw=False, overwrite=False
                     )
+
+    def _apply_date_placeholders(self) -> None:
+        """Show dim ISO-format hint in every empty date-metadata cell.
+
+        Date cells are at tksheet col ``_DATE_PH_COL`` (=1, meta col 2).
+        Rows with ``has_date=True`` whose ``vals[_DATE_PH_COL]`` is empty
+        get a dim ``YYYY-MM-DDTHH:MM:SS`` hint so the user knows which
+        format to type.  Data extraction (``get_edited_dates``) and the
+        YAML writer treat placeholder cells as empty — the hint text never
+        leaks into saved output.
+        """
+        self._ph.clear_all(self.sh)
+        row_of = self._row_map()
+        dim_fg = tcm_gui.theme.DEFAULT_FG
+        for iid, m in self._meta.items():
+            if not m.get("has_date"):
+                continue
+            if (r := row_of.get(iid)) is None:
+                continue
+            vals = self.sh.item(iid).get("values") or ()
+            if len(vals) <= _DATE_PH_COL or not str(vals[_DATE_PH_COL]).strip():
+                self._ph.show(self.sh, r, _DATE_PH_COL, _DATE_FMT, dim_fg)
 
     def _apply_edit_value(self, iid: Any, col: int, value: str) -> None:
         """Restyle cell + ancestors after a committed value."""

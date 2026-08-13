@@ -274,6 +274,7 @@ class TestApplyStyles:
         cs._int_row_of = {}
         cs._vis = ()
         cs._col_resize = MagicMock()
+        cs.on_edit_begin = None
 
         cs._build_coefs(cfg)
         # Open every constructed node so all rows receive styling.
@@ -413,6 +414,7 @@ class TestCoefsPathChildRow:
         cs._hover_btn = None
         cs._iid_of_row = {}
         cs.on_hover_status = None
+        cs.on_edit_begin = None
         cs.hover_status = {}
         cs._status_iid = None
 

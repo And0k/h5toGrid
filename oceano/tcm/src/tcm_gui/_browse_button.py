@@ -28,10 +28,22 @@ from typing import Any
 
 from tksheet import Sheet
 
-COEF_FILETYPES = [("Coefs", "*.h5 *.nc *.yaml *.yml"), ("All", "*.*")]
+from tcm._constants import EXT_CSV, EXT_HDF5, EXT_NC
 
-_LBL_DIR = "…📁"  # no-Shift default: browse directory
-_LBL_FILE = "…📄"  # Shift held: browse files
+from ._i18n import STRINGS as _S
+
+_DATA_EXTS = EXT_CSV | EXT_HDF5 | EXT_NC  # all supported data extensions
+_DATA_GLOB = " ".join(f"*{e}" for e in sorted(_DATA_EXTS))
+_ALL_DATA_GLOB = " ".join(f"*{e}" for e in sorted(_DATA_EXTS | {".yaml"}))
+
+COEF_FILETYPES = [(_S["dialog.filter_coefs"], "*.h5 *.nc *.yaml"), (_S["dialog.filter_all"], "*.*")]
+# Top PathField: data files + YAML configs (configs loadable into tabs directly).
+SEARCH_FILETYPES = [(_S["dialog.filter_search"], _ALL_DATA_GLOB), (_S["dialog.filter_all"], "*.*")]
+# ConfigSheet input.path: data files only — no YAML configs.
+DATA_FILETYPES = [(_S["dialog.filter_data"], _DATA_GLOB), (_S["dialog.filter_all"], "*.*")]
+
+_LBL_DIR = _S["browse.dir_label"]  # no-Shift default: browse directory
+_LBL_FILE = _S["browse.file_label"]  # Shift held: browse files
 _POLL_MS = 80  # Shift-state icon polling interval
 _INTENT_MS = 120  # hover-intent delay (show and hide)
 _RETRY_MS = 50  # editor acquisition retry interval
@@ -91,23 +103,28 @@ class BrowseOverlay:
         read: Callable[[], str] | None = None,
         *,
         filetypes=COEF_FILETYPES,
-        dir_title: str = "Coefficients directory",
-        files_title: str = "Coefficient files",
+        dir_title: str = _S["dialog.coefs_dir"],
+        files_title: str = _S["dialog.coefs_files"],
         leave_hides: bool = False,
         on_status: Callable[[str], None] | None = None,
-        status_hint: str = "",
+        status_hint: str | Callable[[], str] = "",
+        on_shift: Callable[[bool], None] | None = None,
     ) -> None:
         self._host = host
         self._write, self._read = write, read
         self._filetypes, self._dir_title, self._files_title = filetypes, dir_title, files_title
+        self._files_only = not dir_title  # no dir_title → files-only mode
         self._leave_hides = leave_hides
         self._on_status = on_status
         self._status_hint = status_hint
+        self._on_shift = on_shift
         self._button: ttk.Button | None = None
         self._icon_job: str | None = None
         self._show_job: str | None = None
         self._hide_job: str | None = None
         self._pending_place: dict[str, Any] = {}
+        self._hovered = False  # pointer inside button (set by <Enter>/<Leave>)
+        self._last_is_file = False  # Shift-mode change detection in _update_icon
 
     @property
     def visible(self) -> bool:
@@ -130,7 +147,14 @@ class BrowseOverlay:
         self._start_icon_polling()
 
     def hide(self) -> None:
-        """Destroy the button; cancel every pending job."""
+        """Destroy the button; cancel every pending job.
+
+        Also clears ``_hovered`` and resets ``_last_is_file`` so that the
+        next ``show()`` starts clean.  Without the reset, a stale
+        ``_hovered=True`` from a destroyed button would prevent the status
+        callback from ever receiving a ``""`` (clear) message — the
+        ``_on_btn_leave`` binding on the destroyed widget never fires.
+        """
         self.cancel_show()
         self.cancel_hide()
         job, self._icon_job = self._icon_job, None
@@ -138,6 +162,10 @@ class BrowseOverlay:
             with suppress(TclError):
                 self._host.after_cancel(job)
         btn, self._button = self._button, None
+        self._hovered = False
+        self._last_is_file = False
+        if self._on_status is not None:
+            self._on_status("")  # clear status so _browse_hovering resets
         if btn is not None:
             with suppress(TclError):
                 btn.destroy()
@@ -179,6 +207,11 @@ class BrowseOverlay:
             self.hide()
 
     # ── widget core ───────────────────────────────────────────────
+    def _resolve_hint(self) -> str:
+        """Resolve status_hint — supports both static str and callable."""
+        h = self._status_hint
+        return h() if callable(h) else h
+
     def _make_button(self) -> ttk.Button:
         btn = ttk.Button(self._host, text=_LBL_DIR, width=4, command=self._browse)
         btn.focus_set = lambda: None  # type: ignore[method-assign]
@@ -186,10 +219,23 @@ class BrowseOverlay:
         btn.bind("<Button-1>", lambda _e: (self._browse(), "break")[-1], add="+")
         if self._leave_hides:
             btn.bind("<Leave>", lambda _e: self.schedule_hide(), add="+")
-        if self._on_status is not None and self._status_hint:
-            btn.bind("<Enter>", lambda _e: self._on_status(self._status_hint), add="+")
-            btn.bind("<Leave>", lambda _e: self._on_status(""), add="+")
+        btn.bind("<Enter>", lambda _e: self._on_btn_enter(), add="+")
+        btn.bind("<Leave>", lambda _e: self._on_btn_leave(), add="+")
         return btn
+
+    def _on_btn_enter(self) -> None:
+        """Mouse entered the browse button — set hover flag and publish status."""
+        self._hovered = True
+        if self._on_status is not None:
+            hint = self._resolve_hint()
+            if hint:
+                self._on_status(hint)
+
+    def _on_btn_leave(self) -> None:
+        """Mouse left the browse button — clear hover flag and status."""
+        self._hovered = False
+        if self._on_status is not None:
+            self._on_status("")
 
     def _start_icon_polling(self) -> None:
         job, self._icon_job = self._icon_job, None
@@ -201,7 +247,20 @@ class BrowseOverlay:
     def _update_icon(self) -> None:
         if self._button is None:
             return
-        self._button.configure(text=_LBL_FILE if _is_shift_pressed() else _LBL_DIR)
+        # files-only: always show file icon (no folder/Shift toggle).
+        is_file = self._files_only or _is_shift_pressed()
+        self._button.configure(text=_LBL_FILE if is_file else _LBL_DIR)
+        if is_file != self._last_is_file:
+            # Dedicated Shift callback — decoupled from hover status (_on_status)
+            # so consumers can update their own state without side-effects on
+            # other overlays' status bars.
+            if self._on_shift is not None:
+                self._on_shift(is_file)
+            # Re-publish hover status only when _hovered (pointer on button).
+            if self._hovered and self._on_status:
+                hint = self._resolve_hint()
+                self._on_status(hint)
+        self._last_is_file = is_file
         self._icon_job = self._host.after(_POLL_MS, self._update_icon)
 
     # ── dialog ────────────────────────────────────────────────────
@@ -209,7 +268,7 @@ class BrowseOverlay:
         cur = (self._read() if self._read is not None else "") or ""
         start = os.path.dirname(cur.split(",")[0].strip()) or None
         try:
-            if _is_shift_pressed():
+            if self._files_only or _is_shift_pressed():
                 paths = filedialog.askopenfilenames(
                     title=self._files_title, filetypes=self._filetypes, initialdir=start
                 )
@@ -249,6 +308,9 @@ class BrowseButtonManager:
         host=None,
         on_status: Callable[[str], None] | None = None,
         status_hint: str = "",
+        filetypes=COEF_FILETYPES,
+        dir_title: str = "",
+        on_shift: Callable[[bool], None] | None = None,
     ) -> None:
         self._sheet = sheet
         self.notify_path_changed = on_path_changed
@@ -265,8 +327,11 @@ class BrowseButtonManager:
             host or sheet,
             self._write_cell,
             self._read_cell,
+            filetypes=filetypes,
+            dir_title=dir_title,
             on_status=on_status,
             status_hint=status_hint,
+            on_shift=on_shift,
         )
         self._editor_place = editor_place or (
             lambda ed: {"in_": ed, "relx": 1.0, "x": 0, "rely": 0.5, "y": 0}

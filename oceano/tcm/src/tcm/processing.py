@@ -24,6 +24,7 @@ from tcm import _constants, cli, config_yaml, format, paths, policy, schema, sta
 from tcm._xr import coefs as xr_coefs
 from tcm._xr import dataset, physical, storage
 from tcm._xr import io as xr_io
+from tcm.csv_load import estimate_n_chunks
 from tcm.incl_calc.coefs import get_coefs_from_cfg
 from tcm.states import ScanStage, Stage
 
@@ -47,7 +48,7 @@ except ImportError:
 lf = utils2init.LoggingStyleAdapter(__name__)
 
 # Extensions that carry their own coefs (no text-file config discovery).
-_EXT_BINARY = _constants._EXT_NC | _constants._EXT_HDF5
+_EXT_BINARY = _constants.EXT_NC | _constants.EXT_HDF5
 
 
 # ── Upper-bar stage ticks (one tick per stage boundary) ─────────────────
@@ -388,7 +389,7 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
     if path_in.suffix.lower() in _EXT_BINARY:
         # One probe per table group (a single NC/HDF5 may hold several);
         # pin ``tables=[tbl]`` per call so run_processing derives correct pcid.
-        tables = list(cfg.input.tables or [])
+        tables = list(cfg.input.tables) if cfg.input.tables else []
         for tbl in tables or [""]:
             cfg_pc = OmegaConf.merge(cfg, OmegaConf.create({"input": {"tables": [tbl]}})) if tables else cfg
             run_processing(cfg_pc)
@@ -399,6 +400,18 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
             path_in.name,
         )
         return
+
+    # YAML config: skip data discovery, filter to this stem.
+    # When ``input.path`` ends with ``.yaml``, the stem (filename
+    # without extension, or regex/glob before ``.yaml``) is used as the
+    # ``yaml_path`` filter.  This replaces the removed ``input.yaml_path``
+    # config field — callers pass ``input.path=<dir>/(stems).yaml`` instead.
+    # Merge order: per-probe YAML wins over base_cfg — use
+    # ``call_in_raw_dir(yaml_path=...)`` when kwargs must take priority.
+    yaml_path: str | None = None
+    if path_in.suffix.lower() == ".yaml":
+        yaml_path = path_in.stem
+        lf.debug("input.path ends with .yaml → yaml_path filter='{}'", yaml_path)
 
     ids = list(cfg.input.ids) if cfg.input.ids else None
     pcids_requested = format.normalize_probes(set(ids)) if ids else {format.PROBE_WILDCARD}
@@ -413,14 +426,14 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
     if _rt:
         _rt.progress_overall.set(0, 1, ScanStage.SCAN)
 
-    # ── Config generation (skipped when yaml_path provided) ──────────────
-    if (yaml_path := OmegaConf.select(cfg, "input.yaml_path", default=None)) is None:
+    # ── Config generation (skipped when yaml_path derived from .yaml suffix) ──
+    if yaml_path is None:
         # Step 1: regenerate on stale configs OR new source files missing configs.
         stale = config_yaml.find_stale_cfgs(cfgs_existed, dir_cfgs)
         regenerate = bool(stale) or not cfgs_existed
         if not regenerate:
             if _rt:
-                _rt.progress_stage.set(0, 3, "Discovering files\u2026")
+                _rt.progress_stage.set(0, 3, "stage.discovering")
             try:  # lightweight: check for source files lacking config
                 from tcm import csv_load
 
@@ -434,7 +447,7 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
                 pass  # discovery fails → skip regeneration check
         if regenerate:
             if _rt:
-                _rt.progress_stage.set(1, 3, "Generating configs\u2026")
+                _rt.progress_stage.set(1, 3, "stage.generating")
             reason = (
                 f"regenerating {len(stale)} stale config(s): {', '.join(stale)}"
                 if stale
@@ -506,8 +519,9 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
     # ── Filter: input.path pattern ↔ stored YAML input.path ─────────────
     # A concrete file / glob narrows YAMLs whose stored input.path filename
     # matches; uses ruamel YAML directly — lightweight read, avoids
-    # OmegaConf.load's full resolution overhead.
-    if not path_in.is_dir():
+    # OmegaConf.load's full resolution overhead.  Skipped when yaml_path
+    # already filtered by stem (``.yaml`` suffix).
+    if not path_in.is_dir() and not yaml_path:
         _ip_re = re.compile(_ptr(path_in.name), re.IGNORECASE)
         _ry = config_yaml._ry(write=False)
         filtered = {}
@@ -533,7 +547,7 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
     # Step 3: process each config; early-exit (CFG_FROM_ARGS) returns before data load.
     n_cfgs_total = sum(len(s) for s in cfgs_to_run.values())
     if _rt:
-        _rt.progress_stage.set(0, max(n_cfgs_total, 1), "Composing configs\u2026")
+        _rt.progress_stage.set(0, max(n_cfgs_total, 1), "stage.composing")
     processed_pcids, failed_pcids, last_cfg, collected = cli.process_loading_yaml(
         run_processing,
         base_cfg=cfg,
@@ -628,19 +642,34 @@ def run_processing(cfg: DictConfig):
 
     # Active stage plan for upper-bar ticks (NC only if io().h5; TSV if text_path).
     # Each active stage gets an equal slice of the 100-unit per-probe scale.
+    # NC ticks fire for every bin (incl. noAvg); TSV only for bins ≥ dt_min_save
+    # (noAvg at dt_bin=0 is skipped when dt_min_save=1s) — count matches actual ticks.
     _dt_bins_list = _dt_bins(cfg["out"])
     _n_bins = len(_dt_bins_list)
     _has_nc = bool(policy.io())
     _has_tsv = bool(cfg["out"].get("text_path"))
+    _min_save_ts = _dt_min_save(cfg["out"])
+    _n_tsv_bins = sum(1 for b in _dt_bins_list if b >= _min_save_ts) if _has_tsv else 0
     _stages = [Stage.LOAD, Stage.COEFS, Stage.PROC]
     _stages += [Stage.NC] * _n_bins if _has_nc else []
-    _stages += [Stage.TSV] * _n_bins if _has_tsv else []
+    _stages += [Stage.TSV] * _n_tsv_bins if _has_tsv else []
     _n_active = len(_stages)
     stage_ctx.set_stage_plan(_n_active)
 
     # Load begins — boundary record carries data source for clarity
     _src = cfg_in.get("path", "")
     stage_ctx.set_stage(1, Stage.LOAD, "Loading %s", Path(_src).name if _src else pcid)
+
+    # Estimate chunk count for intra-Load progress (cheap: samples first 1 MB per file).
+    _n_load_chunks = 0
+    if src_path.suffix.lower() not in _EXT_BINARY:
+        _bs = cfg_in.get("blocksize", 500_000)
+        _sk = cfg_in.get("skiprows", 0)
+        if cfg.get("files"):
+            _n_load_chunks = sum(estimate_n_chunks(Path(f["path"]), _bs, _sk) for f in cfg["files"])
+        else:
+            _n_load_chunks = estimate_n_chunks(src_path, _bs, _sk)
+        stage_ctx.set_work(_n_load_chunks)
 
     # Batch mode (cfg.files exists): iterate and concatenate
     _loaded_from_raw_nc = False  # track fast-path for Phase 4 skip
@@ -878,6 +907,7 @@ def _load_batch(cfg: dict[str, dict[str, Any]], pcid: str) -> tuple[xr.Dataset |
             cfg_in=cfg["input"],
         ):
             ds_raw = ds_chunk if ds_raw is None else xr.concat([ds_raw, ds_chunk], dim="time")
+            stage_ctx.advance()
 
     if ds_raw is None:
         lf.warning("No data loaded for batch {} — skipping", pcid)

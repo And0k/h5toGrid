@@ -10,9 +10,11 @@ splitting).  Supported constructs:
 * ``{#name}colored text{/}`` — color tag (name resolved by renderer's color map)
 * ``` ``` fenced code blocks ```
 * Markdown tables (pipe-delimited)
+* ``- `` unordered list items (flat; indented continuation lines fold into
+  the preceding item — nested lists are not supported)
 * ``[text](url)`` links → plain text (no click handling)
 
-No HTML, no images, no blockquotes, no ordered/unordered lists.
+No HTML, no images, no blockquotes, no ordered (``1.``) lists.
 """
 
 from __future__ import annotations
@@ -53,7 +55,12 @@ class Table:
     rows: tuple[tuple[Inline, ...], ...]
 
 
-Block = Heading | Paragraph | CodeBlock | Table
+@dataclass(frozen=True, slots=True)
+class List:
+    items: tuple[Inline, ...]
+
+
+Block = Heading | Paragraph | CodeBlock | Table | List
 
 # ── regex primitives ─────────────────────────────────────────────────────────
 
@@ -69,6 +76,10 @@ _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 
 # Code fence toggle: ``` or ~~~.
 _FENCE = re.compile(r"^\s*(```|~~~)")
+
+# Unordered list item: ``- text`` at column 0 (column-0 only → nested indented
+# markers don't match; their lines fold into the parent item as continuation).
+_LIST_ITEM = re.compile(r"^-\s+(.+?)\s*$")
 
 # Inline patterns: escape sequences, color tags, inline code, links, bold, italic.
 _INLINE = re.compile(
@@ -213,6 +224,31 @@ def parse_markdown(src: str) -> tuple[Block, ...]:
             flush_para()
             blocks.append(Heading(len(m.group(1)), parse_inline(m.group(2))))
             i += 1
+            continue
+
+        # Unordered list: ``- `` marker at column 0; indented continuation
+        # lines (≥1 leading space, not a marker) fold into the current item.
+        if m := _LIST_ITEM.match(line):
+            flush_para()
+            items: list[Inline] = []
+            cur: list[str] = [m.group(1)]
+            i += 1
+            while i < n:
+                ln = lines[i]
+                if not ln.strip() or _FENCE.match(ln) or _HEADING.match(ln):
+                    break
+                if cm := _LIST_ITEM.match(ln):
+                    items.append(parse_inline(" ".join(s.strip() for s in cur)))
+                    cur = [cm.group(1)]
+                    i += 1
+                    continue
+                if ln.startswith(" "):  # indented continuation
+                    cur.append(ln)
+                    i += 1
+                    continue
+                break  # non-indented non-marker → list ends
+            items.append(parse_inline(" ".join(s.strip() for s in cur)))
+            blocks.append(List(tuple(items)))
             continue
 
         para.append(line.strip())

@@ -1,22 +1,26 @@
 """Shared state: queues, progress snapshots, pause gate."""
+
 from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
 from queue import Queue
 
+from .progress_bank import ProgressBank
+
 
 class PauseGate:
     """Freeze/resume worker at log/tqdm checkpoints — pipeline code untouched."""
+
     __slots__ = ("_ev",)
 
     def __init__(self) -> None:
         self._ev = threading.Event()
         self._ev.set()
 
-    pause  = lambda s: s._ev.clear()
+    pause = lambda s: s._ev.clear()
     resume = lambda s: s._ev.set()
-    wait   = lambda s: s._ev.wait()
+    wait = lambda s: s._ev.wait()
 
     @property
     def paused(self) -> bool:
@@ -32,9 +36,10 @@ class ProgressState:
         boundaries so the GUI poll can wipe stale stage text without touching
         it in every idle tick.
     """
+
     current: int = 0
-    total:   int = 0
-    desc:    str = ""
+    total: int = 0
+    desc: str = ""
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _clear_status: bool = field(default=False, repr=False)
 
@@ -64,11 +69,13 @@ class ProgressState:
 @dataclass
 class Runtime:
     """Passed to every worker thread."""
-    log_queue:        Queue         = field(default_factory=Queue)
-    result_queue:     Queue         = field(default_factory=Queue)
+
+    log_queue: Queue = field(default_factory=Queue)
+    result_queue: Queue = field(default_factory=Queue)
     progress_overall: ProgressState = field(default_factory=ProgressState)
-    progress_stage:   ProgressState = field(default_factory=ProgressState)
-    pause_gate:       PauseGate     = field(default_factory=PauseGate)
+    progress_stage: ProgressState = field(default_factory=ProgressState)
+    progress_bank: ProgressBank = field(default_factory=ProgressBank)
+    pause_gate: PauseGate = field(default_factory=PauseGate)
     # QueueHandler installed once at GUI startup on the root logger so log
     # records from GUI callbacks (main thread) AND worker tasks (background
     # thread) both reach the ScrolledText.  Worker resets dedup state per task.

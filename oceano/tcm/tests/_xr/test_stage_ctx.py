@@ -18,11 +18,16 @@ import pytest
 from tcm.stage_ctx import (
     StageContextFilter,
     _build_prefix,
+    _cv_work_done,
+    _cv_work_total,
     _lf,
+    advance,
     clear,
     set_probe,
     set_stage,
+    set_stage_plan,
     set_sublevel,
+    set_work,
     snapshot,
 )
 
@@ -51,8 +56,9 @@ def stage_logger(caplog):
     logger.addHandler(handler)
     # Also attach filter to tcm.stage_ctx (used by set_stage/set_sublevel details)
     _lf.addFilter(filt)
-    with caplog.at_level(logging.DEBUG, logger="test_stage_ctx"), caplog.at_level(
-        logging.DEBUG, logger="tcm.stage_ctx"
+    with (
+        caplog.at_level(logging.DEBUG, logger="test_stage_ctx"),
+        caplog.at_level(logging.DEBUG, logger="tcm.stage_ctx"),
     ):
         yield logger
     _lf.removeFilter(filt)
@@ -294,3 +300,293 @@ class TestStageContextFilter:
         assert "[## probe i90 stage 1 load] Loading @i90.TXT" in caplog.text, (
             f"set_stage details not logged: {caplog.text!r}"
         )
+
+
+# ── Intra-stage sub-step progress ────────────────────────────────────────
+
+
+class TestAdvance:
+    """set_work / advance — generic intra-stage progress for any stage."""
+
+    def test_set_work_stores_total_and_resets_done(self):
+        """set_work sets total and resets done counter to 0."""
+        set_work(5)
+        assert _cv_work_total.get() == 5, "total not stored"
+        assert _cv_work_done.get() == 0, "done not reset"
+
+    def test_advance_increments_done(self):
+        """Each advance() increments the done counter."""
+        set_work(3)
+        advance()
+        assert _cv_work_done.get() == 1, "done should be 1 after first advance"
+        advance()
+        assert _cv_work_done.get() == 2, "done should be 2 after second advance"
+
+    def test_advance_noop_when_no_work(self):
+        """advance() is a no-op when total is 0 (no set_work called)."""
+        set_work(0)
+        advance()
+        assert _cv_work_done.get() == 0, "done should stay 0 when total=0"
+
+    def test_clear_resets_work_vars(self):
+        """clear() resets work_total and work_done."""
+        set_work(10)
+        advance()
+        clear()
+        assert _cv_work_total.get() == 0, "total not cleared"
+        assert _cv_work_done.get() == 0, "done not cleared"
+
+    @pytest.mark.parametrize(
+        "n_work, n_active, expected_fracs",
+        [
+            pytest.param(4, 4, [6, 12, 19, 25], id="4-work-4-stages"),
+            pytest.param(5, 4, [5, 10, 15, 20, 25], id="5-work-4-stages"),
+            pytest.param(1, 4, [25], id="1-work-jumps-to-stage-end"),
+            pytest.param(3, 3, [11, 22, 33], id="3-work-3-stages"),
+        ],
+    )
+    def test_advance_advances_overall_fractionally(self, n_work, n_active, expected_fracs):
+        """advance() moves overall progress proportionally within the current stage.
+
+        With n_active stages and tick_idx=0 (Load), each sub-step moves
+        round(done * 100 / n_active / work_total).  For later stages
+        tick_base = tick_idx * stage_frac shifts the base.
+        """
+        from types import SimpleNamespace
+
+        from tcm_gui import progress_bridge as pb
+
+        captured = []
+        mock_overall = SimpleNamespace(set=lambda c, t, d: captured.append(("overall", c, t, d)))
+        mock_stage = SimpleNamespace(set=lambda c, t, d: captured.append(("stage", c, t, d)))
+        mock_bank = SimpleNamespace(inner=lambda cfg, c, t: captured.append(("bank", cfg, c, t)))
+        mock_rt = SimpleNamespace(
+            progress_overall=mock_overall,
+            progress_stage=mock_stage,
+            progress_bank=mock_bank,
+        )
+        old_rt = pb.get_runtime()
+        old_cfg = pb.get_cfg()
+        pb.set_runtime(mock_rt)
+        pb.set_cfg("test_cfg")
+        try:
+            set_probe("i90", 1, 1, 1, 1, stem_idx=1, n_cfgs_total=1)
+            set_stage_plan(n_active)
+            set_work(n_work)
+            for expected_frac in expected_fracs:
+                captured.clear()
+                advance()
+                overall_ticks = [c for c in captured if c[0] == "overall"]
+                assert overall_ticks, f"No overall tick captured for frac={expected_frac}"
+                _, cur, tot, _ = overall_ticks[-1]
+                assert cur == expected_frac, (
+                    f"Expected overall={expected_frac}, got {cur}. n_work={n_work}, n_active={n_active}"
+                )
+                assert tot == 100, f"Total should be 100 (probe_total), got {tot}"
+        finally:
+            pb.set_runtime(old_rt)
+            pb.set_cfg(old_cfg)
+
+    @pytest.mark.parametrize(
+        "tick_idx, n_work, n_active, expected_first",
+        [
+            pytest.param(2, 2, 4, 62, id="tick-idx-2-first-work-at-62"),
+            pytest.param(1, 4, 4, 31, id="tick-idx-1-first-work-at-31"),
+            pytest.param(3, 2, 6, 58, id="tick-idx-3-first-work-at-58"),
+        ],
+    )
+    def test_advance_uses_tick_base_for_later_stages(self, tick_idx, n_work, n_active, expected_first):
+        """advance() adds tick_idx * stage_frac as base for non-first stages.
+
+        Formula: probe_base + tick_idx * (100/n_active) + done * (100/n_active) / n_work.
+        """
+        from types import SimpleNamespace
+
+        from tcm_gui import progress_bridge as pb
+
+        captured = []
+        mock_rt = SimpleNamespace(
+            progress_overall=SimpleNamespace(set=lambda c, t, d: captured.append(c)),
+            progress_stage=SimpleNamespace(set=lambda *_: None),
+            progress_bank=SimpleNamespace(inner=lambda *_: None, stage_start=lambda *_: None),
+        )
+        old_rt = pb.get_runtime()
+        old_cfg = pb.get_cfg()
+        pb.set_runtime(mock_rt)
+        pb.set_cfg("test_cfg")
+        try:
+            set_probe("i90", 1, 1, 1, 1, stem_idx=1, n_cfgs_total=1)
+            set_stage_plan(n_active)
+            from tcm.stage_ctx import _cv_tick_idx
+
+            _cv_tick_idx.set(tick_idx)
+            set_work(n_work)
+            captured.clear()
+            advance()
+            assert captured[-1] == expected_first, (
+                f"tick_idx={tick_idx}: expected first advance at {expected_first}, got {captured[-1]}"
+            )
+        finally:
+            pb.set_runtime(old_rt)
+            pb.set_cfg(old_cfg)
+
+    def test_advance_updates_progress_bank_inner(self):
+        """advance() updates the per-config progress_bank.inner."""
+        from types import SimpleNamespace
+
+        from tcm_gui import progress_bridge as pb
+
+        bank_calls = []
+        mock_bank = SimpleNamespace(inner=lambda cfg, c, t: bank_calls.append((cfg, c, t)))
+        mock_rt = SimpleNamespace(
+            progress_overall=SimpleNamespace(set=lambda *_: None),
+            progress_stage=SimpleNamespace(set=lambda *_: None),
+            progress_bank=mock_bank,
+        )
+        old_rt = pb.get_runtime()
+        old_cfg = pb.get_cfg()
+        pb.set_runtime(mock_rt)
+        pb.set_cfg("i_01")
+        try:
+            set_probe("i90", 1, 1, 1, 1, stem_idx=1, n_cfgs_total=1)
+            set_stage_plan(4)
+            set_work(3)
+            advance()
+            assert bank_calls == [("i_01", 1, 3)], f"Bank calls: {bank_calls}"
+            advance()
+            assert bank_calls[-1] == ("i_01", 2, 3), f"Bank calls after 2nd advance: {bank_calls}"
+        finally:
+            pb.set_runtime(old_rt)
+            pb.set_cfg(old_cfg)
+
+    def test_advance_noop_when_no_pb(self):
+        """advance() is a no-op when progress_bridge is unavailable."""
+        from tcm import stage_ctx as sc
+
+        old_pb = sc._pb
+        sc._pb = None
+        try:
+            set_work(5)
+            advance()
+            assert _cv_work_done.get() == 0, "Should not increment without _pb"
+        finally:
+            sc._pb = old_pb
+
+
+# ── Tick: last-probe progress reaches 100% ──────────────────────────────
+
+
+def _mock_progress_bridge():
+    """Build a mock progress_bridge runtime capturing overall set() calls.
+
+    Returns ``(mock_rt, overall_snapshots)`` where *overall_snapshots* is a list
+    that each ``progress_overall.set(cur, tot, desc)`` appends ``(cur, tot)`` to.
+    The mock ``progress_overall`` also provides ``snapshot()`` returning the last
+    set values — ``progress_bridge.stage_desc`` reads it on each tick boundary.
+    The caller is responsible for restoring ``pb.set_runtime`` / ``pb.set_cfg``.
+    """
+    from types import SimpleNamespace
+
+    overall_snaps: list[tuple[int, int]] = []
+    _state = [0, 0, ""]  # cur, tot, desc — mutable closure for snapshot
+
+    def _set(c, t, d):
+        _state[0], _state[1], _state[2] = c, t, d
+        overall_snaps.append((c, t))
+
+    mock_rt = SimpleNamespace(
+        progress_overall=SimpleNamespace(set=_set, snapshot=lambda: tuple(_state)),
+        progress_stage=SimpleNamespace(set=lambda *_: None),
+        progress_bank=SimpleNamespace(inner=lambda *_: None, stage_start=lambda *_: None),
+    )
+    return mock_rt, overall_snaps
+
+
+class TestTickProgressBarCompletion:
+    """Verify the overall progress bar reaches 100% on the last probe.
+
+    The stage plan ``n_active`` must equal the count of ticks that actually
+    fire: NC for every bin (incl. noAvg), TSV only for bins ≥ dt_min_save.
+    When the plan matches actual ticks, the final tick of the last probe
+    yields ``frac=100`` and the per-config rail fill completes.
+    """
+
+    @staticmethod
+    def _simulate_probe(stem_idx: int, n_cfgs: int, n_active: int, n_nc_ticks: int, n_tsv_ticks: int):
+        """Drive one probe through LOAD → COEFS → PROC → NC×n_nc → TSV×n_tsv.
+
+        Mirrors ``run_processing`` + ``_process_and_persist`` tick flow:
+        tick(LOAD) → tick(COEFS) → tick(PROC) → tick(NC)×n_nc → tick(TSV)×n_tsv.
+        Returns the last overall ``cur`` captured.
+        """
+        from tcm import stage_ctx as sc
+        from tcm.states import Stage
+
+        set_probe(f"p{stem_idx}", stem_idx, 1, n_cfgs, 1, stem_idx=stem_idx, n_cfgs_total=n_cfgs)
+        set_stage_plan(n_active)
+        sc.tick()  # LOAD
+        sc.tick()  # COEFS
+        sc.tick(Stage.PROC)
+        for _ in range(n_nc_ticks):
+            sc.tick(Stage.NC)
+        for _ in range(n_tsv_ticks):
+            sc.tick(Stage.TSV)
+
+    @pytest.mark.parametrize(
+        "n_cfgs, n_nc_tick_per_probe, n_tsv_tick_per_probe, n_active_per_probe",
+        [
+            # noh5: 3 fixed + 0 NC + 4 TSV = 7 active, TSV fires 4 → reaches 100%
+            pytest.param(2, 0, 4, 7, id="noh5-2probes-4tsv"),
+            # h5 fixed: 3 + 5 NC + 4 TSV = 12 active (noAvg not counted in TSV),
+            # TSV fires 4 (noAvg skipped: dt_bin=0 < dt_min_save=1s) → reaches 100%
+            pytest.param(2, 5, 4, 12, id="h5-fixed-2probes-5nc-4tsv"),
+            # single probe h5 fixed
+            pytest.param(1, 5, 4, 12, id="h5-fixed-1probe"),
+        ],
+    )
+    def test_last_probe_reaches_100_percent(
+        self, n_cfgs, n_nc_tick_per_probe, n_tsv_tick_per_probe, n_active_per_probe
+    ):
+        """Last probe's final tick must set overall to probe_base + 100."""
+        from tcm_gui import progress_bridge as pb
+
+        mock_rt, snaps = _mock_progress_bridge()
+        old_rt, old_cfg = pb.get_runtime(), pb.get_cfg()
+        pb.set_runtime(mock_rt), pb.set_cfg("test")
+        try:
+            for stem_idx in range(1, n_cfgs + 1):
+                snaps.clear()
+                self._simulate_probe(
+                    stem_idx, n_cfgs, n_active_per_probe, n_nc_tick_per_probe, n_tsv_tick_per_probe
+                )
+                expected_base = (stem_idx - 1) * 100
+                final_cur, final_tot = snaps[-1]
+                assert final_cur == expected_base + 100, (
+                    f"probe {stem_idx}/{n_cfgs}: overall={final_cur} expected {expected_base + 100} "
+                    f"(n_active={n_active_per_probe}, nc={n_nc_tick_per_probe}, tsv={n_tsv_tick_per_probe})"
+                )
+                assert final_tot == n_cfgs * 100, f"total={final_tot} expected {n_cfgs * 100}"
+        finally:
+            pb.set_runtime(old_rt), pb.set_cfg(old_cfg)
+
+    def test_overcounted_plan_does_not_reach_100(self):
+        """Regression guard: an overcounted plan (more stages than ticks) stalls below 100%.
+
+        Proves that matching ``n_active`` to actual tick count is necessary:
+        with 13 planned stages but only 12 ticks (noAvg skipped by TSV),
+        ``round(12*100/13) = 92`` ≠ 100. The fix prevents this by counting
+        only TSV-eligible bins in the stage plan.
+        """
+        from tcm_gui import progress_bridge as pb
+
+        mock_rt, snaps = _mock_progress_bridge()
+        old_rt, old_cfg = pb.get_runtime(), pb.get_cfg()
+        pb.set_runtime(mock_rt), pb.set_cfg("test")
+        try:
+            # 13 active stages, but only 12 ticks fire (noAvg skipped by TSV)
+            self._simulate_probe(stem_idx=1, n_cfgs=1, n_active=13, n_nc_ticks=5, n_tsv_ticks=4)
+            final_cur, _ = snaps[-1]
+            assert final_cur == 92, f"Overcounted plan: expected 92 (round(12*100/13)), got {final_cur}"
+            assert final_cur != 100, "Overcounted plan must not reach 100 — fix counts only TSV-eligible bins"
+        finally:
+            pb.set_runtime(old_rt), pb.set_cfg(old_cfg)

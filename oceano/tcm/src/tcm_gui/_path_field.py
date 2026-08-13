@@ -22,10 +22,20 @@ from contextlib import suppress
 from tkinter import TclError, ttk
 from typing import Any
 
-import tcm_gui.theme
 from tksheet import Sheet
 
-from ._browse_button import BrowseOverlay, SheetHoverBinder, browse_button_width
+import tcm_gui.theme
+
+from ._browse_button import (
+    COEF_FILETYPES,
+    BrowseOverlay,
+    SheetHoverBinder,
+    _is_shift_pressed,
+    browse_button_width,
+)
+from ._help import help_for_path
+from ._i18n import STRINGS as _S
+from ._placeholder import CellPlaceholder
 
 _COL_W = 4096  # wider than any viewport — scrollable when right-aligned
 
@@ -37,7 +47,13 @@ class PathField(ttk.Frame):
     widget is shrunk to ``frame − button`` (``place(width=…)``) and
     switches to right-aligned — filename ends right before the browse
     button, same geometry as ConfigSheet's ``_field_place_kw``.
-    Editing uses a ``ttk.Entry`` overlay with ``justify="right"``.
+    Editing uses a plain ``ttk.Entry`` overlay with ``justify="right"``.
+
+    When the cell is empty, a dim-gray *placeholder* text is shown
+    (e.g. ``"D:/data/_raw/"``) — it vanishes on first keystroke or
+    double-click.  Holding Shift swaps to the *advanced* placeholder
+    (e.g. ``"D:/data/_raw/(i*raw_file1[.]txt|i*raw_file2[.]txt)"``)
+    revealing pattern syntax; releasing Shift restores the simple one.
 
     Parameters
     ----------
@@ -56,10 +72,15 @@ class PathField(ttk.Frame):
         on_commit: Callable[[str], None] | None = None,
         on_begin_edit: Callable[[], None] | None = None,
         on_end_edit: Callable[[], None] | None = None,
-        dir_title: str = "Browse data path",
-        files_title: str = "Browse data files",
+        dir_title: str = _S["dialog.data_dir"],
+        files_title: str = _S["dialog.data_files"],
+        filetypes=COEF_FILETYPES,
         on_status: Callable[[str], None] | None = None,
-        status_hint: str = "",
+        status_hint: str | Callable[[], str] = "",
+        on_shift: Callable[[bool], None] | None = None,
+        placeholder: str = _S.get("path_field.placeholder", ""),
+        placeholder_shift: str = _S.get("path_field.placeholder_shift", ""),
+        shift_swap: bool = True,  # False for floated fields in ConfigSheet
     ) -> None:
         super().__init__(parent)
         self._on_commit = on_commit
@@ -70,6 +91,32 @@ class PathField(ttk.Frame):
         self._entry: ttk.Entry | None = None
         self._hovering = False
         self._btn_w: int | None = None
+        # Hover status: doc-driven (config_reference.md `input.path` search mode
+        # short lines); fall back to str.yaml when the doc is absent.
+        _h = help_for_path("input.path", mode="search")
+        self._path_status = (
+            _h.body if _h and isinstance(_h.body, str) and _h.body else _S.get("path_field.status", "")
+        )
+        self._shift_status = _S.get("path_field.status_shift", "")
+        self._browse_hint = status_hint
+
+        self._mouse_in = False  # True when pointer is inside PathField frame
+        self._shift_swap = shift_swap
+        # Status callback — shared with BrowseOverlay; also called by Shift handlers.
+        # Two dedicated keys: normal status and Shift-held status (no separator parsing).
+        self._on_status = on_status
+        self._path_status_shift = _S.get("path_field.status_shift", self._path_status)
+        # Placeholder state — two levels: simple (default) and advanced (Shift held).
+        self._placeholder_simple = placeholder
+        self._placeholder_shift = placeholder_shift or placeholder
+        self._ph = CellPlaceholder()
+        self._dim_fg = tcm_gui.theme.DEFAULT_FG
+
+
+
+
+
+
         bg = tcm_gui.theme.ENTRY_BG_FALLBACK
         fg = tcm_gui.theme.FG_DEFAULT
         self.sh = Sheet(
@@ -115,15 +162,29 @@ class PathField(ttk.Frame):
                 ("end_edit_cell", self._on_end_edit),
             ]
         )
+        # Shift key swaps placeholder: simple ↔ advanced pattern hint.
+        # Bind on toplevel — tksheet canvas has no keyboard focus on hover.
+        # Swap only fires when pointer is inside the PathField frame.
+        # Skipped for floated fields (shift_swap=False).
+        if self._shift_swap:
+            root = self.winfo_toplevel()
+            root.bind("<KeyPress-Shift_L>", self._on_shift_press, add="+")
+            root.bind("<KeyPress-Shift_R>", self._on_shift_press, add="+")
+            root.bind("<KeyRelease-Shift_L>", self._on_shift_release, add="+")
+            root.bind("<KeyRelease-Shift_R>", self._on_shift_release, add="+")
+            self.bind("<Enter>", self._on_frame_enter, add="+")
+            self.bind("<Leave>", self._on_frame_leave, add="+")
         self._ov = BrowseOverlay(
             self.winfo_toplevel(),
             self._hover_write,
             self._hover_read,
+            filetypes=filetypes,
             dir_title=dir_title,
             files_title=files_title,
             leave_hides=True,
             on_status=on_status,
             status_hint=status_hint,
+            on_shift=on_shift,
         )
         # Patch overlay to shrink/restore tksheet widget on show/hide
         self._orig_ss = self._ov.schedule_show
@@ -136,6 +197,9 @@ class PathField(ttk.Frame):
         self.sh.pack(fill="both", expand=True)
         with suppress(AttributeError, TclError):
             self.configure(height=self.sh.MT.row_positions[1])
+        # Show placeholder if no initial value was set.
+        if self._placeholder_simple:
+            self._show_placeholder()
 
     # ── hover widget shrink ───────────────────────────────────────
     def _get_btn_w(self) -> int:
@@ -207,12 +271,73 @@ class PathField(ttk.Frame):
         with suppress(TclError):
             self.sh.MT.xview_moveto(0.0)
 
+    # ── placeholder ───────────────────────────────────────────────
+    def _show_placeholder(self) -> None:
+        """Render the placeholder text dimmed in the empty cell."""
+        self._ph.show(self.sh, 0, 0, self._placeholder_simple, self._dim_fg)
+
+    def _clear_placeholder(self) -> None:
+        """Remove placeholder text and restore default foreground."""
+        self._ph.clear(self.sh, 0, 0)
+
+    def _swap_placeholder(self, text: str) -> None:
+        """Swap displayed placeholder text (simple ↔ Shift variant) without changing tracking.
+
+        Delegates to :meth:`CellPlaceholder.show` — the cell is already tracked
+        (callers guard on ``self._ph.active``), so the re-add to ``_cells`` is
+        an idempotent no-op.
+        """
+        self._ph.show(self.sh, 0, 0, text, self._dim_fg)
+        self.sh.redraw()
+
+    def _on_shift_press(self, _event) -> None:
+        """Swap to advanced placeholder + YAML status while Shift is held and cell is empty.
+
+        Only fires when the pointer is inside this PathField (``_mouse_in``) —
+        prevents the search-path placeholder from visually changing while the
+        user Shift-clicks elsewhere in the GUI.
+        """
+        if self._mouse_in and self._ph.active and not self._editing:
+            self._swap_placeholder(self._placeholder_shift)
+            if self._on_status:
+                self._on_status(self._path_status_shift)
+
+    def _on_shift_release(self, _event) -> None:
+        """Restore simple placeholder + normal status when Shift is released.
+
+        Same ``_mouse_in`` guard as :meth:`_on_shift_press`.
+        """
+        if self._mouse_in and self._ph.active and not self._editing:
+            self._swap_placeholder(self._placeholder_simple)
+            if self._on_status:
+                self._on_status(self._path_status)
+
+    def _on_frame_enter(self, _event) -> None:
+        """Mouse entered PathField — if Shift already held, swap immediately."""
+        self._mouse_in = True
+        if self._ph.active and not self._editing and _is_shift_pressed():
+            self._swap_placeholder(self._placeholder_shift)
+            if self._on_status:
+                self._on_status(self._path_status_shift)
+
+    def _on_frame_leave(self, _event) -> None:
+        """Mouse left PathField — restore simple placeholder and normal status."""
+        self._mouse_in = False
+        if self._ph.active and not self._editing:
+            self._swap_placeholder(self._placeholder_simple)
+            if self._on_status:
+                self._on_status(self._path_status)
+
     # ── Entry-like API ────────────────────────────────────────────
     def get(self) -> str:
-        return str(self.sh.get_cell_data(0, 0) or "")
+        return self._ph.get(self.sh, 0, 0)
 
     def set(self, value: str) -> None:
-        self.sh.set_cell_data(0, 0, value)
+        if not value and self._placeholder_simple:
+            self._show_placeholder()
+        else:
+            self._clear_placeholder()
+            self.sh.set_cell_data(0, 0, value)
         self.sh.redraw()
         if self.sh.MT.align == "ne":
             self._scroll_to_right()
@@ -232,7 +357,13 @@ class PathField(ttk.Frame):
         editing entirely through the Entry.
         """
         self._editing = True
-        self._pre_edit = self.get()
+        # Clear placeholder so the user starts with an empty field.
+        if self._ph.active:
+            self._clear_placeholder()
+            self.sh.redraw()
+            self._pre_edit = ""
+        else:
+            self._pre_edit = self.get()
         self._ov.hide()
         if self._on_begin_edit_cb is not None:
             self._on_begin_edit_cb()
@@ -264,7 +395,10 @@ class PathField(ttk.Frame):
         if self._on_end_edit_cb is not None:
             self._on_end_edit_cb()
         if not cancel:
-            self.sh.set_cell_data(0, 0, val)
+            if val:
+                self.sh.set_cell_data(0, 0, val)
+            elif self._placeholder_simple:
+                self._show_placeholder()
         self.sh.redraw()
         if self.sh.MT.align == "ne":
             self._scroll_to_right()

@@ -618,7 +618,7 @@ def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs
         for cfg_i, stem in enumerate(stems, start=1):
             stem_idx += 1
             if _rt:
-                _rt.progress_stage.set(stem_idx - 1, n_cfgs, f"Composing {stem}\u2026")
+                _rt.progress_stage.set(stem_idx - 1, n_cfgs, f"composing:{stem}")
             # Re-resolve per-stem path: ``yaml_path`` from the pre-filter pass
             # holds only the *last-iterated* stem — leaking it here would log
             # and return the wrong filename for every probe (see GH bug: log
@@ -627,6 +627,11 @@ def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs
             yaml_path = dir_cfgs / f"{stem}.yaml"
             # Reuse cached config from pre-filter pass
             cfg_dc = loaded_cfgs[stem]
+
+            # Attribute progress to this config so GuiTqdm / stage_desc feed
+            # the correct tab cell in ProgressBank.
+            if _pb:
+                _pb.set_cfg(stem)
 
             # Set stage context for logging prefix and GUI progress display
             stage_ctx.set_probe(
@@ -642,10 +647,13 @@ def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs
             lf.info('[{}/{}] probe {} (from "{}")', stem_idx, n_cfgs, pcid, yaml_path.name)
             OmegaConf.update(cfg_dc, "_stem_idx", stem_idx, force_add=True)
             OmegaConf.update(cfg_dc, "_n_cfgs", n_cfgs, force_add=True)
+            bank = getattr(_pb.get_runtime(), "progress_bank", None) if _pb else None
+            ok = False
             try:
                 result = process_fun(cfg_dc)
                 processed_pcids.append(pcid)
                 last_cfg = cfg_dc
+                ok = True
                 if result is not None:
                     # CFG_FROM_ARGS (scan): result=DictConfig — no data processed
                     collected.append((stem, str(yaml_path), result))
@@ -662,6 +670,8 @@ def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs
                 lf.exception("[{}/{}] Processing failed for {}", stem_idx, n_cfgs, pcid)
                 failed_pcids.append(pcid)
             finally:
+                if bank:
+                    bank.finish(stem, ok=ok)
                 gc.collect()  # release previous probe's data before loading next
 
     # Clear stage context after all configs processed

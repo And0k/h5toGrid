@@ -151,7 +151,7 @@ def load_coefs(store, tbl: str):
         return _xr_coefs.load_coefs_from_nc(store_path, tbl)
 
     # HDF5 path — skip if binary I/O disabled (noh5 mode)
-    if not isinstance(store, pd.HDFStore) and store_path.suffix in _constants._EXT_HDF5:
+    if not isinstance(store, pd.HDFStore) and store_path.suffix in _constants.EXT_HDF5:
         if not policy.io():
             return None  # silent skip — caller falls through to YAML coefs
         if not store_path.exists():
@@ -382,7 +382,7 @@ def get_coefs_from_cfg(cfg_in: dict, pcid: str) -> dict:
     cp_default = schema.ConfigIn_InclProc.coefs_path
     if cp_default and cp_default not in coefs_paths:
         # Skip H5 path when binary I/O is unavailable/disabled
-        if cp_default.suffix not in _constants._EXT_HDF5 or policy.io():
+        if cp_default.suffix not in _constants.EXT_HDF5 or policy.io():
             coefs_paths.append(cp_default)
     # Always add yaml_export dir as fallback (may be the only working source
     # when io().h5 is False or the H5 file is missing in dist builds).

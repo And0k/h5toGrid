@@ -24,12 +24,12 @@ coordinates ignore ``tk scaling`` — all pixels via :func:`const.scaled`.
 
 from __future__ import annotations
 
-import math
-import time
 import tkinter as tk
 import tkinter.font as tkfont
 
-from .const import scaled, set_widget_meta, strip_palette
+from ._i18n import STRINGS as _S
+from .const import set_widget_meta
+from .theme import scaled, strip_palette
 
 
 class TabRail(tk.Canvas):
@@ -42,9 +42,10 @@ class TabRail(tk.Canvas):
     LERP = 0.25  # fill easing factor per tick
     ANGLE = 90  # CCW → reads bottom→up; flip to 270 if upside down
 
-    def __init__(self, parent: tk.Widget, on_select) -> None:
+    def __init__(self, parent: tk.Widget, on_select, on_hover=None) -> None:
         super().__init__(parent, highlightthickness=0, takefocus=False)
         self._on_select = on_select
+        self._on_hover = on_hover  # (name | None) → status bar update
         self._pal = strip_palette(self)
         self.configure(bg=self._pal["base"])
         self._font = tkfont.nametofont("TkDefaultFont")
@@ -63,8 +64,7 @@ class TabRail(tk.Canvas):
         self.bind("<Leave>", self._leave)
         set_widget_meta(
             self,
-            status="Configuration rail — click a tab to switch; "
-            "vertical fill = processing progress (top→down)",
+            status=_S["rail.status"],
         )
 
     # ── membership ────────────────────────────────────────────────────
@@ -100,7 +100,7 @@ class TabRail(tk.Canvas):
             self._refresh(name)  # paint: colors, accent, text
             if self._full_label(name) != old:  # '✔' appeared — geometry
                 self._layout()
-        if state == "running" and self._after_id is None:
+        if st["frac"] != st["shown"] and self._after_id is None:
             self._after_id = self.after(self.TICK_MS, self._tick)
 
     def set_selected(self, name: str | None) -> None:
@@ -122,35 +122,73 @@ class TabRail(tk.Canvas):
 
         Ideal = rotated label length + padding; surplus grows tabs capped at
         ``min(GROW_CAP, 35%)`` with the remainder left empty below; shortage
-        protects the selected tab and compresses the rest toward MIN_H.
+        protects the selected tab only when there's room for the rest at MIN_H;
+        otherwise compresses ALL tabs together (selected gets a remainder pixel).
         """
         ideal = {n: self._font.measure(self._full_label(n)) + 2 * scaled(self.PAD_Y) for n in self._names}
         total = sum(ideal.values())
+        n = len(self._names)
         if total < H:  # grow, capped
             surplus = H - total
             return {
-                n: h + min(min(scaled(self.GROW_CAP), h * 35 // 100), h * surplus // max(total, 1))
-                for n, h in ideal.items()
+                n_: h + min(min(scaled(self.GROW_CAP), h * 35 // 100), h * surplus // max(total, 1))
+                for n_, h in ideal.items()
             }
-        if self._selected in ideal and len(self._names) > 1:  # protect selected
-            sel = self._selected
-            heights = {sel: ideal[sel]}
-            heights.update(self._compress({n: h for n, h in ideal.items() if n != sel}, H - ideal[sel]))
+        sel = self._selected if self._selected in ideal and n > 1 else None
+        floor = scaled(self.MIN_H)
+        if sel and ideal[sel] + (n - 1) * floor <= H:
+            # Enough room: protect selected at ideal, compress the rest.
+            sel_h = min(ideal[sel], H)
+            heights = {sel: sel_h}
+            heights.update(self._compress({k: v for k, v in ideal.items() if k != sel}, H - sel_h, sel))
             return heights
-        return self._compress(ideal, H)
+        # Shortage: compress ALL tabs together — every tab stays visible.
+        return self._compress(ideal, H, sel)
 
     @staticmethod
-    def _compress(ideal: dict[str, int], budget: int) -> dict[str, int]:
-        """Waterfill shrink: smaller tabs freeze at ideal first; floor MIN_H.
+    def _compress(ideal: dict[str, int], budget: int, selected: str | None = None) -> dict[str, int]:
+        """Distribute *budget* across tabs — waterfill above floor, even split below.
 
-        May slightly overflow when even floors don't fit — canvas clips.
+        When ``budget >= n * MIN_H``: smaller tabs freeze at ideal first,
+        rest share the remainder with a ``MIN_H`` floor (waterfill).
+        When ``budget < n * MIN_H``: every tab gets a share proportional to
+        its ideal height (so larger labels get more space), with the selected
+        tab receiving a 20% bonus (floored to 1 extra pixel minimum).
+        No tab is invisible.
         """
+        n = len(ideal)
+        if n == 0:
+            return {}
+        floor = scaled(TabRail.MIN_H)
+        if budget < n * floor:
+            # Extreme shortage — equal base, selected gets ~20% bonus.
+            # Every tab visible; selected is noticeably taller.
+            sel_count = 1 if selected and selected in ideal else 0
+            n_others = n - sel_count
+            # bonus = 20% of per-tab share, min 1 px, capped so others stay >= 1
+            per_tab = budget // (n_others + sel_count * 6 // 5)  # 6/5 = 1.2x weight for selected
+            bonus = max(per_tab // 5, 1)
+            sel_h = min(per_tab + bonus, budget - n_others) if sel_count else 0
+            remaining = budget - sel_h
+            base_others = remaining // max(n_others, 1)
+            rem = remaining - base_others * n_others
+            result: dict[str, int] = {}
+            if selected and selected in ideal:
+                result[selected] = max(sel_h, 1)
+            for name in ideal:
+                if name == selected:
+                    continue
+                result[name] = base_others + (1 if rem > 0 else 0)
+                rem -= 1
+            return result
+        # Normal shortage — waterfill with MIN_H floor.
         pool = sorted(ideal, key=ideal.__getitem__)
-        heights, remaining = {}, budget
-        for i, n in enumerate(pool):
-            share = remaining // max(len(pool) - i, 1)
-            h = min(ideal[n], max(share, scaled(TabRail.MIN_H)))
-            heights[n] = h
+        heights: dict[str, int] = {}
+        remaining = budget
+        for i, name in enumerate(pool):
+            share = remaining // max(n - i, 1)
+            h = min(ideal[name], max(share, floor))
+            heights[name] = h
             remaining -= h
         return heights
 
@@ -177,7 +215,7 @@ class TabRail(tk.Canvas):
                 # progress column
                 "track": self.create_rectangle(0, y0, PW, y1, fill=pal["track"], width=0),
                 "fill": self.create_rectangle(0, y0, PW, y0, fill=pal["run"], width=0),
-                "edge": self.create_rectangle(0, y0, PW, y0, fill=pal["edge"], width=0),
+                # "edge": self.create_rectangle(0, y0, PW, y0, fill=pal["edge"], width=0),
                 # tab column
                 "face": self.create_rectangle(tx0, y0, tx1, y1, fill=pal["track"], width=0),
                 "acc": self.create_rectangle(
@@ -199,18 +237,6 @@ class TabRail(tk.Canvas):
         front = c["y0"] + int(c["h"] * self._st[name]["shown"])  # grows top→down
         self.coords(c["fill"], 0, c["y0"], scaled(self.PROG_W), front)
 
-    def _geom_edge(self, name: str, t: float) -> None:
-        """Glimmer band riding the fill front while running."""
-        c, st = self._cells[name], self._st[name]
-        if st["shown"] < 0.02:  # nothing to ride on yet
-            self.itemconfigure(c["edge"], state="hidden")
-            return
-        ew = scaled(6)
-        front = c["y0"] + int(c["h"] * st["shown"])
-        dy = math.sin(t * 3.0) * scaled(3)
-        self.itemconfigure(c["edge"], state="normal")
-        self.coords(c["edge"], 0, front - ew + dy, scaled(self.PROG_W), front + dy)
-
     # ── rendering ─────────────────────────────────────────────────────
     def _refresh(self, name: str) -> None:
         c = self._cells.get(name)
@@ -224,13 +250,14 @@ class TabRail(tk.Canvas):
         dim = st["state"] == "pending" and not sel
         self.itemconfigure(c["acc"], state="normal" if sel else "hidden")
         self.itemconfigure(c["text"], fill=pal["dim"] if dim else pal["text"], text=self._label(name))
-        self.itemconfigure(c["edge"], state="normal" if st["state"] == "running" else "hidden")
         self._geom_fill(name)
 
     def _full_label(self, name: str) -> str:
         """Untruncated label — length measurement source for _heights."""
         st = self._st[name]
-        return ("✔ " if st["state"] == "done" else "") + name + ("*" if st["dirty"] else "")
+        # return ("✔ " if st["state"] == "done" else "") + name + ("*" if st["dirty"] else "")
+        pref = {"running": "▸ ", "done": "✔ "}.get(st["state"], "")
+        return pref + name + ("*" if st["dirty"] else "")
 
     def _label(self, name: str) -> str:
         """Fit rotated label into cell height (text length = vertical extent)."""
@@ -246,9 +273,9 @@ class TabRail(tk.Canvas):
 
     # ── animation (lerp fill + glimmer; idles itself to sleep) ───────
     def _tick(self) -> None:
+        """Easing of fills toward targets; stops once all settled — no idle motion."""
         self._after_id = None
         busy = False
-        t = time.monotonic()
         for name in self._names:
             st = self._st[name]
             if abs(st["frac"] - st["shown"]) > 0.002:
@@ -256,10 +283,9 @@ class TabRail(tk.Canvas):
                 busy = True
             elif st["shown"] != st["frac"]:
                 st["shown"] = st["frac"]
+            else:
+                continue  # settled — no redraw
             self._geom_fill(name)
-            if st["state"] == "running":
-                busy = True
-                self._geom_edge(name, t)
         if busy:
             self._after_id = self.after(self.TICK_MS, self._tick)
 
@@ -273,17 +299,21 @@ class TabRail(tk.Canvas):
             self._on_select(name)
 
     def _motion(self, e: tk.Event) -> None:
-        name = self._at(e.y) if e.x >= scaled(self.PROG_W) else None
+        name = self._at(e.y)  # hover over both columns
         if name == self._hovered:
             return
         old, self._hovered = self._hovered, name
         for n in (old, name):
             if n in self._cells:
                 self._refresh(n)
-        self.configure(cursor="hand2" if name else "")
+        self.configure(cursor="hand2" if name and e.x >= scaled(self.PROG_W) else "")
+        if self._on_hover:
+            self._on_hover(name)
 
     def _leave(self, _e: tk.Event) -> None:
         old, self._hovered = self._hovered, None
         if old in self._cells:
             self._refresh(old)
         self.configure(cursor="")
+        if self._on_hover:
+            self._on_hover(None)

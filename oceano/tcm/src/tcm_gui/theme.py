@@ -17,7 +17,7 @@ import tkinter as tk
 from contextlib import suppress
 from tkinter import ttk
 
-from tcm_gui.const import COLOR_MODE
+from tcm_gui.const import COLOR_MODE, UI_SCALE
 
 _l = logging.getLogger(__name__)
 
@@ -45,8 +45,6 @@ TAG_COLORS: dict[str, str] = {
     "error": "#CC0000",
     "critical": "#CC0000",
 }
-
-
 
 
 # Dark-mode color overrides — keyed by the same names as the module globals.
@@ -305,3 +303,43 @@ def resolved_entry_bg(widget) -> str:
         or style.lookup("TEntry", "background")
         or ENTRY_BG_FALLBACK,
     )
+
+
+# ── mixing / scaling helpers ────────────────────────────────────────────────
+
+
+def mix_hex(a: str, b: str, t: float) -> str:
+    """Mix two #rrggbb colors: t=0 → a, t=1 → b."""
+    ca = tuple(int(a[i : i + 2], 16) for i in (1, 3, 5))
+    cb = tuple(int(b[i : i + 2], 16) for i in (1, 3, 5))
+    return "#{:02x}{:02x}{:02x}".format(*(round(x + (y - x) * t) for x, y in zip(ca, cb)))
+
+
+def scaled(px: int) -> int:
+    """Scale manual pixel geometry (Canvas art, fixed heights) by UI_SCALE.
+
+    ``tk scaling`` does not affect canvas coordinates — see
+    :func:`apply_ui_scale`.  Every manual pixel in widget modules goes
+    through this helper.
+    """
+    return round(px * UI_SCALE)
+
+
+# ── tab strip palette (derived from the live theme) ─────────────────────────
+
+
+def strip_palette(widget) -> dict[str, str]:
+    """TabStrip colors — derived from theme + existing tokens, no new hues."""
+    bg = resolved_frame_bg(widget)
+    return {
+        "base": bg,  # strip background
+        "track": mix_hex(bg, "#000000", 0.07),  # resting cell face
+        "hover": mix_hex(bg, "#FFFFFF", 0.60),  # hovered cell face
+        "run": mix_hex(BLUE_FG, "#FFFFFF", 0.55),  # running fill — steel
+        "done": mix_hex("#2E7D32", "#FFFFFF", 0.60),  # done fill — soft green
+        "error": mix_hex(TAG_COLORS["error"], "#FFFFFF", 0.60),
+        # "edge": mix_hex(BLUE_FG, "#FFFFFF", 0.85),  # glimmer at fill front
+        "sel": BLUE_FG,  # selection underline
+        "text": FG_DEFAULT,
+        "dim": DEFAULT_FG,  # pending / unselected
+    }

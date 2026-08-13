@@ -17,14 +17,26 @@ WEIGHTS: Final[dict[str, float]] = dict(
     Scan=5, Load=10, Prepare=5, Processing=60, Save=10, Cleanup=5, Finished=5
 )
 _ORDER: Final[dict[str, int]] = {s: i for i, s in enumerate(STAGES)}
+# Pipeline Stage enum values → canonical bank stages.
+# 4-letter prefix covers Load ("load"), Processing ("proc"), Scan, Cleanup,
+# Finished; explicit map for the rest.
+_ALIASES: Final[dict[str, str]] = {
+    "coefs": "Prepare",
+    "nc": "Save",
+    "tsv": "Save",
+    "combine": "Save",
+}
 
 
 def canon_stage(text: str) -> str:
-    """Free-form phase description → canonical stage by 4-letter prefix.
+    """Free-form phase description → canonical stage.
 
-    ``"Saving results"`` → ``"Save"``; unknown → ``""`` (ignored by the bank).
+    ``"Saving results"`` → ``"Save"``; ``"coefs"`` → ``"Prepare"``;
+    unknown → ``""`` (ignored by the bank).
     """
     t = text.strip().lower()
+    if mapped := _ALIASES.get(t):
+        return mapped
     return next((s for s in STAGES if t.startswith(s.lower()[:4])), "")
 
 

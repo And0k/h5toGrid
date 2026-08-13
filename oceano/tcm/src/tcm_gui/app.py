@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import logging
 import sys
 import tkinter as tk
 from collections.abc import Sequence
@@ -17,15 +18,12 @@ from tcm import cli, config_yaml, format, incl_calc, paths, schema
 from tcm.states import ScanStage
 from tcm_gui.cli_cfg import default_cfg
 
-# Chrome i18n strings — loaded via const.load_str() (auto-detects OS locale).
-from .const import load_str
-
-STR: dict[str, str] = load_str()
-
-from ._browse_button import BrowseButtonManager, _is_shift_pressed
+from ._browse_button import DATA_FILETYPES, SEARCH_FILETYPES, BrowseButtonManager, _is_shift_pressed
 from ._help import help_for_path
+from ._i18n import STRINGS as _S  # Chrome with auto-detection of OS locale if LANG=auto
 from ._path_field import PathField
 from ._rtf_clipboard import copy_rich
+from ._tab_rail import TabRail
 from .coef_sheet import ConfigSheet
 from .const import (
     UIScale,
@@ -40,6 +38,14 @@ from .runtime import Runtime
 from .theme import apply_theme_defaults
 from .worker import Worker
 
+lf = logging.getLogger(__name__)
+
+
+def _tip_body(path: str, **kwargs: str) -> str:
+    """Return help body text or empty string when the entry / body is absent."""
+    e = help_for_path(path, **kwargs)
+    return e.body if e and isinstance(e.body, str) and e.body else ""
+
 
 class App:
     APP_ID = "Vendor.Product"  # todo: Fix, not hardcode here
@@ -53,7 +59,7 @@ class App:
         self.ui = UIScale(self.root)
         configure_ui(self.root)
         self._theme = apply_theme_defaults(self.root)  # dark/light log colors
-        self.root.title("TCM")
+        self.root.title(_S.get("window.title", "TCM"))
         self.root.geometry("1100x800")
 
         # use exe icon
@@ -62,6 +68,7 @@ class App:
         self.set_window_icon()
 
         self.rt = Runtime()
+        self._current: str | None = None  # currently selected page stem
         # Install the QueueHandler on the root logger once, for the lifetime
         # of the app, so log calls from the GUI main thread (e.g.
         # ``_reload_coefs`` triggered by treeview/cell interactions) reach
@@ -70,6 +77,8 @@ class App:
         # so worker-thread logs also reach the queue.
         self.rt.queue_handler = install(self.rt.log_queue, self.rt.pause_gate)
         self.wk = Worker(self.rt)
+        self._tip_active: bool = False  # error detail shown in _status_lbl; suppresses status updates
+        self._error_active = False
         self._pages: dict[str, ConfigSheet] = {}
         self._yaml_paths: dict[str, Path] = {}
         self._tab_of: dict[str, ttk.Frame] = {}  # stem → notebook tab frame
@@ -98,7 +107,7 @@ class App:
             self.root.after(100, self._scan)
         else:
             # No CLI path — show a placeholder page so the notebook isn't empty.
-            self._add_page("(default)", default_cfg())
+            self._add_page(_S.get("default_page.stem", "(default)"), default_cfg())
         self._poll()
 
     @property
@@ -123,13 +132,15 @@ class App:
         f0 = ttk.Frame(r)
         f0.grid(row=0, column=0, sticky="ew", padx=4, pady=2)
         f0.columnconfigure(1, weight=1)
-        self._path_lbl = ttk.Label(f0, text=STR["path_lbl.tooltip"])
+        self._path_lbl = ttk.Label(f0, text=_S["path_lbl.tooltip"])
         self._path_lbl.grid(row=0, column=0, padx=(0, 4))
         self._path_field = PathField(
             f0,
             on_commit=self._on_path_changed,
+            filetypes=SEARCH_FILETYPES,
             on_status=self._on_browse_status,
-            status_hint=STR["browse_btn.status"],
+            status_hint=_S["browse_btn.status"],
+            on_shift=self._on_top_shift,
         )
         self._path_field.grid(row=0, column=1, sticky="ew")
         # Status message on hover — rebind on the Sheet's MT canvas
@@ -137,27 +148,35 @@ class App:
         self._path_field.sh.MT.bind("<Enter>", lambda _: self._on_path_hover_in(), add="+")
         self._path_field.sh.MT.bind("<Leave>", lambda _: self._on_path_hover_out(), add="+")
 
-        # §2 Overall status label + progress bar (dual-purpose: scan state / progress)
+        # §2 Overall status label — scan state / run-level progress text
         f1 = ttk.Frame(r)
         f1.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 0))
-        f1.columnconfigure(0, weight=1)  # label stretches; bar is fixed-width
-        self._overall_lbl = ttk.Label(f1, text=self._cfg_state)
+        f1.columnconfigure(0, weight=1)
+        self._overall_lbl = ttk.Label(f1, text=self._translate_scan_stage(self._cfg_state))
         self._overall_lbl.grid(row=0, column=0, sticky="w")
-        self._prog_all = ttk.Progressbar(f1, mode="determinate", length=220)
-        # _prog_all grid-managed on demand by _poll_progress (hidden by default)
+        # §2b Progress status — current processing stage, right-aligned,
+        # separate from the tab rail's visual fill.
+        self._prog_status = ttk.Label(f1, text="", anchor="e")
+        self._prog_status.grid(row=0, column=1, sticky="e", padx=(8, 0))
+        self._status_hovering = False
+        self._status_bbox: tuple[int, int, int, int] | None = None  # screen-rect recorded at Enter
 
-        # §3 Notebook — full width, below the configuration label
-        self.nb = ttk.Notebook(r)
-        self.nb.grid(row=2, column=0, sticky="nsew", padx=4, pady=(0, 2))
-        # Tab hover: show config-file status when pointer is over a tab label.
-        # Tab frames store their status in widget_meta (set by _add_page);
-        # _on_nb_motion reads it for the tab under the pointer.
-        self.nb.bind("<Motion>", self._on_nb_motion, add="+")
-        self.nb.bind("<Leave>", self._on_nb_leave, add="+")
+        # §3 Main area — vertical rail left, page stack right.
+        # No notebook: rail owns selection entirely, tkraise() switches pages.
+        self._main = ttk.Frame(r)
+        self._main.grid(row=2, column=0, sticky="nsew", padx=4, pady=(0, 2))
+        self._main.columnconfigure(1, weight=1)
+        self._main.rowconfigure(0, weight=1)
+        self._rail = TabRail(self._main, on_select=self._select_tab, on_hover=self._on_rail_hover)
+        self._rail.grid(row=0, column=0, sticky="ns")
+        self._stack = ttk.Frame(self._main)
+        self._stack.grid(row=0, column=1, sticky="nsew")
+        self._stack.rowconfigure(0, weight=1)
+        self._stack.columnconfigure(0, weight=1)
 
-        # §4 Run button — floats at notebook bottom-right, parented on root for z-order
-        self._run_btn = ttk.Button(r, text=STR["run_btn.text"], command=self._on_run)
-        self._run_btn.place(in_=self.nb, relx=1.0, rely=1.0, anchor="se", x=-24, y=-24)
+        # §4 Run button — floats at main area bottom-right, parented on root for z-order
+        self._run_btn = ttk.Button(r, text=_S["run_btn.text"], command=self._on_run)
+        self._run_btn.place(in_=self._main, relx=1.0, rely=1.0, anchor="se", x=-24, y=-24)
         r.bind("<Configure>", lambda _: self._run_btn.lift(), add="+")
 
         # §5 Log — tk.Text + ttk.Scrollbar in a ttk.Frame (ScrolledText uses a
@@ -193,18 +212,27 @@ class App:
         self._log.bind("<MouseWheel>", self._on_log_scroll, add="+")
         self._log.bind("<Button-4>", self._on_log_scroll, add="+")  # Linux scroll up
         self._log.bind("<Button-5>", self._on_log_scroll, add="+")  # Linux scroll down
+        # Log status: show only while mouse is actively moving over the log.
+        # A short timer clears the text when motion stops or pointer leaves.
+        self._log_status_job: str | None = None
+        self._log_status_fade_ms = 600
+        self._log.bind("<Motion>", self._on_log_motion, add="+")
+        self._log.bind("<Leave>", self._on_log_leave, add="+")
         for lvl, clr in tcm_gui.theme.TAG_COLORS.items():
             self._log.tag_configure(lvl, foreground=clr)
         self._log.tag_configure("func", foreground=tcm_gui.theme.FUNC_COLOR)
-        # ``Ctrl+C`` is bound at the ROOT level (not on ``_log``): ``_log`` is
-        # ``state='disabled'`` so it can never take keyboard focus, meaning a
-        # widget-scoped ``<Control-c>`` binding would never fire and the user
-        # would get Tk's default ``<<Copy>>`` (plain text only) — never RTF
-        # colors.  The root handler checks for a ``_log`` selection first; if
-        # present it serialises colored RTF via :func:`copy_rich` and returns
-        # ``'break'`` to suppress the default.  Otherwise it falls through so
-        # the focused widget (e.g. ``_path_field`` ttk.Entry) keeps normal copy.
-        self.root.bind("<Control-c>", self._on_copy_rich, add="+")
+        # ``<<Copy>>`` is the virtual event Tk synthesises from Ctrl+C /
+        # Ctrl+Ins at the C level (``<Control-Key-c>`` → ``<<Copy>>`` via
+        # ``event add``).  Binding ``<Control-c>`` on root is dead code: the
+        # virtual event mapping intercepts the raw keypress BEFORE any
+        # ``<Control-c>`` binding sees it.  ``_log`` is ``state='disabled'``
+        # so it can never take keyboard focus — a widget-scoped binding would
+        # never fire.  The root ``<<Copy>>`` handler checks for a ``_log``
+        # selection first; if present it serialises colored RTF via
+        # :func:`copy_rich` and returns ``'break'`` to suppress further
+        # propagation.  Otherwise it falls through so the focused widget
+        # (e.g. ``_path_field`` ttk.Entry) keeps normal copy behaviour.
+        self.root.bind("<<Copy>>", self._on_copy_rich, add="+")
 
         # §6 GUI status — MarkdownLabel overlaid bottom-left, dynamic width.
         self._status_lbl = MarkdownLabel(
@@ -236,8 +264,15 @@ class App:
         self._prog_stage.pack(side="bottom", fill="x")
         self._prog_show_job: str | None = None  # after() id for delayed show
 
-        # Z-order: mouse motion → GUI status on top.
+        # Z-order: mouse motion lifts GUI status (bottom-left) above floater.
         r.bind("<Motion>", lambda _: self._status_lbl.lift(), add="+")
+        # Esc dismisses the error detail tooltip shown in _status_lbl.
+        r.bind("<Escape>", lambda _e: self._hide_tip(), add="+")
+        # Hover-hide: <Enter> on any status widget hides both; leave is detected
+        # via root <Motion> + recorded bbox (hidden widgets can't fire <Leave>).
+        for w in (self._prog_status, self._prog_floater, self._prog_stage_text, self._prog_stage):
+            w.bind("<Enter>", self._on_status_enter, add="+")
+        r.bind("<Motion>", self._on_motion_check_hover, add="+")
 
         # One pass: bind every chrome ``self._*`` widget to its help text / status
         # from STR.  No per-widget ``set_widget_meta`` calls above — role is derived
@@ -253,9 +288,10 @@ class App:
         wires hover-to-status for every registered widget.  Widgets that already
         have dedicated hover handlers (``_path_field``, ``nb``) are skipped —
         their handlers are more specific (path hovering guard, notebook identify).
+        ``_log`` is skipped: it uses its own Motion/Leave with a fade timer.
         """
         # Widgets with their own hover handling — skip to avoid conflicts.
-        _skip = {self._path_field, self.nb}
+        _skip = {self._path_field, self._rail, self._log}
         for w in widget_meta:
             if not isinstance(w, tk.Misc) or w in _skip:
                 continue
@@ -269,7 +305,7 @@ class App:
         w = event.widget
         if status := get_widget_meta(w, "status"):
             self._chrome_hovering = w
-            self._status_lbl.set_text(status)
+            self._set_status(status)
 
     def _on_chrome_leave(self, _event: tk.Event) -> None:
         """Generic chrome leave: clear hover flag."""
@@ -289,13 +325,13 @@ class App:
             if not isinstance(w, tk.Misc):
                 continue
             role = attr.lstrip("_")
-            tooltip = STR.get(f"{role}.tooltip")
+            tooltip = _S.get(f"{role}.tooltip")
             status: object
             if role == "run_btn":
                 # Dynamic: reflected busy / paused at hover time, not registration.
                 status = self._run_btn_status
             else:
-                status = STR.get(f"{role}.status")
+                status = _S.get(f"{role}.status")
             if tooltip is None and status is None:
                 continue
             kwargs: dict[str, object] = {}
@@ -308,8 +344,8 @@ class App:
     def _run_btn_status(self) -> str:
         """Dynamic Run button status: reflects busy / paused state, read live."""
         if not self.wk.busy:
-            return STR["run.start"]
-        return STR["run.resume"] if self.rt.pause_gate.paused else STR["run.pause"]
+            return _S["run.start"]
+        return _S["run.resume"] if self.rt.pause_gate.paused else _S["run.pause"]
 
     def _fit_status_font(self) -> None:
         """Mark status label font as ready for auto-sizing.
@@ -329,60 +365,119 @@ class App:
         self._status_lbl.mark_font_ready()
         # Re-render cached content with scaled font.
         if not self._status_lbl.rerender():
-            if self._initial_scan and not self._prog_floater.winfo_ismapped():
+            if self._initial_scan and not self._prog_floater.place_info():
                 self._prog_floater.place(relx=1.0, rely=1.0, anchor="se", x=-8, y=-4)
-                self._prog_stage_text.config(text=STR["status.loading"])
+                self._prog_stage_text.config(text=_S["status.loading"])
             elif not self._initial_scan:
-                self._status_lbl.set_text(STR["status.ready"], raw=True)
+                self._set_status(_S["status.ready"], raw=True)
 
     def _on_path_hover_in(self) -> None:
-        """Mouse enters Entry — show status hint from widget_meta registry."""
+        """Mouse enters PathField — show doc-driven status; Shift swaps to browse mode hint."""
         self._path_hovering = True
-        self._status_lbl.set_text(get_widget_meta(self._path_field, "status"))
+        # Show Shift-aware text on entry; the BrowseOverlay's 80 ms polling
+        # re-publishes via _resolve_hint() for ongoing Shift toggles.
+        status = self._path_field._path_status
+        if _is_shift_pressed() and self._path_field._shift_status:
+            status = self._path_field._shift_status
+        self._set_status(status)
 
     def _on_path_hover_out(self) -> None:
         """Mouse leaves Entry — clear hover flag (status restored by poll)."""
         self._path_hovering = False
 
     def _on_browse_status(self, text: str) -> None:
-        """Browse button hover: show Shift hint, guard against poll clobber."""
-        self._browse_hovering = bool(text)
-        self._status_lbl.set_text(text)
+        """Browse button hover: show hint on enter; on leave restore path status.
 
-    # ── §3 notebook tab hover ────────────────────────────────────────
-
-    _nb_hovering: bool = False  # guards against poll clobbering tab status
-
-    def _on_nb_motion(self, event: tk.Event) -> None:
-        """Pointer over notebook — show config-file status when over a tab label.
-
-        ``identify(x, y)`` returns ``"tab"`` (top edge of tab) or ``"label"``
-        (deeper in tab strip) when the pointer is over a tab; ``"client"`` or
-        ``""`` otherwise.  The 3-arg Tcl form ``identify tab x y`` returns the
-        integer tab index directly.
+        ``text=""`` fires from BrowseOverlay ``<Leave>`` (mouse moved off the
+        browse button back to the host widget).  Instead of clearing the status
+        bar, restore the PathField's own hover status so the cell help persists.
         """
-        try:
-            tab_idx = self.nb.tk.call(str(self.nb), "identify", "tab", event.x, event.y)
-        except (tk.TclError, AttributeError):
-            return
-        # 3-arg form returns int index or "" when not over a tab.
-        if tab_idx == "" or tab_idx is None:
-            if self._nb_hovering:
-                self._nb_hovering = False
-            return
-        tabs = self.nb.tabs()
-        tab_idx_int = int(tab_idx)
-        if tab_idx_int >= len(tabs):
-            return
-        frame = self.nb.nametowidget(tabs[tab_idx_int])
-        status = get_widget_meta(frame, "status")
-        if not self._nb_hovering:
-            self._nb_hovering = True
-        self._status_lbl.set_text(status, raw=True)
+        self._browse_hovering = bool(text)
+        if text:
+            self._set_status(text)
+        elif self._path_hovering:
+            self._set_status(self._path_field._path_status)
 
-    def _on_nb_leave(self, _event: tk.Event) -> None:
-        """Pointer left the notebook — clear tab hover flag."""
-        self._nb_hovering = False
+    def _on_status_enter(self, _event: tk.Event) -> None:
+        """Mouse entered status text or floater — hide both.
+
+        Records the union bounding box of visible status widgets BEFORE hiding,
+        so root ``<Motion>`` can detect leave (hidden widgets can't fire
+        ``<Leave>``).  The full error text is always in the log; hover hiding
+        the error floater is fine — the user reads the log for details.
+        """
+        self._status_hovering = True
+        self._status_bbox = self._status_bounds()
+        self._prog_status.grid_remove()
+        if self._prog_floater.place_info():
+            self._prog_floater.place_forget()
+
+    def _status_bounds(self) -> tuple[int, int, int, int] | None:
+        """Union screen-rect of managed status widgets (x0, y0, x1, y1).
+
+        Uses ``grid_info()`` / ``place_info()`` (not ``winfo_ismapped()``) so
+        the check works before the window is fully realized and in tests
+        with a withdrawn root.
+        """
+        ws = [w for w in (self._prog_status, self._prog_floater) if (w.grid_info() or w.place_info())]
+        if not ws:
+            return None
+        return (
+            min(w.winfo_rootx() for w in ws),
+            min(w.winfo_rooty() for w in ws),
+            max(w.winfo_rootx() + w.winfo_width() for w in ws),
+            max(w.winfo_rooty() + w.winfo_height() for w in ws),
+        )
+
+    def _on_motion_check_hover(self, event: tk.Event) -> None:
+        """Clear ``_status_hovering`` when the mouse leaves the recorded status bbox.
+
+        Hidden widgets can't fire ``<Leave>``, so leave is detected here on root
+        ``<Motion>`` using the bbox recorded at ``_on_status_enter`` time.
+        """
+        if not self._status_hovering or self._status_bbox is None:
+            return
+        x0, y0, x1, y1 = self._status_bbox
+        if not (x0 <= event.x_root <= x1 and y0 <= event.y_root <= y1):
+            self._status_hovering = False
+
+    def _on_top_shift(self, is_file: bool) -> None:
+        """Top PathField Shift state changed — swap status text.
+
+        Fires every 80 ms from the BrowseOverlay Shift poll when the state
+        transitions (dir ↔ file).  Only updates when ``_path_hovering`` is
+        True so irrelevant Shift events from other overlays are ignored.
+        """
+        if not self._path_hovering:
+            return
+        status = self._path_field._shift_status if is_file else self._path_field._path_status
+        self._set_status(status)
+
+    # ── §3 rail ↔ page stack sync ────────────────────────────────────
+
+    _nb_hovering: bool = False  # set by _on_rail_hover, read by _any_hovering
+
+    def _select_tab(self, stem: str) -> None:
+        """Switch to *stem* page (rail click or programmatic).
+
+        No events, no guards — the rail is the sole selection owner;
+        tkraise() is the entire mechanism.  All pages stay mapped, so
+        ConfigSheets keep their state across switches.
+        """
+        if (frame := self._tab_of.get(stem)) is None:
+            return
+        frame.tkraise()
+        self._current = stem
+        self._rail.set_selected(stem)
+
+    def _on_rail_hover(self, name: str | None) -> None:
+        """Rail hover callback — show yaml path in status bar."""
+        if name:
+            self._nb_hovering = True
+            if frame := self._tab_of.get(name):
+                self._set_status(get_widget_meta(frame, "status"), raw=True)
+        else:
+            self._nb_hovering = False
 
     @staticmethod
     def _fmt_multi(paths: tuple[str, ...]) -> str:
@@ -400,61 +495,70 @@ class App:
 
     def _on_path_changed(self, _path: str) -> None:
         """PathField committed a new path — trigger scan with immediate overlay."""
+        self._error_active = False
+        self._hide_tip()
         self._initial_scan = True
         # Show progress overlay immediately (skip "Ready" → "Loading…" transition).
-        self._status_lbl.set_text("", raw=True)
-        if self._prog_floater.winfo_ismapped():
+        self._set_status("", raw=True)
+        if self._prog_floater.place_info():
             self._prog_floater.lift()
         else:
             self._prog_floater.place(relx=1.0, rely=1.0, anchor="se", x=-8, y=-4)
-        self._prog_stage_text.config(text=STR["status.loading"])
+        self._prog_stage_text.config(text=_S["status.loading"])
         self._scan()
 
     def _scan(self) -> None:
         path = self._path_field.get().strip()
         if path:
+            # Shift+browse stores comma-separated paths; reformat as regex
+            # alternation so find_dir_raw_absolute can resolve the _raw/ anchor.
+            if "," in path:
+                path = self._fmt_multi(tuple(path.split(",")))
+                self._path_field.set(path)
             self._clear_log()
             # Live path field — not the stale startup argv — drives the scan,
             # so a GUI browse selection of ``_raw`` rescans that directory.
+            # YAML auto-detection (`.yaml`/`.yml` → `input.yaml_path` filter)
+            # happens in processing.run — no GUI-side plumbing needed.
             self.wk.scan(self._original_argv, path)
 
     # ── §2 page management ──────────────────────────────────────────
 
     def _add_page(self, stem: str, cfg: dict, yaml_path: Path | None = None) -> None:
-        frame = ttk.Frame(self.nb)
-        self.nb.add(frame, text=stem)
+        frame = ttk.Frame(self._stack)
+        frame.grid(row=0, column=0, sticky="nsew")  # all pages share cell (0,0)
         self._tab_of[stem] = frame
-        # Dynamic widgets (per-config tabs) live outside App attr names, so the
-        # autorole loop in _register_chrome_help can't see them — bind here.
-        # Format: "Configuration cfg_proc/run/stem.yaml" relative to the
-        # ``_raw`` anchor that ``processing.run`` actually uses — NOT the raw
-        # field text, which may point *into* ``_raw`` (e.g. ``_raw/<cruise>``)
-        # while configs live directly under ``_raw/cfg_proc/``. Mismatch makes
-        # ``relative_to`` raise → fallback to bare filename (loss of context).
+        # Status for rail hover — relative yaml path when available.
         if yaml_path is not None and (field := self._path_field.get().strip()):
             anchor = paths.find_dir_raw_absolute(Path(field).absolute())
             try:
                 rel = Path(yaml_path).relative_to(anchor)
-                status_text = STR["tab.status"].format(path=rel)
+                status_text = _S["tab.status"].format(path=rel)
             except ValueError:
-                status_text = STR["tab.status"].format(path=yaml_path.name)
+                status_text = _S["tab.status"].format(path=yaml_path.name)
         else:
-            status_text = STR["tab.status"].format(path=stem)
+            status_text = _S["tab.status"].format(path=stem)
         set_widget_meta(frame, status=status_text)
+        self._rail.add_tab(stem)
 
-        cs = ConfigSheet(frame, status_hint=STR["browse_btn.status"])
+        cs = ConfigSheet(frame, status_hint=_S["browse_btn.status"])
         cs.sh.pack(fill="both", expand=True, padx=2, pady=2)
         cs._mgr = BrowseButtonManager(
             cs.sh,
             on_path_changed=lambda path: self._set_coefs_and_reload(stem, path),
             on_edit_restyler=cs._apply_edit_value,
             on_status=self._on_browse_status,
-            status_hint=STR["browse_btn.status"],
+            status_hint=_S.get("sheet.input.path", ""),
+            filetypes=DATA_FILETYPES,
+            dir_title="",
         )
         cs.load(cfg, full=self._full_mode, config_root=schema.Config, return_enum=schema.Return)
-        cs.on_hover_status = lambda msg, md=False: self._status_lbl.set_text(msg, raw=not md)
-        cs._empty_area_hint = STR["empty_area.synced" if yaml_path is not None else "empty_area.unsaved"]
+        cs.on_hover_status = lambda msg, md=False: self._set_status(msg, raw=not md)
+        cs.on_edit_begin = self._hide_tip
+        cs._empty_area_hint = _S["empty_area.synced" if yaml_path is not None else "empty_area.unsaved"]
         self._pages[stem] = cs
+        if len(self._tab_of) == 1:  # first page owns the stack
+            self._select_tab(stem)
 
     def _set_coefs_and_reload(self, stem: str, coefs_path: str) -> None:
         """Called from ConfigSheet when ``input.coefs_path`` cell changes."""
@@ -462,7 +566,11 @@ class App:
         if not cs or not coefs_path.strip():
             return
         tbl = format.pcid_to_raw_name(format.stem_to_pcid(stem))
-        coefs = incl_calc.coefs.get_coefs(coefs_path.split(","), tbl)
+        try:
+            coefs = incl_calc.coefs.get_coefs(coefs_path.split(","), tbl)
+        except Exception:
+            lf.exception("Failed to load coefficients from %s", coefs_path)
+            return
         cs._cfg.setdefault("input", {})["coefs"] = coefs
         cs._cfg.setdefault("input", {})["coefs_path"] = coefs_path
         cs.load(cs._cfg, full=self._full_mode, config_root=schema.Config, return_enum=schema.Return)
@@ -473,21 +581,18 @@ class App:
         if self.wk.busy:
             gate = self.rt.pause_gate
             (gate.resume if gate.paused else gate.pause)()
-            self._run_btn.config(text=STR["run_btn.resume"] if gate.paused else STR["run_btn.pause"])
+            self._run_btn.config(text=_S["run_btn.resume"] if gate.paused else _S["run_btn.pause"])
             return
         stems = list(self._pages)
         if not stems:
             return
         for s, cs in self._pages.items():
             self._write_coefs(s, cs)
-        self._clear_log()
+        self._clear_log()  # resets _error_active + hides tip
         self._cfg_detail = ""
-        self._run_btn.config(text=STR["run_btn.pause"])
-        # Show a sliver on overall bar immediately — before the first stage tick
-        self._prog_all.config(value=0, maximum=1)
-        if not self._prog_all.winfo_ismapped():
-            self._prog_all.grid(row=0, column=1, sticky="e", padx=(8, 0))
-        self._overall_lbl.config(text=STR["status.starting"])
+        self._run_btn.config(text=_S["run_btn.pause"])
+        self.rt.progress_bank.run_start(stems)
+        self._overall_lbl.config(text=_S["status.starting"])
         self.wk.run(self._path_field.get(), stems)
 
     def _write_coefs(self, stem: str, cs: ConfigSheet) -> None:
@@ -521,14 +626,30 @@ class App:
         self.root.after(self.POLL, self._poll)
 
     def _poll_dirty_tabs(self) -> None:
-        """Append/remove '*' on tab titles to reflect unsaved edits."""
+        """Sync dirty indicator on rail cells."""
         for stem, cs in self._pages.items():
-            if (frame := self._tab_of.get(stem)) is None:
-                continue
-            current = self.nb.tab(frame, "text")
-            desired = f"{stem}*" if cs.is_dirty else stem
-            if current != desired:
-                self.nb.tab(frame, text=desired)
+            self._rail.set_dirty(stem, cs.is_dirty)
+
+    def _on_log_motion(self, _event: tk.Event) -> None:
+        """Show log status text while mouse is actively moving; fade on pause."""
+        if (status := get_widget_meta(self._log, "status")) is not None:
+            self._set_status(status)
+        # Reset the fade timer on every motion tick.
+        if self._log_status_job is not None:
+            self.root.after_cancel(self._log_status_job)
+        self._log_status_job = self.root.after(self._log_status_fade_ms, self._on_log_status_fade)
+
+    def _on_log_leave(self, _event: tk.Event) -> None:
+        """Clear log status text immediately when pointer leaves."""
+        if self._log_status_job is not None:
+            self.root.after_cancel(self._log_status_job)
+            self._log_status_job = None
+        self._set_status("", raw=True)
+
+    def _on_log_status_fade(self) -> None:
+        """Fade timer expired — clear the log status text."""
+        self._log_status_job = None
+        self._set_status("", raw=True)
 
     def _on_log_scroll(self, _event: tk.Event) -> None:
         """Disable auto-scroll when user scrolls up; re-enable at bottom."""
@@ -548,65 +669,102 @@ class App:
         self._log.config(state="disabled")
 
     def _on_copy_rich(self, _event: tk.Event) -> str | None:
-        """Root-level ``<Control-c>`` → copy ``_log`` selection as RTF, else fall through.
+        """Root-level ``<<Copy>>`` → copy ``_log`` selection as RTF, else fall through.
 
         ``_log`` is ``state='disabled'`` and so cannot receive keyboard focus, so
-        a widget-scoped ``<Control-c>`` binding would never fire (the user would
-        see Tk's default ``<<Copy>>`` — plain text only — never RTF colors).
-        This handler runs at root level so the binding fires regardless of which
-        widget has focus.  When ``_log`` carries a non-empty ``sel`` tag (mouse
-        drag on the disabled text): serve RTF + plain via :func:`copy_rich` and
-        return ``'break'`` to suppress the default ``<<Copy>>`` propagation.
-        Otherwise return ``None`` so the focused widget (e.g. ttk.Entry) keeps
-        its normal copy behaviour.
+        a widget-scoped ``<<Copy>>`` binding would never fire.  Tk's default
+        ``<<Copy>>`` on Entry/Text copies plain text only — never RTF colors.
+        This handler runs at root level so it fires after the focused widget's
+        class binding (which already copied plain text to the clipboard).
+        When ``_log`` carries a non-empty ``sel`` tag (mouse drag on the
+        disabled text): serve RTF + plain via :func:`copy_rich` (overwriting
+        the Entry's plain text) and return ``'break'`` to suppress further
+        propagation.  Otherwise return ``None`` so the focused widget (e.g.
+        ttk.Entry) keeps its normal copy behaviour.
         """
         if self._log.tag_ranges("sel"):
             copy_rich(self._log)
             return "break"
         return None
 
+    # ── i18n translation helpers ────────────────────────────────────────────
+
+    @staticmethod
+    def _translate_desc(desc: str) -> str:
+        """Translate backend stage description key to current locale.
+
+        Handles simple keys (``"stage.discovering"``) and the templated
+        ``composing:{stem}`` convention (single case from ``cli.py``).
+        """
+        if not desc:
+            return desc
+        if desc.startswith("composing:"):
+            stem = desc.split(":", 1)[1]
+            return _S.get("stage.composing_stem", "Composing {stem}\u2026").format(stem=stem)
+        return _S.get(desc, desc)
+
+    @staticmethod
+    def _translate_scan_stage(stage: ScanStage) -> str:
+        """Translate ScanStage enum value to current locale."""
+        return _S.get(f"scan_stage.{stage.name.lower()}", str(stage))
+
     def _poll_progress(self) -> None:
         # Snapshot both states once — avoids redundant lock acquisitions.
         cur, tot, desc = self.rt.progress_stage.snapshot()
-        cur_o, tot_o, desc_o = self.rt.progress_overall.snapshot()
+        _cur_o, tot_o, desc_o = self.rt.progress_overall.snapshot()
         if tot > 0:
             self._prog_stage.config(maximum=tot, value=cur)
-            # Only update stage text while stage is running; keep "Done" message at 100%
-            if cur < tot:
-                self._prog_stage_text.config(text=desc or "")
-            if self._prog_floater.winfo_ismapped():
-                self._prog_floater.lift()
-            elif self._prog_show_job is None:
-                # Delayed show — avoids flashing for very short operations.
-                self._prog_show_job = self.root.after(400, self._show_prog_floater)
+            # Only update stage text while stage is running AND no error is
+            # surfaced — _surface_error appends the error to the current stage
+            # text; _poll_progress must not clobber it on the next 300 ms tick.
+            if cur < tot and not self._error_active:
+                self._prog_stage_text.config(text=self._translate_desc(desc) or "")
+            # Separate status label (row 1, right) — stage desc + fraction.
+            # Restore + update when processing is active and mouse isn't
+            # hovering over the floater area.
+            if not self._status_hovering:
+                self._prog_status.config(text=self._translate_desc(desc) or "")
+                self._prog_status.grid()
+                if self._prog_floater.place_info():
+                    self._prog_floater.lift()
+                elif self._prog_show_job is None:
+                    # Delayed show — avoids flashing for very short operations.
+                    self._prog_show_job = self.root.after(400, self._show_prog_floater)
         else:
             # Cancel pending show if progress ended before delay.
             if self._prog_show_job is not None:
                 self.root.after_cancel(self._prog_show_job)
                 self._prog_show_job = None
             # Don't hide during initial scan — _fit_status_font showed it.
-            if not self._initial_scan and self._prog_floater.winfo_ismapped():
+            # Keep floater visible while an error is surfaced so the localized
+            # error text stays on screen until the next ok scan/run clears it.
+            if not self._initial_scan and not self._error_active and self._prog_floater.place_info():
                 self._prog_floater.place_forget()
             # Stage inactive: consume a one-shot clear signal (set at each
             # probe start via progress_stage.clear_and_reset) so stale text is
             # wiped exactly once; otherwise leave _status alone — explicit
             # setters own it ("Ready", "Done …", hover hints).
             if not self._any_hovering and self.rt.progress_stage.consume_clear():
-                self._status_lbl.set_text("", raw=True)
+                self._set_status("", raw=True)
+            self._prog_status.config(text="")
         if tot_o > 0:
-            self._prog_all.config(maximum=tot_o, value=cur_o)
-            if not self._prog_all.winfo_ismapped():
-                self._prog_all.grid(row=0, column=1, sticky="e", padx=(8, 0))
             self._overall_lbl.config(text=desc_o or "")
         else:
-            if self._prog_all.winfo_ismapped():
-                self._prog_all.grid_remove()
-            self._prog_all.config(value=0)
-            self._overall_lbl.config(text=f"{self._cfg_state}{self._cfg_detail}")
+            self._overall_lbl.config(text=f"{self._translate_scan_stage(self._cfg_state)}{self._cfg_detail}")
+        # Per-config fills → rail; aggregate % → _overall_lbl suffix
+        snaps = self.rt.progress_bank.snapshot_all()
+        for cfg, (state, frac, _stage, _lvl) in snaps.items():
+            self._rail.set_state(cfg, state, frac)
+        if snaps and self.wk.busy:
+            pct = round(100 * sum(v[1] for v in snaps.values()) / len(snaps))
+            desc_o = self.rt.progress_overall.snapshot()[2]
+            self._overall_lbl.config(text=f"{desc_o} \u2014 {pct}%" if desc_o else f"{pct}%")
 
     def _show_prog_floater(self) -> None:
-        """Delayed show of stage progress overlay."""
+        """Delayed show of stage progress overlay — skipped while hovering."""
         self._prog_show_job = None
+        if self._status_hovering:
+            return
         cur, tot, _desc = self.rt.progress_stage.snapshot()
         if tot > 0:
             self._prog_stage.config(maximum=tot, value=cur)
@@ -620,23 +778,91 @@ class App:
             return
         {
             "scan_ok": self._on_scan_ok,
-            "scan_error": lambda p: self._log_err(STR["error.scan"].format(p=p)),
+            "scan_error": self._on_scan_error,
             "run_ok": self._on_run_done,
-            "run_error": lambda p: (
-                self._log_err(STR["error.run"].format(p=p)),
-                self._run_btn.config(text=STR["run_btn.text"]),
-            ),
+            "run_error": self._on_run_error,
         }[kind](payload)
+
+    def _on_scan_error(self, exc: BaseException) -> None:
+        self._surface_error(exc, _S["error.scan"])
+
+    def _on_run_error(self, exc: BaseException) -> None:
+        self._run_btn.config(text=_S["run_btn.text"])
+        self._surface_error(exc, _S["error.run"])
+
+    def _surface_error(self, exc: BaseException, log_prefix: str) -> None:
+        """Common error surface: log line, separator, floater text, detail tip.
+
+        Sets ``_error_active`` so ``_poll_progress`` keeps the floater on screen
+        until a fresh ok scan/run clears it.  The independently-logged exception
+        (worker's ``lf.exception``) is already in ``_log``; here we add the
+        localized prefix line + the markdown detail block rendered in
+        ``_status_lbl`` (bottom-left overlay) via :meth:`_show_tip`.
+        """
+        self._error_active = True
+        short = f"{type(exc).__name__}: {exc}"
+        self._log_err(log_prefix.format(p=short))
+        # Append the error to the current stage text (e.g. "Генерация конфигураций"
+        # → "Генерация конфигураций\nError \"FileNotFoundError: …\".") so the
+        # user sees both the stage that failed and the error details.
+        current = self._prog_stage_text.cget("text")
+        error = self._stage_error_text(exc)
+        self._prog_stage_text.config(text=f"{current}\n{error}" if current else error)
+        if not self._prog_floater.place_info():
+            self._prog_floater.place(relx=1.0, rely=1.0, anchor="se", x=-8, y=-4)
+        self._prog_floater.lift()
+        if tip := _tip_body("input.path", mode="search", detail="Detailed"):
+            self._show_tip(tip)
+        else:
+            self._hide_tip()
+
+    @staticmethod
+    def _stage_error_text(exc: BaseException) -> str:
+        short = f"{type(exc).__name__}: {exc}"
+        return _S.get("stage.error", 'Error "{msg}".').format(msg=short)
+
+    def _set_status(self, text: str, *, raw: bool = False) -> None:
+        """Set ``_status_lbl`` text, suppressed while the error tooltip is active.
+
+        All chrome-hover, poll, and log-motion callers route through here so
+        the tooltip (rendered in the same ``_status_lbl``) is never clobbered
+        by a transient status update.  ``_show_tip`` / ``_hide_tip`` write to
+        ``_status_lbl`` directly, bypassing this guard.
+        """
+        if self._tip_active:
+            return
+        self._status_lbl.set_text(text, raw=raw)
+
+    def _show_tip(self, text: str) -> None:
+        """Show error detail tooltip in ``_status_lbl``; suppress status updates.
+
+        While ``_tip_active`` is True, :meth:`_set_status` is a no-op so hover
+        hints and poll-driven status cannot overwrite the tooltip.  Dismissed
+        by :meth:`_hide_tip` (new scan/run, path change, Esc, or cell edit).
+        """
+        self._tip_active = True
+        self._status_lbl.set_text(text)  # markdown rendered, bypasses _set_status guard
+
+    def _hide_tip(self) -> None:
+        """Dismiss the error tooltip; resume normal status updates."""
+        if not self._tip_active:
+            return
+        self._tip_active = False
+        self._status_lbl.set_text("", raw=True)
 
     def _on_scan_ok(self, result) -> None:
         if not result or len(result) < 4:
             return
 
-        for tab in self.nb.tabs():
-            self.nb.forget(tab)
+        self._error_active = False
+        self._hide_tip()
+        for frame in self._tab_of.values():
+            frame.destroy()
         self._pages.clear()
         self._yaml_paths.clear()
         self._tab_of.clear()
+        self._rail.clear()
+        self._current = None
         for stem, yp, cfg_dc in result[3]:
             cfg = OmegaConf.to_container(cfg_dc, resolve=True)
             # Strip the technical ``CFG_FROM_ARGS`` sentinel injected by
@@ -654,25 +880,23 @@ class App:
         # Clear scan progress so _prog_floater hides on next poll.
         self.rt.progress_stage.set(0, 0, "")
         # Scan done — show "Ready" now.
-        self._status_lbl.set_text(STR["status.ready"], raw=True)
-        self._overall_lbl.config(text=self._cfg_state)
+        self._set_status(_S["status.ready"], raw=True)
+        self._overall_lbl.config(text=self._translate_scan_stage(self._cfg_state))
 
     def _on_run_done(self, result) -> None:
-        self._run_btn.config(text=STR["run_btn.text"])
+        self._error_active = False
+        self._hide_tip()
+        self._run_btn.config(text=_S["run_btn.text"])
         processed, failed = result[0], result[1]
         n = len(processed) + len(failed)
         pct = round(100 * len(processed) / n) if n else 100
         # Hide stage progress floater — completion shown in overall label
-        if self._prog_floater.winfo_ismapped():
+        if self._prog_floater.place_info():
             self._prog_floater.place_forget()
         self.rt.progress_stage.set(0, 0, "")
-        # Reset overall progress bar; show completion in overall label
-        if self._prog_all.winfo_ismapped():
-            self._prog_all.grid_remove()
-        self._prog_all.config(value=0)
         self._cfg_state = ScanStage.DONE
-        self._cfg_detail = STR["overall_lbl.done_detail"].format(pct=pct, ok=len(processed), n=n)
-        self._overall_lbl.config(text=f"{self._cfg_state}{self._cfg_detail}")
+        self._cfg_detail = _S["overall_lbl.done_detail"].format(pct=pct, ok=len(processed), n=n)
+        self._overall_lbl.config(text=f"{self._translate_scan_stage(self._cfg_state)}{self._cfg_detail}")
         self.rt.progress_overall.set(0, 0, "")
 
     def _clear_log(self) -> None:
@@ -685,8 +909,12 @@ class App:
         self._log.config(state="normal")
         self._log.delete("1.0", "end")
         self._log.config(state="disabled")
+        self._error_active = False
+        self._hide_tip()
 
-    def _log_err(self, msg: str) -> None:
+    def _log_err(self, msg: str, *, separator: bool = False) -> None:
+        """Append ``msg`` as an ``error``-tagged line; optionally add a visual
+        separator (``info`` tag) tying the error to the markdown detail block."""
         self._log.config(state="normal")
         self._log.insert("end", f"{msg}\n", "error")
         self._log.see("end")

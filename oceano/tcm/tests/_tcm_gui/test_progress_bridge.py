@@ -7,7 +7,17 @@ from __future__ import annotations
 
 import pytest
 
-from tcm_gui.progress_bridge import GuiTqdm, get_runtime, get_tqdm_class, set_runtime, set_tqdm_class
+from tcm_gui.progress_bank import ProgressBank, canon_stage, WEIGHTS
+from tcm_gui.progress_bridge import (
+    GuiTqdm,
+    get_cfg,
+    get_runtime,
+    get_tqdm_class,
+    set_cfg,
+    set_runtime,
+    set_tqdm_class,
+    stage_desc,
+)
 from tcm_gui.runtime import ProgressState, Runtime
 
 # --------------------------------------------------------------------------- #
@@ -436,3 +446,217 @@ class TestPollProgressLogic:
         assert (cur, tot, desc) == (0, 0, ""), "clear_and_reset resets to idle"
         assert rt.progress_stage.consume_clear(), "first consume returns True"
         assert not rt.progress_stage.consume_clear(), "second consume returns False (one-shot)"
+
+
+# --------------------------------------------------------------------------- #
+# canon_stage mapping
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.gui
+class TestCanonStage:
+    """canon_stage maps pipeline Stage enum values to bank canonical stages."""
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("load", "Load"),
+            ("coefs", "Prepare"),
+            ("proc", "Processing"),
+            ("NC", "Save"),
+            ("TSV", "Save"),
+            ("combine", "Save"),
+            ("Saving results", ""),
+            ("Cleanup phase", "Cleanup"),
+            ("Finished", "Finished"),
+            ("unknown_xyz", ""),
+        ],
+        ids=[
+            "Stage.LOAD",
+            "Stage.COEFS via _ALIASES",
+            "Stage.PROC",
+            "Stage.NC via _ALIASES",
+            "Stage.TSV via _ALIASES",
+            "Stage.COMBINE via _ALIASES",
+            "free-form prefix miss (savi != save)",
+            "4-letter prefix",
+            "exact match",
+            "no match -> empty",
+        ],
+    )
+    def test_canon_stage_maps_correctly(self, text, expected):
+        result = canon_stage(text)
+        assert result == expected, (
+            f"canon_stage({text!r}): expected {expected!r}, got {result!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# ProgressBank lifecycle
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.gui
+class TestProgressBank:
+    """ProgressBank tracks per-config progress through stages → frac."""
+
+    def test_pending_starts_at_zero(self):
+        b = ProgressBank()
+        b.run_start(["s1"])
+        snap = b.snapshot_all()
+        state, frac, stage, lvl = snap["s1"]
+        assert state == "pending"
+        assert frac == 0.0
+
+    def test_running_frac_advances_through_stages(self):
+        b = ProgressBank()
+        b.run_start(["s1"])
+
+        b.stage_start("s1", canon_stage("load"))
+        b.inner("s1", 100, 100)
+        snap = b.snapshot_all()
+        _, frac_load, _, _ = snap["s1"]
+        assert 0 < frac_load < 0.2, "Load stage should be ~10%"
+
+        b.stage_start("s1", canon_stage("proc"))
+        b.inner("s1", 100, 100)
+        snap = b.snapshot_all()
+        _, frac_proc, _, _ = snap["s1"]
+        assert frac_proc > frac_load, "Processing > Load"
+        assert frac_proc < 1.0, "running < 1.0 until finish"
+
+    def test_finish_sets_done_and_frac_one(self):
+        b = ProgressBank()
+        b.run_start(["s1"])
+        b.stage_start("s1", canon_stage("proc"))
+        b.inner("s1", 50, 100)
+        b.finish("s1", ok=True)
+
+        snap = b.snapshot_all()
+        state, frac, stage, lvl = snap["s1"]
+        assert state == "done"
+        assert frac == 1.0
+        assert stage == "Finished"
+
+    def test_finish_error_preserves_last_frac(self):
+        b = ProgressBank()
+        b.run_start(["s1"])
+        b.stage_start("s1", canon_stage("proc"))
+        b.inner("s1", 50, 100)
+        b.finish("s1", ok=False)
+
+        snap = b.snapshot_all()
+        state, frac, stage, _ = snap["s1"]
+        assert state == "error"
+        assert 0 < frac < 1.0, "error preserves running frac, not 1.0"
+        assert stage != "Finished"
+
+    def test_finish_wrong_key_is_noop(self):
+        """finish with a key not in run_start is silently ignored."""
+        b = ProgressBank()
+        b.run_start(["stem_A"])
+        b.stage_start("stem_A", canon_stage("load"))
+        b.inner("stem_A", 100, 100)
+        b.finish("wrong_key", ok=True)  # should not find stem_A
+
+        snap = b.snapshot_all()
+        state, frac, _, _ = snap["stem_A"]
+        assert state == "running", "wrong key → still running"
+        assert frac < 1.0
+
+    def test_stage_start_resets_inner(self):
+        b = ProgressBank()
+        b.run_start(["s1"])
+        b.stage_start("s1", canon_stage("load"))
+        b.inner("s1", 50, 100)
+        snap1 = b.snapshot_all()
+        _, frac1, _, _ = snap1["s1"]
+        assert frac1 > 0
+
+        b.stage_start("s1", canon_stage("coefs"))
+        snap2 = b.snapshot_all()
+        _, frac2, stage2, _ = snap2["s1"]
+        assert stage2 == "Prepare"
+        # inner reset → frac should not increase (coefs weight < load+partial inner)
+        assert frac2 < frac1 or frac2 < 0.2
+
+    def test_inner_noop_when_pending(self):
+        b = ProgressBank()
+        b.run_start(["s1"])
+        b.inner("s1", 100, 100)  # no stage_start → still pending
+        snap = b.snapshot_all()
+        state, frac, _, _ = snap["s1"]
+        assert state == "pending"
+        assert frac == 0.0
+
+    def test_inner_noop_when_cfg_none(self):
+        b = ProgressBank()
+        b.run_start(["s1"])
+        b.inner(None, 100, 100)  # should not raise
+
+    def test_multiple_configs_independent(self):
+        b = ProgressBank()
+        b.run_start(["s1", "s2"])
+        b.stage_start("s1", canon_stage("proc"))
+        b.inner("s1", 100, 100)
+        b.finish("s1", ok=True)
+
+        b.stage_start("s2", canon_stage("load"))
+        b.inner("s2", 50, 100)
+
+        snap = b.snapshot_all()
+        assert snap["s1"][0] == "done"
+        assert snap["s1"][1] == 1.0
+        assert snap["s2"][0] == "running"
+        assert 0 < snap["s2"][1] < 1.0
+
+
+# --------------------------------------------------------------------------- #
+# set_cfg / get_cfg + stage_desc → ProgressBank integration
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.gui
+class TestSetCfgBank:
+    """set_cfg controls which config receives stage_desc and GuiTqdm ticks."""
+
+    def test_set_cfg_stores_current(self):
+        set_cfg("stem_A")
+        assert get_cfg() == "stem_A"
+        set_cfg(None)
+        assert get_cfg() is None
+
+    def test_stage_desc_feeds_bank(self, rt):
+        """stage_desc with a known stage → bank.stage_start on _current_cfg."""
+        set_runtime(rt)
+        set_cfg("stem_A")
+        rt.progress_bank.run_start(["stem_A"])
+
+        stage_desc("load")
+        snap = rt.progress_bank.snapshot_all()
+        state, _, stage, _ = snap["stem_A"]
+        assert state == "running"
+        assert stage == "Load"
+
+    def test_stage_desc_noop_when_bank_empty(self, rt):
+        """stage_desc with empty bank (no run_start) → no crash."""
+        set_runtime(rt)
+        set_cfg("stem_A")
+        stage_desc("proc")  # should not raise
+
+    def test_guitqdm_feeds_bank(self, rt):
+        """GuiTqdm.update → bank.inner on _current_cfg."""
+        set_runtime(rt)
+        set_cfg("stem_A")
+        rt.progress_bank.run_start(["stem_A"])
+        rt.progress_bank.stage_start("stem_A", "Processing")
+
+        bar = GuiTqdm(total=100, desc="test")
+        bar.update(50)
+
+        snap = rt.progress_bank.snapshot_all()
+        _, frac, _, _ = snap["stem_A"]
+        assert frac > 0, "bank received inner tick"
+        # Processing stage: done_before = 20 (Scan+Load+Prepare), cur = 60*0.5 = 30
+        # frac = (20 + 30) / 100 = 0.5
+        assert abs(frac - 0.5) < 0.01

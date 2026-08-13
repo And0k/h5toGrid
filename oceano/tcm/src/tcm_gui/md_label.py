@@ -15,7 +15,7 @@ import tkinter.font as tkfont
 from itertools import accumulate, zip_longest
 from typing import TypeAlias
 
-from tcm._md_parse import Block, CodeBlock, Heading, Inline, Paragraph, Table, parse_markdown
+from tcm._md_parse import Block, CodeBlock, Heading, Inline, List, Paragraph, Table, parse_markdown
 
 from . import theme
 
@@ -171,6 +171,12 @@ class MarkdownLabel(tk.Text):
                 case CodeBlock(text=text):
                     self.insert("end", text, "codeblock")
                     self.insert("end", "\n")
+
+                case List(items=items):
+                    for item in items:
+                        self.insert("end", "• ", ("normal",))
+                        self._insert_inline(item, ("normal",))
+                        self.insert("end", "\n")
 
                 case Table() as table:
                     self._render_table(table)
@@ -376,6 +382,9 @@ class MarkdownLabel(tk.Text):
                     for line in text.split("\n"):
                         w = code.measure(line or " ") + px_pad + 16  # lmargin
                         mx = max(mx, w)
+                case List(items=items):
+                    for item in items:
+                        mx = max(mx, self._inline_width(item, "plain") + px_pad + 12)  # "• " prefix
                 case Table() as table:
                     mx = max(mx, sum(self._table_widths(table)) + px_pad)
         return mx

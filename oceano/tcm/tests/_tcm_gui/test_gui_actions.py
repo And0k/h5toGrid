@@ -292,7 +292,7 @@ class TestGuiRun:
         result = cli.call_in_raw_dir(
             processing.run,
             overrides={
-                "input": {"path": str(raw_dir / "*i*.txt"), "yaml_path": "(@i_01)"},
+                "input": {"path": str(run_dir / "(@i_01).yaml")},
             },
             exit_on_error=False,
         )
@@ -315,7 +315,7 @@ class TestGuiRun:
         cli.call_in_raw_dir(
             processing.run,
             overrides={
-                "input": {"path": str(raw_dir / "*i*.txt"), "yaml_path": "(@i_01)"},
+                "input": {"path": str(run_dir / "(@i_01).yaml")},
             },
             exit_on_error=False,
         )
@@ -337,7 +337,7 @@ class TestGuiRun:
         result = cli.call_in_raw_dir(
             processing.run,
             overrides={
-                "input": {"path": str(raw_dir / "*i*.txt"), "yaml_path": "(@i_01)"},
+                "input": {"path": str(run_dir / "(@i_01).yaml")},
             },
             exit_on_error=False,
         )
@@ -393,7 +393,7 @@ class TestGuiFullCycle:
         run_result = cli.call_in_raw_dir(
             processing.run,
             overrides={
-                "input": {"path": str(raw_dir / "*i*.txt"), "yaml_path": f"({stem})"},
+                "input": {"path": str(run_dir / f"({stem}).yaml")},
             },
             exit_on_error=False,
         )
@@ -461,7 +461,7 @@ class TestGuiSysArgvIsolation:
         cli.call_in_raw_dir(
             processing.run,
             overrides={
-                "input": {"path": str(csv_file), "yaml_path": "(@i_01)"},
+                "input": {"path": str(run_dir / "(@i_01).yaml")},
             },
             exit_on_error=False,
         )
@@ -561,7 +561,7 @@ class TestGuiAtSignFilename:
         result = cli.call_in_raw_dir(
             processing.run,
             overrides={
-                "input": {"path": str(csv_file), "yaml_path": f"({stem})"},
+                "input": {"path": str(run_dir / f"({stem}).yaml")},
             },
             exit_on_error=False,
         )
@@ -633,7 +633,7 @@ class TestGuiGlobalHydraClear:
         result2 = cli.call_in_raw_dir(
             processing.run,
             overrides={
-                "input": {"path": str(raw_dir / "*i*.txt"), "yaml_path": "(@i_01)"},
+                "input": {"path": str(run_dir / "(@i_01).yaml")},
             },
             exit_on_error=False,
         )
@@ -681,7 +681,7 @@ class TestGuiRunWithNoConfigs:
         result = cli.call_in_raw_dir(
             processing.run,
             overrides={
-                "input": {"path": str(raw_dir / "*i*.txt"), "yaml_path": "(@nonexistent_stem)"},
+                "input": {"path": str(run_dir / "(@nonexistent_stem).yaml")},
             },
             exit_on_error=False,
         )
@@ -816,12 +816,12 @@ class TestGuiCliArgs:
         assert len(collected) >= 1
         stem = collected[0][0]
 
-        # Step 2: run with the same stem
+        # Step 2: run with the same stem — path via overrides (not sys.argv)
         GlobalHydra.instance().clear()
-        monkeypatch.setattr(sys, "argv", ["__main__.py", str(raw_dir / "*i*.txt")])
+        monkeypatch.setattr(sys, "argv", ["__main__.py"])
         result2 = cli.call_in_raw_dir(
             processing.run,
-            input={"yaml_path": f"({stem})"},
+            input={"path": str(run_dir / f"({stem}).yaml")},
             exit_on_error=False,
         )
         assert result2 is not None
@@ -1267,24 +1267,34 @@ class TestRtfClipboard:
 
     @pytest.fixture()
     def _log_text(self, _tk_text):
-        """``Text`` widget configured exactly like ``App._log`` (tags from theme)."""
+        """``Text`` widget configured exactly like ``App._log`` (tags from theme).
+
+        Also clears the OS clipboard + drains Tk events so each test starts
+        from a known-empty clipboard.  Tk's ``clipboard_clear``/``append``
+        defer the actual OS clipboard write to idle time, so without an
+        ``update()`` here, the next ``win32clipboard.OpenClipboard`` racing
+        with Tk's pending propagation raises ``pywintypes.error`` (Access
+        denied) — which is *exactly* the real-world contention the hardened
+        :func:`copy_rich` is built to survive, but a flaky test-fixture
+        failure mode we want to avoid.
+        """
         import tcm_gui.theme
 
         for lvl, clr in tcm_gui.theme.TAG_COLORS.items():
             _tk_text.tag_configure(lvl, foreground=clr)
         _tk_text.tag_configure("func", foreground=tcm_gui.theme.FUNC_COLOR)
-        # Fresh OS clipboard for each win32-path test so prior-test clipboard
-        # state doesn't bleed in (Tk clipboard_clear is a no-op on win32 RTF).
-        import win32clipboard as wcb
-
+        _tk_text.update()  # drain any pending Tk clipboard propagation
         try:
+            import win32clipboard as wcb
+
             wcb.OpenClipboard()
             try:
                 wcb.EmptyClipboard()
             finally:
                 wcb.CloseClipboard()
-        except Exception:  # noqa: BLE001 — best-effort; tests retry on contention.
+        except Exception:  # noqa: BLE001 — best-effort; copy_rich retries too.
             pass
+        _tk_text.update()  # drain anything Tk queued from the EmptyClipboard
         return _tk_text
 
     @staticmethod
@@ -1360,7 +1370,7 @@ class TestRtfClipboard:
 
         # CF_RTF must be on the OS clipboard, not just Tk's.
         rtf_fmt = wcb.RegisterClipboardFormat("Rich Text Format")
-        rtf_raw = self._get_clipboard_format_data(rtf_fmt)
+        rtf_raw = self._get_clipboard_format_data(rtf_fmt, _log_text)
         assert rtf_raw is not None, "CF_RTF missing from OS clipboard — Word will show no colors"
         rtf = rtf_raw.decode("ascii", errors="replace") if isinstance(rtf_raw, bytes) else str(rtf_raw)
         # Real RTF preamble + color table + color run for the err tag.
@@ -1371,7 +1381,7 @@ class TestRtfClipboard:
         assert rtf.count("{") == rtf.count("}"), "unbalanced braces → RTF parse fails"
 
         # CF_UNICODETEXT plain-text fallback must ALSO be present.
-        txt = self._get_clipboard_format_data(wcb.CF_UNICODETEXT)
+        txt = self._get_clipboard_format_data(wcb.CF_UNICODETEXT, _log_text)
         assert txt is not None, "CF_UNICODETEXT plain-text fallback missing"
         assert "disk full" in (txt if isinstance(txt, str) else txt.decode("utf-16-le", errors="replace"))
 
@@ -1438,7 +1448,7 @@ class TestRtfClipboard:
             copy_rich(log)
 
             rtf_fmt = wcb.RegisterClipboardFormat("Rich Text Format")
-            rtf_raw = self._get_clipboard_format_data(rtf_fmt)
+            rtf_raw = self._get_clipboard_format_data(rtf_fmt, log)
             assert rtf_raw is not None, (
                 "CF_RTF missing after Ctrl+C on disabled App._log — "
                 "Word shows no colors. See _rtf_clipboard.copy_rich."
@@ -1452,17 +1462,23 @@ class TestRtfClipboard:
             log.destroy()
 
     def test_copy_rich_fires_when_log_disabled_no_focus(self, _tk_root):
-        """Root-scoped ``<Control-c>`` fires ``copy_rich`` even when disabled
+        """Root-scoped ``<<Copy>>`` fires ``copy_rich`` even when disabled
         ``_log`` cannot take keyboard focus — the user's reported bug.
 
-        Before the fix, ``<Control-c>`` was bound on ``_log`` itself; because
-        ``App._log`` is ``state='disabled'`` it can never receive focus, so the
-        binding never fired and the user got Tk's default ``<<Copy>>`` — plain
-        text only, no RTF colors.  This test reproduces the user's real flow:
-        ``_log`` is disabled, has a ``sel`` range from mouse drag, another
-        widget has focus.  Invoke ``App._on_copy_rich`` (the root-level handler)
-        and assert RTF + plain text both land on the clipboard.  This is the
-        exact user-reported-scenario regression.
+        ``App._log`` is ``state='disabled'`` and so cannot take keyboard focus.
+        The user's actual flow: focus is on a ttk.Entry (path field), ``_log``
+        is disabled with a ``sel`` range from mouse drag, and the user presses
+        Ctrl+C.  Tk maps ``<Control-Key-c>`` → ``<<Copy>>`` at the virtual
+        event level, so the real event is ``<<Copy>>``, not ``<Control-c>``.
+        Binding ``<Control-c>`` on root is dead code — it never fires on a
+        real Ctrl+C keypress.  The ``<<Copy>>`` binding must be at root level
+        so it fires regardless of which widget has focus.
+
+        This test reproduces the real flow: focus is on a ttk.Entry,
+        ``<<Copy>>`` is dispatched to that Entry (matching the real Ctrl+C
+        path: Tk synthesises ``<<Copy>>`` on the focused widget), and the
+        Entry's class ``<<Copy>>`` handler fires first (copies Entry plain
+        text), then the root handler fires and overwrites with RTF from _log.
 
         Requires pywin32 + a display; skipped otherwise.
         """
@@ -1471,20 +1487,11 @@ class TestRtfClipboard:
         pytest.importorskip("win32clipboard")
         import re
         import tkinter as tk
+        from tkinter import ttk
 
         import win32clipboard as wcb
 
         import tcm_gui.theme
-        from tcm_gui._rtf_clipboard import copy_rich
-
-        # Stand in for App with just the slice the binding touches.
-        from tcm_gui.app import App
-
-        class _AppStub:
-            def __init__(self, log):
-                self._log = log
-
-            _on_copy_rich = App._on_copy_rich
 
         log = tk.Text(
             _tk_root,
@@ -1493,9 +1500,23 @@ class TestRtfClipboard:
             background=tcm_gui.theme.ENTRY_BG_FALLBACK,
             foreground=tcm_gui.theme.FG_DEFAULT,
         )
+        log.pack()
         for lvl, clr in tcm_gui.theme.TAG_COLORS.items():
             log.tag_configure(lvl, foreground=clr)
         log.tag_configure("func", foreground=tcm_gui.theme.FUNC_COLOR)
+
+        # Stand-in App installing the real root-level <<Copy>> binding.
+        from tcm_gui.app import App
+
+        stub = type("_AppStub", (), {"_log": log, "_on_copy_rich": App._on_copy_rich})()
+        _tk_root.bind("<<Copy>>", stub._on_copy_rich, add="+")
+
+        # Focus is on a ttk.Entry (path field) — _log cannot take focus.
+        ent = ttk.Entry(_tk_root, width=30)
+        ent.insert(0, "B:/Cruises/_raw")
+        ent.pack()
+        ent.focus_set()
+
         try:
             log.config(state="normal")
             log.insert("end", "12:00:00\u2502", "error")
@@ -1507,32 +1528,20 @@ class TestRtfClipboard:
             log.tag_add("sel", "1.0", "2.0")
             assert log.tag_ranges("sel"), "test premise: log has selection"
 
-            # Confirm the *bug premise*: a disabled Text widget can never take
-            # keyboard focus — focus_set + update leaves focus_get returning the
-            # root, not the log.  So a widget-scoped ``<Control-c>`` binding (the
-            # pre-fix binding) would never fire.  Root-level binding fires for
-            # any focused widget.
-            log.focus_set()
+            # Simulate the user pressing Ctrl+C while Entry has focus — Tk
+            # synthesises <<Copy>> on the focused widget (Entry).  The Entry's
+            # class <<Copy>> binding copies Entry text first, then the root
+            # handler fires and overwrites with RTF from _log.
             _tk_root.update()
-            assert _tk_root.focus_get() is not log, (
-                "disabled Text must NOT receive focus — the bug premise.  "
-                f"focus_get={_tk_root.focus_get()!r}"
-            )
-
-            # Directly invoke the root-level handler as Tk would on real Ctrl+C.
-            from tcm_gui.app import App
-
-            stub = type("_AppStub", (), {"_log": log, "_on_copy_rich": App._on_copy_rich})()
-            ret = stub._on_copy_rich(None)
-            assert ret == "break", (
-                f"with log sel present, _on_copy_rich must return 'break' "
-                f"to suppress default <<Copy>> — got {ret!r}"
-            )
+            ent.event_generate("<<Copy>>")
+            _tk_root.update_idletasks()
+            _tk_root.update()
 
             rtf_fmt = wcb.RegisterClipboardFormat("Rich Text Format")
-            rtf_raw = self._get_clipboard_format_data(rtf_fmt)
+            rtf_raw = self._get_clipboard_format_data(rtf_fmt, log)
             assert rtf_raw is not None, (
-                "CF_RTF missing — user sees no colors in Word (the live bug)"
+                "CF_RTF missing after Ctrl+C on disabled App._log — the live bug.  "
+                "Was the binding on <Control-c> instead of <<Copy>>?"
             )
             rtf = rtf_raw.decode("ascii", errors="replace") if isinstance(rtf_raw, bytes) else str(rtf_raw)
             assert rtf.startswith("{\\rtf1"), f"bad RTF start: {rtf[:40]!r}"
@@ -1540,6 +1549,7 @@ class TestRtfClipboard:
             assert re.search(r"\\cf\d+\s", rtf), "\\cfN run absent → colors never applied"
             assert "disk full" in rtf, "selected log text not in RTF"
         finally:
+            ent.destroy()
             log.destroy()
 
     def test_copy_rich_falls_through_when_log_no_selection(self, _tk_root):

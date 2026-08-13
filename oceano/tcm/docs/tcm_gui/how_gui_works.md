@@ -8,7 +8,7 @@ thread.  No custom CLI parsing — Hydra handles all config keys natively via
 
 | File | Purpose |
 |------|---------|
-| `app.py` | Tk root, layout §1–6, 300 ms polling, argv prefill, `_initial_scan` flag (immediate overlay show), `_prog_floater` overlay (400 ms delay for run), z-order `<Motion>` bind; manual `ttk.Frame` + `tk.Text` + `ttk.Scrollbar` log container (replaces `ScrolledText` for ttk-styled scrollbar); `_log_autoscroll` flag + `<MouseWheel>`/`<Button-4/5>` bindings for scroll-aware auto-follow; `_cfg_state: ScanStage` enum drives dual-purpose label at row=1; Run button floats via `place(in_=self.nb)` |
+| `app.py` | Tk root, layout §1–6, 300 ms polling, argv prefill, `_initial_scan` flag (immediate overlay show), `_prog_floater` overlay (400 ms delay for run), z-order `<Motion>` bind; manual `ttk.Frame` + `tk.Text` + `ttk.Scrollbar` log container (replaces `ScrolledText` for ttk-styled scrollbar); `_log_autoscroll` flag + `<MouseWheel>`/`<Button-4/5>` bindings for scroll-aware auto-follow; `_cfg_state: ScanStage` enum drives dual-purpose label at row=1; Run button floats via `place(in_=self._main)`; page stack + `tkraise()` (no Notebook) |
 | `md_label.py` | `MarkdownLabel` (`tk.Text` subclass): Tk renderer for Markdown AST from `_md_parse`; `_current` holds parsed `Block` tuple (not raw text) — `set_text(text, raw=False)` parses Markdown by default so `STR["{role}.status"]` with `**bold**` renders bold; `raw=True` bypasses parsing for paths/keys that interpolate untrusted content (e.g. `tab.status` after `.format(path=...)`); `rerender()` replays `_render` without reparse; `mark_font_ready()` (enables auto-sizing without resizing), `fit_to_height` (rescales + enables), dynamic width (`_fit_width` via font metrics, `wrap="none"` → `wrap="word"`), auto-height (`_fit_height` on `<Configure>`), table tab-stop alignment |
 | `_md_parse.py` | Pure Markdown parser (zero Tk dependency): `parse_inline()`, `parse_markdown()`, `split_table_row()`; AST types `Heading`/`Paragraph`/`CodeBlock`/`Table`/`Inline` |
 | `worker.py` | Background thread: `call_in_raw_dir` for Scan and Run |
@@ -17,14 +17,16 @@ thread.  No custom CLI parsing — Hydra handles all config keys natively via
 | `_path_field.py` | 1×1 tksheet for display + `ttk.Entry` overlay for editing — frame-anchored hover button, column-width tracking via `<Configure>` |
 | `_browse_button.py` | `BrowseOverlay` (widget core + `pending` state + `on_status`/`status_hint` hover-to-status-bar wiring), `BrowseButtonManager` (sheet-edit policy + injectable `editor_place`), `SheetHoverBinder` (MT motion → overlay show/hide with pending-aware veto), `bind_hover_browse` (Entry legacy) |
 | `_cell_spec.py` | Hydra dataclass → ``CellSpec`` (bool/enum/text/number/date) for cell rendering |
-| `_help.py` | Auto-extract config-cell help from ``config_reference.md`` tables (``HelpEntry``, ``help_for_path``, ``parse_reference``); index-stripping for arrays (``Ag[0]`` → ``Ag``); ``lru_cache``-memoized loader |
+| `_help.py` | Auto-extract config-cell help from ``config_reference.md`` tables (``HelpEntry``, ``help_for_path``, ``parse_reference``); index-stripping for arrays (``Ag[0]`` → ``Ag``); mode-tagged `###` sections with `####` detail sub-blocks; per-lang cache (`_CACHE` dict, not `lru_cache`); `detail=` kwarg for `#### Detailed` blocks |
 | `const.py` | Immutable user settings (`UI_SCALE`, `FONT_SCALE`, `TTK_THEME`, `COLOR_MODE`); `UIScale` (sets `tk scaling = platform × UI_SCALE` for uniform geometry scaling + named font multiplier via `FONT_SCALE`; `font()` returns scaled `TkDefaultFont` copy; `set_font(*widgets)` applies per-widget copies to any widget); `configure_ui` (ttk theme selection); `tk_font_family` |
 | `theme.py` | Mutable runtime state: color globals (`FUNC_COLOR`, `FG_DEFAULT`, `BLUE_FG`, `DEFAULT_FG`, `FRAME_BG_FALLBACK`, `ENTRY_BG_FALLBACK`, `CELL_NON_DATA_BG`); `THEME`; `TAG_COLORS`; `widget_meta` registry; `STR` i18n surface; `get_widget_meta` (callable-resolving); `apply_theme_defaults` (dark/light via `COLOR_MODE` or Windows registry); `_apply_ttk_dark` (clam + dark ttk.Style); `_opt_into_dark_titlebar` (`DwmSetWindowAttribute`); `tk_color_to_rgb`/`tk_color_to_hex`; `resolved_frame_bg`/`resolved_entry_bg` |
 | `cli_cfg.py` | `CFG_DEFAULTS` (config-tree defaults) + `COEF_SHAPES` (auto-derived) + `COEFS_TYPE` — all derived from `Config` via `get_type_hints`, no per-section imports |
-| `progress_bridge.py` | `GuiTqdm` (tqdm replacement) + module-level runtime injection |
+| `progress_bridge.py` | `GuiTqdm` (tqdm replacement) + module-level runtime injection + `set_cfg`/`get_cfg` per-config attribution + `stage_desc` feeding both `progress_overall` and `ProgressBank` |
 | `log_bridge.py` | `install()` once at App startup → root logger captures GUI-thread AND worker logs → `QueueHandler` (consecutive dedup + emit-time text freeze) → `tk.Text` drain |
-| `_rtf_clipboard.py` | `Ctrl+C` on log → RTF + plain text on clipboard (colors preserved) |
-| `runtime.py` | Shared state: queues, `ProgressState` (with one-shot `clear_and_reset`/`consume_clear`), `PauseGate`, persistent `queue_handler` reference |
+| `_rtf_clipboard.py` | `Ctrl+C` on log → RTF + HTML + plain text on clipboard (colors preserved) |
+| `runtime.py` | Shared state: queues, `ProgressState` (with one-shot `clear_and_reset`/`consume_clear`), `ProgressBank`, `PauseGate`, persistent `queue_handler` reference |
+| `_tab_rail.py` | Vertical tab rail: progress column + tab column, configs stacked top→down.  Replaces ttk.Notebook entirely — page stack + `tkraise()` for zero-theme page switching.  Hover via `on_hover` callback, per-cell fill animation (lerp), content-based vertical sizing (waterfill on shortage, even split on extreme shortage, capped grow on surplus) |
+| `progress_bank.py` | Per-configuration progress: fixed stage weights → overall fraction.  Thread-safe: workers mutate under lock, the GUI polls `snapshot_all()`.  States: pending/running/done/error; `canon_stage()` maps free-form descriptions to canonical stages |
 
 ## Data flow
 
@@ -33,10 +35,14 @@ thread.  No custom CLI parsing — Hydra handles all config keys natively via
 ```
 Browse / Enter input.path
   → app._clear_log (flush queue + clear tk.Text log)
-  → worker._scan (thread)
+  → app._scan → worker._scan (thread)
     → call_in_raw_dir(processing.run,
-        input={path: live-path-field}, return_="<cfg_from_args>")
-       → processing.run: discovery → gen_metadata → process_loading_yaml
+        input={path: live-path-field},
+        return_="<cfg_from_args>")
+       → processing.run:
+           if input.path.suffix in (.yaml, .yml):
+               yaml_path = path.stem → skip discovery → filter by stem
+           else: discovery → gen_metadata → process_loading_yaml
          → run_processing: main_init → return DictConfig (early exit)
          → collected [(stem, yaml_path, DictConfig)]
        → return (processed_pcids, failed_pcids, last_cfg, collected)
@@ -56,7 +62,7 @@ Edit coefs in tabs → tab title gets "*" (dirty indicator, polled 300ms)
       → cs.mark_clean() → removes "*"
     → worker._run (thread)
       → call_in_raw_dir(processing.run,
-          input={path: data_path, yaml_path: "(stem1|stem2)"})
+          input={path: "<dir>/cfg_proc/run/(stem1|stem2).yaml"})
         → processing.run: yaml_path filter → process_loading_yaml
           → run_processing: full pipeline (load → coefs → process → persist)
           → return (processed_pcids, failed_pcids, last_cfg, collected)
@@ -84,9 +90,14 @@ Click Run while processing → PauseGate
 | `return_="<cfg_from_args>"` for Scan | pipeline does discovery + gen_metadata, returns configs without processing |
 | `ScanStage(StrEnum)` for cfg state labels | value = display text; same pattern as `Stage` for processing phases; drives `_overall_lbl` at row=1 via `progress_overall.desc` during scan, `_cfg_state` attr when idle |
 | `progress_overall.set()` at scan boundaries | `tick()` is per-probe (100-units math); scan-level uses direct `set()` same as `progress_stage` updates already in `processing.run()` |
-| Run button `place(in_=self.nb)` on root | floats at notebook bottom-right with scrollbar margin; `lift()` on `<Configure>` for z-order |
-| Dirty tabs → `*` on title only | cfg label shows scan lifecycle (`ScanStage`), not edit state; `*` on tab title is sufficient dirty indicator |
-| `input.yaml_path` for Run | documented regex filter, skip discovery, only selected configs |
+| `TabRail` replaces ttk.Notebook entirely | page stack + `tkraise()` for zero-theme page selection; rail owns selection, progress, dirty state — no Notebook API remains |
+| `ProgressBank` per-config tracking | stage weights (Processing=60%) → fractional fill; `run_start`/`finish` called from pipeline per-config; `stage_start`/`inner` fed via `progress_bridge` |
+| `set_cfg(stem)` in `process_loading_yaml` | per-config attribution: called before `process_fun(cfg)` so `stage_desc` and `GuiTqdm` ticks land in the correct bank cell; `set_cfg(None)` reset in `_wrap.wrapped` at task start |
+| `bank.finish(stem)` in `process_loading_yaml` | per-config completion: `finally` block calls `bank.finish(stem, ok)` right after each config succeeds/fails — rail cells transition independently during sequential processing |
+| `_on_rail_hover` callback | rail hover → `_nb_hovering` guard + status bar yaml path display; `on_hover=None` default for headless/test usage |
+| Run button `place(in_=self._main)` on root | floats at main area bottom-right with scrollbar margin; `lift()` on `<Configure>` for z-order |
+| Dirty tabs → rail cell `*` via `set_dirty` | rail is the sole dirty indicator; no notebook tabs remain |
+| `input.path` `.yaml` suffix for Run | `cfg_proc/run/(stem1\|stem2).yaml` → `path_in.stem` becomes regex filter, skip discovery, only selected configs |
 | `_run` / `_scan` use minimal `sys.argv` | launch-time positional path stripped via `parse_data_path`; data path fed as `input.path` override, `key=value` overrides preserved for scan only — YAML files for run are the sole config source |
 | `PauseGate` in log + tqdm, not pipeline | pipeline code untouched; pause on next tick |
 | `COEF_SHAPES` auto-derived in `cli_cfg.py` | `infer_coef_shapes()` walks `ConfigInCoefs_InclProc` fields: shape from default value structure (when not `None`) or `Annotated` metadata; `P_t` annotated `(3,3)` since default is `None` |
@@ -105,7 +116,7 @@ Click Run while processing → PauseGate
 | `_apply_edit_value` / `_apply_default_fg` use `overwrite=False` | edit-time restylers pass only `fg` to `highlight_cells`; `overwrite=False` preserves the `bg` that `_apply_styles` set (input.row data cells keep button-face after edits) |
 | **Input row styling** | node label: button-face bg + normal black `FG_DEFAULT` (never blue/gray toggle); all data cells: button-face bg via `highlight_cells` across `total_columns()`.  Other rows: button-face bg + `BLUE_FG`/`_fg_default` node fg as before |
 | **PathField styling** | `theme.ENTRY_BG_FALLBACK` bg + `theme.FG_DEFAULT` fg + **bold** font (sheet-wide, 1×1 cell); left-aligned by default (`align="w"`), on hover tksheet widget shrinks to `frame − btn_w` via `place(width=…)` + right-aligned (`align="e"`) — same `_field_place_kw` geometry as ConfigSheet; entry-field silhouette distinct from the gray coef_sheet cells; **editing via `ttk.Entry` overlay** (veto tksheet's `tk.Text`), `justify="right"` |
-| **Blue node labels** → subtree unchanged | `_node_at_default(id)` recurs: every leaf value matches its config dataclass default; `theme.BLUE_FG = "#0055CC"` on index canvas |
+| **Blue node labels** → subtree at default | `_node_at_default(iid)`: own cells (the node's `max_col`) AND every child subtree must match its config dataclass default; `theme.BLUE_FG = "#0055CC"` on index canvas. `len` is array-shape metadata, NOT `max_col` — a `1d` parent (`max_col=0`+`len=n`, e.g. `kVabs`) holds date columns only and defers entirely to its child row, so it turns blue iff the child row's cells match the dataclass default |
 | `_on_end_edit` → cascade toggle | Gray/clear fg per cell **+** walk ancestral tree labels (blue/standard); `_fg_default` used for clear side (not `fg=None`) |
 | dirty tracking via `_data_snapshot` | `tuple(tuple(str(val) for val in row) for row in sheet)` covers ALL editable cells (not just coefs); `is_dirty` compares current vs snap |
 | `"*"` on tab title (300 ms poll) | visual feedback for unsaved edits; removed by `mark_clean()` after write |
@@ -114,7 +125,7 @@ Click Run while processing → PauseGate
 | `_log_autoscroll` flag + scroll bindings | persistent flag (not `yview()` threshold — `see("end")` yields ~0.91–0.98, never 1.0); starts `True`, cleared by `<MouseWheel>`/`<Button-4/5>` when `after_idle` check finds `yview()[1] < 0.90`, restored when user scrolls back to bottom; `_poll_logs` calls `see("end")` only when flag is `True` |
 | `_clear_status` one-shot flag (not blanket clear) | original `_poll_progress` set `_status.set("")` every 300 ms when `tot == 0`, wiping "Ready", "Done …", and hover hints.  `clear_and_reset()` (worker, at probe start) + `consume_clear()` (GUI, once) replaces continuous clearing with a single event per probe boundary.  `_path_hovering` guard defers consumption while hover is active |
 | `QueueHandler` consecutive dedup | drops equivalent records (same msg at same call site), registered by `funcName+msg` key.  **freezes** the rendered text onto the `LogRecord` (`rec.msg = text; rec.args = ()`) at emit time so deferred `drain`-time `getMessage()` cannot be corrupted by the mutable `Message` reused across log calls in `LoggingStyleAdapter`.  Mirrors Hydra's `job_logging/colorlog` formatter, which renders `record.getMessage()` once synchronously. |
-| `Ctrl+C` → RTF + plain on clipboard | `_rtf_clipboard.copy_rich` serializes tag-colored log ``tk.Text`` widget; pywin32 absent → plain fallback |
+| `Ctrl+C` → RTF + HTML + plain on clipboard | `_rtf_clipboard.copy_rich` serializes tag-colored log ``tk.Text`` widget; bound on root `<<Copy>>` (not `<Control-c>`), writes CF_RTF + HTML Format + CF_UNICODETEXT, retries `OpenClipboard` on contention, falls back to plain text on `ImportError` or exhausted retry |
 | `config.Config` + `config.Return` passed to `load()` | structured-config root + `StrEnum` for `program.return_` dropdown |
 | `_cell_spec_for` → bool/enum/text/number | walks dataclass tree via `spec_for_path`; `bool` → checkbox, `Enum` → dropdown, `str`/`Path` → left-align |
 | node column bg = header bg | `highlight_cells(canvas="index")` in `_apply_styles`; `resolved_frame_bg()` (TFrame background) for all rows including `input` |
@@ -225,12 +236,11 @@ Dynamic tabs (created per config in ``_add_page``) don't have `self._*` names,
 so the auto-role loop can't find them.  ``_add_page`` calls
 ``set_widget_meta(frame, status=STR["tab.status"].format(path=rel))`` directly
 using the STR template (``{path}`` = yaml path relative to the data directory).
-Tab hover is wired via ``<Motion>`` / ``<Leave>`` bindings on ``self.nb`` that
-use ``nb.identify(x, y)`` + ``nb.index(f"@{x},{y}")`` to find the tab frame
-and read its status from ``widget_meta``.  Because ``{path}`` is a filesystem
-path that may contain ``_``/``*``/``\\``/`` ` ``, ``_on_nb_motion`` calls
-``set_text(status, raw=True)`` to bypass Markdown parsing — the template itself
-stays literal (no ``**bold**`` there).
+Tab hover is wired via ``TabRail._on_hover`` → ``App._on_rail_hover`` which reads
+``get_widget_meta(frame, "status")`` and writes to ``_status_lbl``.  Because
+``{path}`` is a filesystem path that may contain special characters,
+``_on_rail_hover`` calls ``set_text(status, raw=True)`` to bypass Markdown
+parsing — the template itself stays literal (no ``**bold**`` there).
 
 Static ``STR["{role}.status"]`` strings (defined by chrome widgets — e.g.
 ``path_field.status``) **do** go through the Markdown parser by default at
@@ -262,13 +272,16 @@ which returns a ``HelpEntry(short, body)`` parsed once from the tables in
    (``input``, ``input.coefs``, ``out``, ``filter``, ``program``).
 2. Inside a config-group section, every markdown table row whose first cell is
    a backtick-quoted identifier (``| `field` | … | description |``) emits
-   ``HelpEntry(path="{section}.{field}", short=<last cell>)``.
-3. CamelCase field names (``Ag``, ``Cg``, ``Rz``) parse identically to
+   ``HelpEntry(path="{section}.{field}", short=<last cell>, body={})``.
+3. **Mode-tagged sections** — ``### `field.path` <mode>value</mode>``
+   subheaders accumulate detail content into ``body[mode]``.  See
+   [Mode-tagged sections](#mode-tagged-sections-in-config_referencemd) below.
+4. CamelCase field names (``Ag``, ``Cg``, ``Rz``) parse identically to
    lowercase Hydra names.
-4. ``_DOC_PATH`` resolves to ``config_reference.md`` at
+5. ``_DOC_PATH`` resolves to ``config_reference.md`` at
    ``{tcm_root.parent}/docs/tcm_cli/config_reference.md``; absent file →
    empty cache → no hover text (graceful degradation).
-5. Array indices stripped at lookup time: ``Ag[0]`` / ``Ag[1][2]`` → ``Ag``.
+6. Array indices stripped at lookup time: ``Ag[0]`` / ``Ag[1][2]`` → ``Ag``.
 
 Fallback chain in ``_publish_status``:
 ``hover_status[ident]`` → ``help_for_path(candidate).short`` → ``key`` / ``label`` / ``path``.
@@ -291,38 +304,136 @@ Index) canvas, which is separate from the MT canvas.  ``_on_tree_motion``
 the current status so moving between tree column and data cell on the SAME row
 triggers a re-publish.
 
+### Mode-tagged sections in `config_reference.md`
+
+When a field's meaning depends on context (per-probe processing vs. input
+specification), the table cell stays minimal and detailed documentation goes
+into ``###`` subsections tagged with a **mode**:
+
+```markdown
+## `input` — Data source & parameters
+| Field | Type | Default | Required | Purpose |
+|-------|------|---------|----------|---------|
+| `path` | `str` | — | **Yes** | Absolute path to the data file. Determines probe identity (pcid). |
+
+### `input.path` <mode>probe</mode>
+Absolute path to the data file.  The filename **determines probe identity** (pcid):
+the pipeline extracts the leading type letter...
+
+### `input.path` <mode>search</mode>
+supports glob (`*i*.txt`), regex (`i.*\.txt`), or directory.
+`.yaml` suffix filters existing configs by stem.
+```
+
+**Heading syntax**: ``### `dotted.field.path` <mode>value</mode>``
+(``</>`` shorthand also accepted).  Regex:
+``^###\s+`([A-Za-z_]\w*(?:\.\w+)*)`\s+<mode>([a-z_]+)</(?:mode)?>``
+
+**Parser behavior**:
+- ``_FIELD_MODE_HEAD`` is checked **before** ``_ANY_HEADING`` so ``###``
+  mode-tagged headers don't close the parent ``##`` section.
+- Each ``###`` subheader opens accumulation under ``HelpEntry.body[mode]``.
+- Next ``###`` or ``##`` closes the previous accumulation.
+- Fields without mode-tagged content get ``body={}``.
+
+**Consumer API** — ``help_for_path(path, *, mode=None)``:
+
+| Call | Return |
+|------|--------|
+| ``help_for_path("input.path")`` | ``HelpEntry(body={"probe": "...", "search": "..."})`` |
+| ``help_for_path("input.path", mode="probe")`` | ``HelpEntry(body="...")`` — probe content only |
+| ``help_for_path("input.path", mode="search")`` | ``HelpEntry(body="...")`` — search content only |
+
+**Mode names** — content regimes, not environment labels:
+
+| Mode | Content regime | Example consumer |
+|------|---------------|------------------|
+| ``probe`` | Per-probe processing meaning — what the field does, how it affects results | GUI coef hover, popup |
+| ``search`` | Input specification patterns — glob, regex, directory, YAML | GUI path field, CLI help |
+
+To add a new mode: (1) add a ``### `field.path` <mode>new_mode</mode>``
+subsection in ``config_reference.md``; (2) call ``help_for_path(path,
+mode="new_mode")`` in the consumer.  The parser recognizes any ``[a-z_]+``
+mode value — no code changes needed in ``_help.py``.
+
 ## i18n architecture
 
 All user-visible strings are centralized in `str.yaml` (loaded once at startup
-into `app.STR` and `worker._STR`).  No hardcoded display text in app.py or
-worker.py — every label, button text, status message, and format template is
-read from `STR` at runtime.
+via `const.load_str()`, cached).  No hardcoded display text in app.py,
+worker.py, _browse_button.py, _path_field.py, _tab_rail.py, or
+coef_sheet.py — every label, button text, dialog title, status message,
+context menu item, and format template is read from the cached STR dict
+at runtime.
 
 ### String categories in `str.yaml`
 
 | Category | Key pattern | Example |
 |----------|-------------|---------|
+| Window chrome | `window.*`, `default_page.*` | `window.title: "TCM"` |
 | Chrome tooltips / hover status | `{role}.tooltip`, `{role}.status` | `run.start: "Start processing"` |
+| Browse dialog titles | `dialog.*` | `dialog.data_dir: "Browse data path"`, `dialog.filter_search: "Data & configs"` |
+| Browse button labels | `browse.*` | `browse.dir_label: "…📁"` |
+| Sheet context menu | `sheet.*` | `sheet.insert_col: "Insert column"` |
 | Button labels | `run_btn.*` | `run_btn.pause: "Pause"` |
 | Status / progress text | `status.*` | `status.ready: "Ready"` |
 | Completion template | `overall_lbl.done_detail` | `" - Done {pct}% ({ok}/{n} ok)"` |
 | Error prefixes | `error.*` | `error.scan: "Scan: {p}"` |
+| PathField placeholder | `path_field.placeholder` / `path_field.placeholder_shift` | `"D:/data/_raw/"` / `"D:/data/_raw/(i*raw_file1[.]txt\|i*raw_file2[.]txt)"` |
 
 ### Locale switching
 
-`:data:`LANG` in `const.py` controls language selection (same pattern as
-:data:`COLOR_MODE`):
+`LANG` in `const.py` controls language selection (same pattern as
+`COLOR_MODE`):
 
 | Value | Behavior |
 |-------|----------|
-| `"auto"` (default) | Detect from OS locale via `locale.getdefaultlocale()` → two-letter code (e.g. `"ru"`). Falls back to `"en"`. |
+| `"auto"` (default) | Detect from OS locale via `locale.getlocale()` → two-letter code (e.g. `"ru"`). Falls back to `"en"`. |
 | `"en"`, `"ru"`, etc. | Explicit language code — loads `str_{lang}.yaml` |
 
 Resolution: `const.resolve_lang()` → cached two-letter code.
 Loading: `const.load_str()` → `str_{lang}.yaml` if exists, else `str.yaml`.
-Both `app.STR` and `worker._STR` call `load_str()` at import.
+Result is cached — all modules calling `load_str()` get the same dict.
+
+Modules that need i18n: `app.py`, `worker.py`, `_browse_button.py`,
+`_path_field.py`, `_tab_rail.py`, `coef_sheet.py` — each imports
+`load_str` from `const`.
 
 To add a language: create `str_{lang}.yaml` with the same keys as `str.yaml`.
+
+### PathField placeholder
+
+When the path field is empty, a dim-gray placeholder example is shown
+(`path_field.placeholder` from str.yaml — simple directory hint).  Holding
+**Shift** swaps to `path_field.placeholder_shift` (advanced pattern syntax);
+releasing Shift restores the simple one.  The swap only applies when the
+placeholder is visible (cell empty) and no edit is active — it does not
+alter `_has_placeholder` state.
+
+`path_field.status` and `path_field.status_shift` are two separate i18n keys:
+normal hover status and Shift-held status (YAML config loading hint).  PathField
+reads both from ``STR`` at init; `_on_shift_press`/`_on_shift_release` swap the
+status bar text alongside the placeholder.
+
+The placeholder clears on first keystroke or double-click edit, and
+reappears when the field is committed empty.  `PathField.get()` returns
+`""` while the placeholder is visible — the placeholder text is never
+treated as user input.
+
+### YAML config selection in PathField
+
+When the PathField value ends with `.yaml`/`.yml`, `processing.run` detects
+the suffix, derives `yaml_path` from `path_in.stem`, and skips data
+discovery — loading only matching configs into tabs.  No GUI-side plumbing
+needed — the detection happens in the CLI layer.
+
+The `input.yaml_path` config field has been removed.  Callers pass
+``input.path=<dir>/cfg_proc/run/(stem1|stem2).yaml`` instead.  The
+``.yaml`` suffix must be **outside** the alternation (``Path.stem`` strips
+it); ``Path("(file1[.]yaml|file2[.]yaml)").stem`` gives
+``"(file1[.]yaml|file2"`` — broken.  Correct: ``(file1|file2).yaml``.
+
+See [config_reference.md `input.path`](../tcm_cli/config_reference.md#input--data-source--parameters)
+for the CLI equivalent.
 
 ### `states.py` enum values
 
@@ -648,10 +759,45 @@ triggers `_schedule_field_hide` (pointer-check vetoes over field).
 [`_rtf_clipboard.py`](`_rtf_clipboard.py`), which walks all tag boundaries,
 maps each tag's `foreground` to an 8-bit RGB via `winfo_rgb`, and emits a
 single `{\cfN …}` segment per slice into an RTF `\\colortbl`.
-Both `CF_UNICODETEXT` (plain, fallback target) and `CF_RTF` are placed on the
-clipboard so Word / Outlook keep colors while plain-text targets degrade
-gracefully.  When `pywin32` is unavailable, falls back to
-`widget.clipboard_append(plain)`.
+Three formats are placed on the clipboard:
+
+- **`CF_UNICODETEXT`** — plain text fallback for all targets
+- **`CF_RTF`** — Word / Outlook preserve foreground colors
+- **`HTML Format`** — CopyQ and other clipboard managers that prefer HTML over RTF
+
+When `pywin32` is unavailable, falls back to `widget.clipboard_append(plain)`.
+
+**Binding placement.** The binding is `self.root.bind("<<Copy>>", ...)`,
+NOT `<Control-c>`.  Tk maps `<Control-Key-c>` → `<<Copy>>` via
+`event add` at the C level — a `<Control-c>` binding is dead code on real
+keypresses.  `_log` is `state='disabled'` → never gets keyboard focus →
+widget-scoped binding would never fire.  Root `<<Copy>>` fires for any
+focused widget.
+
+`tksheet` binds `<Control-c>` (not `<<Copy>>`) on its canvas, so its
+`ctrl_c` handler runs for `<Control-c>` dispatches but **not** for real
+Ctrl+C keypresses (which generate `<<Copy>>`).  The `<<Copy>>` event
+propagates through bindtags (widget → Canvas class → root → all) to our
+root handler.  Python's `event_generate("<<Copy>>")` on a tksheet canvas
+does NOT propagate (a tkinter quirk); Tcl-level `event generate` does.
+Tests use Tcl-level dispatch to match reality.
+
+`App._on_copy_rich` checks `_log.tag_ranges("sel")`: if the user has a
+mouse selection on the disabled log, it serves RTF + HTML + plain via
+`copy_rich` and returns `"break"` (suppresses the default Text/Entry
+`<<Copy>>` so the focused widget doesn't overwrite the clipboard with plain
+text); otherwise it returns `None` and the focused widget (e.g. `_path_field`
+ttk.Entry) keeps its normal copy behaviour.
+
+**Hardening.** `copy_rich` builds RTF + HTML payloads BEFORE touching the OS
+clipboard (a failed build leaves the prior clipboard contents intact rather
+than empty-but-nothing).  `win32clipboard.OpenClipboard` is retried with
+backoff — it can raise `pywintypes.error` ("Отказано в доступе"/Access denied)
+briefly while another viewer holds the clipboard or while Tk's own idle-time
+clipboard propagation is in flight (`widget.update()` is called each retry to
+drain Tk's pending clipboard writes).  On exhausted retries or `ImportError`
+(no `pywin32`), falls back to Tk's plain-text clipboard so the user still gets
+text — never an unhandled exception from Ctrl+C.
 
 ## Pipeline patches (minimal)
 
@@ -665,20 +811,60 @@ gracefully.  When `pywin32` is unavailable, falls back to
 | `io.py` | `get_tqdm_class() or tqdm` for CSV write progress | ~3 |
 | `csv_load.py::_pattern_to_regex` | `if '|' in name: return name` (regex alternation) | ~2 |
 
+## TabRail (`_tab_rail.py`)
+
+Vertical tab rail replacing the native ttk.Notebook tab row.  Two columns
+share one vertical extent per config:
+
+```
+[progress column (PROG_W)] [tab column (TAB_W)]
+  thin vertical fill          rotated label (angle=90, reads bottom→up)
+  grows top→down              selection accent on notebook-facing edge
+  color by state              dirty `*` suffix, ✔ on done
+```
+
+### Sizing policy
+
+Ideal height = rotated label length + padding.  Three modes:
+- **normal** — height by content;
+- **surplus** — capped proportional grow (`min(GROW_CAP, 35%)`), remainder empty below;
+- **shortage** — selected keeps ideal, inactive waterfill-compress to `MIN_H`;
+- **extreme shortage** (``H < n * MIN_H``) — even split, no floor; selected gets
+  a remainder pixel.  Every tab stays visible regardless of window size.
+
+### Interaction
+
+Tab column click → `_on_select(stem)` → `App._select_tab` → `frame.tkraise()`.
+Progress column is display-only (`e.x >= scaled(PROG_W)` check).  Hover
+highlights cell face; `_on_hover` callback updates status bar.
+
 ## Progress
 
-Two independent progress bars + a status text line, all driven by
-`ProgressState` snapshots read every 300 ms in `App._poll_progress`.
+Three layers: per-config fills on the rail, overall description in `_overall_lbl`,
+and stage-level floater overlay — all driven by snapshots read every 300 ms in
+`App._poll_progress`.
 
-### Upper bar — config-level (overall)
+### Per-config fills — `ProgressBank` → `TabRail`
 
-Stage-aware ticks via [`processing.Stage`](../tcm_cli/how_it_works.md#stage-context-stage_ctxpy)
-enum — load → coefs → proc → NC write (per bin) → TSV write (per bin).
-Each config occupies 100 units; active stages share the scale evenly.
-NC stages counted only when `use_h5` is `True`.  Ticks are emitted by
-`processing._stage()` which writes to `progress_overall`.
+`ProgressBank` tracks each config's processing state (pending → running → done
+/error) with stage-weighted fractional progress.  Stage weights are defined in
+`progress_bank.WEIGHTS` (Processing dominates at 60%).  `canon_stage()` maps
+free-form `stage_desc` text to canonical stages by 4-letter prefix.
 
-### Lower bar — stage-level
+Feeding:
+- `cli.process_loading_yaml` calls `progress_bridge.set_cfg(stem)` per config
+  so subsequent `stage_desc` / `GuiTqdm` ticks land in the correct bank cell.
+- `stage_desc(desc)` (called at each processing phase boundary) updates
+  `progress_overall` AND calls `bank.stage_start(current_cfg, canon_stage(desc))`.
+- `GuiTqdm.update(n)` calls `bank.inner(current_cfg, n, total)` alongside
+  `progress_stage.set`.
+
+Rendering: `App._poll_progress` reads `bank.snapshot_all()` →
+`rail.set_state(cfg, state, frac)` per config.  Aggregate % appended to
+`_overall_lbl` text during run.  On completion, `bank.finish(stem, ok)` →
+rail cell shows full fill (done) or error tint.
+
+### Stage-level overlay — `progress_stage` + `GuiTqdm`
 
 Per-item progress via `GuiTqdm` — a tqdm replacement that routes
 `(n, total, desc)` to `progress_stage` (read by `App._poll_progress`).
@@ -701,19 +887,31 @@ root
 │
 ├── row=0: path field (§1)
 │
-├── row=1: overall status + progress bar (§2, dual-purpose)
+├── row=1: overall status label (§2)
 │   └── f1 (ttk.Frame)
-│       ├── _overall_lbl (ttk.Label, text=_cfg_state enum value)
+│       ├── column=0: _overall_lbl (ttk.Label, text=_cfg_state enum value)
 │       │   ScanStage.DEFAULT → "Default configuration"
-│       │   ScanStage.SCAN → "Processing configurations" (driven by progress_overall.desc)
-│       │   ScanStage.DONE → "Generated configurations for processing found data"
-│       └── _prog_all (ttk.Progressbar, length=220, grid-managed on demand)
+│       │   ScanStage.DONE → completion text + aggregated % from bank
+│       │   During run: stage_desc text + " — 62%" from bank snapshot
+│       └── column=1: _prog_status (ttk.Label, anchor="e")
+│           Current processing stage description (separate from tab rail).
+│           Cleared when no stage is active.
 │
-├── row=2: notebook (§3, weight=2)
-│   └── _run_btn (ttk.Button, place(in_=self.nb, relx=1.0, rely=1.0, anchor="se"))
-│       floats at notebook bottom-right with scrollbar margin
+├── row=2: main area (§3)
+│   └── _main (ttk.Frame)
+│       ├── column=0: _rail (TabRail) — vertical tab rail
+│       │   ├── progress column (PROG_W) — per-config fills top→down
+│       │   └── tab column — rotated labels, selection accent, dirty `*`
+│       └── column=1: _stack (ttk.Frame) — page stack, tkraise() switching
+│   └── _run_btn (ttk.Button, place(in_=self._main, relx=1.0, rely=1.0, anchor="se"))
+│       floats at main area bottom-right with scrollbar margin
 │
 ├── row=3: log (§5, weight=1)
+│   └── _log_frame (ttk.Frame)
+│       ├── _log (tk.Text, row=0, weight=1)   ← scrolling log
+│       └── _log_vbar (ttk.Scrollbar, row=0 col=1)
+│
+│   (error tooltip is rendered in _status_lbl — no separate row)
 │
 ├── place(rely=1.0, relx=0.0, anchor="sw")  ← bottom-left
 │   └── _status_lbl (MarkdownLabel)
@@ -779,11 +977,39 @@ only gates `_status_lbl` clearing.
 ``_bind_chrome_hover`` (called once at end of ``_build``) adds
 ``<Motion>``/``<Leave>`` bindings to every widget registered by
 ``_register_chrome_help`` — Run button, progress bars, labels.  Widgets with
-their own dedicated hover handling (``_path_field``, ``nb``) are skipped.
+their own dedicated hover handling (``_path_field``, ``nb``, ``_log``) are skipped.
 
 ``_on_chrome_hover`` reads ``get_widget_meta(w, "status")`` (static string or
 live callable) and writes to ``self._status``.  ``_on_chrome_leave`` clears
 ``_chrome_hovering`` so the poll cycle can resume writing status.
+
+### Hover-hide for stage status + floater
+
+``<Enter>`` on ``_prog_status``, ``_prog_floater``, ``_prog_stage_text``, or
+``_prog_stage`` fires ``_on_status_enter``, which:
+1. Sets ``_status_hovering = True``
+2. Records the union bbox of visible status widgets (``_status_bounds``)
+3. ``grid_remove()``s ``_prog_status`` + ``place_forget()``s ``_prog_floater``
+
+Hidden widgets can't fire ``<Leave>``, so root ``<Motion>`` +
+``_on_motion_check_hover`` detects leave: when the mouse exits the recorded
+bbox, ``_status_hovering`` resets to ``False``.  ``_poll_progress`` then
+restores both on the next 300 ms tick (if ``tot > 0``).
+
+``winfo_ismapped()`` is not used for place-managed widgets (unreliable before
+window realization and on withdrawn test roots); ``place_info()`` /
+``grid_info()`` are used instead.
+
+### Error tooltip in `_status_lbl`
+
+``_show_tip`` sets ``_tip_active = True`` and renders markdown directly in
+``_status_lbl``.  While active, ``_set_status`` is a no-op — all chrome-hover,
+poll, and log-motion status updates are suppressed.  Dismissed by ``_hide_tip``
+on: new scan/run (``_clear_log`` / ``_on_scan_ok`` / ``_on_run_done``), path
+change (``_on_path_changed``), ``<Escape>`` (root binding), or cell edit begin
+(``ConfigSheet.on_edit_begin`` → ``_hide_tip``; fired from
+``_on_begin_edit_cell`` and ``_on_field_edit_start``, excluding the Top
+PathField which is a ``PathField``, not a ``ConfigSheet``).
 
 ## CLI integration
 

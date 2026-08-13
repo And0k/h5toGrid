@@ -7,12 +7,9 @@ import sys
 import threading
 from functools import wraps
 
-from .const import load_str
-from .progress_bridge import GuiTqdm, set_runtime, set_tqdm_class
+from ._i18n import STRINGS as _S
+from .progress_bridge import GuiTqdm, set_cfg, set_runtime, set_tqdm_class
 from .runtime import Runtime
-
-# Chrome i18n strings — same source as app.STR, loaded via shared loader.
-_STR: dict[str, str] = load_str()
 
 
 class Worker:
@@ -85,6 +82,7 @@ class Worker:
                 root.addHandler(rt.queue_handler)
             if rt.queue_handler is not None:
                 rt.queue_handler.reset_dedup()
+            set_cfg(None)  # reset per-config attribution before a new task
             return fun(cfg)
 
         return wrapped
@@ -104,27 +102,42 @@ class Worker:
                 exit_on_error=False,
             )
             self.rt.result_queue.put(("scan_ok", res))
+        except SystemExit as exc:
+            # _print_usage_error (and similar CLI paths) call sys.exit(1);
+            # SystemExit is BaseException, not Exception — catch explicitly
+            # so the error reaches the GUI result_queue instead of dying silently.
+            logging.getLogger(__name__).error("scan exited: code {}", exc.code)
+            self.rt.result_queue.put(("scan_error", exc))
         except Exception as exc:
-            logging.getLogger(__name__).exception("scan failed")
+            logging.getLogger(__name__).exception(_S.get("error.log.scan", "scan failed"))
             self.rt.result_queue.put(("scan_error", exc))
 
     def _run(self, data_path: str, stems: list[str]) -> None:
-        from tcm import cli, processing
+        from pathlib import Path
+
+        from tcm import cli, paths, processing
 
         # Minimal argv: no original CLI overrides.  YAML files (edited by user)
         # are the sole config source.  Data path passed via overrides.
         self._setup(["__main__"])
         # Show a sliver on overall bar immediately (non-zero total → bar visible)
-        self.rt.progress_overall.set(0, 1, _STR["status.starting"])
+        self.rt.progress_overall.set(0, 1, _S["status.starting"])
         self.rt.progress_stage.set(0, 0, "")
+        # Filter by config stems: construct ``cfg_proc/run/(stems).yaml`` path
+        # so processing.run auto-detects the .yaml suffix and filters by stem.
+        dir_raw = paths.find_dir_raw_absolute(Path(data_path).absolute())
+        stem_path = str(dir_raw / "cfg_proc" / "run" / f"({'|'.join(stems)}).yaml")
         try:
             res = cli.call_in_raw_dir(
                 self._wrap(processing.run),
                 config_name="config",
-                input={"path": data_path, "yaml_path": f"({'|'.join(stems)})"},
+                input={"path": stem_path},
                 exit_on_error=False,
             )
             self.rt.result_queue.put(("run_ok", res))
+        except SystemExit as exc:
+            logging.getLogger(__name__).error("run exited: code {}", exc.code)
+            self.rt.result_queue.put(("run_error", exc))
         except Exception as exc:
-            logging.getLogger(__name__).exception("run failed")
+            logging.getLogger(__name__).exception(_S.get("error.log.run", "run failed"))
             self.rt.result_queue.put(("run_error", exc))

@@ -15,10 +15,9 @@ Every run YAML starts with `# @package _global_` so Hydra merges it into the top
 
 | Field | Type | Default | Required | Purpose |
 |-------|------|---------|----------|---------|
-| `path` | `str` | — | **Yes** | Absolute path to the data file (auto-resolved from CLI glob/regex). Supports glob (`*i*.txt`) and regex (`i.*\.txt`) patterns — the pipeline detects which automatically. Re-run with a narrower pattern to process only matching probes. |
+| `path` | `str` | — | **Yes** | Absolute path to the data file. Determines probe identity (pcid). |
 | `tables` | `List[str]` | `['incl*']` | No | Data groups to read — accepts regex (`incl*` matches all inclinometer groups). Auto-derived from filename for CSV. |
 | `ids` | `List[str]` | `None` | No | Process only these probe IDs (e.g. `[i01, i_p02]`). Re-run a single problematic probe without touching others. |
-| `yaml_path` | `str` | `None` | No | Filter existing configs by YAML filename pattern (`*` = all). When set, **no new configs are generated** — only existing YAMLs matching the pattern are processed. Combine with `program.return_=<cfg_from_args>` for a dry-run. |
 | `prefix` | `str` | `'I*[_0]'` | No | Filename prefix filter for CSV file discovery. |
 | `text_type` | `str` | `None` | No | Column layout variant (`i`, `p`, `b`, `d`, `w`). Auto-detected from file header; override here if detection fails. |
 | `text_line_regex` | `str` | `None` | No | Custom regex for raw text line parsing. Only needed when auto-detection fails on unusual file formats. |
@@ -43,6 +42,71 @@ Every run YAML starts with `# @package _global_` so Hydra merges it into the top
 | `dt_hole_warning` | `int` | `600` | No | Alert threshold for data gaps (seconds). Gaps larger than this trigger a warning. `None` disables. |
 | `fs_rounding` | `int` | `100` | No | Round estimated sampling frequency to the nearest multiple of this value. 0 = exact estimation. |
 | `tables_log` | `List[str]` | `['{}/logFiles']` | No | NC log group name template. Default `{}/logFiles` works for standard layouts. |
+
+> **Field detail sections** — When a field's meaning depends on context (per-probe
+> processing vs. input specification), the table cell stays minimal and detailed
+> documentation goes into `###` subsections tagged with a **mode**:
+>
+> | Mode | Content regime | Example consumer |
+> |------|---------------|------------------|
+> | `<mode>probe</mode>` | Per-probe processing meaning — what the field does, how it affects results | GUI coef hover, popup |
+> | `<mode>search</mode>` | Input specification patterns — glob, regex, directory, YAML | GUI path field, CLI help |
+>
+> The GUI compares its current context to the `<mode>` tag and selects matching
+> content.  Add new modes as `### \`field.path\` <mode>value</mode>` subheadings;
+> the parser recognizes any `[a-z_]+` value.  Keep table cells to one sentence.
+
+### `input.path` <mode>probe</mode>
+Absolute path to the data file.  The filename **determines probe identity** (pcid):
+the pipeline extracts the leading type letter (`i` for inclinometer, `w` for wave gauge),
+an optional model letter (`p`, `b`, `d`), and the probe number — e.g. `i_01.txt` → pcid
+`i01`, `i_p05_data.txt` → pcid `i_p05`.  A wrong filename maps to the wrong table and
+wrong coefficients.
+
+### `input.path` <mode>search</mode>
+supports glob (`*i*.txt`), regex (`i.*\.txt`), or directory.
+`.yaml` suffix filters existing configs by stem.
+
+#### Detailed
+Top PathField = CLI first positional argument — anchors data + config discovery.
+
+Accepted forms:
+- **directory** (e.g. `B:\Cruises\BalticSea\`) — pipeline scans for raw data
+  files and a `cfg_proc/run/` subfolder; expects a `_raw`/`proc` layout (below).
+- **glob** (`*i*.txt`) / **regex** (`i.*\.txt`) — match data files by name.
+- **`.yaml`** path — load pre-built configs directly, skip discovery.
+
+Expected directory layout:
+```
+{path}\
+├── _raw\            ← raw data files (.txt/.csv/.h5/.nc) — REQUIRED
+├── cfg_proc\
+│   └── run\         ← per-probe YAML configs (auto-generated on first scan)
+├── proc\            ← pipeline NC output (created on Run)
+└── text_output\     ← TSV export (created on Run)
+```
+
+Common errors:
+- `FileNotFoundError: No input files found matching …` — `_raw` missing or
+  empty; point at the **root** cruise directory, not a leaf.
+- `SystemExit` from `_print_usage_error` — path not resolved; verify absolute
+  and the directory exists.
+
+### `input.coefs_path` <mode>dir</mode>
+Directory of per-probe YAML coefficient files. The pipeline resolves
+`{tbl}.yaml` where `tbl` is the probe table name derived from the
+probe's id (e.g. `incl03`, `incl_p05`, `incl_b12`). Each YAML file
+must follow the `input.coefs` structure with at least one calibration
+field (`Ag`, `Cg`, `Ah`, `Ch`, `Rz`, `kVabs`, `azimuth_shift_deg`).
+
+Missing probe file → falls back to dataclass defaults silently.
+For configs in human readable (YAML) format see bundled `cfg/coef/yaml_export/`.
+
+### `input.coefs_path` <mode>file</mode>
+Single coefficient source file: HDF5 (`.h5`), NetCDF4 (`.nc`), or
+exported YAML (`.yaml`).  All probes share the file — the pipeline
+selects the group by table name.  Comma-separated paths are accepted
+(fallback chain, first match wins).
 
 ## `input.coefs` — Calibration coefficients
 

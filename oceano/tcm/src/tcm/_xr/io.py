@@ -1,6 +1,7 @@
 """
 I/O helpers for the xarray-native pipeline.
 """
+
 from __future__ import annotations
 
 import fnmatch
@@ -11,10 +12,11 @@ from typing import Any
 import pandas as pd
 import xarray as xr
 
-from tcm import _constants, utils2init
+from tcm import _constants, stage_ctx, utils2init
 from tcm._xr import dataset, filters, nc_utils
 
 lf = utils2init.LoggingStyleAdapter(__name__)
+
 
 def load_raw(
     path: str | Path | None = None,
@@ -89,26 +91,31 @@ def load_raw(
     if path is None:
         path = cfg_in["path"]
     path = Path(path)
-    if (suffix := path.suffix.lower()) in _constants._EXT_NC:
+    if (suffix := path.suffix.lower()) in _constants.EXT_NC:
         # ── NC ───────────────────────────────────────────────────────────────
         from tcm._xr.dataset import open_nc
+
         ds, coefs = open_nc(path, tbl=tbl, chunk_time=chunk_time)
         if cfg_in:  # NC has no time_corr — apply load-stage windowing + drop + hole check
             ds = filters.apply_load_time_ranges(ds, cfg_in.get("time_ranges"))
-    elif suffix in _constants._EXT_HDF5:
+    elif suffix in _constants.EXT_HDF5:
         # ── HDF5 ─────────────────────────────────────────────────────────────
         ds, coefs = open_hdf5(path, table=tbl, chunk_time=chunk_time)
         if cfg_in:  # HDF5 has no time_corr — apply load-stage windowing + drop + hole check
             ds = filters.apply_load_time_ranges(ds, cfg_in.get("time_ranges"))
-    elif suffix in _constants._EXT_CSV:
+    elif suffix in _constants.EXT_CSV:
         # ── CSV / TXT ────────────────────────────────────────────────────────
         # Progressive concat: release each chunk after merging instead of
         # accumulating all frames (peak ≈ 2× total data otherwise).
         ds = None
         for ds_chunk, _meta in dataset.open_csv_chunks(
-            path, text_type=text_type, cfg_in=cfg_in, chunk_time=chunk_time,
+            path,
+            text_type=text_type,
+            cfg_in=cfg_in,
+            chunk_time=chunk_time,
         ):
             ds = ds_chunk if ds is None else xr.concat([ds, ds_chunk], dim="time")
+            stage_ctx.advance()
         if ds is None:
             lf.warning("No data loaded from {}", path)
             return None, None
@@ -117,7 +124,7 @@ def load_raw(
     else:
         raise ValueError(
             f"Unsupported file extension '{suffix}' for load_raw(). "
-            f"Supported: {sorted(_constants._EXT_NC | _constants._EXT_HDF5 | _constants._EXT_CSV)}"
+            f"Supported: {sorted(_constants.EXT_NC | _constants.EXT_HDF5 | _constants.EXT_CSV)}"
         )
 
     if ds is None:
@@ -134,7 +141,8 @@ def load_raw(
         filters.warn_on_holes(ds, cfg_in.get("dt_hole_warning"))
     lf.info(
         "Loaded {}: {} ({:d} vars, {:d} rows)",
-        suffix, path.name,
+        suffix,
+        path.name,
         len(ds.data_vars),
         ds.sizes.get("time", 0),
     )
@@ -250,13 +258,17 @@ def _write_large_csv(df: pd.DataFrame, path: Path, csv_kwargs: dict, chunk_size:
     _bar_cls = get_tqdm_class() or tqdm
     for i in _bar_cls(range(0, n_rows, chunk_size), desc=f"Writing {path.name}", unit="chunk"):
         df.iloc[i : i + chunk_size].to_csv(
-            path, mode="w" if i == 0 else "a", header=i == 0, **csv_kwargs,
+            path,
+            mode="w" if i == 0 else "a",
+            header=i == 0,
+            **csv_kwargs,
         )
 
 
 # --------------------------------------------------------------------------- #
 # Legacy HDF5 bridge
 # --------------------------------------------------------------------------- #
+
 
 def open_hdf5(
     path: str | Path,
@@ -276,8 +288,7 @@ def open_hdf5(
 
     if not _constants.TABLES_AVAILABLE:
         raise ImportError(
-            "pytables (tables) required to open HDF5 files — "
-            "install pytables or use NC/CSV input"
+            "pytables (tables) required to open HDF5 files — install pytables or use NC/CSV input"
         )
     from tcm.incl_calc.coefs import load_coefs
 

@@ -134,10 +134,10 @@ python scripts/tcm_proc.py "_raw/*i*.txt" out.text_path=./results filter.corr_ti
 python scripts/tcm_proc.py "_raw/@i01.TXT"
 
 # Filter by YAML stem pattern (skip generation, use existing configs only)
-python scripts/tcm_proc.py "_raw" input.yaml_path="*@i_p5*"
+python scripts/tcm_proc.py "_raw/cfg_proc/run/(*@i_p5*).yaml"
 
 # Dry-run: list matching configs without processing
-python scripts/tcm_proc.py "_raw" input.yaml_path="*" program.return_=<cfg_from_args>
+python scripts/tcm_proc.py "_raw/cfg_proc/run/(*).yaml" program.return_=<cfg_from_args>
 
 # Drop-on-shortcut: Windows passes the raw path as sys.argv[1].
 # Commas, backslashes, quotes in the path are handled automatically —
@@ -177,11 +177,14 @@ cli.call_in_raw_dir(
 6. `processing.run(cfg)` — canonical orchestrator: discover → generate configs → filter → process.
    For binary inputs this step **branches**: calls ``run_processing`` directly per table,
    skipping the text-only config discovery/generation/sync chain.
-   When ``input.yaml_path`` is set, config generation is **skipped** and only existing
-   YAMLs matching the stem pattern are processed. When ``input.path`` is not a directory,
-   it acts as a filter: each YAML's stored **resolved** ``input.path`` (always an absolute
-   path to a concrete file, never a glob/regex) is matched against the CLI ``input.path``
-   pattern. Combined with ``program.return_=<cfg_from_args>``, this enables dry-run listing.
+   When ``input.path`` ends with ``.yaml``/``.yml``, config generation is **skipped**
+   and ``path_in.stem`` becomes a filter matching YAML stems.  Example:
+   ``<dir>/cfg_proc/run/(file1|file2).yaml`` → stem ``(file1|file2)`` → regex
+   alternation.  When ``input.path`` is not a directory and has no ``.yaml``
+   suffix, it acts as a filter: each YAML's stored **resolved** ``input.path``
+   (always an absolute path to a concrete file, never a glob/regex) is matched
+   against the CLI ``input.path`` pattern. Combined with
+   ``program.return_=<cfg_from_args>``, this enables dry-run listing.
 
 ### Log output
 
@@ -253,6 +256,8 @@ across ``processing.py`` (``_probe_base``, ``_probe_total``, ``_tick_idx``,
 | `set_stage_plan(n_active)` | `processing.run_processing` | stage count for `tick()` fraction |
 | `set_stage(num, name, details?, *args?)` | `processing.run_processing` | stage context + boundary mark + log |
 | `set_sublevel(name, details?, *args?)` | loading loops, kernels | sublevel context + boundary mark |
+| `set_work(n)` | `processing.run_processing` | declare sub-step count for current stage |
+| `advance()` | `load_raw()`, `_load_batch()` | one sub-step within current stage |
 | `tick(stage_name?)` | `processing.run_processing` | stage counter + progress bar |
 
 ```
@@ -262,6 +267,11 @@ cli.py:   set_probe("i90", stem_idx=1, n_cfgs_total=2, …)
 processing.py:  set_stage_plan(5)
                 set_stage(1, "load", "Loading %s", path.name)
                 # INFO:  [## probe i90 stage 1 load] Loading @i90.TXT
+                n_chunks = estimate_n_chunks(path, blocksize, skiprows)  # cheap 1 MB sample
+                set_work(n_chunks)  # seed sub-step count for this stage
+                …
+                # per CSV chunk (in load_raw / _load_batch):
+                advance()  # advances overall fractionally within current stage
                 …
                 tick()  # counter→1, frac=20%, progress_overall=20/200
                 set_stage(2, "coefs")
@@ -311,6 +321,13 @@ sub-indexes only when count > 1; sublevel only when set:
 `probe_base + frac` where `probe_base = (stem_idx - 1) * 100`.  The GUI
 bridge (`progress_bridge`) is imported optionally (try/except) — no-op when
 GUI is not installed.
+
+**Stage plan accuracy**: `n_active` equals the count of ticks that actually
+fire.  NC ticks fire for every bin (incl. noAvg, `dt_bin=0`); TSV ticks
+fire only for bins where `dt_bin >= dt_bins_min_save_text` (default 1 s) —
+noAvg (`dt_bin=0`) is skipped.  The plan counts
+`_n_tsv_bins = sum(b >= _min_save_ts for b in dt_bins)` so the final tick of
+the last probe reaches `frac=100` and the per-config rail fill completes.
 
 **QueueHandler**: the GUI's `log_bridge.QueueHandler` installs its own
 `StageContextFilter` so `emit()` sees the prefixed message (boundary marks)
@@ -409,6 +426,15 @@ cli.call_in_raw_dir(
     out={"db_paths": [db_in]},
 )
 ```
+
+**Merge order**: `yaml_path=` loads the YAML as **base**, then kwargs override
+on top (`merge(yaml, kwargs)` → kwargs win).  This is the opposite of
+`input.path` pointing to a `.yaml` file, where `process_loading_yaml` merges
+the per-probe YAML **on top of** `base_cfg` (`merge(base, yaml)` → YAML wins).
+Use `yaml_path=` when CLI overrides must take priority over the YAML (e.g.
+calibration scripts overriding `input.tables`/`channels`).  Use
+`input.path=<dir>/(stems).yaml` when the YAML's own values should be
+authoritative.
 
 The `yaml_path` param loads the YAML via `OmegaConf.load` and uses it as
 the **base** for dict overrides — explicit `**kwargs` win on top via
@@ -673,7 +699,7 @@ part of the per-text-file config sweep.
 
 **Text inputs (CSV/TXT)**: the full discovery pipeline runs as below.
 
-1. **Config generation** (idempotent, **skipped when ``input.yaml_path`` is set**):
+1. **Config generation** (idempotent, **skipped when ``input.path`` ends with ``.yaml``**):
    ``config_yaml.save_config_to_yaml(cfg, ...)`` is called when:
    - Stale configs exist (source file deleted), OR
    - No configs exist, OR
@@ -682,21 +708,21 @@ part of the per-text-file config sweep.
      ``input.ids`` (when requested IDs lack configs but source data may exist).
    After generation, orphan configs (no matching source file) produce a
    **warning only** — configs are never auto-deleted.
-2. **Device-metadata sync** (**skipped when ``input.yaml_path`` is set**):
+2. **Device-metadata sync** (**skipped when ``input.path`` ends with ``.yaml``**):
    `sync_yamls_devmeta_and_hydra(dir_raw.parent, dir_cfgs, cfgs_existed)`
    pushes `time_ranges` from `info_devices.yaml` into run YAMLs that lack them.
 3. **Resolve which configs to process** (by `input.ids` or all).
    When specific IDs are requested and some have no config after discovery
    (source data truly absent), ``ValueError`` is raised — the error is now
    justified because config generation was already attempted in step 1.
-4. **Filter by ``input.yaml_path``** (when set): match YAML stems against the
-   pattern using ``csv_load._pattern_to_regex()`` — only matching stems are kept.
-5. **Filter by ``input.path``** (when not a directory): the CLI ``input.path`` may be
-   a glob/regex pattern; each YAML's stored ``input.path`` is always a **resolved
-   absolute path** to a concrete file.  The filter matches the CLI pattern against
-   the YAML's resolved ``input.path`` filename using ``csv_load._pattern_to_regex()``.
-   Re‑running with a different CLI pattern limits processing to YAMLs whose resolved
-   paths match.  Both filters use AND logic when both are set.
+4. **Filter by ``yaml_path``** (derived from ``input.path`` ``.yaml`` suffix):
+   ``path_in.stem`` is matched against YAML stems using
+   ``csv_load._pattern_to_regex()`` — only matching stems are kept.
+5. **Filter by ``input.path``** (when not a directory **and no ``.yaml`` suffix**):
+   the CLI ``input.path`` may be a glob/regex pattern; each YAML's stored
+   ``input.path`` is always a **resolved absolute path** to a concrete file.
+   The filter matches the CLI pattern against the YAML's resolved ``input.path``
+   filename using ``csv_load._pattern_to_regex()``.
 6. `cli.process_loading_yaml(run_processing, base_cfg=cfg, dir_cfgs=..., cfgs=..., n_cfgs_existed=...)`
    — loads each YAML, merges on top of `cfg`, validates stem match, calls `run_processing(cfg_dc)`.
    Returns `(processed_pcids, failed_pcids, last_cfg)`.
@@ -873,6 +899,13 @@ CSV loading is chunked (`input.blocksize`, default 500 K rows) to limit
 per-chunk memory.  Chunks are progressively concatenated in `load_raw()`
 and `_load_batch()` — each chunk is freed after merge, avoiding the
 previous pattern of holding all frames + concat result simultaneously.
+
+Before iteration starts, `estimate_n_chunks()` samples the first 1 MB of
+each source file (counts `b'\n'` bytes, extrapolates total lines, divides
+by `blocksize`) to seed `set_work()`.  Each processed chunk calls
+`advance()` which advances the overall progress bar fractionally within the
+current stage's allocation — so the bar moves smoothly instead of freezing
+until all chunks complete.
 
 Between probes, `gc.collect()` runs in `cli.process_loading_yaml()` to
 release the previous probe's data before the next one loads.  On Windows,

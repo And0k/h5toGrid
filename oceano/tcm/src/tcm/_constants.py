@@ -6,10 +6,10 @@ Single source of truth for
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
-from typing import Optional
 
-VERSION = "2026.07"
+# if need VERSION, then import from oceano/tcm/scripts/build/version.py
 
 # ---------------------------------------------------------------------------
 # Optional-dependency availability (resolved once at import time)
@@ -38,8 +38,13 @@ except ImportError:
 NC4_AVAILABLE: bool = _netCDF4 is not None
 """Whether ``netCDF4`` is importable (xarray NC engine)."""
 
+# Supported extensions grouped by backend
+EXT_CSV = {".txt", ".csv", ".tsv"}
+EXT_HDF5 = {".h5"}  # , ".hdf5" not need
+EXT_NC = {".nc"}  # , ".nc4" not need
+
 # ---------------------------------------------------------------------------
-# Raw-data layout
+# Project root paths
 # ---------------------------------------------------------------------------
 
 # Canonical name for the directory that anchors all relative processing paths.
@@ -54,7 +59,12 @@ CFG_PATH = PROJECT_ROOT / "cfg"
 # Requires tcm/cfg/__init__.py and tcm/cfg/cfg_proc/__init__.py for pkg:// resolution.
 BUNDLED_CFG_PKG = f"pkg://{PROJECT_ROOT.name}.cfg.cfg_proc"
 
-# Supported extensions grouped by backend
-_EXT_CSV = {".txt", ".csv", ".tsv"}
-_EXT_HDF5 = {".h5"}  # , ".hdf5" not need
-_EXT_NC = {".nc"}  # , ".nc4" not need
+
+# In frozen app: PyInstaller data root.
+def resource_root() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS)
+    return PROJECT_ROOT.parent.parent
+
+
+DOC_DIR = resource_root() / "docs" / "tcm_cli"

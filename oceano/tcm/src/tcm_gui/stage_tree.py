@@ -18,6 +18,7 @@ from typing import Final
 
 from tcm.journal import ProbeState, parse_prefix
 
+from ._i18n import STRINGS as _S
 from .const import DEFAULT_FG, FG_DEFAULT, TAG_COLORS, set_widget_meta
 
 _FIXED: Final = ((1, "load"), (2, "coefs"), (3, "proc"))
@@ -38,8 +39,8 @@ class StageTree(ttk.Treeview):
     def __init__(self, parent, pcid: str, on_pick) -> None:
         super().__init__(parent, columns=("status",), show="tree headings", selectmode="browse")
         self.pcid, self._on_pick = pcid, on_pick
-        self.heading("#0", text="Stage")
-        self.heading("status", text="Status")
+        self.heading("#0", text=_S.get("stage_tree.heading.stage", "Stage"))
+        self.heading("status", text=_S.get("stage_tree.heading.status", "Status"))
         self.column("status", width=90, anchor="e")
         self.tag_configure("pending", foreground=DEFAULT_FG)
         self.tag_configure("done", foreground=FG_DEFAULT)
@@ -59,26 +60,29 @@ class StageTree(ttk.Treeview):
         self.bind("<<TreeviewOpen>>", lambda _: self._own(True))
         self.bind("<<TreeviewClose>>", lambda _: self._own(False))
         self.bind("<<TreeviewSelect>>", self._select)
-        set_widget_meta(self, status=f"Stage journal: {pcid}")
+        set_widget_meta(self, status=_S.get("stage_tree.status", "Stage journal: {pcid}").format(pcid=pcid))
 
     # ── nodes ──────────────────────────────────────────────────────
     def _ensure(self, num: int, name: str) -> str:
         iid = f"s{num}"
         if iid not in self._tag:
-            self.insert("", "end", iid=iid, text=f"{num} {name}", values=("—",), tags=("pending",))
+            self.insert("", "end", iid=iid, text=f"{num} {name}",
+                         values=(_S.get("stage_tree.pending", "\u2014"),), tags=("pending",))
             self._tag[iid] = self._state[iid] = "pending"
         return iid
 
     def enter_stage(self, num: int, name: str = "") -> None:
         """[## …] boundary: previous stage → done (children ✔), this one opens."""
+        _done = _S.get("stage_tree.done", "\u2714")
+        _run = _S.get("stage_tree.running", "\u2026")
         iid = self._ensure(num, name or str(num))
         if iid == self._cur:
             return
         if self._cur:
             for child in self.get_children(self._cur):
-                self.item(child, values=("✔",))
-            self._set_state(self._cur, "done", "✔")
-        self._set_state(iid, "running", "…")
+                self.item(child, values=(_done,))
+            self._set_state(self._cur, "done", _done)
+        self._set_state(iid, "running", _run)
         self._cur, self._live = iid, None
         with self._guarded():
             for other in self._state:
@@ -105,14 +109,15 @@ class StageTree(ttk.Treeview):
 
     def enter_sublevel(self, name: str, status: str) -> None:
         """[### …]: row per sublevel name; repeats (chunks) update in place."""
+        _run = _S.get("stage_tree.running", "\u2026")
         if not self._cur:
             return
         iid = f"{self._cur}:{name}"
         if iid not in self._items:
             self._items.add(iid)
-            self.insert(self._cur, "end", iid=iid, text=name, values=(status or "…",))
+            self.insert(self._cur, "end", iid=iid, text=name, values=(status or _run,))
         else:
-            self.set(iid, "status", status or "…")
+            self.set(iid, "status", status or _run)
         self._live = iid
 
     def set_live_progress(self, desc: str, n: int, total: int) -> None:
@@ -140,16 +145,18 @@ class StageTree(ttk.Treeview):
 
     def apply_snap(self, ps: ProbeState, ended: bool) -> None:
         """Restore from Reader: seen stages done; last interrupted when !ended."""
+        _done = _S.get("stage_tree.done", "\u2714")
+        _interrupted = _S.get("stage_tree.interrupted", "interrupted")
         for num, seg in ps.stages.items():
             iid = self._ensure(num, seg.name)
             if not ended and num == ps.last:
-                self._set_state(iid, "interrupted", "прервано")
+                self._set_state(iid, "interrupted", _interrupted)
             else:
-                self._set_state(iid, "done", "✔")
+                self._set_state(iid, "done", _done)
         for num, ssegs in ps.subs.items():
             for name in dict.fromkeys(s.name for s in ssegs):
                 self._items.add(iid := f"s{num}:{name}")
-                self.insert(f"s{num}", "end", iid=iid, text=name, values=("✔",))
+                self.insert(f"s{num}", "end", iid=iid, text=name, values=(_done,))
         if ps.ok is False and ps.last:
             self.escalate(ps.last, "error")
 

@@ -185,14 +185,14 @@ def _discover_tables(path: Path, table_pattern: str) -> list[str]:
 
     re_pattern = re.compile(_glob_to_regex(table_pattern))
     suffix = path.suffix.lower()
-    if suffix in _constants._EXT_HDF5:
+    if suffix in _constants.EXT_HDF5:
         if not _constants.TABLES_AVAILABLE:
             raise ImportError("pytables (tables) required to read HDF5 files — install or use NC/CSV input")
         import pandas as pd
 
         with pd.HDFStore(str(path), mode="r") as s:
             return [k.lstrip("/") for k in s.keys() if re_pattern.fullmatch(k.lstrip("/"))]
-    if suffix in _constants._EXT_NC:
+    if suffix in _constants.EXT_NC:
         policy.io().require_nc("reading NC4 groups")
         with _constants._h5py.File(path, "r") as f:
             return [k for k in f.keys() if re_pattern.fullmatch(k)]
@@ -276,7 +276,7 @@ def gen_metadata(
     )
 
     # HDF5/NC mode: discover table groups in the file
-    if Path(cfg["input"]["path"]).suffix.lower() in _constants._EXT_HDF5 | _constants._EXT_NC:
+    if Path(cfg["input"]["path"]).suffix.lower() in _constants.EXT_HDF5 | _constants.EXT_NC:
         cfg_in_common["corr_time_mode"] = cfg["input"].get("corr_time_mode", True)
         table_patterns = cfg["input"].get("tables", ["incl*"])
         discovered: list[str] = [

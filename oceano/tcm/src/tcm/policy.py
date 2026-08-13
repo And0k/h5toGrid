@@ -129,7 +129,9 @@ class IOPolicy:
         raise H5DisabledError(f"{operation}: NC/HDF5 output is disabled ({self.reason})")
 
 
-_io: ContextVar[IOPolicy] = ContextVar("io")
+_DEFAULT_POLICY = IOPolicy(request=schema.UseH5.AUTO, available=_constants.H5_AVAILABLE)
+
+_io: ContextVar[IOPolicy] = ContextVar("io", default=_DEFAULT_POLICY)
 
 
 def init_io(cfg: DictConfig, /) -> None:

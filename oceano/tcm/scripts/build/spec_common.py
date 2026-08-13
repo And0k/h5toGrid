@@ -8,6 +8,11 @@ duplicating binary filters, data collectors, and version loading.
 import os
 from pathlib import Path
 
+from tcm import _constants
+
+PROJECT_ROOT = _constants.resource_root()
+SPEC_DIR = Path(os.path.abspath(__file__)).parent
+
 # pyarrow internal .pyd extensions that depend on excluded native DLLs.
 _EXCLUDE_PYARROW_PYD: set[str] = {
     "_parquet", "_orc", "_dataset", "_dataset_orc", "_dataset_parquet",
@@ -73,11 +78,11 @@ def load_version(spec_dir: Path) -> str:
     return _vm.VERSION
 
 
-def collect_docs(project_root: Path, exclude: set[str] | None = None) -> list[tuple[str, str]]:
+def collect_docs(exclude: set[str] | None = None) -> list[tuple[str, str]]:
     """Collect ``docs/`` files as ``(src, dest_dir)`` tuples, excluding named files."""
     exclude = exclude or set()
     return [
-        (str(p), str(p.parent.relative_to(project_root)))
-        for p in (project_root / "docs").rglob("*")
+        (str(p), str(p.parent.relative_to(PROJECT_ROOT)))
+        for p in (PROJECT_ROOT / "docs").rglob("*")
         if p.is_file() and p.name not in exclude
     ]

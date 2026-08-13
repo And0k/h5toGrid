@@ -7,6 +7,7 @@ Covers:
 - Array child paths: no doubling (parent.name.name[i] -> parent.name[i])
 - _iid_at_row: uses tksheet API, not depth-first walk
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -186,9 +187,7 @@ class TestArrayChildPaths:
         for i, child_iid in enumerate(children):
             child_path = cs._meta[child_iid]["path"]
             expected = f"input.coefs.Test[{i}]"
-            assert child_path == expected, (
-                f"child {i}: expected path={expected!r}, got {child_path!r}"
-            )
+            assert child_path == expected, f"child {i}: expected path={expected!r}, got {child_path!r}"
 
     def test_1d_child_path_not_doubled(self):
         """_ins_1d: child path = parent.path (not parent.path.name)."""
@@ -200,9 +199,7 @@ class TestArrayChildPaths:
         child_iid = cs._meta["iid_kVabs"]["child"]
         child_path = cs._meta[child_iid]["path"]
         assert parent_path == "input.coefs.kVabs"
-        assert child_path == "input.coefs.kVabs", (
-            f"1D child should share parent path, got {child_path!r}"
-        )
+        assert child_path == "input.coefs.kVabs", f"1D child should share parent path, got {child_path!r}"
 
     def test_generic_2d_child_path_not_doubled(self):
         """_ins_generic: nested 2D array child paths are not doubled."""
@@ -291,9 +288,7 @@ class TestOnEndEditGrayToggle:
 
         # Display-row → iid map — _walk(visible=True) yields only nodes
         # whose ancestors are all open; _meta filter mirrors _rebuild_row_caches.
-        display_iids = list(
-            iid for iid in cs._walk(visible=True) if iid in cs._meta
-        )
+        display_iids = list(iid for iid in cs._walk(visible=True) if iid in cs._meta)
         _display_row = {iid: idx for idx, iid in enumerate(display_iids)}
         # ``get_row_from_iid`` is still used by tests that verify dual-row
         # semantics; expose the visible-order index through it.
@@ -330,7 +325,9 @@ class TestOnEndEditGrayToggle:
         event = self._make_event(row=azimuth_row, column=0, value=181)
         cs._apply_end_edit_style(event)
 
-        clear_calls = [c for c in mock_sh.highlight_cells.call_args_list if c.kwargs.get("fg") == cs._fg_default]
+        clear_calls = [
+            c for c in mock_sh.highlight_cells.call_args_list if c.kwargs.get("fg") == cs._fg_default
+        ]
         assert len(clear_calls) > 0, (
             f"expected highlight_cells(fg=_fg_default) to clear gray, "
             f"got calls: {mock_sh.highlight_cells.call_args_list}"
@@ -346,9 +343,7 @@ class TestOnEndEditGrayToggle:
         event = self._make_event(row=azimuth_row, column=0, value=180)
         cs._apply_end_edit_style(event)
 
-        gray_calls = [
-            c for c in mock_sh.highlight_cells.call_args_list if c.kwargs.get("fg") == DEFAULT_FG
-        ]
+        gray_calls = [c for c in mock_sh.highlight_cells.call_args_list if c.kwargs.get("fg") == DEFAULT_FG]
         assert len(gray_calls) > 0, (
             f"expected highlight_cells(fg=_DEFAULT_FG) to restore gray, "
             f"got calls: {mock_sh.highlight_cells.call_args_list}"
@@ -372,7 +367,9 @@ class TestOnEndEditGrayToggle:
         event = self._make_event(row=azimuth_row, column=0, value=181)
         cs._apply_end_edit_style(event)
 
-        clear_calls = [c for c in mock_sh.highlight_cells.call_args_list if c.kwargs.get("fg") == cs._fg_default]
+        clear_calls = [
+            c for c in mock_sh.highlight_cells.call_args_list if c.kwargs.get("fg") == cs._fg_default
+        ]
         assert len(clear_calls) > 0, (
             f"gray should be cleared (event.value=181 != default=180), "
             f"but got: {mock_sh.highlight_cells.call_args_list}"
@@ -407,8 +404,7 @@ class TestOnEndEditGrayToggle:
             for iid, m in cs._meta.items():
                 if "Ag.Ag[0]" in str(m.get("path", "")):
                     pytest.fail(
-                        f"Doubled path found: {m['path']!r}. "
-                        "Array child path construction is broken."
+                        f"Doubled path found: {m['path']!r}. Array child path construction is broken."
                     )
             pytest.skip("Ag[0] not found in _meta -- tree structure may differ")
         ag_row = cs.sh.get_row_from_iid(ag_child_iid)
@@ -417,10 +413,11 @@ class TestOnEndEditGrayToggle:
         event = self._make_event(row=ag_row, column=0, value=0.002)
         cs._apply_end_edit_style(event)
 
-        clear_calls = [c for c in mock_sh.highlight_cells.call_args_list if c.kwargs.get("fg") == cs._fg_default]
+        clear_calls = [
+            c for c in mock_sh.highlight_cells.call_args_list if c.kwargs.get("fg") == cs._fg_default
+        ]
         assert len(clear_calls) > 0, (
-            f"2D child gray should clear for non-default value, "
-            f"got: {mock_sh.highlight_cells.call_args_list}"
+            f"2D child gray should clear for non-default value, got: {mock_sh.highlight_cells.call_args_list}"
         )
 
     def test_iid_at_row_uses_tksheet_api(self):
@@ -443,3 +440,145 @@ class TestOnEndEditGrayToggle:
         """_iid_at_row returns None for row with no matching iid."""
         cs, _ = self._make_loaded_sheet()
         assert cs._iid_at_row(9999) is None
+
+
+# -- Parent-node blue propagation -------------------------------------------------
+
+
+class TestNodeAtDefault:
+    """Verify :meth:`_node_at_default` propagates the at-default state up the tree.
+
+    A parent node (e.g. ``input.coefs``, a 2D coef container, or a 1D-with-dates
+    container) must read as ``True`` ONLY when EVERY leaf in its subtree matches
+    its config dataclass default.  The 1D-with-dates case is especially subtle:
+    the parent carries ``len`` for array-shape metadata but holds no own value
+    cells — the child node does — so the parent must defer to its child.
+    """
+
+    @staticmethod
+    def _make_loaded_sheet():
+        """Build a sheet with a 2D coef (Ag), a 1D-with-dates coef (kVabs), a
+        1D-flat coef (Cg) and a scalar (azimuth_shift_deg), all seeded from the
+        real config defaults so every editable cell starts at its default.
+
+        Returns ``(cs, values)`` where ``values`` is the mutable {iid: list}
+        backing ``sh.item(iid)['values']`` — tests edit it in place to simulate
+        user edits without re-stubbing ``sh.item``.
+        """
+        from tcm.schema import Config, Return
+        from tcm_gui.cli_cfg import default_for_path
+
+        kv = default_for_path("input.coefs.kVabs")
+        cg = default_for_path("input.coefs.Cg")
+        ag = default_for_path("input.coefs.Ag")
+        cfg = {
+            "input": {
+                "path": "/data",
+                "coefs": {
+                    "Ag": ag,
+                    "kVabs": kv,
+                    "Cg": cg,
+                    "azimuth_shift_deg": 180.0,
+                },
+            }
+        }
+        mock_sh = MagicMock()
+        mock_sh.total_columns.return_value = 6
+        mock_sh.total_rows.return_value = 0
+        _kids: dict[Any, list[str]] = {}
+        _iid_counter = 0
+        values: dict[str, list] = {}
+
+        def _insert(**kw):
+            nonlocal _iid_counter
+            _iid_counter += 1
+            # tksheet generates unique iids; the mock must too, since _ins_1d
+            # inserts both a parent and a child with the SAME text.  Decorate
+            # with the counter so siblings never collide.
+            iid = f"iid_{kw.get('text', _iid_counter)}_{_iid_counter}"
+            _kids.setdefault(kw.get("parent") or "", []).append(iid)
+            values[iid] = list(kw.get("values") or [])
+            return iid
+
+        mock_sh.insert.side_effect = _insert
+        mock_sh.get_children.side_effect = lambda parent="": list(_kids.get(parent or "", ()))
+        mock_sh.item.side_effect = lambda iid, **kw: {"values": tuple(values.get(iid, []))}
+        mock_sh.winfo_rgb.return_value = (61680, 61680, 61680)
+
+        with patch.object(coef_sheet, "Sheet", return_value=mock_sh):
+            cs = ConfigSheet.__new__(ConfigSheet)
+        cs.sh = mock_sh
+        cs._meta = {}
+        cs._nv = 6
+        cs._full = False
+        cs._cfg = cfg
+        cs._config_root = Config
+        cs._return_enum = Return
+        cs._snap = ()
+        cs._fg_default = "#000000"
+        cs._int_row_of = {}
+        cs._vis = ()
+        cs._col_resize = MagicMock()
+
+        cs._build_coefs(cfg)
+        return cs, values
+
+    @staticmethod
+    def _find_iid(cs, path):
+        for iid, m in cs._meta.items():
+            if m.get("path") == path:
+                return iid
+        return None
+
+    @staticmethod
+    def _find_iid_by(cs, **criteria):
+        """Find the first iid whose meta matches every ``key=value`` criterion."""
+        for iid, m in cs._meta.items():
+            if all(m.get(k) == v for k, v in criteria.items()):
+                return iid
+        return None
+
+    def test_coefs_parent_at_default_when_all_children_default(self):
+        """``input.coefs`` container reads at-default when every coef matches."""
+        cs, _ = self._make_loaded_sheet()
+        coefs_iid = self._find_iid(cs, "input.coefs")
+        assert coefs_iid is not None, "input.coefs container missing from _meta"
+        assert cs._node_at_default(coefs_iid) is True, (
+            "input.coefs parent must be at-default when Ag, kVabs, Cg, "
+            "azimuth_shift_deg all hold their dataclass default values"
+        )
+
+    def test_coefs_parent_not_at_default_when_one_child_differs(self):
+        """``input.coefs`` flips to non-default when a single coef changes."""
+        cs, values = self._make_loaded_sheet()
+        azimuth_iid = self._find_iid(cs, "input.coefs.azimuth_shift_deg")
+        assert azimuth_iid is not None, "azimuth_shift_deg leaf missing from _meta"
+        # Simulate a user edit: cell 0 departs from its default (181 != 180).
+        values[azimuth_iid][0] = 181
+        coefs_iid = self._find_iid(cs, "input.coefs")
+        assert cs._node_at_default(coefs_iid) is False, (
+            "input.coefs parent must NOT be at-default after one leaf scalar departs from its default"
+        )
+
+    def test_1d_with_dates_parent_at_default_via_child(self):
+        """1D-with-dates parent (kVabs, max_col=0 + len=6) defers to its child row.
+
+        The parent holds date metadata, not array values; the child row holds the
+        6 array cells.  If the child cells all match the dataclass default,
+        the parent label must read at-default regardless of ``len``.
+
+        Note: ``_ins_1d`` gives the child the SAME path as the parent
+        (``input.coefs.kVabs``), so we locate the parent by ``type=='1d'`` +
+        ``key=='kVabs'`` rather than by path.
+        """
+        cs, _ = self._make_loaded_sheet()
+        kv_parent = self._find_iid_by(cs, type="1d", key="kVabs")
+        assert kv_parent is not None, "kVabs '1d' parent node missing from _meta"
+        assert cs._meta[kv_parent].get("max_col") == 0, (
+            "kVabs parent must carry max_col=0 (its child row holds the values)"
+        )
+        assert cs._meta[kv_parent].get("len") == 6, "kVabs parent carries len=6 as array-shape metadata"
+        assert cs._node_at_default(kv_parent) is True, (
+            "kVabs 1D-with-dates parent must be at-default when its child row "
+            "holds the dataclass default array"
+        )

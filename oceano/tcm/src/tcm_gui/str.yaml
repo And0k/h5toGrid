@@ -9,25 +9,52 @@
 # resolved by MarkdownLabel's color map at render time.
 # For strings that use .format(), escape as {{#name}}text{{/}}.
 
+# ── Window chrome ──────────────────────────────────────────────────────────
+window.title: "TCM"
+default_page.stem: "(default)"
+
 # ── Chrome widget tooltips / hover status ─────────────────────────────────
-path_lbl.tooltip: "Data search path"
-path_field.tooltip: "Data search path"
+path_lbl.tooltip: "Data & config search path"
+path_field.tooltip: "Data & config search path"
 path_field.status: "Changing data path rescans and **resets all config tabs below**"
-overall_lbl.status: "Current configuration state"
+path_field.status_shift: "Shift held — browse **files**; **YAML configs** load into tabs"
+path_field.placeholder: "D:/data/_raw/"
+path_field.placeholder_shift: "D:/data/_raw/(i*raw_file1[.]txt|i*raw_file2[.]txt)"
+path_field.placeholder_probe: "i_01_measurement.txt"
+overall_lbl.status: "Overall and current configuration processing state"
 run.tooltip: "Run button"
 run.start: "Start processing"
 run.pause: "Pause processing"
 run.resume: "Resume processing"
 status_lbl.status: "Application status messages"
-nb.status: "Configuration tabs — one per data file / deployment"
+prog_status.status: "Current processing stage and progress"
 # keep chrome status strings single-paragraph as _fit_status_font() caps the label to one row
 log.status: "Processing log — color-coded by severity ({#debug}debug{/}/{#info}info{/}/{#warning}warning{/}/{#error}error{/})"
-prog_all.status: "Overall progress across all configurations"
 prog_stage.status: "Current stage progress within the active configuration"
 tab.status: "Configuration: `{path}`"  # template — _add_page formats {path}
 browse_btn.status: "Hold **Shift** to select files instead of directory"
 empty_area.synced: "Editable — coefs, dates, path **sync to YAML on Run**"
 empty_area.unsaved: "No YAML config — provide a data path above to generate configs that persist edits"
+rail.status: "Configuration rail — click a tab to switch; vertical fill = processing progress (top→down)"
+
+# ── Browse dialog titles ──────────────────────────────────────────────────
+dialog.data_dir: "Browse data path"
+dialog.data_files: "Browse data files"
+dialog.coefs_dir: "Coefficients directory"
+dialog.coefs_files: "Coefficient files"
+dialog.filter_coefs: "Coefs"
+dialog.filter_search: "Data & configs"
+dialog.filter_data: "Data"
+dialog.filter_all: "All"
+
+# ── Browse button labels ──────────────────────────────────────────────────
+browse.dir_label: "…\U0001f4c1"  # …+folder emoji (no-Shift default)
+browse.file_label: "…\U0001f4c4"  # …+page emoji (Shift held)
+
+# ── Sheet context menu ────────────────────────────────────────────────────
+sheet.insert_col: "Insert column"
+sheet.insert_row: "Insert row"
+sheet.input.path: "Per-probe data file — must be a concrete file path (not directory, glob, regex, or YAML). Changing this redirects processing to a different source file"
 
 # ── Button labels ─────────────────────────────────────────────────────────
 run_btn.text: "Run"
@@ -45,3 +72,38 @@ overall_lbl.done_detail: " - Done {pct}% ({ok}/{n} ok)"
 # ── Error prefixes (log queue) ────────────────────────────────────────────
 error.scan: "Scan: {p}"
 error.run: "Run: {p}"
+error.log.scan: "scan failed"
+error.log.run: "run failed"
+# Stage floater short error text — {msg} = "<ExcType>: <exc>"; detailed
+# requirements are loaded from config_reference.md `input.path` #### Detailed.
+stage.error: "Error \"{msg}\"."
+
+# ── Pipeline stage descriptions ───────────────────────────────────────────
+stage.load: "load"
+stage.coefs: "coefs"
+stage.proc: "proc"
+stage.nc: "NC"
+stage.tsv: "TSV"
+stage.combine: "combine"
+stage.discovering: "Discovering files\u2026"
+stage.generating: "Generating configs\u2026"
+stage.composing: "Composing configs\u2026"
+stage.composing_stem: "Composing {stem}\u2026"
+stage.loading: "Loading"
+
+# ── Scan lifecycle ────────────────────────────────────────────────────────
+scan_stage.default: "Default configuration"
+scan_stage.scan: "Processing configurations"
+scan_stage.done: "Generated configurations for processing found data"
+
+# ── Stage tree ────────────────────────────────────────────────────────────
+stage_tree.heading.stage: "Stage"
+stage_tree.heading.status: "Status"
+stage_tree.status: "Stage journal: {pcid}"
+stage_tree.pending: "\u2014"
+stage_tree.done: "\u2714"
+stage_tree.running: "\u2026"
+stage_tree.interrupted: "interrupted"
+
+# ── Tooltip ───────────────────────────────────────────────────────────────
+prog_status.tooltip: "Current processing stage"

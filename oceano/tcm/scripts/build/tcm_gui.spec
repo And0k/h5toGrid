@@ -13,10 +13,9 @@ import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.building.build_main import COLLECT, EXE, PYZ, Analysis
 
 if "SPECPATH" not in globals():
-    from PyInstaller.building.build_main import COLLECT, EXE, PYZ, Analysis
-
     SPEC_DIR = Path(os.path.abspath(__file__)).parent
 else:
     SPEC_DIR = Path(SPECPATH)
@@ -30,13 +29,13 @@ from spec_common import (
     load_version,
     should_keep_binary,
     should_keep_data,
+    PROJECT_ROOT
 )
-
+print(f"{SPEC_DIR=}")
 VERSION = load_version(SPEC_DIR)
 
 block_cipher = None
 
-PROJECT_ROOT = SPEC_DIR.parent.parent
 TCM_SRC = "src/tcm"
 TCM_REL = "tcm"
 GUI_SRC = "src/tcm_gui"
@@ -63,7 +62,7 @@ _DOC_EXCLUDE = {"todo.md", "potential_functionality_and_improvement.md"}
 added_files = [
     (str(PROJECT_ROOT / TCM_SRC), TCM_REL),
     (str(PROJECT_ROOT / GUI_SRC), GUI_REL),
-    *collect_docs(PROJECT_ROOT, _DOC_EXCLUDE),
+    *collect_docs(_DOC_EXCLUDE),
     *(collect_data_files("hydra", subdir="conf") + collect_data_files("hydra_plugins.hydra_colorlog")),
     *collect_data_files("pygeomag"),
     *[
@@ -81,7 +80,7 @@ added_files = [
 # ---------------------------------------------------------------------------
 # Analysis
 # ---------------------------------------------------------------------------
-
+print(f"{PROJECT_ROOT=}")
 a = Analysis(
     [str(PROJECT_ROOT / "scripts" / "tcm_gui.py")],
     pathex=[str(PROJECT_ROOT), str(PROJECT_ROOT / "src")],
