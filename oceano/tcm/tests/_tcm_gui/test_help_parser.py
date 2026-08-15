@@ -172,7 +172,7 @@ class TestRealReferenceDetailed:
 
     def test_search_mode_has_details_in_full_body(self):
         """Full ``help_for_path("input.path")`` body[search] is a _ModeBody (has details)."""
-        from tcm_gui._help import _ModeBody, help_for_path, reload_cache
+        from tcm_gui._help import ModeBody, help_for_path, reload_cache
 
         reload_cache()
         e = help_for_path("input.path")
@@ -180,11 +180,11 @@ class TestRealReferenceDetailed:
             pytest.skip("input.path not in bundled doc — version drift")
         assert isinstance(e.body, dict), f"full body should be dict, got {type(e.body).__name__}"
         search = e.body.get("search")
-        assert isinstance(search, _ModeBody), (
-            "search mode now carries #### Detailed → body[search] should be _ModeBody; "
+        assert isinstance(search, ModeBody), (
+            "search mode now carries #### Detailed → body[search] should be ModeBody; "
             f"got {type(search).__name__}"
         )
-        assert search.has_details, f"search _ModeBody should have details, got {search.details!r}"
+        assert search.details, f"search ModeBody should have details, got {search.details!r}"
         assert "Detailed" in search.details, (
             f"search details should include 'Detailed' tag; got {sorted(search.details)!r}"
         )
@@ -204,16 +204,16 @@ class TestRealReferenceDetailed:
 
     def test_probe_mode_without_detailed_stays_str(self):
         """Modes without ``####`` (probe) keep backward-compat: body == whole str."""
-        from tcm_gui._help import _ModeBody, help_for_path, reload_cache
+        from tcm_gui._help import ModeBody, help_for_path, reload_cache
 
         reload_cache()
         e = help_for_path("input.path", mode="probe")
         if e is None:
             pytest.skip("input.path not in bundled doc — version drift")
         assert isinstance(e.body, str), f"probe body (no ####) should stay str, got {type(e.body).__name__}"
-        # Sanity: _ModeBody must NOT be returned for modes without #### sub-blocks.
-        assert not isinstance(e.body, _ModeBody), (
-            "probe mode has no #### sub-blocks — body must be a plain str, not _ModeBody"
+        # Sanity: ModeBody must NOT be returned for modes without #### sub-blocks.
+        assert not isinstance(e.body, ModeBody), (
+            "probe mode has no #### sub-blocks — body must be a plain str, not ModeBody"
         )
 
     def test_per_lang_loader_fallback_to_en(self, monkeypatch, tmp_path):
@@ -226,7 +226,7 @@ class TestRealReferenceDetailed:
             "## `input` — Data source\n\n| `path` | `str` | — | **Yes** | File path (en). |\n",
             encoding="utf-8",
         )
-        monkeypatch.setattr(_help, "DOC_DIR", tmp_path)
+        monkeypatch.setattr(_help._constants, "DOC_DIR", tmp_path)
         _help.reload_cache("ru")
         # resolve_lang is cached; force ru for this assertion.
         monkeypatch.setattr(_help, "resolve_lang", lambda: "ru")
@@ -251,7 +251,7 @@ class TestRealReferenceDetailed:
             "## `input` — Источник данных\n\n| `path` | `str` | — | **Да** | Русский short. |\n",
             encoding="utf-8",
         )
-        monkeypatch.setattr(_help, "DOC_DIR", tmp_path)
+        monkeypatch.setattr(_help._constants, "DOC_DIR", tmp_path)
         monkeypatch.setattr(_help, "resolve_lang", lambda: "ru")
         _help.reload_cache("ru")
         e = _help.help_for_path("input.path")
@@ -488,13 +488,13 @@ class TestDetailSubblock:
         The Detailed content must reach the entry's search-mode body as a
         detail block, NOT be dropped as plain prose outside any section.
         """
-        from tcm_gui._help import _ModeBody
+        from tcm_gui._help import ModeBody
 
         e = self.entries["input.path"]
         assert isinstance(e.body, dict), "input.path should have mode-tagged body"
         search = e.body["search"]
-        assert isinstance(search, _ModeBody), (
-            f"search mode carries #### → body[search] should be _ModeBody; got {type(search).__name__}"
+        assert isinstance(search, ModeBody), (
+            f"search mode carries #### → body[search] should be ModeBody; got {type(search).__name__}"
         )
         assert search.short == "Short one-liner here.", (
             f"search short should be the pre-#### line; got {search.short!r}"
@@ -508,10 +508,10 @@ class TestDetailSubblock:
 
     def test_multiple_detail_blocks_in_one_mode(self):
         """A mode may carry several ``####`` blocks — each addressed by its tag."""
-        from tcm_gui._help import _ModeBody
+        from tcm_gui._help import ModeBody
 
         search = self.entries["input.path"].body["search"]
-        assert isinstance(search, _ModeBody)
+        assert isinstance(search, ModeBody)
         assert set(search.details) == {"Detailed", "Other"}, (
             f"search should have both detail tags; got {sorted(search.details)!r}"
         )

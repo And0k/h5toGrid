@@ -28,6 +28,7 @@ DEFAULT_FG: str = "#999999"  # cell value == config default
 BLUE_FG: str = "#0055CC"  # header text + node label when subtree at default
 FG_DEFAULT: str = "#000000"  # normal (non-default) text color
 FUNC_COLOR: str = "#0070A0"  # function name in log bridge
+INVALID_FG: str = "#CC0000"  # cell value failed validation (e.g. path not found)
 # ── background fallbacks (when ttk.Style().lookup returns None) ──────────────
 # Mutable — updated by apply_theme_defaults() for dark/light mode.
 FRAME_BG_FALLBACK: str = "#F0F0F0"  # TFrame background fallback
@@ -53,6 +54,7 @@ _DARK: dict[str, str] = {
     "DEFAULT_FG": "#808080",
     "BLUE_FG": "#4DA6FF",
     "FG_DEFAULT": "#D4D4D4",
+    "INVALID_FG": "#FF6B6B",
     "FRAME_BG_FALLBACK": "#2D2D2D",
     "ENTRY_BG_FALLBACK": "#1E1E1E",
     "CELL_NON_DATA_BG": "#383838",
@@ -68,6 +70,7 @@ _LIGHT: dict[str, str] = {
     "DEFAULT_FG": "#999999",
     "BLUE_FG": "#0055CC",
     "FG_DEFAULT": "#000000",
+    "INVALID_FG": "#CC0000",
     "FRAME_BG_FALLBACK": "#F0F0F0",
     "ENTRY_BG_FALLBACK": "#FFFFFF",
     "CELL_NON_DATA_BG": "#E8E8E8",
@@ -85,6 +88,7 @@ _GLOBAL_KEYS = (
     "DEFAULT_FG",
     "BLUE_FG",
     "FG_DEFAULT",
+    "INVALID_FG",
     "FRAME_BG_FALLBACK",
     "ENTRY_BG_FALLBACK",
     "CELL_NON_DATA_BG",

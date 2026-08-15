@@ -1,12 +1,21 @@
 """TDD tests for the hover-hide behavior of stage status + progress floater.
 
 Requirements:
-1. ``<Enter>`` on ``_prog_status`` or ``_prog_floater`` → both hidden (grid_remove + place_forget)
-2. Root ``<Motion>`` outside the recorded bbox → ``_status_hovering = False`` (poll restores)
-3. ``_poll_progress`` with ``tot > 0`` does NOT show floater while ``_status_hovering``
+1. Root ``<Motion>`` with the live pointer over a mapped status widget hides
+   THAT widget only — ``_prog_status`` and the floater hide independently;
+   shown always, motion elsewhere never hides
+2. Once hidden, stays hidden after the pointer leaves — restoration is
+   exclusively programmatic: a stage-snapshot change (progress advance) in
+   ``_poll_progress`` clears both hover flags
+3. ``_poll_progress`` with unchanged snapshot does NOT restore while hovering
 4. ``_poll_progress`` with ``tot > 0`` DOES show floater when not hovering
-5. ``_show_prog_floater`` skips placement while ``_status_hovering``
-6. ``_error_active`` does NOT block hover-hide (error text is in the log)
+5. ``_show_prog_floater`` skips placement while ``_floater_hovering``
+6. ``_error_active`` does NOT block hover-hide — the frozen ``tot == 0``
+   snapshot keeps the error floater hidden until a new scan/run changes it
+
+Hide is driven entirely by root ``<Motion>`` with LIVE bounds — ``<Enter>``
+bindings were removed because ``_poll_progress`` re-shows/lifts the floater
+mid-motion (pointer already inside), so ``<Enter>`` can never fire there.
 
 Note: root is withdrawn (headless Tk), so ``winfo_ismapped()`` always returns False.
 We check ``grid_info()`` / ``place_info()`` instead — ``grid_remove()`` clears
@@ -154,7 +163,8 @@ def _build_app_minimal(root):
     ns._prog_stage = _prog_stage
     ns._overall_lbl = _overall_lbl
     ns._status_hovering = False
-    ns._status_bbox = None
+    ns._floater_hovering = False
+    ns._stage_last = (0, 0, "")
     ns._error_active = False
     ns._initial_scan = False
     ns._prog_show_job = None
@@ -169,9 +179,10 @@ def _build_app_minimal(root):
     # Bind methods from App
     from tcm_gui.app import App
 
-    ns._on_status_enter = App._on_status_enter.__get__(ns)
-    ns._status_bounds = App._status_bounds.__get__(ns)
-    ns._on_motion_check_hover = App._on_motion_check_hover.__get__(ns)
+    ns._on_status_motion = App._on_status_motion.__get__(ns)
+    ns._pointer_inside = App._pointer_inside
+    ns._lift_status_z = App._lift_status_z.__get__(ns)
+    ns._place_floater = App._place_floater.__get__(ns)
     ns._poll_progress = App._poll_progress.__get__(ns)
     ns._show_prog_floater = App._show_prog_floater.__get__(ns)
     # Static methods — no self binding
@@ -194,86 +205,118 @@ def _is_placed(widget):
     return bool(widget.place_info())
 
 
-def _fire_enter(ns):
-    """Simulate <Enter> on any status widget — call _on_status_enter directly.
-
-    event_generate('<Enter>') does not fire Python callbacks on a withdrawn
-    root, so we invoke the handler directly with a minimal event-like object.
-    """
-    ns._on_status_enter(type("E", (), {}))
-
-
 def _fire_motion(ns, x_root, y_root):
     """Simulate root <Motion> at screen coordinates (x_root, y_root)."""
     event = type("E", (), {"x_root": x_root, "y_root": y_root, "x": 0, "y": 0, "widget": ns.root})
-    ns._on_motion_check_hover(event)
+    ns._on_status_motion(event)
+
+
+def _point_in(w):
+    """Center of *w*'s live bbox (must have real area)."""
+    x0, y0 = w.winfo_rootx(), w.winfo_rooty()
+    return (2 * x0 + w.winfo_width()) // 2, (2 * y0 + w.winfo_height()) // 2
+
+
+def _fire_motion_over(ns, w):
+    """Simulate root <Motion> with the pointer over widget *w*."""
+    _fire_motion(ns, *_point_in(w))
 
 
 class TestHoverHide:
-    """``<Enter>`` on status widgets hides both; ``<Motion>`` outside restores."""
+    """Each widget hides only under its own pointer; only advance restores."""
 
-    def test_enter_prog_status_hides_both(self):
-        """<Enter> on _prog_status → grid_remove + place_forget, _status_hovering=True."""
+    def test_motion_over_status_hides_only_status(self):
+        """Pointer over _prog_status hides it only — the floater stays visible."""
         ns = _build_app_minimal(_mod._root)
         assert _is_gridded(ns._prog_status), "premise: _prog_status starts gridded"
         assert _is_placed(ns._prog_floater), "premise: _prog_floater starts placed"
-        _fire_enter(ns)
-        assert ns._status_hovering is True, "_status_hovering should be True after <Enter>"
-        assert not _is_gridded(ns._prog_status), "_prog_status should be grid-removed after <Enter>"
-        assert not _is_placed(ns._prog_floater), "_prog_floater should be place-forgotten after <Enter>"
-
-    def test_enter_floater_hides_both(self):
-        """<Enter> on _prog_floater → grid_remove + place_forget, _status_hovering=True."""
-        ns = _build_app_minimal(_mod._root)
-        _fire_enter(ns)
-        assert ns._status_hovering is True, "_status_hovering should be True after <Enter> on floater"
+        _fire_motion_over(ns, ns._prog_status)
+        assert ns._status_hovering is True
         assert not _is_gridded(ns._prog_status), "_prog_status should be grid-removed"
-        assert not _is_placed(ns._prog_floater), "_prog_floater should be place-forgotten"
+        assert ns._floater_hovering is False, "floater flag must stay clear"
+        assert _is_placed(ns._prog_floater), "floater must NOT hide on status hover"
 
-    def test_motion_outside_bbox_clears_flag(self):
-        """Root <Motion> outside the recorded bbox → _status_hovering=False."""
+    def test_motion_over_floater_hides_only_floater(self):
+        """Pointer over the floater hides it only — _prog_status stays visible."""
         ns = _build_app_minimal(_mod._root)
-        _fire_enter(ns)
-        assert ns._status_hovering is True
-        # Fire motion far outside the bbox (top-left corner)
+        _fire_motion_over(ns, ns._prog_floater)
+        assert ns._floater_hovering is True
+        assert not _is_placed(ns._prog_floater), "floater should be place-forgotten"
+        assert ns._status_hovering is False, "status flag must stay clear"
+        assert _is_gridded(ns._prog_status), "_prog_status must NOT hide on floater hover"
+
+    def test_motion_elsewhere_keeps_both_visible(self):
+        """<Motion> anywhere NOT over the status widgets leaves both shown."""
+        ns = _build_app_minimal(_mod._root)
+        _fire_motion(ns, 0, 0)  # top-left corner — far from the bottom-right floater
+        assert ns._status_hovering is False, "motion elsewhere must not set hovering"
+        assert _is_gridded(ns._prog_status), "_prog_status must stay visible on other motion"
+        assert _is_placed(ns._prog_floater), "_prog_floater must stay visible on other motion"
+
+    def test_motion_outside_keeps_hidden(self):
+        """Pointer leave does NOT restore — hidden state persists until advance."""
+        ns = _build_app_minimal(_mod._root)
+        _fire_motion_over(ns, ns._prog_floater)
+        assert ns._floater_hovering is True
+        # Fire motion far outside (top-left corner) — must NOT restore
         _fire_motion(ns, 0, 0)
-        assert ns._status_hovering is False, (
-            "_status_hovering should be False after motion outside bbox"
-        )
+        assert ns._floater_hovering is True, "pointer leave must not end hover-hide"
+        assert not _is_placed(ns._prog_floater), "floater must stay hidden after leave"
 
-    def test_motion_inside_bbox_keeps_flag(self):
-        """Root <Motion> inside the recorded bbox → _status_hovering stays True."""
-        ns = _build_app_minimal(_mod._root)
-        _fire_enter(ns)
-        assert ns._status_hovering is True
-        assert ns._status_bbox is not None
-        x0, y0, x1, y1 = ns._status_bbox
-        # Fire motion at the center of the bbox
-        cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
-        _fire_motion(ns, cx, cy)
-        assert ns._status_hovering is True, "_status_hovering should stay True inside bbox"
-
-    def test_error_active_does_not_block_hide(self):
-        """_error_active=True → <Enter> still hides both (error is in the log)."""
+    def test_error_hides_and_restores_only_on_advance(self):
+        """Error floater: hides on hover, stays hidden on leave, restores on new stage."""
         ns = _build_app_minimal(_mod._root)
         ns._error_active = True
-        _fire_enter(ns)
-        assert ns._status_hovering is True, "_error_active should NOT block hover-hide"
-        assert not _is_gridded(ns._prog_status), "_prog_status should be hidden even with _error_active"
-        assert not _is_placed(ns._prog_floater), "_prog_floater should be hidden even with _error_active"
+        ns.rt.progress_stage._snap = (0, 0, "")  # error state: frozen snapshot
+        ns.rt.progress_overall._snap = (0, 0, "")
+        ns._stage_last = (0, 0, "")
+        _fire_motion_over(ns, ns._prog_floater)
+        assert ns._floater_hovering is True, "_error_active must not block hover-hide"
+        assert not _is_placed(ns._prog_floater), "error floater should hide on hover"
+        # Leave + poll with unchanged snapshot → stays hidden
+        _fire_motion(ns, 0, 0)
+        ns._poll_progress()
+        assert not _is_placed(ns._prog_floater), "frozen snapshot must not restore"
+        # New scan advances the snapshot → poll clears hovering and restores
+        ns.rt.progress_stage._snap = (2, 5, "stage.discovering")
+        ns._poll_progress()
+        assert ns._floater_hovering is False
+        assert ns._prog_show_job is not None or _is_placed(ns._prog_floater), (
+            "advanced snapshot must restore the floater"
+        )
+
+    def test_motion_lift_keeps_error_floater_on_top(self):
+        """_error_active → motion z-order lift re-lifts the floater above the wide tooltip."""
+        ns = _build_app_minimal(_mod._root)
+        ns._error_active = True
+        order = []
+        ns._status_lbl.lift = lambda: order.append("status")
+        ns._prog_floater.lift = lambda: order.append("floater")
+        ns._lift_status_z(type("E", (), {}))
+        assert order == ["status", "floater"], "error floater must stay above the tooltip"
+
+    def test_motion_lift_status_only_when_no_error(self):
+        """No error → motion lifts only the status label (poll re-lifts the floater)."""
+        ns = _build_app_minimal(_mod._root)
+        order = []
+        ns._status_lbl.lift = lambda: order.append("status")
+        ns._prog_floater.lift = lambda: order.append("floater")
+        ns._lift_status_z(type("E", (), {}))
+        assert order == ["status"], "without error only the status label is lifted on motion"
 
     def test_poll_progress_no_show_while_hovering(self):
-        """_poll_progress with tot>0 does NOT show floater while hovering."""
+        """Unchanged snapshot: poll does NOT restore while hovering."""
         ns = _build_app_minimal(_mod._root)
-        _fire_enter(ns)  # hides both, sets _status_hovering=True
         ns.rt.progress_stage._snap = (5, 10, "stage.discovering")
         ns.rt.progress_overall._snap = (0, 0, "")
-        ns._poll_progress()
+        ns._poll_progress()  # establishes _stage_last, floater visible
+        _fire_motion_over(ns, ns._prog_floater)  # hides the floater only
+        ns._poll_progress()  # same snapshot → no restore
         assert not _is_placed(ns._prog_floater), (
-            "floater should NOT be shown while _status_hovering is True"
+            "floater should NOT be restored while hovering without advance"
         )
-        assert not _is_gridded(ns._prog_status), (
-            "_prog_status should NOT be gridded while _status_hovering is True"
+        assert _is_gridded(ns._prog_status), (
+            "_prog_status hides independently — must stay visible here"
         )
 
     def test_poll_progress_shows_when_not_hovering(self):
@@ -290,21 +333,21 @@ class TestHoverHide:
         assert _is_gridded(ns._prog_status), "_prog_status should be gridded when not hovering"
 
     def test_show_prog_floater_skips_while_hovering(self):
-        """_show_prog_floater does NOT place when _status_hovering."""
+        """_show_prog_floater does NOT place when _floater_hovering."""
         ns = _build_app_minimal(_mod._root)
-        ns._status_hovering = True
+        ns._floater_hovering = True
         ns._prog_floater.place_forget()
         ns.rt.progress_stage._snap = (5, 10, "test")
         ns._prog_show_job = None
         ns._show_prog_floater()
         assert not _is_placed(ns._prog_floater), (
-            "_show_prog_floater should skip placement while _status_hovering"
+            "_show_prog_floater should skip placement while _floater_hovering"
         )
 
     def test_show_prog_floater_shows_when_not_hovering(self):
         """_show_prog_floater places floater when not hovering."""
         ns = _build_app_minimal(_mod._root)
-        ns._status_hovering = False
+        ns._floater_hovering = False
         ns._prog_floater.place_forget()
         ns.rt.progress_stage._snap = (5, 10, "test")
         ns._prog_show_job = None
@@ -313,22 +356,24 @@ class TestHoverHide:
             "_show_prog_floater should place floater when not hovering"
         )
 
-    def test_full_cycle_enter_then_motion_then_poll(self):
-        """Full cycle: Enter → hide → motion outside → poll restores."""
+    def test_full_cycle_hide_leave_advance_restore(self):
+        """Full cycle: hide on hover → leave keeps hidden → advance + poll restores."""
         ns = _build_app_minimal(_mod._root)
-        # Enter → hide
-        _fire_enter(ns)
-        assert ns._status_hovering is True
-        assert not _is_placed(ns._prog_floater)
-        # Simulate processing active
         ns.rt.progress_stage._snap = (5, 10, "stage.discovering")
         ns.rt.progress_overall._snap = (0, 0, "")
-        # Poll while hovering → no show
-        ns._poll_progress()
-        assert not _is_placed(ns._prog_floater), "floater should stay hidden while hovering"
-        # Motion outside → flag clears
+        ns._poll_progress()  # establishes _stage_last
+        # Motion over the floater → hide it only
+        _fire_motion_over(ns, ns._prog_floater)
+        assert ns._floater_hovering is True
+        assert not _is_placed(ns._prog_floater)
+        # Leave + poll with the same snapshot → stays hidden
         _fire_motion(ns, 0, 0)
-        assert ns._status_hovering is False
-        # Poll → restores
         ns._poll_progress()
-        assert _is_gridded(ns._prog_status), "_prog_status should be restored after mouse leaves"
+        assert not _is_placed(ns._prog_floater), "floater should stay hidden without advance"
+        # Advance → poll restores
+        ns.rt.progress_stage._snap = (6, 10, "stage.discovering")
+        ns._poll_progress()
+        assert ns._floater_hovering is False
+        assert ns._prog_show_job is not None or _is_placed(ns._prog_floater), (
+            "floater should be restored after advance"
+        )

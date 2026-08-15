@@ -417,6 +417,7 @@ class TestCoefsPathChildRow:
         cs.on_edit_begin = None
         cs.hover_status = {}
         cs._status_iid = None
+        cs._status_hint = ""
 
         cs._build_coefs(cfg)
         for m in cs._meta.values():
@@ -725,3 +726,72 @@ class TestBrowseButtonLifecycle:
             ("read_cell must read column 0 regardless of edit column"),
         )
         assert result == "/data/coefs"
+
+
+# ── hover browse button status hints ────────────────────────────────────────
+
+
+class TestHoverBtnStatusHints:
+    """The hover browse button shows button-specific hints, distinct from
+    the row hover text — mirroring the top PathField's button scheme.
+
+    Regression: ``_show_hover_field`` used to give the coefs button the
+    row's own ``_coefs_status_hint`` callable → hovering the button was
+    visually a no-op ("like no button at all").
+    """
+
+    @staticmethod
+    def _sheet_with_hover():
+        """Loaded sheet with mocked floated field + hover button."""
+        cs, _ = TestCoefsPathChildRow._make_loaded_sheet()
+        cs._hover_field = MagicMock()
+        cs._hover_field._editing = False
+        cs._hover_btn = MagicMock()
+        cs.on_hover_status = MagicMock()
+        return cs
+
+    def test_coefs_btn_gets_button_hints(self):
+        """coefs_path row → dir/file button hints from str.yaml (not row text)."""
+        from tcm_gui._i18n import STRINGS
+
+        cs = self._sheet_with_hover()
+        iid = next(i for i, m in cs._meta.items() if m.get("key") == "coefs_path")
+        cs._show_hover_field(iid, 1, 10)
+        assert cs._hover_btn._status_hint == STRINGS["browse_btn.status"]
+        assert cs._hover_btn._status_hint_files == STRINGS["browse_btn.status_files"]
+
+    def test_input_btn_resets_files_hint(self):
+        """input row → static hint; stale coefs ``_status_hint_files`` reset
+        (singleton button — state leaks across rows otherwise)."""
+        cs = self._sheet_with_hover()
+        cs._hover_btn._status_hint_files = "stale"
+        iid = next(i for i, m in cs._meta.items() if m.get("type") == "input")
+        cs._show_hover_field(iid, 0, 10)
+        assert cs._hover_btn._status_hint == cs._status_hint
+        assert cs._hover_btn._status_hint_files == ""
+
+    def test_shift_toggle_yields_to_hovered_button(self):
+        """Shift pressed while pointer is ON the button → ``_on_shift_toggle``
+        must NOT publish the row text: the button's poll re-publishes its own
+        hint on the transition; the row text would overwrite it.
+
+        Regression: button hint appeared for <80 ms, then the row message
+        returned although the pointer never moved.
+        """
+        cs = self._sheet_with_hover()
+        iid = next(i for i, m in cs._meta.items() if m.get("key") == "coefs_path")
+        cs._status_iid = iid
+        cs._hover_btn._hovered = True
+        cs._on_shift_toggle(None)
+        cs.on_hover_status.assert_not_called()
+
+    def test_shift_toggle_publishes_when_btn_not_hovered(self):
+        """Shift pressed with pointer on the row (button not hovered) →
+        row text is re-published as before."""
+        cs = self._sheet_with_hover()
+        iid = next(i for i, m in cs._meta.items() if m.get("key") == "coefs_path")
+        cs._status_iid = iid
+        cs._hover_btn._hovered = False
+        with patch.object(cs, "_pointer_in_field", return_value=True):
+            cs._on_shift_toggle(None)
+        assert cs.on_hover_status.call_count == 1

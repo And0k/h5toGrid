@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import dataclasses
+import glob as _glob_mod
 import logging
 import operator
 from collections.abc import Callable, Mapping
 from contextlib import suppress
+from pathlib import Path
 from tkinter import TclError
 from types import SimpleNamespace
 from typing import Any, Final
@@ -236,6 +238,9 @@ class ConfigSheet:
         # Second arg ``md``: True when msg is Markdown (from config_reference.md),
         # False for plain strings (STR labels, Hydra paths).
         self.on_hover_status: Callable[[str, bool], None] | None = None
+        # Fired after every path-validation pass — App wires this to re-evaluate
+        # the Run button enabled state across all config tabs.
+        self.on_validity_change: Callable[[], None] | None = None
         self.hover_status: dict[str, str] = {}
         self._empty_area_hint: str = ""  # shown on hover below last row
         self._status_iid: Any = None
@@ -296,6 +301,13 @@ class ConfigSheet:
         with suppress(AttributeError, TypeError):
             self._mt_item_orig = mt.item
             mt.item = self._item_hook_mt
+        # Hook hide_text_editor_and_dropdown — every editor-CLOSE path (Escape,
+        # click-away, Enter, Tab) calls it; open_text_editor calls plain
+        # hide_text_editor instead, so the hook never fires mid-open.
+        # Covers the case tksheet never fires end_edit_cell: committing "" over
+        # an already-"" cell is rejected by input_valid_for_cell (cell_equal_to).
+        self._mt_close_editor_orig = mt.hide_text_editor_and_dropdown
+        mt.hide_text_editor_and_dropdown = self._on_editor_closed
 
     # ── public API ──────────────────────────────────────────────────
 
@@ -329,6 +341,7 @@ class ConfigSheet:
             self._apply_styles()
             self._apply_default_fg()
             self._apply_date_placeholders()
+            self._apply_path_validation()
             self.sh.redraw()
 
             # Geometry sync after redraw: row_positions may change.
@@ -390,6 +403,19 @@ class ConfigSheet:
             if m.get("type") == "input":
                 return (self.sh.item(iid).get("values") or ("",))[0]
         return ""
+
+    def is_path_valid(self) -> bool:
+        """True iff ``input.path`` is non-empty and resolves to an existing file."""
+        for iid, m in self._meta.items():
+            if m.get("type") != "input":
+                continue
+            vals = self.sh.item(iid).get("values") or ("",)
+            path_str = str(vals[0]).strip() if vals else ""
+            if not path_str or path_str.startswith("<"):
+                return False
+            p = Path(path_str).expanduser()
+            return p.exists() or bool(_glob_mod.glob(path_str))
+        return False
 
     # ── dirty tracking ───────────────────────────────────────────────
 
@@ -847,6 +873,35 @@ class ConfigSheet:
         )
         return None
 
+    def _on_editor_closed(self, redraw: bool = True) -> None:
+        """Hook for ``MT.hide_text_editor_and_dropdown`` — enforce the placeholder invariant.
+
+        Every editor-CLOSE path (Escape, click-away, Enter, Tab) funnels here
+        after tksheet made its commit decision; ``open_text_editor`` calls
+        plain ``hide_text_editor`` so the hook never fires mid-open.
+        Restores the dim date placeholder when the edited cell ended up empty —
+        the case tksheet never signals: committing "" over an already-"" cell
+        is rejected by ``input_valid_for_cell`` (``cell_equal_to``), so
+        ``end_edit_cell`` is not fired.  ``text_editor.coords`` (not the
+        selection) identifies the edited cell — Enter moves the selection via
+        ``go_to_next_cell`` before the editor hides.
+        """
+        self._mt_close_editor_orig(redraw=redraw)
+        with suppress(AttributeError, TypeError, IndexError, TclError):
+            r, c = self.sh.MT.text_editor.coords
+            if c != _DATE_COL - self.DATA_COL_BASE:
+                return
+            iid = self._iid_at_row(r)
+            m = self._meta.get(iid, {}) if iid is not None else {}
+            if not m.get("has_date"):
+                return
+            int_row = self._internal_row(iid)
+            if int_row is None or self._ph.has(int_row, c):
+                return
+            if not str(self.sh.get_cell_data(int_row, c) or "").strip():
+                self._ph.show(self.sh, int_row, c, _DATE_FMT, tcm_gui.theme.DEFAULT_FG)
+            self.sh.redraw()
+
     # ── edit lifecycle ──────────────────────────────────────────────
 
     def _on_begin_edit_cell(self, event) -> str | None:
@@ -866,7 +921,8 @@ class ConfigSheet:
         is_date = event.column == _DATE_COL - self.DATA_COL_BASE and m.get("has_date")
         if not is_date and event.column >= max_col:
             return None
-        # Clear placeholder so the user starts with an empty field.
+        # Clear placeholder so the user starts with an empty field;
+        # _on_editor_closed (close-hook) restores it if the edit ends empty.
         if is_date and (int_row := self._internal_row(iid)) is not None:
             if self._ph.has(int_row, event.column):
                 self._ph.clear(self.sh, int_row, event.column)
@@ -874,6 +930,13 @@ class ConfigSheet:
         ri = self._internal_row(iid) if m.get("browse") else None
         if self._mgr is not None and ri is not None:
             self._mgr.attach(ri, 0, iid=iid)
+            # Row-specific browse button status hint:
+            # coefs_path → short files hint (manager overlay is files-only);
+            # other rows (input.path) → static hint from ConfigSheet init.
+            if (ov := self._mgr._ov) is not None:
+                ov._status_hint = (
+                    _S["browse_btn.status_files"] if m.get("key") == "coefs_path" else self._status_hint
+                )
         if ri is not None:
             return self.sh.get_cell_data(ri, 0)  # overflow click edits the path itself
         # Use internal row — display row ≠ data-model row when ancestors collapsed.
@@ -903,11 +966,10 @@ class ConfigSheet:
             c = 0
         if m.get("key") == "coefs_path" and val.strip() and self._mgr is not None:
             self.sh.after_idle(lambda p=val: self._mgr.notify_path_changed(p))
-        # Restore ISO-format placeholder if a date cell was committed empty.
-        is_date = c == _DATE_COL - self.DATA_COL_BASE and m.get("has_date")
-        if is_date and (int_row := self._internal_row(iid)) is not None:
-            self._ph.restore(self.sh, int_row, c, _DATE_FMT, tcm_gui.theme.DEFAULT_FG)
         self._apply_end_edit_style(event, col=c)
+        # Validate input.path existence after edit — red fg if missing.
+        if m.get("type") == "input":
+            self.sh.after_idle(lambda iid=iid: self._apply_path_validation(iid))
 
     # ── overflow-click redirect ───────────────────────────────────
 
@@ -1114,7 +1176,7 @@ class ConfigSheet:
         mode = "file" if _is_shift_pressed() else "dir"
         if (h := _help.help_for_path("input.coefs_path", mode=mode)) and h.body:
             return str(h.body)
-        return self._status_hint
+        return _S["browse_btn.status_files" if mode == "file" else "browse_btn.status"]
 
     def _on_shift_toggle(self, _event) -> None:
         """Re-publish status when Shift is pressed/released while hovering coefs_path.
@@ -1129,6 +1191,11 @@ class ConfigSheet:
         if iid is None:
             return
         if self._meta.get(iid, {}).get("key") != "coefs_path":
+            return
+        # Pointer on the hover button → its poll (_update_icon) re-publishes
+        # the button-specific hint on this transition; publishing the row
+        # text here would overwrite it.
+        if self._hover_btn is not None and self._hover_btn._hovered:
             return
         if not (self._pointer_in_field() or _pointer_inside(self.sh.MT)):
             return
@@ -1213,6 +1280,9 @@ class ConfigSheet:
         m = self._meta.get(iid, {})
         if m.get("key") == "coefs_path" and self._mgr is not None:
             self.sh.after_idle(lambda: self._mgr.notify_path_changed(text))
+        # Validate input.path existence after browse — red fg if missing.
+        if m.get("type") == "input":
+            self.sh.after_idle(lambda: self._apply_path_validation(iid))
 
     def _hover_read(self) -> str:
         """Read column 0 of the hovered row (for dialog initialdir)."""
@@ -1295,6 +1365,8 @@ class ConfigSheet:
 
     def _show_hover_field(self, iid: Any, hit_row: int, fallback_y: int) -> None:
         f = self._ensure_hover_field()
+        if f._editing:
+            return  # safety: don't reposition while editing — Entry stays until Enter/Esc
         f.cancel_edit()  # stale editor from the previous row → Esc
         self._field_iid = iid
         self._field_row = hit_row  # stored for expand-on-edit
@@ -1309,14 +1381,18 @@ class ConfigSheet:
                 self._hover_btn._files_title = _S["dialog.coefs_files"]
                 self._hover_btn._filetypes = COEF_FILETYPES
                 self._hover_btn._files_only = False
-                # Mode-aware status: Shift toggles dir/file content from config_reference.md.
-                self._hover_btn._status_hint = self._coefs_status_hint
+                # Button-specific hints, same scheme as the top PathField's button:
+                # _resolve_hint() picks dir/file variant on Shift.  Distinct from
+                # the row hover text (_coefs_status_hint via _publish_status).
+                self._hover_btn._status_hint = _S["browse_btn.status"]
+                self._hover_btn._status_hint_files = _S["browse_btn.status_files"]
             else:
                 self._hover_btn._dir_title = ""
                 self._hover_btn._files_title = _S["dialog.data_files"]
                 self._hover_btn._filetypes = DATA_FILETYPES
                 self._hover_btn._files_only = True
                 self._hover_btn._status_hint = self._status_hint  # restore static hint
+                self._hover_btn._status_hint_files = ""  # reset stale coefs variant
         val = self._hover_read()
         f.set(val)
         f.place(**self._field_place_kw(hit_row, fallback_y, val))
@@ -1547,6 +1623,11 @@ class ConfigSheet:
                 f.place(**self._field_place_kw(row, y, val))
                 if self._hover_btn is not None:
                     self._hover_btn.show(**self._btn_place_kw(row, y))
+            return
+
+        # While editing, don't reposition or replace the field — it must stay
+        # until the user commits (Enter) or cancels (Esc).
+        if f is not None and f._editing:
             return
 
         self._schedule_field_show(iid, row, y)
@@ -1924,6 +2005,49 @@ class ConfigSheet:
             node = self._meta.get(node, {}).get("parent")
 
         self.sh.redraw()
+
+    def _apply_path_validation(self, target_iid: Any = None) -> None:
+        """Red fg on ``input.path`` cell when the path doesn't exist on disk.
+
+        Called after every edit commit and at the end of ``load()``.
+        Handles glob patterns (red only when zero matches) and ``~`` expansion.
+        Empty / sentinel values (``<…>``) are never marked invalid.
+        """
+        sh = self.sh
+        row_of = self._row_map()
+        error_fg = tcm_gui.theme.INVALID_FG
+
+        for iid, m in self._meta.items():
+            if m.get("type") != "input":
+                continue
+            if target_iid is not None and iid != target_iid:
+                continue
+            if (r := row_of.get(iid)) is None:
+                continue
+
+            vals = sh.item(iid).get("values") or ("",)
+            path_str = str(vals[0]).strip() if vals else ""
+            if not path_str or path_str.startswith("<"):
+                continue
+
+            p = Path(path_str).expanduser()
+            exists = p.exists() or bool(_glob_mod.glob(path_str))
+
+            if exists:
+                # Restore normal fg: gray if value matches config default, else default fg.
+                dv = self._default_for_cell(iid, m, 0)
+                restore_fg = (
+                    tcm_gui.theme.DEFAULT_FG
+                    if dv is not NO_DEFAULT and any2str(vals[0]) == any2str(dv)
+                    else self._fg_default
+                )
+                sh.highlight_cells(row=r, column=0, fg=restore_fg, redraw=False)
+            else:
+                sh.highlight_cells(row=r, column=0, fg=error_fg, redraw=False)
+
+        sh.redraw()
+        if self.on_validity_change:
+            self.on_validity_change()
 
     def _apply_end_edit_style(self, event, col: int | None = None) -> None:
         """Toggle gray cell fg + blue node labels after a committed edit."""

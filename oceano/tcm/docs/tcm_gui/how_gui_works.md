@@ -12,7 +12,7 @@ thread.  No custom CLI parsing — Hydra handles all config keys natively via
 | `md_label.py` | `MarkdownLabel` (`tk.Text` subclass): Tk renderer for Markdown AST from `_md_parse`; `_current` holds parsed `Block` tuple (not raw text) — `set_text(text, raw=False)` parses Markdown by default so `STR["{role}.status"]` with `**bold**` renders bold; `raw=True` bypasses parsing for paths/keys that interpolate untrusted content (e.g. `tab.status` after `.format(path=...)`); `rerender()` replays `_render` without reparse; `mark_font_ready()` (enables auto-sizing without resizing), `fit_to_height` (rescales + enables), dynamic width (`_fit_width` via font metrics, `wrap="none"` → `wrap="word"`), auto-height (`_fit_height` on `<Configure>`), table tab-stop alignment |
 | `_md_parse.py` | Pure Markdown parser (zero Tk dependency): `parse_inline()`, `parse_markdown()`, `split_table_row()`; AST types `Heading`/`Paragraph`/`CodeBlock`/`Table`/`Inline` |
 | `worker.py` | Background thread: `call_in_raw_dir` for Scan and Run |
-| `states.py` (tcm) | `ScanStage(StrEnum)` — scan lifecycle labels (`DEFAULT`, `SCAN`, `DONE`); `Stage(StrEnum)` — per-probe processing phase labels; value = display text |
+| `states.py` (tcm) | `ScanStage(StrEnum)` — scan lifecycle labels (`DEFAULT`, `SCAN`, `DONE`), value = `scan_stage.*` i18n key in `str.yaml`; `Stage(StrEnum)` — per-probe processing phase labels, value = display text |
 | `coef_sheet.py` | tksheet treeview: type-aware widgets (checkbox/dropdown/align), node + metadata bg; row-geometry-free styling via `_row_map()`; floated `PathField` hover-edit on browse rows |
 | `_path_field.py` | 1×1 tksheet for display + `ttk.Entry` overlay for editing — frame-anchored hover button, column-width tracking via `<Configure>` |
 | `_browse_button.py` | `BrowseOverlay` (widget core + `pending` state + `on_status`/`status_hint` hover-to-status-bar wiring), `BrowseButtonManager` (sheet-edit policy + injectable `editor_place`), `SheetHoverBinder` (MT motion → overlay show/hide with pending-aware veto), `bind_hover_browse` (Entry legacy) |
@@ -88,7 +88,7 @@ Click Run while processing → PauseGate
 | `QueueHandler` installed once at App startup; re-attached in `_wrap` after Hydra `dictConfig` | Hydra's ``logging.config.dictConfig`` replaces **all** root handlers with ``[console, file]`` each worker task, removing the ``QueueHandler`` from root.  ``_wrap.wrapped`` (running *after* dictConfig) re-adds it so both worker-thread and GUI-main-thread logs (e.g. ``_reload_coefs`` triggered by treeview interaction) reach the log ``tk.Text`` widget.  ``reset_dedup()`` per task prevents the first record of a new task from being swallowed as a "duplicate" of the previous task's tail |
 | `_runtime` is module-level, not `threading.local` | `TqdmCallback` creates `GuiTqdm` in dask worker threads |
 | `return_="<cfg_from_args>"` for Scan | pipeline does discovery + gen_metadata, returns configs without processing |
-| `ScanStage(StrEnum)` for cfg state labels | value = display text; same pattern as `Stage` for processing phases; drives `_overall_lbl` at row=1 via `progress_overall.desc` during scan, `_cfg_state` attr when idle |
+| `ScanStage(StrEnum)` for cfg state labels | value = `scan_stage.*` i18n key (display text lives only in `str.yaml`); translated by `_translate_scan_stage` (idle) / `_translate_desc` (active `progress_overall.desc`); drives `_overall_lbl` at row=1 via `progress_overall.desc` during scan, `_cfg_state` attr when idle |
 | `progress_overall.set()` at scan boundaries | `tick()` is per-probe (100-units math); scan-level uses direct `set()` same as `progress_stage` updates already in `processing.run()` |
 | `TabRail` replaces ttk.Notebook entirely | page stack + `tkraise()` for zero-theme page selection; rail owns selection, progress, dirty state — no Notebook API remains |
 | `ProgressBank` per-config tracking | stage weights (Processing=60%) → fractional fill; `run_start`/`finish` called from pipeline per-config; `stage_start`/`inner` fed via `progress_bridge` |
@@ -103,6 +103,7 @@ Click Run while processing → PauseGate
 | `COEF_SHAPES` auto-derived in `cli_cfg.py` | `infer_coef_shapes()` walks `ConfigInCoefs_InclProc` fields: shape from default value structure (when not `None`) or `Annotated` metadata; `P_t` annotated `(3,3)` since default is `None` |
 | `cli_cfg` derives section types from `Config` | single `Config` import + `get_type_hints()` → `_SECTION_TYPES` dict; `COEFS_TYPE` extracted from `Config.input.coefs` field; no per-section imports needed |
 | `meta_date_cols` explicitly, not `as_date` | metadata dates override alignment; `as_date` only in edit validation |
+| **Date placeholder restoration** — hook on `MT.hide_text_editor_and_dropdown` | `_on_begin_edit_cell` clears the dim placeholder so the editor starts empty.  tksheet never fires `end_edit_cell` on a cancelled edit: committing `""` over an already-`""` cell is rejected by `input_valid_for_cell` (`cell_equal_to`).  Every editor-CLOSE path funnels through `hide_text_editor_and_dropdown` (Escape `main_table.py:7613`, Enter/Tab/FocusOut commit `:7647`, click-away `mouseclick_outside_editor_or_dropdown` → `close_text_editor` `:7943`), while `open_text_editor` calls plain `hide_text_editor` — so the hook in `__init__` fires on close only, never mid-open.  `_on_editor_closed` restores the placeholder when the edited cell (from `text_editor.coords`, NOT the selection — Enter moves it via `go_to_next_cell` first) ended up empty.  Regression: `tests/_tcm_gui/test_date_placeholder_edit.py` (real `b1_press`/`double_b1` event paths; needs `focus_force` since `close_text_editor` bails when `focus_get() is None`) |
 | `_meta[iid]["path"]` — dotted Hydra path | `_ins()` computes `parent_path + "." + text`; array children override with explicit correct paths (e.g. `input.coefs.Ag[0]`, not doubled `input.coefs.Ag.Ag[0]`) |
 | `_meta[iid]["parent"]` backlink | set in `_ins()` from `parent_iid`; enables `_node_at_default` recursive walk |
 | **Two-row system** — internal vs display | `_row_map()` → **internal** rows (all items, even collapsed) for cell-API calls ;  `_walk(visible=True)` → **display** rows (collapsed items compressed out) for event decoding.  `_on_begin_edit_cell` always converts display→internal via `_internal_row(iid)` before `get_cell_data` — prevents reading wrong cell when ancestors are collapsed |
@@ -227,8 +228,10 @@ leading ``_``) has entries in ``STR``.  For each match:
   (``self._run_btn_status`` for Run) returning the live caption.  Dynamic
   ``status`` is stored as a ``Callable[[], str]`` in ``widget_meta``; the
   ``get_widget_meta`` resolver invokes it at hover-time, so it sees the current
-  application state (busy/paused) and the current language (``STR``)
-  simultaneously.
+  application state (disabled/busy/paused) and the current language (``STR``)
+  simultaneously.  The Run button's dynamic status reports *why* it is
+  disabled (no configurations vs. invalid paths) before falling through to
+  the busy/paused/ready captions.
 
 Widgets with no matching STR keys get no help — the loop skips them.
 
@@ -333,16 +336,22 @@ supports glob (`*i*.txt`), regex (`i.*\.txt`), or directory.
 - ``_FIELD_MODE_HEAD`` is checked **before** ``_ANY_HEADING`` so ``###``
   mode-tagged headers don't close the parent ``##`` section.
 - Each ``###`` subheader opens accumulation under ``HelpEntry.body[mode]``.
+- ``#### <Tag>`` sub-blocks (e.g. ``#### Detailed``) nest inside the active
+  ``###`` mode — they do NOT close it.  A mode carrying any ``####`` block
+  is stored as ``_ModeBody(short=<pre-#### lines>, details={tag: body})``;
+  a mode without ``####`` stays a plain ``str``.
 - Next ``###`` or ``##`` closes the previous accumulation.
 - Fields without mode-tagged content get ``body={}``.
 
-**Consumer API** — ``help_for_path(path, *, mode=None)``:
+**Consumer API** — ``help_for_path(path, *, mode=None, detail=None)``:
 
 | Call | Return |
 |------|--------|
-| ``help_for_path("input.path")`` | ``HelpEntry(body={"probe": "...", "search": "..."})`` |
-| ``help_for_path("input.path", mode="probe")`` | ``HelpEntry(body="...")`` — probe content only |
-| ``help_for_path("input.path", mode="search")`` | ``HelpEntry(body="...")`` — search content only |
+| ``help_for_path("input.path")`` | ``HelpEntry(body={"probe": "...", "search": _ModeBody(...)})`` |
+| ``help_for_path("input.path", mode="probe")`` | ``HelpEntry(body="...")`` — probe content (no #### → str) |
+| ``help_for_path("input.path", mode="search")`` | ``HelpEntry(body="...")`` — search short body (pre-#### lines only) |
+| ``help_for_path("input.path", mode="search", detail="Detailed")`` | ``HelpEntry(body="...")`` — the ``#### Detailed`` block body |
+| ``help_for_path("input.path", mode="search", detail="Unknown")`` | ``HelpEntry(body="")`` — unknown detail → empty (caller no-ops) |
 
 **Mode names** — content regimes, not environment labels:
 
@@ -437,11 +446,14 @@ for the CLI equivalent.
 
 ### `states.py` enum values
 
-`ScanStage` and `Stage` in `tcm/states.py` are `StrEnum` whose values are the
-display text shown in progress bars and the overall label.  These are **code
-constants** — to translate them, either change the enum values directly or add
-a lookup layer in `str.yaml` keyed by `"{EnumName}.{value}"` with fallback to
-the enum value.
+`Stage` and `ScanStage` in `tcm/states.py` are `StrEnum` whose values travel
+through `progress_overall` / `progress_stage` and are translated by the GUI
+(`_translate_desc` → `_S.get(desc, desc)`, free-form text passes through):
+
+| Enum | Value | Example |
+|------|-------|---------|
+| `Stage` | backend-owned display text | `LOAD = "load"` |
+| `ScanStage` | `scan_stage.*` key in `str.yaml` — display text lives there only | `SCAN = "scan_stage.scan"` |
 
 ## Type-aware cell rendering (full mode)
 
@@ -509,17 +521,21 @@ button is visible.  Default label `…📁` (directory), Shift label `…📄` (
 
 ### Status-bar hint on hover
 
-`BrowseOverlay` accepts `on_status: Callable[[str], None]` and
-`status_hint: str` parameters.  On `<Enter>` the button calls
-`on_status(status_hint)` to show the Shift hint in the GUI status bar;
-on `<Leave>` it calls `on_status("")` to clear.  `_make_button` binds
-both events with `add="+"`.  All three creation sites pass the callback:
+`BrowseOverlay` accepts `on_status: Callable[[str], None]`,
+`status_hint: str`, and `status_hint_files: str` parameters.
+`_resolve_hint()` is mode-aware: when the button is in file mode
+(``_files_only`` or Shift held) and ``status_hint_files`` is set,
+it returns the files-specific hint; otherwise the default (dir) hint.
+On `<Enter>` the button calls `on_status(_resolve_hint())` to show
+the hint in the GUI status bar; on `<Leave>` it calls
+`on_status("")` to clear.  `_make_button` binds both events with
+`add="+"`.  All three creation sites pass the callback:
 
-| Site | `on_status` source | `status_hint` source |
-|------|-------------------|---------------------|
-| `PathField` (§1 data path) | `App._on_browse_status` | `STR["browse_btn.status"]` via `PathField.__init__` |
-| `BrowseButtonManager` (in-sheet edit) | `App._on_browse_status` | `STR["browse_btn.status"]` via `BrowseButtonManager.__init__` |
-| `ConfigSheet._ensure_hover_field` (hover-edit) | `lambda text: self.on_hover_status(text, True)` | `tcm_gui.theme.STR["browse_btn.status"]` |
+| Site | `on_status` source | `status_hint` / `status_hint_files` |
+|------|-------------------|--------------------------------------|
+| `PathField` (§1 data path) | `App._on_browse_status` | dir: `STR["browse_btn.status"]`, files: `STR["browse_btn.status_files"]` |
+| `BrowseButtonManager` (in-sheet edit) | `App._on_browse_status` | `STR["browse_btn.status"]` (dir-mode hint) |
+| `ConfigSheet._ensure_hover_field` (hover-edit) | `lambda text: self.on_hover_status(text, True)` | files-only: `STR["browse_btn.status_files"]` |
 
 `App._on_browse_status` sets `_browse_hovering = bool(text)` — included in
 `_any_hovering` — so the 300 ms poll does not clobber the hint during
@@ -889,8 +905,8 @@ root
 │
 ├── row=1: overall status label (§2)
 │   └── f1 (ttk.Frame)
-│       ├── column=0: _overall_lbl (ttk.Label, text=_cfg_state enum value)
-│       │   ScanStage.DEFAULT → "Default configuration"
+│       ├── column=0: _overall_lbl (ttk.Label, text=translated _cfg_state)
+│       │   ScanStage.DEFAULT → scan_stage.default → "Default configuration"
 │       │   ScanStage.DONE → completion text + aggregated % from bank
 │       │   During run: stage_desc text + " — 62%" from bank snapshot
 │       └── column=1: _prog_status (ttk.Label, anchor="e")
@@ -928,9 +944,13 @@ root
         └── _prog_stage (ttk.Progressbar, length=220)
 ```
 
-**Z-order competition**: `<Motion>` on root → `_status_lbl.lift()`.
-`_prog_floater.lift()` on each `tot > 0` poll update.  `_run_btn.lift()`
-on root `<Configure>`.  Last `lift()` wins.
+**Z-order competition**: `<Motion>` on root → `_lift_status_z` lifts
+`_status_lbl`, then **re-lifts `_prog_floater` while `_error_active`** — the
+error-detail tooltip rendered in `_status_lbl` grows to window width with an
+opaque background, so lifting it over the floater buries the error line on
+every mouse motion (flicker: gone while moving, back when the 300 ms poll
+lifts the floater again).  `_prog_floater.lift()` also on each `tot > 0`
+poll update.  `_run_btn.lift()` on root `<Configure>`.  Last `lift()` wins.
 
 **Show delay**: `_prog_floater` is shown via `root.after(400, _show_prog_floater)`
 — avoids flashing for very short operations.  Cancelled if `tot` drops to 0
@@ -985,16 +1005,41 @@ live callable) and writes to ``self._status``.  ``_on_chrome_leave`` clears
 
 ### Hover-hide for stage status + floater
 
-``<Enter>`` on ``_prog_status``, ``_prog_floater``, ``_prog_stage_text``, or
-``_prog_stage`` fires ``_on_status_enter``, which:
-1. Sets ``_status_hovering = True``
-2. Records the union bbox of visible status widgets (``_status_bounds``)
-3. ``grid_remove()``s ``_prog_status`` + ``place_forget()``s ``_prog_floater``
+Shown always; each widget hides INDEPENDENTLY — only while the pointer is
+over THAT widget.  Root ``<Motion>`` (``_on_status_motion``) checks each
+widget's live bbox separately (``_pointer_inside``): hovering
+``_prog_status`` (top row) never hides the bottom-right floater and vice
+versa.
 
-Hidden widgets can't fire ``<Leave>``, so root ``<Motion>`` +
-``_on_motion_check_hover`` detects leave: when the mouse exits the recorded
-bbox, ``_status_hovering`` resets to ``False``.  ``_poll_progress`` then
-restores both on the next 300 ms tick (if ``tot > 0``).
+1. Pointer over a mapped widget → its own flag (``_status_hovering`` /
+   ``_floater_hovering``) is set and only that widget is ``grid_remove()``d /
+   ``place_forget()``d.
+2. Once hidden, it STAYS hidden after the pointer leaves — restoration is
+   exclusively programmatic: ``_poll_progress`` compares the stage snapshot
+   to ``_stage_last`` and clears BOTH flags on change (progress
+   advance / new stage), then re-shows via the regular branches.  Pointer
+   leave alone never re-shows.
+
+**Why Motion, not ``<Enter>``**: ``_poll_progress`` re-shows/lifts the floater
+mid-motion with the pointer already inside it — Tk only fires ``<Enter>`` on a
+boundary crossing, so the widgets can never "catch" the mouse that way
+(flicker: disappears while the mouse moves, reappears when it stops).  Root
+``<Motion>`` re-evaluates live bounds on every event, so the hide triggers
+only when the pointer is genuinely over the widgets and never on motion
+elsewhere.
+
+**Error floater hides too**: ``_error_active`` does NOT veto hover-hide — the
+error floater hides when the pointer is over it, exactly like live progress.
+While active, the stage snapshot is frozen (``tot == 0``), so it stays hidden
+until a fresh scan/run changes the snapshot (or places it explicitly); the
+error itself persists until cleared by ``_clear_log`` / ``_on_scan_ok`` /
+``_on_run_done`` / ``_on_path_changed``.
+
+``_place_floater()`` is the single placement point (canonical bottom-right
+``place(relx=1.0, rely=1.0, anchor="se", x=-8, y=-4)`` + ``lift``); it also
+clears ``_floater_hovering`` — any explicit placement is a programmatic
+activation.  Used by the initial scan, ``_show_prog_floater`` and
+``_surface_error``.
 
 ``winfo_ismapped()`` is not used for place-managed widgets (unreliable before
 window realization and on withdrawn test roots); ``place_info()`` /
@@ -1004,12 +1049,14 @@ window realization and on withdrawn test roots); ``place_info()`` /
 
 ``_show_tip`` sets ``_tip_active = True`` and renders markdown directly in
 ``_status_lbl``.  While active, ``_set_status`` is a no-op — all chrome-hover,
-poll, and log-motion status updates are suppressed.  Dismissed by ``_hide_tip``
-on: new scan/run (``_clear_log`` / ``_on_scan_ok`` / ``_on_run_done``), path
-change (``_on_path_changed``), ``<Escape>`` (root binding), or cell edit begin
-(``ConfigSheet.on_edit_begin`` → ``_hide_tip``; fired from
-``_on_begin_edit_cell`` and ``_on_field_edit_start``, excluding the Top
-PathField which is a ``PathField``, not a ``ConfigSheet``).
+poll, and log-motion status updates are suppressed.  ``_lift_status_z``
+re-lifts the error floater above this wide tooltip on every mouse motion, so
+the short error line in the floater never flickers under it.  Dismissed by
+``_hide_tip`` on: new scan/run (``_clear_log`` / ``_on_scan_ok`` /
+``_on_run_done``), path change (``_on_path_changed``), ``<Escape>`` (root
+binding), or cell edit begin (``ConfigSheet.on_edit_begin`` → ``_hide_tip``;
+fired from ``_on_begin_edit_cell`` and ``_on_field_edit_start``, excluding the
+Top PathField which is a ``PathField``, not a ``ConfigSheet``).
 
 ## CLI integration
 

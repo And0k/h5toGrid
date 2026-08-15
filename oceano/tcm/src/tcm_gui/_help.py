@@ -1,45 +1,56 @@
 """Resolve Hydra config paths to help text auto-extracted from ``config_reference.md``.
 
 Single source of truth for non-chrome (config-cell) tooltips: the existing
-field tables in ``docs/tcm_cli/config_reference.md``.  No dotted-path headings
-need to be authored — the parser walks the table rows under each
-``## ``{section}```` heading (``input``, ``input.coefs``, ``out``, ``filter``,
-``program``) and emits one ``HelpEntry`` per row, keyed by
-``{section}.{field}``.  The last cell of each row (``Purpose`` or
-``Physical meaning``) is the short tooltip / hover-status.
+field tables in ``docs/tcm_cli/config_reference.md``.
 
-**Mode-tagged sections** — When a field's meaning depends on context (per-probe
-processing vs. input specification), detailed documentation goes into ``###``
-subsections tagged with a mode: ``### `input.path` <mode>probe</mode>``.
-The parser extracts these into ``HelpEntry.body`` as a ``dict[str, str]``
-(mode → content).  Consumers select by mode:
+Table-driven sections
+---------------------
+For each field section heading of the form:
+    ## `input`
+    ## `input.coefs`
 
-    help_for_path("input.path", mode="probe")   # per-probe body only
-    help_for_path("input.path", mode="search")  # input patterns only
-    help_for_path("input.path")                 # full dict {"probe": ..., "search": ...}
+the parser scans markdown table rows whose first cell is a backticked field
+identifier:
 
-**Detail sub-blocks** — A mode section may carry ``####`` sub-blocks; the
-canonical one is ``#### Detailed`` (the long-form requirements / tooltip body).
-Lines before the first ``####`` = short status lines; the ``#### <Tag>`` block
-= the detail string addressed by ``detail="<Tag>"``:
+    | `field_name` | ... | Purpose / Physical meaning |
 
-    help_for_path("input.path", mode="search", detail="Detailed")  # long-form body
-    help_for_path("input.path", mode="search")                     # short lines only
+and emits one :class:`HelpEntry` keyed by ``{section}.{field}``.  The last
+cell becomes :attr:`HelpEntry.short`.
 
-Cell hover resolution does not call ``set_widget_meta`` — ``coef_sheet`` looks
-up ``_meta[iid]["path"]``, strips array indices (``Ag[0]`` → ``Ag``) and
-calls :func:`help_for_path`.  i18n = swap ``config_reference_{lang}.md``
-(resolved via :func:`tcm_gui.const.resolve_lang`, fallback to English).
+Mode-tagged detail sections
+---------------------------
+When a field's meaning depends on context, detailed documentation is written
+as mode-tagged ``###`` subsections:
 
-Arrays documented at the field level (``input.coefs.Ag``) — children (``Ag[0]``,
-``Ag[1][2]``) reuse the parent entry via index stripping.
+    ### `input.path` <mode>probe</mode>
+    ### `input.path` <mode>search</mode>
+
+These are stored in :attr:`HelpEntry.body` keyed by mode.
+
+Detail sub-blocks
+-----------------
+Inside a mode section, ``####`` headings define named detail blocks:
+
+    #### Detailed
+
+Lines before the first ``####`` are stored as the mode's short body.
+Named ``####`` blocks are stored in :attr:`ModeBody.details`.
+
+
+Arrays are resolved at the field level: ``Ag[0]`` / ``Ag[1][2]`` are stripped
+to ``Ag`` before lookup.
+
+Localization uses ``config_reference_{lang}.md`` when present, with fallback
+to ``config_reference.md``.
 """
 
 from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from collections import defaultdict
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from tcm import _constants
@@ -49,240 +60,257 @@ from ._i18n import resolve_lang
 
 _l = logging.getLogger(__name__)
 
-
-def _doc_path(lang: str|None = None) -> Path:
-    """Localized config_reference path; English fallback."""
-    if lang and (p := _constants.DOC_DIR / f"config_reference_{lang}.md").is_file():
-        return p
-    return _constants.DOC_DIR / "config_reference.md"
-
-
 # Sections whose ``## ``{section}```` heading opens table-driven field scanning.
 # ``filter/calib`` and decision-table sections are excluded — those fields are
 # either unused by the GUI Hydra tree (calib entry point) or carry
 # non-identifier first columns (``Stage``, ``Column``, …).
 _FIELD_SECTIONS: frozenset[str] = frozenset({"input", "input.coefs", "out", "filter", "program"})
 
-# ``## ``input.coefs```` — dotted identifier inside backticks at level 2.
-# Group 1 = section identifier, group 2 = subtitle text after the separator
-# (``—``, ``:``).  Accepts CamelCase field names (``Ag``, ``Cg``, ``Rz``, ``P``)
-# — Hydra sections convention is lowercase, but coefficient names use
-# Cyrillic-stemed abbrevs.
-_RE_SECTION_HEAD = re.compile(r"^##\s+`([A-Za-z_]\w*(?:\.\w+)*)`\s*(?:—\s*(.+))?\s*$")
-# ``### \`field.path\` <mode>value</mode>`` — mode-tagged field detail section.
-# Group 1 = dotted field path, group 2 = mode value (e.g. ``probe``, ``search``).
-# ``</>`` shorthand also accepted as closing tag.
-_RE_FIELD_MODE_HEAD = re.compile(r"^###\s+`([A-Za-z_]\w*(?:\.\w+)*)`\s+<mode>([a-z_]+)</(?:mode)?>")
-# ``#### <Tag>`` — sub-block INSIDE the active ``###`` mode (does NOT close it).
-# Group 1 = detail tag slug (e.g. ``Detailed``).  Only recognized while a mode
-# is open; outside a mode a ``####`` is plain prose.
-_RE_DETAIL_HEAD = re.compile(r"^####\s+(.+?)\s*$")
-# Any markdown heading — closes the current section's field scan.
-# NOTE: used only AFTER _FIELD_MODE_HEAD and _DETAIL_HEAD are ruled out, so
-# ``###`` mode headers and ``####`` detail headers don't close the parent.
+# ``## ``input.coefs`` — subtitle``.
+_RE_SECTION_HEAD = re.compile(r"^##\s+`(?P<section>[A-Za-z_]\w*(?:\.\w+)*)`\s*(?:—\s*(?P<subtitle>.+))?\s*$")
+# ``### `input.path` <mode>probe</mode>``; ``</>`` shorthand is accepted.
+_RE_FIELD_MODE_HEAD = re.compile(
+    r"^###\s+`(?P<path>[A-Za-z_]\w*(?:\.\w+)*)`\s+<mode>(?P<mode>[a-z_]+)</(?:mode)?>"
+)
+
+# ``#### Detailed`` or any other named detail block.
+_RE_DETAIL_HEAD = re.compile(r"^####\s+(?P<tag>.+?)\s*$")
+# Any markdown heading.  Checked only after mode/detail headings so that
+# ``###`` mode headers and ``####`` detail headers do not close their parent.
 _RE_ANY_HEADING = re.compile(r"^#{1,6}\s")
-# Code-fence toggle (``` or ~~~) — ``#`` inside is not a heading.
+
+# Code-fence toggle.  ``#`` inside a fence is not a heading.
 _RE_FENCE = re.compile(r"^\s*(```|~~~)")
+
 # Table row whose first cell is a bare backtick-quoted identifier:
 # ``| `field_name` | … | description |``.
-_RE_FIELD_ROW = re.compile(r"^\|\s*`([A-Za-z_]\w*)`\s*\|")
-# Array indices at lookup: ``Ag[0]`` / ``Ag[1][2]`` → ``Ag``.
+_RE_FIELD_ROW = re.compile(r"^\|\s*`(?P<field>[A-Za-z_]\w*)`\s*\|")
+
+# Array indices at lookup time: ``Ag[0]`` / ``Ag[1][2]`` → ``Ag``.
 _RE_ARR_INDEX = re.compile(r"\[\d+\]")
 
 
 @dataclass(frozen=True, slots=True)
-class HelpEntry:
-    """One field's help.
+class ModeBody:
+    """Parsed body for one mode-tagged ``###`` section.
 
-    ``short``  — last cell of the table row (tooltip / hover-status).
-    ``body``   — mode-tagged detail content: ``{"probe": ..., "search": ...}``.
-                 Empty dict when no ``###`` subsections exist for this field.
-                 When :func:`help_for_path` is called with *mode*, ``body`` is
-                 reduced to the single mode's content: a ``str`` (short lines)
-                 when *detail* is ``None``, or the named detail block string
-                 when *detail* is set.
-    ``path``   — dotted Hydra path (``input.coefs.Ag``).
+    Attributes:
+        short: Content before the first ``####`` sub-block.  This is the
+            short mode body used for hover/status text.
+        details: Named ``####`` sub-blocks: ``tag → content``.  The canonical
+            tag is ``"Detailed"``.
+    """
+
+    short: str
+    details: Mapping[str, str] = field(default_factory=dict)
+
+
+# One mode value in a full HelpEntry.body mapping.
+#
+# - ``str`` when the mode section has no ``####`` detail blocks.
+# - ``ModeBody`` when the mode section has named ``####`` detail blocks.
+ModeValue = str | ModeBody
+
+# Full body mapping for an entry before mode/detail reduction.
+HelpBody = Mapping[str, ModeValue]
+
+
+@dataclass(frozen=True, slots=True)
+class HelpEntry:
+    """Help entry for one config path.
+
+    Attributes:
+        path: Dotted Hydra path, without array indices.
+        short: Short tooltip extracted from the last table cell.
+        body: Full mode mapping when no mode is selected; a reduced string
+            when :func:`help_for_path` is called with ``mode`` or ``detail``.
     """
 
     path: str
     short: str
-    body: str | dict[str, str]
+    body: HelpBody | str = field(default_factory=dict)
 
 
 @dataclass(slots=True)
-class _ModeBody:
-    """Mode content split into short lines + named ``####`` detail blocks.
+class _State:
+    """Mutable one-pass parser state."""
 
-    ``short`` = lines accumulated before the first ``####`` in the mode section
-    (== the whole mode body when no ``####`` is present).
-    ``details`` = ``{tag: text}`` for each ``#### <Tag>`` sub-block.
-    """
+    section: str | None = None
+    in_field_section: bool = False
+    fence: bool = False
 
-    short: str = ""
+    mode_path: str | None = None
+    mode_tag: str | None = None
+    short_lines: list[str] = field(default_factory=list)
+
+    detail_tag: str | None = None
+    detail_lines: list[str] = field(default_factory=list)
     details: dict[str, str] = field(default_factory=dict)
 
     @property
-    def has_details(self) -> bool:
-        return bool(self.details)
+    def in_mode(self) -> bool:
+        """True while inside a ``### `field` <mode>…</mode>`` section."""
+        return self.mode_path is not None and self.mode_tag is not None
+
+    def clear_mode(self) -> None:
+        """Reset mode/detail accumulation buffers."""
+        self.mode_path = self.mode_tag = self.detail_tag = None
+        self.short_lines.clear()
+        self.detail_lines.clear()
+        self.details.clear()
 
 
 def parse_reference(text: str) -> dict[str, HelpEntry]:
-    """Parse ``config_reference.md`` content → ``{path: HelpEntry}``.
+    """Parse ``config_reference.md`` content into path → :class:`HelpEntry`.
 
-    One pass over the lines while tracking the current ``## ``{section}````
-    block (skipping code fences).  For each field section, markdown table rows
-    emit entries with ``short`` from the last cell; ``###`` mode-tagged
-    subheaders (``### `field.path` <mode>value</mode>``) accumulate detail
-    content into ``body[mode]``.  Inside an open mode, ``#### <Tag>`` headings
-    start named detail sub-blocks (the canonical one is ``Detailed``) — they
-    do NOT close the parent mode; only a subsequent ``###`` or ``##`` does.
+    Args:
+        text: Full markdown source text.
+
+    Returns:
+        Mutable mapping ``{dotted.path: HelpEntry}``.
+
+    Behavior:
+        * ``## ``section`` headings define field sections.
+        * Table rows inside those sections create short help entries.
+        * ``### ``field.path`` <mode>…</mode>`` headings create mode bodies.
+        * ``#### <tag>`` headings inside a mode create named detail blocks.
+        * Code fences are ignored for heading detection, but fence markers
+          and fenced content are preserved inside open mode bodies.
     """
     entries: dict[str, HelpEntry] = {}
+    bodies: defaultdict[str, dict[str, ModeValue]] = defaultdict(dict)
+    st = _State()
 
-    def _scan(lines: list[str]) -> None:
-        section: str | None = None
-        in_field_section = False
-        fence = False
-        # Mode-tagged section accumulation state.
-        mode_path: str | None = None  # field path from ### heading
-        mode_tag: str | None = None  # mode value (e.g. "probe")
-        mode_short_lines: list[str] = []  # short-status lines (pre-first ####)
-        mode_detail_tag: str | None = None  # active #### tag (None until first ####)
-        mode_detail_lines: list[str] = []  # lines for current #### block
-        mode_details: dict[str, str] = {}  # tag → joined detail text
+    def flush_detail() -> None:
+        """Freeze the active ``####`` block into ``st.details``."""
+        if st.detail_tag is not None:
+            st.details[st.detail_tag] = "\n".join(st.detail_lines).strip()
+        st.detail_tag = None
+        st.detail_lines.clear()
 
-        def _flush_detail() -> None:
-            """Freeze accumulated #### block lines into mode_details."""
-            nonlocal mode_detail_tag
-            if mode_detail_tag is not None:
-                content = "\n".join(mode_detail_lines).strip()
-                mode_details[mode_detail_tag] = content
-            mode_detail_tag = None
-            mode_detail_lines.clear()
+    def close_mode() -> None:
+        """Freeze the active mode section into ``bodies``."""
+        flush_detail()
 
-        def _close_mode() -> None:
-            """Freeze accumulated mode content into the entry's body dict."""
-            nonlocal mode_path, mode_tag, mode_detail_tag
-            _flush_detail()
-            if mode_path and mode_tag and mode_path in entries:
-                short = "\n".join(mode_short_lines).strip()
-                e = entries[mode_path]
-                new_body = dict(e.body) if isinstance(e.body, dict) else {}
-                new_body[mode_tag] = (
-                    short if not mode_details else _ModeBody(short=short, details=dict(mode_details))
+        if (path := st.mode_path) and (tag := st.mode_tag) and path in entries:
+            short = "\n".join(st.short_lines).strip()
+            bodies[path][tag] = short if not st.details else ModeBody(short=short, details=dict(st.details))
+
+        st.clear_mode()
+
+    for line in text.splitlines():
+        if _RE_FENCE.match(line):
+            # Preserve fence markers inside mode bodies so downstream markdown
+            # rendering can still recognize fenced code blocks.
+            if st.in_mode:
+                target = st.detail_lines if st.detail_tag is not None else st.short_lines
+                target.append(line)
+
+            st.fence = not st.fence
+            continue
+
+        if not st.fence and (m := _RE_SECTION_HEAD.match(line)):
+            close_mode()
+
+            section = m["section"]
+            st.section = section
+            st.in_field_section = section in _FIELD_SECTIONS
+
+            if st.in_field_section:
+                subtitle = (m["subtitle"] or "").strip()
+                entries[section] = HelpEntry(
+                    path=section,
+                    short=subtitle or section,
                 )
-                entries[mode_path] = HelpEntry(e.path, e.short, new_body)
-            mode_path, mode_tag, mode_detail_tag = None, None, None
-            mode_short_lines.clear()
-            mode_detail_lines.clear()
-            mode_details.clear()
 
-        for line in lines:
-            if _RE_FENCE.match(line):
-                # Preserve fence markers in the mode body so downstream
-                # parse_markdown still recognises fenced code blocks —
-                # otherwise the rows inside ```…``` collapse into one
-                # Paragraph (flush_para joins them with spaces).  The
-                # `fence` state still guards heading detection below.
-                if mode_path and mode_tag:
-                    tgt = mode_detail_lines if mode_detail_tag is not None else mode_short_lines
-                    tgt.append(line)
-                fence = not fence
-                continue
+            continue
 
-            if not fence and (m := _RE_SECTION_HEAD.match(line)):
-                _close_mode()
-                section = m.group(1)
-                in_field_section = section in _FIELD_SECTIONS
-                # Emit section-level entry: ``input`` → "Data source & parameters",
-                # ``input.coefs`` → "Calibration coefficients", etc.
-                if in_field_section:
-                    subtitle = (m.group(2) or "").strip()
-                    entries[section] = HelpEntry(section, subtitle or section, {})
-                continue
+        # Must be checked before generic heading handling.
+        if not st.fence and (m := _RE_FIELD_MODE_HEAD.match(line)):
+            close_mode()
+            st.mode_path, st.mode_tag = m["path"], m["mode"]
+            continue
 
-            # ### mode-tagged subheader — MUST be checked BEFORE _ANY_HEADING
-            # so that ### doesn't close the current ## section.
-            if not fence and (fm := _RE_FIELD_MODE_HEAD.match(line)):
-                _close_mode()
-                mode_path, mode_tag = fm.group(1), fm.group(2)
-                mode_short_lines.clear()
-                mode_details.clear()
-                mode_detail_tag = None
-                continue
+        # Meaningful only inside an open mode; otherwise it is a heading.
+        if not st.fence and st.in_mode and (m := _RE_DETAIL_HEAD.match(line)):
+            flush_detail()
+            st.detail_tag = m["tag"].strip()
+            st.detail_lines.clear()
+            continue
 
-            # #### detail subheader — only meaningful INSIDE a mode; otherwise
-            # treated as plain prose (falls through to accumulation / row scan).
-            # MUST be checked BEFORE _ANY_HEADING so #### doesn't close the mode.
-            if (
-                not fence
-                and mode_path is not None
-                and mode_tag is not None
-                and (dm := _RE_DETAIL_HEAD.match(line))
-            ):
-                _flush_detail()
-                mode_detail_tag = dm.group(1).strip()
-                mode_detail_lines.clear()
-                continue
+        if not st.fence and st.section is not None and _RE_ANY_HEADING.match(line):
+            close_mode()
+            st.section, st.in_field_section = None, False
+            continue
 
-            if (not fence) and section is not None and _RE_ANY_HEADING.match(line):
-                _close_mode()
-                section, in_field_section = None, False
-                continue
+        if st.in_mode:
+            target = st.detail_lines if st.detail_tag is not None else st.short_lines
+            target.append(line)
+            continue
 
-            if mode_path and mode_tag:
-                # Inside a mode: route lines to short-status or active detail.
-                if mode_detail_tag is not None:
-                    mode_detail_lines.append(line)
-                else:
-                    mode_short_lines.append(line)
-                continue
+        if st.fence:
+            continue
 
-            if section is None:
-                continue
+        if st.in_field_section and (section := st.section) and (m := _RE_FIELD_ROW.match(line)):
+            path = f"{section}.{m['field']}"
+            cells = split_table_row(line)
+            entries[path] = HelpEntry(
+                path=path,
+                short=cells[-1].strip() if cells else "",
+            )
 
-            if not in_field_section:
-                continue
+    close_mode()
 
-            if (fm := _RE_FIELD_ROW.match(line)) and (field := fm.group(1)):
-                path = f"{section}.{field}"
-                cells = split_table_row(line)
-                raw = cells[-1].strip() if cells else ""
-                entries[path] = HelpEntry(path, raw, {})
+    for path, modes in bodies.items():
+        if path in entries:
+            entries[path] = replace(entries[path], body=modes)
 
-        _close_mode()
-
-    _scan(text.splitlines())
     return entries
 
 
 # ── loader & resolver ─────────────────────────────────────────────────────────
 
 
+def _doc_path(lang: str | None = None) -> Path:
+    """Localized ``config_reference`` path; English fallback."""
+    if lang and (p := _constants.DOC_DIR / f"config_reference_{lang}.md").is_file():
+        return p
+    return _constants.DOC_DIR / "config_reference.md"
+
+
 _CACHE: dict[str, dict[str, HelpEntry]] = {}
-"""Per-language parsed entries.  Key = resolved two-letter lang code (e.g.
-``"en"``, ``"ru"``).  Populated lazily by :func:`_load`; cleared by
-:func:`reload_cache` (tests monkeypatch ``_constants.DOC_DIR`` then call it)."""
+"""Per-language parsed entries.
+
+Key = resolved two-letter language code.  Populated lazily by :func:`_load`
+and cleared by :func:`reload_cache`.
+"""
 
 
-def _load(lang: str) -> dict[str, HelpEntry]:
-    """Read & parse the reference once per language; log a one-line summary.
+def _load(lang: str | None = None) -> Mapping[str, HelpEntry]:
+    """Load and cache help entries for *lang*.
 
-    Memoized in the module-level :data:`_CACHE` (not ``functools.lru_cache`` —
-    tests call :func:`reload_cache` to bypass it after monkeypatching
-    ``_constants.DOC_DIR``).  On any read/parse error logs at INFO and caches ``{}``
-    for that lang (graceful degradation: no tooltips, no crash).
+    Args:
+        lang: Two-letter language code.  ``None`` resolves the current
+            application language via :func:`resolve_lang`.
+
+    Returns:
+        Mapping ``{dotted.path: HelpEntry}``.  On missing file or parse
+        failure, returns an empty mapping so GUI hover degrades gracefully.
     """
+    if lang is None:
+        lang = resolve_lang()
+
     if lang in _CACHE:
         return _CACHE[lang]
+
     path = _doc_path(lang)
+
     try:
-        text = path.read_text(encoding="utf-8")
-        entries = parse_reference(text)
+        entries = parse_reference(path.read_text(encoding="utf-8"))
     except OSError:
-        _l.error("config_reference not found at %s — config-cell hover disabled", path)
+        _l.error("config_reference not found at %s — hover disabled", path)
         entries = {}
-    except Exception:  # noqa: BLE001 — any parse failure is non-fatal here
+    except Exception:  # noqa: BLE001 — parse failure is non-fatal for tooltips
         _l.error("config_reference parse error at %s — hover disabled", path, exc_info=True)
         entries = {}
     _l.debug("Loaded %d config help entries from %s (lang=%s)", len(entries), path, lang)
@@ -290,42 +318,68 @@ def _load(lang: str) -> dict[str, HelpEntry]:
     return entries
 
 
-def reload_cache(lang: str | None = None) -> dict[str, HelpEntry]:
-    """Force a fresh parse; ``lang=None`` clears ALL cached languages.
+def reload_cache(lang: str | None = None) -> Mapping[str, HelpEntry]:
+    """Clear cached parsed entries and reload. Helpd testing
 
-    Tests that monkeypatch ``_constants.DOC_DIR`` call ``reload_cache()`` (no-arg,
-    preserves the existing contract) to drop stale entries; tests targeting a
-    specific lang pass it explicitly to evict just that slot.
+    Args:
+        lang: Language code to evict/reload.  ``None`` clears all cached
+            languages and reloads the currently resolved language.
+
+    Returns:
+        Fresh mapping ``{dotted.path: HelpEntry}``.
     """
     if lang is None:
         _CACHE.clear()
     else:
         _CACHE.pop(lang, None)
-    return _load(lang if lang is not None else resolve_lang())
+
+    return _load(lang)
 
 
-def help_for_path(path: str, *, mode: str | None = None, detail: str | None = None):
-    """Dotted Hydra path → entry; array indices stripped (``Ag[0]`` → ``Ag``).
+def help_for_path(
+    path: str,
+    *,
+    mode: str | None = None,
+    detail: str | None = None,
+) -> HelpEntry | None:
+    """Resolve a dotted Hydra path to a :class:`HelpEntry`.
 
-    Modes:
-    - ``mode=None, detail=None`` → entry as-is (``body`` is a ``dict`` of
-      per-mode content; each value is a ``str`` (no ``####``) or a
-      :class:`_ModeBody` (mode carries ``####`` detail blocks)).
-    - ``mode=..., detail=None`` → new :class:`HelpEntry` with ``body`` reduced
-      to the mode's short lines (``str``).  For modes without ``####`` this is
-      the whole mode body (backward-compatible); for modes with ``####`` it is
-      the text before the first ``####``.
-    - ``mode=..., detail=<tag>`` → new :class:`HelpEntry` with ``body`` reduced
-      to that detail block's text (``str``).  Returns ``body=""`` when the
-      mode has no such ``####`` block (caller no-ops).
+    Array indices are stripped before lookup:
+
+        ``Ag[0]``      → ``Ag``
+        ``Ag[1][2]``   → ``Ag``
+
+    Args:
+        path: Dotted Hydra path, e.g. ``input.coefs.Ag[0]``.
+        mode: Optional mode selector, e.g. ``"probe"`` or ``"search"``.
+        detail: Optional ``####`` detail tag inside *mode*, e.g.
+            ``"Detailed"``.
+
+    Returns:
+        * ``None`` if the path is undocumented.
+        * If ``mode is None``: the full entry.  ``entry.body`` is a mapping
+          ``mode → str | ModeBody``.
+        * If ``mode`` is given and ``detail is None``: a reduced entry whose
+          ``body`` is the mode's short text.
+        * If both ``mode`` and ``detail`` are given: a reduced entry whose
+          ``body`` is the named detail block, or ``""`` if absent.
     """
-    if (entry := _load(resolve_lang()).get(_RE_ARR_INDEX.sub("", path))) is None:
+    entry = _load().get(_RE_ARR_INDEX.sub("", path))
+
+    if entry is None:
         return None
+
     if mode is None:
         return entry
-    raw = entry.body.get(mode, "") if isinstance(entry.body, dict) else ""
+
+    raw = entry.body.get(mode) if isinstance(entry.body, Mapping) else None
+
+    if raw is None:
+        return replace(entry, body="")
+
     if detail is None:
-        body = raw.short if isinstance(raw, _ModeBody) else raw
-        return HelpEntry(entry.path, entry.short, body)
-    body = raw.details.get(detail, "") if isinstance(raw, _ModeBody) else ""
-    return HelpEntry(entry.path, entry.short, body)
+        body = raw.short if isinstance(raw, ModeBody) else raw
+    else:
+        body = raw.details.get(detail, "") if isinstance(raw, ModeBody) else ""
+
+    return replace(entry, body=body)

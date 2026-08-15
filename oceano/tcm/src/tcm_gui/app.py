@@ -140,6 +140,7 @@ class App:
             filetypes=SEARCH_FILETYPES,
             on_status=self._on_browse_status,
             status_hint=_S["browse_btn.status"],
+            status_hint_files=_S["browse_btn.status_files"],
             on_shift=self._on_top_shift,
         )
         self._path_field.grid(row=0, column=1, sticky="ew")
@@ -159,7 +160,9 @@ class App:
         self._prog_status = ttk.Label(f1, text="", anchor="e")
         self._prog_status.grid(row=0, column=1, sticky="e", padx=(8, 0))
         self._status_hovering = False
-        self._status_bbox: tuple[int, int, int, int] | None = None  # screen-rect recorded at Enter
+        self._floater_hovering = False  # independent per-widget hover-hide flags
+        # Last-seen stage snapshot — a change = progress advanced (see _poll_progress).
+        self._stage_last: tuple[int, int, str] = (0, 0, "")
 
         # §3 Main area — vertical rail left, page stack right.
         # No notebook: rail owns selection entirely, tkraise() switches pages.
@@ -175,7 +178,7 @@ class App:
         self._stack.columnconfigure(0, weight=1)
 
         # §4 Run button — floats at main area bottom-right, parented on root for z-order
-        self._run_btn = ttk.Button(r, text=_S["run_btn.text"], command=self._on_run)
+        self._run_btn = ttk.Button(r, text=_S["run_btn.text"], command=self._on_run, state="disabled")
         self._run_btn.place(in_=self._main, relx=1.0, rely=1.0, anchor="se", x=-24, y=-24)
         r.bind("<Configure>", lambda _: self._run_btn.lift(), add="+")
 
@@ -264,15 +267,19 @@ class App:
         self._prog_stage.pack(side="bottom", fill="x")
         self._prog_show_job: str | None = None  # after() id for delayed show
 
-        # Z-order: mouse motion lifts GUI status (bottom-left) above floater.
-        r.bind("<Motion>", lambda _: self._status_lbl.lift(), add="+")
+        # Z-order: mouse motion lifts GUI status (bottom-left) above floater —
+        # except while an error is surfaced: the wide error-detail tooltip in
+        # _status_lbl would bury the floater's error line between poll lifts.
+        r.bind("<Motion>", self._lift_status_z, add="+")
         # Esc dismisses the error detail tooltip shown in _status_lbl.
         r.bind("<Escape>", lambda _e: self._hide_tip(), add="+")
-        # Hover-hide: <Enter> on any status widget hides both; leave is detected
-        # via root <Motion> + recorded bbox (hidden widgets can't fire <Leave>).
-        for w in (self._prog_status, self._prog_floater, self._prog_stage_text, self._prog_stage):
-            w.bind("<Enter>", self._on_status_enter, add="+")
-        r.bind("<Motion>", self._on_motion_check_hover, add="+")
+        # Hover-hide: root <Motion> hides ONLY when the live pointer is over the
+        # visible status widgets; motion anywhere else never hides them.  <Enter>
+        # bindings proved unreliable — _poll_progress re-shows/lifts the floater
+        # mid-motion, so <Enter> can't fire while the pointer is already inside.
+        # Once hidden, only programmatic activation restores (progress advance /
+        # explicit placement) — pointer leave alone never re-shows.
+        r.bind("<Motion>", self._on_status_motion, add="+")
 
         # One pass: bind every chrome ``self._*`` widget to its help text / status
         # from STR.  No per-widget ``set_widget_meta`` calls above — role is derived
@@ -342,7 +349,9 @@ class App:
             set_widget_meta(w, **kwargs)
 
     def _run_btn_status(self) -> str:
-        """Dynamic Run button status: reflects busy / paused state, read live."""
+        """Dynamic Run button status: reflects disabled / busy / paused state, read live."""
+        if str(self._run_btn.cget("state")) == "disabled":
+            return _S["run_btn.disabled_no_pages" if not self._pages else "run_btn.disabled_invalid_path"]
         if not self.wk.busy:
             return _S["run.start"]
         return _S["run.resume"] if self.rt.pause_gate.paused else _S["run.pause"]
@@ -366,7 +375,7 @@ class App:
         # Re-render cached content with scaled font.
         if not self._status_lbl.rerender():
             if self._initial_scan and not self._prog_floater.place_info():
-                self._prog_floater.place(relx=1.0, rely=1.0, anchor="se", x=-8, y=-4)
+                self._place_floater()
                 self._prog_stage_text.config(text=_S["status.loading"])
             elif not self._initial_scan:
                 self._set_status(_S["status.ready"], raw=True)
@@ -398,48 +407,62 @@ class App:
         elif self._path_hovering:
             self._set_status(self._path_field._path_status)
 
-    def _on_status_enter(self, _event: tk.Event) -> None:
-        """Mouse entered status text or floater — hide both.
+    def _on_status_motion(self, event: tk.Event) -> None:
+        """Hover-hide each status widget independently under the live pointer.
 
-        Records the union bounding box of visible status widgets BEFORE hiding,
-        so root ``<Motion>`` can detect leave (hidden widgets can't fire
-        ``<Leave>``).  The full error text is always in the log; hover hiding
-        the error floater is fine — the user reads the log for details.
+        Shown always; a widget hides only when the pointer is over THAT widget
+        — hovering ``_prog_status`` (top row) never hides the floater and vice
+        versa.  ``<Enter>`` can't "catch" the mouse here: the poll re-shows/
+        lifts widgets mid-motion with the pointer already inside, so root
+        ``<Motion>`` + per-event live bounds is the reliable trigger.
+
+        Once hidden, a widget STAYS hidden after the pointer leaves —
+        restoration is exclusively programmatic: progress advance
+        (``_poll_progress`` clears both flags on snapshot change) or explicit
+        placement (``_place_floater`` clears ``_floater_hovering``).
         """
-        self._status_hovering = True
-        self._status_bbox = self._status_bounds()
-        self._prog_status.grid_remove()
-        if self._prog_floater.place_info():
+        if (
+            not self._status_hovering
+            and self._prog_status.grid_info()
+            and self._pointer_inside(event, self._prog_status)
+        ):
+            self._status_hovering = True
+            self._prog_status.grid_remove()
+        if (
+            not self._floater_hovering
+            and self._prog_floater.place_info()
+            and self._pointer_inside(event, self._prog_floater)
+        ):
+            self._floater_hovering = True
             self._prog_floater.place_forget()
 
-    def _status_bounds(self) -> tuple[int, int, int, int] | None:
-        """Union screen-rect of managed status widgets (x0, y0, x1, y1).
+    def _place_floater(self) -> None:
+        """Place + lift the stage floater — programmatic activation ends hover-hide."""
+        self._floater_hovering = False
+        self._prog_floater.place(relx=1.0, rely=1.0, anchor="se", x=-8, y=-4)
+        self._prog_floater.lift()
 
-        Uses ``grid_info()`` / ``place_info()`` (not ``winfo_ismapped()``) so
-        the check works before the window is fully realized and in tests
-        with a withdrawn root.
-        """
-        ws = [w for w in (self._prog_status, self._prog_floater) if (w.grid_info() or w.place_info())]
-        if not ws:
-            return None
+    @staticmethod
+    def _pointer_inside(event: tk.Event, w: tk.Widget) -> bool:
+        """True when *event*'s screen coords fall inside *w*'s live bbox."""
         return (
-            min(w.winfo_rootx() for w in ws),
-            min(w.winfo_rooty() for w in ws),
-            max(w.winfo_rootx() + w.winfo_width() for w in ws),
-            max(w.winfo_rooty() + w.winfo_height() for w in ws),
+            w.winfo_rootx() <= event.x_root <= w.winfo_rootx() + w.winfo_width()
+            and w.winfo_rooty() <= event.y_root <= w.winfo_rooty() + w.winfo_height()
         )
 
-    def _on_motion_check_hover(self, event: tk.Event) -> None:
-        """Clear ``_status_hovering`` when the mouse leaves the recorded status bbox.
+    def _lift_status_z(self, _event: tk.Event) -> None:
+        """Motion z-order: status label above floater — error floater above tooltip.
 
-        Hidden widgets can't fire ``<Leave>``, so leave is detected here on root
-        ``<Motion>`` using the bbox recorded at ``_on_status_enter`` time.
+        ``_status_lbl`` grows to window width for the error-detail tooltip and
+        visually buries the bottom-right floater when lifted over it.  During
+        normal progress the motion lift keeps hover hints readable (the poll
+        lifts the floater back on the next 300 ms tick), but while
+        ``_error_active`` the floater carries the short error line — re-lift
+        it immediately so it never flickers under the tooltip on mouse motion.
         """
-        if not self._status_hovering or self._status_bbox is None:
-            return
-        x0, y0, x1, y1 = self._status_bbox
-        if not (x0 <= event.x_root <= x1 and y0 <= event.y_root <= y1):
-            self._status_hovering = False
+        self._status_lbl.lift()
+        if self._error_active and self._prog_floater.place_info():
+            self._prog_floater.lift()
 
     def _on_top_shift(self, is_file: bool) -> None:
         """Top PathField Shift state changed — swap status text.
@@ -503,7 +526,7 @@ class App:
         if self._prog_floater.place_info():
             self._prog_floater.lift()
         else:
-            self._prog_floater.place(relx=1.0, rely=1.0, anchor="se", x=-8, y=-4)
+            self._place_floater()
         self._prog_stage_text.config(text=_S["status.loading"])
         self._scan()
 
@@ -541,7 +564,7 @@ class App:
         set_widget_meta(frame, status=status_text)
         self._rail.add_tab(stem)
 
-        cs = ConfigSheet(frame, status_hint=_S["browse_btn.status"])
+        cs = ConfigSheet(frame, status_hint=_S["browse_btn.status_files"])
         cs.sh.pack(fill="both", expand=True, padx=2, pady=2)
         cs._mgr = BrowseButtonManager(
             cs.sh,
@@ -554,6 +577,7 @@ class App:
         )
         cs.load(cfg, full=self._full_mode, config_root=schema.Config, return_enum=schema.Return)
         cs.on_hover_status = lambda msg, md=False: self._set_status(msg, raw=not md)
+        cs.on_validity_change = self._update_run_btn_state
         cs.on_edit_begin = self._hide_tip
         cs._empty_area_hint = _S["empty_area.synced" if yaml_path is not None else "empty_area.unsaved"]
         self._pages[stem] = cs
@@ -577,6 +601,11 @@ class App:
 
     # ── §3 Run / Pause / Resume ─────────────────────────────────────
 
+    def _update_run_btn_state(self) -> None:
+        """Enable Run iff at least one page exists and ALL have valid input.path."""
+        ok = bool(self._pages) and all(cs.is_path_valid() for cs in self._pages.values())
+        self._run_btn.config(state="normal" if ok else "disabled")
+
     def _on_run(self) -> None:
         if self.wk.busy:
             gate = self.rt.pause_gate
@@ -584,7 +613,7 @@ class App:
             self._run_btn.config(text=_S["run_btn.resume"] if gate.paused else _S["run_btn.pause"])
             return
         stems = list(self._pages)
-        if not stems:
+        if not stems or not all(cs.is_path_valid() for cs in self._pages.values()):
             return
         for s, cs in self._pages.items():
             self._write_coefs(s, cs)
@@ -705,12 +734,17 @@ class App:
 
     @staticmethod
     def _translate_scan_stage(stage: ScanStage) -> str:
-        """Translate ScanStage enum value to current locale."""
-        return _S.get(f"scan_stage.{stage.name.lower()}", str(stage))
+        """Translate ScanStage enum value (a ``scan_stage.*`` key) to current locale."""
+        return _S.get(stage, str(stage))
 
     def _poll_progress(self) -> None:
         # Snapshot both states once — avoids redundant lock acquisitions.
         cur, tot, desc = self.rt.progress_stage.snapshot()
+        # Progress advanced (or stage changed) → new information ends
+        # hover-hide; the branches below re-show the widgets.
+        if (cur, tot, desc) != self._stage_last:
+            self._stage_last = cur, tot, desc
+            self._status_hovering = self._floater_hovering = False
         _cur_o, tot_o, desc_o = self.rt.progress_overall.snapshot()
         if tot > 0:
             self._prog_stage.config(maximum=tot, value=cur)
@@ -719,16 +753,16 @@ class App:
             # text; _poll_progress must not clobber it on the next 300 ms tick.
             if cur < tot and not self._error_active:
                 self._prog_stage_text.config(text=self._translate_desc(desc) or "")
-            # Separate status label (row 1, right) — stage desc + fraction.
-            # Restore + update when processing is active and mouse isn't
-            # hovering over the floater area.
+            # Restore/update each widget independently of its own hover flag:
+            # _prog_status (row-1-right label) + the floater (delayed show
+            # avoids flashing for very short operations).
             if not self._status_hovering:
                 self._prog_status.config(text=self._translate_desc(desc) or "")
                 self._prog_status.grid()
+            if not self._floater_hovering:
                 if self._prog_floater.place_info():
                     self._prog_floater.lift()
                 elif self._prog_show_job is None:
-                    # Delayed show — avoids flashing for very short operations.
                     self._prog_show_job = self.root.after(400, self._show_prog_floater)
         else:
             # Cancel pending show if progress ended before delay.
@@ -748,7 +782,8 @@ class App:
                 self._set_status("", raw=True)
             self._prog_status.config(text="")
         if tot_o > 0:
-            self._overall_lbl.config(text=desc_o or "")
+            # desc_o carries ScanStage i18n keys — translate like stage descs.
+            self._overall_lbl.config(text=self._translate_desc(desc_o) or "")
         else:
             self._overall_lbl.config(text=f"{self._translate_scan_stage(self._cfg_state)}{self._cfg_detail}")
         # Per-config fills → rail; aggregate % → _overall_lbl suffix
@@ -757,19 +792,18 @@ class App:
             self._rail.set_state(cfg, state, frac)
         if snaps and self.wk.busy:
             pct = round(100 * sum(v[1] for v in snaps.values()) / len(snaps))
-            desc_o = self.rt.progress_overall.snapshot()[2]
+            desc_o = self._translate_desc(self.rt.progress_overall.snapshot()[2])
             self._overall_lbl.config(text=f"{desc_o} \u2014 {pct}%" if desc_o else f"{pct}%")
 
     def _show_prog_floater(self) -> None:
-        """Delayed show of stage progress overlay — skipped while hovering."""
+        """Delayed show of stage progress overlay — skipped while the floater is hover-hidden."""
         self._prog_show_job = None
-        if self._status_hovering:
+        if self._floater_hovering:
             return
         cur, tot, _desc = self.rt.progress_stage.snapshot()
         if tot > 0:
             self._prog_stage.config(maximum=tot, value=cur)
-            self._prog_floater.place(relx=1.0, rely=1.0, anchor="se", x=-8, y=-4)
-            self._prog_floater.lift()
+            self._place_floater()
 
     def _poll_results(self) -> None:
         try:
@@ -809,8 +843,7 @@ class App:
         error = self._stage_error_text(exc)
         self._prog_stage_text.config(text=f"{current}\n{error}" if current else error)
         if not self._prog_floater.place_info():
-            self._prog_floater.place(relx=1.0, rely=1.0, anchor="se", x=-8, y=-4)
-        self._prog_floater.lift()
+            self._place_floater()
         if tip := _tip_body("input.path", mode="search", detail="Detailed"):
             self._show_tip(tip)
         else:
@@ -882,6 +915,7 @@ class App:
         # Scan done — show "Ready" now.
         self._set_status(_S["status.ready"], raw=True)
         self._overall_lbl.config(text=self._translate_scan_stage(self._cfg_state))
+        self._update_run_btn_state()
 
     def _on_run_done(self, result) -> None:
         self._error_active = False

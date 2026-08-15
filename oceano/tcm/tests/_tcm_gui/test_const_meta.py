@@ -141,8 +141,12 @@ class TestSetFont:
         assert txt.cget("font") == "TkFixedFont", (
             f"fresh tk.Text font should be 'TkFixedFont', got {txt.cget('font')!r}"
         )
-        # Apply the GUI font.
-        ui.set_font(txt)
+        # Apply the GUI font — keep a reference so Tk doesn't recycle the
+        # anonymous font name before we read it back (GC between configure
+        # and cget would free the Font, letting Tk reuse the name for a
+        # different font with a different family).
+        applied_font = ui.font()
+        txt.configure(font=applied_font)
         applied = tkfont.Font(font=txt.cget("font"))
         assert applied.cget("family") == default_family, (
             f"set_font: expected family {default_family!r}, got {applied.cget('family')!r}"
@@ -212,9 +216,13 @@ class TestLogStatusFontMatch:
 
         # Replicate App._build() §5 + §6 exactly.
         log = tk.Text(_tk_root, wrap="word")
-        ui.set_font(log)
+        # Keep references to applied fonts so Tk doesn't recycle the
+        # anonymous font names before we read them back.
+        log_font_obj = ui.font()
+        log.configure(font=log_font_obj)
 
-        status = MarkdownLabel(_tk_root, font=ui.font())
+        status_font_obj = ui.font()
+        status = MarkdownLabel(_tk_root, font=status_font_obj)
 
         log_font = tkfont.Font(font=log.cget("font"))
         status_font = status._fonts["plain"]  # the base font for rendered text
@@ -240,9 +248,13 @@ class TestLogStatusFontMatch:
         ui = UIScale(_tk_root, font_scale=1.0)
 
         log = tk.Text(_tk_root, wrap="word")
-        ui.set_font(log)
+        # Keep references to applied fonts so Tk doesn't recycle the
+        # anonymous font names before we read them back.
+        log_font_obj = ui.font()
+        log.configure(font=log_font_obj)
 
-        status = MarkdownLabel(_tk_root, font=ui.font())
+        status_font_obj = ui.font()
+        status = MarkdownLabel(_tk_root, font=status_font_obj)
         # Replicate _fit_status_font lifecycle: mark_font_ready + rerender.
         status.mark_font_ready()
         status.set_text("Ready", raw=True)

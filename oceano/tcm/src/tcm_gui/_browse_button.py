@@ -108,6 +108,7 @@ class BrowseOverlay:
         leave_hides: bool = False,
         on_status: Callable[[str], None] | None = None,
         status_hint: str | Callable[[], str] = "",
+        status_hint_files: str | Callable[[], str] = "",
         on_shift: Callable[[bool], None] | None = None,
     ) -> None:
         self._host = host
@@ -117,6 +118,7 @@ class BrowseOverlay:
         self._leave_hides = leave_hides
         self._on_status = on_status
         self._status_hint = status_hint
+        self._status_hint_files = status_hint_files
         self._on_shift = on_shift
         self._button: ttk.Button | None = None
         self._icon_job: str | None = None
@@ -208,8 +210,15 @@ class BrowseOverlay:
 
     # ── widget core ───────────────────────────────────────────────
     def _resolve_hint(self) -> str:
-        """Resolve status_hint — supports both static str and callable."""
-        h = self._status_hint
+        """Resolve status_hint — mode-aware: files variant when in file mode.
+
+        Supports both static str and callable hints.  When
+        ``status_hint_files`` is set and the button is in file mode
+        (``_files_only`` or Shift held), the files-specific hint is
+        returned; otherwise the default hint.
+        """
+        is_file = self._files_only or _is_shift_pressed()
+        h = self._status_hint_files if (is_file and self._status_hint_files) else self._status_hint
         return h() if callable(h) else h
 
     def _make_button(self) -> ttk.Button:

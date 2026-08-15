@@ -17,7 +17,7 @@ default_page.stem: "(default)"
 path_lbl.tooltip: "Data & config search path"
 path_field.tooltip: "Data & config search path"
 path_field.status: "Changing data path rescans and **resets all config tabs below**"
-path_field.status_shift: "Shift held — browse **files**; **YAML configs** load into tabs"
+path_field.status_shift: "Browse **files**; **YAML configs** load into tabs"
 path_field.placeholder: "D:/data/_raw/"
 path_field.placeholder_shift: "D:/data/_raw/(i*raw_file1[.]txt|i*raw_file2[.]txt)"
 path_field.placeholder_probe: "i_01_measurement.txt"
@@ -33,6 +33,7 @@ log.status: "Processing log — color-coded by severity ({#debug}debug{/}/{#info
 prog_stage.status: "Current stage progress within the active configuration"
 tab.status: "Configuration: `{path}`"  # template — _add_page formats {path}
 browse_btn.status: "Hold **Shift** to select files instead of directory"
+browse_btn.status_files: "Browse files"
 empty_area.synced: "Editable — coefs, dates, path **sync to YAML on Run**"
 empty_area.unsaved: "No YAML config — provide a data path above to generate configs that persist edits"
 rail.status: "Configuration rail — click a tab to switch; vertical fill = processing progress (top→down)"
@@ -60,6 +61,8 @@ sheet.input.path: "Per-probe data file — must be a concrete file path (not dir
 run_btn.text: "Run"
 run_btn.pause: "Pause"
 run_btn.resume: "Resume"
+run_btn.disabled_no_pages: "No configurations - please specify the data path first."
+run_btn.disabled_invalid_path: "The configurations contain {#error}invalid paths{/}"
 
 # ── Status / progress text ────────────────────────────────────────────────
 status.ready: "Ready"
@@ -74,8 +77,7 @@ error.scan: "Scan: {p}"
 error.run: "Run: {p}"
 error.log.scan: "scan failed"
 error.log.run: "run failed"
-# Stage floater short error text — {msg} = "<ExcType>: <exc>"; detailed
-# requirements are loaded from config_reference.md `input.path` #### Detailed.
+# Stage floater short error text — {msg} = "<ExcType>: <exc>"
 stage.error: "Error \"{msg}\"."
 
 # ── Pipeline stage descriptions ───────────────────────────────────────────

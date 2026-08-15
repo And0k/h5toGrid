@@ -1,8 +1,9 @@
-"""States registry — StrEnum labels where value = display text.
+"""States registry — StrEnum labels where value = transport key.
 
 Single source of truth for all state labels used in progress bars,
-status lines, and log context.  Follows the pattern: enum value IS
-the human-readable text shown to the user.
+status lines, and log context.  ``Stage`` values double as display
+text (backend-owned); ``ScanStage`` values are ``str.yaml`` i18n keys
+translated by the GUI (:meth:`App._translate_scan_stage`).
 
 Usage::
 
@@ -28,7 +29,9 @@ class Stage(StrEnum):
 
 
 class ScanStage(StrEnum):
-    """Scan lifecycle labels (value = overall status label text above notebook).
+    """Scan lifecycle labels — value = ``scan_stage.*`` i18n key in
+    ``tcm_gui/str.yaml`` (display text lives there only; the GUI
+    translates via ``_translate_scan_stage`` / ``_translate_desc``).
 
     Driven by ``progress_overall.set()`` at scan boundaries in
     :func:`processing.run` — same mechanism as ``progress_stage`` updates.
@@ -36,6 +39,6 @@ class ScanStage(StrEnum):
     or the stored :attr:`App._cfg_state` enum when idle.
     """
 
-    DEFAULT = "Default configuration"
-    SCAN = "Processing configurations"
-    DONE = "Generated configurations for processing found data"
+    DEFAULT = "scan_stage.default"
+    SCAN = "scan_stage.scan"
+    DONE = "scan_stage.done"

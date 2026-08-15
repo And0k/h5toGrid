@@ -14,7 +14,7 @@ default_page.stem: "(по умолчанию)"
 path_lbl.tooltip: "Путь поиска данных и конфигураций"
 path_field.tooltip: "Путь поиска данных и конфигураций"
 path_field.status: "Смена пути пересканирует и **сбрасывает все вкладки конфигураций**"
-path_field.status_shift: "Зажат Shift — можно выбирать индивидуальные **файлы**: или данных для поиска/автогенерирации их конфигураций, или уже самих `{pcid}*.yaml` конфигураций непосредственно"
+path_field.status_shift: "Выбор индивидуальных **файлов**: данных (с автогенерирацией/загрузкой их конфигураций) или их конфигураций `{pcid}*.yaml` (путь к даннным содержится внутри них)"
 path_field.placeholder: "D:/data/_raw/"
 path_field.placeholder_shift: "D:/data/_raw/(i*raw_file1[.]txt|i*raw_file2[.]txt)"
 path_field.placeholder_probe: "i_01_измерение.txt"
@@ -29,7 +29,8 @@ prog_status.status: "Текущий этап и прогресс обработ�
 log.status: "Журнал обработки с цветовой маркировкой уровня ({#debug}отладка{/}/{#info}инфо{/}/{#warning}предупреждение{/}/{#error}ошибка{/})"
 prog_stage.status: "Прогресс текущего этапа в активной конфигурации"
 tab.status: "Конфигурация: `{path}`"  # template — _add_page formats {path}
-browse_btn.status: "Выбор каталога или файлов, если нажать с **Shift**"
+browse_btn.status: "Выбор **каталога**; удерживайте **Shift** для выбора **файлов**"
+browse_btn.status_files: "Выбор файлов"
 empty_area.synced: "Редактируемо — коэф., даты, путь **синхронизируются в YAML при запуске**"
 empty_area.unsaved: "Нет YAML-конфигурации — укажите путь выше для генерации конфигураций"
 rail.status: "Панель конфигураций — щёлкните по вкладке; вертикальная заливка = прогресс обработки (сверху→вниз)"
@@ -57,6 +58,8 @@ sheet.input.path: "Файл данных для зонда — должен бы
 run_btn.text: "Запуск"
 run_btn.pause: "Пауза"
 run_btn.resume: "Продолжить"
+run_btn.disabled_no_pages: "Нет конфигураций — сначала укажите путь к данным"
+run_btn.disabled_invalid_path: "В конфигурациях есть {#error}некорректные пути{/})"
 
 # ── Status / progress text ────────────────────────────────────────────────
 status.ready: "Готово"
@@ -71,8 +74,7 @@ error.scan: "Сканирование: {p}"
 error.run: "Запуск: {p}"
 error.log.scan: "сканирование не удалось"
 error.log.run: "обработка не удалась"
-# Detailed requirements for input.path loaded from config_reference_ru.md #### Detailed;
-# short error text shown in the stage progress floater (bottom-right).
+# Stage floater short error text — {msg} = "<ExcType>: <exc>"
 stage.error: 'ошибка "{msg}".'
 
 # ── Pipeline stage descriptions ───────────────────────────────────────────

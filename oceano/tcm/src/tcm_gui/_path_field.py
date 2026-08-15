@@ -77,6 +77,7 @@ class PathField(ttk.Frame):
         filetypes=COEF_FILETYPES,
         on_status: Callable[[str], None] | None = None,
         status_hint: str | Callable[[], str] = "",
+        status_hint_files: str | Callable[[], str] = "",
         on_shift: Callable[[bool], None] | None = None,
         placeholder: str = _S.get("path_field.placeholder", ""),
         placeholder_shift: str = _S.get("path_field.placeholder_shift", ""),
@@ -99,6 +100,7 @@ class PathField(ttk.Frame):
         )
         self._shift_status = _S.get("path_field.status_shift", "")
         self._browse_hint = status_hint
+        self._browse_hint_files = status_hint_files
 
         self._mouse_in = False  # True when pointer is inside PathField frame
         self._shift_swap = shift_swap
@@ -184,6 +186,7 @@ class PathField(ttk.Frame):
             leave_hides=True,
             on_status=on_status,
             status_hint=status_hint,
+            status_hint_files=status_hint_files,
             on_shift=on_shift,
         )
         # Patch overlay to shrink/restore tksheet widget on show/hide
@@ -394,11 +397,12 @@ class PathField(ttk.Frame):
         self._editing = False
         if self._on_end_edit_cb is not None:
             self._on_end_edit_cb()
-        if not cancel:
-            if val:
-                self.sh.set_cell_data(0, 0, val)
-            elif self._placeholder_simple:
-                self._show_placeholder()
+        # On cancel restore pre-edit value; on commit use the Entry value.
+        new_val = self._pre_edit if cancel else val
+        if new_val:
+            self.sh.set_cell_data(0, 0, new_val)
+        elif self._placeholder_simple:
+            self._show_placeholder()
         self.sh.redraw()
         if self.sh.MT.align == "ne":
             self._scroll_to_right()
