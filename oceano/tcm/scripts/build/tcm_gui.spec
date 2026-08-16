@@ -26,13 +26,14 @@ from spec_common import (
     EXCLUDE_BINARIES,
     RUNTIME_DLLs,
     collect_docs,
-    load_version,
+    load_meta,
     should_keep_binary,
     should_keep_data,
     PROJECT_ROOT
 )
 print(f"{SPEC_DIR=}")
-VERSION = load_version(SPEC_DIR)
+META = load_meta(SPEC_DIR)
+VERSION = META["version"]
 
 block_cipher = None
 
@@ -62,6 +63,7 @@ _DOC_EXCLUDE = {"todo.md", "potential_functionality_and_improvement.md"}
 added_files = [
     (str(PROJECT_ROOT / TCM_SRC), TCM_REL),
     (str(PROJECT_ROOT / GUI_SRC), GUI_REL),
+    (str(SPEC_DIR / "version_meta.json"), "."),
     *collect_docs(_DOC_EXCLUDE),
     *(collect_data_files("hydra", subdir="conf") + collect_data_files("hydra_plugins.hydra_colorlog")),
     *collect_data_files("pygeomag"),

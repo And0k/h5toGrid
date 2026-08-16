@@ -110,6 +110,7 @@ class BrowseOverlay:
         status_hint: str | Callable[[], str] = "",
         status_hint_files: str | Callable[[], str] = "",
         on_shift: Callable[[bool], None] | None = None,
+        on_click: Callable[[], None] | None = None,
     ) -> None:
         self._host = host
         self._write, self._read = write, read
@@ -120,6 +121,7 @@ class BrowseOverlay:
         self._status_hint = status_hint
         self._status_hint_files = status_hint_files
         self._on_shift = on_shift
+        self._on_click = on_click
         self._button: ttk.Button | None = None
         self._icon_job: str | None = None
         self._show_job: str | None = None
@@ -274,6 +276,8 @@ class BrowseOverlay:
 
     # ── dialog ────────────────────────────────────────────────────
     def _browse(self) -> None:
+        if self._on_click is not None:
+            self._on_click()
         cur = (self._read() if self._read is not None else "") or ""
         start = os.path.dirname(cur.split(",")[0].strip()) or None
         try:
@@ -320,6 +324,7 @@ class BrowseButtonManager:
         filetypes=COEF_FILETYPES,
         dir_title: str = "",
         on_shift: Callable[[bool], None] | None = None,
+        on_click: Callable[[], None] | None = None,
     ) -> None:
         self._sheet = sheet
         self.notify_path_changed = on_path_changed
@@ -341,6 +346,7 @@ class BrowseButtonManager:
             on_status=on_status,
             status_hint=status_hint,
             on_shift=on_shift,
+            on_click=on_click,
         )
         self._editor_place = editor_place or (
             lambda ed: {"in_": ed, "relx": 1.0, "x": 0, "rely": 0.5, "y": 0}

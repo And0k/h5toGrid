@@ -68,14 +68,12 @@ def should_keep_data(entry: tuple, tcm_rel: str = "tcm") -> bool:
     return tcm_rel + os.sep + "todo" not in norm
 
 
-def load_version(spec_dir: Path) -> str:
-    """Load ``VERSION`` string from ``version.py`` next to the spec file."""
-    import importlib.util as _ilu
+def load_meta(spec_dir: Path | None = None) -> dict:
+    """Read ``version_meta.json`` from *spec_dir* (default: next to this script)."""
+    import json
 
-    _vs = _ilu.spec_from_file_location("_bv", spec_dir / "version.py")
-    _vm = _ilu.module_from_spec(_vs)
-    _vs.loader.exec_module(_vm)
-    return _vm.VERSION
+    path = (spec_dir or SPEC_DIR) / "version_meta.json"
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def collect_docs(exclude: set[str] | None = None) -> list[tuple[str, str]]:

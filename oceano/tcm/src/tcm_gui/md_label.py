@@ -61,6 +61,7 @@ class MarkdownLabel(tk.Text):
         )
 
         self._autoheight = autoheight
+        self._wrap = kwargs.get("wrap", "none")  # caller-requested wrap; _render restores it
         self._autosizing = False
         self._sizing_width = False
         self._font_scaled = False
@@ -154,6 +155,8 @@ class MarkdownLabel(tk.Text):
     # ── rendering ────────────────────────────────────────────────────────
 
     def _render(self, blocks: tuple[Block, ...]) -> None:
+        # wrap="none" during insert (stable positions); restored below —
+        # tables stay un-wrapped via per-tag ``wrap="none"``.
         self.configure(state="normal", wrap="none")
         self.delete("1.0", "end")
         self._table_uid = 0
@@ -184,7 +187,7 @@ class MarkdownLabel(tk.Text):
         if self.compare("end-1c", ">", "1.0") and self.get("end-2c", "end-1c") == "\n":
             self.delete("end-2c", "end-1c")
 
-        self.configure(state="disabled")
+        self.configure(state="disabled", wrap=self._wrap)
         self._fitted_h = None  # content changed → re-measure height
         self.after_idle(self._fit_width)
         self.after_idle(self._fit_height)

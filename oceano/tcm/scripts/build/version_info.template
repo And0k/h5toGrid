@@ -14,13 +14,13 @@ VSVersionInfo(
       StringTable(
         "040904B0",
         [
-          StringStruct("CompanyName", "Atlantic Branch of Shirshov Institute of Oceanology, Russian Academy of Sciences (AB SIO RAS)"),
+          StringStruct("CompanyName", "{COMPANY_NAME}"),
           StringStruct("FileDescription", "{DESCRIPTION}"),
           StringStruct("FileVersion", "{VERSION}"),
           StringStruct("InternalName", "{INTERNAL_NAME}"),
-          StringStruct("LegalCopyright", '© Andrey Korzh <"ao.korzh@gmail.com">'),
+          StringStruct("LegalCopyright", '{LEGAL_COPYRIGHT}'),
           StringStruct("OriginalFilename", "{ORIGINAL_FILENAME}"),
-          StringStruct("ProductName", "TCM calculations"),
+          StringStruct("ProductName", "{PRODUCT_NAME}"),
           StringStruct("ProductVersion", "{VERSION}")
         ]
       )

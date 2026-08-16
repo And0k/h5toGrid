@@ -8,7 +8,7 @@ thread.  No custom CLI parsing — Hydra handles all config keys natively via
 
 | File | Purpose |
 |------|---------|
-| `app.py` | Tk root, layout §1–6, 300 ms polling, argv prefill, `_initial_scan` flag (immediate overlay show), `_prog_floater` overlay (400 ms delay for run), z-order `<Motion>` bind; manual `ttk.Frame` + `tk.Text` + `ttk.Scrollbar` log container (replaces `ScrolledText` for ttk-styled scrollbar); `_log_autoscroll` flag + `<MouseWheel>`/`<Button-4/5>` bindings for scroll-aware auto-follow; `_cfg_state: ScanStage` enum drives dual-purpose label at row=1; Run button floats via `place(in_=self._main)`; page stack + `tkraise()` (no Notebook) |
+| `app.py` | Tk root, layout §1–6, 300 ms polling, argv prefill, `_initial_scan` flag (immediate overlay show), `_prog_floater` overlay (400 ms delay for run), z-order `<Motion>` bind; manual `ttk.Frame` + `tk.Text` + `ttk.Scrollbar` log container (replaces `ScrolledText` for ttk-styled scrollbar); `_log_autoscroll` flag + `<MouseWheel>`/`<Button-4/5>` bindings for scroll-aware auto-follow; `_cfg_state: ScanStage` enum drives dual-purpose label at row=1; Run button floats via `place(in_=self._main)`; page stack + `tkraise()` (no Notebook); **§1 search path row**: `path_lbl` + `path_field` + vertical separator + `_button_bar` frame (extensible container) with `?` help button (opens `AboutDialog`) |
 | `md_label.py` | `MarkdownLabel` (`tk.Text` subclass): Tk renderer for Markdown AST from `_md_parse`; `_current` holds parsed `Block` tuple (not raw text) — `set_text(text, raw=False)` parses Markdown by default so `STR["{role}.status"]` with `**bold**` renders bold; `raw=True` bypasses parsing for paths/keys that interpolate untrusted content (e.g. `tab.status` after `.format(path=...)`); `rerender()` replays `_render` without reparse; `mark_font_ready()` (enables auto-sizing without resizing), `fit_to_height` (rescales + enables), dynamic width (`_fit_width` via font metrics, `wrap="none"` → `wrap="word"`), auto-height (`_fit_height` on `<Configure>`), table tab-stop alignment |
 | `_md_parse.py` | Pure Markdown parser (zero Tk dependency): `parse_inline()`, `parse_markdown()`, `split_table_row()`; AST types `Heading`/`Paragraph`/`CodeBlock`/`Table`/`Inline` |
 | `worker.py` | Background thread: `call_in_raw_dir` for Scan and Run |
@@ -17,6 +17,7 @@ thread.  No custom CLI parsing — Hydra handles all config keys natively via
 | `_path_field.py` | 1×1 tksheet for display + `ttk.Entry` overlay for editing — frame-anchored hover button, column-width tracking via `<Configure>` |
 | `_browse_button.py` | `BrowseOverlay` (widget core + `pending` state + `on_status`/`status_hint` hover-to-status-bar wiring), `BrowseButtonManager` (sheet-edit policy + injectable `editor_place`), `SheetHoverBinder` (MT motion → overlay show/hide with pending-aware veto), `bind_hover_browse` (Entry legacy) |
 | `_cell_spec.py` | Hydra dataclass → ``CellSpec`` (bool/enum/text/number/date) for cell rendering |
+| `_about.py` | About dialog: modal `tk.Toplevel` shown only when ready (`withdraw()` → build → single centering `geometry` → `deiconify()` → `_refit()` → `grab_set()` — no top-left corner flash). System title carries the runtime statuses via `about.title` template (`{name} — {mode}, HDF5: {h5}`), keeping the body two short rows less. Two `MarkdownLabel` widgets — `_header` (metadata as separate list items: description paragraph, Version, Product, Company, Copyright, clickable repo/docs URLs) and `_docs_lbl` (hierarchical doc tree at smaller font: folder = bold paragraph, titles = column-0 list items — indented `  - ` lines would fold into the previous item per parser); `autoheight=False` + `wrap="word"` on both (pack layout — `_fit_height` uses `place` which conflicts). All chrome strings AND the meta VALUES are i18n via `STRINGS` `about.*` keys (`str.yaml`/`str_ru.yaml`): `about.meta.description`/`about.meta.company` override the build meta when present (`version_meta.json` stays EN — it feeds the exe version info); a copyright value containing `©` renders bare (self-labeling — no `Copyright:` prefix). Layout: header → `ttk.Separator` → docs tree; NO button row (Escape closes). Height fitting (`_refit`): the window is resized to the measured content BEFORE fitting — pack squeezes children whose total px request exceeds the window, and squeezed text is unmeasurable (`dlineinfo` returns `None` below the allocation). `_content_px` measures each label with its sibling collapsed to 1 unit: request growing heights (`n_display + 8/16/24`), take the last display line's `dlineinfo` bottom as content px (spacing-tag px included — never predicted from fonts); growth that stops increasing `winfo_height` = squeeze → bail at the allocation. Chrome px = `_PADS` (the pack paddings) + separator `winfo_height` — never the window spare, which would feed back and accumulate per reflow. `_fit_label_height` then grows from the wrap-aware display-line count until `dlineinfo` reports the last line (the clip condition itself), +1 unit (window grown by the calibrated unit px) if trailing spacing still scrolls (`yview()[1]` truth); deferred while unmapped / <10px wide (pre-show 1px wrap width would count hundreds of garbage lines). `<Configure>` → `_on_resize` refits both labels on width >100px change (word-wrap reflow; window height follows content). `parse_markdown` merges consecutive lines into one paragraph, so each field must be its own block. `<<Copy>>` → `copy_rich` (RTF/HTML). `discover_docs` returns `(folder, title, path)` 3-tuples, then `_lang_filter` keeps only the app language (`resolve_lang`): `en` → drop suffixed stems (`_lang_parts` splits the `_ru`-style `_([a-z]{2})$` suffix); other langs → per base name prefer the `_{lang}` version, else the unsuffixed original, else any translation. `_docs_tree` groups by folder; clicking a title opens `DocViewer` — separate zoomed `tk.Toplevel` with scrollable `MarkdownLabel`; the modal `grab_release()`s while a viewer is open and regrabs on its `<Destroy>` |
 | `_help.py` | Auto-extract config-cell help from ``config_reference.md`` tables (``HelpEntry``, ``help_for_path``, ``parse_reference``); index-stripping for arrays (``Ag[0]`` → ``Ag``); mode-tagged `###` sections with `####` detail sub-blocks; per-lang cache (`_CACHE` dict, not `lru_cache`); `detail=` kwarg for `#### Detailed` blocks |
 | `const.py` | Immutable user settings (`UI_SCALE`, `FONT_SCALE`, `TTK_THEME`, `COLOR_MODE`); `UIScale` (sets `tk scaling = platform × UI_SCALE` for uniform geometry scaling + named font multiplier via `FONT_SCALE`; `font()` returns scaled `TkDefaultFont` copy; `set_font(*widgets)` applies per-widget copies to any widget); `configure_ui` (ttk theme selection); `tk_font_family` |
 | `theme.py` | Mutable runtime state: color globals (`FUNC_COLOR`, `FG_DEFAULT`, `BLUE_FG`, `DEFAULT_FG`, `FRAME_BG_FALLBACK`, `ENTRY_BG_FALLBACK`, `CELL_NON_DATA_BG`); `THEME`; `TAG_COLORS`; `widget_meta` registry; `STR` i18n surface; `get_widget_meta` (callable-resolving); `apply_theme_defaults` (dark/light via `COLOR_MODE` or Windows registry); `_apply_ttk_dark` (clam + dark ttk.Style); `_opt_into_dark_titlebar` (`DwmSetWindowAttribute`); `tk_color_to_rgb`/`tk_color_to_hex`; `resolved_frame_bg`/`resolved_entry_bg` |
@@ -387,7 +388,7 @@ at runtime.
 | Status / progress text | `status.*` | `status.ready: "Ready"` |
 | Completion template | `overall_lbl.done_detail` | `" - Done {pct}% ({ok}/{n} ok)"` |
 | Error prefixes | `error.*` | `error.scan: "Scan: {p}"` |
-| PathField placeholder | `path_field.placeholder` / `path_field.placeholder_shift` | `"D:/data/_raw/"` / `"D:/data/_raw/(i*raw_file1[.]txt\|i*raw_file2[.]txt)"` |
+| PathField placeholder | `path_field.placeholder` / `path_field.placeholder_shift` | `"D:/data"` / `"D:/data/_raw/(i*raw_file1[.]txt\|i*raw_file2[.]txt)"` |
 
 ### Locale switching
 
@@ -455,11 +456,10 @@ through `progress_overall` / `progress_stage` and are translated by the GUI
 | `Stage` | backend-owned display text | `LOAD = "load"` |
 | `ScanStage` | `scan_stage.*` key in `str.yaml` — display text lives there only | `SCAN = "scan_stage.scan"` |
 
-## Type-aware cell rendering (full mode)
+## Type-aware cell rendering
 
-
-When `Shift` is held at startup, `ConfigSheet.load()` receives the full
-`Config` dataclass as `config_root`.  Each cell's type is resolved via
+`ConfigSheet.load()` always receives the full `Config` dataclass as
+`config_root` (both modes).  Each cell's type is resolved via
 `_cell_spec.spec_for_path(config_root, path, Return)`:
 
 | CellSpec.kind | Rendering | Example fields |
@@ -474,6 +474,27 @@ The `path` stored in `_meta[iid]["path"]` is the dotted Hydra path (e.g.
 `"program.return_"`, `"out.dt_bins"`).  Resolution walks the dataclass
 tree using `dataclasses.fields` + `get_type_hints(include_extras=True)`.
 `Annotated`, `Optional`, and `Union` are unwrapped by `_cell_spec._unwrap`.
+
+## Full mode (Shift at startup)
+
+When `Shift` is held at startup, `App._full_mode = True` and
+`ConfigSheet.load()` is called with `full=True`.  The difference:
+
+| Aspect | Simple mode (`full=False`) | Full mode (`full=True`) |
+|--------|---------------------------|------------------------|
+| Row builder | `_build_coefs` — only `input` section | `_build_full` — all config sections |
+| Visible sections | `input.path`, `time_ranges`, `coefs_path`, coefs | `input`, `out`, `filter`, `program` |
+| Editing before scan | Read-only (default page) | Editable |
+| Editing after scan | Editable | Editable |
+| Overlays before scan | Hidden (hover PathField, browse buttons) | Visible |
+| Overlays after scan | Visible | Visible |
+
+Both modes use identical type-aware cell rendering (see above).  The only
+difference is **which rows are built**, not how cells are rendered.
+
+In readonly mode (`set_readonly(True)`), `_on_begin_edit_cell` vetoes
+editing and `_on_sheet_motion` suppresses hover overlays.  Calling
+`set_readonly(True)` also tears down any active overlays immediately.
 
 ## Floating browse button (`_browse_button.py`)
 
@@ -1006,15 +1027,21 @@ live callable) and writes to ``self._status``.  ``_on_chrome_leave`` clears
 ### Hover-hide for stage status + floater
 
 Shown always; each widget hides INDEPENDENTLY — only while the pointer is
-over THAT widget.  Root ``<Motion>`` (``_on_status_motion``) checks each
-widget's live bbox separately (``_pointer_inside``): hovering
-``_prog_status`` (top row) never hides the bottom-right floater and vice
-versa.
+over THAT widget **or** the user starts an editing interaction.  Root
+``<Motion>`` (``_on_status_motion``) checks each widget's live bbox
+separately (``_pointer_inside``): hovering ``_prog_status`` (top row) never
+hides the bottom-right floater and vice versa.
 
 1. Pointer over a mapped widget → its own flag (``_status_hovering`` /
    ``_floater_hovering``) is set and only that widget is ``grid_remove()``d /
    ``place_forget()``d.
-2. Once hidden, it STAYS hidden after the pointer leaves — restoration is
+2. User starts editing → ``_hide_progress_widgets()`` sets BOTH flags and
+   hides both widgets immediately.  Triggered by: tksheet cell edit begin
+   (``ConfigSheet.on_edit_begin`` → fired from ``_on_begin_edit_cell``),
+   PathField edit begin (``on_begin_edit``), PathField browse click
+   (``on_browse_click``), and ConfigSheet browse button click
+   (``BrowseButtonManager`` → ``BrowseOverlay.on_click``).
+3. Once hidden, widgets STAY hidden after the pointer leaves — restoration is
    exclusively programmatic: ``_poll_progress`` compares the stage snapshot
    to ``_stage_last`` and clears BOTH flags on change (progress
    advance / new stage), then re-shows via the regular branches.  Pointer

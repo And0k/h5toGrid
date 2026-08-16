@@ -76,7 +76,7 @@ env = { BUILD_MODE = "manual" }
 
 `BUILD_MODE=manual` — версия генерируется из текущей даты (`YYYY.MM`).
 При `BUILD_MODE=auto` (задача `build-tcm-clc-txt-auto`) версия читается из
-`oceano/tcm/scripts/build/version.py`.
+`oceano/tcm/scripts/build/version_meta.json`.
 
 Или напрямую через скрипт-обёртку:
 ```bash
@@ -84,9 +84,15 @@ pixi run -e noh5-tcm python oceano/tcm/scripts/build/build_tcm_proc.py
 ```
 
 Скрипт-обёртка (`scripts/build/build_tcm_proc.py`):
-1. Обновляет/читает `VERSION` (в `version.py`)
+1. Записывает/читает `version_meta.json` (версия, продукт, URL репозитория/документации)
 2. Запускает `generate_version_info` — создаёт `version_info.txt` с Windows-ресурсами
 3. Вызывает PyInstaller с spec-файлом
+
+`version_meta.json` — единый источник метаданных сборки:
+- Используется PyInstaller для Windows file properties (CompanyName, FileDescription, LegalCopyright, ProductName и др.)
+- Упаковывается в exe и читается runtime для окна «О программе»
+- URL репозитория получается программно из `git remote origin.url`
+- URL документации автоформируется как `{repo_url}/tree/{branch}/oceano/tcm/docs`
 
 Результат: `dist/tcm_proc/tcm_proc.exe` + сопутствующие файлы.
 
@@ -252,11 +258,12 @@ pixi run -e bin-optim-tcm python oceano/tcm/scripts/build/build_tcm_gui.py
 ```
 
 Скрипт-обёртка (`scripts/build/build_tcm_gui.py`):
-1. Обновляет/читает `VERSION` (в `version.py`)
-2. Запускает `generate_version_info` с GUI-описанием:
-   - `FileDescription`: `"AB SIO RAS' TCM inclinometer data processor GUI..."`
-   - `InternalName`: `tcm_gui.exe`
-   - `OriginalFilename`: `tcm_gui\__main__.py`
+1. Записывает/читает `version_meta.json` с GUI-метаданными:
+   - `product`: `"tcm_gui"`
+   - `description`: `"AB SIO RAS' TCM inclinometer data processor GUI..."`
+   - `internal_name`: `tcm_gui.exe`
+   - `original_filename`: `tcm_gui\__main__.py`
+2. Запускает `generate_version_info` — создаёт `version_info.txt`
 3. Вызывает PyInstaller с `tcm_gui.spec`
 
 Результат: `dist/tcm_gui/tcm_gui.exe` + сопутствующие файлы.

@@ -79,6 +79,7 @@ class PathField(ttk.Frame):
         status_hint: str | Callable[[], str] = "",
         status_hint_files: str | Callable[[], str] = "",
         on_shift: Callable[[bool], None] | None = None,
+        on_browse_click: Callable[[], None] | None = None,
         placeholder: str = _S.get("path_field.placeholder", ""),
         placeholder_shift: str = _S.get("path_field.placeholder_shift", ""),
         shift_swap: bool = True,  # False for floated fields in ConfigSheet
@@ -104,6 +105,7 @@ class PathField(ttk.Frame):
 
         self._mouse_in = False  # True when pointer is inside PathField frame
         self._shift_swap = shift_swap
+        self._on_browse_click = on_browse_click
         # Status callback — shared with BrowseOverlay; also called by Shift handlers.
         # Two dedicated keys: normal status and Shift-held status (no separator parsing).
         self._on_status = on_status
@@ -188,6 +190,7 @@ class PathField(ttk.Frame):
             status_hint=status_hint,
             status_hint_files=status_hint_files,
             on_shift=on_shift,
+            on_click=on_browse_click,
         )
         # Patch overlay to shrink/restore tksheet widget on show/hide
         self._orig_ss = self._ov.schedule_show

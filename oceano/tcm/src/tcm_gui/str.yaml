@@ -11,14 +11,14 @@
 
 # ── Window chrome ──────────────────────────────────────────────────────────
 window.title: "TCM"
-default_page.stem: "(default)"
+default_page.stem: "default values"
 
 # ── Chrome widget tooltips / hover status ─────────────────────────────────
-path_lbl.tooltip: "Data & config search path"
+path_lbl.tooltip: "Search path"
 path_field.tooltip: "Data & config search path"
 path_field.status: "Changing data path rescans and **resets all config tabs below**"
 path_field.status_shift: "Browse **files**; **YAML configs** load into tabs"
-path_field.placeholder: "D:/data/_raw/"
+path_field.placeholder: "D:/data"
 path_field.placeholder_shift: "D:/data/_raw/(i*raw_file1[.]txt|i*raw_file2[.]txt)"
 path_field.placeholder_probe: "i_01_measurement.txt"
 overall_lbl.status: "Overall and current configuration processing state"
@@ -35,8 +35,29 @@ tab.status: "Configuration: `{path}`"  # template — _add_page formats {path}
 browse_btn.status: "Hold **Shift** to select files instead of directory"
 browse_btn.status_files: "Browse files"
 empty_area.synced: "Editable — coefs, dates, path **sync to YAML on Run**"
-empty_area.unsaved: "No YAML config — provide a data path above to generate configs that persist edits"
+empty_area.unsaved: "Read-only - please specify the path above first (simplified mode is enabled, requiring sequential filling)"
+empty_area.unsaved_full: "Editable — provide a data path above to scan"
 rail.status: "Configuration rail — click a tab to switch; vertical fill = processing progress (top→down)"
+help_btn.tooltip: "Help / About"
+help_btn.status: "Open About dialog with version info and documentation"
+
+# ── About dialog ──────────────────────────────────────────────────────────
+# title: {name} = product name, {mode}/{h5} = runtime statuses
+about.title: "About {name} — {mode}, HDF5: {h5}"
+about.mode_full: "full editing mode"
+about.mode_simple: "simple editing mode"
+about.h5_available: "available"
+about.h5_missing: "not available"
+about.version: "Version"
+about.product: "Product"
+about.company: "Company"
+about.copyright: "Copyright"
+about.repository: "Repository"
+about.documentation: "Documentation"
+# Translatable meta VALUES (build meta in version_meta.json stays EN — it feeds
+# the exe version info). Present key overrides the JSON value in the dialog.
+about.meta.description: "AB SIO RAS' inclinometers data processor GUI. Configure and run processing"
+about.meta.company: "Atlantic Branch of Shirshov Institute of Oceanology, Russian Academy of Sciences (AB SIO RAS)"
 
 # ── Browse dialog titles ──────────────────────────────────────────────────
 dialog.data_dir: "Browse data path"
@@ -55,14 +76,14 @@ browse.file_label: "…\U0001f4c4"  # …+page emoji (Shift held)
 # ── Sheet context menu ────────────────────────────────────────────────────
 sheet.insert_col: "Insert column"
 sheet.insert_row: "Insert row"
-sheet.input.path: "Per-probe data file — must be a concrete file path (not directory, glob, regex, or YAML). Changing this redirects processing to a different source file"
+sheet.input.path: "Per-probe data file — must be a concrete file path (not directory, glob, regex, or YAML). Change to redirect processing to a different source file for the same probe, keeping current config parameters"
 
 # ── Button labels ─────────────────────────────────────────────────────────
 run_btn.text: "Run"
 run_btn.pause: "Pause"
 run_btn.resume: "Resume"
 run_btn.disabled_no_pages: "No configurations - please specify the data path first."
-run_btn.disabled_invalid_path: "The configurations contain {#error}invalid paths{/}"
+run_btn.disabled_invalid_path: "Run processing (inactive: configurations must not contain {#error}errors{/})"
 
 # ── Status / progress text ────────────────────────────────────────────────
 status.ready: "Ready"
@@ -70,7 +91,7 @@ status.loading: "Loading\u2026"
 status.starting: "Starting\u2026"
 
 # ── Completion template (format: pct, ok, n) ──────────────────────────────
-overall_lbl.done_detail: " - Done {pct}% ({ok}/{n} ok)"
+overall_lbl.done_detail: " - Done {pct}% ({ok}/{n} OK)"
 
 # ── Error prefixes (log queue) ────────────────────────────────────────────
 error.scan: "Scan: {p}"
@@ -84,8 +105,8 @@ stage.error: "Error \"{msg}\"."
 stage.load: "load"
 stage.coefs: "coefs"
 stage.proc: "proc"
-stage.nc: "NC"
-stage.tsv: "TSV"
+stage.nc: "NetCDF (*.nc)"
+stage.tsv: "Text (*.tsv)"
 stage.combine: "combine"
 stage.discovering: "Discovering files\u2026"
 stage.generating: "Generating configs\u2026"
@@ -94,8 +115,9 @@ stage.composing_stem: "Composing {stem}\u2026"
 stage.loading: "Loading"
 
 # ── Scan lifecycle ────────────────────────────────────────────────────────
-scan_stage.default: "Default configuration"
-scan_stage.scan: "Processing configurations"
+scan_stage.default: "Processing configuration (not active because data has not yet been found)"
+scan_stage.default_full: "Processing Configuration (default, full mode)"
+scan_stage.scan: "Search/generation of configurations…"
 scan_stage.done: "Generated configurations for processing found data"
 
 # ── Stage tree ────────────────────────────────────────────────────────────

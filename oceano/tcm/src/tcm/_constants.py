@@ -3,13 +3,14 @@
 Single source of truth for
 - path names
 - optional-dependency availability flags
+- build metadata (version, URLs) via :func:`version_meta`
 """
 from __future__ import annotations
 
+import json
 import sys
+from functools import cache
 from pathlib import Path
-
-# if need VERSION, then import from oceano/tcm/scripts/build/version.py
 
 # ---------------------------------------------------------------------------
 # Optional-dependency availability (resolved once at import time)
@@ -68,3 +69,22 @@ def resource_root() -> Path:
 
 
 DOC_DIR = resource_root() / "docs" / "tcm_cli"
+
+
+@cache
+def version_meta() -> dict:
+    """Build metadata: version, product, repo/docs URLs.
+
+    Frozen exe → ``_MEIPASS/version_meta.json``.
+    Dev → ``scripts/build/version_meta.json`` relative to ``resource_root()``
+    (``oceano/tcm`` in src-layout).
+    Missing → empty dict (graceful degradation).
+    """
+    candidates = [
+        resource_root() / "version_meta.json",
+        resource_root() / "scripts" / "build" / "version_meta.json",
+    ]
+    for path in candidates:
+        if path.is_file():
+            return json.loads(path.read_text(encoding="utf-8"))
+    return {}

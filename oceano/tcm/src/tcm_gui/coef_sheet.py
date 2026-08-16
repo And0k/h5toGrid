@@ -220,6 +220,7 @@ class ConfigSheet:
         self._nv = 6
         self._full = False
         self._cfg: dict = {}
+        self._readonly = False  # blocks editing until scan finds configs (non-full mode)
 
         # Hydra structured-config root type for cell classification
         self._config_root: type | None = None
@@ -238,6 +239,9 @@ class ConfigSheet:
         # Second arg ``md``: True when msg is Markdown (from config_reference.md),
         # False for plain strings (STR labels, Hydra paths).
         self.on_hover_status: Callable[[str, bool], None] | None = None
+        # Fired when the user starts editing any cell (double-click / keypress).
+        # App wires this to hide progress widgets during editing.
+        self.on_edit_begin: Callable[[], None] | None = None
         # Fired after every path-validation pass — App wires this to re-evaluate
         # the Run button enabled state across all config tabs.
         self.on_validity_change: Callable[[], None] | None = None
@@ -452,6 +456,19 @@ class ConfigSheet:
     def mark_clean(self) -> None:
         """Reset dirty flag after a successful write-back."""
         self._take_snapshot()
+
+    def set_readonly(self, readonly: bool) -> None:
+        """Block/unblock cell editing.
+
+        Used in non-full mode to disable editing until scan finds configs.
+        When enabling readonly, also hides any active overlays.
+        """
+        self._readonly = readonly
+        if readonly:
+            # Hide any active overlays (hover PathField, browse buttons).
+            self._hide_hover_field()
+            if self._mgr is not None:
+                self._mgr.detach()
 
     # ── tree construction ───────────────────────────────────────────
 
@@ -908,6 +925,10 @@ class ConfigSheet:
         """Detach any previous browse button; attach for path-type rows.
         Browse rows always edit col 0 — overflow clicks rerouted here.
         Non-data cells (beyond max_col) are rejected — except the date cell."""
+        if self._readonly:
+            return None  # veto editing in readonly mode (non-full before scan)
+        if self.on_edit_begin is not None:
+            self.on_edit_begin()
         self._hide_hover_field()
         # Unconditional detach — prevents ghost buttons from a previous edit.
         if self._mgr is not None:
@@ -1607,6 +1628,11 @@ class ConfigSheet:
             self._status_iid = iid
             self._status_source = "data"
             self._publish_status(iid)
+
+        # Readonly mode: no hover overlays (editing is blocked anyway).
+        if self._readonly:
+            self._schedule_field_hide()
+            return
 
         if not self._meta.get(iid, {}).get("browse"):
             self._schedule_field_hide()

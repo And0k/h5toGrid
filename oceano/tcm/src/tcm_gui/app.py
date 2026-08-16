@@ -18,6 +18,7 @@ from tcm import cli, config_yaml, format, incl_calc, paths, schema
 from tcm.states import ScanStage
 from tcm_gui.cli_cfg import default_cfg
 
+from ._about import AboutDialog
 from ._browse_button import DATA_FILETYPES, SEARCH_FILETYPES, BrowseButtonManager, _is_shift_pressed
 from ._help import help_for_path
 from ._i18n import STRINGS as _S  # Chrome with auto-detection of OS locale if LANG=auto
@@ -108,6 +109,10 @@ class App:
         else:
             # No CLI path — show a placeholder page so the notebook isn't empty.
             self._add_page(_S.get("default_page.stem", "(default)"), default_cfg())
+            # Non-full mode: disable editing until scan finds configs.
+            if not self._full_mode:
+                for cs in self._pages.values():
+                    cs.set_readonly(True)
         self._poll()
 
     @property
@@ -137,6 +142,8 @@ class App:
         self._path_field = PathField(
             f0,
             on_commit=self._on_path_changed,
+            on_begin_edit=self._hide_progress_widgets,
+            on_browse_click=self._hide_progress_widgets,
             filetypes=SEARCH_FILETYPES,
             on_status=self._on_browse_status,
             status_hint=_S["browse_btn.status"],
@@ -144,6 +151,19 @@ class App:
             on_shift=self._on_top_shift,
         )
         self._path_field.grid(row=0, column=1, sticky="ew")
+
+        # Vertical separator + button bar (extensible container for future buttons)
+        ttk.Separator(f0, orient="vertical").grid(row=0, column=2, sticky="ns", padx=(4, 2))
+        self._button_bar = ttk.Frame(f0)
+        self._button_bar.grid(row=0, column=3, sticky="e", padx=(0, 2))
+        self._help_btn = ttk.Button(
+            self._button_bar,
+            text="?",
+            width=2,
+            command=self._on_help,
+        )
+        self._help_btn.pack(side="right")
+
         # Status message on hover — rebind on the Sheet's MT canvas
         self._path_hovering = False
         self._path_field.sh.MT.bind("<Enter>", lambda _: self._on_path_hover_in(), add="+")
@@ -153,7 +173,8 @@ class App:
         f1 = ttk.Frame(r)
         f1.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 0))
         f1.columnconfigure(0, weight=1)
-        self._overall_lbl = ttk.Label(f1, text=self._translate_scan_stage(self._cfg_state))
+        # Use mode-specific default stage text: full mode is editable, non-full is readonly.
+        self._overall_lbl = ttk.Label(f1, text=self._default_stage_text())
         self._overall_lbl.grid(row=0, column=0, sticky="w")
         # §2b Progress status — current processing stage, right-aligned,
         # separate from the tab rail's visual fill.
@@ -407,6 +428,19 @@ class App:
         elif self._path_hovering:
             self._set_status(self._path_field._path_status)
 
+    def _hide_progress_widgets(self) -> None:
+        """Hide both progress widgets on user interaction (edit/browse start).
+
+        Sets both hover flags so the widgets stay hidden until programmatic
+        activation (progress advance / explicit placement).  Called when the
+        user starts editing tksheet cells, the path field, or clicks browse.
+        """
+        self._status_hovering = True
+        self._floater_hovering = True
+        self._prog_status.grid_remove()
+        if self._prog_floater.place_info():
+            self._prog_floater.place_forget()
+
     def _on_status_motion(self, event: tk.Event) -> None:
         """Hover-hide each status widget independently under the live pointer.
 
@@ -475,6 +509,10 @@ class App:
             return
         status = self._path_field._shift_status if is_file else self._path_field._path_status
         self._set_status(status)
+
+    def _on_help(self) -> None:
+        """Open the About dialog (version, runtime info, docs browser)."""
+        AboutDialog(self.root, full_mode=self._full_mode, ui=self.ui)
 
     # ── §3 rail ↔ page stack sync ────────────────────────────────────
 
@@ -574,12 +612,17 @@ class App:
             status_hint=_S.get("sheet.input.path", ""),
             filetypes=DATA_FILETYPES,
             dir_title="",
+            on_click=self._hide_progress_widgets,
         )
         cs.load(cfg, full=self._full_mode, config_root=schema.Config, return_enum=schema.Return)
         cs.on_hover_status = lambda msg, md=False: self._set_status(msg, raw=not md)
+        cs.on_edit_begin = lambda: (self._hide_tip(), self._hide_progress_widgets())
         cs.on_validity_change = self._update_run_btn_state
-        cs.on_edit_begin = self._hide_tip
-        cs._empty_area_hint = _S["empty_area.synced" if yaml_path is not None else "empty_area.unsaved"]
+        cs._empty_area_hint = _S[
+            "empty_area.synced"
+            if yaml_path is not None
+            else ("empty_area.unsaved_full" if self._full_mode else "empty_area.unsaved")
+        ]
         self._pages[stem] = cs
         if len(self._tab_of) == 1:  # first page owns the stack
             self._select_tab(stem)
@@ -737,6 +780,15 @@ class App:
         """Translate ScanStage enum value (a ``scan_stage.*`` key) to current locale."""
         return _S.get(stage, str(stage))
 
+    def _default_stage_text(self) -> str:
+        """Return the appropriate default stage text based on _full_mode.
+
+        Full mode: editable, no 'enable editing' hint.
+        Non-full mode: readonly, shows 'provide a data path above to enable editing'.
+        """
+        key = "scan_stage.default_full" if self._full_mode else "scan_stage.default"
+        return _S.get(key, "")
+
     def _poll_progress(self) -> None:
         # Snapshot both states once — avoids redundant lock acquisitions.
         cur, tot, desc = self.rt.progress_stage.snapshot()
@@ -784,6 +836,9 @@ class App:
         if tot_o > 0:
             # desc_o carries ScanStage i18n keys — translate like stage descs.
             self._overall_lbl.config(text=self._translate_desc(desc_o) or "")
+        elif self._cfg_state == ScanStage.DEFAULT:
+            # In DEFAULT state, use mode-specific text (full vs non-full).
+            self._overall_lbl.config(text=self._default_stage_text())
         else:
             self._overall_lbl.config(text=f"{self._translate_scan_stage(self._cfg_state)}{self._cfg_detail}")
         # Per-config fills → rail; aggregate % → _overall_lbl suffix
@@ -819,6 +874,11 @@ class App:
 
     def _on_scan_error(self, exc: BaseException) -> None:
         self._surface_error(exc, _S["error.scan"])
+        # Reset state to DEFAULT and clear progress so _poll_progress shows default text.
+        self._cfg_state = ScanStage.DEFAULT
+        self._cfg_detail = ""
+        self.rt.progress_overall.set(0, 0, "")
+        self._overall_lbl.config(text=self._default_stage_text())
 
     def _on_run_error(self, exc: BaseException) -> None:
         self._run_btn.config(text=_S["run_btn.text"])
