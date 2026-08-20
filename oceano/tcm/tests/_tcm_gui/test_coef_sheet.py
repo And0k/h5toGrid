@@ -11,6 +11,8 @@ from enum import Enum
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import tcm_gui.coef_sheet as coef_sheet
 import tcm_gui.theme as theme
 from tkinter import ttk
@@ -318,7 +320,7 @@ class TestApplyStyles:
         """Date cells (coefs parent with has_date) are right-aligned (``e``).
 
         See :func:`_apply_styles` section 3 and the CellSpec.kind table in
-        how_gui_works.md — ``"date"`` is right-aligned, not left.
+        docs/project_developer_guide/GUI.md — ``"date"`` is right-aligned, not left.
         """
         cs, mock_sh = self._make_loaded_sheet()
         cs._apply_styles()
@@ -402,6 +404,7 @@ class TestCoefsPathChildRow:
         cs._return_enum = Return
         cs._snap = ({}, {}, "")
         cs._fg_default = "#000000"
+        cs._readonly = False
         # __new__ bypasses __init__ — set row-cache + hover fields manually
         cs._int_row_of = {}
         cs._vis = ()
@@ -795,3 +798,111 @@ class TestHoverBtnStatusHints:
         with patch.object(cs, "_pointer_in_field", return_value=True):
             cs._on_shift_toggle(None)
         assert cs.on_hover_status.call_count == 1
+
+
+# ── _hide_hover_field cancels in-flight Entry edits (regression) ────────────
+
+
+class TestHideHoverFieldCancelsEdit:
+    """An open floated-field Entry must be cancelled on immediate teardown.
+
+    Regression: double-clicking a browse row (``input.path`` /
+    ``input.coefs_path``) opened the Entry, then double-clicking any other row
+    ran ``_hide_hover_field`` which only ``place_forget``-ed the field.  The
+    orphaned Entry left ``_editing=True`` — every ``_editing``-guarded path
+    (``_show_hover_field``, ``_do_field_hide``, ``_on_sheet_motion``)
+    early-returned forever, so the browse button + editing field overlay never
+    reappeared until a new scan rebuilt the sheet.
+    """
+
+    @staticmethod
+    def _sheet_with_field(editing: bool):
+        cs, _ = TestCoefsPathChildRow._make_loaded_sheet()
+        cs._hover_field = MagicMock()
+        cs._hover_field._editing = editing
+        cs._hover_field.winfo_ismapped.return_value = True
+        cs._hover_btn = MagicMock()
+        return cs
+
+    def test_hide_cancels_active_edit(self):
+        cs = self._sheet_with_field(editing=True)
+        cs._hide_hover_field()
+        cs._hover_field.cancel_edit.assert_called_once()
+
+    def test_hide_unmaps_before_cancel(self):
+        """``place_forget`` runs BEFORE ``cancel_edit`` so the edit-end
+        callback's ``winfo_ismapped`` guard skips the restore round-trip."""
+        cs = self._sheet_with_field(editing=True)
+        cs._hide_hover_field()
+        calls = [name for name, _args, _kw in cs._hover_field.method_calls]
+        assert "place_forget" in calls and "cancel_edit" in calls
+        assert calls.index("place_forget") < calls.index("cancel_edit")
+
+    def test_hide_spares_clean_field(self):
+        """No edit in flight → no ``cancel_edit`` (pending ``after_idle``
+        commits from a finished edit must survive the hide)."""
+        cs = self._sheet_with_field(editing=False)
+        cs._hide_hover_field()
+        cs._hover_field.cancel_edit.assert_not_called()
+        cs._hover_field.place_forget.assert_called_once()
+
+    def test_begin_edit_unwedges_orphan_entry(self):
+        """The reported repro: double-click another row while the floated
+        Entry is open — edit begin must end with the Entry cancelled."""
+        cs, mock_sh = TestCoefsPathChildRow._make_loaded_sheet()
+        cs._mgr = MagicMock()
+        cs._hover_field = MagicMock()
+        cs._hover_field._editing = True
+        cs._hover_field.winfo_ismapped.return_value = True
+        cs._hover_btn = MagicMock()
+        input_iid = next(i for i, m in cs._meta.items() if m.get("type") == "input")
+        cs._iid_at_row = MagicMock(return_value=input_iid)
+        mock_sh.get_cell_data.return_value = ""
+
+        event = MagicMock()
+        event.row = 0
+        event.column = 0
+        cs._on_begin_edit_cell(event)
+
+        cs._hover_field.cancel_edit.assert_called_once()
+
+
+# ── browse dialog initialdir (regression) ───────────────────────────────────
+
+
+class TestBrowseInitialDir:
+    """``initialdir`` contract: an existing directory value (previous
+    ``askdirectory`` pick) opens the dialog AT that directory, not one level
+    up.  Regression: after selecting ``…/260711_Pionerskiy@i/_raw`` the second
+    browse opened at ``…/260711_Pionerskiy@i`` (``os.path.dirname`` of the
+    value) — user had to descend again on every search.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_shift(self, monkeypatch):
+        monkeypatch.setattr(coef_sheet, "_is_shift_pressed", lambda: False)
+        monkeypatch.setattr("tcm_gui._browse_button._is_shift_pressed", lambda: False)
+
+    @staticmethod
+    def _capturing(monkeypatch, read_val: str) -> dict:
+        from tcm_gui._browse_button import BrowseOverlay
+
+        captured: dict = {}
+        monkeypatch.setattr("tkinter.filedialog.askdirectory", lambda **kw: captured.update(kw) or "")
+        ov = BrowseOverlay(MagicMock(), MagicMock(), lambda: read_val, dir_title="dir")
+        ov._browse()
+        return captured
+
+    def test_dir_value_opens_at_itself(self, tmp_path, monkeypatch):
+        captured = self._capturing(monkeypatch, str(tmp_path))
+        assert captured["initialdir"] == str(tmp_path)
+
+    def test_file_value_opens_at_parent(self, tmp_path, monkeypatch):
+        f = tmp_path / "data.txt"
+        f.touch()
+        captured = self._capturing(monkeypatch, str(f))
+        assert captured["initialdir"] == str(tmp_path)
+
+    def test_absent_value_falls_back_to_parent(self, monkeypatch):
+        captured = self._capturing(monkeypatch, "B:/no/such/dir")
+        assert captured["initialdir"] == "B:/no/such"

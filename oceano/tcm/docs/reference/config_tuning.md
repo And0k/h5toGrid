@@ -2,7 +2,7 @@
 
 Decision tables, behavior tuning, and YAML examples for the processing pipeline.
 Field definitions are in [config_reference.md](config_reference.md); implementation
-internals are in [how_it_works.md](how_it_works.md).
+internals are in [../project_developer_guide/CLI.md](../project_developer_guide/CLI.md).
 
 ## Phase-stopping
 
@@ -20,13 +20,14 @@ internals are in [how_it_works.md](how_it_works.md).
 **Typical use**: debug partial output without waiting for full processing.
 For example, `program.return_='<saved_raw>'` to verify raw data ingestion.
 
-> **noh5 note**: `<saved_raw>` persists coefs to NC when h5py is available, or to
-> the run YAML in noh5 mode. Raw data cannot be saved to NC without pytables, but
-> coef changes ARE written regardless. Coefficients always overwrite in-place;
-> `out.overwrite_db` does NOT affect coef persistence — it only controls whether
-> processed outputs (noAvg/binned) are re-generated when the time range is already
-> covered. See [Updating Coefficients via Zeroing](../README.md#updating-coefficients-via-zeroing)
-> for the coef persistence matrix.
+> **When h5py is unavailable**: `<saved_raw>` persists coefs to NC when h5py is
+> available, or to the run YAML otherwise. Raw data cannot be saved to NC without
+> pytables, but coef changes ARE written regardless. Coefficients always overwrite
+> in-place; `out.overwrite_db` does NOT affect coef persistence — it only controls
+> whether processed outputs (noAvg/binned) are re-generated when the time range is
+> already covered. See [Updating Coefficients via
+> Zeroing](../user_guide/configuration.md#updating-coefficients-via-zeroing) for
+> the coef persistence matrix.
 
 ## Time correction modes
 
@@ -46,7 +47,7 @@ For example, `program.return_='<saved_raw>'` to verify raw data ingestion.
 | `dt_interp_between` | `1.5s` | Minimum gap to detect a real hole (vs jitter within a segment) |
 | `corr_time_outlier_threshold_s` | `0.6s` | Spike/backward detection threshold |
 
-See `how_it_works.md` (§Time correction) for the correction pipeline internals,
+See `../project_developer_guide/CLI.md` (§Time correction) for the correction pipeline internals,
 diagnostics bitmask, and edge-row detection behavior.
 
 ## Config filtering
@@ -98,7 +99,7 @@ matches any inclinometer `.txt` file. Corrected `@`-prefixed files are always fo
 independently — `@?i.*\.txt` and `i.*\.txt` produce identical results because the
 `@` prefix is stripped before pattern matching.
 
-See `how_it_works.md` (§Discovery) for the implementation in `csv_load._pattern_to_regex()`.
+See `../project_developer_guide/CLI.md` (§Discovery) for the implementation in `csv_load._pattern_to_regex()`.
 
 ## Column order
 
@@ -300,74 +301,5 @@ Override any top-level field (`input`, `out`, `filter`, `program`). The `# @pack
 directive tells Hydra to merge this YAML's contents at the Config root rather than under a
 `run` namespace.
 
-## Minimal viable config
-
-Auto‑generated, user edits `coefs` and `time_ranges`:
-
-```yaml
-# @package _global_
-input:
-  path: "/abs/path/to/@i_01.txt"
-  tables: ["incl01"]
-  coefs:
-    Ag: [[1,0,0],[0,1,0],[0,0,1]]
-    Cg: [0,0,0]
-    Ah: [[1,0,0],[0,1,0],[0,0,1]]
-    Ch: [0,0,0]
-    kVabs: [1,0,0,0,0,0]
-    Rz: [[1,0,0],[0,1,0],[0,0,1]]
-out:
-  dt_bins: [0, 2, 600]
-  text_path: "text_output"
-filter: {}
-```
-
-**Required user edits** after initial generation:
-- `input.coefs` — replace defaults with actual calibration values
-- `input.time_ranges` — optionally restrict processing window
-
-### Azimuth calibration
-
-`azimuth_shift_deg` is the correction converting the **tilt direction** (azimuth
-of the inclinometer's lean) from sensor coordinates to geographic coordinates.
-The `Vdir` formula computes the tilt azimuth via `G × H` (gravity × magnetic
-field) cross product, then adds `azimuth_shift_deg` to get degrees from North.
-
-Default is `180°` to compensate the magnetometer sign inversion applied at load
-time (`invert_magnetometer` in `csv_load.py` → `Mxyz` negated).
-
-| `azimuth_shift_deg` | Tilt direction reported as |
-|---|---|
-| `0` | North |
-| `90` | East |
-| `180` (default) | South |
-| `270` | West |
-
-**Manual**: set the value directly in `input.coefs.azimuth_shift_deg`.
-
-**From data** (`time_ranges_azimuth`): record data while the instrument is tilted
-in a known direction, then set `input.time_ranges_azimuth` to that interval. The
-pipeline computes the shift via `orientation.azimuth_shift()` and writes it to
-the coefficients (YAML in noh5, NC in full env).
-
-**Corrections** applied on top: `azimuth_add` (manual offset) and magnetic
-declination from `coordinates` + `data_date`.
-
-### Filter expansion
-
-`cfg.filter.max` and `cfg.filter.min` support `M` as a shorthand for `Mx`,
-`My`, `Mz`. If `M` is set but `Mx`/`My`/`Mz` are not, the value is copied
-to all three axes.
-
-```yaml
-# Equivalent configurations:
-filter:
-  max: {M: 5}           # → Mx=5, My=5, Mz=5
-
-# Explicit (overrides M expansion):
-filter:
-  max: {Mx: 5, My: 4, Mz: 6}
-```
-
-The same shorthand works in `input.min`/`input.max` (load-stage DROP).
-Expansion runs at compose time via `_xr/filters.expand_m_shorthand()`.
+Minimal viable config, azimuth calibration, and filter expansion are
+documented in [../user_guide/configuration.md](../user_guide/configuration.md).

@@ -3,9 +3,12 @@ Filename parsing functions for TCM Metadata Processor.
 """
 
 import re
-from typing import Dict, Any, List, Optional
-from .logging_config import setup_logging
+from typing import Any, Dict, List, Optional
+
 from meta_finder import config
+
+from .logging_config import setup_logging
+
 logger = setup_logging()
 
 

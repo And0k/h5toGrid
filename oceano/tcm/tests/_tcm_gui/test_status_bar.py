@@ -94,9 +94,7 @@ class TestContraction:
         lbl, _ = _build_status_bar(root)
         win_w = root.winfo_width()
         lbl_w = lbl.winfo_width()
-        assert lbl_w < win_w // 2, (
-            f"short text: label {lbl_w}px should be < half window {win_w}px"
-        )
+        assert lbl_w < win_w // 2, f"short text: label {lbl_w}px should be < half window {win_w}px"
 
     def test_empty_collapses(self):
         root = _mod._root
@@ -115,9 +113,7 @@ class TestContraction:
         # Re-show (simulates second hover).
         lbl.set_text("Hover hint text", raw=True)
         _wait_settled(root, lbl)
-        assert lbl.winfo_width() > 10, (
-            f"re-show after clear: label {lbl.winfo_width()}px should be > 10px"
-        )
+        assert lbl.winfo_width() > 10, f"re-show after clear: label {lbl.winfo_width()}px should be > 10px"
 
     def test_long_text_fills_window(self):
         root = _mod._root
@@ -126,9 +122,7 @@ class TestContraction:
         _wait_settled(root, lbl)
         win_w = root.winfo_width()
         lbl_w = lbl.winfo_width()
-        assert lbl_w >= win_w - 20, (
-            f"long text: label {lbl_w}px should be ≈ window {win_w}px"
-        )
+        assert lbl_w >= win_w - 20, f"long text: label {lbl_w}px should be ≈ window {win_w}px"
 
 
 class TestContentNotCut:
@@ -190,3 +184,27 @@ class TestResizeAdapts:
 
         root.geometry("1100x800")
         assert h_narrow >= h_wide, f"narrow({h_narrow}) < wide({h_wide})"
+
+
+class TestStatusLinks:
+    """Markdown links in status-bar text are rendered as clickable link spans."""
+
+    def test_link_tag_and_url_recorded(self):
+        root = _mod._root
+        lbl, _ = _build_status_bar(root)
+        lbl.set_text("Ожидаемая структура ([подробнее](io_formats.md#directory-layout))")
+        content = lbl.get("1.0", "end-1c")
+        assert content == "Ожидаемая структура (подробнее)", f"url must not render: {content!r}"
+        pos = content.index("подробнее")
+        assert "link" in lbl.tag_names(f"1.{pos}"), (
+            f"link tag missing at link span: {lbl.tag_names(f'1.{pos}')!r}"
+        )
+        assert len(lbl._links) == 1, f"recorded links: {lbl._links!r}"
+        _start, _end, url = lbl._links[0]
+        assert url == "io_formats.md#directory-layout", f"recorded url: {url!r}"
+
+    def test_plain_text_no_link_tag(self):
+        root = _mod._root
+        lbl, _ = _build_status_bar(root)
+        lbl.set_text("Ready", raw=True)
+        assert "link" not in lbl.tag_names("1.0"), f"unexpected link tag: {lbl.tag_names('1.0')!r}"

@@ -27,8 +27,10 @@ import logging
 # Optional GUI bridge — no-op when GUI is not installed.
 try:
     from tcm_gui import progress_bridge as _pb
+    from tcm_gui.progress_bank import WEIGHTS as _WEIGHTS, _ORDER as _ORDER, canon_stage as _canon_stage
 except ImportError:
     _pb = None  # type: ignore[assignment]
+    _WEIGHTS = _ORDER = _canon_stage = None  # type: ignore[assignment]
 
 # ── Context variables (task-local, thread-safe) ─────────────────────────
 
@@ -48,6 +50,11 @@ _cv_probe_base = contextvars.ContextVar("probe_base", default=0)
 _cv_probe_total = contextvars.ContextVar("probe_total", default=0)
 _cv_n_active = contextvars.ContextVar("n_active", default=0)
 _cv_tick_idx = contextvars.ContextVar("tick_idx", default=0)
+# Intra-canonical-stage tick tracking — keeps ProgressBank.inner in sync
+# when multiple pipeline stages map to the same bank stage (NC+TSV→Save).
+_cv_canon_total = contextvars.ContextVar("canon_total", default=0)
+_cv_canon_tick = contextvars.ContextVar("canon_tick", default=0)
+_cv_canon_last = contextvars.ContextVar("canon_last", default="")
 # Intra-stage sub-step progress — set by set_work, advanced by advance().
 _cv_work_total = contextvars.ContextVar("work_total", default=0)
 _cv_work_done = contextvars.ContextVar("work_done", default=0)
@@ -66,6 +73,9 @@ _ALL_CVS = (
     (_cv_probe_total, 0),
     (_cv_n_active, 0),
     (_cv_tick_idx, 0),
+    (_cv_canon_total, 0),
+    (_cv_canon_tick, 0),
+    (_cv_canon_last, ""),
     (_cv_work_total, 0),
     (_cv_work_done, 0),
 )
@@ -73,6 +83,11 @@ _ALL_CVS = (
 # Boundaries carry name=tcm.stage_ctx (framework event) and funcName of the
 # caller (stacklevel=2) — distinct from module logs in the file format.
 _lf = logging.getLogger(__name__)
+
+# Per-canonical-stage tick counts — set by set_stage_plan, read by tick().
+# Module-level (not contextvar) because it's set once per probe and read
+# in the same worker thread.
+_canon_counts: dict[str, int] = {}
 
 
 # ── Setters ─────────────────────────────────────────────────────────────
@@ -110,9 +125,22 @@ def set_probe(
     _cv_probe_total.set(n_cfgs_total * 100 if n_cfgs_total else 0)
 
 
-def set_stage_plan(n_active: int) -> None:
-    """Record how many stages are active in this config (for ``tick()`` fraction)."""
+def set_stage_plan(n_active: int, stages: list | None = None) -> None:
+    """Record how many stages are active in this config (for ``tick()`` fraction).
+
+    When *stages* (list of pipeline Stage values) is given **and** the GUI
+    bank is available, pre-compute per-canonical-stage tick counts so that
+    ``bank.inner()`` tracks intra-stage progress correctly — critical when
+    multiple pipeline stages map to the same bank stage (NC+TSV→Save).
+    """
     _cv_n_active.set(n_active)
+    global _canon_counts
+    _canon_counts = {}
+    if stages and _canon_stage is not None:
+        for s in stages:
+            c = _canon_stage(str(s))
+            if c:
+                _canon_counts[c] = _canon_counts.get(c, 0) + 1
 
 
 def set_stage(stage_num: int, stage_name: str, details: str = "", *args) -> None:
@@ -201,6 +229,10 @@ def tick(stage_name: str = "") -> None:
     stage change + progress in one call).  No log record is emitted —
     pure state transition.  Also feeds :func:`progress_bridge.stage_desc`
     when a new stage name is given so the bank tracks stage boundaries.
+
+    When multiple pipeline stages map to the same canonical bank stage
+    (NC+TSV→Save), ``bank.inner()`` is updated with the intra-canonical
+    tick fraction so the per-config tab fill advances smoothly to 100%.
     """
     idx = _cv_tick_idx.get() + 1
     _cv_tick_idx.set(idx)
@@ -211,12 +243,32 @@ def tick(stage_name: str = "") -> None:
         _cv_fresh.set(2)
         if _pb:
             _pb.stage_desc(stage_name)
+            # Track intra-canonical-stage tick for bank.inner() sync.
+            if _canon_stage is not None:
+                cs = _canon_stage(str(stage_name))
+                if cs != _cv_canon_last.get():
+                    _cv_canon_last.set(cs)
+                    _cv_canon_tick.set(0)
     if _pb and (n_active := _cv_n_active.get()):
         frac = round(idx * 100 / n_active)
         base = _cv_probe_base.get()
         total = _cv_probe_total.get()
         if rt := _pb.get_runtime():
             rt.progress_overall.set(base + frac, total, _build_prefix())
+            # Feed intra-canonical-stage fraction to bank so repeated stages
+            # (NC+TSV→Save) advance the per-config fill instead of stalling.
+            if _canon_stage is not None:
+                cs = _cv_canon_last.get()
+                if cs and (cs_total := _canon_counts.get(cs, 0)):
+                    ct = _cv_canon_tick.get() + 1
+                    _cv_canon_tick.set(ct)
+                    if cfg_name := _pb.get_cfg():
+                        rt.progress_bank.inner(cfg_name, ct, cs_total)
+        if idx == n_active:
+            _lf.debug(
+                "tick 100%%: idx=%d/%d, base=%d, total=%d → overall=%d",
+                idx, n_active, base, total, base + frac,
+            )
 
 
 def clear() -> None:
@@ -245,8 +297,9 @@ def snapshot() -> tuple[str, int, int, int, int, int, str, str]:
 def _build_prefix() -> str:
     """Human-readable prefix from current context vars.
 
-    Format: ``probe {id} [{idx}] [stage {n} {name}] [/ {sublevel}]`` —
+    Format: ``probe {id} [{idx}] [stage {n}/{total} {name}] [/ {sublevel}]`` —
     sub-indexes only when the corresponding count > 1.
+    Stage shows ``tick_idx/n_active`` (finished/needed) when both are set.
     """
     pid = _cv_probe_id.get()
     if not pid:
@@ -258,7 +311,14 @@ def _build_prefix() -> str:
         parts.append(f"{pi}.{ci}/{np_}.{nc}" if nc > 1 else f"{pi}/{np_}")
     sn, sname = _cv_stage_num.get(), _cv_stage_name.get()
     if sname:
-        parts.append(f"stage {sn} {sname}" if sn else sname)
+        na = _cv_n_active.get()
+        idx = _cv_tick_idx.get()
+        if sn and na:
+            parts.append(f"stage {idx}/{na} {sname}")
+        elif sn:
+            parts.append(f"stage {sn} {sname}")
+        else:
+            parts.append(sname)
     if sub := _cv_sub.get():
         parts.append(f"/ {sub}")
     return " ".join(parts)

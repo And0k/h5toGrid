@@ -1,33 +1,105 @@
-# How the GUI works — Internal Architecture
+# GUI Internals
 
 Optional Tkinter frontend wrapping `tcm.cli.call_in_raw_dir` in a background
 thread.  No custom CLI parsing — Hydra handles all config keys natively via
-`sys.argv` (see [CLI usage](../tcm_cli/README.md#quick-start)).
+`sys.argv` (see [CLI entry point](../../readme.md)).
 
 ## Architecture
 
-| File | Purpose |
-|------|---------|
-| `app.py` | Tk root, layout §1–6, 300 ms polling, argv prefill, `_initial_scan` flag (immediate overlay show), `_prog_floater` overlay (400 ms delay for run), z-order `<Motion>` bind; manual `ttk.Frame` + `tk.Text` + `ttk.Scrollbar` log container (replaces `ScrolledText` for ttk-styled scrollbar); `_log_autoscroll` flag + `<MouseWheel>`/`<Button-4/5>` bindings for scroll-aware auto-follow; `_cfg_state: ScanStage` enum drives dual-purpose label at row=1; Run button floats via `place(in_=self._main)`; page stack + `tkraise()` (no Notebook); **§1 search path row**: `path_lbl` + `path_field` + vertical separator + `_button_bar` frame (extensible container) with `?` help button (opens `AboutDialog`) |
-| `md_label.py` | `MarkdownLabel` (`tk.Text` subclass): Tk renderer for Markdown AST from `_md_parse`; `_current` holds parsed `Block` tuple (not raw text) — `set_text(text, raw=False)` parses Markdown by default so `STR["{role}.status"]` with `**bold**` renders bold; `raw=True` bypasses parsing for paths/keys that interpolate untrusted content (e.g. `tab.status` after `.format(path=...)`); `rerender()` replays `_render` without reparse; `mark_font_ready()` (enables auto-sizing without resizing), `fit_to_height` (rescales + enables), dynamic width (`_fit_width` via font metrics, `wrap="none"` → `wrap="word"`), auto-height (`_fit_height` on `<Configure>`), table tab-stop alignment |
-| `_md_parse.py` | Pure Markdown parser (zero Tk dependency): `parse_inline()`, `parse_markdown()`, `split_table_row()`; AST types `Heading`/`Paragraph`/`CodeBlock`/`Table`/`Inline` |
-| `worker.py` | Background thread: `call_in_raw_dir` for Scan and Run |
-| `states.py` (tcm) | `ScanStage(StrEnum)` — scan lifecycle labels (`DEFAULT`, `SCAN`, `DONE`), value = `scan_stage.*` i18n key in `str.yaml`; `Stage(StrEnum)` — per-probe processing phase labels, value = display text |
-| `coef_sheet.py` | tksheet treeview: type-aware widgets (checkbox/dropdown/align), node + metadata bg; row-geometry-free styling via `_row_map()`; floated `PathField` hover-edit on browse rows |
-| `_path_field.py` | 1×1 tksheet for display + `ttk.Entry` overlay for editing — frame-anchored hover button, column-width tracking via `<Configure>` |
-| `_browse_button.py` | `BrowseOverlay` (widget core + `pending` state + `on_status`/`status_hint` hover-to-status-bar wiring), `BrowseButtonManager` (sheet-edit policy + injectable `editor_place`), `SheetHoverBinder` (MT motion → overlay show/hide with pending-aware veto), `bind_hover_browse` (Entry legacy) |
-| `_cell_spec.py` | Hydra dataclass → ``CellSpec`` (bool/enum/text/number/date) for cell rendering |
-| `_about.py` | About dialog: modal `tk.Toplevel` shown only when ready (`withdraw()` → build → single centering `geometry` → `deiconify()` → `_refit()` → `grab_set()` — no top-left corner flash). System title carries the runtime statuses via `about.title` template (`{name} — {mode}, HDF5: {h5}`), keeping the body two short rows less. Two `MarkdownLabel` widgets — `_header` (metadata as separate list items: description paragraph, Version, Product, Company, Copyright, clickable repo/docs URLs) and `_docs_lbl` (hierarchical doc tree at smaller font: folder = bold paragraph, titles = column-0 list items — indented `  - ` lines would fold into the previous item per parser); `autoheight=False` + `wrap="word"` on both (pack layout — `_fit_height` uses `place` which conflicts). All chrome strings AND the meta VALUES are i18n via `STRINGS` `about.*` keys (`str.yaml`/`str_ru.yaml`): `about.meta.description`/`about.meta.company` override the build meta when present (`version_meta.json` stays EN — it feeds the exe version info); a copyright value containing `©` renders bare (self-labeling — no `Copyright:` prefix). Layout: header → `ttk.Separator` → docs tree; NO button row (Escape closes). Height fitting (`_refit`): the window is resized to the measured content BEFORE fitting — pack squeezes children whose total px request exceeds the window, and squeezed text is unmeasurable (`dlineinfo` returns `None` below the allocation). `_content_px` measures each label with its sibling collapsed to 1 unit: request growing heights (`n_display + 8/16/24`), take the last display line's `dlineinfo` bottom as content px (spacing-tag px included — never predicted from fonts); growth that stops increasing `winfo_height` = squeeze → bail at the allocation. Chrome px = `_PADS` (the pack paddings) + separator `winfo_height` — never the window spare, which would feed back and accumulate per reflow. `_fit_label_height` then grows from the wrap-aware display-line count until `dlineinfo` reports the last line (the clip condition itself), +1 unit (window grown by the calibrated unit px) if trailing spacing still scrolls (`yview()[1]` truth); deferred while unmapped / <10px wide (pre-show 1px wrap width would count hundreds of garbage lines). `<Configure>` → `_on_resize` refits both labels on width >100px change (word-wrap reflow; window height follows content). `parse_markdown` merges consecutive lines into one paragraph, so each field must be its own block. `<<Copy>>` → `copy_rich` (RTF/HTML). `discover_docs` returns `(folder, title, path)` 3-tuples, then `_lang_filter` keeps only the app language (`resolve_lang`): `en` → drop suffixed stems (`_lang_parts` splits the `_ru`-style `_([a-z]{2})$` suffix); other langs → per base name prefer the `_{lang}` version, else the unsuffixed original, else any translation. `_docs_tree` groups by folder; clicking a title opens `DocViewer` — separate zoomed `tk.Toplevel` with scrollable `MarkdownLabel`; the modal `grab_release()`s while a viewer is open and regrabs on its `<Destroy>` |
-| `_help.py` | Auto-extract config-cell help from ``config_reference.md`` tables (``HelpEntry``, ``help_for_path``, ``parse_reference``); index-stripping for arrays (``Ag[0]`` → ``Ag``); mode-tagged `###` sections with `####` detail sub-blocks; per-lang cache (`_CACHE` dict, not `lru_cache`); `detail=` kwarg for `#### Detailed` blocks |
-| `const.py` | Immutable user settings (`UI_SCALE`, `FONT_SCALE`, `TTK_THEME`, `COLOR_MODE`); `UIScale` (sets `tk scaling = platform × UI_SCALE` for uniform geometry scaling + named font multiplier via `FONT_SCALE`; `font()` returns scaled `TkDefaultFont` copy; `set_font(*widgets)` applies per-widget copies to any widget); `configure_ui` (ttk theme selection); `tk_font_family` |
-| `theme.py` | Mutable runtime state: color globals (`FUNC_COLOR`, `FG_DEFAULT`, `BLUE_FG`, `DEFAULT_FG`, `FRAME_BG_FALLBACK`, `ENTRY_BG_FALLBACK`, `CELL_NON_DATA_BG`); `THEME`; `TAG_COLORS`; `widget_meta` registry; `STR` i18n surface; `get_widget_meta` (callable-resolving); `apply_theme_defaults` (dark/light via `COLOR_MODE` or Windows registry); `_apply_ttk_dark` (clam + dark ttk.Style); `_opt_into_dark_titlebar` (`DwmSetWindowAttribute`); `tk_color_to_rgb`/`tk_color_to_hex`; `resolved_frame_bg`/`resolved_entry_bg` |
-| `cli_cfg.py` | `CFG_DEFAULTS` (config-tree defaults) + `COEF_SHAPES` (auto-derived) + `COEFS_TYPE` — all derived from `Config` via `get_type_hints`, no per-section imports |
-| `progress_bridge.py` | `GuiTqdm` (tqdm replacement) + module-level runtime injection + `set_cfg`/`get_cfg` per-config attribution + `stage_desc` feeding both `progress_overall` and `ProgressBank` |
-| `log_bridge.py` | `install()` once at App startup → root logger captures GUI-thread AND worker logs → `QueueHandler` (consecutive dedup + emit-time text freeze) → `tk.Text` drain |
-| `_rtf_clipboard.py` | `Ctrl+C` on log → RTF + HTML + plain text on clipboard (colors preserved) |
-| `runtime.py` | Shared state: queues, `ProgressState` (with one-shot `clear_and_reset`/`consume_clear`), `ProgressBank`, `PauseGate`, persistent `queue_handler` reference |
-| `_tab_rail.py` | Vertical tab rail: progress column + tab column, configs stacked top→down.  Replaces ttk.Notebook entirely — page stack + `tkraise()` for zero-theme page switching.  Hover via `on_hover` callback, per-cell fill animation (lerp), content-based vertical sizing (waterfill on shortage, even split on extreme shortage, capped grow on surplus) |
-| `progress_bank.py` | Per-configuration progress: fixed stage weights → overall fraction.  Thread-safe: workers mutate under lock, the GUI polls `snapshot_all()`.  States: pending/running/done/error; `canon_stage()` maps free-form descriptions to canonical stages |
+File - Purpose
+--------------
+
+### `app.py`
+
+Tk root, layout §1–6, 300 ms polling, argv prefill, `_initial_scan` flag (immediate overlay show), `_prog_floater` overlay (400 ms delay for run), z-order `<Motion>` bind; manual `ttk.Frame` + `tk.Text` + `ttk.Scrollbar` log container (replaces `ScrolledText` for ttk-styled scrollbar); `_log_autoscroll` flag + `<MouseWheel>`/`<Button-4/5>` bindings for scroll-aware auto-follow; `_cfg_state: ScanStage` enum drives dual-purpose label at row=1; Run button floats via `place(in_=self._main)`; page stack + `tkraise()` (no Notebook); **§1 search path row**: `path_lbl` + `path_field` + vertical separator + `_button_bar` frame (extensible container) with `?` help button (opens `AboutDialog`)
+
+### `md_label.py`
+
+`MarkdownLabel` (`tk.Text` subclass): Tk renderer for Markdown AST from `_md_parse`; `_current` holds parsed `Block` tuple (not raw text) — `set_text(text, raw=False, base=None)` parses Markdown by default so `STR["{role}.status"]` with `**bold**` renders bold; `raw=True` bypasses parsing for paths/keys that interpolate untrusted content (e.g. `tab.status` after `.format(path=...)`); `rerender()` replays `_render` without reparse; `mark_font_ready()` (enables auto-sizing without resizing), `fit_to_height` (rescales + enables), dynamic width (`_fit_width` via font metrics, `wrap="none"` → `wrap="word"`), auto-height (`_fit_height` on `<Configure>`), table tab-stop alignment.  **Inline links are first-class**: ``[text](url)`` spans carry the URL as their span tag; `_insert_inline` styles them with the ``link`` tag (`theme.LINK_FG` + underline, raised above base tags), the tag's `<Enter>`/`<Leave>` bindings switch the widget cursor to `hand2`, and `<Button-1>` forwards `(url, base)` to the `on_link` callback (App and the About dialog pass `open_md_link`, no lambdas); link ranges are recorded in `_links` and `link_at(x, y)` resolves the URL under a point.  `set_text(..., base=…)` stores the source doc's directory so relative link targets resolve on click — dwell/error tips and every debounced status apply (`_apply_status`) pass `_help.doc_path().parent`.
+
+### `_md_parse.py`
+
+Pure Markdown parser (zero Tk dependency): `parse_inline()`, `parse_markdown()`, `split_table_row()`; AST types `Heading`/`Paragraph`/`CodeBlock`/`Table`/`Inline`.  Inline ``[text](url)`` links parse to a span whose **tag is the target URL** — ``(text, url)`` exactly like ``(text, "bold")`` — so the renderer tells styles apart (their own font variants) from links (any other tag), and URLs are never measured as text.
+
+### `worker.py`
+
+Background thread: `call_in_raw_dir` for Scan and Run
+
+### `states.py` (tcm)
+
+`ScanStage(StrEnum)` — scan lifecycle labels (`DEFAULT`, `SCAN`, `DONE`), value = `scan_stage.*` i18n key in `str.yaml`; `Stage(StrEnum)` — per-probe processing phase labels, value = display text
+
+### `coef_sheet.py`
+
+tksheet treeview: type-aware widgets (checkbox/dropdown/align), node + metadata bg; row-geometry-free styling via `_row_map()`; floated `PathField` hover-edit on browse rows
+
+### `_path_field.py`
+
+1×1 tksheet for display + `ttk.Entry` overlay for editing — frame-anchored hover button, column-width tracking via `<Configure>`
+
+### `_browse_button.py`
+
+`BrowseOverlay` (widget core + `pending` state + `on_status`/`status_hint` hover-to-status-bar wiring), `BrowseButtonManager` (sheet-edit policy + injectable `editor_place`), `SheetHoverBinder` (MT motion → overlay show/hide with pending-aware veto), `bind_hover_browse` (Entry legacy).  Dialog `initialdir`: the current value when it is an existing directory (previous `askdirectory` pick opens AT itself, not its parent — regression: `_raw` reopen landed one level up), else its parent dir.
+
+### `_cell_spec.py`
+
+Hydra dataclass → ``CellSpec`` (bool/enum/text/number/date) for cell rendering
+
+### `_about.py`
+
+About dialog: modal `tk.Toplevel` shown only when ready (`withdraw()` → build → single centering `geometry` → `deiconify()` → `_refit()` → `grab_set()` — no top-left corner flash). System title carries the runtime statuses via `about.title` template (`{name} — {mode}, HDF5: {h5}`). Two widgets — `_header` (`MarkdownLabel`: metadata as separate list items: description paragraph, Version, Product, Company, Copyright, clickable repo URL; the meta label's links are plain markdown syntax — `[repo](repo_url)` and docs `[internet](docs_url) / [local](readme path)` — styled, hover-cursored and clicked by `MarkdownLabel` itself (`on_link=open_md_link`), and the hover URL lands in the main status bar via `_on_header_motion` → `label.link_at(x, y)`);
+docs widget `_docs_view` (`ttk.Treeview`, `show="tree"`, style `Docs.Treeview`): folder parent nodes labeled via `_folder_label` (underscores → spaces, first letter capitalized), doc titles as leaves, ALL nodes expanded by default. Tree styling: themed like the main window — `background`/`fieldbackground` = `theme.ENTRY_BG_FALLBACK`, `foreground` = `theme.FG_DEFAULT` (folder nodes are NOT the gray default), selected row = `mix_hex(entry_bg, BLUE_FG, 0.3)`; row font = ⅔ of the theme `Treeview` font (`_docs_font`), leaves link-blue (`tag "doc"` via `theme.LINK_FG`); `rowheight = linespace + 2` synced to that font so descenders ("g", "p") never clip against the next row. All theme colors read at BUILD time via the `theme.X` module attribute — `from .theme import NAME` would freeze the light palette bound before `apply_theme_defaults` mutates the globals.
+**Manual word-wrap** (`_populate(width)`): treeview has no native row wrap AND Tk 8.6 items have no per-row `-height` → each extra wrapped line is its own continuation item (`iid = f"{path}#n"`); `_wrap_px` is a greedy word-wrap against `font.measure` with budget `width − _ICON_PX` (folders) / `width − _INDENT_PX` (leaves). `_iid_path` maps EVERY leaf segment (first + continuations) to its file path → click/hover resolve uniformly; folder rows only toggle expand.
+**Auto scrollbar**: `yscrollcommand=_on_tree_yview` inspects the `(first, last)` fractions (Tk's own pattern) — `_docs_vbar` appears only while the tree can scroll and is `place`d in the tree's right padding strip (`_place_vbar`), so the tree box itself never shifts.
+**Screen fit**: all clamping uses `_work_area()` — per-monitor Win32 `MonitorFromWindow` + `GetMonitorInfo` `rcWork` (taskbar excluded; `SPI_GETWORKAREA` only knows the primary monitor), never `winfo_screenheight`. The window stays vertically CENTERED on the work area: `__init__` centers the initial `_W×_H`; `_refit` re-centers on every fitted-height change (`y = top + max(need_gap, 0) // 2`) reading the position via `_pos()` (`wm_geometry()` — the same coordinate space `geometry()` writes; `winfo_x/y` semantics differ per platform); capped content pins to the work-area top. `_fit_label_height` +1-unit growth shifts the window up by `unit // 2` — fixed-y growth would drift the bottom off-center and past the screen. Header px via `_content_px` (tree collapsed to 1 row during measurement): request growing heights (`n_display + 8/16/24`), take the last display line's `dlineinfo` bottom (spacing tags included — never predicted from fonts); growth that stops increasing `winfo_height` = pack-squeeze → bail at the allocation. Docs px = display rows × row px calibrated from two `height` settings (DPI-safe). Chrome px = `_PADS` only (no separator between header and tree — the tree is visually distinct; never the window spare, which would feed back per reflow). `<Configure>` → `_on_resize`: width change >100px → full `_refit` (titles re-wrap at the new width); height-only change → re-glue the vbar. **Hover → main-window status bar**: `on_status` callback injected by `App._on_help` (`_set_status(msg, raw=True)`); header `<Motion>` shows the URL under the pointer (the label's `link_at`), tree `<Motion>` shows the hovered leaf's file path AND switches the widget cursor to `hand2` on leaves (`_on_tree_motion` with a state-deduped `tree.configure(cursor=...)`, `_on_tree_leave` restores it) — folders keep the default cursor; `<Leave>` clears, `_hover_status` dedups motion storms, dialog `<Destroy>` clears; `App` restores `status.ready` on the dialog's `<Destroy>`.
+All chrome strings AND the meta VALUES are i18n via `STRINGS` `about.*` keys (`about.meta.description`/`about.meta.company` override build meta; `version_meta.json` stays EN for the exe version info; `©` copyright renders bare).
+`parse_markdown` merges consecutive lines into one paragraph, so each header field must be its own block. `<<Copy>>` → `copy_rich` from the _header. `discover_docs` returns `(folder, title, path)` 3-tuples, then `_lang_filter` keeps only the app language (`resolve_lang`): `en` → drop suffixed stems (`_lang_parts` splits the `_ru`-style `_([a-z]{2})$` suffix); other langs → per base name prefer the `_{lang}` version, else the unsuffixed original, else any translation. `_docs_tree()` groups by folder; clicking a title opens `open_md_link(path)` — a localhost HTTP server serves the document to the system default browser, rendered client-side by vendored marked.js + MathJax (see `tcm_gui/browser/` below)
+
+### `tcm_gui/browser/` — documentation browser
+
+Local document browser subsystem. One localhost HTTP server (`127.0.0.1:<random-port>`) starts on first `open(path)` and is reused afterwards. Serves four document classes — markdown (marked.js + MathJax TeX — `protectMath` shields `\(…\)`/`\[…\]` delimiters from marked's CommonMark backslash-escape stripping, `restoreMath` reinserts), source/text (highlight.js, `#L42` line anchors), images (`/api/asset`, native MIME) and external links (handed to the OS browser). Source files cover only repo-present languages (`server._SOURCE_LANG` mirrors `web/viewer.js`).
+
+Split: `browser.py` = public `DocumentationBrowser` + singleton (`get_documentation_browser()`); `server.py` = `_Handler`/`_Server`, document classification and static locations; `web/` = first-party viewer page (`index.html`, `viewer.js`, `viewer.css`, bundled with the package). `_Handler` routes: viewer page at `/` `/index.html` `/viewer.js` `/viewer.css`, JSON `{kind, file, language, content}` at `/api/document?file=<path>` (415 for unsupported kinds), image bytes at `/api/asset`, vendored runtime under `/assets/` (suffix whitelist + root containment). The third-party runtime is generated into `_build/browser-runtime` by `browser/vendor.mjs` (pixi `browser-runtime`; see that script header for the file map and the MathJax newcm font-package constraints — the stub must stay vendored AND `loader.paths["mathjax-newcm"]` pins it, else fonts fall back to the jsdelivr CDN). The frozen build bundles `_build/browser-runtime` → `_build/browser-runtime` as PyInstaller datas; `open()` guards a missing runtime with `pixi run -e bin-optim-tcm browser-runtime`.  `open(path, anchor=…)` appends the URL-encoded `#anchor` fragment — the viewer's startup reads `location.hash` and scrolls to the GitHub-slug heading / `L42` line.  Module-level `open_md_link(url, base=None)` is the single dispatcher for every markdown link rendered in the GUI: whitelisted external schemes (`http/https/mailto/ftp/ftps/file:`) → OS browser via `os.startfile`/`xdg-open`; anything else is a local doc path (relative ones resolved against `base` — the source `.md`'s directory) → `DocumentationBrowser.open(path, anchor)`; failures are logged, never raised. Only files within `allowed_roots` (default: `resource_root()` — the whole `tcm` package, since docs cross-link files above `docs/`) are served. Browser-side JavaScript handles relative links (Windows paths) and anchors (`slugify`/`addHeadingIds` assign GitHub-style heading ids — `{#explicit-id}` suffix honored, punctuation dropped, each space → `-`, dupes get `-N`; `navigationSerial` guards stale fetches) — no new server starts for in-page navigation. Panel visibility is toggled by inline `display:"block"` (never `""`, which would fall back to the stylesheet's hidden state and blank the page).
+
+### `_help.py`
+
+Auto-extract config-cell help from ``config_reference.md`` tables (``HelpEntry``, ``help_for_path``, ``parse_reference``, ``doc_path``); index-stripping for arrays (``Ag[0]`` → ``Ag``); mode-tagged `###` sections with `####` detail sub-blocks; per-lang cache (`_CACHE` dict, not `lru_cache`); `detail=` kwarg for `#### Detailed` blocks.  ``doc_path()`` resolves the localized source doc — its directory is also the `base` for relative markdown links inside rendered bodies (dwell/error tooltips)
+
+### `const.py`
+
+Immutable user settings (`UI_SCALE`, `FONT_SCALE`, `TTK_THEME`, `COLOR_MODE`); `UIScale` (sets `tk scaling = platform × UI_SCALE` for uniform geometry scaling + named font multiplier via `FONT_SCALE`; `font()` returns scaled `TkDefaultFont` copy; `set_font(*widgets)` applies per-widget copies to any widget); `configure_ui` (ttk theme selection); `tk_font_family`
+
+### `theme.py`
+
+Mutable runtime state: color globals (`FUNC_COLOR`, `FG_DEFAULT`, `BLUE_FG`, `DEFAULT_FG`, `FRAME_BG_FALLBACK`, `ENTRY_BG_FALLBACK`, `CELL_NON_DATA_BG`); `THEME`; `TAG_COLORS`; `widget_meta` registry; `STR` i18n surface; `get_widget_meta` (callable-resolving); `apply_theme_defaults` (dark/light via `COLOR_MODE` or Windows registry); `_apply_ttk_dark` (clam + dark ttk.Style); `_opt_into_dark_titlebar` (`DwmSetWindowAttribute`); `tk_color_to_rgb`/`tk_color_to_hex`; `resolved_frame_bg`/`resolved_entry_bg`
+
+### `cli_cfg.py`
+
+`CFG_DEFAULTS` (config-tree defaults) + `COEF_SHAPES` (auto-derived) + `COEFS_TYPE` — all derived from `Config` via `get_type_hints`, no per-section imports
+
+### `progress_bridge.py`
+
+`GuiTqdm` (tqdm replacement) + module-level runtime injection + `set_cfg`/`get_cfg` per-config attribution + `stage_desc` feeding both `progress_overall` and `ProgressBank`
+
+### `log_bridge.py`
+
+`install()` once at App startup → root logger captures GUI-thread AND worker logs → `QueueHandler` (consecutive dedup + emit-time text freeze) → `tk.Text` drain.  `emit` degrades gracefully: a record whose message cannot survive stdlib `%`-formatting (a `{}`-style string on a plain logger, or a stray `%` in user content) still reaches the queue with its raw text — a logging bug must never crash the GUI callback that produced it (regression: the About dialog died this way from `theme.py`'s `{:#x}` debug call).  `drain` also renders `exc_info` records' exception line (`format_exception_only`) so worker-side `lf.exception(...)`/`exception(...)` tracebacks surface their message (e.g. `FileNotFoundError: No input files found matching …`) in the GUI log instead of only in the console
+
+### `_rtf_clipboard.py`
+
+`Ctrl+C` on log → RTF + HTML + plain text on clipboard (colors preserved; `MarkdownLabel` links → RTF `HYPERLINK` fields / HTML anchors via its `link_url_at` hook)
+
+### `runtime.py`
+
+Shared state: queues, `ProgressState` (with one-shot `clear_and_reset`/`consume_clear`), `ProgressBank`, `PauseGate`, persistent `queue_handler` reference
+
+### `_tab_rail.py`
+
+Vertical tab rail: progress column + tab column, configs stacked top→down.  Replaces ttk.Notebook entirely — page stack + `tkraise()` for zero-theme page switching.  Hover via `on_hover` callback, per-cell fill animation (lerp), content-based vertical sizing (waterfill on shortage, even split on extreme shortage, capped grow on surplus).  Tab order == `_on_scan_ok` collected order (== `cfgs` dict order); the first tab is selected right after all pages exist — never inside `_add_page` (a page gridded later stacks ABOVE an earlier `tkraise()`'d one, which made the visible page the LAST tab while the rail highlighted the first)
+
+### `progress_bank.py`
+
+Per-configuration progress: fixed stage weights → overall fraction.  Thread-safe: workers mutate under lock, the GUI polls `snapshot_all()`.  States: pending/running/done/error; `canon_stage()` maps free-form descriptions to canonical stages |
 
 ## Data flow
 
@@ -50,6 +122,7 @@ Browse / Enter input.path
      → result_queue.put(("scan_ok", result))
    → app._poll_results → _on_scan_ok
      → one tab per config (stem) with ConfigSheet (clean snapshot taken)
+     → after ALL pages exist: _select_tab(first tab) — rail indicator + raised page
 ```
 
 ### Run
@@ -87,6 +160,7 @@ Click Run while processing → PauseGate
 |---|---|
 | `hydra_main` in thread, not Compose API | logging, resolvers, runtime state require `@hydra.main` |
 | `QueueHandler` installed once at App startup; re-attached in `_wrap` after Hydra `dictConfig` | Hydra's ``logging.config.dictConfig`` replaces **all** root handlers with ``[console, file]`` each worker task, removing the ``QueueHandler`` from root.  ``_wrap.wrapped`` (running *after* dictConfig) re-adds it so both worker-thread and GUI-main-thread logs (e.g. ``_reload_coefs`` triggered by treeview interaction) reach the log ``tk.Text`` widget.  ``reset_dedup()`` per task prevents the first record of a new task from being swallowed as a "duplicate" of the previous task's tail |
+| `App._report_tk_exception` set as `root.report_callback_exception` | Tkinter catches exceptions in event/``after`` callbacks itself and passes them to ``report_callback_exception`` (default: stderr print only — ``sys.excepthook`` never fires for them, which is why GUI-only crashes were invisible in ``_log``).  The hook logs through root → ``QueueHandler`` → ``_log``, embedding the full traceback in the message (``drain`` renders only the exception line for ``exc_info`` records; frozen ``pythonw`` builds have no console fallback) |
 | `_runtime` is module-level, not `threading.local` | `TqdmCallback` creates `GuiTqdm` in dask worker threads |
 | `return_="<cfg_from_args>"` for Scan | pipeline does discovery + gen_metadata, returns configs without processing |
 | `ScanStage(StrEnum)` for cfg state labels | value = `scan_stage.*` i18n key (display text lives only in `str.yaml`); translated by `_translate_scan_stage` (idle) / `_translate_desc` (active `progress_overall.desc`); drives `_overall_lbl` at row=1 via `progress_overall.desc` during scan, `_cfg_state` attr when idle |
@@ -98,7 +172,7 @@ Click Run while processing → PauseGate
 | `_on_rail_hover` callback | rail hover → `_nb_hovering` guard + status bar yaml path display; `on_hover=None` default for headless/test usage |
 | Run button `place(in_=self._main)` on root | floats at main area bottom-right with scrollbar margin; `lift()` on `<Configure>` for z-order |
 | Dirty tabs → rail cell `*` via `set_dirty` | rail is the sole dirty indicator; no notebook tabs remain |
-| `input.path` `.yaml` suffix for Run | `cfg_proc/run/(stem1\|stem2).yaml` → `path_in.stem` becomes regex filter, skip discovery, only selected configs |
+| `input.path` `.yaml` suffix for Run | `cfg_proc/run/(stem1\|stem2).yaml` → `path_in.stem` becomes regex filter, skip discovery, only selected configs.  The alternation is **filter-only** — it cannot impose an order; processing iterates the same `cfgs` dict the tabs were built from, so Run goes top→bottom in tab order (pinned by `TestScanTabs`) |
 | `_run` / `_scan` use minimal `sys.argv` | launch-time positional path stripped via `parse_data_path`; data path fed as `input.path` override, `key=value` overrides preserved for scan only — YAML files for run are the sole config source |
 | `PauseGate` in log + tqdm, not pipeline | pipeline code untouched; pause on next tick |
 | `COEF_SHAPES` auto-derived in `cli_cfg.py` | `infer_coef_shapes()` walks `ConfigInCoefs_InclProc` fields: shape from default value structure (when not `None`) or `Annotated` metadata; `P_t` annotated `(3,3)` since default is `None` |
@@ -116,6 +190,9 @@ Click Run while processing → PauseGate
 | `_default_for_cell` rejects dict results | non-leaf paths (e.g. `"input"`) return `NO_DEFAULT`; `input`-type cells append `.path` to resolve the input.path field |
 | `_fg_default` — theme foreground color | `theme.FG_DEFAULT` (set by `apply_theme_defaults`); applied explicitly (never `fg=None`, which is a per-key merge no-op in tksheet 7.x) |
 | `_apply_edit_value` / `_apply_default_fg` use `overwrite=False` | edit-time restylers pass only `fg` to `highlight_cells`; `overwrite=False` preserves the `bg` that `_apply_styles` set (input.row data cells keep button-face after edits) |
+| `_apply_validations` (was `_apply_path_validation`) — red fg on failed `check` | any cell with `meta["check"] == "exists"` (`input.path`, `input.coefs_path`) gets `theme.INVALID_FG` when the path doesn't exist on disk (glob = red only on zero matches, `~` expanded); empty / `<…>` sentinel values never marked invalid; valid cells restore default-or-normal fg.  Runs at the end of `load()` and after every committed edit / browse — `_on_end_edit_cell` and `_hover_write` gate on `m.get("check")`, so any future `check` on any cell is colored automatically |
+| `is_path_valid()` gates Run on `input.path` only | `coefs_path` is optional — manual coef entry stays runnable — even though `_apply_validations` red-flags it when missing; shares the `_path_exists()` predicate with the validator |
+| `PathField.set_error(flag)` — search path red on failed scan | `_on_scan_error` → `set_error(True)` (`INVALID_FG` on the 1×1 cell); `_on_scan_ok` / `_on_path_changed` → `set_error(False)` restores `FG_DEFAULT` |
 | **Input row styling** | node label: button-face bg + normal black `FG_DEFAULT` (never blue/gray toggle); all data cells: button-face bg via `highlight_cells` across `total_columns()`.  Other rows: button-face bg + `BLUE_FG`/`_fg_default` node fg as before |
 | **PathField styling** | `theme.ENTRY_BG_FALLBACK` bg + `theme.FG_DEFAULT` fg + **bold** font (sheet-wide, 1×1 cell); left-aligned by default (`align="w"`), on hover tksheet widget shrinks to `frame − btn_w` via `place(width=…)` + right-aligned (`align="e"`) — same `_field_place_kw` geometry as ConfigSheet; entry-field silhouette distinct from the gray coef_sheet cells; **editing via `ttk.Entry` overlay** (veto tksheet's `tk.Text`), `justify="right"` |
 | **Blue node labels** → subtree at default | `_node_at_default(iid)`: own cells (the node's `max_col`) AND every child subtree must match its config dataclass default; `theme.BLUE_FG = "#0055CC"` on index canvas. `len` is array-shape metadata, NOT `max_col` — a `1d` parent (`max_col=0`+`len=n`, e.g. `kVabs`) holds date columns only and defers entirely to its child row, so it turns blue iff the child row's cells match the dataclass default |
@@ -127,12 +204,12 @@ Click Run while processing → PauseGate
 | `_log_autoscroll` flag + scroll bindings | persistent flag (not `yview()` threshold — `see("end")` yields ~0.91–0.98, never 1.0); starts `True`, cleared by `<MouseWheel>`/`<Button-4/5>` when `after_idle` check finds `yview()[1] < 0.90`, restored when user scrolls back to bottom; `_poll_logs` calls `see("end")` only when flag is `True` |
 | `_clear_status` one-shot flag (not blanket clear) | original `_poll_progress` set `_status.set("")` every 300 ms when `tot == 0`, wiping "Ready", "Done …", and hover hints.  `clear_and_reset()` (worker, at probe start) + `consume_clear()` (GUI, once) replaces continuous clearing with a single event per probe boundary.  `_path_hovering` guard defers consumption while hover is active |
 | `QueueHandler` consecutive dedup | drops equivalent records (same msg at same call site), registered by `funcName+msg` key.  **freezes** the rendered text onto the `LogRecord` (`rec.msg = text; rec.args = ()`) at emit time so deferred `drain`-time `getMessage()` cannot be corrupted by the mutable `Message` reused across log calls in `LoggingStyleAdapter`.  Mirrors Hydra's `job_logging/colorlog` formatter, which renders `record.getMessage()` once synchronously. |
-| `Ctrl+C` → RTF + HTML + plain on clipboard | `_rtf_clipboard.copy_rich` serializes tag-colored log ``tk.Text`` widget; bound on root `<<Copy>>` (not `<Control-c>`), writes CF_RTF + HTML Format + CF_UNICODETEXT, retries `OpenClipboard` on contention, falls back to plain text on `ImportError` or exhausted retry |
+| `Ctrl+C` → RTF + HTML + plain on clipboard | `_rtf_clipboard.copy_rich` serializes the tag-colored ``tk.Text`` holding the selection — the log and the status ``MarkdownLabel`` (both may be unfocusable; the root-level ``<<Copy>>`` handler picks the event widget if it is one of them, else the surface carrying a ``sel`` tag); bound on root `<<Copy>>` (not `<Control-c>`), writes CF_RTF + HTML Format + CF_UNICODETEXT, retries `OpenClipboard` on contention, falls back to plain text on `ImportError` or exhausted retry |
 | `config.Config` + `config.Return` passed to `load()` | structured-config root + `StrEnum` for `program.return_` dropdown |
 | `_cell_spec_for` → bool/enum/text/number | walks dataclass tree via `spec_for_path`; `bool` → checkbox, `Enum` → dropdown, `str`/`Path` → left-align |
 | node column bg = header bg | `highlight_cells(canvas="index")` in `_apply_styles`; `resolved_frame_bg()` (TFrame background) for all rows including `input` |
 | metadata row bg up to last date cell | all cells from col 0 through last `meta_date_cols` entry share the bg |
-| ordering `_apply_open()` → `_row_map()` → `_apply_styles()` → `_apply_default_fg()` | invariant: build tree → set open states → compute row map → apply styles → gray defaults → redraw |
+| ordering `_apply_open()` → `_row_map()` → `_apply_styles()` → `_apply_default_fg()` → `_apply_validations()` | invariant: build tree → set open states → compute row map → apply styles → gray defaults → red-flag failed path checks → redraw |
 | `date` independent of `max_col` | coefs parent has `max_col=0`; styling in dedicated section before `max_col` loop |
 | PathField = 1×1 Sheet for display, `ttk.Entry` for editing | Display: left-aligned default; on hover tksheet widget shrinks (`place(width=frame−btn_w)`) + right-align + `xview_moveto(1.0)` — filename ends before button.  Edit: `ttk.Entry` is inherently single-line (no wrapping), native horizontal scroll, cursor always visible.  tksheet's `tk.Text` editor cannot disable wrapping (`table_wrap` is display-only).  Veto via `return None` from `begin_edit_cell` callback |
 | `SheetHoverBinder` extracted from ConfigSheet | three MT binds + churn veto reusable by PathField and any future sheet-hover site |
@@ -143,6 +220,8 @@ Click Run while processing → PauseGate
 | `_status_source` tracks hover canvas | `"tree"` (RI) / `"data"` (MT) — re-publishes status on source change for same row |
 | `_any_hovering` property | combines `_path_hovering`, `_nb_hovering`, `_chrome_hovering`, `_browse_hovering` — single guard against poll clobbering |
 | `_bind_chrome_hover` wires status to Run/progress/labels | `<Motion>`/`<Leave>` on all registered chrome widgets; skips `_path_field` + `nb` (own handlers) |
+| **Dwell tooltip** | `_arm_dwell(text)` schedules `after()` on hover-enter; `_dwell_widget` prevents re-arming on motion within same widget; stays while hovered — while a tip owns the label, any debounced switch (`_apply_status`, 0.3 s) waits out the `_DWELL_HIDE_MS` = 3 s linger before the new text applies (a pending arm from the new row stays untouched); cleared on `<Leave>` / Esc / `_hide_tip()`. Error tips (`_tip_active`) take precedence. ConfigSheet cells provide detailed body via `_hover_detail` → `_resolve_detail` |
+| `_on_cell_status` wraps ConfigSheet callback | App reads `cs._hover_detail` after each status update; arms dwell with detailed help text. Replaces direct lambda to `_set_status` |
 | **Floated PathField on browse rows** | one reusable `PathField` for text + separate `BrowseOverlay` for button; intent-delayed (120 ms); focus strictly opt-in; full edit parity free; button stays at sheet right edge while field text stops at button's left edge; `_do_field_hide` vetoes hide during `f._editing`; `_on_field_edit_end` → `_restore_hover_placement` (show button first, `update_idletasks`, then `f.place` at shortened width) |
 | `_field_iid` survives hide | `_hide_hover_field` keeps `_field_iid` — `PathField._notify` queues via `after_idle`, so a commit in flight still writes to its row; `_hover_btn` (browse button) is hidden separately |
 
@@ -215,7 +294,7 @@ Two independent help sources — one per widget category:
 
 | Source | Widgets | Key derivation | i18n mechanism |
 |---|---|---|---|
-| `STR` (``const.py``) | Chrome widgets (`self._path_lbl`, `_path_field`, `_overall_lbl`, `_run_btn`, `_status_lbl`) + dynamic tabs | Attribute name → role → ``STR["{role}.tooltip"]`` / ``STR["{role}.status"]`` | Replace ``STR`` dict wholesale at build for target language |
+| `STR` (``const.py``) | Chrome widgets (`self._path_lbl`, `_path_field`, `_overall_lbl`, `_run_btn`) + dynamic tabs | Attribute name → role → ``STR["{role}.tooltip"]`` / ``STR["{role}.status"]`` | Replace ``STR`` dict wholesale at build for target language |
 | ``_help.py`` (``config_reference.md``) | Config cells (``_meta[iid]["path"]`` keys) | ``help_for_path(strip_index(path)).short`` | Replace ``config_reference_<lang>.md`` |
 
 ### Chrome widgets: auto-registration
@@ -275,7 +354,8 @@ which returns a ``HelpEntry(short, body)`` parsed once from the tables in
 1. Parser walks lines, tracking code-fence state and ``## `section` `` headings
    (``input``, ``input.coefs``, ``out``, ``filter``, ``program``).
 2. Inside a config-group section, every markdown table row whose first cell is
-   a backtick-quoted identifier (``| `field` | … | description |``) emits
+   a backtick-quoted identifier (``| `field` = default | … | description |`` —
+   the joined ``Field = Default`` column) emits
    ``HelpEntry(path="{section}.{field}", short=<last cell>, body={})``.
 3. **Mode-tagged sections** — ``### `field.path` <mode>value</mode>``
    subheaders accumulate detail content into ``body[mode]``.  See
@@ -283,7 +363,7 @@ which returns a ``HelpEntry(short, body)`` parsed once from the tables in
 4. CamelCase field names (``Ag``, ``Cg``, ``Rz``) parse identically to
    lowercase Hydra names.
 5. ``_DOC_PATH`` resolves to ``config_reference.md`` at
-   ``{tcm_root.parent}/docs/tcm_cli/config_reference.md``; absent file →
+   ``{tcm_root.parent}/docs/reference/config_reference.md``; absent file →
    empty cache → no hover text (graceful degradation).
 6. Array indices stripped at lookup time: ``Ag[0]`` / ``Ag[1][2]`` → ``Ag``.
 
@@ -316,9 +396,9 @@ into ``###`` subsections tagged with a **mode**:
 
 ```markdown
 ## `input` — Data source & parameters
-| Field | Type | Default | Required | Purpose |
-|-------|------|---------|----------|---------|
-| `path` | `str` | — | **Yes** | Absolute path to the data file. Determines probe identity (pcid). |
+| Field = Default | Purpose |
+|-----------------|---------|
+| `path` = — | Absolute path to the data file. Determines probe identity (pcid). |
 
 ### `input.path` <mode>probe</mode>
 Absolute path to the data file.  The filename **determines probe identity** (pcid):
@@ -336,6 +416,8 @@ supports glob (`*i*.txt`), regex (`i.*\.txt`), or directory.
 **Parser behavior**:
 - ``_FIELD_MODE_HEAD`` is checked **before** ``_ANY_HEADING`` so ``###``
   mode-tagged headers don't close the parent ``##`` section.
+- A field-level ``####`` block still open when a ``###`` mode section opens is
+  flushed first — the mode body never leaks into the previous field's detail.
 - Each ``###`` subheader opens accumulation under ``HelpEntry.body[mode]``.
 - ``#### <Tag>`` sub-blocks (e.g. ``#### Detailed``) nest inside the active
   ``###`` mode — they do NOT close it.  A mode carrying any ``####`` block
@@ -365,6 +447,56 @@ To add a new mode: (1) add a ``### `field.path` <mode>new_mode</mode>``
 subsection in ``config_reference.md``; (2) call ``help_for_path(path,
 mode="new_mode")`` in the consumer.  The parser recognizes any ``[a-z_]+``
 mode value — no code changes needed in ``_help.py``.
+
+### Field-level `#### Detailed` blocks (no mode tag)
+
+For fields that do NOT have mode-dependent meanings, detailed tooltip
+content is written as ``#### Detailed`` blocks directly under the
+``## section`` heading — **after** all table rows:
+
+```markdown
+## `program` — Runtime flags
+
+| Field = Default | Purpose |
+|-----------------|---------|
+| `b_interact` = `False` | Confirmation prompt before creating directories. |
+| `return_` = `'<end>'` | Pipeline exit point. |
+
+#### Detailed
+| `return_` value | Stops after | Typical use |
+|:---|---|---|
+| `<saved_coefs>` | Coef persistence only | Zeroing/azimuth → save coefs, stop |
+| `<end>` (default) | Full pipeline | Normal processing |
+```
+
+**Critical placement rule**: ``#### Detailed`` blocks MUST come after ALL
+table rows in the section. A ``####`` heading breaks the markdown table —
+any table rows after it are parsed as body text, not field rows. The
+parser associates the ``#### Detailed`` content with the **last field row**
+before the block (tracked via ``last_field_path``).
+
+**Parser behavior**:
+- ``#### <Tag>`` outside any ``###`` mode section triggers field-level
+  detail accumulation. Content lines are stored under the sentinel mode
+  key ``_FIELD_DETAIL = "_"`` in ``HelpEntry.body``.
+- Stored as ``ModeBody(short="", details={tag: body})`` under
+  ``body[_FIELD_DETAIL]``.
+- The ``#### Detailed`` block is associated with ``last_field_path`` —
+  the last ``| `field` = default | … |`` table row parsed before the ``####``
+  heading. To attach detail to a specific field, make it the last row
+  before the block.
+
+**Consumer API** — ``_resolve_detail`` in ``coef_sheet.py``:
+
+```python
+for mode in ("probe", "search", _help._FIELD_DETAIL):
+    if (e := _help.help_for_path(path, mode=mode, detail="Detailed")) and e.body:
+        return str(e.body)
+```
+
+This checks mode-tagged content first (probe/search), then falls back to
+field-level ``#### Detailed``. The dwell tooltip shows the most detailed
+content available for the current context.
 
 ## i18n architecture
 
@@ -442,7 +574,7 @@ The `input.yaml_path` config field has been removed.  Callers pass
 it); ``Path("(file1[.]yaml|file2[.]yaml)").stem`` gives
 ``"(file1[.]yaml|file2"`` — broken.  Correct: ``(file1|file2).yaml``.
 
-See [config_reference.md `input.path`](../tcm_cli/config_reference.md#input--data-source--parameters)
+See [config_reference.md `input.path`](../reference/config_reference.md#input--data-source--parameters)
 for the CLI equivalent.
 
 ### `states.py` enum values
@@ -625,6 +757,10 @@ _Enter_ → _commit_entry:
       destroy Entry
       _editing = False
       _on_end_edit_cb()           # coef_sheet: _restore_hover_placement
+_FocusOut_ → _commit_entry       # click-away / focus loss commits — same
+                                # contract as a tksheet cell (its editor
+                                # commits on FocusOut); ``_entry is None``
+                                # guard makes destroy-triggered re-entry safe
       set_cell_data(0, 0, value)  # if not cancel
       redraw + scroll if right-aligned (floated field)
       _notify(value)              # if changed
@@ -687,6 +823,15 @@ pointer position (the Entry fills the PathField frame but the pointer
 may drift outside its bounds).  After edit ends, `_on_field_edit_end`
 → `_restore_hover_placement` immediately shrinks the field back to
 hover width and re-shows the browse button.
+
+`_hide_hover_field` unmaps the field **then** `cancel_edit()`s an open
+Entry — unmap-first makes `_restore_hover_placement`'s `winfo_ismapped`
+guard skip the place/show round-trip just undone.  Without the cancel
+(regression: double-click a browse row, then double-click any other row)
+an orphaned Entry kept `_editing=True` forever and every
+`_editing`-guarded path (`_show_hover_field`, `_do_field_hide`,
+`_on_sheet_motion`) early-returned — the browse button + field overlay
+never reappeared until a new scan rebuilt the sheet.
 
 ### Status bar preservation
 
@@ -793,14 +938,23 @@ publishes status for any row (not just browse rows).  `_on_sheet_leave`
 triggers `_schedule_field_hide` (pointer-check vetoes over field).
 
 `Ctrl+C` on the log `tk.Text` widget calls `copy_rich` from
-[`_rtf_clipboard.py`](`_rtf_clipboard.py`), which walks all tag boundaries,
-maps each tag's `foreground` to an 8-bit RGB via `winfo_rgb`, and emits a
-single `{\cfN …}` segment per slice into an RTF `\\colortbl`.
-Three formats are placed on the clipboard:
+[`_rtf_clipboard.py`](`_rtf_clipboard.py`).  `_segments` walks all tag
+boundaries, maps each tag's `foreground` to an 8-bit RGB via `winfo_rgb`, and
+resolves link URLs duck-typed through `MarkdownLabel.link_url_at` (widgets
+without the hook — e.g. the log — simply carry no URL).  `build_rtf` emits a
+single `{\cfN …}` run per span into an RTF `\colortbl`; link spans wrap in
+`{\field{\*\fldinst{HYPERLINK "url"}}{\fldrslt …}}` (+`\ul`) so Word keeps
+them clickable, `build_html` wraps them in `<a href>`.  Three formats are
+placed on the clipboard:
 
 - **`CF_UNICODETEXT`** — plain text fallback for all targets
-- **`CF_RTF`** — Word / Outlook preserve foreground colors
+- **`CF_RTF`** — Word / Outlook preserve foreground colors and links
 - **`HTML Format`** — CopyQ and other clipboard managers that prefer HTML over RTF
+
+Word may still show its paste-options flyout defaulting to *Merge Formatting*
+— that is Word's own "Pasting from other programs" setting (set it to *Keep
+Source Formatting* once via *Set Default Paste…*); the RTF itself is
+well-formed (fonttbl+`\deff0`, `\cfN` runs, `\uN?` unicode escapes).
 
 When `pywin32` is unavailable, falls back to `widget.clipboard_append(plain)`.
 
@@ -835,6 +989,13 @@ clipboard propagation is in flight (`widget.update()` is called each retry to
 drain Tk's pending clipboard writes).  On exhausted retries or `ImportError`
 (no `pywin32`), falls back to Tk's plain-text clipboard so the user still gets
 text — never an unhandled exception from Ctrl+C.
+
+**Tests.** The `TestRtfClipboard` tests that write the real OS clipboard carry
+`@pytest.mark.clipboard` and are deselected by default
+(`addopts -m "not clipboard"` in `pyproject.toml`) — each run would otherwise
+fill clipboard-manager history (CopyQ / Win+V) with test junk.  Run them
+explicitly with `pytest -m clipboard`.  Builder-level tests (`build_rtf` /
+`build_html`, incl. link preservation) are pure and always run.
 
 ## Pipeline patches (minimal)
 
@@ -900,6 +1061,15 @@ Rendering: `App._poll_progress` reads `bank.snapshot_all()` →
 `rail.set_state(cfg, state, frac)` per config.  Aggregate % appended to
 `_overall_lbl` text during run.  On completion, `bank.finish(stem, ok)` →
 rail cell shows full fill (done) or error tint.
+
+**Terminal states are final**: `stage_start` only acts on `pending`/`running`
+cells.  Post-loop phases (h5 `combine`) still carry the last config's
+attribution — without the guard their `stage_desc` would flip a `done` cell
+back to `running` (fill regresses ~1.0 → 0.8), stalling the last config's
+bar below 100% (`finish` already ran per-config and never repeats).
+`run()` additionally detaches attribution via `progress_bridge.set_cfg(None)`
+before combine (see [CLI](CLI.md) — Combine
+attribution detach).
 
 ### Stage-level overlay — `progress_stage` + `GuiTqdm`
 
@@ -1085,11 +1255,86 @@ binding), or cell edit begin (``ConfigSheet.on_edit_begin`` → ``_hide_tip``;
 fired from ``_on_begin_edit_cell`` and ``_on_field_edit_start``, excluding the
 Top PathField which is a ``PathField``, not a ``ConfigSheet``).
 
+``_hide_tip`` also clears dwell tooltip state (``_dwell_active``,
+``_dwell_widget``, pending job) — both tooltip types share the same
+``_status_lbl`` overlay and dismissal triggers.
+
+### Dwell tooltip (_DWELL_MS delay hover → detailed help)
+
+When the mouse stays in a widget area for :attr:`App._DWELL_MS`,
+a detailed tooltip is shown in ``_status_lbl``.  Unlike error tooltips
+(``_tip_active``), dwell tooltips disappear when the mouse leaves the widget.
+
+**Trigger**: each hover-enter event (``<Motion>`` on a new chrome widget,
+``<Enter>`` on PathField, sheet cell change) calls :meth:`_arm_dwell` with
+the widget's tooltip text.  The method schedules a single ``after(_DWELL_MS, ...)``
+callback.  Subsequent motion within the same widget does NOT reset the timer
+— ``_dwell_widget`` tracks the arming widget and only re-arms on change.
+
+**Content**:
+
+| Widget category | Dwell text source |
+|---|---|
+| Chrome widgets | ``widget_meta[w]["tooltip"]`` (``STR["{role}.tooltip"]``) |
+| PathField | ``STR["path_field.tooltip"]`` |
+| ConfigSheet cells | :meth:`ConfigSheet._resolve_detail` — most detailed body from ``config_reference.md`` (mode ``#### Detailed`` → field-level ``#### Detailed`` → mode short → plain body) |
+| Log | ``STR["log.tooltip"]`` (if defined) |
+
+**Suppression**: while ``_dwell_active`` is True, the debounced
+:meth:`_apply_status` (``_STATUS_SETTLE_MS`` = 0.3 s after the latest
+:meth:`_set_status`) clears it — motion within the same widget publishes no new
+status (dedup), so the tip persists; switching to another row/widget replaces
+it after 0.3 s.
+
+**Dismissal**: the tip stays while hovered; a dismissal trigger (``<Leave>``
+on the widget, hover-enter on a different widget, a debounced status switch —
+cursor moved to another sheet row) only **schedules** the clear after
+``_DWELL_HIDE_MS`` (3 s linger — reading / clicking links); the debounced
+switch re-queues itself right after the clear, so the new status takes over
+exactly when the tip goes away.  A re-show (``_show_dwell_tip``) cancels the
+pending clear and takes the label.  Hard clears are immediate: ``<Escape>``
+(root binding), ``_hide_tip()`` (new scan/run/path change/edit begin) and
+``_show_tip()`` (error precedence, via ``_clear_dwell_now``).  The linger
+countdown **pauses while the pointer is on the status label itself**
+(``_on_status_enter``/``_on_status_leave`` hold the tip; ``_apply_status``
+also yields while ``_status_hovering``).  The status label carries no
+``status_lbl.*`` STR keys — hovering it must not replace the tip it renders.
+
+**Architecture**:
+
+```
+_on_chrome_hover(A) → _cancel_dwell() + _set_status(A.status) + _arm_dwell(A.tooltip)
+  → _DWELL_MS timer fires → _show_dwell_tip(A.tooltip) → _dwell_active = True (stays while hovered)
+_on_chrome_leave(A) → _cancel_dwell() → clear scheduled after _DWELL_HIDE_MS (3 s linger)
+_on_chrome_hover(B) → _cancel_dwell() + _set_status(B.status) + _arm_dwell(B.tooltip)
+  → _apply_status fires after _STATUS_SETTLE_MS (0.3 s) — dwell still owns the label:
+    clear scheduled at _DWELL_HIDE_MS, the switch re-queues itself right after it
+```
+
+ConfigSheet cells: ``_publish_status`` resolves ``_hover_detail`` (detailed
+body from ``config_reference.md``) and passes it through ``on_hover_status``
+→ ``App._on_cell_status`` → ``_arm_dwell(detail)``.
+
+### F1 — doc browser at the hovered row's heading
+
+``ConfigSheet._on_f1_help`` (toplevel ``<F1>`` binding): the hovered row
+(``_status_iid``) resolves its config path → ``help_for_path(path).anchor``
+(section heading slug — ``_help._slug`` mirrors ``viewer.js::slugify``;
+``{#explicit-id}`` wins, field rows inherit the section anchor) →
+``get_documentation_browser().open(doc_path(resolve_lang()), anchor=…)``.
+The doc MUST be the same localized file the entries were parsed from —
+``doc_path()`` without a lang always serves English, and a localized anchor
+then finds no element (page opens, never scrolls).  Complex formulas
+live on methodology pages: the ``#### Detailed`` bodies link there (e.g.
+[§Pressure computation](../methodology/pressure.md)) because the Tk
+``MarkdownLabel`` tooltip renders plain text only — the browser typesets them
+with MathJax.
+
 ## CLI integration
 
 GUI accepts CLI args: first positional = data path (prefills GUI entry, auto-scans), then
 `key=value` = Hydra overrides passed verbatim via `sys.argv`
-(see [`cli.py` internals](../tcm_cli/how_it_works.md#entry-point) for
+(see [`cli.py` internals](CLI.md#entry-point) for
 `call_in_raw_dir`, `parse_data_path`, `hydra_main`)
 Example: `python -m tcm_gui "D:/data/_raw/@i_p1.TXT" "input.ids=[i90]"`.
 

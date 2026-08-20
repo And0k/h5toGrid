@@ -378,8 +378,8 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
     ``result`` is the **full** per-probe config (all fields, not just non-defaults) — unlike YAMLs on disk
     which strip defaults.
 
-    See also: :doc:`how_it_works </tcm_cli/how_it_works>`, :doc:`config_reference
-    </tcm_cli/config_reference>`.
+    See also: :doc:`CLI </docs/project_developer_guide/CLI.md>`, :doc:`config_reference
+    </docs/reference/config_reference.md>`.
     """
     if (path_in := cfg.input.path) is None:
         raise ValueError("cfg.input.path must be provided")
@@ -560,12 +560,15 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
     if cfg["program"]["return_"] == schema.Return.CFG_FROM_ARGS:
         return processed_pcids, failed_pcids, last_cfg, collected
 
-    # Combine distinct probes (legacy parity). Requires HDF5/netCDF4 backend.
+    # Combine distinct probes. Requires HDF5/netCDF4 backend.
     distinct_pcids = list(dict.fromkeys(processed_pcids))
     if len(distinct_pcids) > 1 and last_cfg is not None and policy.io():
         if not _constants.NC4_AVAILABLE:
             lf.debug("Combine skipped — netCDF4 not available")
         else:
+            # Run-level phase: detach per-config attribution so its stage_desc /
+            # GuiTqdm ticks don't re-run the last config's finished bank cell.
+            progress_bridge.set_cfg(None)
             stage_ctx.set_stage(0, Stage.COMBINE, "Combining %d probes", len(distinct_pcids))
             _combine_probes(distinct_pcids, last_cfg)
 
@@ -578,6 +581,14 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
         distinct_pcids,
         OmegaConf.select(last_cfg, "_yaml_path") if last_cfg else None,
     )
+    # Final progress: last probe's tick should have reached frac=100.
+    # Log the computed value so mismatches are visible without GUI.
+    if last_cfg:
+        _fb = _dt_bins(last_cfg["out"])
+        _has_tsv_f = bool(last_cfg["out"].get("text_path"))
+        _n_tsv_f = sum(1 for b in _fb if b >= _dt_min_save(last_cfg["out"])) if _has_tsv_f else 0
+        _n_nc_f = 3 + len(_fb) + _n_tsv_f  # LOAD+COEFS+PROC + NC_bins + TSV_bins
+        lf.debug("Final progress plan: n_active={}, tsv_bins={}", _n_nc_f, _n_tsv_f)
     # A probe failed on one YAML but succeeded on another = success (config, not data, failed).
     truly_failed = sorted(set(failed_pcids) - set(processed_pcids))
     skipped = (
@@ -654,7 +665,15 @@ def run_processing(cfg: DictConfig):
     _stages += [Stage.NC] * _n_bins if _has_nc else []
     _stages += [Stage.TSV] * _n_tsv_bins if _has_tsv else []
     _n_active = len(_stages)
-    stage_ctx.set_stage_plan(_n_active)
+    stage_ctx.set_stage_plan(_n_active, _stages)
+    lf.debug(
+        "Stage plan: n_active={}, bins={}, nc={}, tsv={}, min_save_ts={}",
+        _n_active,
+        _n_bins,
+        _has_nc,
+        _n_tsv_bins,
+        _min_save_ts,
+    )
 
     # Load begins — boundary record carries data source for clarity
     _src = cfg_in.get("path", "")
@@ -841,9 +860,21 @@ def run_processing(cfg: DictConfig):
             # for _process_and_persist without full materialisation.
             ds_raw, _ = xr_io.load_raw(path=Path(raw_nc), tbl=tbl, cfg_in=cfg_in)
 
+    # Helper: fire remaining ticks (PROC + NC×n_bins + TSV×n_tsv_bins) for
+    # fast-paths that skip _process_and_persist — keeps progress at 100%.
+    def _fire_remaining_ticks() -> None:
+        stage_ctx.tick(Stage.PROC)
+        if _has_nc:
+            for _ in range(_n_bins):
+                stage_ctx.tick(Stage.NC)
+        if _has_tsv:
+            for _ in range(_n_tsv_bins):
+                stage_ctx.tick(Stage.TSV)
+
     # Phase-stopping: stop after coefs saved or raw data saved (before processing).
     if (return_ := cfg["program"]["return_"]) in (schema.Return.SAVED_COEFS, schema.Return.SAVED_RAW):
         lf.info("return_={} — stopping {} now", return_, pcid)
+        _fire_remaining_ticks()
         return
 
     # ── overwrite_db mode dispatch (export-only / trim / splice or extend)
@@ -855,6 +886,7 @@ def run_processing(cfg: DictConfig):
         if raw_nc_dispatch:
             _export_tsv_from_nc(cfg, pcid)
             lf.info("Export-only (overwrite_db=export) TSV for {}", pcid)
+        _fire_remaining_ticks()
         return
 
     if overwrite_db == "trim":
@@ -862,9 +894,11 @@ def run_processing(cfg: DictConfig):
             _trim_all_nc(cfg, pcid, tr_dispatch)
             _export_tsv_from_nc(cfg, pcid)
             lf.info("Trimmed {} to time_ranges (overwrite_db=trim)", pcid)
+            _fire_remaining_ticks()
             return  # no reprocess
         if not tr_dispatch:
             lf.warning("overwrite_db=trim but no time_ranges — skipping {}", pcid)
+            _fire_remaining_ticks()
             return
         # time_ranges extends existing → fall through to _process_and_persist (append new data)
 

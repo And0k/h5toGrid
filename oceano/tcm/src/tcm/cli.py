@@ -22,7 +22,7 @@ from types import FrameType, ModuleType
 from typing import Any, NamedTuple
 from omegaconf import DictConfig, MissingMandatoryValue, OmegaConf
 
-from tcm import policy, schema
+from tcm import format, policy, schema
 
 # Optional GUI bridge for scan progress — no-op when GUI is not installed.
 try:
@@ -390,7 +390,7 @@ def _print_usage_error(data_dir: Path | None, path_in: Path | None) -> None:
         f"  tcm_proc --help           ← list all options\n"
         f"  tcm_proc --cfg job        ← show the composed config without running\n\n"
         f"See --help for all config fields, or the user guide:\n"
-        f"  docs/tcm_cli/README.md\n"
+        f"  README.md\n"
         f"{'─' * 60}",
         file=sys.stderr,
     )
@@ -529,6 +529,24 @@ def call_in_raw_dir(fun, yaml_path: Path | None = None, **kwargs) -> Any:
     return hydra_main(fun, overrides=overrides or None, **hydra_main_kwargs)
 
 
+def _pcid_key(core: str) -> tuple[str, str]:
+    """(canonical pcid, comment) compare key for config ↔ input.path matching.
+
+    Permissive on pcid formatting (``i90`` ≡ ``i_90`` ≡ ``i_1`` → ``i01``),
+    strict on the ``-comment`` suffix so backup copies (``i_90-backup….yaml``)
+    stay distinguishable. Unparseable cores compare as-is.
+    """
+    parts = format.parse_name(core) or {}
+    return (
+        # probe_from_name idiom: model falls back to type ("w" keeps the
+        # model-less wave-gauge form, "i" collapses to plain inclinometer)
+        format.pcid_from_parts(model=parts.get("model") or parts.get("type"), number=parts["number"])
+        if parts
+        else core,
+        parts.get("comment", ""),
+    )
+
+
 def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs_existed):
     """Load per-probe run YAMLs, merge on top of *base_cfg*, call process_fun.
 
@@ -538,7 +556,9 @@ def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs
     in the YAML.
 
     **Pre-filtering**: before processing, all YAML stems are validated against
-    ``input.path`` to exclude backup copies (e.g. ``i_90-backup260723.yaml``).
+    ``input.path`` by comparing canonical pcids (see :func:`_pcid_key`) —
+    permissive across pcid formatting variants, still excluding backup copies
+    (e.g. ``i_90-backup260723.yaml``).
     One WARNING summarises all skips; the remaining valid configs drive the
     ``[idx/n_cfgs]`` numbering and GUI progress totals.
 
@@ -578,7 +598,7 @@ def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs
             OmegaConf.update(cfg_dc, "_yaml_path", yaml_path, force_add=True)
             yaml_core = stem.rsplit("@", 1)[-1]
             input_core = Path(cfg_dc.input.path).stem.rsplit("@", 1)[-1]
-            if yaml_core != input_core:
+            if _pcid_key(yaml_core) != _pcid_key(input_core):
                 skipped_cfgs.append((stem, yaml_core, input_core))
                 continue
             valid_stems.append(stem)

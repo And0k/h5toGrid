@@ -4,7 +4,8 @@ Cover the table-driven parser (``parse_reference``) and the index-stripping
 resolver (``help_for_path``):
   * ``## ``section```` opens a config-group section (``input``/``out``/``filter``/
     ``program``/``input.coefs``); narrative ``###`` subsections close the scan.
-  * Each ``| `field` | … | description |`` row inside a section emits
+  * Each ``| `field` = default | … | description |`` row (joined
+    ``Field = Default`` column) inside a section emits
     ``HelpEntry(path="{section}.{field}", short=<last cell>)``.
   * Escaped pipes (``\\\\|``) inside cells stay literal; CamelCase field names
     (``Ag``, ``Cg``, ``Rz``) parse just like lowercase Hydra names.
@@ -19,9 +20,9 @@ import textwrap
 
 import pytest
 
-from tcm_gui._help import HelpEntry, _doc_path, parse_reference, reload_cache
+from tcm_gui._help import HelpEntry, doc_path, parse_reference, reload_cache
 
-_DOC_PATH = _doc_path()
+_DOC_PATH = doc_path()
 
 # ── parser smoke (real config_reference.md) ─────────────────────────────────
 
@@ -216,12 +217,46 @@ class TestRealReferenceDetailed:
             "probe mode has no #### sub-blocks — body must be a plain str, not ModeBody"
         )
 
+    def test_field_level_detailed_block_reachable(self, monkeypatch):
+        """Field-level ``#### Detailed`` (no mode tag) is reachable via ``_FIELD_DETAIL``."""
+        from tcm_gui._help import _FIELD_DETAIL, help_for_path, reload_cache
+
+        monkeypatch.setattr("tcm_gui._help.resolve_lang", lambda: "en")
+        reload_cache("en")
+        # ``filter.max`` has a field-level #### Detailed block (process-computed
+        # threshold columns; wording deduped with the section intro).
+        e = help_for_path("filter.max", mode=_FIELD_DETAIL, detail="Detailed")
+        if e is None:
+            pytest.skip("filter.max not in bundled doc — version drift")
+        assert isinstance(e.body, str), f"field-level detail body should be str, got {type(e.body).__name__}"
+        assert e.body, (
+            "filter.max #### Detailed body should be non-empty — "
+            "did config_reference.md gain the field-level Detailed block?"
+        )
+        assert "process-computed" in e.body, f"Detailed body should mention process-computed; got {e.body!r}"
+
+    def test_field_level_detailed_via_resolve_detail(self, monkeypatch):
+        """``help_for_path(path, mode='_', detail='Detailed')`` returns the field-level detail body."""
+        from tcm_gui._help import _FIELD_DETAIL, help_for_path, reload_cache
+
+        monkeypatch.setattr("tcm_gui._help.resolve_lang", lambda: "en")
+        reload_cache("en")
+        # ``program.return_`` has a field-level #### Detailed block (phase-stopping table).
+        e = help_for_path("program.return_", mode=_FIELD_DETAIL, detail="Detailed")
+        if e is None:
+            pytest.skip("program.return_ not in bundled doc")
+        assert isinstance(e.body, str), f"field-level detail body should be str, got {type(e.body).__name__}"
+        assert e.body, "program.return_ Detailed block should be non-empty"
+        assert "saved_coefs" in e.body, f"Detailed body should mention phase-stopping values; got {e.body!r}"
+
     def test_per_lang_loader_fallback_to_en(self, monkeypatch, tmp_path):
         """Absent ``config_reference_ru.md`` → fallback to English ``config_reference.md``."""
         from tcm_gui import _help
 
-        # Point DOC_DIR at a tmp dir with ONLY the English file.
-        en = tmp_path / "config_reference.md"
+        # Point DOC_DIR at a tmp dir with ONLY the English file (reference/ subdir, as bundled).
+        ref = tmp_path / "reference"
+        ref.mkdir()
+        en = ref / "config_reference.md"
         en.write_text(
             "## `input` — Data source\n\n| `path` | `str` | — | **Yes** | File path (en). |\n",
             encoding="utf-8",
@@ -241,12 +276,14 @@ class TestRealReferenceDetailed:
         """When ``config_reference_ru.md`` exists, ru request reads it, not the en file."""
         from tcm_gui import _help
 
-        en = tmp_path / "config_reference.md"
+        ref = tmp_path / "reference"
+        ref.mkdir()
+        en = ref / "config_reference.md"
         en.write_text(
             "## `input` — Data source\n\n| `path` | `str` | — | **Yes** | English short. |\n",
             encoding="utf-8",
         )
-        ru = tmp_path / "config_reference_ru.md"
+        ru = ref / "config_reference_ru.md"
         ru.write_text(
             "## `input` — Источник данных\n\n| `path` | `str` | — | **Да** | Русский short. |\n",
             encoding="utf-8",
@@ -274,11 +311,11 @@ _SAMPLE = textwrap.dedent(
 
     Narrative for input — emitted as body to all input.* entries.
 
-    | Field | Type | Default | Required | Purpose |
-    |-------|------|---------|----------|---------|
-    | `path` | `str` | — | **Yes** | File path, glob, or regex pattern (CLI input). |
-    | `tables` | `List[str]` | `['incl*']` | No | HDF5 table names (regex allowed). |
-    | `corr_time_mode` | `[bool, str, None]` | `True` | No | Time correction mode; see `\\|col\\|` shorthand. |
+    | Field = Default | Purpose |
+    |-----------------|---------|
+    | `path` = — | File path, glob, or regex pattern (CLI input). |
+    | `tables` = `['incl*']` | HDF5 table names (regex allowed). |
+    | `corr_time_mode` = `True` | Time correction mode; see `\\|col\\|` shorthand. |
 
     ### Pattern interpretation
 
@@ -539,6 +576,185 @@ class TestDetailSubblock:
             "out.dt_bins must parse normally after search mode's #### blocks — "
             "#### must not eat the following ## heading"
         )
+
+
+# ── #### sub-blocks at field level (no ### mode tag) ─────────────────────
+
+
+_FIELD_DETAIL_SAMPLE = textwrap.dedent(
+    """\
+    ## `input` — Data source
+
+    | Field | Type | Default | Required | Purpose |
+    |-------|------|---------|----------|---------|
+    | `path` | `str` | — | **Yes** | File path. |
+    | `time_ranges` | `List[str]` | `None` | No | Time window. |
+    | `coordinates` | `List[float]` | `None` | No | Station coords. |
+
+    #### Detailed
+    Field-level detail for coordinates (last field before this block).
+
+    ## `program` — Runtime flags
+
+    | Field | Type | Default | Purpose |
+    |-------|------|---------|---------|
+    | `verbose` | `str` | `'INFO'` | Log verbosity. |
+    | `return_` | `str` | `'<end>'` | Pipeline exit point. |
+
+    #### Detailed
+    Phase-stopping table for return_.
+
+    #### Examples
+    Some examples for return_.
+    """
+)
+
+
+class TestFieldLevelDetail:
+    """``#### <Tag>`` blocks directly under ``## section`` (no ``###`` mode tag).
+
+    Each ``####`` block is associated with the last table field row seen
+    before it (tracked via ``last_field_path``).
+    """
+
+    def setup_method(self):
+        self.entries = parse_reference(_FIELD_DETAIL_SAMPLE)
+
+    def test_field_level_detail_stored_under_correct_field(self):
+        """``#### Detailed`` after ``coordinates`` row → stored under ``input.coordinates``."""
+        from tcm_gui._help import _FIELD_DETAIL, ModeBody
+
+        e = self.entries["input.coordinates"]
+        assert isinstance(e.body, dict), f"body should be dict, got {type(e.body).__name__}"
+        field_detail = e.body.get(_FIELD_DETAIL)
+        assert isinstance(field_detail, ModeBody), (
+            f"coordinates should carry field-level detail as ModeBody; got {type(field_detail).__name__}"
+        )
+        assert "Detailed" in field_detail.details, (
+            f"should have 'Detailed' tag; got {sorted(field_detail.details)!r}"
+        )
+        assert "coordinates" in field_detail.details["Detailed"], (
+            f"detail content should mention coordinates; got {field_detail.details['Detailed']!r}"
+        )
+
+    def test_field_level_detail_not_on_other_fields(self):
+        """Fields before the ``####`` block must NOT carry field-level detail."""
+        from tcm_gui._help import _FIELD_DETAIL
+
+        # ``input.path`` and ``input.time_ranges`` have no #### after them.
+        for path in ("input.path", "input.time_ranges"):
+            e = self.entries[path]
+            assert _FIELD_DETAIL not in (e.body if isinstance(e.body, dict) else {}), (
+                f"{path} should NOT have field-level detail; got body={e.body!r}"
+            )
+
+    def test_multiple_detail_tags_on_same_field(self):
+        """A field may carry several ``####`` tags (Detailed + Examples)."""
+        from tcm_gui._help import _FIELD_DETAIL, ModeBody
+
+        e = self.entries["program.return_"]
+        field_detail = e.body.get(_FIELD_DETAIL)
+        assert isinstance(field_detail, ModeBody)
+        assert set(field_detail.details) == {"Detailed", "Examples"}, (
+            f"return_ should have both tags; got {sorted(field_detail.details)!r}"
+        )
+        assert "Phase-stopping" in field_detail.details["Detailed"]
+        assert "examples" in field_detail.details["Examples"].lower()
+
+    def test_help_for_path_field_detail_resolution(self):
+        """``help_for_path(path, mode='_', detail='Detailed')`` returns the detail body."""
+        from tcm_gui._help import _FIELD_DETAIL, help_for_path
+
+        # Use parse_reference directly since this sample isn't the bundled doc.
+        entries = parse_reference(_FIELD_DETAIL_SAMPLE)
+        # Manually check the structure (help_for_path uses the cache, not this sample).
+        e = entries["program.return_"]
+        field_detail = e.body[_FIELD_DETAIL]
+        assert isinstance(field_detail.details.get("Detailed", ""), str)
+        assert "Phase-stopping" in field_detail.details["Detailed"]
+
+
+class TestModeSectionAfterFieldDetail:
+    """A ``###`` mode section opening after a field-level ``####`` block flushes
+    the field detail first — mode body never leaks into the previous field."""
+
+    _SAMPLE = textwrap.dedent(
+        """\
+        ## `input.coefs` — Coefficients
+
+        | Field = Default | Physical meaning |
+        |-----------------|------------------|
+        | `P_t` = `None` | Pressure polynomial. |
+        | `date` = `None` | Overall date. |
+
+        #### Detailed
+        Field-level block for date.
+
+        ### `input.coefs.P_t` <mode>probe</mode>
+        P_t short body.
+
+        #### Detailed
+        P_t detail body.
+        """
+    )
+
+    def setup_method(self):
+        self.entries = parse_reference(self._SAMPLE)
+
+    def test_field_detail_not_contaminated_by_mode(self):
+        """date's field-level Detailed keeps only its own content."""
+        from tcm_gui._help import _FIELD_DETAIL, ModeBody
+
+        e = self.entries["input.coefs.date"]
+        field_detail = e.body[_FIELD_DETAIL]
+        assert isinstance(field_detail, ModeBody)
+        detailed = field_detail.details["Detailed"]
+        assert "Field-level block for date." in detailed
+        assert "P_t" not in detailed, f"mode body leaked into date's detail; got {detailed!r}"
+
+    def test_mode_body_reaches_own_field(self):
+        """P_t's mode section carries its own short body + Detailed block."""
+        from tcm_gui._help import ModeBody
+
+        probe = self.entries["input.coefs.P_t"].body["probe"]
+        assert isinstance(probe, ModeBody)
+        assert probe.short == "P_t short body."
+        assert probe.details["Detailed"] == "P_t detail body."
+
+
+class TestAnchors:
+    """Section-heading anchors (GitHub-style slug, ``{#id}`` honored) for F1 help."""
+
+    def test_real_doc_section_anchors(self, monkeypatch):
+        from tcm_gui._help import help_for_path, reload_cache
+
+        monkeypatch.setattr("tcm_gui._help.resolve_lang", lambda: "en")
+        reload_cache("en")
+        assert help_for_path("input").anchor == "input--data-source--parameters"
+        assert help_for_path("input.coefs").anchor == "inputcoefs--calibration-coefficients"
+        assert help_for_path("program").anchor == "program--runtime-flags"
+
+    def test_field_rows_inherit_section_anchor(self, monkeypatch):
+        from tcm_gui._help import help_for_path, reload_cache
+
+        monkeypatch.setattr("tcm_gui._help.resolve_lang", lambda: "en")
+        reload_cache("en")
+        assert help_for_path("input.coefs.Ag[0]").anchor == "inputcoefs--calibration-coefficients"
+
+    def test_explicit_id_wins_and_strips_subtitle(self):
+        sample = textwrap.dedent(
+            """\
+            ## `filter` — Process-stage {#quality}
+
+            | Field = Default | Purpose |
+            |-----------------|---------|
+            | `min` = `{}` | Lower bounds. |
+            """
+        )
+        e = parse_reference(sample)
+        assert e["filter"].anchor == "quality"
+        assert e["filter.min"].anchor == "quality"
+        assert e["filter"].short == "Process-stage"
 
 
 class TestHelpForPath:

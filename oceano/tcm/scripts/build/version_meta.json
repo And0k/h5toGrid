@@ -1,7 +1,7 @@
 {
   "name": "TCM",
   "product": "tcm_gui",
-  "version": "2026.08+bin-optim-tcm",
+  "version": "2026.08+noh5-tcm-gui",
   "filevers": [
     2026,
     8,

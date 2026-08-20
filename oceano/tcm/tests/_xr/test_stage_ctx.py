@@ -590,3 +590,68 @@ class TestTickProgressBarCompletion:
             assert final_cur != 100, "Overcounted plan must not reach 100 — fix counts only TSV-eligible bins"
         finally:
             pb.set_runtime(old_rt), pb.set_cfg(old_cfg)
+
+    def test_tsv_skip_still_reaches_100(self):
+        """Regression guard: TSV ticks must fire even when the file is skipped.
+
+        When ``b_overwrite_text=False`` and the TSV file already exists,
+        the write is skipped but the tick MUST still fire — the stage plan
+        counted this bin.  If the tick were inside the write-only branch,
+        skipped TSVs would reduce actual ticks below the plan → <100%.
+        """
+        from tcm_gui import progress_bridge as pb
+
+        mock_rt, snaps = _mock_progress_bridge()
+        old_rt, old_cfg = pb.get_runtime(), pb.get_cfg()
+        pb.set_runtime(mock_rt), pb.set_cfg("test")
+        try:
+            # 5 NC + 4 TSV = 12 active.  All 4 TSV ticks fire (even if files skipped).
+            self._simulate_probe(stem_idx=1, n_cfgs=1, n_active=12, n_nc_ticks=5, n_tsv_ticks=4)
+            final_cur, _ = snaps[-1]
+            assert final_cur == 100, f"TSV-skip plan: expected 100, got {final_cur}"
+            # Prove that skipping even ONE TSV tick drops below 100
+            self._simulate_probe(stem_idx=1, n_cfgs=1, n_active=12, n_nc_ticks=5, n_tsv_ticks=3)
+            final_cur_skip, _ = snaps[-1]
+            assert final_cur_skip < 100, (
+                f"Missing one TSV tick must drop below 100, got {final_cur_skip}"
+            )
+        finally:
+            pb.set_runtime(old_rt), pb.set_cfg(old_cfg)
+
+    def test_fast_path_fires_remaining_ticks(self):
+        """Regression guard: h5 export/trim fast-paths must fire remaining ticks.
+
+        When ``overwrite_db`` is "export" or "trim", ``run_processing`` returns
+        early via ``_fire_remaining_ticks()`` — firing PROC + NC×n_bins +
+        TSV×n_tsv_bins after LOAD+COEFS.  Without this, only 2/12 ticks fire
+        and progress stalls at 17%.  This test simulates the fast-path tick
+        sequence: LOAD → COEFS → (fast-path fires PROC + NC + TSV).
+        """
+        from tcm_gui import progress_bridge as pb
+
+        mock_rt, snaps = _mock_progress_bridge()
+        old_rt, old_cfg = pb.get_runtime(), pb.get_cfg()
+        pb.set_runtime(mock_rt), pb.set_cfg("test")
+        try:
+            # Simulate: LOAD + COEFS fire normally, then _fire_remaining_ticks
+            # fires PROC + NC×5 + TSV×4 (total 12 ticks = stage plan).
+            self._simulate_probe(stem_idx=1, n_cfgs=1, n_active=12, n_nc_ticks=5, n_tsv_ticks=4)
+            final_cur, _ = snaps[-1]
+            assert final_cur == 100, (
+                f"Fast-path must reach 100%% after _fire_remaining_ticks, got {final_cur}"
+            )
+            # Without _fire_remaining_ticks: only LOAD+COEFS fire → 2/12 = 17%
+            from tcm import stage_ctx as sc
+
+            clear()
+            set_probe("p1", 1, 1, 1, 1, stem_idx=1, n_cfgs_total=1)
+            set_stage_plan(12)
+            sc.tick()  # LOAD
+            sc.tick()  # COEFS
+            # No PROC/NC/TSV ticks (old bug: fast-path returned without them)
+            final_cur_bug, _ = snaps[-1]
+            assert final_cur_bug == 17, (
+                f"Without _fire_remaining_ticks: expected 17 (round(2*100/12)), got {final_cur_bug}"
+            )
+        finally:
+            pb.set_runtime(old_rt), pb.set_cfg(old_cfg)

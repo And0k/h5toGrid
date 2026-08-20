@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import sys
+import traceback
 import tkinter as tk
 from collections.abc import Sequence
 from pathlib import Path, PurePath
@@ -14,17 +15,18 @@ from tkinter import ttk
 from omegaconf import OmegaConf
 
 import tcm_gui.theme
-from tcm import cli, config_yaml, format, incl_calc, paths, schema
+from tcm import cli, config_yaml, format, incl_calc, paths, schema, to_omegaconf
 from tcm.states import ScanStage
 from tcm_gui.cli_cfg import default_cfg
 
 from ._about import AboutDialog
 from ._browse_button import DATA_FILETYPES, SEARCH_FILETYPES, BrowseButtonManager, _is_shift_pressed
-from ._help import help_for_path
+from ._help import doc_path, help_for_path
 from ._i18n import STRINGS as _S  # Chrome with auto-detection of OS locale if LANG=auto
 from ._path_field import PathField
 from ._rtf_clipboard import copy_rich
 from ._tab_rail import TabRail
+from .browser import open_md_link
 from .coef_sheet import ConfigSheet
 from .const import (
     UIScale,
@@ -51,6 +53,7 @@ def _tip_body(path: str, **kwargs: str) -> str:
 class App:
     APP_ID = "Vendor.Product"  # todo: Fix, not hardcode here
     POLL = 300  # ms
+    _DWELL_MS = 6_000  # dwell tooltip delay — show detailed help after hover
 
     def __init__(self, argv: Sequence[str] | None = None) -> None:
         if sys.platform == "win32":
@@ -77,9 +80,20 @@ class App:
         # re-attaches it after Hydra's ``dictConfig`` replaces root handlers,
         # so worker-thread logs also reach the queue.
         self.rt.queue_handler = install(self.rt.log_queue, self.rt.pause_gate)
+        # Tkinter catches exceptions in callbacks itself and hands them to
+        # ``report_callback_exception`` (default: stderr print only — sys.excepthook
+        # never fires).  Route through logging so they reach ``_log``; the full
+        # traceback goes into the message because ``drain`` renders only the
+        # exception line for ``exc_info`` records, and frozen builds have no console.
+        self.root.report_callback_exception = self._report_tk_exception
         self.wk = Worker(self.rt)
         self._tip_active: bool = False  # error detail shown in _status_lbl; suppresses status updates
         self._error_active = False
+        # Dwell tooltip state — detailed help shown after _DWELL_MS of hover.
+        # Unlike _tip_active (error), cleared on widget leave / Esc.
+        self._dwell_job: str | None = None  # pending after() id
+        self._dwell_active: bool = False  # dwell tip currently shown
+        self._dwell_widget: tk.Widget | None = None  # widget that armed the dwell
         self._pages: dict[str, ConfigSheet] = {}
         self._yaml_paths: dict[str, Path] = {}
         self._tab_of: dict[str, ttk.Frame] = {}  # stem → notebook tab frame
@@ -265,6 +279,7 @@ class App:
             background=tcm_gui.theme.FRAME_BG_FALLBACK,
             foreground=tcm_gui.theme.FG_DEFAULT,
             colors=tcm_gui.theme.TAG_COLORS,
+            on_link=open_md_link,
         )
         self._status_lbl.place(rely=1.0, relx=0.0, anchor="sw", x=4, y=0)
 
@@ -293,7 +308,7 @@ class App:
         # _status_lbl would bury the floater's error line between poll lifts.
         r.bind("<Motion>", self._lift_status_z, add="+")
         # Esc dismisses the error detail tooltip shown in _status_lbl.
-        r.bind("<Escape>", lambda _e: self._hide_tip(), add="+")
+        r.bind("<Escape>", lambda _e: (self._hide_tip(), self._cancel_dwell()), add="+")
         # Hover-hide: root <Motion> hides ONLY when the live pointer is over the
         # visible status widgets; motion anywhere else never hides them.  <Enter>
         # bindings proved unreliable — _poll_progress re-shows/lifts the floater
@@ -329,15 +344,24 @@ class App:
             w.bind("<Leave>", self._on_chrome_leave, add="+")
 
     def _on_chrome_hover(self, event: tk.Event) -> None:
-        """Generic chrome hover: show widget's status text."""
+        """Generic chrome hover: show widget's status text; arm dwell tooltip."""
         w = event.widget
         if status := get_widget_meta(w, "status"):
             self._chrome_hovering = w
-            self._set_status(status)
+            # Widget changed → clear previous dwell before updating status.
+            if self._dwell_widget is not w:
+                self._cancel_dwell()
+                self._dwell_widget = w
+                self._set_status(status)
+                self._arm_dwell(get_widget_meta(w, "tooltip"))
+            else:
+                self._set_status(status)
 
     def _on_chrome_leave(self, _event: tk.Event) -> None:
-        """Generic chrome leave: clear hover flag."""
+        """Generic chrome leave: clear hover flag + cancel dwell."""
         self._chrome_hovering = None
+        self._dwell_widget = None
+        self._cancel_dwell()
 
     def _register_chrome_help(self) -> None:
         """Bind chrome widgets to help text / status in one pass.
@@ -409,11 +433,14 @@ class App:
         status = self._path_field._path_status
         if _is_shift_pressed() and self._path_field._shift_status:
             status = self._path_field._shift_status
+        self._cancel_dwell()
         self._set_status(status)
+        self._arm_dwell(_S.get("path_field.tooltip", ""))
 
     def _on_path_hover_out(self) -> None:
-        """Mouse leaves Entry — clear hover flag (status restored by poll)."""
+        """Mouse leaves Entry — clear hover flag + cancel dwell (status restored by poll)."""
         self._path_hovering = False
+        self._cancel_dwell()
 
     def _on_browse_status(self, text: str) -> None:
         """Browse button hover: show hint on enter; on leave restore path status.
@@ -512,7 +539,16 @@ class App:
 
     def _on_help(self) -> None:
         """Open the About dialog (version, runtime info, docs browser)."""
-        AboutDialog(self.root, full_mode=self._full_mode, ui=self.ui)
+        dlg = AboutDialog(
+            self.root,
+            full_mode=self._full_mode,
+            ui=self.ui,
+            on_status=lambda msg: self._set_status(msg, raw=True),  # hover URLs/paths
+        )
+        # dialog closed → restore Ready (its hover texts die with the window)
+        dlg.bind(
+            "<Destroy>", lambda e: e.widget is dlg and self._set_status(_S["status.ready"], raw=True), add="+"
+        )
 
     # ── §3 rail ↔ page stack sync ────────────────────────────────────
 
@@ -532,7 +568,8 @@ class App:
         self._rail.set_selected(stem)
 
     def _on_rail_hover(self, name: str | None) -> None:
-        """Rail hover callback — show yaml path in status bar."""
+        """Rail hover callback — show yaml path in status bar; cancel dwell."""
+        self._cancel_dwell()
         if name:
             self._nb_hovering = True
             if frame := self._tab_of.get(name):
@@ -557,6 +594,7 @@ class App:
     def _on_path_changed(self, _path: str) -> None:
         """PathField committed a new path — trigger scan with immediate overlay."""
         self._error_active = False
+        self._path_field.set_error(False)  # fresh search attempt clears the failure mark
         self._hide_tip()
         self._initial_scan = True
         # Show progress overlay immediately (skip "Ready" → "Loading…" transition).
@@ -615,7 +653,7 @@ class App:
             on_click=self._hide_progress_widgets,
         )
         cs.load(cfg, full=self._full_mode, config_root=schema.Config, return_enum=schema.Return)
-        cs.on_hover_status = lambda msg, md=False: self._set_status(msg, raw=not md)
+        cs.on_hover_status = lambda msg, md=False: self._on_cell_status(cs, msg, md)
         cs.on_edit_begin = lambda: (self._hide_tip(), self._hide_progress_widgets())
         cs.on_validity_change = self._update_run_btn_state
         cs._empty_area_hint = _S[
@@ -624,21 +662,26 @@ class App:
             else ("empty_area.unsaved_full" if self._full_mode else "empty_area.unsaved")
         ]
         self._pages[stem] = cs
-        if len(self._tab_of) == 1:  # first page owns the stack
-            self._select_tab(stem)
+        # NOTE: no _select_tab here — a page gridded later stacks ABOVE any
+        # earlier tkraise()'d one (Tk sibling order), so the visible page would
+        # end up the LAST tab while the rail highlights the first.  The first
+        # tab is selected once, after ALL pages exist (_on_scan_ok).
 
     def _set_coefs_and_reload(self, stem: str, coefs_path: str) -> None:
         """Called from ConfigSheet when ``input.coefs_path`` cell changes."""
         cs = self._pages.get(stem)
         if not cs or not coefs_path.strip():
             return
-        tbl = format.pcid_to_raw_name(format.stem_to_pcid(stem))
+        # Page stem is a corrected-filename stem (e.g. "i_90"), not the canonical
+        # pcid ("i90") — normalize before resolving the coefs table name
+        tbl = format.pcid_to_raw_name(format.to_pcid_from_name(format.stem_to_pcid(stem)))
         try:
             coefs = incl_calc.coefs.get_coefs(coefs_path.split(","), tbl)
         except Exception:
             lf.exception("Failed to load coefficients from %s", coefs_path)
             return
-        cs._cfg.setdefault("input", {})["coefs"] = coefs
+        # get_coefs returns numpy arrays; cfg models the run YAML (plain lists)
+        cs._cfg.setdefault("input", {})["coefs"] = to_omegaconf.to_omegaconf_compatible_types(coefs)
         cs._cfg.setdefault("input", {})["coefs_path"] = coefs_path
         cs.load(cs._cfg, full=self._full_mode, config_root=schema.Config, return_enum=schema.Return)
 
@@ -705,17 +748,24 @@ class App:
     def _on_log_motion(self, _event: tk.Event) -> None:
         """Show log status text while mouse is actively moving; fade on pause."""
         if (status := get_widget_meta(self._log, "status")) is not None:
+            self._cancel_dwell()
             self._set_status(status)
+        # Arm dwell with log tooltip (if defined) on first motion.
+        if self._dwell_widget is not self._log:
+            self._dwell_widget = self._log
+            self._arm_dwell(_S.get("log.tooltip", ""))
         # Reset the fade timer on every motion tick.
         if self._log_status_job is not None:
             self.root.after_cancel(self._log_status_job)
         self._log_status_job = self.root.after(self._log_status_fade_ms, self._on_log_status_fade)
 
     def _on_log_leave(self, _event: tk.Event) -> None:
-        """Clear log status text immediately when pointer leaves."""
+        """Clear log status text + cancel dwell when pointer leaves."""
         if self._log_status_job is not None:
             self.root.after_cancel(self._log_status_job)
             self._log_status_job = None
+        self._dwell_widget = None
+        self._cancel_dwell()
         self._set_status("", raw=True)
 
     def _on_log_status_fade(self) -> None:
@@ -873,6 +923,7 @@ class App:
         }[kind](payload)
 
     def _on_scan_error(self, exc: BaseException) -> None:
+        self._path_field.set_error(True)  # failed search — red fg on the search path
         self._surface_error(exc, _S["error.scan"])
         # Reset state to DEFAULT and clear progress so _poll_progress shows default text.
         self._cfg_state = ScanStage.DEFAULT
@@ -915,14 +966,15 @@ class App:
         return _S.get("stage.error", 'Error "{msg}".').format(msg=short)
 
     def _set_status(self, text: str, *, raw: bool = False) -> None:
-        """Set ``_status_lbl`` text, suppressed while the error tooltip is active.
+        """Set ``_status_lbl`` text, suppressed while error or dwell tooltip is active.
 
         All chrome-hover, poll, and log-motion callers route through here so
         the tooltip (rendered in the same ``_status_lbl``) is never clobbered
-        by a transient status update.  ``_show_tip`` / ``_hide_tip`` write to
-        ``_status_lbl`` directly, bypassing this guard.
+        by a transient status update.  ``_show_tip`` / ``_hide_tip`` and
+        ``_show_dwell_tip`` / ``_cancel_dwell`` write to ``_status_lbl``
+        directly, bypassing this guard.
         """
-        if self._tip_active:
+        if self._tip_active or self._dwell_active:
             return
         self._status_lbl.set_text(text, raw=raw)
 
@@ -932,22 +984,84 @@ class App:
         While ``_tip_active`` is True, :meth:`_set_status` is a no-op so hover
         hints and poll-driven status cannot overwrite the tooltip.  Dismissed
         by :meth:`_hide_tip` (new scan/run, path change, Esc, or cell edit).
+        Also clears any active dwell tip (error takes precedence).
         """
+        self._cancel_dwell()  # error takes precedence over dwell
         self._tip_active = True
-        self._status_lbl.set_text(text)  # markdown rendered, bypasses _set_status guard
+        # Relative links in the body resolve against config_reference_*.md's dir.
+        self._status_lbl.set_text(text, base=doc_path().parent)
 
     def _hide_tip(self) -> None:
-        """Dismiss the error tooltip; resume normal status updates."""
-        if not self._tip_active:
+        """Dismiss the error tooltip; resume normal status updates.
+
+        Also clears any active dwell tip — both are tooltip overlays in
+        ``_status_lbl`` and share the same dismissal triggers (Esc, new
+        scan/run, path change, cell edit begin).
+        """
+        was_active = self._tip_active or self._dwell_active
+        if not was_active:
             return
         self._tip_active = False
+        self._dwell_active = False
+        self._dwell_widget = None
+        self._cancel_dwell_job()
         self._status_lbl.set_text("", raw=True)
+
+    # ── dwell tooltip ────────────────────────────────────────────────
+
+    def _arm_dwell(self, text: str) -> None:
+        """Schedule dwell tooltip — show *text* in ``_status_lbl`` after :attr:`_DWELL_MS`.
+
+        Only armed when *text* is non-empty.  Cancels any pending dwell job
+        first (widget changed or re-entry).  The actual show is done by
+        :meth:`_show_dwell_tip` which fires from the ``after()`` callback.
+        """
+        self._cancel_dwell_job()
+        if not text or self._tip_active:
+            return
+        self._dwell_job = self.root.after(self._DWELL_MS, lambda: self._show_dwell_tip(text))
+
+    def _cancel_dwell_job(self) -> None:
+        """Cancel a pending dwell ``after()`` job (does NOT clear an active tip)."""
+        if self._dwell_job is not None:
+            self.root.after_cancel(self._dwell_job)
+            self._dwell_job = None
+
+    def _cancel_dwell(self) -> None:
+        """Cancel pending dwell job AND clear an active dwell tooltip."""
+        self._cancel_dwell_job()
+        if self._dwell_active:
+            self._dwell_active = False
+            self._status_lbl.set_text("", raw=True)
+        self._dwell_widget = None
+
+    def _show_dwell_tip(self, text: str) -> None:
+        """Fire after :attr:`_DWELL_MS` — render *text* in ``_status_lbl``.
+
+        Suppressed while ``_tip_active`` (error tooltip takes precedence).
+        While ``_dwell_active`` is True, :meth:`_set_status` is a no-op so
+        motion events don't overwrite the dwell tooltip.
+        """
+        self._dwell_job = None
+        if self._tip_active:
+            return
+        self._dwell_active = True
+        # Relative links in the body resolve against config_reference_*.md's dir.
+        self._status_lbl.set_text(text, base=doc_path().parent)
+
+    def _on_cell_status(self, cs: ConfigSheet, msg: str, md: bool = False) -> None:
+        """ConfigSheet hover callback — set status + arm dwell with detailed body."""
+        self._cancel_dwell()
+        self._set_status(msg, raw=not md)
+        if detail := getattr(cs, "_hover_detail", ""):
+            self._arm_dwell(detail)
 
     def _on_scan_ok(self, result) -> None:
         if not result or len(result) < 4:
             return
 
         self._error_active = False
+        self._path_field.set_error(False)
         self._hide_tip()
         for frame in self._tab_of.values():
             frame.destroy()
@@ -967,6 +1081,8 @@ class App:
                 prog["return_"] = str(schema.Return.END)
             self._yaml_paths[stem] = Path(yp)
             self._add_page(stem, cfg, yaml_path=Path(yp))
+        if self._tab_of:  # top tab gets rail indicator + the raised (visible) page
+            self._select_tab(next(iter(self._tab_of)))
         self._cfg_state = ScanStage.DONE
         self._cfg_detail = ""
         self._initial_scan = False
@@ -1005,6 +1121,15 @@ class App:
         self._log.config(state="disabled")
         self._error_active = False
         self._hide_tip()
+
+    def _report_tk_exception(self, exc, val, tb) -> None:
+        """Tkinter callback exception → logging → ``_log`` (and console/file handlers).
+
+        Tkinter passes the already-caught ``(exc, val, tb)`` — we are NOT inside
+        an active exception, so ``lf.exception`` (implicit ``sys.exc_info()``)
+        would lose the traceback: embed it in the message instead.
+        """
+        lf.error("Exception in Tkinter callback\n%s", "".join(traceback.format_exception(exc, val, tb)))
 
     def _log_err(self, msg: str, *, separator: bool = False) -> None:
         """Append ``msg`` as an ``error``-tagged line; optionally add a visual

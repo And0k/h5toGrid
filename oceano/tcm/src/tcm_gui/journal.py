@@ -6,7 +6,7 @@ Segments are line spans between consecutive boundaries of a probe; sublevel
 segments nest within the stage active at their boundary.  Within-context
 [prefix] marks (WARNING+) carry identity but do not affect segmentation.
 Run outcome is best-effort from the documented terminal line "Done — …"
-(how_it_works.md §processing.run).
+(docs/project_developer_guide/CLI.md §processing.run).
 
 Usage::
 

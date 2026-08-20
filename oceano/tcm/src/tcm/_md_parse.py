@@ -12,7 +12,8 @@ splitting).  Supported constructs:
 * Markdown tables (pipe-delimited)
 * ``- `` unordered list items (flat; indented continuation lines fold into
   the preceding item — nested lists are not supported)
-* ``[text](url)`` links → plain text (no click handling)
+* ``[text](url)`` links → span ``(text, url)`` (the URL is the span tag;
+  click handling lives in the renderer)
 
 No HTML, no images, no blockquotes, no ordered (``1.``) lists.
 """
@@ -86,7 +87,7 @@ _INLINE = re.compile(
     r"(?P<esc>\\[\\`*_{}\[\]()#+\-.!>~|])"
     r"|(?P<color>\{#(?P<color_name>[a-z_]+)\}(?P<color_text>.*?)\{/\})"
     r"|(?P<code>`[^`]+`)"
-    r"|(?P<link>\[(?P<link_text>[^\]]*)\]\([^)]*\))"
+    r"|(?P<link>\[(?P<link_text>[^\]]*)\]\((?P<link_url>[^)]*)\))"
     r"|(?P<bold>\*\*(?P<bold_ast>.+?)\*\*|(?<!\w)__(?P<bold_und>.+?)__(?!\w))"
     r"|(?P<italic>\*(?P<italic_ast>.+?)\*|(?<!\w)_(?P<italic_und>.+?)_(?!\w))"
 )
@@ -147,8 +148,8 @@ def parse_inline(text: str) -> Inline:
             out.append((code[1:-1], "code"))
 
         elif m.group("link"):
-            # Simplified: display link text only; no click handling.
-            out.append((m.group("link_text") or "", "plain"))
+            # Span tag carries the target URL; the renderer styles/clicks it.
+            out.append((m.group("link_text") or "", m.group("link_url")))
 
         elif m.group("bold"):
             out.append((m.group("bold_ast") or m.group("bold_und") or "", "bold"))

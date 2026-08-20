@@ -116,11 +116,6 @@ class PathField(ttk.Frame):
         self._ph = CellPlaceholder()
         self._dim_fg = tcm_gui.theme.DEFAULT_FG
 
-
-
-
-
-
         bg = tcm_gui.theme.ENTRY_BG_FALLBACK
         fg = tcm_gui.theme.FG_DEFAULT
         self.sh = Sheet(
@@ -350,6 +345,16 @@ class PathField(ttk.Frame):
         else:
             self._scroll_to_left()
 
+    def set_error(self, flag: bool) -> None:
+        """Red fg on the single cell when *flag* (scan failed), else restore normal fg."""
+        self.sh.highlight_cells(
+            row=0,
+            column=0,
+            fg=tcm_gui.theme.INVALID_FG if flag else tcm_gui.theme.FG_DEFAULT,
+            redraw=False,
+        )
+        self.sh.redraw()
+
     def cancel_edit(self) -> None:
         """Close the Entry editor if open."""
         if self._entry is not None:
@@ -386,6 +391,11 @@ class PathField(ttk.Frame):
         ent.place(relx=0, rely=0, relwidth=1, relheight=1)
         ent.bind("<Return>", lambda _e: self._commit_entry())
         ent.bind("<Escape>", lambda _e: self._commit_entry(cancel=True))
+        # Focus-loss commits — same contract as a tksheet cell (its editor
+        # commits on FocusOut).  Without it a click-away leaves an orphaned
+        # open Entry wedging every ``_editing``-guarded path.  ``_entry`` is
+        # None by the time a re-entrant FocusOut (from destroy) fires.
+        ent.bind("<FocusOut>", lambda _e: self._commit_entry() if self._entry is not None else None)
         ent.focus_set()
         self._entry = ent
 

@@ -226,7 +226,7 @@ cs.store(
 ### 3.1. Окружение `bin-optim-tcm`
 
 Используется pixi-окружение **`bin-optim-tcm`** (solve-group `noh5`),
-которое объединяет features `noh5` + `bin-optim` + `tcm` + `test`:
+которое объединяет features `noh5` + `bin-optim` + `tcm` + `test` + `browser`:
 
 | Feature      | Ключевые пакеты                           | Назначение                    |
 | ------------ | ----------------------------------------- | ----------------------------- |
@@ -234,6 +234,7 @@ cs.store(
 | `bin-optim`  | `h5py`, `scipy`, `matplotlib`, `numba`, `xarray`, `netcdf4` | Полный вычислительный стек    |
 | `tcm`        | `dask-core`, `absioras-tcm`, `pygeomag`   | Ядро обработки TCM            |
 | `test`       | `pytest`, `pytest-mock`                   | Тестирование                  |
+| `browser`    | `nodejs >=20`                             | Генерация runtime браузера документации |
 
 **Важно:** `bin-optim-tcm` **включает** `h5py`, `scipy`, `matplotlib` —
 в отличие от `noh5-tcm`, эти пакеты доступны и собираются в дистрибутив.
@@ -250,7 +251,14 @@ pixi run -e bin-optim-tcm build-tcm-gui
 [tool.pixi.tasks.build-tcm-gui]
 cmd = "python oceano/tcm/scripts/build/build_tcm_gui.py"
 env = { BUILD_MODE = "manual" }
+depends-on = ["browser-runtime"]
 ```
+
+Перед сборкой выполняется зависимость **`browser-runtime`** — `npm ci` по
+зафиксированному `browser/package-lock.json` и копирование минимального набора
+файлов браузера документации в `_build/browser-runtime/` (см. `browser/vendor.mjs`).
+Явное обновление зависимостей runtime — `pixi run -e bin-optim-tcm browser-runtime-update`
+(поднимает до `@latest` и пересобирает `_build/browser-runtime`).
 
 Или напрямую:
 ```bash
@@ -288,6 +296,13 @@ pixi run -e bin-optim-tcm python oceano/tcm/scripts/build/build_tcm_gui.py
 
 Общая логика (фильтрация бинарников, сборка данных) вынесена в
 `scripts/build/spec_common.py` и используется обоими spec-файлами.
+
+Ресурсы браузера документации попадают в дистрибутив так: first-party страница
+(`index.html`/`viewer.js`/`viewer.css`) лежит внутри пакета —
+`src/tcm_gui/browser/web`, поэтому упаковывается вместе с `src/tcm_gui`;
+сгенерированный runtime добавляется отдельным datas-элементом
+`(_build/browser-runtime → "_build/browser-runtime")`. Подкаталоги `todo/`
+документации исключаются из сборки (`spec_common.should_keep_data`).
 
 ### 3.4. Runtime hook (`rthook_hydra_pkg.py`)
 

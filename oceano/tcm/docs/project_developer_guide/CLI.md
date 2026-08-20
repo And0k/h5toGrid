@@ -1,4 +1,4 @@
-# How It Works — Internal Architecture
+# CLI Internals
 
 ## Module Architecture
 
@@ -66,8 +66,6 @@ tcm/
 
 ### Module Boundary Rules
 
-- `_xr/` must never import from `_dask_legacy`
-- `_dask_legacy` is optional — `csv_load.py` imports it lazily (try/except)
 - Functions inside each namespace use clean names (folder is the namespace)
 - `incl_calc/calc.py` — pure numpy kernels (Layer 0)
 
@@ -81,7 +79,6 @@ code outside `load_raw`:
     .nc / .nc4  →  _xr/dataset.open_nc()      (group-based, coefs from /{tbl}/coef/)
     .h5 / .hdf5 →  _xr/io.open_hdf5()         (pandas HDFStore, coefs via load_coefs)
     .txt / .csv →  _xr/dataset.open_csv()      (csv_load pipeline, no embedded coefs)
-    _dask_legacy/           ← legacy dask.dataframe pipeline (optional, lazy import)
 ```
 
 CSV path: chunks are loaded via `csv_load.load_from_csv_gen()` (streaming
@@ -329,6 +326,32 @@ noAvg (`dt_bin=0`) is skipped.  The plan counts
 `_n_tsv_bins = sum(b >= _min_save_ts for b in dt_bins)` so the final tick of
 the last probe reaches `frac=100` and the per-config rail fill completes.
 
+**ProgressBank intra-stage sync**: multiple pipeline stages can map to the
+same canonical bank stage (NC+TSV→"Save", weight=10).  Without sync,
+`bank.stage_start("Save")` resets `inner=0` on each NC→TSV transition and
+the per-config fill stalls at ~80%.  `tick()` solves this by pre-computing
+per-canonical-stage tick counts from the stage plan (via `set_stage_plan(n, stages)`)
+and feeding `bank.inner(tick, total)` with the intra-canonical fraction on
+every tick — the fill advances smoothly through all 9 Save ticks (5 NC + 4 TSV)
+to reach 100%.
+
+**Fast-path tick completion** (h5-specific): when `overwrite_db` is `"export"`
+or `"trim"`, `run_processing` returns early via `_fire_remaining_ticks()` —
+firing PROC + NC×n_bins + TSV×n_tsv_bins after LOAD+COEFS.  Without this,
+only 2/N ticks fire and progress stalls at `round(2*100/N)%`.  The same
+applies to `SAVED_COEFS`/`SAVED_RAW` phase-stopping returns.  This is
+h5-specific because `raw_nc_dispatch` (required for export/trim) is only
+set when `raw_db_path` exists.
+
+**Combine attribution detach** (h5-specific): the post-loop `combine` stage
+fires `set_stage(0, COMBINE)` while `progress_bridge` attribution still
+points at the last config — its `stage_desc("combine")` used to re-run the
+last config's already-`done` ProgressBank cell (`finish` had fired per-config
+in `process_loading_yaml`'s `finally`), regressing the fill ~1.0 → 0.8
+forever.  `run()` calls `progress_bridge.set_cfg(None)` before combine (a
+run-level phase, not per-config).  h5-specific because combine requires
+`policy.io()` + netCDF4.
+
 **QueueHandler**: the GUI's `log_bridge.QueueHandler` installs its own
 `StageContextFilter` so `emit()` sees the prefixed message (boundary marks)
 before freeze + dedup.
@@ -390,11 +413,12 @@ duplication occurs because NC incremental append skips overlapping time
 ranges (see [Re-run behavior](#re-run-behavior)). Coefs are written twice
 (last YAML wins). Combined output deduplicates via `dict.fromkeys()`.
 
-**Stem validation**: before calling `process_fun`, the YAML stem (after
-stripping the last `@`) is compared with the `input.path` file stem (after
-stripping `@`). If they differ, the YAML is skipped — this catches
-manually-copied configs (e.g. `@i_01_backup.yaml`) whose stem no longer
-matches the data file they reference.
+**Stem validation**: before calling `process_fun`, the YAML stem and the
+`input.path` file stem (both after stripping the last `@`) are normalized to
+canonical pcids and compared (`cli._pcid_key()` — permissive across pcid
+formatting variants `i_90` ≡ `i90`, strict on the `-comment` suffix). If they
+differ, the YAML is skipped — this catches manually-copied configs (e.g.
+`@i_01_backup.yaml`) whose stem no longer matches the data file they reference.
 
 ### `call_in_raw_dir()` — entry point for non-processing pipelines
 
@@ -477,18 +501,9 @@ Discovery is performed by `config_yaml.gen_metadata()` which calls `csv_load.sea
 
 ### Path pattern classification
 
-`_pattern_to_regex(name)` in `csv_load.py` classifies `input.path` into glob or regex:
-
-| Condition | Mode | Example input | Effective regex |
-|-----------|------|---------------|-----------------|
-| Invalid regex (compilation fails) | glob | `*[0bdp]*.txt` | `.*?[0bdp].*?\.txt` |
-| Valid regex, extension dot **unescaped** | glob | `file?.txt` | `file.\.txt` |
-| Valid regex with `|` or `(...)` wrapper | regex | `(a\|b).txt` | `(a\|b).txt` |
-| Valid regex, extension dot **escaped** (`\.`) | regex | `i.*\.txt` | `i.*\.txt` |
-| `path` is a directory | default regex `i.*\.txt` | `_raw/` | `i.*\.txt` |
-
-The "extension dot" is the last `.` before a suffix containing no further dots.
-Glob conversion: `*` → `.*?`, `?` → `.`, all dots → `\.` (all case-insensitive).
+Pattern classification rules (glob vs regex auto-detection) are documented in
+[CLI Reference §Pattern classification](../reference/cli.md#pattern-classification)
+and [Config Tuning §Pattern interpretation](../reference/config_tuning.md#pattern-interpretation).
 
 Implementation:
 
@@ -626,11 +641,12 @@ Each run YAML is linked to a corrected raw input file through **two mechanisms**
 - `probe_from_name(pcid_stem)` → `parse_name()` regex extracts `(model, number)`.
 
 **Stem validation** (`processing.run()`): before processing, the YAML stem
-(after stripping `{datestamp}@`) is compared with the `input.path` file stem
-(after stripping `@`).  If they differ, the YAML is skipped with a warning.
-This prevents manually-copied or renamed configs (e.g. `@i_p1 — копия.yaml`)
-from being silently used as valid configs — even though `probe_from_name()`
-would resolve the correct pcid, the raw stem mismatch catches the discrepancy.
+(after stripping `{datestamp}@`) and the `input.path` file stem (after
+stripping `@`) are normalized to canonical pcids and compared via
+`cli._pcid_key()` — permissive across pcid formatting variants (`i_90` ≡
+`i90`), strict on the `-comment` suffix. Mismatches are skipped with a
+warning, preventing manually-copied or renamed configs (e.g.
+`@i_p1 — копия.yaml`) from being silently used as valid configs.
 
 ### Device-metadata `time_ranges` sync
 
@@ -742,16 +758,17 @@ part of the per-text-file config sweep.
      → ``format.to_pcid_from_name()``, tbl ← ``pcid_to_raw_name(pcid)``.
 2. Resolve output paths via `paths.PathLayout.from_cfg()` + `layout.apply_to_cfg(cfg.out)`
 3. **Phase 1 — Load coefs**: `get_coefs_from_cfg()` + merge file coefs + HDF5 auto-migrate
-   (extract coefs from legacy `.raw.h5` if `.raw.nc` absent)
+   (extract coefs from `.raw.h5` if `.raw.nc` absent)
 4. **Phase 2 — Calc/update coefs**: `prepare_coefs()` — zeroing rotation from
    `time_ranges_zeroing`, azimuth correction from `time_ranges_azimuth` (data-driven
-   tilt direction) and/or `azimuth_add`/`coordinates` (manual/declination)
+   tilt direction) and/or `azimuth_add`/`coordinates` (manual/declination via WMM
+   (`pygeomag`) at the station location for the current date)
 5. **Phase 3 — Save coefs**: write changed coefs to NC file (NC source or raw_db_path)
-   or run YAML (noh5). NC-source coefs overwrite in-place (bypasses data-skip guard).
+   or run YAML (when h5py is unavailable). NC-source coefs overwrite in-place (bypasses data-skip guard).
    CSV+H5 sources always write coefs (idempotent via `save_coefs_to_nc`) — multiple
    probes may share one `*.raw.nc`, each needing its own `/{tbl}/coef/` group.
    Changed coefs are **always** mirrored to the run YAML when `yaml_path` exists
-   (not just in noh5 mode) — keeps the config readable.  Before first modification,
+   (not just when h5py is unavailable) — keeps the config readable.  Before first modification,
    `update_coefs_in_run_yaml` creates a timestamped backup
    (`-backupYYMMDD_HHMMSS.yaml`); subsequent updates reuse the same backup.
 6. **Phase 4 — Save data**: append raw data to `*.raw.nc` via `nc_incremental_update`
@@ -875,7 +892,8 @@ Filtering is split into two distinct stages by namespace:
 
 `cfg.input.min`/`max` (load-stage DROP) and `cfg.filter.min`/`max` (process-stage NaN-out)
 both support `M` as a shorthand for `Mx`, `My`, `Mz`. Expansion runs at compose time via
-`_xr/filters.expand_m_shorthand()` — see `config_tuning.md` (§Filter expansion) for examples.
+`_xr/filters.expand_m_shorthand()` — field semantics and YAML examples:
+[§`input.min` / `input.max`](../reference/config_reference.md#input-min-max).
 
 ### Processing pipeline stages
 
@@ -917,7 +935,7 @@ Rough per-chunk memory for CSV (float64, 6 data columns):
 
 ### Column order
 
-Output columns follow legacy ordering — see `config_tuning.md`
+Output columns follow this ordering — see `config_tuning.md`
 (§Column order) for the full specification including Vabs/Vdir save policy
 (computed on-the-fly for per-probe TSV only; never persisted in NC
 or combined TSV; `inclination` excluded from combined TSV).
@@ -987,51 +1005,16 @@ them along a `probe` dimension, and writes combined groups to `*.proc.nc`.
 Only **distinct** pcids are combined — multiple stems (source files) for
 the same pcid are deduplicated via `dict.fromkeys()`. No-averaged
 (`dt_bin=0`) data is **never combined** — per-probe only.
-Skipped when `H5_AVAILABLE` is `False` (noh5 environment).
+Skipped when `H5_AVAILABLE` is `False` (when h5py is unavailable).
 
-| Output | Group | Content |
-|--------|-------|---------|
-| `*.proc.nc` | `/{probe_type}_bin{N}s/` | All probes, binned, `probe` dim |
-| TSV | `{ts}bin{N}s@{pcid1},{pcid2}.tsv` | Combined tab-separated text |
-
-*`probe_type`* is the short probe prefix derived from the first pcid
-(e.g. `"i"` for inclinometers, `"w"` for wave gauges).
-
-Column order in combined TSV: `v_i01, u_i01, v_i02, ...`
-(Vabs/Vdir/inclination excluded from combined TSV; axis=1 concatenation
-unless `b_all_to_one_col=True`).
+See [Processing §Combined multi-probe output](../user_guide/processing.md#combined-multi-probe-output)
+for the output format and group structure.
 
 ### Re-run behavior
 
-On re-processing the same input data, each NC output type handles idempotency differently:
-
-| Output | Write function | Re-run behavior |
-|--------|---------------|----------------|
-| `*.raw.nc` | `nc_incremental_update` (log dedup) | **SKIP** — same fileName + mtime detected via log table |
-| `*.proc_Avg.nc` (per-probe binned) | `store_processed_incremental` (time-range check) | **SKIP** — new time range ⊂ existing range |
-| `*.proc_noAvg.nc` (per-probe no-avg) | `store_processed_incremental` (time-range check) | **SKIP** — new time range ⊂ existing range |
-| `*.proc.nc` (combined) | `_combine_probes` → `to_netcdf(mode="a")` | **SKIP** — `_combined_group_is_current` checks combined covers per-probe ranges |
-
-`store_processed_incremental` only checks time-range containment, not data content.
-If coefficients change (detected via the latest ``/param_spans/{tbl}`` interval
-entry vs current, ignoring ``input.time_ranges`` lines), a **ValueError** is
-raised showing a unified diff.  Each processing run appends a new dated interval
-to the table; duplicate params are not recorded.  Delete the group or re-run with
-`out.overwrite_db=splice` to force re-processing.
-See `config_tuning.md` (§`/param_spans/{tbl}` interval table) for the full field list.
-
-| `overwrite_db` | Params changed? | `time_ranges` vs existing | Behavior |
-|:---:|:---:|:---:|---|
-| `None` | No | subset | **Skip NC** — export TSV only |
-| `None` | No | extends | **Append** — append new tail only |
-| `None` | Yes | extends | **Append + warn** — keep existing, append new |
-| `None` | Yes | contained | **Error** — suggest `out.overwrite_db=splice` |
-| `"splice"` | — | subset | **Splice** — keep outside, replace inside with reprocessed |
-| `"splice"` | — | extends | **Splice** — keep outside, replace/append inside |
-| `"splice"` | — | None | **Splice** — reprocess all from source |
-| `"trim"` | — | subset | **Trim** — delete outside `time_ranges`, no reprocessing |
-| `"trim"` | — | extends | **Trim + append** — trim existing, process/append new |
-| `"export"` | — | any | **Export only** — block NC writes, export TSV |
+See [Console Messages §Re-run behavior](../user_guide/console_messages.md#re-run-behavior)
+for the re-run decision matrix and [Config Tuning §overwrite_db behavior](../reference/config_tuning.md#overwrite_db-behavior)
+for the full decision tables.
 
 `overwrite_db="splice"` triggers :func:`splice_group` which keeps data outside
 ``[ds_new.time.min(), ds_new.time.max()]`` intact (head + tail) and replaces
@@ -1085,7 +1068,7 @@ Raw data and coefficients are persisted in separate phases (see [run_processing]
   `ds_raw.load()` + `ds_raw.close()` releases any lingering netCDF4 read handle
   (required for the autoload fast-path where `ds_raw` was loaded from the same
   `*.raw.nc`; no-op when Phase 4 already closed the handle).
-- **noh5 mode**: changed coefs written to the run YAML (`cfg_proc/run/*.yaml`)
+- **When h5py is unavailable**: changed coefs written to the run YAML (`cfg_proc/run/*.yaml`)
   via `config_yaml.update_coefs_in_run_yaml()`.
 
 **Data persistence (Phase 4)** — CSV/HDF5 sources only:
@@ -1274,7 +1257,7 @@ both CF `float64` seconds (parsing the epoch from the *units* string) and legacy
 `store_processed_incremental`, `_read_nc_group_as_dataset`, `append_to_nc`, and
 `read_nc_log` all decode identically.
 
-#### Float64-seconds precision limit
+#### Float64-seconds precision limit {#float64-seconds-precision-limit}
 
 CF-standard `float64 seconds since 1970-01-01` has **~100 ns** effective
 resolution for current timestamps (~1.76 × 10⁹ s uses 10 integer digits,
@@ -1377,7 +1360,10 @@ instead of hardcoding the string.
 `select_input_db()` checks `.nc` first, falls back to `.h5` — enables
 transparent migration from HDF5 to NC without config changes.
 
-## CSV correction
+## CSV correction {#csv-correction}
+
+For the user-facing description of input file handling, see
+[Input/Output Guide](../user_guide/input_output.md).
 
 `csv_load.correct_raw_files()` → `(corrected_paths, params)`:
 
@@ -1411,13 +1397,16 @@ botched correction stripped trailing columns from data), the header is truncated
 to match the data.  This prevents `ValueError` in `init_input_cols` and
 `ParserError` in pandas `read_csv`.
 
-## Coefficient loading
+## Coefficient loading {#coefficient-loading}
+
+For the coefficient source priority and user-facing description, see
+[I/O Formats Reference §Coefficient source priority](../reference/io_formats.md#coefficient-source-priority).
 
 `incl_calc.coefs.get_coefs_from_cfg()` builds a three-tier fallback chain:
 1. `input.coefs` in YAML (highest priority)
 2. `coefs_path` (HDF5 `calibration.h5` or YAML directory)
 3. Sibling `cfg/coef/yaml_export/` directory — **always** appended as final fallback
-   (silently used in noh5 / `dist/tcm_proc` packaging where the `.h5` file was pruned)
+   (silently used in the noh5 distribution / `dist/tcm_proc` packaging where the `.h5` file was pruned)
 
 The same chain is mirrored in `_xr/coefs.prep_cfg_for_probe()`.
 HDF5 paths are gated on `H5_AVAILABLE` (`tcm._constants`) — when h5py is not
@@ -1433,7 +1422,7 @@ the user overrides; otherwise the load is logged at DEBUG.
 - Dispatches on file suffix: directory → YAML, `.yaml`/`.yml` → direct,
   `.nc` → `load_coefs_from_nc()` (lazy import), else → `h5py`
 - **`P_t` supersedes `P`/`PBattery`/`PTemp`**: for pressure probes (`*p*`) the 2-D
-  polynomial `P_t` replaces the legacy scalar triples. When `P_t` is defined (loaded
+  polynomial `P_t` replaces the scalar triples. When `P_t` is defined (loaded
   or overridden), the missing `P`/`PBattery`/`PTemp` defaults are silently ignored —
   no warning about "not redefined from current run config".
 
@@ -1462,7 +1451,7 @@ Read: `load_coefs_from_nc(nc_path, tbl)` — traverses
 `/{tbl}/coef/` group hierarchy and reconstructs the coefs dict. Both are
 idempotent (overwrite in-place).
 
-Calibration writes coefs via legacy `h5inclinometer_coef.h5copy_coef()`
+Calibration writes coefs via `h5inclinometer_coef.h5copy_coef()`
 which uses the same h5py approach. When the target NC file is already open
 by xarray (e.g. loaded via `load_raw`), call `ds.close()` before writing —
 see [h5py-only file I/O](#h5py-only-file-io).
@@ -1492,6 +1481,9 @@ Without this, numpy broadcasting silently produces `(3, 3)` and the subsequent
 `np.cross` in `rotate()` fails with "incompatible dimensions".
 
 ## File name parsing
+
+For the user-facing naming rules and normalization examples, see
+[I/O Formats Reference §File name parsing](../reference/io_formats.md#file-name-parsing).
 
 `format.parse_name(name)` in `tcm/format.py` extracts probe identity parts.
 Three regex steps (first match wins):

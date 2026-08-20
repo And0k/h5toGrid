@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Documentation</title>
+<link rel="stylesheet" href="/assets/highlight/default.min.css">
+<!-- MathJax config must precede its script; standard delimiters only
+     ($...$ deliberately off — dollar signs are common in plain text).
+     typeset:false — content is fetched dynamically, render typesets per page.
+     loader.paths pins the newcm font package to the vendored copy — without
+     it the loader falls back to the jsdelivr CDN default for the package. -->
+<script>
+window.MathJax = {
+    tex: {
+        inlineMath: [["\\(", "\\)"]],
+        displayMath: [["$$", "$$"], ["\\[", "\\]"]]
+    },
+    loader: { paths: { "mathjax-newcm": "/assets/mathjax/output/fonts/mathjax-newcm" } },
+    startup: { typeset: false }
+};
+</script>
+<script src="/assets/marked/marked.min.js"></script>
+<script src="/assets/highlight/highlight.min.js"></script>
+<script src="/assets/mathjax/tex-chtml.js"></script>
+<link rel="stylesheet" href="/viewer.css">
+</head>
+<body>
+<main id="content" class="markdown-body"><div class="message">Loading…</div></main>
+<section id="source-panel"><pre><code id="source-code"></code></pre></section>
+<section id="image-panel"><img id="image-view" alt=""></section>
+<section id="directory-panel">
+    <h1 id="directory-title">Directory</h1>
+    <ul id="directory-parent"></ul>
+    <ul id="directory-list"></ul>
+    <ul id="file-list"></ul>
+</section>
+<script src="/viewer.js"></script>
+</body>
+</html>

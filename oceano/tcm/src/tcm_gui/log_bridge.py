@@ -14,12 +14,21 @@ formats the message once at emit time and freezes the result back onto the
 record (``rec.msg = text; rec.args = ()``) so the GUI side, which only ever
 calls ``rec.getMessage()`` lazily from the queue, sees the same immutable text
 Hydra already wrote to console/file.
+
+``emit`` degrades gracefully: a record whose message cannot render through
+stdlib ``%``-formatting (e.g. a ``{}``-style string on a plain logger, or a
+stray ``%`` in user content) still reaches the queue with its raw text — a
+logging bug must never crash the GUI callback that produced it (the About
+dialog used to die this way).  ``drain`` additionally renders ``exc_info``
+records' exception line (``format_exception_only``) so worker-side
+``lf.exception(...)`` tracebacks surface their message in the GUI log.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+import traceback
 from queue import Empty, Queue
 
 from tcm.stage_ctx import StageContextFilter
@@ -55,7 +64,13 @@ class QueueHandler(logging.Handler):
         # Render once with live fmt/args, then freeze the result so later
         # drain-time getMessage() returns the same text — not whatever the
         # caller's reused Message object was last mutated to.
-        text = rec.getMessage()
+        try:
+            text = rec.getMessage()
+        except Exception:
+            # fmt can't survive stdlib %-formatting ({} on plain logger, stray
+            # % in user content) — keep the record's raw text and move on:
+            # the GUI log must still receive it and the caller must never crash.
+            text = str(rec.msg)
         rec.msg, rec.args = text, ()
         key = (rec.funcName, text)
         if key == self._last_key:
@@ -97,4 +112,6 @@ def drain(q: Queue, w) -> int:
         w.insert("end", f"{ts}│", tag)
         w.insert("end", f"{rec.funcName}│", "func")
         w.insert("end", f"{rec.getMessage()}\n", tag)
+        if rec.exc_info:  # exception records: show the exception line too
+            w.insert("end", "".join(traceback.format_exception_only(*rec.exc_info[:2])), tag)
     return n

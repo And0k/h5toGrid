@@ -13,6 +13,7 @@ Key integration points tested:
 - ``update_coefs_in_run_yaml`` creates backup + merges coefs into YAML
 - ``input.yaml_path`` regex filters configs (replaces undocumented ``program.configs``)
 """
+
 from __future__ import annotations
 
 import logging
@@ -67,7 +68,9 @@ def gui_project(tmp_path):
 class _FakeSheet:
     """Minimal ``ConfigSheet`` stand-in for ``_write_coefs`` tests."""
 
-    def __init__(self, coefs: dict | None = None, dates: dict | None = None, path: str = "", dirty: bool = True):
+    def __init__(
+        self, coefs: dict | None = None, dates: dict | None = None, path: str = "", dirty: bool = True
+    ):
         self._coefs = coefs or {}
         self._dates = dates or {}
         self._path = path
@@ -100,7 +103,8 @@ class TestGuiScan:
         path_str = str(raw_dir / "*i*.txt")
 
         monkeypatch.setattr(
-            sys, "argv",
+            sys,
+            "argv",
             ["prog", path_str, f'program.return_="{Return.CFG_FROM_ARGS}"'],
         )
         mock_proc = mocker.patch.object(processing, "run_processing")
@@ -117,7 +121,8 @@ class TestGuiScan:
         path_str = str(raw_dir / "*i*.txt")
 
         monkeypatch.setattr(
-            sys, "argv",
+            sys,
+            "argv",
             ["prog", path_str, f'program.return_="{Return.CFG_FROM_ARGS}"'],
         )
         mocker.patch.object(processing, "run_processing")
@@ -322,6 +327,151 @@ class TestGuiRun:
 
         mock_save.assert_not_called()
 
+
+# --------------------------------------------------------------------------- #
+# Step 1c: Scan → tabs — order + initial selection
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.gui
+class TestScanTabs:
+    """Tab order == backend config order; first tab selected after all pages exist."""
+
+    @staticmethod
+    def _seed_configs(gui_project):
+        """Add extra probes/stems so ordering is observable (fixture adds @i_01).
+
+        Each YAML needs its own source CSV — ``process_loading_yaml`` skips
+        configs whose ``input.path`` filename stem ≠ YAML stem.  Names must
+        parse as probe identities (contain ``i``/``w``, see tcm.format).
+        """
+        tmp_path, raw_dir, csv_file, run_dir = gui_project
+        head = "yyyy,mm,dd,HH,MM,SS,Ax,Ay,Az,Mx,My,Mz,Battery,Temp\n"
+        rows = head + "2024,06,13,12,00,00,100.0,200.0,300.0,400.0,500.0,600.0,12.5,25.0\n" * 2
+        for stem in ("i_02", "w_01", "i_01b"):
+            csv = raw_dir / f"@{stem}.txt"
+            csv.write_text(rows, encoding="utf-8")
+            (run_dir / f"@{stem}.yaml").write_text(
+                f"# @package _global_\ninput:\n  path: '{csv}'\nout:\n  dt_bins: [0]\n",
+                encoding="utf-8",
+            )
+
+    def test_scan_order_matches_backend_cfgs(self, gui_project, monkeypatch, mocker):
+        """Tabs follow ``collected`` order == flattened ``get_existed_cfgs`` order."""
+        tmp_path, raw_dir, csv_file, run_dir = gui_project
+        self._seed_configs(gui_project)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys, "argv", ["prog"])
+        mocker.patch.object(processing, "run_processing")
+        result = cli.call_in_raw_dir(
+            processing.run,
+            overrides={
+                "input": {"path": str(raw_dir)},
+                "program": {"return_": Return.CFG_FROM_ARGS},
+            },
+            exit_on_error=False,
+        )
+        collected_stems = [stem for stem, _, _ in result[3]]
+        backend_stems = [s for ss in config_yaml.get_existed_cfgs(run_dir).values() for s in ss]
+        # _on_scan_ok builds tabs in collected order; the run pipeline filters
+        # the same cfgs dict — display order == processing order (top→bottom).
+        assert collected_stems == backend_stems
+
+    def test_run_order_matches_scan_order(self, gui_project, monkeypatch, mocker):
+        """Run processes stems in the same order tabs were built."""
+        tmp_path, raw_dir, csv_file, run_dir = gui_project
+        self._seed_configs(gui_project)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys, "argv", ["prog"])
+
+        mocker.patch.object(processing, "run_processing")  # scan early-exit
+        scan = cli.call_in_raw_dir(
+            processing.run,
+            overrides={"input": {"path": str(raw_dir)}, "program": {"return_": Return.CFG_FROM_ARGS}},
+            exit_on_error=False,
+        )
+        collected_stems = [stem for stem, _, _ in scan[3]]
+        pcid_of = {s: pcid for pcid, ss in config_yaml.get_existed_cfgs(run_dir).items() for s in ss}
+
+        mocker.patch.object(processing, "run_processing", return_value=None)
+        run = cli.call_in_raw_dir(
+            processing.run,
+            overrides={"input": {"path": str(run_dir / f"({'|'.join(collected_stems)}).yaml")}},
+            exit_on_error=False,
+        )
+        processed, _, _, _ = run
+        assert processed == [pcid_of[s] for s in collected_stems]
+
+    def test_scan_ok_selects_first_tab_after_rebuild(self, monkeypatch):
+        """``_on_scan_ok`` selects the FIRST tab only after ALL pages exist.
+
+        Regression: the first page used to be raised before the later pages
+        were gridded — Tk stacks later-created frames above it, so the visible
+        sheet was the LAST tab while the rail highlighted the first.
+        """
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from omegaconf import OmegaConf
+
+        from tcm_gui.app import App
+
+        app = App.__new__(App)
+        app._tab_of = {}
+        app._pages = {}
+        app._yaml_paths = {}
+        app._current = None
+        app._rail = MagicMock()
+        app._path_field = MagicMock()
+        app._cfg_detail = ""
+        app._initial_scan = False
+        app.rt = SimpleNamespace(progress_stage=MagicMock())
+        app._hide_tip = MagicMock()
+        app._set_status = MagicMock()
+        app._translate_scan_stage = lambda _s: ""
+        app._update_run_btn_state = MagicMock()
+        app._overall_lbl = MagicMock()
+
+        added: list[str] = []
+
+        def _fake_add_page(stem, cfg, yaml_path=None):
+            added.append(stem)
+            app._tab_of[stem] = object()
+
+        app._add_page = _fake_add_page
+        events: list[tuple] = []
+
+        def _fake_select(stem):
+            events.append((stem, tuple(app._tab_of)))
+
+        app._select_tab = _fake_select
+
+        cfg = OmegaConf.create({"input": {"path": "x"}, "program": {"return_": str(Return.END)}})
+        result = (["p"], [], None, [(s, f"{s}.yaml", cfg) for s in ("b", "a", "c")])
+        app._on_scan_ok(result)
+
+        assert added == ["b", "a", "c"]  # tabs follow collected order
+        assert events == [("b", ("b", "a", "c"))]  # ONE select, first tab, after all pages
+        app._path_field.set_error.assert_called_once_with(False)
+
+    def test_scan_error_marks_path_field_red(self, monkeypatch):
+        """Failed scan → red fg on the search path field."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from tcm_gui.app import App
+
+        app = App.__new__(App)
+        app._path_field = MagicMock()
+        app._surface_error = MagicMock()
+        app._cfg_detail = ""
+        app.rt = SimpleNamespace(progress_overall=MagicMock())
+        app._overall_lbl = MagicMock()
+        app._default_stage_text = lambda: ""
+        app._on_scan_error(ValueError("boom"))
+        app._path_field.set_error.assert_called_once_with(True)
+        app._surface_error.assert_called_once()
+
     def test_run_exit_on_error_false(self, gui_project, monkeypatch, mocker):
         """``exit_on_error=False`` on run propagates exceptions."""
         tmp_path, raw_dir, csv_file, run_dir = gui_project
@@ -434,9 +584,7 @@ class TestGuiSysArgvIsolation:
         )
         # sys.argv should have script name + --config-dir, but NOT the data path
         assert len(sys.argv) <= 3, f"sys.argv accumulated junk: {sys.argv}"
-        assert all("@" not in a for a in sys.argv[1:]), (
-            f"Data path leaked into sys.argv: {sys.argv}"
-        )
+        assert all("@" not in a for a in sys.argv[1:]), f"Data path leaked into sys.argv: {sys.argv}"
 
     def test_no_argv_accumulation_on_repeated_calls(self, gui_project, monkeypatch, mocker):
         """Worker._setup resets sys.argv between calls — no --config-dir accumulation."""
@@ -722,9 +870,7 @@ class TestGuiWriteCoefsIdempotent:
         yaml_path = run_dir / "@i_01.yaml"
         monkeypatch.chdir(tmp_path)
 
-        config_yaml.update_coefs_in_run_yaml(
-            yaml_path, {"Rz": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}
-        )
+        config_yaml.update_coefs_in_run_yaml(yaml_path, {"Rz": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]})
         first_line = yaml_path.read_text(encoding="utf-8").split("\n")[0]
         assert first_line.strip() == "# @package _global_"
 
@@ -751,12 +897,14 @@ class TestGuiCliArgs:
         """Path + key=value → path extracted, overrides stay in argv."""
         from tcm.cli import parse_data_path
 
-        path_in, remaining = parse_data_path([
-            "prog",
-            "D:/data/_raw",
-            "input.time_ranges=['2024-01-01','2024-01-02']",
-            "filter.max.g_minus_1=2.0",
-        ])
+        path_in, remaining = parse_data_path(
+            [
+                "prog",
+                "D:/data/_raw",
+                "input.time_ranges=['2024-01-01','2024-01-02']",
+                "filter.max.g_minus_1=2.0",
+            ]
+        )
         assert str(path_in) == "D:\\data\\_raw"
         # remaining still has the override args
         assert "input.time_ranges=['2024-01-01','2024-01-02']" in remaining
@@ -766,11 +914,13 @@ class TestGuiCliArgs:
         """``input.ids=[i90, i67]`` stays in argv for Hydra."""
         from tcm.cli import parse_data_path
 
-        path_in, remaining = parse_data_path([
-            "prog",
-            "B:/Cruises/_raw",
-            "input.ids=[i90, i67]",
-        ])
+        path_in, remaining = parse_data_path(
+            [
+                "prog",
+                "B:/Cruises/_raw",
+                "input.ids=[i90, i67]",
+            ]
+        )
         assert "input.ids=[i90, i67]" in remaining
 
     def test_hydra_args_propagate_to_processing(self, gui_project, monkeypatch, mocker):
@@ -781,6 +931,7 @@ class TestGuiCliArgs:
         monkeypatch.setattr(sys, "argv", ["__main__.py", str(csv_file), "filter.max.g_minus_1=5.0"])
 
         from hydra.core.global_hydra import GlobalHydra
+
         GlobalHydra.instance().clear()
 
         mocker.patch.object(processing, "run_processing")
@@ -841,16 +992,35 @@ class TestFakeSheetDirtyTracking:
         ("coefs", "dates", "path", "dirty", "expect_write"),
         [
             pytest.param(
-                {"Ag": [[0.001]]}, {}, "", True, True,
+                {"Ag": [[0.001]]},
+                {},
+                "",
+                True,
+                True,
                 id="dirty_with_coefs",
             ),
-            pytest.param({}, {}, "", False, False,
+            pytest.param(
+                {},
+                {},
+                "",
+                False,
+                False,
                 id="clean_no_write",
             ),
-            pytest.param({}, {"Ag": "2024-01-01"}, "", True, True,
+            pytest.param(
+                {},
+                {"Ag": "2024-01-01"},
+                "",
+                True,
+                True,
                 id="dirty_with_dates_only",
             ),
-            pytest.param({}, {}, "/some/path", True, True,
+            pytest.param(
+                {},
+                {},
+                "/some/path",
+                True,
+                True,
                 id="dirty_with_path_only",
             ),
         ],
@@ -934,7 +1104,7 @@ class TestQueueHandlerDedup:
 # deferred drain-time getMessage() returns the message that was actually
 # logged at emit time, not whatever the shared Message was last mutated to.
 # Without this freeze, every record from a given logger would render as the
-# *last* message that logger produced (see how_gui_works.md → log_bridge).
+# *last* message that logger produced (see docs/project_developer_guide/GUI.md → log_bridge).
 # --------------------------------------------------------------------------- #
 
 
@@ -1040,6 +1210,72 @@ class TestQueueHandlerFreezeMutableMessage:
 
 
 @pytest.mark.gui
+class TestQueueHandlerFormatFailures:
+    """A record that cannot survive stdlib %-formatting must still reach the GUI log.
+
+    Regression: ``theme.py`` logged with ``{}``-style format strings on a plain
+    stdlib logger, so ``rec.getMessage()`` raised TypeError inside
+    ``QueueHandler.emit`` while the About dialog was being built — the dialog
+    never opened and the line never reached ``App._log`` (console-only).
+    """
+
+    @staticmethod
+    def _make_record(func: str, msg, args=(), level=logging.INFO, exc_info=None) -> logging.LogRecord:
+        return logging.LogRecord("test", level, "", 0, msg, args, exc_info, func)
+
+    def test_brace_style_message_still_queued(self):
+        """``{}`` fmt + args on a plain logger → emit never raises, raw text queued."""
+        from tcm_gui.log_bridge import QueueHandler
+        from tcm_gui.runtime import PauseGate
+
+        q: Queue = Queue()
+        h = QueueHandler(q, PauseGate())
+        raw = "DwmSetWindowAttribute(HWND={:#x}) → HRESULT={:#010x}"
+        rec = self._make_record("_opt_into_dark_titlebar", raw, (5705430, 0))
+        h.emit(rec)  # must not raise
+        assert q.qsize() == 1, f"record lost on format failure: {q.qsize()}"
+        assert q.get().getMessage() == raw, "raw text must survive a format failure"
+
+    def test_mismatched_args_message_still_queued(self):
+        """msg without % conversions + non-empty args → raw text still queued.
+
+        The exact failure from the traceback: 'not all arguments converted
+        during string formatting'.  The degraded raw text must reach the queue.
+        """
+        from tcm_gui.log_bridge import QueueHandler
+        from tcm_gui.runtime import PauseGate
+
+        q: Queue = Queue()
+        h = QueueHandler(q, PauseGate())
+        raw = "Scan: FileNotFoundError: No input files found matching B:\\cruises"
+        rec = self._make_record("scan", raw, (1,))
+        h.emit(rec)
+        assert q.get().getMessage() == raw
+
+    def test_drain_renders_exception_line(self):
+        """Records with exc_info show their exception line in drain (GUI log)."""
+        from tcm_gui.log_bridge import QueueHandler, drain
+        from tcm_gui.runtime import PauseGate
+
+        q: Queue = Queue()
+        h = QueueHandler(q, PauseGate())
+        exc = FileNotFoundError("No input files found matching B:\\cruises\\x.txt")
+        rec = self._make_record("_scan", "scan failed", exc_info=(FileNotFoundError, exc, None))
+        h.emit(rec)
+
+        class _FakeText:
+            def __init__(self) -> None:
+                self.parts: list[str] = []
+
+            def insert(self, _end: str, text: str, _tag: str | None = None) -> None:
+                self.parts.append(text)
+
+        w = _FakeText()
+        assert drain(q, w) == 1
+        assert "FileNotFoundError: No input files found matching B:\\cruises\\x.txt" in "".join(w.parts)
+
+
+@pytest.mark.gui
 class TestQueueHandlerPersistsAcrossTasks:
     """GUI-thread log calls reach the queue via the single persistent QueueHandler.
 
@@ -1082,9 +1318,7 @@ class TestQueueHandlerPersistsAcrossTasks:
         assert "coef table not found for incl_67" in texts, (
             f"GUI-thread error log missing from queue; got {texts!r}"
         )
-        assert "user edited coefs path" in texts, (
-            f"GUI-thread warning log missing from queue; got {texts!r}"
-        )
+        assert "user edited coefs path" in texts, f"GUI-thread warning log missing from queue; got {texts!r}"
 
     def test_reset_dedup_allows_first_record_of_new_task(self):
         """reset_dedup() clears _last_key so the new task's first record is not swallowed.
@@ -1125,9 +1359,7 @@ class TestQueueHandlerPersistsAcrossTasks:
         )
         # With reset: the second record is enqueued → 2 records total.
         n_with_reset = _emit_boundary(Queue(), PauseGate(), reset=True)
-        assert n_with_reset == 2, (
-            f"after reset_dedup the boundary record must enqueue; got {n_with_reset}"
-        )
+        assert n_with_reset == 2, f"after reset_dedup the boundary record must enqueue; got {n_with_reset}"
 
 
 # --------------------------------------------------------------------------- #
@@ -1186,6 +1418,7 @@ class TestRtfClipboard:
     def test_esc_basic(self, input_s, expected):
         """_esc handles ASCII, braces, backslash, newline."""
         from tcm_gui._rtf_clipboard import _esc
+
         assert _esc(input_s) == expected
 
     def test_esc_unicode_above_127(self):
@@ -1243,14 +1476,44 @@ class TestRtfClipboard:
         # Brace balancing — outer \rtf1 group must close exactly once.
         assert rtf.count("{") == rtf.count("}")
 
+    def test_build_keeps_link_text(self, _tk_root):
+        """MarkdownLabel ``[text](url)`` spans → RTF HYPERLINK field + HTML anchor.
+
+        Pure builder test (no OS clipboard write): colors alone are not enough —
+        Word must keep the link clickable, so link spans resolve their URL via
+        ``MarkdownLabel.link_url_at`` (:func:`_rtf_clipboard._segments`).
+        """
+        if _tk_root is None:
+            pytest.skip("Tk unavailable — Tcl interpreter already destroyed")
+        import re
+
+        from tcm_gui._rtf_clipboard import build_html, build_rtf
+        from tcm_gui.md_label import MarkdownLabel
+
+        md = MarkdownLabel(_tk_root)
+        try:
+            md.set_text("See [docs](https://example.com/docs?a=1&b=2) for details")
+            rtf = build_rtf(md)
+            # URL escaped for RTF (& is literal there), display text inside \fldrslt
+            assert 'HYPERLINK "https://example.com/docs?a=1&b=2"' in rtf
+            assert re.search(r"\\fldrslt\{[^}]*docs[^}]*\}", rtf), "display text lost from field result"
+            assert "See " in rtf and " for details" in rtf, "non-link text lost"
+            assert rtf.count("{") == rtf.count("}"), "unbalanced braces → RTF parse fails"
+
+            html = build_html(md).decode("utf-8")
+            assert '<a href="https://example.com/docs?a=1&amp;b=2">' in html
+            assert "docs</span></a>" in html, "anchor must wrap the colored display text"
+            assert "See " in html and " for details" in html
+        finally:
+            md.destroy()
+
+    @pytest.mark.clipboard  # Tk clipboard_append lands on the OS clipboard too
     def test_copy_rich_fallback_without_pywin32(self, _tk_text, monkeypatch):
         """When pywin32 is missing, fall back to plain-text + clipboard_append."""
         from tcm_gui._rtf_clipboard import copy_rich
 
         _tk_text.insert("1.0", "hello")
-        monkeypatch.setitem(
-            __import__("sys").modules, "win32clipboard", None
-        )
+        monkeypatch.setitem(__import__("sys").modules, "win32clipboard", None)
         # Just verify it runs without crashing (fallback to plain text)
         copy_rich(_tk_text)
         # After copy_rich, clipboard contents should be the plain text
@@ -1263,7 +1526,12 @@ class TestRtfClipboard:
     # so a bug in the win32 path (a real one: see note in ``copy_rich``) went
     # uncaught.  Configure the Text as ``App._log`` would: per-level tag colors
     # from ``theme.TAG_COLORS`` plus the ``func`` tag, and verify RTF + plain text
-    # both land on the OS clipboard and Word sees the color runs.  ───────────────
+    # both land on the OS clipboard and Word sees the color runs.
+    #
+    # ``@pytest.mark.clipboard`` (all tests below): every one WRITES the real OS
+    # clipboard → clipboard-manager history (CopyQ / Win+V) fills with test junk
+    # on each run.  Deselected by default (``addopts -m "not clipboard"`` in
+    # pytest.ini); run explicitly with ``pytest -m clipboard``.  ────────────────
 
     @pytest.fixture()
     def _log_text(self, _tk_text):
@@ -1340,6 +1608,7 @@ class TestRtfClipboard:
                 time.sleep(0.05)
         return None
 
+    @pytest.mark.clipboard
     def test_copy_rich_places_rtf_on_os_clipboard(self, _log_text):
         """``copy_rich`` with pywin32 present → ``CF_RTF`` & ``CF_UNICODETEXT`` on OS clipboard.
 
@@ -1389,6 +1658,7 @@ class TestRtfClipboard:
         if isinstance(rtf_raw, bytes):
             assert "\\u9474?" in rtf, "│ (U+2502 = 9474) must be escaped as \\u9474?"
 
+    @pytest.mark.clipboard
     def test_copy_rich_real_app_log_config(self, _tk_root):
         """``copy_rich`` on a ``state='disabled'`` ``App._log`` stand-in.
 
@@ -1461,6 +1731,7 @@ class TestRtfClipboard:
         finally:
             log.destroy()
 
+    @pytest.mark.clipboard
     def test_copy_rich_fires_when_log_disabled_no_focus(self, _tk_root):
         """Root-scoped ``<<Copy>>`` fires ``copy_rich`` even when disabled
         ``_log`` cannot take keyboard focus — the user's reported bug.
@@ -1552,6 +1823,7 @@ class TestRtfClipboard:
             ent.destroy()
             log.destroy()
 
+    @pytest.mark.clipboard  # status-label branch calls copy_rich → OS clipboard
     def test_copy_rich_falls_through_when_log_no_selection(self, _tk_root):
         """``_on_copy_rich`` returns ``None`` (lets default ``<<Copy>>`` run)
         when ``_log`` has no mouse selection — so the focused ttk.Entry keeps
@@ -1568,11 +1840,25 @@ class TestRtfClipboard:
         from tcm_gui.app import App
 
         log = tk.Text(_tk_root, state="disabled")
+        status = tk.Text(_tk_root)
         log.pack()
         try:
-            stub = type("_AppStub", (), {"_log": log, "_on_copy_rich": App._on_copy_rich})()
-            assert log.tag_ranges("sel") == (), "test premise: log has no selection"
+            stub = type(
+                "_AppStub",
+                (),
+                {"_log": log, "_status_lbl": status, "_on_copy_rich": App._on_copy_rich},
+            )()
+            assert log.tag_ranges("sel") == () and status.tag_ranges("sel") == (), (
+                "test premise: no selection anywhere"
+            )
             ret = stub._on_copy_rich(None)
-            assert ret is None, f"no log sel → must return None (fall through); got {ret!r}"
+            assert ret is None, f"no sel → must return None (fall through); got {ret!r}"
+
+            # Selection on the status MarkdownLabel (no focus needed) → rich copy.
+            status.insert("1.0", "status message text")
+            status.tag_add("sel", "1.0", "end-1c")
+            ret = stub._on_copy_rich(None)
+            assert ret == "break", f"status sel → must copy rich + break; got {ret!r}"
         finally:
             log.destroy()
+            status.destroy()

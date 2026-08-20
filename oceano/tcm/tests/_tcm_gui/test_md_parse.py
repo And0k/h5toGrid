@@ -10,6 +10,7 @@ Cover ``split_table_row``, ``parse_inline``, and ``parse_markdown``:
 from __future__ import annotations
 
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -86,9 +87,33 @@ class TestParseInline:
         assert result == (("code", "code"),), f"inline code: {result!r}"
 
     def test_link_text_only(self):
-        """Links render as plain text — no click handling."""
+        """Links keep their text; the span tag is the target URL."""
         result = parse_inline("[click here](https://example.com)")
-        assert result == (("click here", "plain"),), f"link: {result!r}"
+        assert result == (("click here", "https://example.com"),), f"link: {result!r}"
+
+    def test_link_with_anchor(self):
+        """A relative doc link with a heading anchor keeps text + target."""
+        result = parse_inline("([подробнее](io_formats.md#directory-layout))")
+        assert result == (
+            ("(", "plain"),
+            ("подробнее", "io_formats.md#directory-layout"),
+            (")", "plain"),
+        ), f"anchored link: {result!r}"
+
+    def test_link_adjacent(self):
+        """Adjacent links with different targets stay separate spans."""
+        result = parse_inline("[a](x)[b](y)")
+        assert result == (("a", "x"), ("b", "y")), f"adjacent links: {result!r}"
+
+    def test_link_same_target_merged(self):
+        """Adjacent links with the same target merge like any same-tag spans."""
+        result = parse_inline("[a](x)[b](x)")
+        assert result == (("ab", "x"),), f"merged link: {result!r}"
+
+    def test_link_empty_url(self):
+        """Brackets without a target keep the text as a (dead) link span."""
+        result = parse_inline("[x]()")
+        assert result == (("x", ""),), f"empty url: {result!r}"
 
     def test_link_empty_text(self):
         result = parse_inline("[](https://example.com)")
@@ -381,6 +406,42 @@ class TestMarkdownLabelRendering:
             f"code tag missing at 'code' span: {lbl.tag_names(f'1.{pos}')!r}"
         )
 
+    def test_link_tag_applied(self):
+        """``[text](url)`` renders text only, tagged ``link``, URL recorded."""
+        lbl = self._make_label()
+        lbl.set_text("[click here](io_formats.md#directory-layout)")
+        content = lbl.get("1.0", "end-1c")
+        assert content == "click here", f"url must not render: {content!r}"
+        pos = content.index("click here")
+        assert "link" in lbl.tag_names(f"1.{pos}"), f"link tag missing: {lbl.tag_names(f'1.{pos}')!r}"
+        assert len(lbl._links) == 1, f"expected 1 recorded link: {lbl._links!r}"
+        start, end, url = lbl._links[0]
+        assert url == "io_formats.md#directory-layout", f"recorded url: {url!r}"
+        assert lbl.get(start, end) == "click here", f"range text: {lbl.get(start, end)!r}"
+
+    def test_link_at_returns_url(self):
+        """``link_at`` resolves the URL under widget coordinates."""
+        lbl = self._make_label()
+        lbl.set_text("[click here](https://example.com)")
+        lbl.update_idletasks()
+        bb = lbl.bbox("1.0")
+        if bb is None:
+            pytest.skip("no geometry in headless env")
+        assert lbl.link_at(bb[0] + 2, bb[1] + bb[3] // 2) == "https://example.com"
+
+    def test_links_reset_on_rerender(self):
+        lbl = self._make_label()
+        lbl.set_text("[a](x)")
+        lbl.set_text("plain text")
+        assert lbl._links == [], f"stale links after rerender: {lbl._links!r}"
+
+    def test_raw_never_links(self):
+        """``raw=True`` (untrusted content) must never produce link spans."""
+        lbl = self._make_label()
+        lbl.set_text("[a](x)", raw=True)
+        assert "link" not in lbl.tag_names("1.0"), f"raw leaked link tag: {lbl.tag_names('1.0')!r}"
+        assert lbl._links == []
+
     def test_color_tag_rendered(self):
         """{#name}text{/} applies color map foreground."""
         colors = {"error": "#CC0000", "debug": "#808080"}
@@ -491,6 +552,81 @@ class TestMarkdownLabelRendering:
         if lbl.winfo_width() <= 10:
             pytest.skip("no real widget width in headless env")
         assert h > 1, f"multi-line height: {h}"
+
+
+class TestLinkEvents:
+    """Coordinate/event link behavior — needs a real mapped root.
+
+    ``link_at``/click/cursor resolve widget coordinates via ``bbox``, which
+    is degenerate on a withdrawn root — this class maps its own root.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _mapped_root(self):
+        import tkinter as tk
+
+        try:
+            root = tk.Tk()
+        except tk.TclError:
+            pytest.skip("Tk not available")
+            return
+        root.geometry("800x200")
+        root.update_idletasks()
+        yield root
+        root.destroy()
+
+    def _make_label(self, root, **kw):
+        from tcm_gui.md_label import MarkdownLabel
+
+        w = MarkdownLabel(root, font=("TkDefaultFont", 9), width=80, **kw)
+        w.pack(fill="x")
+        return w
+
+    @staticmethod
+    def _link_coords(lbl):
+        """Pointer coords inside the first link text char, or skip headless."""
+        lbl.update_idletasks()
+        bb = lbl.bbox("1.0")
+        if bb is None:
+            pytest.skip("no geometry in headless env")
+        return bb[0] + 2, bb[1] + bb[3] // 2
+
+    def test_link_at_returns_url(self, _mapped_root):
+        lbl = self._make_label(_mapped_root)
+        lbl.set_text("[click here](https://example.com)")
+        x, y = self._link_coords(lbl)
+        assert lbl.link_at(x, y) == "https://example.com"
+        last = lbl.index("end-1c")
+        lbl.update_idletasks()
+        bb = lbl.bbox(last)
+        if bb is not None:  # past the text end → outside every link range
+            assert lbl.link_at(bb[0] + bb[2] + 4, bb[1] + bb[3] // 2) is None
+
+    def test_link_on_link_callback(self, _mapped_root):
+        """``_open_link`` (bound to the tag's ``<Button-1>``) forwards ``(url, base)``.
+
+        Text tag button bindings do not fire from ``event_generate`` (Tk
+        processes real input-manager events only), so the handler is invoked
+        directly with a synthetic event — the same call the tag binding makes.
+        """
+        from types import SimpleNamespace
+
+        calls = []
+        lbl = self._make_label(_mapped_root, on_link=lambda url, base: calls.append((url, base)))
+        lbl.set_text("[a](b.md#c)", base="D:/docs/reference")
+        x, y = self._link_coords(lbl)
+        lbl._open_link(SimpleNamespace(x=x, y=y))
+        lbl.update()
+        assert calls == [("b.md#c", Path("D:/docs/reference"))], f"on_link calls: {calls!r}"
+
+    def test_link_hover_cursor(self, _mapped_root):
+        """Hovering a link switches the widget cursor to ``hand2``."""
+        lbl = self._make_label(_mapped_root)
+        lbl.set_text("[a](b.md)")
+        x, y = self._link_coords(lbl)
+        lbl.event_generate("<Motion>", x=x, y=y)
+        lbl.update()
+        assert str(lbl.cget("cursor")) == "hand2", f"cursor over link: {lbl.cget('cursor')!r}"
 
 
 class TestHeightSufficient:

@@ -60,11 +60,19 @@ print(
 # ---------------------------------------------------------------------------
 
 _DOC_EXCLUDE = {"todo.md", "potential_functionality_and_improvement.md"}
+# Generated third-party browser runtime — resolves via resource_root()/_build
+# at runtime (tcm_gui.browser.server._VEND_DIR); first-party web/ ships inside
+# src/tcm_gui and arrives with the GUI_SRC data below.
 added_files = [
     (str(PROJECT_ROOT / TCM_SRC), TCM_REL),
     (str(PROJECT_ROOT / GUI_SRC), GUI_REL),
     (str(SPEC_DIR / "version_meta.json"), "."),
+    (str(PROJECT_ROOT / "_build" / "browser-runtime"), "_build/browser-runtime"),
     *collect_docs(_DOC_EXCLUDE),
+    # Entry-point readmes → resource_root()/readme*.md ("local" docs link in the
+    # About header opens readme.md; served like any other markdown document).
+    (str(PROJECT_ROOT / "readme.md"), "."),
+    (str(PROJECT_ROOT / "readme_Ru.md"), "."),
     *(collect_data_files("hydra", subdir="conf") + collect_data_files("hydra_plugins.hydra_colorlog")),
     *collect_data_files("pygeomag"),
     *[
@@ -107,6 +115,10 @@ a = Analysis(
         "pandas._libs",
         "xarray",
         "tcm._constants",
+        # tcm_gui.* ships as datas (excluded from pure) → its imports are invisible
+        # to Analysis; the documentation browser needs these stdlib modules
+        "http.server",  # tcm_gui/browser/server.py
+        "webbrowser",  # tcm_gui/browser/browser.py (also NOT in excludes)
         "tksheet",
     ]
     + collect_submodules("hydra")
@@ -237,7 +249,9 @@ a = Analysis(
         "pkg_resources",
         "wheel",
         "pip",
-        "webbrowser",
+        # note: "webbrowser" must stay AVAILABLE (not excluded) — the
+        # documentation browser (tcm_gui/browser) imports it to open the
+        # system default browser; it was once excluded here by mistake.
         "tornado",
         "msgpack",
         "lz4",

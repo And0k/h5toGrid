@@ -279,7 +279,10 @@ class BrowseOverlay:
         if self._on_click is not None:
             self._on_click()
         cur = (self._read() if self._read is not None else "") or ""
-        start = os.path.dirname(cur.split(",")[0].strip()) or None
+        first = cur.split(",")[0].strip()
+        # Existing directory value (e.g. a previous askdirectory pick) → open AT it,
+        # not one level up; file / glob / absent values → parent dir as before.
+        start = first if first and os.path.isdir(first) else (os.path.dirname(first) or None)
         try:
             if self._files_only or _is_shift_pressed():
                 paths = filedialog.askopenfilenames(

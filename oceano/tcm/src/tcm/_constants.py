@@ -68,7 +68,7 @@ def resource_root() -> Path:
     return PROJECT_ROOT.parent.parent
 
 
-DOC_DIR = resource_root() / "docs" / "tcm_cli"
+DOC_DIR = resource_root() / "docs"
 
 
 @cache

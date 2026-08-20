@@ -1,0 +1,15 @@
+{
+  "name": "tcm-browser",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Browser runtime dependencies for the tcm local documentation viewer (synced into _build/browser-vendor by tools/browser_vendor.mjs)",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@mathjax/mathjax-newcm-font": "4.1.3",
+    "highlight.js": "11.11.1",
+    "marked": "18.0.10",
+    "mathjax": "4.1.3"
+  }
+}

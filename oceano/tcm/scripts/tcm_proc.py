@@ -17,9 +17,6 @@ Usage::
 
     # Config-generation-only (scan) — writes processing-cfg_from_args.log
     python scripts/tcm_proc.py "_raw/*i*.txt" 'program.return_=<cfg_from_args>'
-
-For the legacy dask-dataframe pipeline, use ``tcm._dask_legacy.scripts.tcm_proc``.
-Full user guide: :file:`docs/tcm_cli/README.md`.
 """
 from tcm import cli, processing
 

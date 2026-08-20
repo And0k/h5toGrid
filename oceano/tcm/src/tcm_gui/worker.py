@@ -106,7 +106,7 @@ class Worker:
             # _print_usage_error (and similar CLI paths) call sys.exit(1);
             # SystemExit is BaseException, not Exception — catch explicitly
             # so the error reaches the GUI result_queue instead of dying silently.
-            logging.getLogger(__name__).error("scan exited: code {}", exc.code)
+            logging.getLogger(__name__).error("scan exited: code %s", exc.code)
             self.rt.result_queue.put(("scan_error", exc))
         except Exception as exc:
             logging.getLogger(__name__).exception(_S.get("error.log.scan", "scan failed"))
@@ -136,7 +136,7 @@ class Worker:
             )
             self.rt.result_queue.put(("run_ok", res))
         except SystemExit as exc:
-            logging.getLogger(__name__).error("run exited: code {}", exc.code)
+            logging.getLogger(__name__).error("run exited: code %s", exc.code)
             self.rt.result_queue.put(("run_error", exc))
         except Exception as exc:
             logging.getLogger(__name__).exception(_S.get("error.log.run", "run failed"))

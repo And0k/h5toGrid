@@ -1,7 +1,7 @@
 """Resolve Hydra config paths to help text auto-extracted from ``config_reference.md``.
 
 Single source of truth for non-chrome (config-cell) tooltips: the existing
-field tables in ``docs/tcm_cli/config_reference.md``.
+field tables in ``docs/reference/config_reference.md``.
 
 Table-driven sections
 ---------------------
@@ -12,10 +12,10 @@ For each field section heading of the form:
 the parser scans markdown table rows whose first cell is a backticked field
 identifier:
 
-    | `field_name` | ... | Purpose / Physical meaning |
+    | `field_name` = default | ... | Purpose / Physical meaning |
 
 and emits one :class:`HelpEntry` keyed by ``{section}.{field}``.  The last
-cell becomes :attr:`HelpEntry.short`.
+cell (the description column) becomes :attr:`HelpEntry.short`.
 
 Mode-tagged detail sections
 ---------------------------
@@ -35,6 +35,15 @@ Inside a mode section, ``####`` headings define named detail blocks:
 
 Lines before the first ``####`` are stored as the mode's short body.
 Named ``####`` blocks are stored in :attr:`ModeBody.details`.
+
+Field-level detail blocks
+-------------------------
+``####`` headings may also appear directly under a ``## ``section``` heading
+(without an intervening ``###`` mode tag).  These are stored under the
+sentinel mode key ``_`` in :attr:`HelpEntry.body`, making them reachable
+via :func:`help_for_path` without specifying a mode.  This is the primary
+mechanism for config-cell dwell tooltips on fields that do not have
+mode-dependent meanings.
 
 
 Arrays are resolved at the field level: ``Ag[0]`` / ``Ag[1][2]`` are stripped
@@ -82,12 +91,33 @@ _RE_ANY_HEADING = re.compile(r"^#{1,6}\s")
 # Code-fence toggle.  ``#`` inside a fence is not a heading.
 _RE_FENCE = re.compile(r"^\s*(```|~~~)")
 
-# Table row whose first cell is a bare backtick-quoted identifier:
-# ``| `field_name` | … | description |``.
-_RE_FIELD_ROW = re.compile(r"^\|\s*`(?P<field>[A-Za-z_]\w*)`\s*\|")
+# Table row whose first cell is a backtick-quoted identifier optionally followed
+# by `` = default`` — the joined ``Field = Default`` column:
+# ``| `field_name` = default | … | description |``.
+_RE_FIELD_ROW = re.compile(r"^\|\s*`(?P<field>[A-Za-z_]\w*)`[^|]*\|")
 
 # Array indices at lookup time: ``Ag[0]`` / ``Ag[1][2]`` → ``Ag``.
 _RE_ARR_INDEX = re.compile(r"\[\d+\]")
+
+# Sentinel mode key for field-level ``#### Detail`` blocks (no ``###`` mode tag).
+_FIELD_DETAIL = "_"
+
+# ``{#explicit-id}`` suffix on a heading (doc browser honors it as the anchor).
+_RE_ANCHOR_ID = re.compile(r"\{#([^{}]+)\}\s*$")
+# GitHub-style slug drops: everything but word chars (unicode letters/digits/_),
+# whitespace and hyphens — mirrors ``browser/web/viewer.js::slugify``.
+_RE_SLUG_DROP = re.compile(r"[^\w\s-]", re.UNICODE)
+
+
+def _slug(text: str) -> str:
+    """Heading anchor — explicit ``{#id}`` wins, else the GitHub-style slug.
+
+    Mirrors ``browser/web/viewer.js::slugify``: lowercase, drop punctuation,
+    each space → one dash (so ``a — b`` → ``a--b``).
+    """
+    if m := _RE_ANCHOR_ID.search(text):
+        return m.group(1)
+    return _RE_SLUG_DROP.sub("", text.lower()).strip().replace(" ", "-")
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,11 +154,14 @@ class HelpEntry:
         short: Short tooltip extracted from the last table cell.
         body: Full mode mapping when no mode is selected; a reduced string
             when :func:`help_for_path` is called with ``mode`` or ``detail``.
+        anchor: Heading anchor in the source doc (browser F1-jump target);
+            field rows inherit their section heading's anchor.
     """
 
     path: str
     short: str
     body: HelpBody | str = field(default_factory=dict)
+    anchor: str = ""
 
 
 @dataclass(slots=True)
@@ -146,6 +179,12 @@ class _State:
     detail_tag: str | None = None
     detail_lines: list[str] = field(default_factory=list)
     details: dict[str, str] = field(default_factory=dict)
+
+    # Field-level detail blocks (#### outside any ### mode).
+    # Keyed by the full dotted field path (e.g. "input.time_ranges").
+    field_details: dict[str, dict[str, str]] = field(default_factory=dict)
+    last_field_path: str | None = None
+    section_anchor: str = ""
 
     @property
     def in_mode(self) -> bool:
@@ -198,6 +237,19 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
 
         st.clear_mode()
 
+    def flush_any_detail() -> None:
+        """Freeze the active ``####`` buffer — mode detail inside a mode, field-level otherwise."""
+        (flush_detail if st.in_mode else flush_section_detail)()
+
+    def flush_section_detail() -> None:
+        """Freeze the active field-level ``####`` block into ``st.field_details``."""
+        if st.detail_tag is not None and st.last_field_path:
+            st.field_details.setdefault(st.last_field_path, {})[st.detail_tag] = "\n".join(
+                st.detail_lines
+            ).strip()
+        st.detail_tag = None
+        st.detail_lines.clear()
+
     for line in text.splitlines():
         if _RE_FENCE.match(line):
             # Preserve fence markers inside mode bodies so downstream markdown
@@ -210,23 +262,30 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
             continue
 
         if not st.fence and (m := _RE_SECTION_HEAD.match(line)):
+            flush_any_detail()
             close_mode()
 
             section = m["section"]
             st.section = section
             st.in_field_section = section in _FIELD_SECTIONS
+            st.last_field_path = None
 
             if st.in_field_section:
-                subtitle = (m["subtitle"] or "").strip()
+                subtitle = _RE_ANCHOR_ID.sub("", (m["subtitle"] or "")).strip()
+                st.section_anchor = _slug(line)
                 entries[section] = HelpEntry(
                     path=section,
                     short=subtitle or section,
+                    anchor=st.section_anchor,
                 )
+            else:
+                st.section_anchor = ""
 
             continue
 
         # Must be checked before generic heading handling.
         if not st.fence and (m := _RE_FIELD_MODE_HEAD.match(line)):
+            flush_any_detail()
             close_mode()
             st.mode_path, st.mode_tag = m["path"], m["mode"]
             continue
@@ -238,9 +297,19 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
             st.detail_lines.clear()
             continue
 
+        # Field-level #### detail block (no ### mode tag active).
+        if not st.fence and not st.in_mode and st.in_field_section and (m := _RE_DETAIL_HEAD.match(line)):
+            flush_section_detail()
+            st.detail_tag = m["tag"].strip()
+            st.detail_lines.clear()
+            continue
+
         if not st.fence and st.section is not None and _RE_ANY_HEADING.match(line):
+            flush_any_detail()
             close_mode()
             st.section, st.in_field_section = None, False
+            st.last_field_path = None
+            st.section_anchor = ""
             continue
 
         if st.in_mode:
@@ -248,18 +317,31 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
             target.append(line)
             continue
 
+        # Field-level detail content (#### outside ### mode, inside ## section).
+        if not st.in_mode and st.in_field_section and st.detail_tag is not None:
+            st.detail_lines.append(line)
+            continue
+
         if st.fence:
             continue
 
         if st.in_field_section and (section := st.section) and (m := _RE_FIELD_ROW.match(line)):
-            path = f"{section}.{m['field']}"
+            field_name = m["field"]
+            path = f"{section}.{field_name}"
+            st.last_field_path = path
             cells = split_table_row(line)
             entries[path] = HelpEntry(
                 path=path,
                 short=cells[-1].strip() if cells else "",
+                anchor=st.section_anchor,
             )
 
+    flush_any_detail()
     close_mode()
+    # Store field-level details under each field's own path.
+    for field_path, details in st.field_details.items():
+        if field_path in entries:
+            bodies[field_path][_FIELD_DETAIL] = ModeBody(short="", details=dict(details))
 
     for path, modes in bodies.items():
         if path in entries:
@@ -271,11 +353,15 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
 # ── loader & resolver ─────────────────────────────────────────────────────────
 
 
-def _doc_path(lang: str | None = None) -> Path:
-    """Localized ``config_reference`` path; English fallback."""
-    if lang and (p := _constants.DOC_DIR / f"config_reference_{lang}.md").is_file():
+def doc_path(lang: str | None = None) -> Path:
+    """Localized ``config_reference`` path; English fallback.
+
+    The source document for :func:`help_for_path` entries — also the base
+    directory for relative markdown links inside their bodies (tooltips).
+    """
+    if lang and (p := _constants.DOC_DIR / "reference" / f"config_reference_{lang}.md").is_file():
         return p
-    return _constants.DOC_DIR / "config_reference.md"
+    return _constants.DOC_DIR / "reference" / "config_reference.md"
 
 
 _CACHE: dict[str, dict[str, HelpEntry]] = {}
@@ -303,7 +389,7 @@ def _load(lang: str | None = None) -> Mapping[str, HelpEntry]:
     if lang in _CACHE:
         return _CACHE[lang]
 
-    path = _doc_path(lang)
+    path = doc_path(lang)
 
     try:
         entries = parse_reference(path.read_text(encoding="utf-8"))

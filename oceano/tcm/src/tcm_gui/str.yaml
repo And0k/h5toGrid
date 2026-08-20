@@ -26,7 +26,6 @@ run.tooltip: "Run button"
 run.start: "Start processing"
 run.pause: "Pause processing"
 run.resume: "Resume processing"
-status_lbl.status: "Application status messages"
 prog_status.status: "Current processing stage and progress"
 # keep chrome status strings single-paragraph as _fit_status_font() caps the label to one row
 log.status: "Processing log — color-coded by severity ({#debug}debug{/}/{#info}info{/}/{#warning}warning{/}/{#error}error{/})"
@@ -34,7 +33,7 @@ prog_stage.status: "Current stage progress within the active configuration"
 tab.status: "Configuration: `{path}`"  # template — _add_page formats {path}
 browse_btn.status: "Hold **Shift** to select files instead of directory"
 browse_btn.status_files: "Browse files"
-empty_area.synced: "Editable — coefs, dates, path **sync to YAML on Run**"
+empty_area.synced: "Edit the calculation configuration (changes will be saved to the corresponding YAML file on Run)"
 empty_area.unsaved: "Read-only - please specify the path above first (simplified mode is enabled, requiring sequential filling)"
 empty_area.unsaved_full: "Editable — provide a data path above to scan"
 rail.status: "Configuration rail — click a tab to switch; vertical fill = processing progress (top→down)"
@@ -54,9 +53,11 @@ about.company: "Company"
 about.copyright: "Copyright"
 about.repository: "Repository"
 about.documentation: "Documentation"
+about.docs_internet: "internet"
+about.docs_local: "local"
 # Translatable meta VALUES (build meta in version_meta.json stays EN — it feeds
 # the exe version info). Present key overrides the JSON value in the dialog.
-about.meta.description: "AB SIO RAS' inclinometers data processor GUI. Configure and run processing"
+about.meta.description: "AB SIO RAS' inclinometers data processor GUI. Configure and run processing with live progress"
 about.meta.company: "Atlantic Branch of Shirshov Institute of Oceanology, Russian Academy of Sciences (AB SIO RAS)"
 
 # ── Browse dialog titles ──────────────────────────────────────────────────

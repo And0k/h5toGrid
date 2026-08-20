@@ -3,6 +3,7 @@
 Verifies the lower (stage) progress bar data path:
   TqdmCallback → GuiTqdm → ProgressState → App._poll_progress → ttk.Progressbar
 """
+
 from __future__ import annotations
 
 import pytest
@@ -486,9 +487,7 @@ class TestCanonStage:
     )
     def test_canon_stage_maps_correctly(self, text, expected):
         result = canon_stage(text)
-        assert result == expected, (
-            f"canon_stage({text!r}): expected {expected!r}, got {result!r}"
-        )
+        assert result == expected, f"canon_stage({text!r}): expected {expected!r}, got {result!r}"
 
 
 # --------------------------------------------------------------------------- #
@@ -593,6 +592,30 @@ class TestProgressBank:
         b = ProgressBank()
         b.run_start(["s1"])
         b.inner(None, 100, 100)  # should not raise
+
+    def test_stage_start_after_finish_is_noop(self):
+        """Regression: h5 combine re-runs the last config's done cell.
+
+        ``bank.finish(stem)`` fires per-config right after each probe, but the
+        post-loop combine stage still carries the last stem's attribution —
+        its ``stage_desc("combine")`` used to flip the done cell back to
+        running (fill regressed ~1.0 → 0.8), stalling the last config's bar.
+        Terminal states must be final.
+        """
+        b = ProgressBank()
+        b.run_start(["s1", "s2"])
+        b.stage_start("s2", canon_stage("proc"))
+        b.inner("s2", 100, 100)
+        b.finish("s2", ok=True)
+
+        # Post-loop phase attributed to the last stem — must not re-run it.
+        b.stage_start("s2", canon_stage("combine"))
+        b.inner("s2", 1, 4)  # inner is already state-guarded; belt and braces
+
+        state, frac, stage, _ = b.snapshot_all()["s2"]
+        assert state == "done", "finish is terminal — combine must not re-run"
+        assert frac == 1.0
+        assert stage == "Finished"
 
     def test_multiple_configs_independent(self):
         b = ProgressBank()

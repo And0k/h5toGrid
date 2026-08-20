@@ -11,11 +11,17 @@ PROBE_WILDCARD = "*"
 
 
 def pcid_to_raw_name(pcid: str):
-    """
-    :param pcid: Probe output Column ID (pcid):
-    # {type}_{model}{number} or if no model then {type}{number}:  may be i/w for inclinometer/wave gage.
-    # Inclinometers with pressure sensor currently have only model "p"
+    """Canonical pcid → raw / noAvg DB table name.
+
+    Raw name = ``incl`` + model + number — the ``_`` between probe type and
+    model is dropped; wave gauges keep their pcid unchanged. Only canonical
+    pcids (from :func:`to_pcid_from_name` / :func:`pcid_from_parts`) are
+    accepted: any file/corrected-name stem must be normalized first.
+
+    :param pcid: canonical pcid: ``i{number}`` / ``i_{model}{number}`` /
+      ``w{number}`` (model ∈ ``b``, ``d``, ``p``).
     :return: table name in **raw** or **not averaged** data DB
+      (``i01`` → ``incl01``, ``i_p05`` → ``incl_p05``, ``w01`` → ``w01``).
     """
     return f"incl{pcid[1:]}" if pcid[0] == "i" else pcid
 
@@ -39,27 +45,29 @@ def str_dt(dt_s: float, lang="en"):
     :param dt_s: time, s
     """
     if isinstance(dt_s, float):
-        s=np.array(int(dt_s * 1000000), "M8[us]")
+        s = np.array(int(dt_s * 1000000), "M8[us]")
         a = np.int16((s.item().timetuple())[:6]) - [1970, 1, 1, 0, 0, 0]
         if ~np.any(a):
             a = [0, 0, 0, 0, 0, np.round(s.microsecond * 1e-06, 3)]
     else:
         a = np.int16((datetime.min + dt_s).timetuple())[:6] - [1, 1, 1, 0, 0, 0]
 
-    out = " ".join([
-        f"{d}{w}"
-        for d, w in zip(
-            a,
-            ["лет", "месяцев", "дней", "ч", "мин", "с"]
-            if lang == "ru"
-            else ["years", "months", "days", "h", "min", "s"],
-        )
-        if d
-    ])
+    out = " ".join(
+        [
+            f"{d}{w}"
+            for d, w in zip(
+                a,
+                ["лет", "месяцев", "дней", "ч", "мин", "с"]
+                if lang == "ru"
+                else ["years", "months", "days", "h", "min", "s"],
+            )
+            if d
+        ]
+    )
     return out.strip()
 
 
-def pcid_from_parts(type: Optional[str] = None, model: str = None, number: str|int = None, **kwargs):
+def pcid_from_parts(type: Optional[str] = None, model: str = None, number: str | int = None, **kwargs):
     """
     Get Probe output Column ID (pcid)
     :param type: probe type, default: 'i' (inclinometers) or "" if model is "w" (wavegauges)
@@ -111,10 +119,10 @@ def to_pcid_from_name(probe_name: str | int, probe_type: Optional[str] = None):
     else:  # isinstance(probe_name, int):
         return f"{probe_type or 'i'}{probe_name:0>2}"
 
-    if (pattern_name_parts := parse_name(probe_name.replace('.', ''))):
+    if pattern_name_parts := parse_name(probe_name.replace(".", "")):
         return utils2init.call_with_valid_kwargs(pcid_from_parts, **pattern_name_parts)
     else:
-        return '*'
+        return "*"
 
 
 def normalize_probes(ids: set[str]) -> set[str]:
@@ -156,7 +164,7 @@ def track_probe_closure(b_input_is_h5, b_from_processed_db=False):
 
     def track_probe(pcid):
         nonlocal pcid_part, pcid_prev
-        probe_continues = (pcid == pcid_prev)
+        probe_continues = pcid == pcid_prev
         if probe_continues:
             pcid_part += 1  # next part of same csv
         else:
@@ -226,9 +234,7 @@ def parse_name(name: str) -> Optional[Dict[str, str]]:
         return m.groupdict()
 
     # 3. Unusual i/w (e.g. voln_v)
-    m = re.match(
-        r"@?(?P<type>voln_v)(?P<chars2>\D*0*)(?P<number>\d\d)(?P<comment>.*)", name
-    )
+    m = re.match(r"@?(?P<type>voln_v)(?P<chars2>\D*0*)(?P<number>\d\d)(?P<comment>.*)", name)
     if m:
         m = m.groupdict()
         m["chars0"] = m["chars1"] = ""

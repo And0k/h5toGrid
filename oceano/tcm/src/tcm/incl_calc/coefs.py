@@ -263,23 +263,29 @@ def get_coefs(coefs_paths: Sequence, tbl: str, coefs_ovr: Mapping[str, Any] | No
             from_file = {
                 k
                 for k, v in coefs_load.items()
-                if k not in _META_KEYS and not isinstance(v, (str, bytes)) and (not coefs_ovr or k not in coefs_ovr)
+                if k not in _META_KEYS
+                and not isinstance(v, (str, bytes))
+                and (not coefs_ovr or k not in coefs_ovr)
             }
             # Coefs supplied by overrides merge on top of file values below.
             from_ovr = (
-                {k for k in (coefs_ovr or {}) if k in defaults and k not in not_ovr and coefs_ovr[k] is not None}
+                {
+                    k
+                    for k in (coefs_ovr or {})
+                    if k in defaults and k not in not_ovr and coefs_ovr[k] is not None
+                }
                 if coefs_ovr
                 else set()
             )
             from_file -= from_ovr  # override wins → attribute to override, not file
             lf.debug(
-                "Coef sources for {}: {} file={}[{}], {} override[{}], {} default",
+                "Coef sources for {}: from file={} ({}){}, override ({}){}, default ({} items)",
                 tbl,
-                len(from_file),
                 coefs_load_src,
-                sorted(from_file),
+                len(from_file),
+                f": {sorted(from_file)}" if len(from_file) else "",
                 len(from_ovr),
-                sorted(from_ovr),
+                f": {sorted(from_ovr)}" if len(from_ovr) else "",
                 len(defaults) - len(from_file) - len(from_ovr),
             )
             coefs_load_dates = coefs_load.get("dates", coefs_ovr_dates)

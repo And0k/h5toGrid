@@ -1,0 +1,68 @@
+<p align="center"><img src="docs/images/logo.png" alt="TCM" width="128"></p>
+
+# TCM Data Processing
+
+Convert raw data files measured by AB SIO RAS tilt current meters (TCM) to
+text (CSV/TSV) and NetCDF data files with physical units (velocity,
+inclination, direction, and pressure outputs) optionally with filtering/averaging.
+Provides both a CLI pipeline (`tcm_proc`) and a GUI with live progress (`tcm_gui`).
+
+## Distribution types
+
+- **exe** — `tcm_proc.exe`, `tcm_gui.exe` for the operating system
+  corresponding to the compilation environment (Windows 10 64 bit).
+- **Source** — `python -m tcm.scripts.tcm_proc` in an installed Python
+  environment with the required packages (see `pyproject.toml`).
+
+### Execution variants
+
+The source code or a compiled distribution works in either of two runtime
+configurations, depending on the environment:
+
+- **Full** — h5py, scipy, matplotlib, numba: complete NC/HDF5 I/O.
+- **noh5** — no h5py/pytables: TSV output only, coefficients persisted to YAML.
+
+## Documentation
+
+### [User guides](docs/user_guide/)
+
+- [Getting Started](docs/user_guide/getting_started.md)
+- [GUI Guide](docs/user_guide/gui.md)
+- [CLI Guide](docs/user_guide/cli.md)
+- [Input / Output Guide](docs/user_guide/input_output.md)
+- [Configuration Guide](docs/user_guide/configuration.md)
+- [Processing Guide](docs/user_guide/processing.md)
+- [Console Messages](docs/user_guide/console_messages.md)
+- [Описание журнала работы tcm_proc](docs/user_guide/log_description_ru.md)
+
+### [Reference](docs/reference/)
+
+Exact, authoritative specs.
+
+- [Config YAML Field Reference](docs/reference/config_reference.md)
+- [Справочник полей конфигурации YAML](docs/reference/config_reference_Ru.md)
+- [Config Tuning — Decision Tables & Behavior](docs/reference/config_tuning.md)
+- [CLI Reference](docs/reference/cli.md)
+- [Input / Output Format Specification](docs/reference/io_formats.md)
+
+### [Methodology](docs/methodology/)
+
+Theory behind the algorithms, not usage.
+
+- [Calibration Wiki: Theory and Method](docs/methodology/calibration_wiki.md)
+- [Algorithm of frequency estimation `utils_time_corr._estimate_freq_np`](docs/methodology/estimate_freq_logic.md)
+
+### [Python developer guide](docs/python_developer_guide/)
+
+- [Magnetometer/Accelerometer Calibration — Usage Guide](docs/python_developer_guide/calibration.md)
+- [Калибровка магнитометра/акселерометра: сценарий использования и ограничения](docs/python_developer_guide/calibration_Ru.md)
+- [Examples](docs/python_developer_guide/examples.py)
+
+### [Project developer guide](docs/project_developer_guide/)
+
+Internal architecture and build instructions.
+
+- [CLI Internals](docs/project_developer_guide/CLI.md)
+- [GUI Internals](docs/project_developer_guide/GUI.md)
+- [Documentation Authoring Contract](docs/project_developer_guide/doc_authoring.md)
+- [Сборка минимального дистрибутива `tcm_proc`](docs/project_developer_guide/build_tcm_clc_txt_Ru.md)

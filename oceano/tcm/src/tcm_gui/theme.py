@@ -26,6 +26,7 @@ _l = logging.getLogger(__name__)
 
 DEFAULT_FG: str = "#999999"  # cell value == config default
 BLUE_FG: str = "#0055CC"  # header text + node label when subtree at default
+LINK_FG: str = "#0066CC"  # markdown links (MarkdownLabel) + doc-tree leaves
 FG_DEFAULT: str = "#000000"  # normal (non-default) text color
 FUNC_COLOR: str = "#0070A0"  # function name in log bridge
 INVALID_FG: str = "#CC0000"  # cell value failed validation (e.g. path not found)
@@ -53,6 +54,7 @@ _DARK: dict[str, str] = {
     "FUNC_COLOR": "#5CB8D6",
     "DEFAULT_FG": "#808080",
     "BLUE_FG": "#4DA6FF",
+    "LINK_FG": "#66AAFF",
     "FG_DEFAULT": "#D4D4D4",
     "INVALID_FG": "#FF6B6B",
     "FRAME_BG_FALLBACK": "#2D2D2D",
@@ -69,6 +71,7 @@ _LIGHT: dict[str, str] = {
     "FUNC_COLOR": "#0070A0",
     "DEFAULT_FG": "#999999",
     "BLUE_FG": "#0055CC",
+    "LINK_FG": "#0066CC",
     "FG_DEFAULT": "#000000",
     "INVALID_FG": "#CC0000",
     "FRAME_BG_FALLBACK": "#F0F0F0",
@@ -87,6 +90,7 @@ _GLOBAL_KEYS = (
     "FUNC_COLOR",
     "DEFAULT_FG",
     "BLUE_FG",
+    "LINK_FG",
     "FG_DEFAULT",
     "INVALID_FG",
     "FRAME_BG_FALLBACK",
@@ -179,7 +183,7 @@ def _apply_ttk_dark(root: tk.Tk) -> None:
     # Root window bg — used by tk.Frame/Label as implicit parent color.
     root.configure(bg=bg)
     _l.debug(
-        "ttk.Style switched to 'clam' for dark mode: bg={}, fg={}, entry_bg={}",
+        "ttk.Style switched to 'clam' for dark mode: bg=%s, fg=%s, entry_bg=%s",
         bg,
         fg,
         entry_bg,
@@ -225,7 +229,7 @@ def _opt_into_dark_titlebar(root: tk.Tk) -> None:
         value = ctypes.c_int(1)
         hr = dwm.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(value), ctypes.sizeof(value))
         _l.debug(
-            "DwmSetWindowAttribute(HWND={:#x}, DWMWA_USE_IMMERSIVE_DARK_MODE=TRUE) → HRESULT={:#010x}",
+            "DwmSetWindowAttribute(HWND=%#x, DWMWA_USE_IMMERSIVE_DARK_MODE=TRUE) → HRESULT=%#010x",
             hwnd,
             hr & 0xFFFFFFFF,
         )
@@ -264,7 +268,7 @@ def apply_theme_defaults(root: tk.Tk) -> str:
     # this produces a light title bar; on a dark system, a dark one.
     _opt_into_dark_titlebar(root)
     _l.debug(
-        "Theme detected: {} → FUNC_COLOR={}, FRAME_BG_FALLBACK={}, ENTRY_BG_FALLBACK={}",
+        "Theme detected: %s → FUNC_COLOR=%s, FRAME_BG_FALLBACK=%s, ENTRY_BG_FALLBACK=%s",
         theme,
         FUNC_COLOR,
         FRAME_BG_FALLBACK,

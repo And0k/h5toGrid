@@ -55,7 +55,10 @@ class ProgressBank:
         if not cfg or stage not in _ORDER:
             return
         with self._lock:
-            if st := self._st.get(cfg):
+            if (st := self._st.get(cfg)) and st["state"] in ("pending", "running"):
+                # Terminal states are final: post-loop phases (combine) still
+                # carry the last config's attribution — re-running it would
+                # drop a done fill back to mid-Save (h5 last-config stall).
                 st.update(state="running", stage=stage, inner=0.0)
 
     def inner(self, cfg: str | None, cur: float, tot: float) -> None:

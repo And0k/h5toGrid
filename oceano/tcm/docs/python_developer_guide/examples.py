@@ -2,7 +2,7 @@
 
 Run from the project root::
 
-    pixi run python oceano/tcm/docs/tcm_cli/examples.py [data_pattern]
+    pixi run python oceano/tcm/docs/python_developer_guide/examples.py [data_pattern]
 
 All examples assume a data directory with ``_raw/`` containing CSV/NC/HDF5 files
 and ``cfg_proc/`` containing Hydra config files (``config.yaml``, ``run/*.yaml``).

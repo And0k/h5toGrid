@@ -15,10 +15,27 @@ SPEC_DIR = Path(os.path.abspath(__file__)).parent
 
 # pyarrow internal .pyd extensions that depend on excluded native DLLs.
 _EXCLUDE_PYARROW_PYD: set[str] = {
-    "_parquet", "_orc", "_dataset", "_dataset_orc", "_dataset_parquet",
-    "_fs", "_gcsfs", "_s3fs", "_hdfs", "_flight", "_gandiva", "_acero",
-    "_json", "_csv", "_compute", "_exec_plan", "_substrait", "_cdata",
-    "_dataset_schema", "_helpers", "_azurefs",
+    "_parquet",
+    "_orc",
+    "_dataset",
+    "_dataset_orc",
+    "_dataset_parquet",
+    "_fs",
+    "_gcsfs",
+    "_s3fs",
+    "_hdfs",
+    "_flight",
+    "_gandiva",
+    "_acero",
+    "_json",
+    "_csv",
+    "_compute",
+    "_exec_plan",
+    "_substrait",
+    "_cdata",
+    "_dataset_schema",
+    "_helpers",
+    "_azurefs",
 }
 
 # Binary basename substrings to exclude (case-insensitive).
@@ -27,17 +44,34 @@ _EXCLUDE_PYARROW_PYD: set[str] = {
 # llvmlite (numba) depends on zstd.dll.
 EXCLUDE_BINARIES: list[str] = [
     "mkl_",
-    "pyarrow", "parquet.dll", "libzstd.dll", "_zstd", "_lz4",
-    "botocore", "certifi", "charset_normalizer", "google_crc32c",
+    "pyarrow",
+    "parquet.dll",
+    "libzstd.dll",
+    "_zstd",
+    "_lz4",
+    "botocore",
+    "certifi",
+    "charset_normalizer",
+    "google_crc32c",
     "numcodecs",
 ]
 
 # Runtime DLLs for OpenBLAS + Python stdlib — shared by all tcm builds.
 RUNTIME_DLLs: list[str] = [
-    "libmpdec-4.dll", "liblzma.dll", "libexpat.dll", "ffi-8.dll",
-    "yaml.dll", "sqlite3.dll", "libzmq-mt-4_3_5.dll",
-    "tbb12.dll", "tbbmalloc.dll", "tbbmalloc_proxy.dll",
-    "openblas.dll", "libcblas.dll", "libblas.dll", "liblapack.dll",
+    "libmpdec-4.dll",
+    "liblzma.dll",
+    "libexpat.dll",
+    "ffi-8.dll",
+    "yaml.dll",
+    "sqlite3.dll",
+    "libzmq-mt-4_3_5.dll",
+    "tbb12.dll",
+    "tbbmalloc.dll",
+    "tbbmalloc_proxy.dll",
+    "openblas.dll",
+    "libcblas.dll",
+    "libblas.dll",
+    "liblapack.dll",
 ]
 
 
@@ -58,14 +92,14 @@ def should_keep_binary(entry: tuple, extra_exclude: list[str] | None = None) -> 
     )
 
 
-def should_keep_data(entry: tuple, tcm_rel: str = "tcm") -> bool:
-    """Exclude todo/ and pattern-matched files from bundled data."""
+def should_keep_data(entry: tuple) -> bool:
+    """Exclude todo/ & done/ internal dirs and pattern-matched files from bundled data."""
     dest_name = entry[0]
     name = os.path.basename(dest_name).lower()
     if any(pat in name for pat in EXCLUDE_BINARIES):
         return False
-    norm = dest_name.replace("\\", os.sep).replace("/", os.sep)
-    return tcm_rel + os.sep + "todo" not in norm
+    parts = dest_name.replace("\\", os.sep).replace("/", os.sep).split(os.sep)
+    return not {"todo", "done"}.intersection(parts)
 
 
 def load_meta(spec_dir: Path | None = None) -> dict:

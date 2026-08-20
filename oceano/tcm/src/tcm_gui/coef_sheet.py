@@ -54,6 +54,11 @@ def _safe_select(sheet: Any, row: int, col: int) -> None:
         sheet.select_cell(row, col)
 
 
+def _path_exists(path_str: str) -> bool:
+    """True iff *path_str* (after ``~`` expansion) exists or matches files via glob."""
+    return Path(path_str).expanduser().exists() or bool(_glob_mod.glob(path_str))
+
+
 class CellBoundaryColumnResize:
     """Column resizing from selected cell boundaries, without a visible header.
 
@@ -242,7 +247,7 @@ class ConfigSheet:
         # Fired when the user starts editing any cell (double-click / keypress).
         # App wires this to hide progress widgets during editing.
         self.on_edit_begin: Callable[[], None] | None = None
-        # Fired after every path-validation pass — App wires this to re-evaluate
+        # Fired after every validation pass — App wires this to re-evaluate
         # the Run button enabled state across all config tabs.
         self.on_validity_change: Callable[[], None] | None = None
         self.hover_status: dict[str, str] = {}
@@ -251,6 +256,9 @@ class ConfigSheet:
         # Track which canvas owns the current status: "tree" (RI) or "data" (MT).
         # Moving between tree column and data cell on the SAME row must re-publish.
         self._status_source: str | None = None
+        # Detailed body text for dwell tooltip (App reads via _on_cell_status).
+        # Set by _publish_status / _on_tree_motion; cleared by _clear_status.
+        self._hover_detail: str = ""
 
         # ── floated PathField: hover-edit surface for browse rows ──
         # One reusable instance — reposition + .set() per hover; created
@@ -272,6 +280,8 @@ class ConfigSheet:
         root.bind("<KeyPress-Shift_L>", self._on_shift_toggle, add="+")
         root.bind("<KeyRelease-Shift_L>", self._on_shift_toggle, add="+")
         root.bind("<KeyRelease-Shift_R>", self._on_shift_toggle, add="+")
+        # F1 — open the doc browser at the hovered row's config_reference heading.
+        root.bind("<F1>", self._on_f1_help, add="+")
 
         # Row-space caches — rebuilt on load and expand/collapse.
         self._loading = False
@@ -345,7 +355,7 @@ class ConfigSheet:
             self._apply_styles()
             self._apply_default_fg()
             self._apply_date_placeholders()
-            self._apply_path_validation()
+            self._apply_validations()
             self.sh.redraw()
 
             # Geometry sync after redraw: row_positions may change.
@@ -409,7 +419,12 @@ class ConfigSheet:
         return ""
 
     def is_path_valid(self) -> bool:
-        """True iff ``input.path`` is non-empty and resolves to an existing file."""
+        """True iff ``input.path`` is non-empty and resolves to an existing file.
+
+        Only the ``input.path`` row gates the Run button — ``input.coefs_path``
+        is optional (coefficients may be entered manually), even though
+        :meth:`_apply_validations` still red-flags it when the path is missing.
+        """
         for iid, m in self._meta.items():
             if m.get("type") != "input":
                 continue
@@ -417,8 +432,7 @@ class ConfigSheet:
             path_str = str(vals[0]).strip() if vals else ""
             if not path_str or path_str.startswith("<"):
                 return False
-            p = Path(path_str).expanduser()
-            return p.exists() or bool(_glob_mod.glob(path_str))
+            return _path_exists(path_str)
         return False
 
     # ── dirty tracking ───────────────────────────────────────────────
@@ -488,6 +502,27 @@ class ConfigSheet:
 
         return nv
 
+    def _ins_coefs_path(self, inp_iid: Any, coefs_path: str) -> None:
+        """Insert the ``input.coefs_path`` child row (shared by both build modes).
+
+        ``check: "exists"`` marks the row for red-fg validation when the path
+        doesn't exist on disk (see :meth:`_apply_validations`).
+        """
+        self._ins(
+            inp_iid,
+            "coefs_path",
+            [coefs_path] + [""] * (self._nv - 1),
+            "",
+            meta={
+                "key": "coefs_path",
+                "check": "exists",
+                "is_string": True,
+                "max_col": 1,
+                "path": "input.coefs_path",
+                "browse": True,
+            },
+        )
+
     def _build_coefs(self, cfg: dict) -> None:
         inp = cfg.get("input", {})
 
@@ -500,6 +535,7 @@ class ConfigSheet:
             meta={
                 "key": "input",
                 "type": "input",
+                "check": "exists",
                 "is_string": True,
                 "max_col": 1,
                 "style": "node",
@@ -517,20 +553,7 @@ class ConfigSheet:
                 meta={"is_string": True, "max_col": self._nv},
             )
 
-        coefs_path = any2str(inp.get("coefs_path", ""))
-        self._ins(
-            inp_iid,
-            "coefs_path",
-            [coefs_path] + [""] * (self._nv - 1),
-            "",
-            meta={
-                "key": "coefs_path",
-                "is_string": True,
-                "max_col": 1,
-                "path": "input.coefs_path",
-                "browse": True,
-            },
-        )
+        self._ins_coefs_path(inp_iid, any2str(inp.get("coefs_path", "")))
 
         coefs = inp.get("coefs", {})
         dates = coefs.get("dates", {})
@@ -576,6 +599,7 @@ class ConfigSheet:
             meta={
                 "key": "input",
                 "type": "input",
+                "check": "exists",
                 "is_string": True,
                 "max_col": 1,
                 "style": "node",
@@ -584,20 +608,7 @@ class ConfigSheet:
             open_=True,
         )
 
-        coefs_path = any2str(inp.get("coefs_path", ""))
-        self._ins(
-            inp_iid,
-            "coefs_path",
-            [coefs_path] + [""] * (self._nv - 1),
-            "",
-            meta={
-                "key": "coefs_path",
-                "is_string": True,
-                "max_col": 1,
-                "path": "input.coefs_path",
-                "browse": True,
-            },
-        )
+        self._ins_coefs_path(inp_iid, any2str(inp.get("coefs_path", "")))
 
         for k, v in inp.items():
             if k in ("path", "coefs_path"):
@@ -988,9 +999,9 @@ class ConfigSheet:
         if m.get("key") == "coefs_path" and val.strip() and self._mgr is not None:
             self.sh.after_idle(lambda p=val: self._mgr.notify_path_changed(p))
         self._apply_end_edit_style(event, col=c)
-        # Validate input.path existence after edit — red fg if missing.
-        if m.get("type") == "input":
-            self.sh.after_idle(lambda iid=iid: self._apply_path_validation(iid))
+        # Re-validate the edited cell after commit — red fg if its check fails.
+        if m.get("check"):
+            self.sh.after_idle(lambda iid=iid: self._apply_validations(iid))
 
     # ── overflow-click redirect ───────────────────────────────────
 
@@ -1144,6 +1155,7 @@ class ConfigSheet:
         """Reset hover status tracking and clear the status bar."""
         self._status_iid = None
         self._status_source = None
+        self._hover_detail = ""
         self._publish_status(None)
 
     def _on_sheet_leave(self, _event) -> None:
@@ -1185,8 +1197,10 @@ class ConfigSheet:
         # Section-level: resolve the path as-is (no `.path` suffix).
         if path and (h := _help.help_for_path(path)) and h.short:
             self.on_hover_status(h.short, True)
+            self._hover_detail = self._resolve_detail(path)
         elif self.on_hover_status is not None:
             self.on_hover_status(str(m.get("key") or m.get("label") or path or ""), False)
+            self._hover_detail = ""
 
     def _coefs_status_hint(self) -> str:
         """Mode-aware status hint for ``coefs_path`` browse button.
@@ -1222,6 +1236,44 @@ class ConfigSheet:
             return
         self._publish_status(iid)
 
+    def _on_f1_help(self, _event=None) -> None:
+        """F1 over a sheet row — open the doc browser at its ``config_reference`` heading.
+
+        Uses the hovered row (``_status_iid``) so no pointer event is needed;
+        ``help_for_path`` strips array indices and returns the section anchor
+        (GitHub-style slug, mirrors ``browser/web/viewer.js::slugify``).  The
+        doc MUST be the same localized file the entries were parsed from
+        (``doc_path(resolve_lang())`` — exactly what ``_load`` reads); plain
+        ``doc_path()`` always serves the English file and a localized anchor
+        then finds no element — the page opens but never scrolls.
+        """
+        if (iid := self._status_iid) is None:
+            return
+        if not (path := str(self._meta.get(iid, {}).get("path") or "")):
+            return
+        anchor = entry.anchor if (entry := _help.help_for_path(path)) else ""
+        from tcm_gui.browser import get_documentation_browser
+
+        get_documentation_browser().open(_help.doc_path(_help.resolve_lang()), anchor=anchor or None)
+
+    @staticmethod
+    def _resolve_detail(path: str) -> str:
+        """Resolve the most detailed help body for *path* (dwell tooltip text).
+
+        Tries Detailed blocks first (probe → search → field-level), then short
+        mode bodies, then plain string body (non-mode entries).  Returns ``""``
+        when no detailed content exists — the caller skips arming the dwell.
+        """
+        for mode in ("probe", "search", _help._FIELD_DETAIL):
+            if (e := _help.help_for_path(path, mode=mode, detail="Detailed")) and e.body:
+                return str(e.body)
+        for mode in ("probe", "search", _help._FIELD_DETAIL):
+            if (e := _help.help_for_path(path, mode=mode)) and e.body:
+                return str(e.body)
+        if (e := _help.help_for_path(path)) and isinstance(e.body, str) and e.body:
+            return e.body
+        return ""
+
     def _publish_status(self, iid: Any) -> None:
         """Status text for the hovered element (data cells on MT canvas).
 
@@ -1244,6 +1296,7 @@ class ConfigSheet:
 
         if iid is None:
             self.on_hover_status("", False)
+            self._hover_detail = ""
             return
 
         m = self._meta.get(iid, {})
@@ -1251,12 +1304,14 @@ class ConfigSheet:
 
         if (txt := self.hover_status.get(ident)) is not None:
             self.on_hover_status(txt, False)
+            self._hover_detail = ""
             return
 
         # Mode-aware: coefs_path shows dir/file content from config_reference.md
         # instead of the table-row short text.  Shift toggles mode.
         if ident == "coefs_path" and (txt := self._coefs_status_hint()):
             self.on_hover_status(txt, True)
+            self._hover_detail = self._resolve_detail("input.coefs_path")
             return
 
         # Doc-driven help: ``config_reference.md`` → short tooltip per field.
@@ -1282,9 +1337,23 @@ class ConfigSheet:
             for candidate in candidates:
                 if (h := _help.help_for_path(candidate)) and h.short:
                     self.on_hover_status(h.short, True)
+                    # Detail chain: the accepted candidate → the row's own field
+                    # modes (a coef parent's date cell must show e.g. P_t's
+                    # probe/Detailed, not a generic parent body) → the parent's.
+                    self._hover_detail = (
+                        self._resolve_detail(candidate)
+                        or self._resolve_detail(path)
+                        or (
+                            self._resolve_detail(pp)
+                            if (par := m.get("parent"))
+                            and (pp := self._meta.get(par, {}).get("path"))
+                            else ""
+                        )
+                    )
                     return
 
         self.on_hover_status(str(m.get("key") or m.get("label") or m.get("path") or ""), False)
+        self._hover_detail = ""
 
     def _hover_write(self, text: str) -> None:
         """Write path to column 0 of the hovered row + restyle."""
@@ -1301,9 +1370,9 @@ class ConfigSheet:
         m = self._meta.get(iid, {})
         if m.get("key") == "coefs_path" and self._mgr is not None:
             self.sh.after_idle(lambda: self._mgr.notify_path_changed(text))
-        # Validate input.path existence after browse — red fg if missing.
-        if m.get("type") == "input":
-            self.sh.after_idle(lambda: self._apply_path_validation(iid))
+        # Re-validate the written cell after browse — red fg if its check fails.
+        if m.get("check"):
+            self.sh.after_idle(lambda: self._apply_validations(iid))
 
     def _hover_read(self) -> str:
         """Read column 0 of the hovered row (for dialog initialdir)."""
@@ -1583,18 +1652,26 @@ class ConfigSheet:
             self._hide_hover_field()
 
     def _hide_hover_field(self) -> None:
-        """Immediate teardown: cancel jobs, unmap field + button.
+        """Immediate teardown: cancel jobs, cancel in-flight edit, unmap field + button.
 
         Deliberately keeps ``_field_iid`` — PathField commits via
         ``after_idle``, so a commit already queued must still land on its row.
+        An open Entry must be cancelled (``_editing`` reset) or every
+        ``_editing``-guarded path stays wedged — the overlay never reappears
+        until a new scan rebuilds the sheet.  Unmap runs BEFORE cancel so
+        ``_on_field_edit_end`` → ``_restore_hover_placement`` sees an unmapped
+        field and skips the place/show round-trip just undone here.
         """
         for attr in ("_field_show_job", "_field_hide_job"):
             if (job := getattr(self, attr)) is not None:
                 self.sh.after_cancel(job)
                 setattr(self, attr, None)
         self._field_pending = None
-        if (f := self._hover_field) is not None and f.winfo_ismapped():
-            f.place_forget()
+        if (f := self._hover_field) is not None:
+            if f.winfo_ismapped():
+                f.place_forget()
+            if f._editing:
+                f.cancel_edit()
         if self._hover_btn is not None:
             self._hover_btn.hide()
 
@@ -2032,19 +2109,21 @@ class ConfigSheet:
 
         self.sh.redraw()
 
-    def _apply_path_validation(self, target_iid: Any = None) -> None:
-        """Red fg on ``input.path`` cell when the path doesn't exist on disk.
+    def _apply_validations(self, target_iid: Any = None) -> None:
+        """Red fg on any cell whose ``check`` validation fails (path existence).
 
         Called after every edit commit and at the end of ``load()``.
-        Handles glob patterns (red only when zero matches) and ``~`` expansion.
-        Empty / sentinel values (``<…>``) are never marked invalid.
+        ``check: "exists"`` rows (``input.path``, ``input.coefs_path``) are
+        marked red when the path doesn't exist on disk; glob patterns are red
+        only when zero matches; ``~`` is expanded.  Empty / sentinel values
+        (``<…>``) are never marked invalid.
         """
         sh = self.sh
         row_of = self._row_map()
         error_fg = tcm_gui.theme.INVALID_FG
 
         for iid, m in self._meta.items():
-            if m.get("type") != "input":
+            if m.get("check") != "exists":
                 continue
             if target_iid is not None and iid != target_iid:
                 continue
@@ -2056,10 +2135,7 @@ class ConfigSheet:
             if not path_str or path_str.startswith("<"):
                 continue
 
-            p = Path(path_str).expanduser()
-            exists = p.exists() or bool(_glob_mod.glob(path_str))
-
-            if exists:
+            if _path_exists(path_str):
                 # Restore normal fg: gray if value matches config default, else default fg.
                 dv = self._default_for_cell(iid, m, 0)
                 restore_fg = (

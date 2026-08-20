@@ -1,21 +1,28 @@
 """Rich-text clipboard: ScrolledText → RTF + HTML + plain text (Ctrl+C with colors).
 
 Places RTF, HTML Format, and plain text on the clipboard so Word, Outlook,
-CopyQ, and other apps preserve foreground colors.  Plain-text targets degrade
-automatically.  Falls back to plain-text-only copy if ``pywin32`` is absent
-or the OS clipboard is momentarily locked (:func:`copy_rich`).
+CopyQ, and other apps preserve foreground colors and hyperlinks.  Plain-text
+targets degrade automatically.  Falls back to plain-text-only copy if
+``pywin32`` is absent or the OS clipboard is momentarily locked
+(:func:`copy_rich`).
 """
 
 from __future__ import annotations
 
 import itertools
 import tkinter as tk
+from collections.abc import Iterator
+from typing import TypeAlias
 
 from tcm import utils2init
 from tcm_gui.const import tk_font_family
 from tcm_gui.theme import tk_color_to_rgb
 
 lf = utils2init.LoggingStyleAdapter(__name__)
+
+RGB: TypeAlias = tuple[int, int, int]
+# (start, end, foreground RGB | None, link URL | None) — one styled span
+Segment: TypeAlias = tuple[str, str, RGB | None, str | None]
 
 
 def _esc(text: str) -> str:
@@ -37,50 +44,64 @@ def _esc(text: str) -> str:
     return "".join(out)
 
 
-def build_rtf(widget: tk.Text) -> str:
-    """Serialize selected text to RTF, preserving foreground colors.
+def _palette(widget: tk.Text) -> dict[str, RGB]:
+    """tag → RGB for tags with a foreground actually covering text (``sel`` excluded)."""
+    return {
+        t: tk_color_to_rgb(widget, widget.tag_cget(t, "foreground"))
+        for t in widget.tag_names()
+        if t != "sel" and widget.tag_cget(t, "foreground") and widget.tag_ranges(t)
+    }
 
-    Scans all tag boundaries so each text segment carries a single
-    ``\\cfN`` color reference. Colors are collected into a \\colortbl
-    from the full widget, then only the selected range is emitted.
-    Falls back to full text if no selection.
+
+def _segments(widget: tk.Text) -> Iterator[Segment]:
+    """Yield ``(start, end, fg, url)`` per single-style span of the selection (full text if none).
+
+    Slices at every ``_palette`` tag boundary so each span carries one tag set;
+    ``url`` resolves through the widget's optional duck-typed ``link_url_at``
+    hook (:meth:`tcm_gui.md_label.MarkdownLabel.link_url_at`) — widgets
+    without it (e.g. the log) simply yield ``url=None``.
     """
     end = widget.index("end-1c")
     # Determine slice: use selection if present; coerce Tcl_Obj → str (hackable set element)
     sel = widget.tag_ranges("sel")
     start, end = (widget.index(sel[0]), widget.index(sel[1])) if sel else ("1.0", end)
-    palette = {
-        t: tk_color_to_rgb(widget, widget.tag_cget(t, "foreground"))
-        for t in widget.tag_names()
-        if t != "sel"
-        and widget.tag_cget(t, "foreground")
-        and widget.tag_ranges(t)  # only tags actually covering text
-    }
-    colors = list(dict.fromkeys(palette.values()))
+    palette = _palette(widget)
+    link_url_at = getattr(widget, "link_url_at", None)
 
     # Slice the text at every tag boundary so each segment has one tag set
     cuts: set[str] = {"1.0", end}
     for t in palette:
         cuts.update(map(widget.index, widget.tag_ranges(t)))
-    cuts_sorted = sorted(cuts, key=lambda i: tuple(map(int, i.split("."))))
 
-    body: list[str] = []
-    for a, b in itertools.pairwise(cuts_sorted):
+    for a, b in itertools.pairwise(sorted(cuts, key=lambda i: tuple(map(int, i.split("."))))):
         if widget.compare(a, ">=", b):
             continue
         seg_a = a if widget.compare(a, ">=", start) else start
         seg_b = b if widget.compare(b, "<=", end) else end
         if not widget.compare(seg_a, "<", seg_b):
             continue
-        fg = next(
-            (palette[t] for t in reversed(widget.tag_names(seg_a)) if t in palette),
-            None,
-        )
+        fg = next((palette[t] for t in reversed(widget.tag_names(seg_a)) if t in palette), None)
+        yield seg_a, seg_b, fg, link_url_at(seg_a) if link_url_at else None
+
+
+def build_rtf(widget: tk.Text) -> str:
+    """Serialize selected text to RTF, preserving foreground colors and hyperlinks.
+
+    Each :func:`_segments` span becomes one ``\\cfN`` run; link spans wrap in a
+    ``\\field{\\*\\fldinst HYPERLINK "url"}`` so Word keeps them clickable
+    (``\\ul`` underlined).  Falls back to full text if no selection.
+    """
+    colors: list[RGB] = []
+    body: list[str] = []
+    for seg_a, seg_b, fg, url in _segments(widget):
+        if fg is not None and fg not in colors:
+            colors.append(fg)
         seg = _esc(widget.get(seg_a, seg_b))
-        if fg is not None:
-            body.append(f"{{\\cf{colors.index(fg) + 1} {seg}}}")
-        else:
-            body.append(seg)
+        fmt = (f"\\cf{colors.index(fg) + 1}" if fg is not None else "") + ("\\ul" if url else "")
+        run = f"{{{fmt} {seg}}}" if fmt else seg
+        if url is not None:  # \* marks fldinst skippable for non-field-aware readers
+            run = f'{{\\field{{\\*\\fldinst{{HYPERLINK "{_esc(url)}"}}}}{{\\fldrslt{run}}}}}'
+        body.append(run)
 
     table = "".join(f"\\red{r}\\green{g}\\blue{b};" for r, g, b in colors)
     font = tk_font_family(widget)
@@ -94,12 +115,12 @@ def build_rtf(widget: tk.Text) -> str:
 
 
 def _esc_html(text: str) -> str:
-    """Escape for HTML: &, <, >, quotes."""
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    """Escape for HTML: &, <, >, double quotes (attribute-safe)."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
 def build_html(widget: tk.Text) -> bytes:
-    """Build Windows ``CF_HTML`` clipboard content with inline color spans.
+    """Build Windows ``CF_HTML`` clipboard content with color spans and links.
 
     The Windows HTML clipboard format requires a header with byte offsets::
 
@@ -114,41 +135,15 @@ def build_html(widget: tk.Text) -> bytes:
     start of the entire payload.  Returns ``bytes`` (UTF-8 for the HTML body,
     ASCII for the header) with correct byte offsets.
     """
-    end = widget.index("end-1c")
-    sel = widget.tag_ranges("sel")
-    start, end = (widget.index(sel[0]), widget.index(sel[1])) if sel else ("1.0", end)
-
-    palette = {
-        t: tk_color_to_rgb(widget, widget.tag_cget(t, "foreground"))
-        for t in widget.tag_names()
-        if t != "sel"
-        and widget.tag_cget(t, "foreground")
-        and widget.tag_ranges(t)
-    }
-
-    cuts: set[str] = {"1.0", end}
-    for t in palette:
-        cuts.update(map(widget.index, widget.tag_ranges(t)))
-    cuts_sorted = sorted(cuts, key=lambda i: tuple(map(int, i.split("."))))
-
     spans: list[str] = []
-    for a, b in itertools.pairwise(cuts_sorted):
-        if widget.compare(a, ">=", b):
-            continue
-        seg_a = a if widget.compare(a, ">=", start) else start
-        seg_b = b if widget.compare(b, "<=", end) else end
-        if not widget.compare(seg_a, "<", seg_b):
-            continue
-        fg = next(
-            (palette[t] for t in reversed(widget.tag_names(seg_a)) if t in palette),
-            None,
-        )
+    for seg_a, seg_b, fg, url in _segments(widget):
         text = _esc_html(widget.get(seg_a, seg_b)).replace("\n", "<br>")
         if fg is not None:
             r, g, b_ = fg
-            spans.append(f'<span style="color:#{r:02x}{g:02x}{b_:02x}">{text}</span>')
-        else:
-            spans.append(text)
+            text = f'<span style="color:#{r:02x}{g:02x}{b_:02x}">{text}</span>'
+        if url is not None:
+            text = f'<a href="{_esc_html(url)}">{text}</a>'
+        spans.append(text)
 
     fragment = "".join(spans)
     body = f"<html><body><!--StartFragment-->{fragment}<!--EndFragment--></body></html>"
@@ -179,11 +174,7 @@ def copy_rich(widget: tk.Text) -> None:
        user still gets plain text — never an unhandled exception from Ctrl+C.
     """
     sel = widget.tag_ranges("sel")
-    plain = (
-        widget.get(widget.index(sel[0]), widget.index(sel[1]))
-        if sel
-        else widget.get("1.0", "end-1c")
-    )
+    plain = widget.get(widget.index(sel[0]), widget.index(sel[1])) if sel else widget.get("1.0", "end-1c")
     try:
         import win32clipboard as wcb  # pywin32
     except ImportError:

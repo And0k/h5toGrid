@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ── Build metadata (generate_version_info.py) ───────────────────────────────
 
 
@@ -91,12 +90,8 @@ class TestRepoUrl:
 
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts" / "build"))
         try:
-            from generate_version_info import repo_url
-
             # Mock subprocess to return a known URL
-            import subprocess
-
-            original_run = subprocess.run
+            from generate_version_info import repo_url
 
             def mock_run(cmd, *args, **kwargs):
                 class Result:
@@ -121,7 +116,6 @@ class TestRepoUrl:
 
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts" / "build"))
         try:
-            import subprocess
             import generate_version_info
 
             def mock_run(cmd, *args, **kwargs):
@@ -220,9 +214,9 @@ class TestDocDiscovery:
     def test_discover_docs_excludes_todo(self, tmp_path: Path) -> None:
         """discover_docs excludes todo/ directory and reports folder names."""
         # Create test structure
-        (tmp_path / "tcm_cli").mkdir()
+        (tmp_path / "python_developer_guide").mkdir()
         (tmp_path / "todo").mkdir()
-        (tmp_path / "tcm_cli" / "readme.md").write_text("# CLI Docs", encoding="utf-8")
+        (tmp_path / "python_developer_guide" / "readme.md").write_text("# CLI Docs", encoding="utf-8")
         (tmp_path / "todo" / "notes.md").write_text("# TODO Notes", encoding="utf-8")
 
         import sys
@@ -232,7 +226,7 @@ class TestDocDiscovery:
             from tcm_gui._about import discover_docs
 
             docs = discover_docs(tmp_path, lang="en")
-            assert [(folder, title) for folder, title, _ in docs] == [("tcm_cli", "CLI Docs")]
+            assert [(folder, title) for folder, title, _ in docs] == [("python_developer_guide", "CLI Docs")]
         finally:
             sys.path.pop(0)
 
@@ -254,10 +248,10 @@ class TestDocDiscovery:
 
     def test_docs_tree_groups_by_folder(self, tmp_path: Path) -> None:
         """_docs_tree groups flat docs by folder, sorted by folder name."""
-        (tmp_path / "tcm_gui").mkdir()
-        (tmp_path / "tcm_cli").mkdir()
-        (tmp_path / "tcm_gui" / "a.md").write_text("# GUI", encoding="utf-8")
-        (tmp_path / "tcm_cli" / "b.md").write_text("# CLI", encoding="utf-8")
+        (tmp_path / "reference").mkdir()
+        (tmp_path / "python_developer_guide").mkdir()
+        (tmp_path / "reference" / "a.md").write_text("# GUI", encoding="utf-8")
+        (tmp_path / "python_developer_guide" / "b.md").write_text("# CLI", encoding="utf-8")
 
         import sys
 
@@ -265,10 +259,36 @@ class TestDocDiscovery:
         try:
             from tcm_gui._about import _docs_tree, discover_docs
 
-            tree = _docs_tree(discover_docs(tmp_path, lang="en"))
-            assert list(tree) == ["tcm_cli", "tcm_gui"]
-            assert [title for title, _ in tree["tcm_cli"]] == ["CLI"]
-            assert [title for title, _ in tree["tcm_gui"]] == ["GUI"]
+            tree = _docs_tree(discover_docs(tmp_path, lang="en"), tmp_path)
+            assert list(tree) == ["python_developer_guide", "reference"]
+            assert [title for title, _ in tree["python_developer_guide"]] == ["CLI"]
+            assert [title for title, _ in tree["reference"]] == ["GUI"]
+        finally:
+            sys.path.pop(0)
+
+    def test_docs_tree_follows_readme_order(self, tmp_path: Path) -> None:
+        """Folders sort by readme.md link appearance, extras after."""
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "reference").mkdir()
+        (tmp_path / "docs" / "user_guide").mkdir()
+        (tmp_path / "docs" / "images").mkdir()
+        (tmp_path / "docs" / "reference" / "z.md").write_text("# Z", encoding="utf-8")
+        (tmp_path / "docs" / "user_guide" / "a.md").write_text("# A", encoding="utf-8")
+        (tmp_path / "readme.md").write_text(
+            'See <img src="docs/images/logo.png"> [guide](docs/user_guide/a.md)'
+            " and [ref](docs/reference/z.md).",
+            encoding="utf-8",
+        )
+
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        try:
+            from tcm_gui._about import _docs_tree, discover_docs
+
+            tree = _docs_tree(discover_docs(tmp_path / "docs", lang="en"), tmp_path / "docs")
+            # image src must not count as a folder; link order wins
+            assert list(tree) == ["user_guide", "reference"]
         finally:
             sys.path.pop(0)
 
@@ -320,6 +340,30 @@ class TestDocLangFilter:
             (tmp_path / name).write_text(f"# {name}", encoding="utf-8")
         docs = about.discover_docs(tmp_path, lang="ru")
         assert [p.name for _, _, p in docs] == ["d_ru.md"]
+
+
+class TestLocalReadme:
+    """bundled readme chosen by the resolved language, any language."""
+
+    def test_picks_localized_readme_of_resolved_lang(self, tmp_path: Path, monkeypatch) -> None:
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        try:
+            import tcm_gui._about as about
+
+            readmes = tmp_path
+            (readmes / "readme.md").write_text("# Base", encoding="utf-8")
+            (readmes / "readme_Ru.md").write_text("# RU", encoding="utf-8")
+            monkeypatch.setattr(about, "DOC_DIR", readmes / "docs")
+            monkeypatch.setattr(about, "resolve_lang", lambda: "ru")
+            assert about.AboutDialog._local_readme() == readmes / "readme_Ru.md"
+            monkeypatch.setattr(about, "resolve_lang", lambda: "en")
+            assert about.AboutDialog._local_readme() == readmes / "readme.md"
+            monkeypatch.setattr(about, "resolve_lang", lambda: "fr")  # no _fr file → base
+            assert about.AboutDialog._local_readme() == readmes / "readme.md"
+        finally:
+            sys.path.pop(0)
 
 
 # ── Runtime version_meta loader ─────────────────────────────────────────────

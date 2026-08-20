@@ -10,9 +10,13 @@ Tables are aligned by measured tab stops.
 from __future__ import annotations
 
 import logging
+import os
+import re
 import tkinter as tk
 import tkinter.font as tkfont
+from collections.abc import Callable
 from itertools import accumulate, zip_longest
+from pathlib import Path
 from typing import TypeAlias
 
 from tcm._md_parse import Block, CodeBlock, Heading, Inline, List, Paragraph, Table, parse_markdown
@@ -23,11 +27,22 @@ FontSpec: TypeAlias = tkfont.Font | str | tuple[str | int, ...] | None
 
 _l = logging.getLogger(__name__)
 
+# The parser's ``{#name}`` color grammar (see ``_md_parse.py``) — a tag shaped
+# like a color name is a color even when unmapped; anything else is a link URL.
+_COLOR_NAME = re.compile(r"[a-z_]+\Z")
+
 # ── Tk widget ────────────────────────────────────────────────────────────────
 
 
 class MarkdownLabel(tk.Text):
-    """Read-only label-like Tk Text widget rendering a Markdown subset."""
+    """Read-only label-like Tk Text widget rendering a Markdown subset.
+
+    Inline ``[text](url)`` links parse to a span whose tag IS the target URL
+    (:mod:`tcm._md_parse`); this renderer styles them (``link`` tag: link
+    color + underline), switches the cursor to ``hand2`` on hover, and
+    forwards clicks to the ``on_link`` callback with the URL and the ``base``
+    set via :meth:`set_text` (for relative-link resolution).
+    """
 
     _CELL_PAD = 8
 
@@ -40,6 +55,7 @@ class MarkdownLabel(tk.Text):
         foreground: str | None = None,
         autoheight: bool = True,
         colors: dict[str, str] | None = None,
+        on_link: Callable[[str, str | None], None] | None = None,
         **kwargs,
     ):
         super().__init__(
@@ -70,10 +86,16 @@ class MarkdownLabel(tk.Text):
         self._fitted_h: int | None = None  # cached height from _fit_height
         self._fitted_w: int = 0  # cached width from _fit_height
         self._colors: dict[str, str] = colors or {}  # {#name} → hex foreground
+        self._on_link = on_link
+        self._base: Path | None = None  # source-doc dir for relative links
+        self._links: list[tuple[str, str, str]] = []  # (start, end, url) spans
 
         self._fonts = self._build_fonts(font)
         self._configure_tags()
         self._raise_span_tags()
+        self.tag_bind("link", "<Button-1>", self._open_link)
+        self.tag_bind("link", "<Enter>", lambda _e: self.configure(cursor="hand2"))
+        self.tag_bind("link", "<Leave>", lambda _e: self.configure(cursor=""))
 
         if background is None and master is not None:
             try:
@@ -91,14 +113,19 @@ class MarkdownLabel(tk.Text):
 
     # ── public API ───────────────────────────────────────────────────────
 
-    def set_text(self, text: str, /, *, raw: bool = False) -> bool:
+    def set_text(self, text: str, /, *, raw: bool = False, base: str | os.PathLike | None = None) -> bool:
         """Render *text* as Markdown (default) or as a literal single span (``raw=True``).
 
         ``raw`` bypasses :func:`parse_markdown` — for strings that interpolate
         untrusted content (e.g. filesystem paths in ``STR["tab.status"]``),
         preventing ``_``/``*``/``\\``/`` ` `` in the substitution from being
         reinterpreted as inline markup.  No-op if parsed blocks are unchanged.
+
+        ``base`` is the source document directory for relative link targets
+        (e.g. ``docs/reference/`` when *text* came from ``config_reference.md``);
+        ``raw=True`` text contains no links, so *base* is ignored.
         """
+        self._base = Path(base) if base else None
         if not text:
             blocks: tuple[Block, ...] = ()
         elif raw:
@@ -160,6 +187,7 @@ class MarkdownLabel(tk.Text):
         self.configure(state="normal", wrap="none")
         self.delete("1.0", "end")
         self._table_uid = 0
+        self._links = []
 
         for block in blocks:
             match block:
@@ -188,6 +216,7 @@ class MarkdownLabel(tk.Text):
             self.delete("end-2c", "end-1c")
 
         self.configure(state="disabled", wrap=self._wrap)
+        self.configure(cursor="")  # content swapped → stale hand2 from a link hover
         self._fitted_h = None  # content changed → re-measure height
         self.after_idle(self._fit_width)
         self.after_idle(self._fit_height)
@@ -233,16 +262,54 @@ class MarkdownLabel(tk.Text):
         self.insert("end", "\n", tag)
 
     def _insert_inline(self, inline: Inline, base_tags: tuple[str, ...]) -> None:
-        """Insert inline spans with correct tag application."""
+        """Insert inline spans with correct tag application.
+
+        A span tag that is not ``plain``/a color name/one of this widget's
+        font variants is a link target URL (see :mod:`tcm._md_parse`): the
+        span renders under the ``link`` tag and its range is recorded in
+        ``_links`` for click resolution.
+        """
         for text, tag in inline:
             if tag == "plain":
                 tags = base_tags
             elif tag in self._colors:
                 self.tag_configure(tag, foreground=self._colors[tag])
                 tags = (*base_tags, tag)
+            elif tag in self._fonts:
+                tags = (*base_tags, tag)  # bold / italic / code style span
+            elif _COLOR_NAME.fullmatch(tag):
+                tags = (*base_tags, tag)  # unmapped {#name} color — tag passthrough
             else:
-                tags = (*base_tags, tag)
+                tags = (*base_tags, "link")  # tag = link target URL
+                self.insert("end", text, tags)
+                end = self.index("insert")  # insert cursor: just after inserted text
+                self._links.append((f"{end}-{len(text)}c", end, tag))
+                continue
             self.insert("end", text, tags)
+
+    def link_url_at(self, index: str) -> str | None:
+        """Target URL of the link span containing *index* (``None`` outside links).
+
+        Duck-typed hook for :mod:`tcm_gui._rtf_clipboard` — any Text widget
+        exposing it exports clickable links (RTF ``HYPERLINK`` / HTML ``<a>``).
+        """
+        return next(
+            (
+                url
+                for start, end, url in self._links
+                if self.compare(start, "<=", index) and self.compare(index, "<", end)
+            ),
+            None,
+        )
+
+    def link_at(self, x: int, y: int) -> str | None:
+        """Target URL of the link span at widget coordinates ``(x, y)``."""
+        return self.link_url_at(self.index(f"@{x},{y}"))
+
+    def _open_link(self, event: tk.Event) -> None:
+        """Forward a link click (``url``, ``base``) to the ``on_link`` callback."""
+        if self._on_link is not None and (url := self.link_at(event.x, event.y)):
+            self._on_link(url, self._base)
 
     # ── table metrics ────────────────────────────────────────────────────
 
@@ -318,9 +385,10 @@ class MarkdownLabel(tk.Text):
 
         self.tag_configure("table_header", font=self._fonts["bold"])
         self.tag_configure("table_cell", font=self._fonts["plain"])
+        self.tag_configure("link", foreground=theme.LINK_FG, underline=True)
 
     def _raise_span_tags(self) -> None:
-        for tag in ("code", "bold", "italic"):
+        for tag in ("code", "bold", "italic", "link"):
             self.tag_raise(tag)
 
     # ── size management ──────────────────────────────────────────────────
