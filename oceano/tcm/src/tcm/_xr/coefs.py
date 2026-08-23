@@ -13,6 +13,7 @@ Provides:
 
 All functions avoid importing ``dask.dataframe``.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -28,14 +29,25 @@ import xarray as xr
 from tcm._xr import filters as filters_xr
 from tcm.utils2init import LoggingStyleAdapter
 from tcm.calibration import orientation, calibrate
+
 lf = LoggingStyleAdapter(__name__)
 
 # Keys that _coefs_to_h5_dict renames or skips when building the flat dict.
 # "date" (singular) is excluded from the catch-all numpy-array comprehension
 # because it is always written as a fixed-length string dataset at line 66.
-_RENAMED_OR_SKIP = frozenset({
-    "Ag", "Cg", "Ah", "Ch", "azimuth_shift_deg", "kVabs", "date", "dates", "i",
-})
+_RENAMED_OR_SKIP = frozenset(
+    {
+        "Ag",
+        "Cg",
+        "Ah",
+        "Ch",
+        "azimuth_shift_deg",
+        "kVabs",
+        "date",
+        "dates",
+        "i",
+    }
+)
 
 # Reverse of _coefs_to_h5_dict's rename: short coef name → h5copy_coef rel_path.
 # Used to translate prepare_coefs's ``dates`` dict keys so h5copy_coef can
@@ -69,9 +81,7 @@ def _coefs_to_h5_dict(coef: Mapping[str, Any], pcid: str | None = None, date: st
             if f"{m}{ch}" in coef
         },
         **(
-            {"//coef//H//azimuth_shift_deg": coef["azimuth_shift_deg"]}
-            if "azimuth_shift_deg" in coef
-            else {}
+            {"//coef//H//azimuth_shift_deg": coef["azimuth_shift_deg"]} if "azimuth_shift_deg" in coef else {}
         ),
         **({"//coef//Vabs0": coef["kVabs"]} if "kVabs" in coef else {}),
         **{
@@ -150,9 +160,7 @@ def _read_coefs_from_coef_group(coef_grp: "_h5py.Group") -> dict[str, Any]:
             for name_l2, item_l2 in item_l1.items():
                 if not isinstance(item_l2, _h5py.Dataset):
                     continue
-                coef_key = (
-                    f"{name_l2}{name_l1.lower()}" if name_l2[-1:].isupper() else name_l2
-                )
+                coef_key = f"{name_l2}{name_l1.lower()}" if name_l2[-1:].isupper() else name_l2
                 coefs_dict[coef_key] = item_l2[()]
                 if "timestamp" in item_l2.attrs:
                     coefs_dict["dates"][coef_key] = str(item_l2.attrs["timestamp"])
@@ -208,11 +216,12 @@ def load_coefs_from_nc(nc_path: Path, tbl: str) -> dict[str, Any] | None:
 # Coefs preparation
 # ---------------------------------------------------------------------------
 
+
 def coef_zeroing_rotation_from_data(
     ds_raw: xr.Dataset,
     time_ranges: list | None = None,
     Ag: np.ndarray | None = None,
-    Cg: np.ndarray | None = None
+    Cg: np.ndarray | None = None,
 ) -> np.ndarray | None:
     """Compute zeroing rotation matrix from raw data within *time_ranges*.
 
@@ -278,8 +287,10 @@ def coef_azimuth_from_data(
     a_raw = np.stack([ds_sel[v].values for v in ("Ax", "Ay", "Az")])
     m_raw = np.stack([ds_sel[v].values for v in ("Mx", "My", "Mz")])
     shift = orientation.azimuth_shift(
-        m_raw, orientation.SensorCalibration(Ch, Ah),
-        a_raw, orientation.SensorCalibration(Cg, Ag),
+        m_raw,
+        orientation.SensorCalibration(Ch, Ah),
+        a_raw,
+        orientation.SensorCalibration(Cg, Ag),
     )
     lf.info(
         "Zeroing azimuth in interval {} – {} ({:d} points): azimuth shift={:.3g}°",
@@ -320,6 +331,7 @@ def prepare_coefs(
     coefs: dict,
     ds_raw: xr.Dataset,
     *,
+    g0xyz: list | None = None,
     time_ranges_zeroing: list | None = None,
     time_ranges_azimuth: list | None = None,
     azimuth_add: float | None = None,
@@ -334,6 +346,9 @@ def prepare_coefs(
 
     :param coefs: Raw coefficients dict from :func:`get_coefs`.
     :param ds_raw: Raw inclinometer Dataset (needs Ax, Ay, Az, Mx, My, Mz columns).
+    :param g0xyz: Raw accelerometer vector at zero tilt (``input.calib.g0xyz``) —
+        overrides ``Rz`` with a computed rotation; takes precedence over a
+        g0xyz found inside *coefs* (file-sourced).
     :param time_ranges_zeroing: Time ranges for **tilt** zeroing (``Rz`` rotation).
     :param time_ranges_azimuth: Time ranges for **azimuth** zeroing
         (``azimuth_shift_deg`` from mag+accel unit vectors via
@@ -348,13 +363,19 @@ def prepare_coefs(
     coefs_new: dict = {}
     if "azimuth_shift_deg" in coefs:
         coefs_new["azimuth_shift_deg"] = get_coef_azimuth_shift(
-            azimuth_add, coordinates, coefs.get("azimuth_shift_deg", 0), data_date,
+            azimuth_add,
+            coordinates,
+            coefs.get("azimuth_shift_deg", 0),
+            data_date,
         )
 
     msg_zeroed = ""
     if time_ranges_zeroing:
         rotation_coef = coef_zeroing_rotation_from_data(
-            ds_raw, time_ranges=time_ranges_zeroing, Ag=coefs["Ag"], Cg=coefs["Cg"],
+            ds_raw,
+            time_ranges=time_ranges_zeroing,
+            Ag=coefs["Ag"],
+            Cg=coefs["Cg"],
         )
         if rotation_coef is None:
             lf.debug("time_ranges_zeroing not in current data range")
@@ -364,15 +385,24 @@ def prepare_coefs(
 
     if time_ranges_azimuth:
         azimuth = coef_azimuth_from_data(
-            ds_raw, time_ranges=time_ranges_azimuth,
-            Ah=coefs["Ah"], Ch=coefs["Ch"], Ag=coefs["Ag"], Cg=coefs["Cg"],
+            ds_raw,
+            time_ranges=time_ranges_azimuth,
+            Ah=coefs["Ah"],
+            Ch=coefs["Ch"],
+            Ag=coefs["Ag"],
+            Cg=coefs["Cg"],
         )
         if azimuth is not None:
             coefs_new["azimuth_shift_deg"] = get_coef_azimuth_shift(
-                azimuth_add, coordinates, azimuth, data_date,
+                azimuth_add,
+                coordinates,
+                azimuth,
+                data_date,
             )
             msg_zeroed += "with new azimuth from time_ranges_azimuth "
 
+    if g0xyz is not None:  # config-sourced g0xyz wins over file-sourced
+        coefs = {**coefs, "g0xyz": g0xyz}
     coef_zeroing_matrix, msg_rotated = get_coef_zeroing_matrix(**coefs)
 
     dates = coefs.get("dates", {})

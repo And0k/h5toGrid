@@ -53,7 +53,7 @@ tcm_proc.exe "_raw/i*.txt" 'program.return_="<cfg_from_args>"'
 **Zeroing-only** (compute Rz, persist coefs, stop — no data processing):
 ```bash
 tcm_proc.exe "_raw/*i*.txt" \
-  'input.time_ranges_zeroing=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
+  'input.calib.time_ranges_zeroing=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
   'input.time_ranges=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
   'program.return_="<saved_coefs>"'
 ```

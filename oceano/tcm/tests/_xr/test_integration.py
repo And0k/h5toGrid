@@ -280,7 +280,7 @@ class TestPipelineIntegration:
         """prepare_coefs is wired into run_processing — coef_zeroing_matrix flows to process."""
 
         pipeline_env.cfg.out.dt_bins = [0]
-        pipeline_env.cfg.input.time_ranges_zeroing = [
+        pipeline_env.cfg.input.calib.time_ranges_zeroing = [
             "2024-01-01T00:00:00",
             "2024-01-01T00:00:05",
         ]
@@ -345,7 +345,7 @@ class TestCoefPersistence:
         from tcm._xr.coefs import load_coefs_from_nc
 
         env = nc_source_env
-        env.cfg.input.time_ranges_zeroing = [
+        env.cfg.input.calib.time_ranges_zeroing = [
             "2024-01-01T00:00:00",
             "2024-01-01T00:00:05",
         ]
@@ -368,7 +368,7 @@ class TestCoefPersistence:
                 "coefs": {},
                 "dt_from_utc": pd.Timedelta(0),
                 "corr_time_mode": None,
-                "time_ranges_zeroing": env.cfg.input.time_ranges_zeroing,
+                "calib": {"time_ranges_zeroing": env.cfg.input.calib.time_ranges_zeroing},
             },
             "out": {},
             "filter": {},
@@ -405,7 +405,7 @@ class TestCoefPersistence:
         from tcm._xr import coefs as xr_coefs_mod
 
         env = nc_source_env
-        env.cfg.input.time_ranges_zeroing = [
+        env.cfg.input.calib.time_ranges_zeroing = [
             "2024-01-01T00:00:00",
             "2024-01-01T00:00:05",
         ]
@@ -441,7 +441,7 @@ class TestCoefPersistence:
                 "coefs": {},
                 "dt_from_utc": pd.Timedelta(0),
                 "corr_time_mode": None,
-                "time_ranges_zeroing": env.cfg.input.time_ranges_zeroing,
+                "calib": {"time_ranges_zeroing": env.cfg.input.calib.time_ranges_zeroing},
             },
             "out": {},
             "filter": {},

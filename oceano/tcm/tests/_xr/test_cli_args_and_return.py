@@ -1,7 +1,7 @@
 """Tests for CLI argument parsing, return_ modes, and duplicate YAML behaviour.
 
 Verifies that:
-- Hydra list overrides (time_ranges, time_ranges_zeroing) parse from CLI args
+- Hydra list overrides (time_ranges, input.calib.time_ranges_zeroing) parse from CLI args
 - ``program.return_="<cfg_from_args>"`` stops processing inside main_init
 - ``program.return_="<saved_raw>"`` dispatches run_processing for coef save
 - Duplicate YAMLs (same pcid, multiple stems) are both processed, but data is
@@ -37,16 +37,16 @@ class TestCliOverrideParsing:
     ``[""]`` and ``<>`` from the shell::
 
         'program.return_="<cfg_from_args>"'
-        'input.time_ranges_zeroing=["2026-06-25T17:23:30","2026-06-25T17:25:00"]'
+        'input.calib.time_ranges_zeroing=["2026-06-25T17:23:30","2026-06-25T17:25:00"]'
     """
 
     @pytest.mark.parametrize(
         ("extra_args", "check"),
         [
             pytest.param(
-                ['input.time_ranges_zeroing=["2026-06-25T17:23:30","2026-06-25T17:25:00"]'],
+                ['input.calib.time_ranges_zeroing=["2026-06-25T17:23:30","2026-06-25T17:25:00"]'],
                 lambda cfg: (
-                    list(cfg.input.time_ranges_zeroing)
+                    list(cfg.input.calib.time_ranges_zeroing)
                     == [
                         "2026-06-25T17:23:30",
                         "2026-06-25T17:25:00",

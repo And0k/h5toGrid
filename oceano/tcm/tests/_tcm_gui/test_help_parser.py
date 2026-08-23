@@ -218,34 +218,34 @@ class TestRealReferenceDetailed:
         )
 
     def test_field_level_detailed_block_reachable(self, monkeypatch):
-        """Field-level ``#### Detailed`` (no mode tag) is reachable via ``_FIELD_DETAIL``."""
-        from tcm_gui._help import _FIELD_DETAIL, help_for_path, reload_cache
+        """``filter.max`` modeless-section ``#### Detailed`` block is reachable."""
+        from tcm_gui._help import _NO_MODE, help_for_path, reload_cache
 
         monkeypatch.setattr("tcm_gui._help.resolve_lang", lambda: "en")
         reload_cache("en")
-        # ``filter.max`` has a field-level #### Detailed block (process-computed
-        # threshold columns; wording deduped with the section intro).
-        e = help_for_path("filter.max", mode=_FIELD_DETAIL, detail="Detailed")
+        # ``filter.max`` carries a modeless ### section with a #### Detailed
+        # block (process-computed threshold columns).
+        e = help_for_path("filter.max", mode=_NO_MODE, detail="Detailed")
         if e is None:
             pytest.skip("filter.max not in bundled doc — version drift")
-        assert isinstance(e.body, str), f"field-level detail body should be str, got {type(e.body).__name__}"
+        assert isinstance(e.body, str), f"modeless detail body should be str, got {type(e.body).__name__}"
         assert e.body, (
-            "filter.max #### Detailed body should be non-empty — "
-            "did config_reference.md gain the field-level Detailed block?"
+            "filter.max Detailed body should be non-empty — "
+            "did config_reference.md gain the filter.max section?"
         )
         assert "process-computed" in e.body, f"Detailed body should mention process-computed; got {e.body!r}"
 
     def test_field_level_detailed_via_resolve_detail(self, monkeypatch):
-        """``help_for_path(path, mode='_', detail='Detailed')`` returns the field-level detail body."""
-        from tcm_gui._help import _FIELD_DETAIL, help_for_path, reload_cache
+        """``program.return_`` modeless-section Detailed returns the phase table."""
+        from tcm_gui._help import _NO_MODE, help_for_path, reload_cache
 
         monkeypatch.setattr("tcm_gui._help.resolve_lang", lambda: "en")
         reload_cache("en")
-        # ``program.return_`` has a field-level #### Detailed block (phase-stopping table).
-        e = help_for_path("program.return_", mode=_FIELD_DETAIL, detail="Detailed")
+        # ``program.return_`` carries a modeless ### section with the phase-stopping table.
+        e = help_for_path("program.return_", mode=_NO_MODE, detail="Detailed")
         if e is None:
             pytest.skip("program.return_ not in bundled doc")
-        assert isinstance(e.body, str), f"field-level detail body should be str, got {type(e.body).__name__}"
+        assert isinstance(e.body, str), f"modeless detail body should be str, got {type(e.body).__name__}"
         assert e.body, "program.return_ Detailed block should be non-empty"
         assert "saved_coefs" in e.body, f"Detailed body should mention phase-stopping values; got {e.body!r}"
 
@@ -722,6 +722,55 @@ class TestModeSectionAfterFieldDetail:
         assert probe.details["Detailed"] == "P_t detail body."
 
 
+class TestModelessSections:
+    """``### `field` `` without a ``<mode>`` tag — the single-context default."""
+
+    _SAMPLE = textwrap.dedent(
+        """\
+        ## `input` — Data source
+
+        | Field = Default | Purpose |
+        |-----------------|---------|
+        | `time_ranges` = `None` | Time window. |
+
+        ### `input.time_ranges`
+        Short body.
+
+        #### Detailed
+        Detailed body.
+
+        ## `out` — Output
+
+        | Field = Default | Purpose |
+        |-----------------|---------|
+        | `overwrite_db` = `None` | NC overwrite strategy. |
+
+        ### `out.overwrite_db`
+        Narrative with a decision table after it — the table must NOT leak
+        field rows (the section swallows it as body):
+
+        | `None` | No | subset | Skip NC |
+        | `trim` | — | any | Trim |
+        """
+    )
+
+    def test_modeless_section_stored_under_no_mode(self):
+        from tcm_gui._help import _NO_MODE, ModeBody
+
+        e = parse_reference(self._SAMPLE)["input.time_ranges"]
+        body = e.body[_NO_MODE]
+        assert isinstance(body, ModeBody)
+        assert body.short == "Short body."
+        assert body.details["Detailed"] == "Detailed body."
+
+    def test_table_after_modeless_section_not_leaked_as_rows(self):
+        entries = parse_reference(self._SAMPLE)
+        assert "out.overwrite_db" in entries, "table row must parse before the modeless section"
+        assert not any(p in entries for p in ("out.None", "out.trim")), (
+            "decision-table rows after a modeless section must stay body, not become field rows"
+        )
+
+
 class TestAnchors:
     """Section-heading anchors (GitHub-style slug, ``{#id}`` honored) for F1 help."""
 
@@ -740,6 +789,28 @@ class TestAnchors:
         monkeypatch.setattr("tcm_gui._help.resolve_lang", lambda: "en")
         reload_cache("en")
         assert help_for_path("input.coefs.Ag[0]").anchor == "inputcoefs--calibration-coefficients"
+
+    def test_real_doc_calib_entries(self, monkeypatch):
+        """Schema-derived ``input.calib`` section feeds sheet status + dwell tooltips.
+
+        Regression: ``_FIELD_SECTIONS`` is inferred from ``schema`` (nested input
+        dataclass groups) — a missing ``input.calib`` made every calib sheet row
+        fall back to the bare key name in the status bar.
+        """
+        from tcm_gui._help import help_for_path, reload_cache
+
+        monkeypatch.setattr("tcm_gui._help.resolve_lang", lambda: "en")
+        reload_cache("en")
+        for p in (
+            "input.calib.g0xyz",
+            "input.calib.time_ranges_zeroing",
+            "input.calib.time_ranges_azimuth",
+            "input.calib.coordinates",
+            "input.calib.azimuth_add",
+        ):
+            e = help_for_path(p)
+            assert e is not None and e.short, f"{p} must parse from the input.calib field table"
+            assert help_for_path(p, mode="detail", detail="Detailed").body, f"{p} needs a #### Detailed block"
 
     def test_explicit_id_wins_and_strips_subtitle(self):
         sample = textwrap.dedent(

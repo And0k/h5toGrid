@@ -233,6 +233,7 @@ def pipeline_env(tmp_path):
                 "tables": ["incl*"], "text_type": None, "text_line_regex": None,
                 "prefix": None, "dt_from_utc": 0,
                 "corr_time_mode": None,  # moved from filter
+                "calib": {},
             },
             "out": {"dt_bins": [0, 2, 600]},
             "filter": {},

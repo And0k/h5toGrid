@@ -107,6 +107,6 @@ environmental fluctuations, instrument instability in the flow, and its noise.
   fluid load on inclined cylinders from optical measurements of the
   reconfiguration of flexible filaments in flow // J. Fluids Struct. 2018.
   Vol. 76. P. 488–505.
-- The short citations [Marsh, 1982] and [Knutson, 1987] follow the source
-  methodology text; their full bibliographic records were lost in the docx
-  conversion and are to be restored.
+- Marsh J. L. Hand-Held Calculator Assists in Directional Drilling Control // Pet Eng Int U. S. 1982.
+  Т. 2. С. 12–14.
+- Knutson R. K. BASIC Desk-Top Computer Program for the Three-Dimensional Static Configuration of an Extensible Flexible Cable in a Uniform Stream. : David Taylor Naval Ship R&D Center, 1987.

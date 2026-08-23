@@ -328,14 +328,13 @@ class TestPrepareCoefs:
         assert result is None
 
     def test_prepare_coefs_g0xyz_produces_coef_zeroing_matrix(self):
-        """prepare_coefs with g0xyz in coefs → returns non-None coef_zeroing_matrix."""
+        """prepare_coefs with g0xyz kwarg (input.calib.g0xyz) → non-None coef_zeroing_matrix."""
         coefs = {
             "Ag": np.eye(3) * 0.00173,
             "Cg": np.array([10.0, 10.0, 10.0]),
-            "g0xyz": np.array([0.1, 0.2, 9.8]),
             "dates": {},
         }
-        _, matrix, _, msg = prepare_coefs(coefs, _sample_ds())
+        _, matrix, _, msg = prepare_coefs(coefs, _sample_ds(), g0xyz=np.array([0.1, 0.2, 9.8]))
         assert matrix is not None and matrix.shape == (3, 3), (
             f"g0xyz should produce coef_zeroing_matrix, got {matrix}"
         )
@@ -592,13 +591,17 @@ class TestRunParamsAttr:
         ds = _sample_ds(50)
         # First write with one set of params
         store_processed_incremental(
-            ds, path, group="i_p01",
+            ds,
+            path,
+            group="i_p01",
             filter_params="filter.max.g=1.0\ncoef.Ax=1.0",
         )
         # Second write with different coef — data is covered, should error
         with pytest.raises(ValueError, match="Coefficients/params changed"):
             store_processed_incremental(
-                ds, path, group="i_p01",
+                ds,
+                path,
+                group="i_p01",
                 filter_params="filter.max.g=1.0\ncoef.Ax=2.0",
             )
 

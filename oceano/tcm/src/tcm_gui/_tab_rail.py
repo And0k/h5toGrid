@@ -57,6 +57,7 @@ class TabRail(tk.Canvas):
         self._st: dict[str, dict] = {}  # name → visual state
         self._selected: str | None = None
         self._hovered: str | None = None
+        self._disabled = False  # inert look + click veto — no configs to switch to yet
         self._after_id: str | None = None  # animation loop handle
         self.bind("<Configure>", lambda _e: self._layout())
         self.bind("<Button-1>", self._click)
@@ -115,6 +116,18 @@ class TabRail(tk.Canvas):
             return
         st["dirty"] = dirty
         self._layout()  # '*' changes ideal height
+
+    def set_disabled(self, disabled: bool) -> None:
+        """Inert look for the whole rail: dim text, no accent, click veto.
+
+        Simple mode before the first successful scan — mirrors the readonly
+        tksheet so the placeholder tab + caption read as awaiting a data path.
+        """
+        if self._disabled == disabled:
+            return
+        self._disabled = disabled
+        for name in self._names:
+            self._refresh(name)
 
     # ── vertical sizing policy ────────────────────────────────────────
     def _heights(self, H: int) -> dict[str, int]:
@@ -246,8 +259,8 @@ class TabRail(tk.Canvas):
         self.itemconfigure(c["face"], fill=pal["hover"] if self._hovered == name else pal["track"])
         if fill_clr := {"running": pal["run"], "done": pal["done"], "error": pal["error"]}.get(st["state"]):
             self.itemconfigure(c["fill"], fill=fill_clr)
-        sel = self._selected == name
-        dim = st["state"] == "pending" and not sel
+        sel = self._selected == name and not self._disabled
+        dim = self._disabled or (st["state"] == "pending" and not sel)
         self.itemconfigure(c["acc"], state="normal" if sel else "hidden")
         self.itemconfigure(c["text"], fill=pal["dim"] if dim else pal["text"], text=self._label(name))
         self._geom_fill(name)
@@ -294,6 +307,8 @@ class TabRail(tk.Canvas):
         return next((n for n, c in self._cells.items() if c["y0"] <= y < c["y1"]), None)
 
     def _click(self, e: tk.Event) -> None:
+        if self._disabled:
+            return
         # Tab column is the button; progress column stays display-only.
         if e.x >= scaled(self.PROG_W) and (name := self._at(e.y)) is not None:
             self._on_select(name)
@@ -306,7 +321,7 @@ class TabRail(tk.Canvas):
         for n in (old, name):
             if n in self._cells:
                 self._refresh(n)
-        self.configure(cursor="hand2" if name and e.x >= scaled(self.PROG_W) else "")
+        self.configure(cursor="hand2" if name and not self._disabled and e.x >= scaled(self.PROG_W) else "")
         if self._on_hover:
             self._on_hover(name)
 

@@ -337,7 +337,6 @@ def get_coefs(coefs_paths: Sequence, tbl: str, coefs_ovr: Mapping[str, Any] | No
 def coefs_format_for_h5(coef: Mapping[str, Any], pcid: str = None, date: str | None = None):
     if coef is None:
         coef = schema.ConfigInCoefs_InclProc().__dict__
-        del coef["g0xyz"]
         if not pcid.split("_")[-1].startswith("p"):
             del coef["P_t"]
         if not pcid.startswith("w"):

@@ -12,7 +12,7 @@ Four configuration groups control the pipeline:
 
 | Group | What it controls | Key fields |
 |-------|------------------|------------|
-| `input` | Source files, calibration, time ranges | `path`, `ids`, `coefs`, `time_ranges`, `coordinates` |
+| `input` | Source files, calibration, time ranges | `path`, `ids`, `coefs`, `time_ranges`, `calib` |
 | `out` | Output format, binning, text export | `dt_bins`, `text_path`, `overwrite_db` |
 | `filter` | Data quality thresholds | `min`, `max`, `corr_time_mode` |
 | `program` | Runtime behavior | `return_`, `verbose` |
@@ -69,8 +69,8 @@ Config root rather than under a `run` namespace. Without it, the fields would
 be nested under `run.input.*` instead of `input.*`.
 
 Typical user edits: replace default `coefs` with actual calibration values,
-narrow `time_ranges` to the deployment period, set `coordinates` for magnetic
-declination correction.
+narrow `time_ranges` to the deployment period, set `input.calib.coordinates`
+for magnetic declination correction.
 
 ## Filter expansion (M shorthand)
 
@@ -120,15 +120,18 @@ plane.
 ```yaml
 # All calibrations at once:
 input:
-  time_ranges_zeroing: ["2026-06-25T17:23:30", "2026-06-25T17:25:00"]   # Rz
-  time_ranges_azimuth: ["2026-06-25T17:23:30", "2026-06-25T17:25:00"]   # azimuth_shift_deg
   time_ranges: ["2026-06-25T17:23:30", "2026-06-25T17:25:00"]           # data filter
   coefs:
     azimuth_shift_deg: 180   # default (compensates magnetometer inversion)
+  calib:
+    time_ranges_zeroing: ["2026-06-25T17:23:30", "2026-06-25T17:25:00"]   # Rz
+    time_ranges_azimuth: ["2026-06-25T17:23:30", "2026-06-25T17:25:00"]   # azimuth_shift_deg
+    coordinates: [54.70, 20.51]   # Kaliningrad (magnetic declination)
+    azimuth_add: 2.5              # manual fine-tune
 ```
 
-**Layering**: `azimuth_add` (manual offset, degrees) and `coordinates` +
-`data_date` (magnetic declination via `pygeomag`) are applied **on top of**
+**Layering**: `azimuth_add` (manual offset, degrees) and `coordinates` + `data_date`
+(magnetic declination via `pygeomag`) are applied **on top of**
 the data-computed azimuth.
 
 ## Updating coefficients via zeroing
@@ -137,8 +140,8 @@ Two independent zeroing operations, each with its own time window:
 
 | Parameter | What | How | Writes |
 |---|---|---|---|
-| `time_ranges_zeroing` | Tilt rotation | `orientation.zeroing_rotation()` on accelerometer data | `Rz` |
-| `time_ranges_azimuth` | Tilt direction azimuth | `orientation.azimuth_shift()` on mag+accel unit vectors | `azimuth_shift_deg` |
+| `input.calib.time_ranges_zeroing` | Tilt rotation | `orientation.zeroing_rotation()` on accelerometer data | `Rz` |
+| `input.calib.time_ranges_azimuth` | Tilt direction azimuth | `orientation.azimuth_shift()` on mag+accel unit vectors | `azimuth_shift_deg` |
 
 The azimuth computation uses calibrated unit vectors only (no velocity/magnitude
 calculation), so it does not depend on `kVabs` or inclination-to-magnitude
@@ -151,7 +154,7 @@ accelerometer vector `[Ax, Ay, Az]` measured when the instrument was at zero til
 
 ```yaml
 input:
-  coefs:
+  calib:
     g0xyz: [100.5, 50.2, 980.1]   # raw accelerometer at zero tilt
 ```
 
@@ -159,9 +162,9 @@ When `g0xyz` is set, it **overrides** any existing `Rz` in the coefficients.
 
 | Method | Input | What it computes | Typical use |
 |--------|-------|-----------------|-------------|
-| `g0xyz` | Single raw accel vector at known zero tilt | Rotation to align sensor Z with gravity | Lab calibration, known plumb reference |
-| `time_ranges_zeroing` | Data interval with instrument at rest | Mean tilt rotation from multiple samples | Field zeroing, post-deployment correction |
-| `time_ranges_azimuth` | Data interval at known tilt direction | Azimuth shift from mag+accel unit vectors | Field azimuth calibration |
+| `input.calib.g0xyz` | Single raw accel vector at known zero tilt | Rotation to align sensor Z with gravity | Lab calibration, known plumb reference |
+| `input.calib.time_ranges_zeroing` | Data interval with instrument at rest | Mean tilt rotation from multiple samples | Field zeroing, post-deployment correction |
+| `input.calib.time_ranges_azimuth` | Data interval at known tilt direction | Azimuth shift from mag+accel unit vectors | Field azimuth calibration |
 
 ### Coefficient persistence
 
@@ -183,12 +186,12 @@ Coefs saved to ...//incl01: 12 datasets (2 overwritten)
 ```bash
 # From text CSV — generates config, computes Rz, proceeds with processing
 tcm_proc.exe "_raw/*i*.txt" \
-  'input.time_ranges_zeroing=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
+  'input.calib.time_ranges_zeroing=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
   'input.time_ranges=["2026-06-25T17:23:30","2026-06-25T17:25:00"]'
 
 # Zeroing-only (compute Rz, persist coefs, stop — no data processing):
 tcm_proc.exe "_raw/*i*.txt" \
-  'input.time_ranges_zeroing=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
+  'input.calib.time_ranges_zeroing=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
   'input.time_ranges=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
   'program.return_="<saved_coefs>"'
 ```

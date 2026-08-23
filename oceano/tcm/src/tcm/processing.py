@@ -735,13 +735,11 @@ def run_processing(cfg: DictConfig):
     # Prepare coefs: zeroing rotation, azimuth correction
     lf.debug("Preparing coefs for {}...", pcid)
 
+    calib = cfg_in.get("calib") or {}  # kwargs mirror ConfigInCalib_InclProc fields
     coefs_merged, coef_zeroing_matrix, dates, msg = xr_coefs.prepare_coefs(
         coefs,
         ds_raw,
-        time_ranges_zeroing=cfg_in.get("time_ranges_zeroing") or None,
-        time_ranges_azimuth=cfg_in.get("time_ranges_azimuth") or None,
-        azimuth_add=cfg_in.get("azimuth_add") or None,
-        coordinates=tuple(cfg_in["coordinates"]) if cfg_in.get("coordinates") else None,
+        **{k: v for k, v in calib.items() if v},
     )
     lf.info("Coefs prepared for {}: {}", pcid, msg or "no zeroing/azimuth adjustments")
     stage_ctx.tick()  # coefs done

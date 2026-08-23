@@ -53,7 +53,9 @@ def _tip_body(path: str, **kwargs: str) -> str:
 class App:
     APP_ID = "Vendor.Product"  # todo: Fix, not hardcode here
     POLL = 300  # ms
-    _DWELL_MS = 6_000  # dwell tooltip delay — show detailed help after hover
+    _DWELL_MS = 4000  # dwell tooltip delay — show detailed help after hover
+    _DWELL_HIDE_MS = 1500  # dwell tooltip auto-close delay after show
+    _STATUS_SETTLE_MS = 300  # status message switch/close debounce
 
     def __init__(self, argv: Sequence[str] | None = None) -> None:
         if sys.platform == "win32":
@@ -94,6 +96,9 @@ class App:
         self._dwell_job: str | None = None  # pending after() id
         self._dwell_active: bool = False  # dwell tip currently shown
         self._dwell_widget: tk.Widget | None = None  # widget that armed the dwell
+        self._dwell_hide_job: str | None = None  # pending dwell auto-close after()
+        self._status_job: str | None = None  # pending debounced _apply_status
+        self._status_hovering: bool = False  # pointer on _status_lbl — hold the dwell tip
         self._pages: dict[str, ConfigSheet] = {}
         self._yaml_paths: dict[str, Path] = {}
         self._tab_of: dict[str, ttk.Frame] = {}  # stem → notebook tab frame
@@ -127,6 +132,7 @@ class App:
             if not self._full_mode:
                 for cs in self._pages.values():
                     cs.set_readonly(True)
+                self._set_cfg_ui_disabled(True)
         self._poll()
 
     @property
@@ -183,19 +189,24 @@ class App:
         self._path_field.sh.MT.bind("<Enter>", lambda _: self._on_path_hover_in(), add="+")
         self._path_field.sh.MT.bind("<Leave>", lambda _: self._on_path_hover_out(), add="+")
 
-        # §2 Overall status label — scan state / run-level progress text
+        # §2 Status row — one line that COLLAPSES to the centered overall
+        # caption while the stage progress is inactive.  _overall_lbl spans
+        # column 0 (weight=1): its anchor centers the idle caption across the
+        # whole row and left-aligns the text once the stage widgets (columns
+        # 1–2) are gridded: overall caption, bar, stage description.
         f1 = ttk.Frame(r)
         f1.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 0))
         f1.columnconfigure(0, weight=1)
+        self._status_hovering = False  # pointer on _status_lbl — hold the dwell tip
+        self._stage_hovering = False  # pointer over the stage widgets — keep them hidden
+        self._prog_show_job: str | None = None  # after() id for delayed show
         # Use mode-specific default stage text: full mode is editable, non-full is readonly.
-        self._overall_lbl = ttk.Label(f1, text=self._default_stage_text())
-        self._overall_lbl.grid(row=0, column=0, sticky="w")
-        # §2b Progress status — current processing stage, right-aligned,
-        # separate from the tab rail's visual fill.
-        self._prog_status = ttk.Label(f1, text="", anchor="e")
-        self._prog_status.grid(row=0, column=1, sticky="e", padx=(8, 0))
-        self._status_hovering = False
-        self._floater_hovering = False  # independent per-widget hover-hide flags
+        self._overall_lbl = ttk.Label(f1, text=self._default_stage_text(), anchor="center")
+        self._overall_lbl.grid(row=0, column=0, sticky="ew")
+        # §2b Stage progress — never gridded at build; only active stages grid
+        # them (see _show_stage_progress), so the row starts collapsed.
+        self._prog_stage = ttk.Progressbar(f1, mode="determinate", length=220)
+        self._prog_stage_text = ttk.Label(f1, text="", anchor="w", justify="left")
         # Last-seen stage snapshot — a change = progress advanced (see _poll_progress).
         self._stage_last: tuple[int, int, str] = (0, 0, "")
 
@@ -282,36 +293,16 @@ class App:
             on_link=open_md_link,
         )
         self._status_lbl.place(rely=1.0, relx=0.0, anchor="sw", x=4, y=0)
+        # Hovering the status text itself: pause the dwell auto-close so the
+        # user can keep reading / click a link; the countdown resumes on leave.
+        self._status_lbl.bind("<Enter>", self._on_status_enter, add="+")
+        self._status_lbl.bind("<Leave>", self._on_status_leave, add="+")
 
-        # §6b Stage progress — overlaid bottom-right, shown only when active.
-        # Text label sits above the bar inside a transparent-background frame.
-        _bg = tcm_gui.theme.FRAME_BG_FALLBACK
-        self._prog_floater = tk.Frame(r, bg=_bg, bd=0, highlightthickness=0)
-        self._prog_stage_text = tk.Label(
-            self._prog_floater,
-            text="",
-            anchor="e",
-            justify="right",
-            bg=_bg,
-            fg=tcm_gui.theme.FG_DEFAULT,
-            bd=0,
-            highlightthickness=0,
-            padx=4,
-        )
-        self._prog_stage_text.pack(side="top", anchor="e", fill="x")
-        self._prog_stage = ttk.Progressbar(self._prog_floater, mode="determinate", length=220)
-        self._prog_stage.pack(side="bottom", fill="x")
-        self._prog_show_job: str | None = None  # after() id for delayed show
-
-        # Z-order: mouse motion lifts GUI status (bottom-left) above floater —
-        # except while an error is surfaced: the wide error-detail tooltip in
-        # _status_lbl would bury the floater's error line between poll lifts.
-        r.bind("<Motion>", self._lift_status_z, add="+")
         # Esc dismisses the error detail tooltip shown in _status_lbl.
         r.bind("<Escape>", lambda _e: (self._hide_tip(), self._cancel_dwell()), add="+")
         # Hover-hide: root <Motion> hides ONLY when the live pointer is over the
-        # visible status widgets; motion anywhere else never hides them.  <Enter>
-        # bindings proved unreliable — _poll_progress re-shows/lifts the floater
+        # visible stage widgets; motion anywhere else never hides them.  <Enter>
+        # bindings proved unreliable — _poll_progress re-grids the widgets
         # mid-motion, so <Enter> can't fire while the pointer is already inside.
         # Once hidden, only programmatic activation restores (progress advance /
         # explicit placement) — pointer leave alone never re-shows.
@@ -419,8 +410,8 @@ class App:
         self._status_lbl.mark_font_ready()
         # Re-render cached content with scaled font.
         if not self._status_lbl.rerender():
-            if self._initial_scan and not self._prog_floater.place_info():
-                self._place_floater()
+            if self._initial_scan and not self._stage_shown:
+                self._show_stage_progress()
                 self._prog_stage_text.config(text=_S["status.loading"])
             elif not self._initial_scan:
                 self._set_status(_S["status.ready"], raw=True)
@@ -456,52 +447,61 @@ class App:
             self._set_status(self._path_field._path_status)
 
     def _hide_progress_widgets(self) -> None:
-        """Hide both progress widgets on user interaction (edit/browse start).
+        """Collapse the stage progress row on user interaction (edit/browse start).
 
-        Sets both hover flags so the widgets stay hidden until programmatic
+        Sets the hover flags so the widgets stay hidden until programmatic
         activation (progress advance / explicit placement).  Called when the
         user starts editing tksheet cells, the path field, or clicks browse.
         """
         self._status_hovering = True
-        self._floater_hovering = True
-        self._prog_status.grid_remove()
-        if self._prog_floater.place_info():
-            self._prog_floater.place_forget()
+        self._stage_hovering = True
+        self._hide_stage_progress()
 
     def _on_status_motion(self, event: tk.Event) -> None:
-        """Hover-hide each status widget independently under the live pointer.
+        """Hover-hide the stage widgets under the live pointer.
 
-        Shown always; a widget hides only when the pointer is over THAT widget
-        — hovering ``_prog_status`` (top row) never hides the floater and vice
-        versa.  ``<Enter>`` can't "catch" the mouse here: the poll re-shows/
-        lifts widgets mid-motion with the pointer already inside, so root
-        ``<Motion>`` + per-event live bounds is the reliable trigger.
+        Shown always; the row collapses only when the pointer is over the bar
+        or the stage text.  ``<Enter>`` can't "catch" the mouse here: the poll
+        re-grids the widgets mid-motion with the pointer already inside, so
+        root ``<Motion>`` + per-event live bounds is the reliable trigger.
 
-        Once hidden, a widget STAYS hidden after the pointer leaves —
+        Once hidden, the row STAYS collapsed after the pointer leaves —
         restoration is exclusively programmatic: progress advance
-        (``_poll_progress`` clears both flags on snapshot change) or explicit
-        placement (``_place_floater`` clears ``_floater_hovering``).
+        (``_poll_progress`` clears the flag on snapshot change) or explicit
+        placement (``_show_stage_progress``).
         """
         if (
-            not self._status_hovering
-            and self._prog_status.grid_info()
-            and self._pointer_inside(event, self._prog_status)
+            not self._stage_hovering
+            and self._stage_shown
+            and (
+                self._pointer_inside(event, self._prog_stage)
+                or self._pointer_inside(event, self._prog_stage_text)
+            )
         ):
-            self._status_hovering = True
-            self._prog_status.grid_remove()
-        if (
-            not self._floater_hovering
-            and self._prog_floater.place_info()
-            and self._pointer_inside(event, self._prog_floater)
-        ):
-            self._floater_hovering = True
-            self._prog_floater.place_forget()
+            self._stage_hovering = True
+            self._hide_stage_progress()
 
-    def _place_floater(self) -> None:
-        """Place + lift the stage floater — programmatic activation ends hover-hide."""
-        self._floater_hovering = False
-        self._prog_floater.place(relx=1.0, rely=1.0, anchor="se", x=-8, y=-4)
-        self._prog_floater.lift()
+    @property
+    def _stage_shown(self) -> bool:
+        """True while the stage progress widgets are gridded in the status row."""
+        return bool(self._prog_stage.grid_info())
+
+    def _show_stage_progress(self) -> None:
+        """Grid bar + stage text into the row, left-align the overall caption.
+
+        Programmatic activation — also clears ``_stage_hovering`` so a
+        hover-hidden row re-appears.
+        """
+        self._stage_hovering = False
+        self._prog_stage.grid(row=0, column=1, padx=(8, 4))
+        self._prog_stage_text.grid(row=0, column=2, sticky="w")
+        self._overall_lbl.configure(anchor="w")
+
+    def _hide_stage_progress(self) -> None:
+        """Collapse the row — overall caption alone, centered across it."""
+        self._prog_stage.grid_remove()
+        self._prog_stage_text.grid_remove()
+        self._overall_lbl.configure(anchor="center")
 
     @staticmethod
     def _pointer_inside(event: tk.Event, w: tk.Widget) -> bool:
@@ -510,20 +510,6 @@ class App:
             w.winfo_rootx() <= event.x_root <= w.winfo_rootx() + w.winfo_width()
             and w.winfo_rooty() <= event.y_root <= w.winfo_rooty() + w.winfo_height()
         )
-
-    def _lift_status_z(self, _event: tk.Event) -> None:
-        """Motion z-order: status label above floater — error floater above tooltip.
-
-        ``_status_lbl`` grows to window width for the error-detail tooltip and
-        visually buries the bottom-right floater when lifted over it.  During
-        normal progress the motion lift keeps hover hints readable (the poll
-        lifts the floater back on the next 300 ms tick), but while
-        ``_error_active`` the floater carries the short error line — re-lift
-        it immediately so it never flickers under the tooltip on mouse motion.
-        """
-        self._status_lbl.lift()
-        if self._error_active and self._prog_floater.place_info():
-            self._prog_floater.lift()
 
     def _on_top_shift(self, is_file: bool) -> None:
         """Top PathField Shift state changed — swap status text.
@@ -597,12 +583,10 @@ class App:
         self._path_field.set_error(False)  # fresh search attempt clears the failure mark
         self._hide_tip()
         self._initial_scan = True
-        # Show progress overlay immediately (skip "Ready" → "Loading…" transition).
+        self._set_cfg_ui_disabled(False)  # search activity — drop the inert look
+        # Show the stage row immediately (skip "Ready" → "Loading…" transition).
         self._set_status("", raw=True)
-        if self._prog_floater.place_info():
-            self._prog_floater.lift()
-        else:
-            self._place_floater()
+        self._show_stage_progress()
         self._prog_stage_text.config(text=_S["status.loading"])
         self._scan()
 
@@ -790,22 +774,28 @@ class App:
             self._log.see("end")
         self._log.config(state="disabled")
 
-    def _on_copy_rich(self, _event: tk.Event) -> str | None:
-        """Root-level ``<<Copy>>`` → copy ``_log`` selection as RTF, else fall through.
+    def _on_copy_rich(self, event: tk.Event) -> str | None:
+        """Root-level ``<<Copy>>`` → rich-copy the selection of any text surface.
 
-        ``_log`` is ``state='disabled'`` and so cannot receive keyboard focus, so
-        a widget-scoped ``<<Copy>>`` binding would never fire.  Tk's default
-        ``<<Copy>>`` on Entry/Text copies plain text only — never RTF colors.
-        This handler runs at root level so it fires after the focused widget's
-        class binding (which already copied plain text to the clipboard).
-        When ``_log`` carries a non-empty ``sel`` tag (mouse drag on the
-        disabled text): serve RTF + plain via :func:`copy_rich` (overwriting
-        the Entry's plain text) and return ``'break'`` to suppress further
-        propagation.  Otherwise return ``None`` so the focused widget (e.g.
-        ttk.Entry) keeps its normal copy behaviour.
+        ``_log`` is ``state='disabled'`` and ``_status_lbl`` never needs focus, so
+        widget-scoped ``<<Copy>>`` bindings would never fire for them.  Tk's
+        default ``<<Copy>>`` on Entry/Text copies plain text only — never RTF
+        colors.  This handler runs at root level (fires via the toplevel
+        bindtag whatever holds focus) after the focused widget's class binding
+        (which already copied plain text).  When one of our text surfaces
+        carries a ``sel`` tag — the event widget if it is one, else the first
+        with a selection: serve RTF + plain via :func:`copy_rich` (overwriting
+        the plain copy) and return ``'break'`` to suppress further propagation.
+        Otherwise return ``None`` so the focused widget (e.g. ttk.Entry) keeps
+        its normal copy behaviour.
         """
-        if self._log.tag_ranges("sel"):
-            copy_rich(self._log)
+        surfaces = (self._log, self._status_lbl)
+        focused = getattr(event, "widget", None)
+        target = next((w for w in surfaces if focused is w), None) or next(
+            (w for w in surfaces if w.tag_ranges("sel")), None
+        )
+        if target is not None:
+            copy_rich(target)
             return "break"
         return None
 
@@ -839,50 +829,53 @@ class App:
         key = "scan_stage.default_full" if self._full_mode else "scan_stage.default"
         return _S.get(key, "")
 
+    def _set_cfg_ui_disabled(self, disabled: bool) -> None:
+        """Inert look for rail + overall caption while no scanned configs exist.
+
+        Simple mode only (full mode is editable before scan by design): the
+        rail grays out and ignores clicks, the centered caption renders dim —
+        same awaiting-a-path affordance as the readonly tksheet pages.
+        """
+        self._rail.set_disabled(disabled)
+        self._overall_lbl.config(
+            foreground=tcm_gui.theme.DEFAULT_FG if disabled else tcm_gui.theme.FG_DEFAULT
+        )
+
     def _poll_progress(self) -> None:
         # Snapshot both states once — avoids redundant lock acquisitions.
         cur, tot, desc = self.rt.progress_stage.snapshot()
         # Progress advanced (or stage changed) → new information ends
-        # hover-hide; the branches below re-show the widgets.
+        # hover-hide; the branches below re-show the row.
         if (cur, tot, desc) != self._stage_last:
             self._stage_last = cur, tot, desc
-            self._status_hovering = self._floater_hovering = False
+            self._stage_hovering = self._status_hovering = False
         _cur_o, tot_o, desc_o = self.rt.progress_overall.snapshot()
         if tot > 0:
             self._prog_stage.config(maximum=tot, value=cur)
-            # Only update stage text while stage is running AND no error is
+            # Only update stage text while the stage runs AND no error is
             # surfaced — _surface_error appends the error to the current stage
             # text; _poll_progress must not clobber it on the next 300 ms tick.
             if cur < tot and not self._error_active:
                 self._prog_stage_text.config(text=self._translate_desc(desc) or "")
-            # Restore/update each widget independently of its own hover flag:
-            # _prog_status (row-1-right label) + the floater (delayed show
-            # avoids flashing for very short operations).
-            if not self._status_hovering:
-                self._prog_status.config(text=self._translate_desc(desc) or "")
-                self._prog_status.grid()
-            if not self._floater_hovering:
-                if self._prog_floater.place_info():
-                    self._prog_floater.lift()
-                elif self._prog_show_job is None:
-                    self._prog_show_job = self.root.after(400, self._show_prog_floater)
+            # Delayed show avoids flashing the row for very short operations.
+            if not self._stage_hovering and not self._stage_shown and self._prog_show_job is None:
+                self._prog_show_job = self.root.after(400, self._show_prog_stage)
         else:
-            # Cancel pending show if progress ended before delay.
+            # Cancel pending show if progress ended before the delay.
             if self._prog_show_job is not None:
                 self.root.after_cancel(self._prog_show_job)
                 self._prog_show_job = None
             # Don't hide during initial scan — _fit_status_font showed it.
-            # Keep floater visible while an error is surfaced so the localized
-            # error text stays on screen until the next ok scan/run clears it.
-            if not self._initial_scan and not self._error_active and self._prog_floater.place_info():
-                self._prog_floater.place_forget()
+            # Keep the row while an error is surfaced so the localized error
+            # text stays on screen until the next ok scan/run clears it.
+            if not self._initial_scan and not self._error_active and self._stage_shown:
+                self._hide_stage_progress()
             # Stage inactive: consume a one-shot clear signal (set at each
             # probe start via progress_stage.clear_and_reset) so stale text is
             # wiped exactly once; otherwise leave _status alone — explicit
             # setters own it ("Ready", "Done …", hover hints).
             if not self._any_hovering and self.rt.progress_stage.consume_clear():
                 self._set_status("", raw=True)
-            self._prog_status.config(text="")
         if tot_o > 0:
             # desc_o carries ScanStage i18n keys — translate like stage descs.
             self._overall_lbl.config(text=self._translate_desc(desc_o) or "")
@@ -900,15 +893,15 @@ class App:
             desc_o = self._translate_desc(self.rt.progress_overall.snapshot()[2])
             self._overall_lbl.config(text=f"{desc_o} \u2014 {pct}%" if desc_o else f"{pct}%")
 
-    def _show_prog_floater(self) -> None:
-        """Delayed show of stage progress overlay — skipped while the floater is hover-hidden."""
+    def _show_prog_stage(self) -> None:
+        """Delayed show of the stage progress row — skipped while hover-hidden."""
         self._prog_show_job = None
-        if self._floater_hovering:
+        if self._stage_hovering:
             return
         cur, tot, _desc = self.rt.progress_stage.snapshot()
         if tot > 0:
             self._prog_stage.config(maximum=tot, value=cur)
-            self._place_floater()
+            self._show_stage_progress()
 
     def _poll_results(self) -> None:
         try:
@@ -930,6 +923,10 @@ class App:
         self._cfg_detail = ""
         self.rt.progress_overall.set(0, 0, "")
         self._overall_lbl.config(text=self._default_stage_text())
+        # No configs from ANY successful scan (placeholder never enters
+        # _yaml_paths) → back to the inert look until a valid path.
+        if not self._full_mode and not self._yaml_paths:
+            self._set_cfg_ui_disabled(True)
 
     def _on_run_error(self, exc: BaseException) -> None:
         self._run_btn.config(text=_S["run_btn.text"])
@@ -953,8 +950,7 @@ class App:
         current = self._prog_stage_text.cget("text")
         error = self._stage_error_text(exc)
         self._prog_stage_text.config(text=f"{current}\n{error}" if current else error)
-        if not self._prog_floater.place_info():
-            self._place_floater()
+        self._show_stage_progress()
         if tip := _tip_body("input.path", mode="search", detail="Detailed"):
             self._show_tip(tip)
         else:
@@ -966,17 +962,60 @@ class App:
         return _S.get("stage.error", 'Error "{msg}".').format(msg=short)
 
     def _set_status(self, text: str, *, raw: bool = False) -> None:
-        """Set ``_status_lbl`` text, suppressed while error or dwell tooltip is active.
+        """Debounced status switch/close — applied by :meth:`_apply_status` after
+        :attr:`_STATUS_SETTLE_MS`.
 
-        All chrome-hover, poll, and log-motion callers route through here so
-        the tooltip (rendered in the same ``_status_lbl``) is never clobbered
-        by a transient status update.  ``_show_tip`` / ``_hide_tip`` and
-        ``_show_dwell_tip`` / ``_cancel_dwell`` write to ``_status_lbl``
-        directly, bypassing this guard.
+        All chrome-hover, poll, and config-cell callers route through here so a
+        quick pointer pass does not flicker the label; the latest text wins.
+        ``_show_tip`` / ``_show_dwell_tip`` write to ``_status_lbl`` directly and
+        cancel the pending job, bypassing this debounce.
         """
-        if self._tip_active or self._dwell_active:
+        self._cancel_status_job()
+        self._status_job = self.root.after(
+            self._STATUS_SETTLE_MS, lambda t=text, r=raw: self._apply_status(t, raw=r)
+        )
+
+    def _cancel_status_job(self) -> None:
+        """Cancel a pending debounced status apply."""
+        if self._status_job is not None:
+            self.root.after_cancel(self._status_job)
+            self._status_job = None
+
+    def _apply_status(self, text: str, *, raw: bool = False) -> None:
+        """Fire after :attr:`_STATUS_SETTLE_MS` — error tooltip and a reader on
+        the status label win.  While a dwell tooltip owns the label, ANY switch
+        (row move on the sheet, leave) first waits out the linger window
+        :attr:`_DWELL_HIDE_MS` — the tip stays readable / clickable; the new
+        text is re-applied right after the clear.  A pending dwell arm from the
+        new row stays untouched.  ``base`` resolves relative markdown links in
+        config-reference-derived texts (mode bodies) against the doc directory."""
+        self._status_job = None
+        if self._tip_active or self._status_hovering:
             return
-        self._status_lbl.set_text(text, raw=raw)
+        if self._dwell_active:
+            self._cancel_dwell_hide_job()
+            self._dwell_hide_job = self.root.after(self._DWELL_HIDE_MS, self._clear_dwell_now)
+            self._dwell_widget = None
+            self._cancel_status_job()
+            self._status_job = self.root.after(
+                self._DWELL_HIDE_MS, lambda t=text, r=raw: self._apply_status(t, raw=r)
+            )
+            return
+        self._status_lbl.set_text(text, raw=raw, base=doc_path().parent)
+
+    # ── status-label hover — hold the dwell tip while reading / clicking ─────
+
+    def _on_status_enter(self, _event: tk.Event | None = None) -> None:
+        """Pointer entered the status text — pause the dwell auto-close."""
+        self._status_hovering = True
+        self._cancel_dwell_hide_job()
+
+    def _on_status_leave(self, _event: tk.Event | None = None) -> None:
+        """Pointer left the status text — restart the linger countdown."""
+        self._status_hovering = False
+        if self._dwell_active:
+            self._cancel_dwell_hide_job()
+            self._dwell_hide_job = self.root.after(self._DWELL_HIDE_MS, self._clear_dwell_now)
 
     def _show_tip(self, text: str) -> None:
         """Show error detail tooltip in ``_status_lbl``; suppress status updates.
@@ -986,7 +1025,8 @@ class App:
         by :meth:`_hide_tip` (new scan/run, path change, Esc, or cell edit).
         Also clears any active dwell tip (error takes precedence).
         """
-        self._cancel_dwell()  # error takes precedence over dwell
+        self._clear_dwell_now()  # error takes precedence over dwell
+        self._cancel_status_job()  # error tip shows immediately — drop pending switch
         self._tip_active = True
         # Relative links in the body resolve against config_reference_*.md's dir.
         self._status_lbl.set_text(text, base=doc_path().parent)
@@ -1005,6 +1045,7 @@ class App:
         self._dwell_active = False
         self._dwell_widget = None
         self._cancel_dwell_job()
+        self._cancel_dwell_hide_job()
         self._status_lbl.set_text("", raw=True)
 
     # ── dwell tooltip ────────────────────────────────────────────────
@@ -1027,9 +1068,27 @@ class App:
             self.root.after_cancel(self._dwell_job)
             self._dwell_job = None
 
+    def _cancel_dwell_hide_job(self) -> None:
+        """Cancel a pending dwell auto-close ``after()`` job."""
+        if self._dwell_hide_job is not None:
+            self.root.after_cancel(self._dwell_hide_job)
+            self._dwell_hide_job = None
+
     def _cancel_dwell(self) -> None:
-        """Cancel pending dwell job AND clear an active dwell tooltip."""
+        """Soft-dismiss: cancel the pending arm; an ACTIVE tip lingers
+        :attr:`_DWELL_HIDE_MS` (reading / clicking links) before
+        :meth:`_clear_dwell_now` clears it.  A re-show (:meth:`_show_dwell_tip`)
+        or a non-empty status replacement cancels the pending clear."""
         self._cancel_dwell_job()
+        if self._dwell_active:
+            self._cancel_dwell_hide_job()
+            self._dwell_hide_job = self.root.after(self._DWELL_HIDE_MS, self._clear_dwell_now)
+        self._dwell_widget = None
+
+    def _clear_dwell_now(self) -> None:
+        """Hard-dismiss: cancel pending dwell jobs AND clear an active tooltip."""
+        self._cancel_dwell_job()
+        self._cancel_dwell_hide_job()
         if self._dwell_active:
             self._dwell_active = False
             self._status_lbl.set_text("", raw=True)
@@ -1039,19 +1098,27 @@ class App:
         """Fire after :attr:`_DWELL_MS` — render *text* in ``_status_lbl``.
 
         Suppressed while ``_tip_active`` (error tooltip takes precedence).
-        While ``_dwell_active`` is True, :meth:`_set_status` is a no-op so
-        motion events don't overwrite the dwell tooltip.
+        Stays while hovered: dismissal triggers (leave / widget switch) only
+        schedule the clear via :meth:`_cancel_dwell` — the tip lingers
+        :attr:`_DWELL_HIDE_MS` so the user can keep reading or click a link.
         """
         self._dwell_job = None
         if self._tip_active:
             return
         self._dwell_active = True
+        self._cancel_status_job()  # dwell takes the label — drop the pending switch
+        self._cancel_dwell_hide_job()  # a deferred clear must not kill the re-shown tip
         # Relative links in the body resolve against config_reference_*.md's dir.
         self._status_lbl.set_text(text, base=doc_path().parent)
 
     def _on_cell_status(self, cs: ConfigSheet, msg: str, md: bool = False) -> None:
-        """ConfigSheet hover callback — set status + arm dwell with detailed body."""
-        self._cancel_dwell()
+        """ConfigSheet hover callback — debounced status switch + arm dwell.
+
+        Row switch cancels the pending dwell arm from the previous row; the
+        debounced :meth:`_apply_status` replaces a still-active dwell tooltip,
+        so a stale tip never outlives its row.
+        """
+        self._cancel_dwell_job()
         self._set_status(msg, raw=not md)
         if detail := getattr(cs, "_hover_detail", ""):
             self._arm_dwell(detail)
@@ -1069,6 +1136,7 @@ class App:
         self._yaml_paths.clear()
         self._tab_of.clear()
         self._rail.clear()
+        self._set_cfg_ui_disabled(False)  # scanned configs exist — active from first paint
         self._current = None
         for stem, yp, cfg_dc in result[3]:
             cfg = OmegaConf.to_container(cfg_dc, resolve=True)
@@ -1086,7 +1154,7 @@ class App:
         self._cfg_state = ScanStage.DONE
         self._cfg_detail = ""
         self._initial_scan = False
-        # Clear scan progress so _prog_floater hides on next poll.
+        # Clear scan progress so the stage row collapses on next poll.
         self.rt.progress_stage.set(0, 0, "")
         # Scan done — show "Ready" now.
         self._set_status(_S["status.ready"], raw=True)
@@ -1100,9 +1168,8 @@ class App:
         processed, failed = result[0], result[1]
         n = len(processed) + len(failed)
         pct = round(100 * len(processed) / n) if n else 100
-        # Hide stage progress floater — completion shown in overall label
-        if self._prog_floater.place_info():
-            self._prog_floater.place_forget()
+        # Collapse the stage progress row — completion shown in overall label
+        self._hide_stage_progress()
         self.rt.progress_stage.set(0, 0, "")
         self._cfg_state = ScanStage.DONE
         self._cfg_detail = _S["overall_lbl.done_detail"].format(pct=pct, ok=len(processed), n=n)

@@ -1459,13 +1459,16 @@ see [h5py-only file I/O](#h5py-only-file-io).
 ### Coefs preparation (xr-native)
 
 `_xr.coefs.prepare_coefs()`:
-1. Accepts `coefs`, `ds_raw`, and keyword args `time_ranges_zeroing`,
-   `time_ranges_azimuth`, `azimuth_add`, `coordinates`, `data_date`
+1. Accepts `coefs`, `ds_raw`, and keyword args mirroring `ConfigInCalib_InclProc`
+   (`g0xyz`, `time_ranges_zeroing`, `time_ranges_azimuth`, `azimuth_add`,
+   `coordinates`) plus `data_date` — passed from `processing.run_processing` as
+   `**{k: v for k, v in calib.items() if v}`
 2. Azimuth correction via `get_coef_azimuth_shift()` (if `azimuth_shift_deg` in coefs)
 3. If `time_ranges_zeroing`: tilt zeroing → `coef_zeroing_rotation_from_data()` → `Rz`
 4. If `time_ranges_azimuth`: tilt direction azimuth → `coef_azimuth_from_data()` → `azimuth_shift_deg`
    (uses `orientation.azimuth_shift()` on calibrated unit vectors, no kVabs dependency)
-5. `get_coef_zeroing_matrix(**coefs)` — computes rotation from `g0xyz` (if set)
+5. `get_coef_zeroing_matrix(**coefs)` — computes rotation from `g0xyz` (if set;
+   the `input.calib.g0xyz` kwarg overrides any file-sourced value inside *coefs*)
    or returns existing `Rz` (if non-identity). `g0xyz` takes precedence.
 6. Returns `(coefs_merged, coef_zeroing_matrix, dates, msg)`
 

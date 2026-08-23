@@ -110,6 +110,6 @@ $$V = \sqrt{\dfrac{\sin\Theta}{a_0 + \sum_{n=1}^{\infty}
   fluid load on inclined cylinders from optical measurements of the
   reconfiguration of flexible filaments in flow // J. Fluids Struct. 2018.
   Т. 76. С. 488–505.
-- Короткие ссылки [Marsh, 1982] и [Knutson, 1987] приведены по исходному
-  тексту методики; их полные библиографические описания утеряны при
-  конвертации из docx и подлежат восстановлению.
+- Marsh J. L. Hand-Held Calculator Assists in Directional Drilling Control // Pet Eng Int U. S. 1982.
+  Т. 2. С. 12–14.
+- Knutson R. K. BASIC Desk-Top Computer Program for the Three-Dimensional Static Configuration of an Extensible Flexible Cable in a Uniform Stream. : David Taylor Naval Ship R&D Center, 1987.

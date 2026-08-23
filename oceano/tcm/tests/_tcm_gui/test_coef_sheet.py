@@ -800,6 +800,57 @@ class TestHoverBtnStatusHints:
         assert cs.on_hover_status.call_count == 1
 
 
+# ── _hover_detail must be set BEFORE the status callback (regression) ───────
+
+
+class TestHoverDetailPublishOrder:
+    """``_hover_detail`` must be assigned BEFORE ``on_hover_status`` fires.
+
+    Regression: ``_publish_status`` called the callback first — App reads
+    ``cs._hover_detail`` synchronously in ``_on_cell_status`` to arm the dwell,
+    so every tooltip showed the PREVIOUS row's detail (P_t row → the coefs
+    priority text; kVabs row → P_t's Detailed).
+    """
+
+    def test_detail_snapshot_matches_hovered_row(self, monkeypatch):
+        from tcm_gui import _help
+
+        monkeypatch.setattr("tcm_gui._help.resolve_lang", lambda: "en")
+        _help.reload_cache("en")
+        cfg = {
+            "input": {
+                "path": "/data",
+                "coefs": {
+                    "Ag": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                    "P_t": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                    "kVabs": [1, 2, 3, 4, 5, 6],
+                },
+            }
+        }
+        cs, _ = TestCoefsPathChildRow._make_loaded_sheet(cfg)
+
+        snapshots: list[str] = []
+        # Mirror App._on_cell_status: read the detail AT callback time.
+        cs.on_hover_status = lambda msg, md=False: snapshots.append(cs._hover_detail)
+
+        def _iid(key: str):
+            return next(i for i, m in cs._meta.items() if m.get("key") == key)
+
+        cs._publish_status(_iid("coefs"))
+        assert snapshots[-1] == "", (
+            "coefs parent has no #### Detailed → no dwell (group prose must not arm it); "
+            f"got {snapshots[-1]!r}"
+        )
+        cs._publish_status(_iid("P_t"))
+        assert "polyval2d" in snapshots[-1], (
+            f"P_t dwell must show its own Detailed at callback time; got {snapshots[-1]!r}"
+        )
+        cs._publish_status(_iid("Ag"))
+        assert snapshots[-1] == "", "Ag has no #### Detailed → no dwell (no group-text inheritance)"
+        cs._clear_status()
+        assert snapshots[-1] == "", "sheet leave must publish with an empty detail (no stale dwell arm)"
+
+
 # ── _hide_hover_field cancels in-flight Entry edits (regression) ────────────
 
 

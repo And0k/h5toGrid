@@ -27,8 +27,8 @@ independent operations:
 
 | Operation | Config field | Output coefficient |
 |-----------|-------------|-------------------|
-| Tilt zeroing | `time_ranges_zeroing` | `Rz` (rotation matrix) |
-| Azimuth calibration | `time_ranges_azimuth` | `azimuth_shift_deg` |
+| Tilt zeroing | `input.calib.time_ranges_zeroing` | `Rz` (rotation matrix) |
+| Azimuth calibration | `input.calib.time_ranges_azimuth` | `azimuth_shift_deg` |
 
 **Tilt zeroing**: the instrument hangs plumb in a known orientation. The
 pipeline averages accelerometer data over the specified time window and
@@ -38,9 +38,9 @@ computes a rotation matrix (`Rz`) that aligns the sensor Z-axis with gravity.
 (e.g. facing North). The pipeline computes the azimuth offset from
 magnetometer + accelerometer unit vectors and writes `azimuth_shift_deg`.
 
-**Alternative — `g0xyz`**: supply a raw accelerometer vector measured at
+**Alternative — `input.calib.g0xyz`**: supply a raw accelerometer vector measured at
 known zero tilt. The pipeline computes the rotation directly, overriding
-any `Rz` from `time_ranges_zeroing`.
+any `Rz` from `input.calib.time_ranges_zeroing`.
 
 See [Configuration §Updating coefficients via zeroing](configuration.md#updating-coefficients-via-zeroing)
 for the full workflow and persistence details.

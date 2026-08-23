@@ -11,7 +11,7 @@ File - Purpose
 
 ### `app.py`
 
-Tk root, layout §1–6, 300 ms polling, argv prefill, `_initial_scan` flag (immediate overlay show), `_prog_floater` overlay (400 ms delay for run), z-order `<Motion>` bind; manual `ttk.Frame` + `tk.Text` + `ttk.Scrollbar` log container (replaces `ScrolledText` for ttk-styled scrollbar); `_log_autoscroll` flag + `<MouseWheel>`/`<Button-4/5>` bindings for scroll-aware auto-follow; `_cfg_state: ScanStage` enum drives dual-purpose label at row=1; Run button floats via `place(in_=self._main)`; page stack + `tkraise()` (no Notebook); **§1 search path row**: `path_lbl` + `path_field` + vertical separator + `_button_bar` frame (extensible container) with `?` help button (opens `AboutDialog`)
+Tk root, layout §1–6, 300 ms polling, argv prefill, `_initial_scan` flag (immediate stage-row show), collapsible §2 status row (`_overall_lbl` + `_prog_stage` + `_prog_stage_text` gridded together, 400 ms delay for run); manual `ttk.Frame` + `tk.Text` + `ttk.Scrollbar` log container (replaces `ScrolledText` for ttk-styled scrollbar); `_log_autoscroll` flag + `<MouseWheel>`/`<Button-4/5>` bindings for scroll-aware auto-follow; `_cfg_state: ScanStage` enum drives dual-purpose label at row=1; Run button floats via `place(in_=self._main)`; page stack + `tkraise()` (no Notebook); **§1 search path row**: `path_lbl` + `path_field` + vertical separator + `_button_bar` frame (extensible container) with `?` help button (opens `AboutDialog`); `_set_cfg_ui_disabled` — inert look (dim rail + caption) in simple mode until configs exist: enabled by `_on_path_changed`/`_on_scan_ok`, re-dimmed by `_on_scan_error` when `not _yaml_paths`
 
 ### `md_label.py`
 
@@ -95,7 +95,7 @@ Shared state: queues, `ProgressState` (with one-shot `clear_and_reset`/`consume_
 
 ### `_tab_rail.py`
 
-Vertical tab rail: progress column + tab column, configs stacked top→down.  Replaces ttk.Notebook entirely — page stack + `tkraise()` for zero-theme page switching.  Hover via `on_hover` callback, per-cell fill animation (lerp), content-based vertical sizing (waterfill on shortage, even split on extreme shortage, capped grow on surplus).  Tab order == `_on_scan_ok` collected order (== `cfgs` dict order); the first tab is selected right after all pages exist — never inside `_add_page` (a page gridded later stacks ABOVE an earlier `tkraise()`'d one, which made the visible page the LAST tab while the rail highlighted the first)
+Vertical tab rail: progress column + tab column, configs stacked top→down.  Replaces ttk.Notebook entirely — page stack + `tkraise()` for zero-theme page switching.  Hover via `on_hover` callback, per-cell fill animation (lerp), content-based vertical sizing (waterfill on shortage, even split on extreme shortage, capped grow on surplus).  `set_disabled` — inert rail: dim text, hidden selection accent, click veto, no `hand2` cursor (simple mode before the first successful scan; survives `clear()`/`add_tab` rebuilds).  Tab order == `_on_scan_ok` collected order (== `cfgs` dict order); the first tab is selected right after all pages exist — never inside `_add_page` (a page gridded later stacks ABOVE an earlier `tkraise()`'d one, which made the visible page the LAST tab while the rail highlighted the first)
 
 ### `progress_bank.py`
 
@@ -221,7 +221,7 @@ Click Run while processing → PauseGate
 | `_any_hovering` property | combines `_path_hovering`, `_nb_hovering`, `_chrome_hovering`, `_browse_hovering` — single guard against poll clobbering |
 | `_bind_chrome_hover` wires status to Run/progress/labels | `<Motion>`/`<Leave>` on all registered chrome widgets; skips `_path_field` + `nb` (own handlers) |
 | **Dwell tooltip** | `_arm_dwell(text)` schedules `after()` on hover-enter; `_dwell_widget` prevents re-arming on motion within same widget; stays while hovered — while a tip owns the label, any debounced switch (`_apply_status`, 0.3 s) waits out the `_DWELL_HIDE_MS` = 3 s linger before the new text applies (a pending arm from the new row stays untouched); cleared on `<Leave>` / Esc / `_hide_tip()`. Error tips (`_tip_active`) take precedence. ConfigSheet cells provide detailed body via `_hover_detail` → `_resolve_detail` |
-| `_on_cell_status` wraps ConfigSheet callback | App reads `cs._hover_detail` after each status update; arms dwell with detailed help text. Replaces direct lambda to `_set_status` |
+| `_on_cell_status` wraps ConfigSheet callback | App reads `cs._hover_detail` DURING the callback to arm the dwell — `_publish_status`/`_on_tree_motion` therefore assign `_hover_detail` BEFORE calling `on_hover_status` (regression: assign-after-call armed the previous row's detail — P_t showed the coefs-priority text, kVabs showed P_t's Detailed) |
 | **Floated PathField on browse rows** | one reusable `PathField` for text + separate `BrowseOverlay` for button; intent-delayed (120 ms); focus strictly opt-in; full edit parity free; button stays at sheet right edge while field text stops at button's left edge; `_do_field_hide` vetoes hide during `f._editing`; `_on_field_edit_end` → `_restore_hover_placement` (show button first, `update_idletasks`, then `f.place` at shortened width) |
 | `_field_iid` survives hide | `_hide_hover_field` keeps `_field_iid` — `PathField._notify` queues via `after_idle`, so a commit in flight still writes to its row; `_hover_btn` (browse button) is hidden separately |
 
@@ -279,7 +279,7 @@ are already in the scaled coordinate system — no multiplier needed.
 | `tk.Text` + `ttk.Scrollbar` (log) | `bg=theme.ENTRY_BG_FALLBACK`, `fg=theme.FG_DEFAULT`, `insertbackground=theme.FG_DEFAULT`; manual container replaces `ScrolledText` to get a real `ttk.Scrollbar` |
 | Log scrollbar | `ttk.Scrollbar` with `style="App.Vertical.TScrollbar"` — matches tksheet via shared theme inheritance (`scrollbar_theme_inheritance="default"`) |
 | `MarkdownLabel` (status) | `background=theme.FRAME_BG_FALLBACK`, `foreground=theme.FG_DEFAULT` |
-| `tk.Frame` + `tk.Label` (prog_floater) | `bg=theme.FRAME_BG_FALLBACK`, `fg=theme.FG_DEFAULT` |
+| `ttk.Label` + `ttk.Progressbar` (§2 status row) | inherits from `ttk.Style` (TLabel/TProgressbar) — no explicit colors |
 | `ConfigSheet` (tksheet) | `change_theme("dark")` + `scrollbar_theme_inheritance="default"` in `__init__`; `_apply_styles` uses `theme.resolved_frame_bg()` + `theme.FG_DEFAULT` |
 | `PathField` (1×1 tksheet) | `table_bg=theme.ENTRY_BG_FALLBACK`, `table_fg=theme.FG_DEFAULT` — set at construction |
 | `ttk.Entry` (PathField editor) | inherits from `ttk.Style("TEntry")` dark configuration |
@@ -357,9 +357,11 @@ which returns a ``HelpEntry(short, body)`` parsed once from the tables in
    a backtick-quoted identifier (``| `field` = default | … | description |`` —
    the joined ``Field = Default`` column) emits
    ``HelpEntry(path="{section}.{field}", short=<last cell>, body={})``.
-3. **Mode-tagged sections** — ``### `field.path` <mode>value</mode>``
-   subheaders accumulate detail content into ``body[mode]``.  See
-   [Mode-tagged sections](#mode-tagged-sections-in-config_referencemd) below.
+3. **Field detail sections** — ``### `field.path` `` subheaders (the
+   `<mode>` tag is optional — context-dependent fields only) accumulate
+   detail content into ``body[mode]``; a modeless section is stored under
+   ``body[_NO_MODE]``.  Authoring contract: [§Field detail sections in
+   doc_authoring.md](doc_authoring.md#structure).
 4. CamelCase field names (``Ag``, ``Cg``, ``Rz``) parse identically to
    lowercase Hydra names.
 5. ``_DOC_PATH`` resolves to ``config_reference.md`` at
@@ -388,43 +390,32 @@ Index) canvas, which is separate from the MT canvas.  ``_on_tree_motion``
 the current status so moving between tree column and data cell on the SAME row
 triggers a re-publish.
 
-### Mode-tagged sections in `config_reference.md`
+### Field detail sections in `config_reference.md`
 
-When a field's meaning depends on context (per-probe processing vs. input
-specification), the table cell stays minimal and detailed documentation goes
-into ``###`` subsections tagged with a **mode**:
+When a field needs more than the table cell, its detailed documentation goes
+into a ``### `field.path` `` section; when the meaning depends on the consumer
+context, one section per context, tagged with a **mode** — authoring rules
+and examples live in [doc_authoring.md](doc_authoring.md#structure).  This
+section documents the parser and consumer internals.
 
-```markdown
-## `input` — Data source & parameters
-| Field = Default | Purpose |
-|-----------------|---------|
-| `path` = — | Absolute path to the data file. Determines probe identity (pcid). |
-
-### `input.path` <mode>probe</mode>
-Absolute path to the data file.  The filename **determines probe identity** (pcid):
-the pipeline extracts the leading type letter...
-
-### `input.path` <mode>search</mode>
-supports glob (`*i*.txt`), regex (`i.*\.txt`), or directory.
-`.yaml` suffix filters existing configs by stem.
-```
-
-**Heading syntax**: ``### `dotted.field.path` <mode>value</mode>``
-(``</>`` shorthand also accepted).  Regex:
-``^###\s+`([A-Za-z_]\w*(?:\.\w+)*)`\s+<mode>([a-z_]+)</(?:mode)?>``
+**Heading syntax**: ``### `dotted.field.path` `` optionally followed by
+``<mode>value</mode>`` (``</>`` shorthand accepted) and an explicit ``{#id}``.
+Regex (mode group optional):
+``^###\s+`([A-Za-z_]\w*(?:\.\w+)*)`(?:\s+<mode>([a-z_]+)</(?:mode)?>)?``
 
 **Parser behavior**:
-- ``_FIELD_MODE_HEAD`` is checked **before** ``_ANY_HEADING`` so ``###``
-  mode-tagged headers don't close the parent ``##`` section.
-- A field-level ``####`` block still open when a ``###`` mode section opens is
-  flushed first — the mode body never leaks into the previous field's detail.
-- Each ``###`` subheader opens accumulation under ``HelpEntry.body[mode]``.
+- ``_FIELD_MODE_HEAD`` is checked **before** ``_ANY_HEADING`` — a ``###``
+  field section (tagged or modeless) does not close the parent ``##`` section.
+- Each ``###`` subheader opens accumulation under ``HelpEntry.body[mode]``;
+  a modeless heading stores under the implicit key ``_NO_MODE = "detail"``.
+- A field-level ``####`` block still open when a ``###`` section opens is
+  flushed first — the section body never leaks into the previous field's detail.
 - ``#### <Tag>`` sub-blocks (e.g. ``#### Detailed``) nest inside the active
-  ``###`` mode — they do NOT close it.  A mode carrying any ``####`` block
-  is stored as ``_ModeBody(short=<pre-#### lines>, details={tag: body})``;
-  a mode without ``####`` stays a plain ``str``.
+  ``###`` section — they do NOT close it.  A section carrying any ``####``
+  block is stored as ``_ModeBody(short=<pre-#### lines>, details={tag: body})``;
+  without ``####`` it stays a plain ``str``.
 - Next ``###`` or ``##`` closes the previous accumulation.
-- Fields without mode-tagged content get ``body={}``.
+- Fields without ``###`` sections get ``body={}``.
 
 **Consumer API** — ``help_for_path(path, *, mode=None, detail=None)``:
 
@@ -434,69 +425,39 @@ supports glob (`*i*.txt`), regex (`i.*\.txt`), or directory.
 | ``help_for_path("input.path", mode="probe")`` | ``HelpEntry(body="...")`` — probe content (no #### → str) |
 | ``help_for_path("input.path", mode="search")`` | ``HelpEntry(body="...")`` — search short body (pre-#### lines only) |
 | ``help_for_path("input.path", mode="search", detail="Detailed")`` | ``HelpEntry(body="...")`` — the ``#### Detailed`` block body |
+| ``help_for_path("program.return_", mode=_NO_MODE, detail="Detailed")`` | ``HelpEntry(body="...")`` — a modeless section's Detailed block |
 | ``help_for_path("input.path", mode="search", detail="Unknown")`` | ``HelpEntry(body="")`` — unknown detail → empty (caller no-ops) |
-
-**Mode names** — content regimes, not environment labels:
-
-| Mode | Content regime | Example consumer |
-|------|---------------|------------------|
-| ``probe`` | Per-probe processing meaning — what the field does, how it affects results | GUI coef hover, popup |
-| ``search`` | Input specification patterns — glob, regex, directory, YAML | GUI path field, CLI help |
 
 To add a new mode: (1) add a ``### `field.path` <mode>new_mode</mode>``
 subsection in ``config_reference.md``; (2) call ``help_for_path(path,
-mode="new_mode")`` in the consumer.  The parser recognizes any ``[a-z_]+``
-mode value — no code changes needed in ``_help.py``.
+mode="new_mode")`` in the consumer.
 
-### Field-level `#### Detailed` blocks (no mode tag)
+### Field-level `#### Detailed` blocks (legacy, no `###` section)
 
-For fields that do NOT have mode-dependent meanings, detailed tooltip
-content is written as ``#### Detailed`` blocks directly under the
-``## section`` heading — **after** all table rows:
+Fields may also carry a ``#### Detailed`` block directly under the ``##
+section`` heading — **after** all table rows.  All current docs use explicit
+``### `field` `` sections instead; the field-level form remains parser-supported:
 
-```markdown
-## `program` — Runtime flags
+**Critical placement rule**: the ``####`` heading breaks the markdown table —
+any table rows after it are parsed as body text, not field rows. The content
+is associated with the **last field row** before the block (tracked via
+``last_field_path``) and stored as ``ModeBody(short="", details={tag: body})``
+under the sentinel key ``_FIELD_DETAIL = "_"``.
 
-| Field = Default | Purpose |
-|-----------------|---------|
-| `b_interact` = `False` | Confirmation prompt before creating directories. |
-| `return_` = `'<end>'` | Pipeline exit point. |
-
-#### Detailed
-| `return_` value | Stops after | Typical use |
-|:---|---|---|
-| `<saved_coefs>` | Coef persistence only | Zeroing/azimuth → save coefs, stop |
-| `<end>` (default) | Full pipeline | Normal processing |
-```
-
-**Critical placement rule**: ``#### Detailed`` blocks MUST come after ALL
-table rows in the section. A ``####`` heading breaks the markdown table —
-any table rows after it are parsed as body text, not field rows. The
-parser associates the ``#### Detailed`` content with the **last field row**
-before the block (tracked via ``last_field_path``).
-
-**Parser behavior**:
-- ``#### <Tag>`` outside any ``###`` mode section triggers field-level
-  detail accumulation. Content lines are stored under the sentinel mode
-  key ``_FIELD_DETAIL = "_"`` in ``HelpEntry.body``.
-- Stored as ``ModeBody(short="", details={tag: body})`` under
-  ``body[_FIELD_DETAIL]``.
-- The ``#### Detailed`` block is associated with ``last_field_path`` —
-  the last ``| `field` = default | … |`` table row parsed before the ``####``
-  heading. To attach detail to a specific field, make it the last row
-  before the block.
-
-**Consumer API** — ``_resolve_detail`` in ``coef_sheet.py``:
+**Consumer** — ``_resolve_detail`` in ``coef_sheet.py`` scans every section of
+the field (mode-tagged, modeless, field-level) and returns the first
+``#### Detailed`` body:
 
 ```python
-for mode in ("probe", "search", _help._FIELD_DETAIL):
-    if (e := _help.help_for_path(path, mode=mode, detail="Detailed")) and e.body:
-        return str(e.body)
+if (e := _help.help_for_path(path)) and isinstance(e.body, Mapping):
+    for val in e.body.values():
+        if isinstance(val, _help.ModeBody) and (d := val.details.get("Detailed")):
+            return str(d)
+return ""
 ```
 
-This checks mode-tagged content first (probe/search), then falls back to
-field-level ``#### Detailed``. The dwell tooltip shows the most detailed
-content available for the current context.
+``#### Detailed`` is the **only** body that arms the dwell tooltip — section
+short bodies and group prose never do.
 
 ## i18n architecture
 
@@ -599,7 +560,7 @@ through `progress_overall` / `progress_stage` and are translated by the GUI
 | `"bool"` | tksheet checkbox | `program.b_interact`, `out.b_incremental_update` |
 | `"enum"` | tksheet dropdown | `program.return_` (7 `Return` values) |
 | `"text"` | left-aligned | `input.path`, `out.text_path`, `program.log` |
-| `"number"` | right-aligned (default) | `input.azimuth_add`, coefs matrices |
+| `"number"` | right-aligned (default) | `input.calib.azimuth_add`, coefs matrices |
 | `"date"` | right-aligned | `datetime` fields |
 
 The `path` stored in `_meta[iid]["path"]` is the dotted Hydra path (e.g.
@@ -615,8 +576,9 @@ When `Shift` is held at startup, `App._full_mode = True` and
 | Aspect | Simple mode (`full=False`) | Full mode (`full=True`) |
 |--------|---------------------------|------------------------|
 | Row builder | `_build_coefs` — only `input` section | `_build_full` — all config sections |
-| Visible sections | `input.path`, `time_ranges`, `coefs_path`, coefs | `input`, `out`, `filter`, `program` |
+| Visible sections | `input.path`, `time_ranges`, `coefs_path`, coefs, `calib` | `input`, `out`, `filter`, `program` |
 | Editing before scan | Read-only (default page) | Editable |
+| Config rail + `_overall_lbl` before scan | Dimmed + click-ignored (`set_disabled` / `_set_cfg_ui_disabled`) | Active |
 | Editing after scan | Editable | Editable |
 | Overlays before scan | Hidden (hover PathField, browse buttons) | Visible |
 | Overlays after scan | Visible | Visible |
@@ -626,7 +588,12 @@ difference is **which rows are built**, not how cells are rendered.
 
 In readonly mode (`set_readonly(True)`), `_on_begin_edit_cell` vetoes
 editing and `_on_sheet_motion` suppresses hover overlays.  Calling
-`set_readonly(True)` also tears down any active overlays immediately.
+`set_readonly(True)` also tears down any active overlays immediately.  The
+same startup branch calls `_set_cfg_ui_disabled(True)` — the rail and the
+centered `_overall_lbl` (fg `theme.DEFAULT_FG`) join the inert look until a
+new search (`_on_path_changed`) or a successful scan (`_on_scan_ok`) enables
+them; a failed scan re-dims only while `_yaml_paths` is empty (tabs from an
+earlier successful scan stay active).
 
 ## Floating browse button (`_browse_button.py`)
 
@@ -1039,7 +1006,7 @@ highlights cell face; `_on_hover` callback updates status bar.
 ## Progress
 
 Three layers: per-config fills on the rail, overall description in `_overall_lbl`,
-and stage-level floater overlay — all driven by snapshots read every 300 ms in
+and the collapsible stage row — all driven by snapshots read every 300 ms in
 `App._poll_progress`.
 
 ### Per-config fills — `ProgressBank` → `TabRail`
@@ -1085,24 +1052,28 @@ Two code paths activate `GuiTqdm`:
 `physical.py` and `io.py` import `get_tqdm_class` with `try/except ImportError`
 fallback (same pattern as `processing.py`'s `progress_bridge` import).
 
-### Status bar layout (§6)
+### Status bar layout (§2 + §6)
 
-Two independent overlays on `root`, both at the bottom edge:
+One gridded status row at row=1 plus one bottom-left overlay:
 
 ```
 root
 │
 ├── row=0: path field (§1)
 │
-├── row=1: overall status label (§2)
+├── row=1: status row (§2) — COLLAPSES when the stage progress is inactive
 │   └── f1 (ttk.Frame)
-│       ├── column=0: _overall_lbl (ttk.Label, text=translated _cfg_state)
+│       ├── column=0 (weight=1): _overall_lbl (ttk.Label)
+│       │   Spans the whole row when collapsed (anchor="center" — caption
+│       │   centers across the full width).  anchor="w" while expanded.
 │       │   ScanStage.DEFAULT → scan_stage.default → "Default configuration"
 │       │   ScanStage.DONE → completion text + aggregated % from bank
 │       │   During run: stage_desc text + " — 62%" from bank snapshot
-│       └── column=1: _prog_status (ttk.Label, anchor="e")
-│           Current processing stage description (separate from tab rail).
-│           Cleared when no stage is active.
+│       ├── column=1: _prog_stage (ttk.Progressbar, length=220)      ┐ gridded
+│       └── column=2: _prog_stage_text (ttk.Label, anchor="w")        ┘ together
+│           Current stage description (or appended error line).  Both are
+│           grid_remove'd when tot == 0 (and at build) — column 0 then
+│           re-expands and the overall caption re-centers.
 │
 ├── row=2: main area (§3)
 │   └── _main (ttk.Frame)
@@ -1118,32 +1089,26 @@ root
 │       ├── _log (tk.Text, row=0, weight=1)   ← scrolling log
 │       └── _log_vbar (ttk.Scrollbar, row=0 col=1)
 │
-│   (error tooltip is rendered in _status_lbl — no separate row)
-│
-├── place(rely=1.0, relx=0.0, anchor="sw")  ← bottom-left
-│   └── _status_lbl (MarkdownLabel)
-│       wrap="none" by default; switches to wrap="word" only if
-│       content exceeds window width (_fit_width via font metrics).
-│       Width contracts to text width.
-│       Height = exact pixel via place_configure (dlineinfo walk).
-│       Font: ui.font() copy of TkDefaultFont (same as _log via set_font).
-│       mark_font_ready() enables auto-sizing; does NOT crush to bar height.
-│
-└── place(relx=1.0, rely=1.0, anchor="se")  ← bottom-right, hidden by default
-    └── _prog_floater (tk.Frame, bg=match root)
-        ├── _prog_stage_text (tk.Label, anchor="e", right-aligned)
-        └── _prog_stage (ttk.Progressbar, length=220)
+└── place(rely=1.0, relx=0.0, anchor="sw")  ← bottom-left
+    └── _status_lbl (MarkdownLabel)
+        wrap="none" by default; switches to wrap="word" only if
+        content exceeds window width (_fit_width via font metrics).
+        Width contracts to text width.
+        Height = exact pixel via place_configure (dlineinfo walk).
+        Font: ui.font() copy of TkDefaultFont (same as _log via set_font).
+        mark_font_ready() enables auto-sizing; does NOT crush to bar height.
+        (error tooltip is rendered here too)
 ```
 
-**Z-order competition**: `<Motion>` on root → `_lift_status_z` lifts
-`_status_lbl`, then **re-lifts `_prog_floater` while `_error_active`** — the
-error-detail tooltip rendered in `_status_lbl` grows to window width with an
-opaque background, so lifting it over the floater buries the error line on
-every mouse motion (flicker: gone while moving, back when the 300 ms poll
-lifts the floater again).  `_prog_floater.lift()` also on each `tot > 0`
-poll update.  `_run_btn.lift()` on root `<Configure>`.  Last `lift()` wins.
+**Expand / collapse** (replaces the former bottom-right floater + its z-order
+management — gridded widgets never compete with the `_status_lbl` overlay):
+`_show_stage_progress()` grids bar + text into columns 1–2 and flips
+`_overall_lbl` to `anchor="w"`; `_hide_stage_progress()` `grid_remove`s both
+and restores `anchor="center"`.  Column 0 keeps `weight=1` in both states, so
+the caption centers over the *entire* row when collapsed — the geometry
+manager expresses the two layouts, not per-text `justify` tricks.
 
-**Show delay**: `_prog_floater` is shown via `root.after(400, _show_prog_floater)`
+**Show delay**: the row is shown via `root.after(400, _show_prog_stage)`
 — avoids flashing for very short operations.  Cancelled if `tot` drops to 0
 before the delay fires.
 
@@ -1155,10 +1120,10 @@ control it:
 | Setter | When | Widget | Text |
 |--------|------|--------|------|
 | `_fit_status_font` | startup, no CLI args | `_status_lbl` | `"Ready"` (calls `mark_font_ready()` — does NOT crush font to bar height; status auto-grows for multi-line content) |
-| `_fit_status_font` | startup, CLI args | `_prog_floater` | `"Loading…"` (immediate, no delay) |
-| `_on_path_changed` | browse button / Enter | `_prog_floater` | `"Loading…"` (immediate, no delay) |
-| `processing.run` | scan phases | `_prog_floater` | "Discovering…", "Generating…", "Composing {stem}…" |
-| `process_loading_yaml` | per-config | `_prog_floater` | "Composing {stem}…" (via `_pb`) |
+| `_fit_status_font` | startup, CLI args | §2 stage row | `"Loading…"` (immediate, no delay) |
+| `_on_path_changed` | browse button / Enter | §2 stage row | `"Loading…"` (immediate, no delay) |
+| `processing.run` | scan phases | §2 stage row | "Discovering…", "Generating…", "Composing {stem}…" |
+| `process_loading_yaml` | per-config | §2 stage row | "Composing {stem}…" (via `_pb`) |
 | `_on_scan_ok` | scan completion | `_status_lbl` | `"Ready"` |
 | `_on_run_done` | run completion | `_status_lbl` | `"Done — {pct}% ({ok}/{n} ok)"` |
 | `_on_path_hover_in` | mouse enters path field | `_status_lbl` | hover hint |
@@ -1194,30 +1159,29 @@ their own dedicated hover handling (``_path_field``, ``nb``, ``_log``) are skipp
 live callable) and writes to ``self._status``.  ``_on_chrome_leave`` clears
 ``_chrome_hovering`` so the poll cycle can resume writing status.
 
-### Hover-hide for stage status + floater
+### Hover-hide for the stage progress row
 
-Shown always; each widget hides INDEPENDENTLY — only while the pointer is
-over THAT widget **or** the user starts an editing interaction.  Root
-``<Motion>`` (``_on_status_motion``) checks each widget's live bbox
-separately (``_pointer_inside``): hovering ``_prog_status`` (top row) never
-hides the bottom-right floater and vice versa.
+Shown always while active; the row collapses only while the pointer is over
+the bar **or** the stage text, or the user starts an editing interaction.
+Root ``<Motion>`` (``_on_status_motion``) checks both widgets' live bboxes
+(``_pointer_inside``) — bar and text hide together as one group
+(``_stage_hovering``).
 
-1. Pointer over a mapped widget → its own flag (``_status_hovering`` /
-   ``_floater_hovering``) is set and only that widget is ``grid_remove()``d /
-   ``place_forget()``d.
-2. User starts editing → ``_hide_progress_widgets()`` sets BOTH flags and
-   hides both widgets immediately.  Triggered by: tksheet cell edit begin
+1. Pointer over a gridded stage widget → ``_stage_hovering`` is set and both
+   widgets are ``grid_remove()``d (overall caption re-centers).
+2. User starts editing → ``_hide_progress_widgets()`` sets the flag and
+   collapses the row immediately.  Triggered by: tksheet cell edit begin
    (``ConfigSheet.on_edit_begin`` → fired from ``_on_begin_edit_cell``),
    PathField edit begin (``on_begin_edit``), PathField browse click
    (``on_browse_click``), and ConfigSheet browse button click
    (``BrowseButtonManager`` → ``BrowseOverlay.on_click``).
-3. Once hidden, widgets STAY hidden after the pointer leaves — restoration is
-   exclusively programmatic: ``_poll_progress`` compares the stage snapshot
-   to ``_stage_last`` and clears BOTH flags on change (progress
-   advance / new stage), then re-shows via the regular branches.  Pointer
-   leave alone never re-shows.
+3. Once hidden, the row STAYS collapsed after the pointer leaves — restoration
+   is exclusively programmatic: ``_poll_progress`` compares the stage snapshot
+   to ``_stage_last`` and clears the flag on change (progress advance / new
+   stage), then re-grids via the regular branches.  Pointer leave alone never
+   re-shows.
 
-**Why Motion, not ``<Enter>``**: ``_poll_progress`` re-shows/lifts the floater
+**Why Motion, not ``<Enter>``**: ``_poll_progress`` re-grids the row
 mid-motion with the pointer already inside it — Tk only fires ``<Enter>`` on a
 boundary crossing, so the widgets can never "catch" the mouse that way
 (flicker: disappears while the mouse moves, reappears when it stops).  Root
@@ -1225,30 +1189,30 @@ boundary crossing, so the widgets can never "catch" the mouse that way
 only when the pointer is genuinely over the widgets and never on motion
 elsewhere.
 
-**Error floater hides too**: ``_error_active`` does NOT veto hover-hide — the
-error floater hides when the pointer is over it, exactly like live progress.
+**Error row hides too**: ``_error_active`` does NOT veto hover-hide — the
+error row collapses when the pointer is over it, exactly like live progress.
 While active, the stage snapshot is frozen (``tot == 0``), so it stays hidden
-until a fresh scan/run changes the snapshot (or places it explicitly); the
+until a fresh scan/run changes the snapshot (or expands it explicitly); the
 error itself persists until cleared by ``_clear_log`` / ``_on_scan_ok`` /
 ``_on_run_done`` / ``_on_path_changed``.
 
-``_place_floater()`` is the single placement point (canonical bottom-right
-``place(relx=1.0, rely=1.0, anchor="se", x=-8, y=-4)`` + ``lift``); it also
-clears ``_floater_hovering`` — any explicit placement is a programmatic
-activation.  Used by the initial scan, ``_show_prog_floater`` and
+``_show_stage_progress()`` is the single expansion point; it also clears
+``_stage_hovering`` — any explicit expansion is a programmatic activation.
+Used by the initial scan, ``_show_prog_stage``, ``_on_path_changed`` and
 ``_surface_error``.
 
-``winfo_ismapped()`` is not used for place-managed widgets (unreliable before
-window realization and on withdrawn test roots); ``place_info()`` /
-``grid_info()`` are used instead.
+``winfo_ismapped()`` is not used (unreliable before window realization and on
+withdrawn test roots); ``grid_info()`` (via the ``_stage_shown`` property) is
+used instead.
 
 ### Error tooltip in `_status_lbl`
 
 ``_show_tip`` sets ``_tip_active = True`` and renders markdown directly in
 ``_status_lbl``.  While active, ``_set_status`` is a no-op — all chrome-hover,
-poll, and log-motion status updates are suppressed.  ``_lift_status_z``
-re-lifts the error floater above this wide tooltip on every mouse motion, so
-the short error line in the floater never flickers under it.  Dismissed by
+poll, and log-motion status updates are suppressed.  The short error line
+lives in ``_prog_stage_text`` (§2 row), which cannot overlap the bottom-left
+tooltip — the former floater z-order dance (``_lift_status_z``) is gone.
+Dismissed by
 ``_hide_tip`` on: new scan/run (``_clear_log`` / ``_on_scan_ok`` /
 ``_on_run_done``), path change (``_on_path_changed``), ``<Escape>`` (root
 binding), or cell edit begin (``ConfigSheet.on_edit_begin`` → ``_hide_tip``;
@@ -1277,7 +1241,7 @@ callback.  Subsequent motion within the same widget does NOT reset the timer
 |---|---|
 | Chrome widgets | ``widget_meta[w]["tooltip"]`` (``STR["{role}.tooltip"]``) |
 | PathField | ``STR["path_field.tooltip"]`` |
-| ConfigSheet cells | :meth:`ConfigSheet._resolve_detail` — most detailed body from ``config_reference.md`` (mode ``#### Detailed`` → field-level ``#### Detailed`` → mode short → plain body) |
+| ConfigSheet cells | :meth:`ConfigSheet._resolve_detail` — ``#### Detailed`` blocks only from ``config_reference.md`` (mode ``probe`` → mode ``search`` → field-level).  Mode short bodies and parent-group prose never arm the dwell — a tooltip exists ⟺ the field carries a ``Detailed`` block (regression: every coef row showed the ``input.coefs`` group text) |
 | Log | ``STR["log.tooltip"]`` (if defined) |
 
 **Suppression**: while ``_dwell_active`` is True, the debounced

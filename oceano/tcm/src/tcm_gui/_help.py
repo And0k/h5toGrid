@@ -19,11 +19,14 @@ cell (the description column) becomes :attr:`HelpEntry.short`.
 
 Mode-tagged detail sections
 ---------------------------
-When a field's meaning depends on context, detailed documentation is written
-as mode-tagged ``###`` subsections:
+Detailed documentation lives in ``###`` subsections of a field.  The
+``<mode>`` tag is optional — use it only when the field's meaning depends on
+the consumer context (one section per context); a modeless ``### `field` ``
+section is the single-context default and is stored under :data:`_NO_MODE`:
 
     ### `input.path` <mode>probe</mode>
     ### `input.path` <mode>search</mode>
+    ### `input.coefs.P_t`
 
 These are stored in :attr:`HelpEntry.body` keyed by mode.
 
@@ -55,31 +58,45 @@ to ``config_reference.md``.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import re
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import get_type_hints
 
-from tcm import _constants
+from tcm import _constants, schema
 from tcm._md_parse import split_table_row
 
+from ._cell_spec import _unwrap
 from ._i18n import resolve_lang
 
 _l = logging.getLogger(__name__)
 
-# Sections whose ``## ``{section}```` heading opens table-driven field scanning.
-# ``filter/calib`` and decision-table sections are excluded — those fields are
-# either unused by the GUI Hydra tree (calib entry point) or carry
-# non-identifier first columns (``Stage``, ``Column``, …).
-_FIELD_SECTIONS: frozenset[str] = frozenset({"input", "input.coefs", "out", "filter", "program"})
+# Sections whose ``## ``{section}```` heading opens table-driven field scanning,
+# inferred from the structured schema: top-level ``Config`` groups plus nested
+# dataclass groups of ``input`` (``input.coefs``, ``input.calib``).  ``proc`` is
+# not a ``Config`` field and decision-table sections carry non-identifier first
+# columns (``Stage``, ``Column``, …) — both stay excluded by construction.
+# ``_unwrap`` resolves the ``X | None`` union around nested group hints.
+_FIELD_SECTIONS: frozenset[str] = frozenset(
+    {n for n, t in get_type_hints(schema.Config).items() if dataclasses.is_dataclass(_unwrap(t))}
+    | {
+        f"input.{n}"
+        for n, t in get_type_hints(schema.ConfigIn_InclProc).items()
+        if dataclasses.is_dataclass(_unwrap(t))
+    }
+)
 
 # ``## ``input.coefs`` — subtitle``.
 _RE_SECTION_HEAD = re.compile(r"^##\s+`(?P<section>[A-Za-z_]\w*(?:\.\w+)*)`\s*(?:—\s*(?P<subtitle>.+))?\s*$")
-# ``### `input.path` <mode>probe</mode>``; ``</>`` shorthand is accepted.
+# ``### `input.path` <mode>probe</mode>`` — the <mode> tag is optional (a
+# modeless ``### `field` `` section is the single-context default); ``</>``
+# shorthand is accepted.
 _RE_FIELD_MODE_HEAD = re.compile(
-    r"^###\s+`(?P<path>[A-Za-z_]\w*(?:\.\w+)*)`\s+<mode>(?P<mode>[a-z_]+)</(?:mode)?>"
+    r"^###\s+`(?P<path>[A-Za-z_]\w*(?:\.\w+)*)`(?:\s+<mode>(?P<mode>[a-z_]+)</(?:mode)?>)?"
 )
 
 # ``#### Detailed`` or any other named detail block.
@@ -101,6 +118,11 @@ _RE_ARR_INDEX = re.compile(r"\[\d+\]")
 
 # Sentinel mode key for field-level ``#### Detail`` blocks (no ``###`` mode tag).
 _FIELD_DETAIL = "_"
+
+# Implicit body key for modeless ``### `field` `` sections — single-context
+# detail without a probe/search split.  Any name from ``[a-z_]+`` works; this
+# one is reserved so a user tag cannot collide with it.
+_NO_MODE = "detail"
 
 # ``{#explicit-id}`` suffix on a heading (doc browser honors it as the anchor).
 _RE_ANCHOR_ID = re.compile(r"\{#([^{}]+)\}\s*$")
@@ -287,7 +309,7 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
         if not st.fence and (m := _RE_FIELD_MODE_HEAD.match(line)):
             flush_any_detail()
             close_mode()
-            st.mode_path, st.mode_tag = m["path"], m["mode"]
+            st.mode_path, st.mode_tag = m["path"], m["mode"] or _NO_MODE
             continue
 
         # Meaningful only inside an open mode; otherwise it is a heading.

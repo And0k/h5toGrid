@@ -578,6 +578,18 @@ class ConfigSheet:
             if name in coefs:
                 self._ins_coef(coefs_iid, name, coefs.get(name), dates.get(name, ""))
 
+        # ── process-stage calibration correction ──
+        if calib := inp.get("calib"):
+            calib_iid = self._ins(
+                inp_iid,
+                "calib",
+                [""] * self._nv,
+                "",
+                meta={"key": "calib", "style": "node", "max_col": 0},
+            )
+            for k, v in calib.items():
+                self._ins_generic(calib_iid, k, v)
+
     def _build_full(self, cfg: dict) -> None:
         for sec, val in cfg.items():
             if sec == "input":
@@ -1196,11 +1208,11 @@ class ConfigSheet:
         path = str(m.get("path") or "")
         # Section-level: resolve the path as-is (no `.path` suffix).
         if path and (h := _help.help_for_path(path)) and h.short:
-            self.on_hover_status(h.short, True)
             self._hover_detail = self._resolve_detail(path)
+            self.on_hover_status(h.short, True)
         elif self.on_hover_status is not None:
-            self.on_hover_status(str(m.get("key") or m.get("label") or path or ""), False)
             self._hover_detail = ""
+            self.on_hover_status(str(m.get("key") or m.get("label") or path or ""), False)
 
     def _coefs_status_hint(self) -> str:
         """Mode-aware status hint for ``coefs_path`` browse button.
@@ -1258,20 +1270,18 @@ class ConfigSheet:
 
     @staticmethod
     def _resolve_detail(path: str) -> str:
-        """Resolve the most detailed help body for *path* (dwell tooltip text).
+        """Resolve the dwell tooltip text — ``#### Detailed`` blocks only.
 
-        Tries Detailed blocks first (probe → search → field-level), then short
-        mode bodies, then plain string body (non-mode entries).  Returns ``""``
-        when no detailed content exists — the caller skips arming the dwell.
+        Scans every ``###`` section of the field (mode-tagged or modeless)
+        plus the field-level block; a tooltip exists ⟺ some section carries a
+        ``Detailed`` block.  Section short bodies and group prose never arm
+        the dwell — regression: every coef row showed the ``input.coefs``
+        group text instead of nothing.  Returns ``""`` — the caller skips arming.
         """
-        for mode in ("probe", "search", _help._FIELD_DETAIL):
-            if (e := _help.help_for_path(path, mode=mode, detail="Detailed")) and e.body:
-                return str(e.body)
-        for mode in ("probe", "search", _help._FIELD_DETAIL):
-            if (e := _help.help_for_path(path, mode=mode)) and e.body:
-                return str(e.body)
-        if (e := _help.help_for_path(path)) and isinstance(e.body, str) and e.body:
-            return e.body
+        if (e := _help.help_for_path(path)) and isinstance(e.body, Mapping):
+            for val in e.body.values():
+                if isinstance(val, _help.ModeBody) and (d := val.details.get("Detailed")):
+                    return str(d)
         return ""
 
     def _publish_status(self, iid: Any) -> None:
@@ -1295,23 +1305,23 @@ class ConfigSheet:
             return
 
         if iid is None:
-            self.on_hover_status("", False)
             self._hover_detail = ""
+            self.on_hover_status("", False)
             return
 
         m = self._meta.get(iid, {})
         ident = str(m.get("key") or m.get("path") or m.get("label") or "")
 
         if (txt := self.hover_status.get(ident)) is not None:
-            self.on_hover_status(txt, False)
             self._hover_detail = ""
+            self.on_hover_status(txt, False)
             return
 
         # Mode-aware: coefs_path shows dir/file content from config_reference.md
         # instead of the table-row short text.  Shift toggles mode.
         if ident == "coefs_path" and (txt := self._coefs_status_hint()):
-            self.on_hover_status(txt, True)
             self._hover_detail = self._resolve_detail("input.coefs_path")
+            self.on_hover_status(txt, True)
             return
 
         # Doc-driven help: ``config_reference.md`` → short tooltip per field.
@@ -1336,24 +1346,19 @@ class ConfigSheet:
             candidates.append(path)
             for candidate in candidates:
                 if (h := _help.help_for_path(candidate)) and h.short:
-                    self.on_hover_status(h.short, True)
                     # Detail chain: the accepted candidate → the row's own field
                     # modes (a coef parent's date cell must show e.g. P_t's
-                    # probe/Detailed, not a generic parent body) → the parent's.
-                    self._hover_detail = (
-                        self._resolve_detail(candidate)
-                        or self._resolve_detail(path)
-                        or (
-                            self._resolve_detail(pp)
-                            if (par := m.get("parent"))
-                            and (pp := self._meta.get(par, {}).get("path"))
-                            else ""
-                        )
-                    )
+                    # Detailed, not a generic group text).  Detailed blocks
+                    # only — no group prose.  Assigned BEFORE the callback:
+                    # App reads ``cs._hover_detail`` synchronously in
+                    # ``_on_cell_status`` to arm the dwell — assign-after-call
+                    # armed the PREVIOUS row's detail.
+                    self._hover_detail = self._resolve_detail(candidate) or self._resolve_detail(path)
+                    self.on_hover_status(h.short, True)
                     return
 
-        self.on_hover_status(str(m.get("key") or m.get("label") or m.get("path") or ""), False)
         self._hover_detail = ""
+        self.on_hover_status(str(m.get("key") or m.get("label") or m.get("path") or ""), False)
 
     def _hover_write(self, text: str) -> None:
         """Write path to column 0 of the hovered row + restyle."""

@@ -15,7 +15,7 @@ default_page.stem: "default values"
 
 # ── Chrome widget tooltips / hover status ─────────────────────────────────
 path_lbl.tooltip: "Search path"
-path_field.tooltip: "Data & config search path"
+path_field.tooltip: "Raw data/processing configurations search path"
 path_field.status: "Changing data path rescans and **resets all config tabs below**"
 path_field.status_shift: "Browse **files**; **YAML configs** load into tabs"
 path_field.placeholder: "D:/data"
@@ -116,8 +116,8 @@ stage.composing_stem: "Composing {stem}\u2026"
 stage.loading: "Loading"
 
 # ── Scan lifecycle ────────────────────────────────────────────────────────
-scan_stage.default: "Processing configuration (not active because data has not yet been found)"
-scan_stage.default_full: "Processing Configuration (default, full mode)"
+scan_stage.default: "Processing configuration: generate/find by entering above directory\\file/glob/regex for data/configuration"
+scan_stage.default_full: "Processing configuration: update by entering the path above or edit manually (full editing mode enabled)"
 scan_stage.scan: "Search/generation of configurations…"
 scan_stage.done: "Generated configurations for processing found data"
 

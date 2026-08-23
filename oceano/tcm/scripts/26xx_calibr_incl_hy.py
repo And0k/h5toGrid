@@ -77,8 +77,8 @@ if st(11, "Magnetometer and accelerometer calibration of devices listed in cfg_p
         input={
             "path": path_db_raw,
             "tables": tables_raw,
-            "time_ranges_zeroing": time_ranges_zeroing,
-            "time_ranges": time_ranges_zeroing
+            "time_ranges": time_ranges_zeroing,
+            "calib": {"time_ranges_zeroing": time_ranges_zeroing},
         },
     )
 

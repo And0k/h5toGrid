@@ -87,28 +87,40 @@ prose), every code block highlighted, every local link navigates without a
 400/404, back button returns.
 
 
-# Field detail sections in config_reference.md for programmatic display in status and tooltips
+# config_reference.md for programmatic display in status and tooltips
 
-Table cells — one concise sentence (used in GUI status messages),
-more detailed documentation — explanations in the `###` subsections (used in GUI tooltips).
-When a field's meaning depends on context, the table cell stays minimal and detailed
-documentation goes into `###` subsections tagged with a **mode**:
+General rules:
+
+- Do not refer to a section's position in the document ("see details below")
+  — a section body may be displayed programmatically in an arbitrary place.
+- `###`/`####` bodies are interface-neutral: no GUI widget names, no
+  CLI-argument framing — the consumer context is expressed only by `<mode>` tags.
+- The Tk dwell tooltip renders plain text only — display math (`$$…$$`) never
+  goes into `###`/`####` bodies. Put formulas on a methodology page and link,
+  e.g. `[§Pressure computation](../methodology/pressure.md)`; the link opens
+  the doc browser where MathJax typesets it.
+
+## Structure
+
+| Doc element | GUI consumer |
+|---|---|
+| Table cell — one concise sentence | status bar message |
+| `### \`field.path\`` — modeless, single-context detail | browser/doc view; its `#### Detailed` body arms the dwell tooltip |
+| `### \`field.path\` <mode>value</mode>` — one section per consumer context | consumer selects by mode (e.g. `coefs_path` dir/file status hints) |
+
+- The `<mode>` tag is **optional**: use it only when the field's meaning
+  depends on the consumer context; otherwise write a modeless section.
+- Heading syntax: `` ### `dotted.field.path` `` optionally followed by
+  `<mode>value</mode>` (`</>` shorthand accepted) and an explicit `{#id}`.
+- `#### <Tag>` blocks nest inside the active `###` section; `#### Detailed`
+  is the only body that arms the dwell tooltip.
+- Parser: a `###` section does not close the parent `##` field section; the
+  next `###`/`##` closes the accumulation; any `[a-z_]+` mode value is
+  recognized, no code changes needed in `_help.py`.
 
 | Mode | Content regime | Example consumer |
 |-------|---------|-------------------|
 | `<mode>probe</mode>` | Per-probe processing meaning — what the field does, how it affects the result | GUI coef hover, popup |
 | `<mode>search</mode>` | Input specification patterns — glob, regex, directory, YAML | GUI path field, CLI help |
 
-
-The GUI compares its current context to the `<mode>` tag and selects matching
-content.  Add new modes as `### \`field.path\` <mode>value</mode>` subheadings;
-the parser recognizes any `[a-z_]+` value.  Keep table cells to one sentence.
-
-
-Detailed (`###`/`####`) bodies are interface-neutral: no GUI widget names, no
-CLI-argument framing — the consumer context is expressed only by `<mode>` tags.
-
-The Tk dwell tooltip renders plain text only — display math (`$$…$$`) never
-goes into `###`/`####` bodies. Put formulas on a methodology page and link,
-e.g. `[§Pressure computation](../methodology/pressure.md)`; the link opens
-the doc browser where MathJax typesets it.
+Parser internals: [§Field detail sections in GUI.md](GUI.md#field-detail-sections-in-config_referencemd).

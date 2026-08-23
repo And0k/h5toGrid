@@ -455,7 +455,7 @@ class TestScanTabs:
         app._path_field.set_error.assert_called_once_with(False)
 
     def test_scan_error_marks_path_field_red(self, monkeypatch):
-        """Failed scan → red fg on the search path field."""
+        """Failed scan → red fg on the search path field + inert cfg UI re-dim."""
         from types import SimpleNamespace
         from unittest.mock import MagicMock
 
@@ -468,9 +468,13 @@ class TestScanTabs:
         app.rt = SimpleNamespace(progress_overall=MagicMock())
         app._overall_lbl = MagicMock()
         app._default_stage_text = lambda: ""
+        app._full_mode = False
+        app._yaml_paths = {}  # no successful scan ever → re-dim rail + caption
+        app._set_cfg_ui_disabled = MagicMock()
         app._on_scan_error(ValueError("boom"))
         app._path_field.set_error.assert_called_once_with(True)
         app._surface_error.assert_called_once()
+        app._set_cfg_ui_disabled.assert_called_once_with(True)
 
     def test_run_exit_on_error_false(self, gui_project, monkeypatch, mocker):
         """``exit_on_error=False`` on run propagates exceptions."""

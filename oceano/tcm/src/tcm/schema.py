@@ -87,11 +87,21 @@ class ConfigInCoefs_InclProc:
     PBattery: list[float] | None = field(default_factory=lambda: [0, 1])
     PTemp: list[float] | None = field(default_factory=lambda: [0, 1])
     azimuth_shift_deg: float | None = 180
-    g0xyz: Annotated[list[float], 3] | None = None
     dates: dict[str, str] | None = field(  # struct=False to allow dynamic keys
         default_factory=lambda: OmegaConf.create({}, flags={"struct": False})
     )
     date: str | None = None
+
+
+@dataclass
+class ConfigInCalib_InclProc:
+    """Inclinometer calibration coefficients process-stage correction"""
+
+    g0xyz: Annotated[list[float], 3] | None = None
+    time_ranges_zeroing: list[str] | None = field(default_factory=list)
+    time_ranges_azimuth: list[str] | None = field(default_factory=list)
+    coordinates: list[float] | None = None
+    azimuth_add: float = 0
 
 
 @dataclass
@@ -145,15 +155,14 @@ class ConfigIn_InclProc:
     fs_rounding: int | None = 100  # frequency estimation rounding (0=disabled)
     dt_hole_warning: int | None = 600  # warn if max data gap > this seconds; None=skip
 
-    # ── process-stage coefs + calibration ──
+    # ── process-stage coefs ──
     coefs: ConfigInCoefs_InclProc | None = field(default_factory=ConfigInCoefs_InclProc)
     coefs_path: Path | None = Path(__file__).with_name("cfg") / "coef" / "calibration.h5"
-    time_ranges_zeroing: list[str] | None = field(default_factory=list)
-    time_ranges_azimuth: list[str] | None = field(default_factory=list)
-    coordinates: list[float] | None = None
-    azimuth_add: float = 0
     max_incl_of_fit_deg: float | None = None
     calc_version: str = "trigonometric(incl)"
+
+    # ── process-stage calibration correction ──
+    calib: ConfigInCalib_InclProc | None = field(default_factory=ConfigInCalib_InclProc)
 
     # ── storage wiring ──
     tables_log: list[str] = field(default_factory=lambda: ["{}/logFiles"])
