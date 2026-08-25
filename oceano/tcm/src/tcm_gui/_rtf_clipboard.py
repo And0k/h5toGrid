@@ -14,11 +14,12 @@ import tkinter as tk
 from collections.abc import Iterator
 from typing import TypeAlias
 
-from tcm import utils2init
+from utils import log_init
+
 from tcm_gui.const import tk_font_family
 from tcm_gui.theme import tk_color_to_rgb
 
-lf = utils2init.LoggingStyleAdapter(__name__)
+lf = log_init.LoggingStyleAdapter(__name__)
 
 RGB: TypeAlias = tuple[int, int, int]
 # (start, end, foreground RGB | None, link URL | None) — one styled span

@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterable, Iterator, Mapping, MutableMapping, Optio
 import numpy as np
 import pandas as pd
 from tables.exceptions import HDF5ExtError, ClosedFileError
+from utils.log_init import LoggingStyleAdapter
 try:
     import dask.array as da
     from dask import compute, dataframe as dd
@@ -22,7 +23,7 @@ except ImportError:
     dd = pd
     da = np
 # my
-from utils.init import Ex_nothing_done, standard_error_info, dir_create_if_need, LoggingStyleAdapter
+from utils.init import Ex_nothing_done, standard_error_info, dir_create_if_need
 
 pd.set_option('io.hdf.default_format', 'table')
 
@@ -237,8 +238,9 @@ def i_bursts_starts(
 
 def add_tz_if_need(v, tim: Union[pd.Index, dd.Index]) -> pd.Timestamp:
     """
-    If tim has tz then ensure v has too
-    :param v: time value that need be comparable with tim
+    If tim has tz then ensure v has too. Works with pandas and dask Index.
+
+    :param v: time value that needs to be comparable with tim
     :param tim: series/index from which tz will be copied. If dask.dataframe.Index mast have known divisions
     :return: v with added timezone if needed
     """

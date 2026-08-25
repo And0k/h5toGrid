@@ -3,26 +3,23 @@ Low-level math kernels for physical calculations.
 Pure numpy implementations — no dask dependencies.
 _xr/calc.py wraps these with xr.apply_ufunc for dask.array support.
 """
+from collections.abc import Sequence
 from datetime import timedelta
 from typing import (
-    List,
-    Sequence,
-    TypeVar,
     TYPE_CHECKING,
     Union,
 )
+
 import numpy as np
 import pandas as pd
-
-from tcm.calibration.calibrate import SensorCalibration, to_unit_vector
 
 if TYPE_CHECKING:
     import dask.array as da
     import xarray as xr
 
-from tcm import utils2init
+from utils import log_init
 
-lf = utils2init.LoggingStyleAdapter(__name__)
+lf = log_init.LoggingStyleAdapter(__name__)
 
 
 # @allow_dask
@@ -50,7 +47,7 @@ def fG(Axyz: Union[np.ndarray, 'da.Array'],
 # @allow_dask
 def polar2dekart(
     Vabs: Union[np.ndarray, "da.Array", "xr.DataArray"], Vdir: Union[np.ndarray, "da.Array", "xr.DataArray"]
-) -> List[Union[np.ndarray, "da.Array", "xr.DataArray"]]:
+) -> list[Union[np.ndarray, "da.Array", "xr.DataArray"]]:
     """
     Polar → cartesian (v, u)
     Vabs, Vdir polar components: module and angle (degrees)

@@ -12,7 +12,7 @@ default_page.stem: "значения по умолчанию"
 
 # ── Chrome widget tooltips / hover status ─────────────────────────────────
 path_lbl.tooltip: "Путь поиска"
-path_field.tooltip: "Путь поиска данных и конфигураций"
+path_field.tooltip: "Путь поиска исходных данных / конфигураций их обработки"
 path_field.status: "Смена пути пересканирует и **сбрасывает все вкладки конфигураций**"
 path_field.status_shift: "Выбор индивидуальных **файлов**: данных (с автогенерирацией/загрузкой их конфигураций) или их конфигураций `{pcid}*.yaml` (путь к даннным содержится внутри них)"
 path_field.placeholder: "D:/data/_raw/"
@@ -116,7 +116,7 @@ stage.loading: "Загрузка"
 scan_stage.default: "Конфигурация обработки: сгенерируйте/найдите введя выше директорию\\файл/glob/regex данных/конфигурации"
 scan_stage.default_full: "Конфигурация оработки: обновите введя путь выше или редактируйте вручную (полный режим редактирования включен)"
 scan_stage.scan: "Поиск/генрация конфигураций…"
-scan_stage.done: "Сгенерированы конфигурации для обработки найденных данных"
+scan_stage.done: "Конфигурации для обработки найденных данных"
 
 # ── Stage tree ────────────────────────────────────────────────────────────
 stage_tree.heading.stage: "Этап"
@@ -126,6 +126,13 @@ stage_tree.pending: "\u2014"
 stage_tree.done: "\u2714"
 stage_tree.running: "\u2026"
 stage_tree.interrupted: "прервано"
+
+# ── Device metadata sync ───────────────────────────────────────────────────
+time_ranges.hover.broader: "шире чем в info_devices [{s}, {e}] — проверьте"
+time_ranges.hover.differs: "отличается от info_devices [{s}, {e}] — сужено или смещено"
+time_ranges.hover.written: "заполнено из info_devices [{s}, {e}]"
+time_ranges.hover.kept: "совпадает с info_devices [{s}, {e}]"
+metadata.status: "Метаданные развертывания (info_devices.yaml) — правьте до Запуска"
 
 # ── Tooltip ───────────────────────────────────────────────────────────────
 prog_status.tooltip: "Текущий этап обработки"

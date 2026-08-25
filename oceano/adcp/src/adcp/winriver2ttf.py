@@ -12,6 +12,8 @@
 import re
 from lxml import etree as ET  # import lxml.etree
 from pathlib import Path
+
+from utils.paths import name_output_file
 rs = '(?P<val>^\d{1,3})\. *(?P<key>[^\n;]+)(?:.*$)'
 ro = re.compile(rs, re.MULTILINE)  # |re.IGNORECASE
 
@@ -62,7 +64,7 @@ if __name__ == '__main__':
         from os import path as  os_path
 
         sys_path.append(os_path.dirname(os_path.dirname(os_path.abspath(__file__))))
-    from utils.init import ini2dict, pathAndMask, name_output_file  # dir_walker, readable, bGood_dir, bGood_file
+    from utils.init import ini2dict, pathAndMask  # dir_walker, readable, bGood_dir, bGood_file
 
     cfg = ini2dict()
 

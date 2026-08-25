@@ -3,19 +3,18 @@ Diagnostics – plot  (3-panel: correction magnitude, event timeline, cumsum)
 """
 
 from __future__ import annotations
+
 from pathlib import Path
-from typing import Final, Optional, Union
+from typing import Final
 
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
-from .utils2init import LoggingStyleAdapter
-from tcm.utils_time_corr import (
-    NS_F,
-    _ROW_MASKS,
-    DiagBit
-)
-lf = LoggingStyleAdapter(__name__)
+from utils import log_init
+
+from tcm.utils_time_corr import _ROW_MASKS, NS_F, DiagBit
+
+lf = log_init.LoggingStyleAdapter(__name__)
 # BACKWARD (clock jump) and OUT_OF_RANGE (excluded window) span arbitrary, unbounded gaps —
 # unlike TRIM/SPIKE (single-sample, bounded local interpolation, safe to accumulate). Used by
 # plot_time_corr_diagnostics's Panel 3 to reset the cumulative-correction sum at each boundary.
@@ -42,7 +41,7 @@ def build_show_diag(n: int, idx: NDArray[np.intp], act: NDArray[np.uint8]) -> ND
     return show_diag
 
 
-def build_diag_cmap() -> "ListedColormap":  # noqa: F821  (matplotlib imported lazily below)
+def build_diag_cmap() -> ListedColormap:  # noqa: F821  (matplotlib imported lazily below)
     """128-colour map (index = raw action byte, 0..127) matching DiagBit's two-row split.
 
     Row 0 (bits 0-3, values 0-15): RGBA basis vectors combined by np.einsum — additive
@@ -55,7 +54,8 @@ def build_diag_cmap() -> "ListedColormap":  # noqa: F821  (matplotlib imported l
     the primary signal), else falls back to the row-0 additive blend (context only).
     """
     import colorsys
-    from matplotlib.colors import ListedColormap   # lazy: mirrors plot fn's optional-dep guard
+
+    from matplotlib.colors import ListedColormap  # lazy: mirrors plot fn's optional-dep guard
 
     row0_basis = np.array([                    # aligned to DiagBit bits 0..3 (row 0)
         [0.80, 0.10, 0.10, 1.0],   # HOLE          — warm red
@@ -107,10 +107,10 @@ def segmented_cumsum(dt_s: NDArray[np.float64], act: NDArray[np.uint8]) -> NDArr
 # =============================================================================
 
 def plot_time_corr_diagnostics(
-    npz_path: Union[Path, str],
-    t_obs_ns: Optional[NDArray[np.int64]] = None,
-    path_save: Optional[Union[Path, str]] = None,
-) -> Optional[Path]:
+    npz_path: Path | str,
+    t_obs_ns: NDArray[np.int64] | None = None,
+    path_save: Path | str | None = None,
+) -> Path | None:
     """
     3-panel figure from NPZ saved by save_time_corr_diagnostics.
 

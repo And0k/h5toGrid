@@ -1,11 +1,11 @@
 import re
-from datetime import timedelta
-from typing import Dict, Tuple, Optional
-import numpy as np
 from datetime import datetime
-from tcm import utils2init
 
-lf = utils2init.LoggingStyleAdapter(__name__)
+import numpy as np
+from utils import init
+import utils.log_init
+
+lf = utils.log_init.LoggingStyleAdapter(__name__)
 
 PROBE_WILDCARD = "*"
 
@@ -67,7 +67,7 @@ def str_dt(dt_s: float, lang="en"):
     return out.strip()
 
 
-def pcid_from_parts(type: Optional[str] = None, model: str = None, number: str | int = None, **kwargs):
+def pcid_from_parts(type: str | None = None, model: str = None, number: str | int = None, **kwargs):
     """
     Get Probe output Column ID (pcid)
     :param type: probe type, default: 'i' (inclinometers) or "" if model is "w" (wavegauges)
@@ -92,7 +92,7 @@ def pcid_from_parts(type: Optional[str] = None, model: str = None, number: str |
     return f"{type}{_}{model}{number:0>2}"
 
 
-def to_pcid_from_name(probe_name: str | int, probe_type: Optional[str] = None):
+def to_pcid_from_name(probe_name: str | int, probe_type: str | None = None):
     """
     Get Probe output Column ID (pcid). This normalized ID has type (optional if "i") and model parts joined
     with "_"
@@ -120,7 +120,7 @@ def to_pcid_from_name(probe_name: str | int, probe_type: Optional[str] = None):
         return f"{probe_type or 'i'}{probe_name:0>2}"
 
     if pattern_name_parts := parse_name(probe_name.replace(".", "")):
-        return utils2init.call_with_valid_kwargs(pcid_from_parts, **pattern_name_parts)
+        return init.call_with_valid_kwargs(pcid_from_parts, **pattern_name_parts)
     else:
         return "*"
 
@@ -199,7 +199,7 @@ def track_probe_closure(b_input_is_h5, b_from_processed_db=False):
 century = b"20"
 
 
-def parse_name(name: str) -> Optional[Dict[str, str]]:
+def parse_name(name: str) -> dict[str, str] | None:
     """
     Extract logical parts of inclinometer / wave gauge name/glob from source raw csv file name.
 
@@ -245,7 +245,7 @@ def parse_name(name: str) -> Optional[Dict[str, str]]:
     return None
 
 
-def probe_from_name(name: str) -> Optional[Tuple[str, int]]:
+def probe_from_name(name: str) -> tuple[str, int] | None:
     """Extract ``(model, number)`` probe identity from filename via :func:`parse_name`.
 
     :param name: file stem or name (case-insensitive).

@@ -34,10 +34,10 @@ from typing import Any, Final
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
+from utils import init
+import utils.log_init
 
-from .utils2init import LoggingStyleAdapter, dir_create_if_need
-
-lf = LoggingStyleAdapter(__name__)
+lf = utils.log_init.LoggingStyleAdapter(__name__)
 
 NS = 1_000_000_000  # 1 s in ns (int64)
 NS_F = np.float64(NS)
@@ -974,7 +974,7 @@ def save_time_corr_diagnostics(
                     break
             while not base.is_dir():
                 base = base.parent
-            p = dir_create_if_need(base / str(path_save))
+            p = init.dir_create_if_need(base / str(path_save))
             if stem:
                 if len(parts := stem.split("@", 1)) == 2:  # put `@{pid}` after "dt"
                     stem_npz = "_dt@".join(parts) if parts[0] else f"dt@{parts[-1]}"

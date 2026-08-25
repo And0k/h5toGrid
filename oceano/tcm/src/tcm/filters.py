@@ -1,16 +1,16 @@
 import logging
 from contextlib import nullcontext
-from typing import Any, List, Optional, Tuple, Union
 from datetime import timedelta
+
 import numpy as np
 
 try:
     from numba import njit, objmode
 except ImportError:
-    njit = lambda f=None, **kw: (f if f is not None else lambda fn: fn)  # noqa: E731
+    njit = lambda f=None, **kw: (f if f is not None else lambda fn: fn)
     objmode = nullcontext
 
-# l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])
+
 l = logging.getLogger(__name__)
 
 dt64_1s = np.int64(1e9)
@@ -324,7 +324,7 @@ _longest_increasing_subsequence_jit = njit(_lis_core)
 
 
 # Public interface with automatic fallback
-def longest_increasing_subsequence_i(seq: Union[np.ndarray, list]) -> np.ndarray:
+def longest_increasing_subsequence_i(seq: np.ndarray | list) -> np.ndarray:
     """
     Compute longest increasing subsequence with debug-aware JIT fallback:
     - First attempts JIT-compiled version
@@ -339,7 +339,7 @@ def longest_increasing_subsequence_i(seq: Union[np.ndarray, list]) -> np.ndarray
     # First attempt: Try JIT-compiled version
     try:
         return _longest_increasing_subsequence_jit(seq)
-    except Exception as e:
+    except Exception:
         l.exception("Fallback to non-JIT Python version")
         # Fallback to Python implementation
         return _lis_core(seq)
@@ -366,7 +366,7 @@ def update_trend_between(t, t_trend, b_keep):
 
 
 # @njit: py12 err
-def repeated2increased(t: np.ndarray, freq: float, b_increased: Optional[np.ndarray] = None) -> np.ndarray:
+def repeated2increased(t: np.ndarray, freq: float, b_increased: np.ndarray | None = None) -> np.ndarray:
     """
     Increases time resolution of only repeated or b_increased elements using constant frequency
     Note: can produce inversions where number of repeated elements bigger than freq!
@@ -463,7 +463,7 @@ def rep2mean_with_const_freq_ends(y, b_ok, freq):
 
 def make_linear_with_shifts(
         t: np.ndarray, freq: float,
-        linearize_accuracy_s: Optional[float] = None, b_increased: Optional[np.ndarray] = None
+        linearize_accuracy_s: float | None = None, b_increased: np.ndarray | None = None
 ) -> np.ndarray:
     """
     Corrects ``t`` values (implicitly) by make them linear with constant frequency and then shift to
@@ -537,7 +537,7 @@ def make_linear_with_shifts(
 
 
 #@njit
-def make_linear(tim: np.int64, freq: float, dt_big_hole: Optional[timedelta] = None) -> np.ndarray:
+def make_linear(tim: np.int64, freq: float, dt_big_hole: timedelta | None = None) -> np.ndarray:
     """
     Corrects tim values (implicitly) by make them linear increasing but excluding big holes
     Note: Not works (big errors) for changing frequency (if no gaps between frequency changes)!
@@ -681,12 +681,12 @@ def make_linear(tim: np.int64, freq: float, dt_big_hole: Optional[timedelta] = N
                         tEn_calc = tEn
                     if dt0new_prev != dt0new:  # Show new frequency for iSt - iEn rows that we increased
                         print(
-                            f'ref.freq' if dt0new_prev == 0 else '', f'> {dt64_1s / dt0new:g}Hz for',
+                            'ref.freq' if dt0new_prev == 0 else '', f'> {dt64_1s / dt0new:g}Hz for',
                             iSt, '-', iEn, 'rows', end=', '
                         )
                         dt0new_prev = dt0new
                     else:
-                        print(f'for', iSt, '-', iEn, 'rows', end=', ')
+                        print('for', iSt, '-', iEn, 'rows', end=', ')
                     t[iSt:iEn] = np.arange(tSt, tEn_calc + np.int64(dt0new / 2), dt0new, np.int64)
 
                 #
@@ -862,7 +862,7 @@ def search_sorted_closest(sorted_array, value):
 # @njit()  # py12 error
 def find_sampling_frequency(tim: np.ndarray,
                             precision: float = 0,
-                            b_show: bool = True) -> Tuple[np.float64, int, int, np.ndarray]:
+                            b_show: bool = True) -> tuple[np.float64, int, int, np.ndarray]:
     """
     Function tries to find true frequency inside packets.
     Finds highest frequency of irregular array _tim_ with specified precision.
@@ -960,4 +960,3 @@ def find_sampling_frequency(tim: np.ndarray,
     if b_show:
         print('freq =', freq, 'Hz')
     return freq, n_nondec - n_dec, n_dec, i_inc_out
-

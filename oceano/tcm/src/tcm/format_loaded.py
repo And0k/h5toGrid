@@ -4,7 +4,7 @@ Format-specific CSV post-load processors — pure pandas/numpy, no dask.
 Extracted from ``_dask_legacy.csv_specific_proc`` to make raw CSV loading
 available on Layer 0 (the default environment).  All functions here are
 self-contained: they depend only on numpy/pandas/re and on
-``tcm.utils2init`` / ``tcm.utils_time_corr`` — never on ``dask.dataframe``.
+``utils.init`` / ``tcm.utils_time_corr`` — never on ``dask.dataframe``.
 
 Public API (re-exported by :mod:`tcm.csv_load`):
 - :func:`loaded_tcm`  — TCM inclinometer date/time + magnetometer inversion
@@ -30,14 +30,14 @@ from typing import (
 import numpy as np
 import pandas as pd
 
-from tcm.utils2init import (
+from utils.init import (
     FakeContextIfOpen,
-    LoggingStyleAdapter,
     dir_create_if_need,
     set_field_if_no,
     standard_error_info,
 )
 from tcm.utils_time_corr import save_time_corr_diagnostics
+from utils.log_init import LoggingStyleAdapter
 
 lf = LoggingStyleAdapter(__name__)
 

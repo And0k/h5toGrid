@@ -15,13 +15,11 @@ bins by **both** inclination (θ) and azimuth (φ) via
 """
 from __future__ import annotations
 
-
 import numpy as np
 from scipy import stats
+from utils import log_init
 
-from tcm import utils2init
-
-lf = utils2init.LoggingStyleAdapter(__name__)
+lf = log_init.LoggingStyleAdapter(__name__)
 
 
 # --------------------------------------------------------------------------- #

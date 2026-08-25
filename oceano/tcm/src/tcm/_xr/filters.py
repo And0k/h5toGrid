@@ -7,17 +7,19 @@ Replaces ``tcm._dask_legacy.utils_dask.filter_global_minmax`` and
 """
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from datetime import timedelta
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd
 import xarray as xr
+from utils import log_init
 
+from tcm import utils_time_corr
 from tcm._xr.calc import _time_values_to_int64
-from tcm import utils2init, utils_time_corr
 
-lf = utils2init.LoggingStyleAdapter(__name__)
+lf = log_init.LoggingStyleAdapter(__name__)
 
 
 # --------------------------------------------------------------------------- #
@@ -26,7 +28,7 @@ lf = utils2init.LoggingStyleAdapter(__name__)
 
 def filter_global_minmax(
     ds: xr.Dataset,
-    cfg_in: Optional[Mapping[str, Any]] = None,
+    cfg_in: Mapping[str, Any] | None = None,
 ) -> xr.Dataset:
     """Drop rows where any raw-column value exceeds configured min/max bounds.
 
@@ -81,8 +83,8 @@ def filter_global_minmax(
 
 def filter_local(
     ds: xr.Dataset,
-    cfg_filter: Optional[Mapping[str, Any]] = None,
-    ignore_absent: Optional[set[str]] = None,
+    cfg_filter: Mapping[str, Any] | None = None,
+    ignore_absent: set[str] | None = None,
 ) -> xr.Dataset:
     """Set values to NaN where computed-column values exceed configured thresholds.
 
@@ -225,7 +227,7 @@ def apply_load_time_ranges(
 
 def warn_on_holes(
     ds: xr.Dataset,
-    dt_hole_warning: "Optional[int | float | timedelta]" = None,
+    dt_hole_warning: float | timedelta | None = None,
 ) -> None:
     """Log a warning if the maximum data gap exceeds *dt_hole_warning* seconds.
 
@@ -233,7 +235,7 @@ def warn_on_holes(
     when *dt_hole_warning* is positive; ``None`` or 0 disables the check.
 
     After :func:`tcm.cli.main_init`, the ``dt_hole_warning`` config key is
-    converted to ``timedelta`` by :func:`utils2init.type_fix` (``dt_*`` prefix).
+    converted to ``timedelta`` by :func:`utils.init.type_fix` (``dt_*`` prefix).
     This function accepts both ``timedelta`` and numeric (int/float) values.
 
     Parameters

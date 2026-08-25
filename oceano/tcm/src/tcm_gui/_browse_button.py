@@ -116,6 +116,8 @@ class BrowseOverlay:
         self._write, self._read = write, read
         self._filetypes, self._dir_title, self._files_title = filetypes, dir_title, files_title
         self._files_only = not dir_title  # no dir_title → files-only mode
+        self._save_mode = False
+        self._save_ext = ""
         self._leave_hides = leave_hides
         self._on_status = on_status
         self._status_hint = status_hint
@@ -280,11 +282,18 @@ class BrowseOverlay:
             self._on_click()
         cur = (self._read() if self._read is not None else "") or ""
         first = cur.split(",")[0].strip()
-        # Existing directory value (e.g. a previous askdirectory pick) → open AT it,
-        # not one level up; file / glob / absent values → parent dir as before.
         start = first if first and os.path.isdir(first) else (os.path.dirname(first) or None)
         try:
-            if self._files_only or _is_shift_pressed():
+            if getattr(self, "_save_mode", False):
+                result = filedialog.asksaveasfilename(
+                    title=self._files_title,
+                    filetypes=self._filetypes,
+                    initialdir=start,
+                    defaultextension=getattr(self, "_save_ext", "") or None,
+                    initialfile=os.path.basename(first) if first else None,
+                    confirmoverwrite=False,
+                )
+            elif self._files_only or _is_shift_pressed():
                 paths = filedialog.askopenfilenames(
                     title=self._files_title, filetypes=self._filetypes, initialdir=start
                 )

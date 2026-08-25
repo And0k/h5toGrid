@@ -1,25 +1,24 @@
 """Hydro-bios MWS12 Slimline """
-from os import chdir as os_chdir
 # from pathlib import Path
 import re
-import numpy as np
+from itertools import takewhile
+from os import chdir as os_chdir
+
 # import pandas as pd
 import gsw
-from itertools import takewhile
-# My functions:
-from utils.init import st, format_to_glob
-from utils import veuszPropagate
-from hdf5_pandas.csv2h5 import main as csv2h5
-from hdf5_pandas.gpx2h5 import main as gpx2h5
-from hdf5_pandas.ctd_calc import main as ctd_calc
-# from hdf5_pandas.csv_specific_proc import loaded_corr
-from utils.h5_to_gpx import main as h5_to_gpx
-from utils.grid2d_vsz import main as grid2d_vsz
-from hdf5_pandas import h5
+import numpy as np
 from hdf5_alt.h5tocsv import main_call as h5tocsv
+from hdf5_pandas import h5
+from hdf5_pandas.csv2h5 import main as csv2h5
+from hdf5_pandas.ctd_calc import main as ctd_calc
+from hdf5_pandas.gpx2h5 import main as gpx2h5
+from utils import veuszPropagate
+from utils.grid2d_vsz import main as grid2d_vsz
+from utils.h5_to_gpx import main as h5_to_gpx
+from utils.init import st
+from utils.paths import format_to_glob
 
 from ctd import wf_cfg  # path_cruise, path_db, min_coord, max_coord
-
 
 max_coord = 'Lat:60.55, Lon:30.3'  # includes Gulf Of Finland
 
@@ -274,7 +273,7 @@ def proc(common_ctd_params_list, st_base=400):
             "".join([
                 '+out.cols={rec_num: "@i + 1", identific: "@i_log + 1", station: "@df_log.station.iat[@i_log]", ',
                 ", ".join([
-                    p if ":" in p else f"{p}: {p}" for p in "Pres;Temp;Cond;Sal;sigma0;soundV".split(";")
+                    p if ":" in p else f"{p}: {p}" for p in ["Pres", "Temp", "Cond", "Sal", "sigma0", "soundV"]
                 ]),  # Temp:Temp90;SigmaT;SoundVel
                 "}",
             ]),

@@ -14,8 +14,9 @@ from typing import Any, NamedTuple
 
 import numpy as np
 import xarray as xr
+from utils import log_init
 
-from tcm import policy, utils2init
+from tcm import policy
 from tcm._constants import _h5py, nc_engine
 from tcm._xr import store_params
 from tcm._xr.nc_utils import (
@@ -31,7 +32,7 @@ from tcm._xr.nc_utils import (
     write_time_ds,
 )
 
-lf = utils2init.LoggingStyleAdapter(__name__)
+lf = log_init.LoggingStyleAdapter(__name__)
 
 
 # --------------------------------------------------------------------------- #

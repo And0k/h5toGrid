@@ -14,16 +14,34 @@ Modified: 08.07.2026
 Requirement: source raw data loaded to HDF5/NC table
 """
 from datetime import datetime
+from pathlib import Path,
+import sys
+import re
 
 from tcm import cli, format, h5inclinometer_coef, processing
-from tcm.utils2init import init_logging, path_on_drive_d, st
+from utils.init import st
 from tcm.calibration import run
+from utils.log_init import init_logging
 
 st.start = 11  # 10 15 20 35
 st.end = 10
 
 ## Source calibration lab/tank data path
 # (in lab + in tank if you not redefine it under step 15)
+
+def path_on_drive_d(path_str: str = "/mnt/D", drive_win32: str = "D:", drive_linux: str = "/mnt/D"):
+    """convert path location on my drive to current system (Linux / Windows)"""
+    if path_str is None:
+        return None
+    linux_next_to_d = re.match(f"{drive_linux}(.*)", path_str)
+    if linux_next_to_d:
+        if sys.platform == "win32":
+            path_str = f"{drive_win32}{linux_next_to_d.group(1)}"
+    elif sys.platform != "win32":
+        win32_next_to_d = re.match(f"{drive_win32}(.*)", path_str)
+        path_str = f"{drive_linux}{win32_next_to_d.group(1)}"
+    return Path(path_str)
+
 path_db_raw = path_on_drive_d(
     r"B:\WorkData\experiment\inclinometer\260624@ip05-Press\_raw\260624.raw.nc"
     # r"D:\WorkData\_experiment\inclinometer\250610tank@i63,64,67,68,78,86,87\_raw\250610tank.raw.h5"
@@ -224,7 +242,15 @@ db_paths_copy.append(
     r"D:\Cruises\BalticSea\240616_ABP56@i,t-chain\inclinometer\_raw\240625.raw.h5"
 )
 if db_paths_copy and st(35, f"Copy calibration coefficients from {db_path_tank} to {db_paths_copy}"):
-    init_logging(logger=__name__)
+    l = init_logging(logger=__name__)
+    # from tcm.stage_ctx import StageContextFilter
+    # # Install stage context filter on root logger (idempotent) — injects
+    # # record.stage_prefix from contextvars so WARNING+ messages get [prefix]
+    # # automatically.  Hydra's dictConfig installs its own StageContextFilter
+    # # via colorlog.yaml; this covers the non-Hydra fallback path.
+    # if not any(isinstance(f, StageContextFilter) for f in l.root.filters):
+    #     l.root.addFilter(StageContextFilter())
+
     for db in db_paths_copy:
         print('to', db)
         for i, p_num in enumerate(probes):

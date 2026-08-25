@@ -139,6 +139,7 @@ nodejs = ">=20,<25"
 
 [tool.pixi.feature.tcm.pypi-dependencies]
 absioras-tcm = { path = "oceano/tcm", editable = true }
+absioras-meta_finder = { path = "oceano/meta_finder", editable = true }
 pygeomag = ">=1.1.0,<2"
 
 [tool.pixi.feature.notebook.dependencies]

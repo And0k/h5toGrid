@@ -10,11 +10,12 @@ from pathlib import Path, PurePath
 from typing import Any
 
 from omegaconf import OmegaConf
+from utils import log_init
 
-from tcm import schema, _constants, csv_load, format, metadata, paths, policy, to_omegaconf, utils2init
+from tcm import _constants, csv_load, format, metadata, paths, policy, schema, to_omegaconf
 from tcm.incl_calc.coefs import get_coefs_from_cfg
 
-lf = utils2init.LoggingStyleAdapter(__name__)
+lf = log_init.LoggingStyleAdapter(__name__)
 
 
 def has_run_yamls(dir_run: Path) -> bool:
@@ -74,16 +75,22 @@ def get_existed_cfgs(
 
 
 def sync_yamls_devmeta_and_hydra(dev_dir, dir_cfgs, cfgs: dict[str, list[str]]):
-    """Load date ranges from ``info_devices.yaml/.json`` and update ``time_ranges`` in hydra configs.
+    """Load date ranges from ``info_devices.yaml/.json`` and update ``time_ranges``.
 
     For each probe (pcid), iterates all its config stems.  When multiple configs exist,
     synchronises start time from the first config's ``time_ranges[0]`` and end time from
     the last config's ``time_ranges[-1]`` to the metadata file — using the minimum start
     and maximum end across sources.
 
+    Bidirectional fill: if device metadata provides ``time_range`` [6,7] and the run
+    YAML's ``input.time_ranges`` is missing or has <2 elements, absent ends are
+    filled from metadata (existing elements are never overwritten).
+
     :param dev_dir: directory to search for ``info_devices`` metadata file.
     :param dir_cfgs: directory containing YAML config files.
     :param cfgs: ``{pcid: [cfg_stems, …]}`` from :func:`get_existed_cfgs`.
+    :returns: ``SyncResult`` ``{stem: {status, meta_tr, existing_tr?}}`` or ``None``
+        when no metadata file / no records. ``status`` in ``written, kept, broader``.
     """
     lf.info('Loading date range from "info_devices" metadata file')
     all_stems = [s for stems in cfgs.values() for s in stems]
@@ -91,45 +98,39 @@ def sync_yamls_devmeta_and_hydra(dev_dir, dir_cfgs, cfgs: dict[str, list[str]]):
         format.pcid_from_parts(**format.parse_name(format.stem_to_pcid(v))).replace("_", "")
         for v in all_stems
     ]
-    # EAFP: missing info_devices.yaml is benign — no metadata to sync, return cleanly
-    # (was the silent cause of "no time_ranges recorded": raised FileNotFoundError
-    # before reaching the try block, aborting the whole pipeline before any write).
     try:
         devmeta_path = metadata.get_path_in_parents(dev_dir, "info_devices.yaml", "info_devices.json")
         meta_arrays = metadata.load_file_meta(devmeta_path)
         device_info = metadata.extract_devices_info(meta_arrays, pcids)
     except FileNotFoundError:
         lf.debug("No info_devices.yaml/.json in {} — skipping time_ranges sync", dev_dir)
-        return
+        return None
     except Exception:
         lf.warning(
             'Failed to load or parse "info_devices" metadata from {} — skipping time_ranges sync',
             dev_dir,
             exc_info=True,
         )
-        return
+        return None
 
     ry = _ry()
-
     if not any(str_time_ranges_devmeta_all := {pcid: v["r"] for pcid, v in device_info.items() if "r" in v}):
         lf.info("No time records in metadata file")
-        return
+        return None
 
+    sync_result: dict[str, dict] = {}
     try:
         for pcid, stems in cfgs.items():
             pcid_key = pcid.replace("_", "")
             if not (str_time_ranges_devmeta_pcid := str_time_ranges_devmeta_all.get(pcid_key)):
                 lf.debug("  {}: no time ranges in metadata", pcid)
                 continue
-
             time_ranges_devmeta = [
                 datetime.fromisoformat(t).strftime("%Y-%m-%dT%H:%M:%S") for t in str_time_ranges_devmeta_pcid
             ]
-
             updated_stems: list[str] = []
             kept_stems: list[str] = []
-            broader_stems: dict[str, list[str]] = {}  # stem → existing time_ranges
-
+            broader_stems: dict[str, list[str]] = {}
             for stem in stems:
                 cfg_path = (dir_cfgs / stem).with_suffix(".yaml")
                 try:
@@ -137,23 +138,50 @@ def sync_yamls_devmeta_and_hydra(dev_dir, dir_cfgs, cfgs: dict[str, list[str]]):
                 except Exception:
                     lf.warning("  Skipping {} (load error)", stem, exc_info=True)
                     continue
-                if tr_existing := (cfg_cur or {}).get("input", {}).get("time_ranges"):
+                tr_existing = (cfg_cur or {}).get("input", {}).get("time_ranges")
+                # Bidirectional: device time_range → input.time_ranges for absent ends
+                if time_ranges_devmeta[0] and time_ranges_devmeta[-1]:
+                    if not tr_existing or len(tr_existing) < 2 or not tr_existing[0] or not tr_existing[-1]:
+                        filled = list(tr_existing or [])
+                        if not filled or not filled[0]:
+                            filled = [time_ranges_devmeta[0]] + (filled[1:] if len(filled) > 1 else [])
+                            if len(filled) == 1:
+                                filled.append(time_ranges_devmeta[-1])
+                        if len(filled) < 2 or not filled[-1]:
+                            if len(filled) >= 2:
+                                filled[-1] = time_ranges_devmeta[-1]
+                            else:
+                                filled.append(time_ranges_devmeta[-1])
+                        if filled != (tr_existing or []):
+                            cfg_cur.setdefault("input", {})["time_ranges"] = filled
+                            ry.dump(cfg_cur, stream=cfg_path)
+                            tr_existing = filled
+                            updated_stems.append(stem)
+                            sync_result[stem] = {"status": "written", "meta_tr": time_ranges_devmeta}
+                            continue
+                if tr_existing:
                     kept_stems.append(stem)
-                    if tr_existing[0] < time_ranges_devmeta[0] or tr_existing[-1] > time_ranges_devmeta[-1]:
+                    broader = (
+                        tr_existing[0] < time_ranges_devmeta[0] or tr_existing[-1] > time_ranges_devmeta[-1]
+                    )
+                    sync_result[stem] = {
+                        "status": "broader" if broader else "kept",
+                        "meta_tr": time_ranges_devmeta,
+                        "existing_tr": list(tr_existing),
+                    }
+                    if broader:
                         broader_stems[stem] = tr_existing
                     continue
-                cfg_cur["input"]["time_ranges"] = time_ranges_devmeta
+                cfg_cur.setdefault("input", {})["time_ranges"] = time_ranges_devmeta
                 ry.dump(cfg_cur, stream=cfg_path)
                 updated_stems.append(stem)
-
-            # Log what info_devices provides for this probe
+                sync_result[stem] = {"status": "written", "meta_tr": time_ranges_devmeta}
             lf.info(
                 "  {}: [{}, {}] in info_devices metadata file",
                 pcid,
                 time_ranges_devmeta[0],
                 time_ranges_devmeta[-1],
             )
-
             if updated_stems:
                 lf.info("    written to {}", ", ".join(f"{s}.yaml" for s in updated_stems))
             if kept_stems:
@@ -166,6 +194,7 @@ def sync_yamls_devmeta_and_hydra(dev_dir, dir_cfgs, cfgs: dict[str, list[str]]):
                     lf.debug("    already configured: {}", ", ".join(f"{s}.yaml" for s in kept_stems))
     except Exception:
         lf.exception('Date range job from "info_devices" metadata file failed')
+    return sync_result if sync_result else None
 
 
 def _discover_tables(path: Path, table_pattern: str) -> list[str]:

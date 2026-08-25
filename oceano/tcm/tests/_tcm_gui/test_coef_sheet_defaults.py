@@ -124,14 +124,14 @@ class TestDefaultForCell:
         cs = self._make_sheet()
         m = {"path": "input.coefs.Ag[0]", "type": "_coef_child"}
         result = cs._default_for_cell("iid", m, 0)
-        assert abs(result - 0.00173) < 1e-6, f"expected ~0.00173, got {result}"
+        assert abs(float(result) - 0.00173) < 1e-6, f"expected ~0.00173, got {result}"
 
     def test_2d_child_col1(self):
         """Ag[0] row, col 1 -> second element of first row."""
         cs = self._make_sheet()
         m = {"path": "input.coefs.Ag[0]", "type": "_coef_child"}
         result = cs._default_for_cell("iid", m, 1)
-        assert result == 0, f"expected 0, got {result}"
+        assert float(result) == 0, f"expected 0, got {result}"
 
     def test_none_default_returns_empty(self):
         """Field with None default -> '' (empty string)."""
@@ -391,9 +391,13 @@ class TestOnEndEditGrayToggle:
         event = self._make_event(row=coefs_row, column=0, value="anything")
         cs._apply_end_edit_style(event)
 
-        assert mock_sh.highlight_cells.call_count == 0, (
-            f"container row (dict default) should not toggle gray, "
-            f"got: {mock_sh.highlight_cells.call_args_list}"
+        # Container cell has NO_DEFAULT → no cell-gray toggle, but node-label
+        # walk still recolors ancestors (blue/black via _node_at_default) —
+        # those use canvas="index" and are not cell-gray toggles.
+        cell_calls = [c for c in mock_sh.highlight_cells.call_args_list if c.kwargs.get("canvas") != "index"]
+        assert len(cell_calls) == 0, (
+            f"container row (dict default) should not toggle cell gray, "
+            f"got: {cell_calls}"
         )
 
     def test_2d_child_gray_toggle(self):

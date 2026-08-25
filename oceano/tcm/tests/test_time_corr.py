@@ -26,12 +26,12 @@ from tcm.plot_time_corr_diagnostics import build_diag_cmap, build_show_diag
 # # Bootstrap: stub package, load module directly from sibling file
 # # ---------------------------------------------------------------------------
 # _pkg   = types.ModuleType("tcm")
-# _utils = types.ModuleType("tcm.utils2init")
+# _utils = types.ModuleType("utils.init")
 # # Null adapter: avoids %-vs-{} format conflict between stdlib logging and LoggingStyleAdapter
 # _NullLog = type("L", (), {m: (lambda *a, **k: None) for m in ("debug","info","warning","error","exception")})
 # _utils.LoggingStyleAdapter  = lambda n: _NullLog()                    # type: ignore[attr-defined]
 # _utils.dir_create_if_need   = lambda p: (p.mkdir(parents=True, exist_ok=True), p)[-1]  # type: ignore
-# sys.modules.update({"tcm": _pkg, "tcm.utils2init": _utils})
+# sys.modules.update({"tcm": _pkg, "utils.init": _utils})
 # _spec = importlib.util.spec_from_file_location(
 #     "tcm.utils_time_corr", Path(__file__).with_name("utils_time_corr.py"))
 # _m = importlib.util.module_from_spec(_spec)      # type: ignore[arg-type]

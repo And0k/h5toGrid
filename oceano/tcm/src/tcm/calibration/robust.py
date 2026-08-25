@@ -25,14 +25,14 @@ not have that failure mode.
 """
 import numpy as np
 from scipy.spatial import cKDTree
+from utils import log_init
 
 from tcm.calibration import calibrate as cal
 from tcm.calibration import moments
 from tcm.calibration.calibrate import to_unit_vector
 from tcm.calibration.moments import fibonacci_sphere
-from tcm import utils2init
 
-lf = utils2init.LoggingStyleAdapter(__name__)
+lf = log_init.LoggingStyleAdapter(__name__)
 
 MAD_TO_STD = 1.4826                                 # scale making MAD consistent with std, Gaussian data
 

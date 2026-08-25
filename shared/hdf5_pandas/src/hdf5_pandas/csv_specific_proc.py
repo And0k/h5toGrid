@@ -13,9 +13,10 @@ import pandas as pd
 # if __debug__:  'commented because functions in this file used by dask in separate threads so start plot here is problematic
 #     from matplotlib import pyplot as plt
 from pathlib import Path, PurePath
-from utils.init import set_field_if_no, FakeContextIfOpen, standard_error_info, dir_create_if_need, my_logging
+from utils.init import set_field_if_no, FakeContextIfOpen, standard_error_info, dir_create_if_need
 from functools import wraps
 
+from utils.log_init import my_logging
 from utils.time import matlab2datetime64ns, date_from_filename
 from utils.time_corr import plot_bad_time_in_thread
 

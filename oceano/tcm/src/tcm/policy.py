@@ -8,15 +8,17 @@ module globals, or ``Optional[bool]`` tri-states.
 """
 from __future__ import annotations
 
-from contextvars import ContextVar
 import logging
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 
 from omegaconf import DictConfig, OmegaConf
-from tcm import schema, _constants, utils2init
+from utils import log_init
 
-lf = utils2init.LoggingStyleAdapter(__name__)
+from tcm import _constants, schema
+
+lf = log_init.LoggingStyleAdapter(__name__)
 
 
 class H5Mode(Enum):

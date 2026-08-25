@@ -592,22 +592,37 @@ class App:
 
     def _scan(self) -> None:
         path = self._path_field.get().strip()
-        if path:
-            # Shift+browse stores comma-separated paths; reformat as regex
-            # alternation so find_dir_raw_absolute can resolve the _raw/ anchor.
-            if "," in path:
-                path = self._fmt_multi(tuple(path.split(",")))
-                self._path_field.set(path)
-            self._clear_log()
-            # Live path field — not the stale startup argv — drives the scan,
-            # so a GUI browse selection of ``_raw`` rescans that directory.
-            # YAML auto-detection (`.yaml`/`.yml` → `input.yaml_path` filter)
-            # happens in processing.run — no GUI-side plumbing needed.
-            self.wk.scan(self._original_argv, path)
+        # if path:
+        # Shift+browse stores comma-separated paths; reformat as regex
+        # alternation so find_dir_raw_absolute can resolve the _raw/ anchor.
+        if "," in path:
+            path = self._fmt_multi(tuple(path.split(",")))
+            self._path_field.set(path)
+        self._clear_log()
+        # Live path field — not the stale startup argv — drives the scan,
+        # so a GUI browse selection of ``_raw`` rescans that directory.
+        # YAML auto-detection (`.yaml`/`.yml` → `input.yaml_path` filter)
+        # happens in processing.run — no GUI-side plumbing needed.
+        self.wk.scan(self._original_argv, path)
+        # else:
+        #     # Empty path — no worker would spawn, leaving the "Loading…"
+        #     # stage frozen: surface the same failure as a wrong path (red
+        #     # field, error floater, DEFAULT stage reset).  Message mirrors
+        #     # tcm.paths' no-resolved-paths FileNotFoundError.
+        #     self._clear_log()
+        #     self._on_scan_error(FileNotFoundError("Not found stored data: []"))
 
     # ── §2 page management ──────────────────────────────────────────
 
-    def _add_page(self, stem: str, cfg: dict, yaml_path: Path | None = None) -> None:
+    def _add_page(
+        self,
+        stem: str,
+        cfg: dict,
+        yaml_path: Path | None = None,
+        metadata: list | None = None,
+        sync_status: dict | None = None,
+        metadata_path: str | None = None,
+    ) -> None:
         frame = ttk.Frame(self._stack)
         frame.grid(row=0, column=0, sticky="nsew")  # all pages share cell (0,0)
         self._tab_of[stem] = frame
@@ -636,7 +651,23 @@ class App:
             dir_title="",
             on_click=self._hide_progress_widgets,
         )
-        cs.load(cfg, full=self._full_mode, config_root=schema.Config, return_enum=schema.Return)
+        cfg["_page_stem"] = stem
+        cs.load(
+            cfg,
+            full=self._full_mode,
+            config_root=schema.Config,
+            return_enum=schema.Return,
+            metadata=metadata,
+            sync_status=sync_status,
+            metadata_path=metadata_path,
+        )
+        cs._page_stem = stem
+        # Visual sync indicator on time_ranges row (broader → warning fg) + hover detail
+        if sync_status:
+            try:
+                cs.apply_time_ranges_sync_status(sync_status)
+            except Exception:
+                pass
         cs.on_hover_status = lambda msg, md=False: self._on_cell_status(cs, msg, md)
         cs.on_edit_begin = lambda: (self._hide_tip(), self._hide_progress_widgets())
         cs.on_validity_change = self._update_run_btn_state
@@ -685,8 +716,17 @@ class App:
         stems = list(self._pages)
         if not stems or not all(cs.is_path_valid() for cs in self._pages.values()):
             return
-        for s, cs in self._pages.items():
-            self._write_coefs(s, cs)
+        try:
+            for s, cs in self._pages.items():
+                self._write_coefs(s, cs)
+            self._write_metadata()
+        except Exception:
+            lf.exception("Run pre-write failed")
+            self._surface_error(
+                __import__("sys").exc_info()[1] or Exception("pre-write failed"),
+                _S.get("error.run", "Run: {p}"),
+            )
+            return
         self._clear_log()  # resets _error_active + hides tip
         self._cfg_detail = ""
         self._run_btn.config(text=_S["run_btn.pause"])
@@ -713,6 +753,134 @@ class App:
         config_yaml.update_coefs_in_run_yaml(yp, patch)
         cs.mark_clean()
 
+    def _load_device_meta(self) -> tuple[dict | None, Path | None, Path | None]:
+        """Resolve device dir + ``info_devices.yaml`` path + parsed content.
+
+        Returns ``(device_meta, ddir, metadata_path)`` — all ``None`` when
+        resolution fails.  Single source for scan + write paths (DRY).
+        """
+        try:
+            from meta_finder import io_info_files
+            from meta_finder.config import DEVICES_FILE_NAME_YAML, DEVICES_FILE_NAME
+
+            p = self._path_field.get().strip()
+            if p:
+                ddir = paths.find_dir_raw_absolute(Path(p).absolute()).parent
+                for nm in (DEVICES_FILE_NAME_YAML, DEVICES_FILE_NAME):
+                    cand = ddir / nm
+                    if cand.is_file():
+                        return io_info_files.read_metadata_file(cand), ddir, cand
+                return None, ddir, ddir / DEVICES_FILE_NAME_YAML
+        except Exception:
+            pass
+        return None, None, None
+
+    def _write_metadata(self) -> None:
+        """Write edited ``metadata`` rows back to ``info_devices.yaml``.
+
+        Collects per-stem 11-arrays from dirty ``metadata*`` nodes, merges into
+        the device file via ``meta_finder`` (preserving other devices), and
+        marks metadata clean on success.  Frozen build includes ``meta_finder``
+        (see ``pyproject.toml: tcm`` feature + ``tcm_gui.spec``).
+        """
+        # Gather per-pcid new content: {pcid: {sid: [11-array]}}
+        new_content: dict[str, dict[str, list]] = {}
+        # Map stem → pcid for Setup_ID indexing
+        stems_by_pcid: dict[str, list[str]] = {}
+        for stem in self._pages:
+            try:
+                pcid = format.to_pcid_from_name(format.stem_to_pcid(stem))
+            except Exception:
+                continue
+            stems_by_pcid.setdefault(pcid, []).append(stem)
+        for pcid, stems in stems_by_pcid.items():
+            stems.sort()
+        for stem, cs in self._pages.items():
+            if not getattr(cs, "is_metadata_dirty", False) or not cs.is_metadata_dirty:
+                continue
+            try:
+                pcid = format.to_pcid_from_name(format.stem_to_pcid(stem))
+            except Exception:
+                continue
+            sid = (
+                str(stems_by_pcid.get(pcid, [stem]).index(stem))
+                if stem in stems_by_pcid.get(pcid, [])
+                else "0"
+            )
+            arr = cs.get_edited_metadata()
+            if not arr:
+                continue
+            new_content.setdefault(pcid, {})[sid] = arr
+        if not new_content:
+            return
+        # Prefer per-page browsed path (user may have retargeted device file)
+        browsed: Path | None = next(
+            (Path(cs.get_metadata_path()) for cs in self._pages.values() if cs.get_metadata_path().strip()),
+            None,
+        )
+        if browsed is not None:
+            device_dir, info_path = browsed.parent, browsed
+            _, _, fallback = self._load_device_meta()
+            existing_fallback: dict | None = None
+            if fallback and fallback != info_path:
+                try:
+                    from meta_finder import io_info_files as _io2
+
+                    if fallback.is_file():
+                        existing_fallback = _io2.read_metadata_file(fallback)
+                except Exception:
+                    pass
+        else:
+            _, device_dir, info_path = self._load_device_meta()  # type: ignore[assignment]
+            existing_fallback = None
+        if device_dir is None or info_path is None:
+            lf.warning("Cannot resolve device dir for metadata write — skipping")
+            return
+        try:
+            from meta_finder import io_info_files
+            from meta_finder.create_info_files import _merge_device_metadata
+
+            existing: dict = {}
+            if existing_fallback is not None:
+                existing = dict(existing_fallback)
+            if info_path.is_file():
+                try:
+                    existing = io_info_files.read_metadata_file(info_path)
+                except Exception:
+                    lf.warning("Failed to read %s — will overwrite", info_path, exc_info=True)
+            # Merge: user-edited metadata overwrites non-placeholder; other devices preserved
+            if existing:
+                merged = _merge_device_metadata(existing, new_content)
+                # Force dirty SIDs to user values (merge keeps existing non-placeholder)
+                for pcid, sids in new_content.items():
+                    for sid, arr in sids.items():
+                        # Ensure the merged entry reflects user's edited array
+                        if pcid in merged and isinstance(merged[pcid], dict) and sid in merged[pcid]:
+                            # Overwrite this sid with user's array (dirty wins)
+                            merged[pcid][sid] = arr
+                        elif pcid in merged:
+                            # Fallback: set at top level
+                            if isinstance(merged[pcid], dict):
+                                merged[pcid][sid] = arr
+                            else:
+                                merged[pcid] = {sid: arr}
+                        else:
+                            merged[pcid] = {sid: arr}
+            else:
+                merged = new_content
+            # Write via atomic helper (tmp → move)
+            io_info_files.write_metadata_file(device_dir, info_path, merged)
+            lf.info("Wrote metadata for %s to %s", ", ".join(new_content), info_path.name)
+            for cs in self._pages.values():
+                if getattr(cs, "is_metadata_dirty", False) and cs.is_metadata_dirty:
+                    cs.mark_metadata_clean()
+                    # Refresh ``metadata*`` → ``metadata`` label
+                    with __import__("contextlib").suppress(Exception):
+                        cs._apply_metadata_dirty_label()
+                        cs.sh.redraw()
+        except Exception:
+            lf.exception("Failed to write metadata to info_devices.yaml")
+
     # ── polling (300 ms) ────────────────────────────────────────────
 
     def _poll(self) -> None:
@@ -725,9 +893,10 @@ class App:
         self.root.after(self.POLL, self._poll)
 
     def _poll_dirty_tabs(self) -> None:
-        """Sync dirty indicator on rail cells."""
+        """Sync dirty indicator on rail cells (coefs dirty OR metadata* dirty)."""
         for stem, cs in self._pages.items():
-            self._rail.set_dirty(stem, cs.is_dirty)
+            dirty = cs.is_dirty or (getattr(cs, "is_metadata_dirty", False) and cs.is_metadata_dirty)
+            self._rail.set_dirty(stem, dirty)
 
     def _on_log_motion(self, _event: tk.Event) -> None:
         """Show log status text while mouse is actively moving; fade on pause."""
@@ -1126,6 +1295,10 @@ class App:
     def _on_scan_ok(self, result) -> None:
         if not result or len(result) < 4:
             return
+        sync_result = result[4] if len(result) >= 5 and isinstance(result[4], dict) else None
+        # Preload device metadata for ``metadata`` node (frozen build includes meta_finder).
+        # DRY: device-dir + file lookup via App helper (also used by _write_metadata).
+        device_meta, ddir, metadata_path = self._load_device_meta()
 
         self._error_active = False
         self._path_field.set_error(False)
@@ -1138,17 +1311,65 @@ class App:
         self._rail.clear()
         self._set_cfg_ui_disabled(False)  # scanned configs exist — active from first paint
         self._current = None
+        # Build pcid→stems index for Setup_ID mapping
+        all_stems = [s for s, _, _ in result[3]]
+        stems_by_pcid: dict[str, list[str]] = {}
+        for s in all_stems:
+            try:
+                pc = format.to_pcid_from_name(format.stem_to_pcid(s))
+            except Exception:
+                pc = s
+            stems_by_pcid.setdefault(pc, []).append(s)
+        for v in stems_by_pcid.values():
+            v.sort()
+
+        def _meta_for_stem(stem: str) -> list | None:
+            if device_meta is None:
+                return None
+            try:
+                pcid = format.to_pcid_from_name(format.stem_to_pcid(stem))
+            except Exception:
+                return None
+            # Try normalized keys (meta_finder stores normalized ids)
+            for cand in (pcid, pcid.replace("_", "")):
+                if cand in device_meta:
+                    ent = device_meta[cand]
+                    # ent is {sid: [list]} or list
+                    if isinstance(ent, dict):
+                        sid = (
+                            str(stems_by_pcid.get(pcid, [stem]).index(stem))
+                            if stem in stems_by_pcid.get(pcid, [])
+                            else "0"
+                        )
+                        # Prefer exact sid, fallback to "0" or first
+                        if sid in ent:
+                            return list(ent[sid])
+                        if "0" in ent:
+                            return list(ent["0"])
+                        # Take first station
+                        for _k, _v in ent.items():
+                            if isinstance(_v, (list, tuple)):
+                                return list(_v)
+                    elif isinstance(ent, (list, tuple)):
+                        return list(ent)
+            return None
+
         for stem, yp, cfg_dc in result[3]:
             cfg = OmegaConf.to_container(cfg_dc, resolve=True)
-            # Strip the technical ``CFG_FROM_ARGS`` sentinel injected by
-            # ``worker._scan`` for early-exit — it is not a user config value.
-            # Restore the real default so the dropdown shows the value that
-            # ``processing.run`` will actually use when the user clicks Run.
             prog = cfg.get("program")
             if prog and prog.get("return_") == schema.Return.CFG_FROM_ARGS:
                 prog["return_"] = str(schema.Return.END)
             self._yaml_paths[stem] = Path(yp)
-            self._add_page(stem, cfg, yaml_path=Path(yp))
+            md = _meta_for_stem(stem)
+            ss = sync_result.get(stem) if sync_result else None
+            self._add_page(
+                stem,
+                cfg,
+                yaml_path=Path(yp),
+                metadata=md,
+                sync_status=ss,
+                metadata_path=str(metadata_path) if metadata_path else None,
+            )
         if self._tab_of:  # top tab gets rail indicator + the raised (visible) page
             self._select_tab(next(iter(self._tab_of)))
         self._cfg_state = ScanStage.DONE
@@ -1195,8 +1416,16 @@ class App:
         Tkinter passes the already-caught ``(exc, val, tb)`` — we are NOT inside
         an active exception, so ``lf.exception`` (implicit ``sys.exc_info()``)
         would lose the traceback: embed it in the message instead.
+        Also surfaces in the GUI log panel via ``_surface_error`` so every
+        Tk callback failure is visible to the user without needing the console.
         """
-        lf.error("Exception in Tkinter callback\n%s", "".join(traceback.format_exception(exc, val, tb)))
+        msg = "".join(traceback.format_exception(exc, val, tb))
+        lf.error("Exception in Tkinter callback\n%s", msg)
+        # Mirror to GUI log + status tip — general, no per-call try/except needed.
+        try:
+            self._surface_error(val, _S.get("error.run", "Run: {p}"))
+        except Exception:
+            pass
 
     def _log_err(self, msg: str, *, separator: bool = False) -> None:
         """Append ``msg`` as an ``error``-tagged line; optionally add a visual

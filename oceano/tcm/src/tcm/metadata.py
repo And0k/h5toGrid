@@ -4,20 +4,19 @@ Provides :func:`get_path_in_parents`, :func:`load_file_meta`, and
 :func:`extract_devices_info` — the only three functions from the external
 ``veusz_helpers`` package used by TCM.
 
-The original module depended on ``func_vsz.DictKeyIfNoVal`` (a Veusz-specific
+The original module depended on ``vsz_func.DictKeyIfNoVal`` (a Veusz-specific
 translation dict with a module-level Windows-registry read).  For the TCM
 distribution we replace it with :class:`_KeyAsDefault`, which returns the key
 itself when missing — identical to the English-locale behaviour of the original.
 """
 
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Dict, Sequence
 
 import numpy as np
+from utils import log_init
 
-from tcm import utils2init
-
-lf = utils2init.LoggingStyleAdapter(__name__)
+lf = log_init.LoggingStyleAdapter(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +143,7 @@ def extract_devices_info(meta: dict, devices: Sequence[str]) -> dict:
     :param devices: probe IDs to look up (e.g. ``["i01", "i02"]``).
     :returns: ``{pid: {p: …, b: …, …}}`` for each matching *devices* entry.
     """
-    device_info: Dict[str, dict] = {}
+    device_info: dict[str, dict] = {}
     for pid_cur in devices:
         try:
             pid_array = meta[pid_cur]

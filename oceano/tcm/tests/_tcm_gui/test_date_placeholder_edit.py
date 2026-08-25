@@ -21,12 +21,13 @@ from contextlib import suppress
 
 import pytest
 
+import tcm_gui._sheet_tint as _sheet_tint
 import tcm_gui.coef_sheet as coef_sheet
 import tcm_gui.theme as theme
 from tcm_gui.coef_sheet import ConfigSheet
 
-FMT = coef_sheet._DATE_FMT
-PH_COL = coef_sheet._DATE_PH_COL  # tksheet col of the date cell (0-based)
+FMT = _sheet_tint._DATE_FMT
+PH_COL = _sheet_tint._DATE_PH_COL  # tksheet col of the date cell (0-based)
 
 
 def _mouse_ev(mt, r: int, c: int) -> tk.Event:
@@ -61,7 +62,7 @@ def cs(_session_tk_root):
     sheet._meta[d1] = {"has_date": True, "key": "dt_from", "max_col": 0}
     sheet._meta[r2] = {"key": "plain", "max_col": 1}
     sheet._rebuild_row_caches()
-    sheet._apply_date_placeholders()
+    sheet._apply_placeholders()
     root.update_idletasks()
     root.update()
     yield sheet

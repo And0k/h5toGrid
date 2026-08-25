@@ -1,24 +1,25 @@
 import functools
-from datetime import datetime
+import json
 import shutil
 import sys
 import traceback
+from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, Any
-import json
+from typing import Any, Callable, Dict, Mapping, Sequence
+
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
-from ruamel.yaml.scalarstring import DoubleQuotedScalarString as DQ
 from ruamel.yaml.representer import RoundTripRepresenter
-from typing import Mapping, Sequence
-from .logging_config import setup_logging
+from ruamel.yaml.scalarstring import DoubleQuotedScalarString as DQ
+
 from .config import DEVICES_FILE_NAME, DEVICES_FILE_NAME_UPD
+from .logging_config import setup_logging
 
 logger = setup_logging()
 
 # Common encodings to try for reading metadata files with special characters
 # Includes UTF-8 variants and common legacy encodings for international character sets
-COMMON_ENCODINGS = ['utf-8', 'cp1251', 'iso-8859-1', 'utf-8-sig']
+COMMON_ENCODINGS = ["utf-8", "cp1251", "iso-8859-1", "utf-8-sig"]
 
 # Configure YAML parser/dumper with preferred settings (global for reuse)
 yaml = YAML()
@@ -28,8 +29,10 @@ yaml.preserve_quotes = True
 yaml.sort_base_mapping_type_on_output = False
 yaml.width = 4096  # practical “no wrap” #  yaml.width = None  # works in newer ruamel.yaml versions
 
+
 def represent_none_as_tilde(representer, data):
     return representer.represent_scalar("tag:yaml.org,2002:null", "~")
+
 
 yaml.representer.add_representer(type(None), represent_none_as_tilde)
 
@@ -46,20 +49,23 @@ info_devices_field_names_extended = [
     "burst_dt",
     "bursts_t",
     "comment",
-    "coef_date", # index 11 - coef date from HDF5 files
+    "coef_date",  # index 11 - coef date from HDF5 files
     "time_raw_st",  # index 12 - raw start time from HDF5 files
     "time_raw_en",  # index 13 - raw end time from HDF5 files
 ]
 max_fields_number = 11
-comment_field_index = info_devices_field_names_extended.index('comment')
+comment_field_index = info_devices_field_names_extended.index("comment")
 
-yaml_array_header = ", ".join([
-    (
-        "h_above_bot" if n == "height_above_bottom" else "symbol" if n == "modification_symbol" else n
-    ).capitalize()
-    for n in info_devices_field_names_extended[:max_fields_number]
-])
-placeholders = {"?", "-", ""}
+yaml_array_header = ", ".join(
+    [
+        (
+            "h_above_bot" if n == "height_above_bottom" else "symbol" if n == "modification_symbol" else n
+        ).capitalize()
+        for n in info_devices_field_names_extended[:max_fields_number]
+    ]
+)
+placeholders = {"?", "-", "", None}
+PLACEHOLDER_DISPLAY = "?"  # GUI display for any placeholder (incl. YAML ``~`` → None)
 
 # Special keys that are not part of the metadata structure
 _SPECIAL_METADATA_KEYS = ["data_paths", "setup_name", "combined_comments"]
@@ -94,10 +100,7 @@ def _station_metadata_to_list(station_metadata) -> list:
         Flat list of metadata values in field-name order.
     """
     if isinstance(station_metadata, dict):
-        return [
-            station_metadata.get(field_name, "?")
-            for field_name in info_devices_field_names_extended
-        ]
+        return [station_metadata.get(field_name, "?") for field_name in info_devices_field_names_extended]
     return list(station_metadata)
 
 
@@ -119,7 +122,9 @@ def all_vals_empty(content: Dict[str, Any]) -> bool:
             # Check nested dict structure (station_id -> metadata) via iter_station_id_items
             for station_id, station_metadata in iter_station_id_items(values):
                 metadata_list = _station_metadata_to_list(station_metadata)
-                logger.debug(f"      Checking station_id {station_id}: type={type(station_metadata).__name__}")
+                logger.debug(
+                    f"      Checking station_id {station_id}: type={type(station_metadata).__name__}"
+                )
                 preview = metadata_list[:3]
                 if len(metadata_list) > 3:
                     preview.append(f"... ({len(metadata_list) - 3} more)")
@@ -136,7 +141,9 @@ def all_vals_empty(content: Dict[str, Any]) -> bool:
             for field_name in info_devices_field_names_extended:
                 field_value = values.get(field_name, "?")
                 if field_value not in placeholders:
-                    logger.debug(f"      Found non-placeholder field {field_name}={field_value}, returning False")
+                    logger.debug(
+                        f"      Found non-placeholder field {field_name}={field_value}, returning False"
+                    )
                     return False
         elif isinstance(values, list):
             logger.debug(f"    Device {device_id} is list: {values}")
@@ -166,10 +173,11 @@ def atomic_write(write_func: Callable[[Path, dict], None]) -> Callable[[Path, Pa
     Returns:
         Decorated function that takes (device_dir, info_file, content_write) and returns bool
     """
+
     @functools.wraps(write_func)
     def wrapper(device_dir: Path, info_file: Path, content_write: dict) -> bool:
         try:
-            temp_file_path = info_file.with_suffix(info_file.suffix + '.tmp')
+            temp_file_path = info_file.with_suffix(info_file.suffix + ".tmp")
             write_func(temp_file_path, content_write)
             shutil.move(str(temp_file_path), str(info_file))
             logger.info(f"Created {info_file.name} in {device_dir} with {len(content_write)} devices")
@@ -179,13 +187,14 @@ def atomic_write(write_func: Callable[[Path, dict], None]) -> Callable[[Path, Pa
             print(f"ERROR: Error creating file {info_file}: {e}", file=sys.stderr)
             print("Traceback (most recent call last):", file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
-            temp_file_path = info_file.with_suffix(info_file.suffix + '.tmp')
+            temp_file_path = info_file.with_suffix(info_file.suffix + ".tmp")
             if temp_file_path.exists():
                 try:
                     temp_file_path.unlink()
                 except:
                     pass
             return False
+
     return wrapper
 
 
@@ -203,12 +212,13 @@ def read_with_encoding_retry(file_format: str):
     Returns:
         Decorated function that takes (file_path: Path) and returns parsed content
     """
+
     def decorator(read_func: Callable[[Any], dict]) -> Callable[[Path], dict]:
         @functools.wraps(read_func)
         def wrapper(file_path: Path) -> dict:
             for encoding in COMMON_ENCODINGS:
                 try:
-                    with open(file_path, 'r', encoding=encoding) as f:
+                    with open(file_path, "r", encoding=encoding) as f:
                         return read_func(f)
                 except UnicodeDecodeError:
                     continue
@@ -219,16 +229,18 @@ def read_with_encoding_retry(file_format: str):
 
             # Fallback: try with utf-8 and error replacement for corrupted files
             try:
-                with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
                     return read_func(f)
             except Exception as e:
                 logger.error(
                     f"Failed to read {file_format} file {file_path} after trying encodings: "
                     f"{COMMON_ENCODINGS}",
-                    exc_info=True
+                    exc_info=True,
                 )
                 raise
+
         return wrapper
+
     return decorator
 
 
@@ -243,7 +255,7 @@ def write_devices_meta_json(path: Path, content: dict) -> None:
         path: Path to the file location
         content_write: Dictionary content to write as JSON
     """
-    with open(path, 'w', encoding='utf-8') as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write("{\n")
         items = list(content.items())
         for i, (device_id, values) in enumerate(items):
@@ -270,7 +282,7 @@ def _concatenate_additional_comments(metadata_list: list) -> list:
     # Extract non-empty/placeholder values from elements AFTER comment field
     additional_comments = [
         str(elem)
-        for elem in metadata_list[comment_field_index + 1:]
+        for elem in metadata_list[comment_field_index + 1 :]
         if elem not in placeholders and elem not in [None, ""]
     ]
 
@@ -313,34 +325,43 @@ def force_dq(obj):
             return obj
 
 
+def is_placeholder(v: Any) -> bool:
+    """True for placeholder values: ``?, -, '', None`` (YAML ``~`` → None)."""
+    return v in placeholders
+
+
+def placeholder_to_display(v: Any) -> str:
+    """Map any placeholder to ``?`` for GUI display; passthrough otherwise."""
+    return PLACEHOLDER_DISPLAY if is_placeholder(v) else str(v)
+
+
+# Required slice must be persisted even when placeholder - written as ``~``.
+# Indices 0..REQUIRED_LAST inclusive are never trimmed.
+REQUIRED_LAST = info_devices_field_names_extended.index("time_en")  # 7
+
+
+def display_to_storage(v: str) -> Any:
+    """Map GUI cell ``?`` back to storage ``None`` (→ ``~``); keep others as-is."""
+    s = v.strip() if isinstance(v, str) else v
+    return None if s == PLACEHOLDER_DISPLAY or s in ("", "-") else s
+
+
 def _remove_trailing_empty_fields(seq: Sequence[Any]) -> Sequence[Any]:
-    """Remove trailing empty/null values from a sequence.
+    """Remove trailing placeholder values beyond required slice.
 
-    Args:
-        seq: Sequence of values to filter
-
-    Returns:
-        Sequence with trailing empty values removed
+    Required fields ``0..REQUIRED_LAST`` (up to ``time_en``) are kept even
+    when placeholder - they serialise as ``~``. Only the optional tail
+    ``burst_dt, bursts_t, comment`` (8..10) is trimmed.
     """
-    # Find the index of time_en (field index 6)
-    time_en_index = 6
-
-    # If sequence is shorter than time_en index, return as-is
-    if len(seq) <= time_en_index:
+    if len(seq) <= REQUIRED_LAST:
         return seq
-
-    # Find the last non-empty value starting from the end
     last_non_empty = len(seq) - 1
-    while last_non_empty > time_en_index:
-        value = seq[last_non_empty]
-        # Check if value is empty (None, empty string, or placeholder)
-        if value is None or value == "" or value in placeholders:
+    while last_non_empty > REQUIRED_LAST:
+        if is_placeholder(seq[last_non_empty]):
             last_non_empty -= 1
         else:
             break
-
-    # Return sequence up to last non-empty value
-    return seq[:last_non_empty + 1]
+    return seq[: last_non_empty + 1]
 
 
 def save_to_yaml_format(content: Mapping[str, Mapping[str, Sequence[Any]] | Sequence[Any]], output_path):
@@ -372,13 +393,13 @@ def save_to_yaml_format(content: Mapping[str, Mapping[str, Sequence[Any]] | Sequ
                 # Count only station entries (exclude special keys already filtered by iter_station_id_items)
                 station_entries = dict(iter_station_id_items(map_or_seq))
                 # Check if there's only one interval (station_id '0') - if so, write as simple list
-                if len(station_entries) == 1 and '0' in station_entries:
+                if len(station_entries) == 1 and "0" in station_entries:
                     # Single interval - write as simple list for backward compatibility
                     logger.debug(f"  Device {name} has single interval, writing as simple list")
                     if not commented_1d:
                         commented_1d = True
                         root.yaml_set_start_comment("Instrument_ID: [{}]".format(yaml_array_header))
-                    metadata_seq = _station_metadata_to_list(station_entries['0'])
+                    metadata_seq = _station_metadata_to_list(station_entries["0"])
                     filtered_seq = _remove_trailing_empty_fields(metadata_seq)
                     value = CommentedSeq(filtered_seq)
                     value.fa.set_flow_style()  # <-- inline [a, b, c]
@@ -389,7 +410,9 @@ def save_to_yaml_format(content: Mapping[str, Mapping[str, Sequence[Any]] | Sequ
                     )
                     if not commented_2d:
                         commented_2d = True
-                        root.yaml_set_start_comment("Instrument_ID:\n  Setup_ID: [{}]".format(yaml_array_header))
+                        root.yaml_set_start_comment(
+                            "Instrument_ID:\n  Setup_ID: [{}]".format(yaml_array_header)
+                        )
                     value = CommentedMap()
                     for station_id, station_metadata in station_entries.items():
                         logger.debug(
@@ -408,8 +431,7 @@ def save_to_yaml_format(content: Mapping[str, Mapping[str, Sequence[Any]] | Sequ
                     root.yaml_set_start_comment("Instrument_ID: [{}]".format(yaml_array_header))
                 # Convert dict to list format
                 metadata_list = [
-                    map_or_seq.get(field_name, "")
-                    for field_name in info_devices_field_names_extended
+                    map_or_seq.get(field_name, "") for field_name in info_devices_field_names_extended
                 ]
                 filtered_seq = _remove_trailing_empty_fields(metadata_list)
                 value = CommentedSeq(filtered_seq)
@@ -448,7 +470,9 @@ def write_devices_meta_yaml(path: Path, content: dict) -> None:
     """
     logger.debug(f"write_devices_meta_yaml called with content keys: {list(content.keys())}")
     for device_id, device_entry in content.items():
-        logger.debug(f"  Device {device_id}: type={type(device_entry)}, keys={list(device_entry.keys()) if isinstance(device_entry, dict) else 'N/A'}")
+        logger.debug(
+            f"  Device {device_id}: type={type(device_entry)}, keys={list(device_entry.keys()) if isinstance(device_entry, dict) else 'N/A'}"
+        )
     # Content should already be in nested dict structure, write directly
     save_to_yaml_format(content, path)
 
@@ -471,13 +495,13 @@ def read_metadata_file(file_path: Path) -> dict:
     """
     suffix = file_path.suffix.lower()
     # Use CommentedMap to preserve order of devices from file
-    if (data := (
-        read_with_encoding_retry(file_format='JSON')(json.load)(file_path)
+    if data := (
+        read_with_encoding_retry(file_format="JSON")(json.load)(file_path)
         if suffix == ".json"
-        else read_with_encoding_retry(file_format='YAML')(yaml.load)(file_path)
+        else read_with_encoding_retry(file_format="YAML")(yaml.load)(file_path)
         if suffix in (".yaml", ".yml")
         else None
-    )):
+    ):
         # Skip device entries whose ID starts with a space — convention for "no data yet"
         filtered = CommentedMap()
         skipped = []
@@ -489,10 +513,13 @@ def read_metadata_file(file_path: Path) -> dict:
         if skipped:
             logger.debug(
                 "Skipped %s space-prefixed device(s) from %s: %s",
-                len(skipped), file_path.name, skipped,
+                len(skipped),
+                file_path.name,
+                skipped,
             )
         return filtered
     raise Exception(f"Unsupported file format: {suffix}. Supported formats: .json, .yaml, .yml")
+
 
 def _convert_metadata_to_nested_dict(
     metadata: Dict[str | int, Dict[str | int, Sequence[str | int | float | datetime]]]
@@ -538,12 +565,14 @@ def write_metadata_file(device_dir: Path, info_file: Path, content_write: dict) 
     """
     logger.debug(f"write_metadata_file called for {info_file.name} with {len(content_write)} devices")
     for device_id, device_entry in content_write.items():
-        logger.debug(f"  Device {device_id}: type={type(device_entry)}, keys={list(device_entry.keys()) if isinstance(device_entry, dict) else 'N/A'}")
+        logger.debug(
+            f"  Device {device_id}: type={type(device_entry)}, keys={list(device_entry.keys()) if isinstance(device_entry, dict) else 'N/A'}"
+        )
     suffix = info_file.suffix.lower()
 
-    if suffix == '.json':
+    if suffix == ".json":
         return write_devices_meta_json(device_dir, info_file, content_write)
-    elif suffix in ('.yaml', '.yml'):
+    elif suffix in (".yaml", ".yml"):
         return write_devices_meta_yaml(device_dir, info_file, content_write)
     else:
         raise Exception(f"Unsupported file format: {suffix}. Supported formats: .json, .yaml, .yml")

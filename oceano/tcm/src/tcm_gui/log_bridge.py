@@ -1,7 +1,7 @@
 """LogRecord → queue → ScrolledText color tags.  No ANSI parsing.
 
 Records buffered in the queue may be drained long after their originating
-``lf.debug(...)`` call returned.  :class:`tcm.utils2init.LoggingStyleAdapter`
+``lf.debug(...)`` call returned.  :class:`utils.init.LoggingStyleAdapter`
 mutates a single ``Message`` instance across log calls (its ``fmt``/``args``
 overwrite in place), so a deferred ``rec.getMessage()`` would render the
 *latest* message instead of the one recorded at emit time — every record

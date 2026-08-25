@@ -34,19 +34,35 @@ class Config:
         ),
         metadata={"help": "Search directories for cruises"},
     )
-    input_dirs: Optional[List[Path]] = field(default=None, metadata={"help": "Specific cruise/device to process (overrides top_search_dirs)"})
-    create_info_files: bool = field(default=False, metadata={"help": f"Update {DEVICES_FILE_NAME_UPD} files if they exist, or create new ones"})
-    from_data: bool = field(default=True, metadata={"help": "Process metadata from data files. If True, extracts metadata from data files and combines with existing info-file metadata. If False, only uses metadata from existing info-files without extracting from data files"})
+    input_dirs: Optional[List[Path]] = field(
+        default=None, metadata={"help": "Specific cruise/device to process (overrides top_search_dirs)"}
+    )
+    create_info_files: bool = field(
+        default=False,
+        metadata={"help": f"Update {DEVICES_FILE_NAME_UPD} files if they exist, or create new ones"},
+    )
+    from_data: bool = field(
+        default=True,
+        metadata={
+            "help": "Process metadata from data files. If True, extracts metadata from data files and combines with existing info-file metadata. If False, only uses metadata from existing info-files without extracting from data files"
+        },
+    )
     extract_hdf5_times: bool = field(
         default=True, metadata={"help": "Extract time metadata from HDF5 files if not found in text_output"}
     )
-    extract_hdf5_coef_dates: bool = field(default=False, metadata={"help": "Extract dates of coefficients in HDF5 files"})
-    output_format: List[str] = field(default_factory=lambda: ["tsv"], metadata={"help": "Output formats to generate"})
-    output_dir: Optional[Path] = field(default=None, metadata={"help": "Output directory for generated files"})
+    extract_hdf5_coef_dates: bool = field(
+        default=False, metadata={"help": "Extract dates of coefficients in HDF5 files"}
+    )
+    output_format: List[str] = field(
+        default_factory=lambda: ["tsv"], metadata={"help": "Output formats to generate"}
+    )
+    output_dir: Optional[Path] = field(
+        default=None, metadata={"help": "Output directory for generated files"}
+    )
     overwrite_bad_devs_in_info_files: bool = field(
         default=True,
         metadata={
-            "help": 'Update individual device entries in info files having all empty values '
+            "help": "Update individual device entries in info files having all empty values "
             '("?", "-", or ""); preserves existing non-placeholder values and device order'
         },
     )
@@ -60,14 +76,29 @@ class Config:
         },
     )
     # Global setting for RAW HDF5 columns that should be extracted from _raw/*.h5 files
-    raw_hdf5_cols: set = field(default_factory=lambda: {"coef_date", "raw_date_range"}, metadata={"help":
-    "Output columns to trigger extraction of corresponding info from RAW HDF5 files (from _raw/*.h5)"})
+    raw_hdf5_cols: set = field(
+        default_factory=lambda: {"coef_date", "raw_date_range"},
+        metadata={
+            "help": "Output columns to trigger extraction of corresponding info from RAW HDF5 files (from _raw/*.h5)"
+        },
+    )
     # Global logging level setting
-    logging_level: Union[int, str] = field(default=logging.INFO, metadata={"help": "Global logging level setting (DEBUG, INFO, WARNING, ERROR, CRITICAL or their numeric values)"})
+    logging_level: Union[int, str] = field(
+        default=logging.INFO,
+        metadata={
+            "help": "Global logging level setting (DEBUG, INFO, WARNING, ERROR, CRITICAL or their numeric values)"
+        },
+    )
     # Global default averaging value for text files that don't specify averaging
-    default_text_file_averaging: float = field(default=2.0001, metadata={"help": "Global default averaging value for text files that don't specify averaging"})
+    default_text_file_averaging: float = field(
+        default=2.0001,
+        metadata={"help": "Global default averaging value for text files that don't specify averaging"},
+    )
     # Cache configuration for file reading to minimize redundant file access
-    cache_files_number: int = field(default=2000, metadata={"help": "Cache configuration for file reading to minimize redundant file access"})
+    cache_files_number: int = field(
+        default=2000,
+        metadata={"help": "Cache configuration for file reading to minimize redundant file access"},
+    )
     temp_dir: Optional[Path] = field(default=None, metadata={"help": "Temporary directory settings"})
     # Exclusion patterns - directories and HDF5 files matching these patterns will be skipped
     ptn_dir_exclude: List[str] = field(
@@ -81,21 +112,15 @@ class Config:
     # Supported file extensions
     extensions_text: set = field(
         default_factory=lambda: {".txt", ".tsv", ".csv"},
-        metadata={
-            "help": "Set of supported text file extensions for data files"
-        }
+        metadata={"help": "Set of supported text file extensions for data files"},
     )
     extensions_archive: set = field(
         default_factory=lambda: {".zip", ".7z"},
-        metadata={
-            "help": "Set of supported archive extensions for compressed data files"
-        }
+        metadata={"help": "Set of supported archive extensions for compressed data files"},
     )
     extensions_hdf5: set = field(
         default_factory=lambda: {".h5", ".hdf5", ".mat"},
-        metadata={
-            "help": "Set of supported HDF5/MAT file extensions for data files"
-        }
+        metadata={"help": "Set of supported HDF5/MAT file extensions for data files"},
     )
     # Regex patterns (case-insensitive matching will be used)
     # Device directory keywords pattern. (device directory can instead or in addition contain
@@ -148,7 +173,6 @@ class Config:
         },
     )
 
-
     # Flexible device identifier pattern for extracting device IDs part in text output filenames
     # to get all device ids with `parse_data_file_name.parse_filename_for_metadata()`.
     # Device type or model in 1st position is REQUIRED to correctly identify IDs part and exclude random files
@@ -185,8 +209,6 @@ class Config:
         },
     )
 
-
-
     # ptn_devices_groups_part: str = field(
     #     default=(
     #         r"(({ptn_device_type}(?:_?\(?{ptn_device_model})?|{ptn_device_model}){ptn_device_num}?[,;()-]?"
@@ -212,7 +234,7 @@ class Config:
             "If empty, all GPX files are included. "
             "If set, only GPX files matching the pattern are included. "
             "Default uses ptn_device_id to prefer files with device identifiers."
-        }
+        },
     )
 
     def __post_init__(self):
@@ -245,14 +267,14 @@ class Config:
                 value = getattr(self, field_name)
                 # Only format fields that still contain template placeholders like {ptn_device_...}.
                 # Skip fields already built by lambdas that contain regex quantifiers like {1,5}.
-                if isinstance(value, str) and '{ptn_' in value:
+                if isinstance(value, str) and "{ptn_" in value:
                     setattr(self, field_name, value.format_map(data))
 
         # Pattern for matching dated prefixes in file names.
         # Supports date ranges like 130510..0708 where ".." separates start and end dates.
         self.glob_dated_dir = "[0-9][0-9][0-9][0-9][0-9][0-9]*"
         self.ptn_dated_prefix = r"\d{4,6}(?:\.\.\d{2,6})?"
-        self.ptn_time_range = "_[0-9]+(?:-[0-9]+(?:_[0-9]+)?)?" # `_{time start}-{date end}_{time end}`
+        self.ptn_time_range = "_[0-9]+(?:-[0-9]+(?:_[0-9]+)?)?"  # `_{time start}-{date end}_{time end}`
         # or r"(?:_\d{2,5})?(?:-\d{2,5})?(?:_\d{4})?"
 
         # Derive strict variant of ptn_devices_groups_part for directory discovery.
@@ -260,9 +282,7 @@ class Config:
         # after @/# without device type prefix (needed for filename parsing like
         # "191210#07,23,30,32-bin300s.zip"), but causes false positives in directory
         # discovery (e.g., "CTD_SST_48Mc#1253" matching as a device directory).
-        self.ptn_devices_groups_part_strict = re.sub(
-            r'\(\?<=\[@#\]\)\|', '', self.ptn_devices_groups_part
-        )
+        self.ptn_devices_groups_part_strict = re.sub(r"\(\?<=\[@#\]\)\|", "", self.ptn_devices_groups_part)
 
         # Pattern for matching device directories and extracting device suffixes from names.
         # Structure: sep + device + boundary
@@ -279,18 +299,14 @@ class Config:
         # The broader alternative accepts non-standard device names (e.g., ADCP, CTD) mixed
         # with known types, requiring at least one item to match ptn_device_type_model or
         # ptn_devices_groups_part_strict to avoid false positives on arbitrary word lists.
-        self.ptn_broader_dev_list = (
-            r"(?:[A-Za-z]\w*[,;])*(?:{tm}|{gr})(?:[,;][A-Za-z]\w*)*".format(
-                tm=self.ptn_device_type_model, gr=self.ptn_devices_groups_part_strict
-            )
+        self.ptn_broader_dev_list = r"(?:[A-Za-z]\w*[,;])*(?:{tm}|{gr})(?:[,;][A-Za-z]\w*)*".format(
+            tm=self.ptn_device_type_model, gr=self.ptn_devices_groups_part_strict
         )
         # Extend keyword pattern to allow comma-separated keyword lists
         # (e.g., "inclinometer,wavegage,any_other") where at least one item must
         # be a known keyword, but unknown items are allowed before/after.
         kw_base = data["ptn_device_dir_keywords"]
-        self.ptn_device_dir_keywords_comma = (
-            rf"(?:[A-Za-z]\w*[,;])*(?:{kw_base})(?:[,;_@#][A-Za-z]\w*)*"
-        )
+        self.ptn_device_dir_keywords_comma = rf"(?:[A-Za-z]\w*[,;])*(?:{kw_base})(?:[,;_@#][A-Za-z]\w*)*"
         self.ptn_device_dir_search = (
             r"(?P<sep>{ptn_device_dir_sep}|)"
             r"(?P<device>(?P<kw>{kw_comma})?"
@@ -318,7 +334,6 @@ class Config:
         # Convert logging level if it's a string
         self.logging_level = self._convert_logging_level(self.logging_level)
 
-
     @classmethod
     def create_argument_parser(cls):
         """Create and return an argument parser with all the configuration options."""
@@ -328,10 +343,11 @@ class Config:
 
         # Add interactive mode argument
         parser.add_argument(
-            "-i", "--interactive",
+            "-i",
+            "--interactive",
             action="store_true",
             help="Interactive mode: prompt for each Config setting in order. "
-                "Enter '*' to use defaults for all remaining settings."
+            "Enter '*' to use defaults for all remaining settings.",
         )
 
         def _get_field_help(field, default_start="", default_end=""):
@@ -373,6 +389,7 @@ class Config:
 
             # Handle the case where default might be MISSING (for dataclass fields)
             from dataclasses import MISSING
+
             default_val = field.default
             if default_val is MISSING:
                 parser.add_argument(
@@ -440,14 +457,14 @@ class Config:
                         parser.add_argument(
                             f"--{field_name}",
                             type=inner_type,
-                            help=fld.metadata.get('help', f"{field_name.replace('-', ' ')} value"),
+                            help=fld.metadata.get("help", f"{field_name.replace('-', ' ')} value"),
                         )
                     else:
                         parser.add_argument(
                             f"--{field_name}",
                             type=inner_type,
                             default=default_val,
-                            help=fld.metadata.get('help', f"{field_name.replace('-', ' ')} value"),
+                            help=fld.metadata.get("help", f"{field_name.replace('-', ' ')} value"),
                         )
             else:
                 # Default handler for primitive types
@@ -460,13 +477,13 @@ class Config:
                         parser.add_argument(
                             f"--{field_name}",
                             type=str,  # Accept string input
-                            help=fld.metadata.get('help', f"{field_name.replace('-', ' ')} value"),
+                            help=fld.metadata.get("help", f"{field_name.replace('-', ' ')} value"),
                         )
                     else:
                         parser.add_argument(
                             f"--{field_name}",
                             type=field_type,
-                            help=fld.metadata.get('help', f"{field_name.replace('-', ' ')} value"),
+                            help=fld.metadata.get("help", f"{field_name.replace('-', ' ')} value"),
                         )
                 else:
                     if field_name == "logging-level":
@@ -645,11 +662,10 @@ class Config:
             config_dict = config_from_file
 
         # Convert logging level if it's a string
-        if 'logging_level' in config_dict:
-            config_dict['logging_level'] = cls._convert_logging_level(config_dict['logging_level'])
+        if "logging_level" in config_dict:
+            config_dict["logging_level"] = cls._convert_logging_level(config_dict["logging_level"])
 
         return cls(**config_dict)
-
 
     @staticmethod
     def _get_type_annotation(field_type):
@@ -675,13 +691,13 @@ class Config:
         if isinstance(level, str):
             level = level.upper()
             level_map = {
-                'DEBUG': logging.DEBUG,
-                'INFO': logging.INFO,
-                'WARNING': logging.WARNING,
-                'WARN': logging.WARNING,
-                'ERROR': logging.ERROR,
-                'CRITICAL': logging.CRITICAL,
-                'FATAL': logging.CRITICAL
+                "DEBUG": logging.DEBUG,
+                "INFO": logging.INFO,
+                "WARNING": logging.WARNING,
+                "WARN": logging.WARNING,
+                "ERROR": logging.ERROR,
+                "CRITICAL": logging.CRITICAL,
+                "FATAL": logging.CRITICAL,
             }
             return level_map.get(level, logging.INFO)  # Default to INFO if invalid level name
         return level
@@ -692,8 +708,8 @@ class Config:
             config_dict = json.load(f)
 
         # Convert logging level if it's provided as a string in the config file
-        if 'logging_level' in config_dict:
-            config_dict['logging_level'] = Config._convert_logging_level(config_dict['logging_level'])
+        if "logging_level" in config_dict:
+            config_dict["logging_level"] = Config._convert_logging_level(config_dict["logging_level"])
 
         return config_dict
 
@@ -704,6 +720,7 @@ class Config:
 _config_instance = None
 _config_initialized = False
 
+
 def _initialize_config():
     """Initialize the config instance."""
     global _config_instance, _config_initialized
@@ -713,7 +730,7 @@ def _initialize_config():
 
     # Check if we're running pytest or importing for tests
     # If pytest is in sys.argv or if we're in a test collection context
-    is_pytest = any('pytest' in str(arg) for arg in sys.argv)
+    is_pytest = any("pytest" in str(arg) for arg in sys.argv)
 
     # Check if help is requested before parsing arguments
     if not is_pytest and ("--help" in sys.argv or "-h" in sys.argv):
@@ -723,19 +740,30 @@ def _initialize_config():
         parser.print_help()
         sys.exit(0)
 
-    if is_pytest:
-        # When running tests, create a default config without parsing args
-        config = Config()
+    # Library import (e.g. from tcm_gui): Hydra injects --config-dir etc.
+    # which are not meta_finder args; tcm_gui also passes a data path
+    # positional arg (D:/.../_raw) that must be ignored here.
+    _known = {s for a in Config.create_argument_parser()._actions for s in a.option_strings}
+    _has_positional = any(not a.startswith("-") for a in sys.argv[1:])
+    _has_foreign_flag = any(a.startswith("-") and a not in _known for a in sys.argv[1:])
+    if _has_positional or _has_foreign_flag or is_pytest:
+        # Imported as library or with positional data path — use defaults,
+        # unless an explicit meta_finder flag is present and no foreign flag.
+        if is_pytest or _has_positional or _has_foreign_flag:
+            config = Config()
+        else:
+            try:
+                config = Config.from_args()
+            except SystemExit:
+                raise
+            except Exception:
+                config = Config()
     else:
-        # Otherwise, parse command line arguments
         try:
             config = Config.from_args()
         except SystemExit:
-            # If argument parsing fails due to invalid arguments, let it propagate
-            # This allows argparse to properly exit with error code when invalid arguments are provided
             raise
         except Exception:
-            # If there's any other error in parsing, use default
             config = Config()
 
     # Check if pytables is available to enable HDF5 functionality
@@ -756,10 +784,12 @@ def _initialize_config():
     _config_instance = config
     _config_initialized = True
 
+
 def get_config():
     """Get or create the global config instance."""
     _initialize_config()
     return _config_instance
+
 
 # Create the config instance using the lazy loading approach
 config = get_config()
@@ -767,5 +797,5 @@ config = get_config()
 # Expose all config attributes at module level
 # This makes attributes like config.logging_level accessible as module attributes
 for attr_name in dir(config):
-    if not attr_name.startswith('_'):
+    if not attr_name.startswith("_"):
         globals()[attr_name] = getattr(config, attr_name)

@@ -34,13 +34,12 @@ from utils.init import (
     this_prog_basename,
     init_file_names,
     dir_from_cfg,
-    init_logging,
     Ex_nothing_done,
     import_file,
     standard_error_info,
-    LoggingStyleAdapter,
 )
 from hdf5_pandas import h5
+from utils.log_init import LoggingStyleAdapter, init_logging
 
 # Globals
 to_mytz_offset = tzoffset(None, -tzlocal()._dst_offset.total_seconds())
@@ -250,7 +249,7 @@ def load_vsz_closure(
     load_timeout_s: Optional[int] = 120,
     b_execute_vsz: bool = False,
     hidden=False,
-    vsz_path_env=r"C:/Work/Python/AB_SIO_RAS/h5toGrid/shared/veusz_helpers/func_vsz.py",
+    vsz_path_env=r"C:/Work/Python/AB_SIO_RAS/h5toGrid/shared/veusz_helpers/vsz_func.py",
 ) -> Callable[
     [Union[str, PurePath], Optional[str], Optional[str], Optional[str]], Tuple[Any, Optional[Dict[str, Any]]]
 ]:

@@ -42,10 +42,12 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import utils.log_init
 import xarray as xr
 from hydra.core.config_store import ConfigStore
+from utils import init
 
-from tcm import cli, h5inclinometer_coef, schema, utils2init
+from tcm import cli, h5inclinometer_coef, schema
 from tcm._xr import io as xr_io
 from tcm.calibration import filtering, pipeline, robust, visualization
 from tcm.calibration.calibrate import to_unit_vector
@@ -90,7 +92,7 @@ _cs.store(group="proc", name="calib", node=schema.ConfigProcCalib)
 _cs.store(group="program", name="base", node=ConfigProgramCalib)
 
 
-lf = utils2init.LoggingStyleAdapter(__name__)
+lf = utils.log_init.LoggingStyleAdapter(__name__)
 
 
 # =================================================================== #
@@ -153,7 +155,7 @@ def run_calibration(
 
     lf.info(
         "Begin {:s}({:s}) for channels: {}",
-        utils2init.this_prog_basename(__file__),
+        init.this_prog_basename(__file__),
         ", ".join(cfg_in["tables"]),
         channels,
     )

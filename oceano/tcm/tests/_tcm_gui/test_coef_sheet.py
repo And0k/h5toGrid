@@ -418,7 +418,7 @@ class TestCoefsPathChildRow:
         cs._iid_of_row = {}
         cs.on_hover_status = None
         cs.on_edit_begin = None
-        cs.hover_status = {}
+        # (hover_status removed — live detail via _time_ranges_detail)
         cs._status_iid = None
         cs._status_hint = ""
 
@@ -931,8 +931,9 @@ class TestBrowseInitialDir:
 
     @pytest.fixture(autouse=True)
     def _no_shift(self, monkeypatch):
-        monkeypatch.setattr(coef_sheet, "_is_shift_pressed", lambda: False)
+        # _is_shift_pressed lives in _browse_button (coef_sheet no longer re-exports it)
         monkeypatch.setattr("tcm_gui._browse_button._is_shift_pressed", lambda: False)
+        monkeypatch.setattr("tcm_gui._sheet_status._is_shift_pressed", lambda: False, raising=False)
 
     @staticmethod
     def _capturing(monkeypatch, read_val: str) -> dict:

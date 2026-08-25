@@ -22,8 +22,9 @@ import pandas as pd
 from hdf5_pandas.csv2h5 import init_input_cols, set_filterGlobal_minmax
 from hdf5_pandas.h5_dask_pandas import h5
 from hdf5_pandas import h5
-from utils.init import my_argparser_common_part, cfg_from_args, init_logging, init_file_names, Ex_nothing_done, \
+from utils.init import my_argparser_common_part, cfg_from_args, init_file_names, Ex_nothing_done, \
     set_field_if_no, this_prog_basename
+from utils.log_init import init_logging
 
 if __name__ == '__main__':
     l = None  # see main(): l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])

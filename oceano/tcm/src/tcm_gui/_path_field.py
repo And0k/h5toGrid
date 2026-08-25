@@ -8,7 +8,7 @@ tksheet widget shrinks to ``viewport − button`` (same
 ``_field_place_kw`` pattern as ConfigSheet's floated field) and
 switches to right-aligned scroll-to-filename.  Editing uses a plain
 ``ttk.Entry`` overlaid on the cell — native single-line scroll, no
-wrapping, cursor always visible.
+wrapping, cursor always visible, justify follows the field's ``align``.
 
 Reuses the floating-button stack: ``BrowseButtonManager`` (editor-
 anchored, during edit) and ``BrowseOverlay`` + ``SheetHoverBinder``
@@ -47,7 +47,8 @@ class PathField(ttk.Frame):
     widget is shrunk to ``frame − button`` (``place(width=…)``) and
     switches to right-aligned — filename ends right before the browse
     button, same geometry as ConfigSheet's ``_field_place_kw``.
-    Editing uses a plain ``ttk.Entry`` overlay with ``justify="right"``.
+    Editing uses a plain ``ttk.Entry`` overlay whose justify follows
+    ``align`` (left by default).
 
     When the cell is empty, a dim-gray *placeholder* text is shown
     (e.g. ``"D:/data/_raw/"``) — it vanishes on first keystroke or
@@ -58,8 +59,10 @@ class PathField(ttk.Frame):
     Parameters
     ----------
     align : ``"w"`` | ``"e"``
-        Initial cell alignment.  ``"w"`` (default) for standalone
-        fields; ``"e"`` for floated fields managed by ConfigSheet.
+        Initial cell alignment — also the justify of the edit Entry.
+        Standalone and ConfigSheet floated fields are ``"w"`` (left,
+        matching the cells they cover); ``"e"`` is kept for the transient
+        hover-shrink right-align-scroll-to-filename mode.
     """
 
     _MIN_W = 50  # minimum tksheet width during hover
@@ -88,6 +91,7 @@ class PathField(ttk.Frame):
         self._on_commit = on_commit
         self._on_begin_edit_cb = on_begin_edit
         self._on_end_edit_cb = on_end_edit
+        self._align = align  # "w" standalone, "w" floated; also the Entry justify
         self._pre_edit = ""
         self._editing = False
         self._entry: ttk.Entry | None = None
@@ -114,7 +118,10 @@ class PathField(ttk.Frame):
         self._placeholder_simple = placeholder
         self._placeholder_shift = placeholder_shift or placeholder
         self._ph = CellPlaceholder()
-        self._dim_fg = tcm_gui.theme.DEFAULT_FG
+        # Ghost fg comes from the ``_dim_fg`` property — never snapshotted:
+        # apply_theme_defaults() swaps the theme globals AFTER widgets exist
+        # (dark mode); a captured value would go stale and the ghost would
+        # vanish against the entry background.
 
         bg = tcm_gui.theme.ENTRY_BG_FALLBACK
         fg = tcm_gui.theme.FG_DEFAULT
@@ -213,8 +220,24 @@ class PathField(ttk.Frame):
         """Constrained tksheet width: frame minus button."""
         return max(self.winfo_width() - self._get_btn_w(), self._MIN_W)
 
+    def _hover_align(self) -> str:
+        """Hover-mode align: ghosts stay LEFT; real paths right-align so the
+        filename end sits next to the browse button."""
+        return "w" if self._ph.has(0, 0) else "e"
+
+    def _apply_hover_layout(self) -> None:
+        """Align + scroll for the current hover content (ghost ↔ path)."""
+        align = self._hover_align()
+        self.sh.table_align(align, redraw=False)
+        self.update_idletasks()  # force geometry so scroll targets the viewport
+        self.sh.redraw()
+        if align == "e":
+            self._scroll_to_right()
+        else:
+            self._scroll_to_left()
+
     def _switch_to_hover_shrink(self) -> None:
-        """Shrink tksheet widget + right-align + scroll-to-filename.
+        """Shrink tksheet widget + content-aware align + scroll.
 
         Mirrors ``ConfigSheet._field_place_kw``: the field width ends
         where the browse button starts.
@@ -222,12 +245,9 @@ class PathField(ttk.Frame):
         if self._hovering:
             return
         self._hovering = True
-        self.sh.table_align("e", redraw=False)
         self.sh.pack_forget()
         self.sh.place(relx=0, rely=0, relheight=1, width=self._hover_shrink_width())
-        self.update_idletasks()  # force geometry so scroll targets the new viewport
-        self.sh.redraw()  # explicit render with right-align at new width
-        self._scroll_to_right()
+        self._apply_hover_layout()
 
     def _restore_default_layout(self) -> None:
         """Restore left-align + full-width tksheet (pack)."""
@@ -253,10 +273,9 @@ class PathField(ttk.Frame):
         if self._editing:
             return
         if self._hovering:
-            # viewport resized — re-constrain tksheet width
+            # viewport resized — re-constrain tksheet width + re-align/scroll
             self.sh.place(width=self._hover_shrink_width())
-            self.update_idletasks()  # force geometry before scroll
-            self._scroll_to_right()
+            self._apply_hover_layout()
         elif self.sh.MT.align == "ne":
             # right-aligned non-hover (floated field) — keep scrolled
             self._scroll_to_right()
@@ -273,13 +292,27 @@ class PathField(ttk.Frame):
             self.sh.MT.xview_moveto(0.0)
 
     # ── placeholder ───────────────────────────────────────────────
+    @property
+    def _dim_fg(self) -> str:
+        """Ghost fg resolved live — theme globals may be swapped for dark mode."""
+        return tcm_gui.theme.ghost_fg(tcm_gui.theme.ENTRY_BG_FALLBACK)
+
+    def _set_font_weight(self, bold: bool) -> None:
+        """tksheet has one table font — ghosts render regular, data bold."""
+        cur = self.sh.font()
+        want = "bold" if bold else "normal"
+        if len(cur) < 3 or cur[2] != want:
+            self.sh.font((cur[0], cur[1], want))
+
     def _show_placeholder(self) -> None:
         """Render the placeholder text dimmed in the empty cell."""
+        self._set_font_weight(False)
         self._ph.show(self.sh, 0, 0, self._placeholder_simple, self._dim_fg)
 
     def _clear_placeholder(self) -> None:
         """Remove placeholder text and restore default foreground."""
         self._ph.clear(self.sh, 0, 0)
+        self._set_font_weight(True)
 
     def _swap_placeholder(self, text: str) -> None:
         """Swap displayed placeholder text (simple ↔ Shift variant) without changing tracking.
@@ -288,6 +321,7 @@ class PathField(ttk.Frame):
         (callers guard on ``self._ph.active``), so the re-add to ``_cells`` is
         an idempotent no-op.
         """
+        self._set_font_weight(False)
         self._ph.show(self.sh, 0, 0, text, self._dim_fg)
         self.sh.redraw()
 
@@ -340,17 +374,44 @@ class PathField(ttk.Frame):
             self._clear_placeholder()
             self.sh.set_cell_data(0, 0, value)
         self.sh.redraw()
-        if self.sh.MT.align == "ne":
+        if self._hovering:
+            self._apply_hover_layout()
+        elif self.sh.MT.align == "ne":
             self._scroll_to_right()
         else:
             self._scroll_to_left()
 
+    def set_placeholder(self, text: str) -> None:
+        """Replace the displayed placeholder hint (no-op while data is present).
+
+        Lets the host surface the SAME ghost text as the cell underneath
+        (ConfigSheet ``_placeholder_for``) instead of the generic one
+        this field was constructed with.
+        """
+        if text and text != self._placeholder_simple:
+            self._placeholder_simple = text
+            self._placeholder_shift = text
+            if self._ph.has(0, 0):
+                self._show_placeholder()
+                self.sh.redraw()
+
     def set_error(self, flag: bool) -> None:
-        """Red fg on the single cell when *flag* (scan failed), else restore normal fg."""
+        """Red fg on the single cell when *flag* (scan failed), else restore normal fg.
+
+        Clearing the mark on a placeholder cell restores the dim ghost fg —
+        ``FG_DEFAULT`` would render the hint full-strength (empty commit →
+        ``set_error(False)`` lands AFTER the ghost is re-shown).
+        """
+        if flag:
+            fg = tcm_gui.theme.INVALID_FG
+        elif self._ph.has(0, 0):
+            fg = self._dim_fg
+        else:
+            fg = tcm_gui.theme.FG_DEFAULT
         self.sh.highlight_cells(
             row=0,
             column=0,
-            fg=tcm_gui.theme.INVALID_FG if flag else tcm_gui.theme.FG_DEFAULT,
+            fg=fg,
             redraw=False,
         )
         self.sh.redraw()
@@ -378,16 +439,27 @@ class PathField(ttk.Frame):
         self._ov.hide()
         if self._on_begin_edit_cb is not None:
             self._on_begin_edit_cb()
-        self._open_entry()
+        try:
+            self._open_entry()
+        except TclError:
+            # Editor failed to open — release the edit lock, otherwise
+            # every ``_editing``-guarded path stays wedged until the
+            # sheet is rebuilt (regression: justify="w" wedged the field).
+            self._editing = False
+            if self._on_end_edit_cb is not None:
+                self._on_end_edit_cb()
         return None  # veto tksheet's tk.Text editor
 
     def _open_entry(self) -> None:
         """Create and place a ``ttk.Entry`` filling the PathField frame."""
         bold = self.sh.font()
-        ent = ttk.Entry(self, font=bold, justify="right")
+        # ttk.Entry justify is left/center/right — NOT tksheet's "w"/"e"
+        # (regression: justify="w" raised TclError, wedging ``_editing``).
+        ent = ttk.Entry(self, font=bold, justify="right" if self._align == "e" else "left")
         ent.insert(0, self._pre_edit)
         ent.icursor("end")
-        ent.xview_moveto(1.0)
+        if self._align == "e":
+            ent.xview_moveto(1.0)
         ent.place(relx=0, rely=0, relwidth=1, relheight=1)
         ent.bind("<Return>", lambda _e: self._commit_entry())
         ent.bind("<Escape>", lambda _e: self._commit_entry(cancel=True))
@@ -413,11 +485,17 @@ class PathField(ttk.Frame):
         # On cancel restore pre-edit value; on commit use the Entry value.
         new_val = self._pre_edit if cancel else val
         if new_val:
+            self._clear_placeholder()
             self.sh.set_cell_data(0, 0, new_val)
         elif self._placeholder_simple:
             self._show_placeholder()
+        else:
+            self._clear_placeholder()
+            self.sh.set_cell_data(0, 0, "")
         self.sh.redraw()
-        if self.sh.MT.align == "ne":
+        if self._hovering:
+            self._apply_hover_layout()
+        elif self.sh.MT.align == "ne":
             self._scroll_to_right()
         else:
             self._scroll_to_left()
@@ -431,8 +509,8 @@ class PathField(ttk.Frame):
         self._editing = False
 
     def _notify(self, value: str) -> None:
-        if self._on_commit is not None and value.strip():
-            self.after_idle(lambda: self._on_commit(value))
+        if self._on_commit is not None:
+            self.after_idle(lambda v=value: self._on_commit(v))
 
     # ── hover policy ──────────────────────────────────────────────
     def _place_kw(self) -> dict[str, Any]:

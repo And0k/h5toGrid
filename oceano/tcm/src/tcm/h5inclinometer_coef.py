@@ -9,17 +9,19 @@ Save/modify coef in hdf5 data in "/coef" table of PyTables (pandas hdf5) store
 """
 
 import re
+from collections.abc import Iterable, Mapping
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path, PurePath
-from typing import Iterable, Mapping, Optional, Tuple, Union
 
 import h5py
 import numpy as np
+from utils import init
 
-from tcm import h5inclinometer_coef, utils2init
+from tcm import h5inclinometer_coef
+import utils.log_init
 
-lf = utils2init.my_logging(__name__)
+lf = utils.log_init.my_logging(__name__)
 
 def h5savecoef(h5file_dest, path, coef):
     """
@@ -39,13 +41,13 @@ def h5savecoef(h5file_dest, path, coef):
             try:
                 h5dest.create_dataset(path, data=coef, dtype=np.float64)
                 return
-            except (OSError, RuntimeError) as e:
+            except (OSError, RuntimeError):
                 try:
                     print(f"updating {h5file_dest}/{path}")  # .keys()
                     h5dest[path][...] = coef
                     h5dest.flush()
                     return
-                except Exception as e:
+                except Exception:
                     pass  # prints error message?
                 lf.exception("Can not save/update coef to hdf5 {}. There are error ", h5file_dest)
 
@@ -54,10 +56,10 @@ def h5savecoef(h5file_dest, path, coef):
 def h5copy_coef(
     h5file_source=None,
     h5file_dest=None,
-    tbl: Optional[str] = None,
-    tbl_source: Optional[str] = None,
-    tbl_dest: Optional[str] = None,
-    dict_matrices: Union[Mapping[str, np.ndarray], Iterable[str], None] = None,
+    tbl: str | None = None,
+    tbl_source: str | None = None,
+    tbl_dest: str | None = None,
+    dict_matrices: Mapping[str, np.ndarray] | Iterable[str] | None = None,
     dates: bool | Mapping[str, str] = None,
     ok_to_replace_group=False,
 ):
@@ -229,7 +231,7 @@ def h5copy_coef(
                             except KeyError as e:
                                 pass
                             dset = h5dest.create_dataset(path, data=data, dtype=dtype)
-                        except KeyError as e:  # Unable to open object (component not found)
+                        except KeyError:  # Unable to open object (component not found)
                             lf.debug('Creating "{}"', path)
                             dset = h5dest.create_dataset(path, data=data, dtype=dtype)
                         if dates:
@@ -245,7 +247,7 @@ def h5copy_coef(
                                     dset.attrs.modify(
                                         "timestamp", date if isinstance(date, str) else date_now_str
                                     )
-                                except Exception as e:
+                                except Exception:
                                     dset.attrs["timestamp"] = date if isinstance(date, str) else date_now_str
                 else:
                     paths = list(dict_matrices)
@@ -279,7 +281,7 @@ def h5copy_coef(
             del h5dest[path]
             h5source.copy(path, h5dest[tbl_dest])
         else:
-            lf.error("Skip copy coef{}!", f": {utils2init.standard_error_info(e)}" if e else "")
+            lf.error("Skip copy coef{}!", f": {init.standard_error_info(e)}" if e else "")
 
     # try:
     with (
@@ -324,7 +326,7 @@ def h5copy_coef(
     return tables_written
 
 
-def channel_cols(channel: str) -> Tuple[str, str]:
+def channel_cols(channel: str) -> tuple[str, str]:
     """
     Data columns names (col_str M/A) and coef letters (coef_str H/G) from parameter name (or its abbreviation)
     :param channel: magnetometer (M) or accelerometer (A)
@@ -401,7 +403,7 @@ def dict_matrices_for_h5(coefs=None, tbl=None, channels=None, msg="Saving coeffi
         if (i_search := re.search(r"\d*$", tbl)):
             try:
                 dict_matrices["//coef//i"] = int(i_search.group(0))
-            except Exception as e:
+            except Exception:
                 pass
         dict_matrices["//coef//Vabs0"] = coefs["Vabs0"]
 

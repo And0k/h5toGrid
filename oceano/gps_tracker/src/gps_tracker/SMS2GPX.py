@@ -14,7 +14,8 @@ import xml.etree.ElementTree as ET
 import gpxpy.gpx as GPX
 # from codecs import
 
-from utils.init import Ex_nothing_done, cfg_from_args, my_argparser_common_part, this_prog_basename, init_logging, standard_error_info
+from utils.init import Ex_nothing_done, cfg_from_args, my_argparser_common_part, this_prog_basename, standard_error_info
+from utils.log_init import init_logging
 
 if __name__ == '__main__':
     l = None  # see main(): l = init_logging('', cfg['program']['log'], cfg['program']['verbose'])

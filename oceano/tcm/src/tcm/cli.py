@@ -23,6 +23,7 @@ from typing import Any, NamedTuple
 from omegaconf import DictConfig, MissingMandatoryValue, OmegaConf
 
 from tcm import format, policy, schema
+from utils.log_init import LoggingStyleAdapter
 
 # Optional GUI bridge for scan progress — no-op when GUI is not installed.
 try:
@@ -53,9 +54,8 @@ argparse.HelpFormatter._get_help_string = _patched_get_help_string
 import hydra  # noqa: E402
 
 from tcm import _constants, config_yaml, paths, stage_ctx, to_omegaconf  # noqa: E402
-from tcm.utils2init import (  # noqa: E402
+from utils.init import (  # noqa: E402
     Ex_nothing_done,
-    LoggingStyleAdapter,
     ini2dict,
     standard_error_info,
     this_prog_basename,
@@ -155,7 +155,7 @@ def _setup_file_handler(cfg: Mapping[str, Any]) -> None:
     fh.setLevel(logging.DEBUG)
     fh.addFilter(stage_ctx.StageContextFilter())
     root.addHandler(fh)
-    lf.debug("Log file: {}", run_dir / filename)
+    # lf.debug("Log file: {}", run_dir / filename)
 
 
 def parse_data_path(argv: list[str]) -> tuple[Path | None, list[str]]:

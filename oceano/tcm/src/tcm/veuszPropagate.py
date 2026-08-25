@@ -31,18 +31,17 @@ import pandas as pd
 from dateutil.tz import tzlocal, tzoffset
 
 # my
-from .utils2init import (
+from utils.init import (
     Ex_nothing_done,
-    LoggingStyleAdapter,
     cfg_from_args,
     dir_from_cfg,
     import_file,
     init_file_names,
-    init_logging,
     my_argparser_common_part,
     standard_error_info,
     this_prog_basename,
 )
+from utils.log_init import LoggingStyleAdapter, init_logging
 
 # Globals
 to_mytz_offset = tzoffset(None, -tzlocal()._dst_offset.total_seconds())
@@ -252,7 +251,7 @@ def load_vsz_closure(
     load_timeout_s: int | None = 120,
     b_execute_vsz: bool = False,
     hidden=False,
-    vsz_path_env=r"C:/Work/Python/AB_SIO_RAS/h5toGrid/shared/veusz_helpers/func_vsz.py",
+    vsz_path_env=r"C:/Work/Python/AB_SIO_RAS/h5toGrid/shared/veusz_helpers/vsz_func.py",
 ) -> Callable[
     [str | PurePath, str | None, str | None, str | None], tuple[Any, dict[str, Any] | None]
 ]:

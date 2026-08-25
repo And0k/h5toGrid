@@ -19,10 +19,11 @@ import pandas as pd
 from gpxpy.gpx import GPX
 # my
 from utils.init import (
-    cfg_from_args, my_argparser_common_part, init_file_names, Ex_nothing_done, set_field_if_no, this_prog_basename, init_logging, standard_error_info, call_with_valid_kwargs
+    cfg_from_args, my_argparser_common_part, init_file_names, Ex_nothing_done, set_field_if_no, this_prog_basename, standard_error_info, call_with_valid_kwargs
     )
 from hdf5_pandas.h5_dask_pandas import filterGlobal_minmax  # filter_global_minmax
 from hdf5_pandas import h5
+from utils.log_init import init_logging
 from utils.time import multiindex_timeindex, multiindex_replace
 from utils.time_corr import time_corr
 

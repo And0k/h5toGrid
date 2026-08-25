@@ -12,7 +12,7 @@ from scipy.ndimage.filters import gaussian_filter1d
 # import gsw
 from pathlib import Path
 from collections import namedtuple
-from utils.init import LoggingStyleAdapter
+from utils.log_init import LoggingStyleAdapter
 from hdf5_pandas import h5
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))

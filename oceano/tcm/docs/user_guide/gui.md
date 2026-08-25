@@ -43,6 +43,7 @@ If the search fails (the path cannot be resolved), the top search field turns
 ### 2. Edit coefficients
 
 Each tab shows a treeview with the config's parameters:
+- **`metadata`** — device deployment file path (`info_devices.yaml` parent of `_raw`) — always editable with browse; children are `point, symbol | sea depth, h_above | lat, lon | time_range | burst_dt/t | comment` per probe deployment, with gray example hints (`P3`, `7.5`, `↟`, `60`, `600`, `2026-07-11T12:20:12`, `deployment note`) that vanish on edit; `metadata*` (asterisk) marks unsaved edits to the device file — see [Config Reference](../reference/config_reference.md#metadata--device-deployment-metadata-per-probe-infodevicesyaml)
 - **`input.path`** — data file path
 - **`input.coefs_path`** — calibration coefficients source file (HDF5 or YAML)
 - **`input.time_ranges`** — time window for this deployment
@@ -55,7 +56,17 @@ Numeric fields reject non-numeric input.
 not exist on disk (and the Run button is disabled).  `input.coefs_path` is
 **optional** — coefficients may be entered manually — but a missing file is
 still flagged with red text so you can see it at a glance; it does not block
-Run.
+Run.  The **`metadata`** row's path cell behaves identically (red when the
+device file is missing, browse works even when the file does not yet exist —
+a new `info_devices.yaml` is created on Run).
+
+**Default tint**: cells at their dataclass defaults appear dim gray (`#999`),
+edited cells are black — same rule for `metadata` (`time_range` defaults to the
+current `input.time_ranges[[0, -1]]` — copy-paste there grays instantly, live) and for `input.calib` date lists (`time_ranges_zeroing`/`time_ranges_azimuth`: empty means at-default).  The leaf node label is blue when its entire subtree is at defaults, black otherwise; an empty metadata child (all ghosts) is therefore blue.
+
+**Deleting a path**: clear the floated `input.path` / `metadata` field and the cell empties, the dim placeholder returns and the path reads as `""` — a deleted path never resurrects on the next hover.
+
+**Time window hover**: hovering `input.time_ranges` shows the live relation to `info_devices` — _matches_ (equal), _broader than_ (warning tint), _differs_ (narrowed/shifted) — recomputed on every hover/edit, not a stale scan-time message.
 
 **Shift-click** at startup (or hold Shift while clicking Browse) to load the
 full config tree (all sections: `out`, `filter`, `program`).

@@ -14,7 +14,7 @@ from typing import Callable, BinaryIO, Mapping, Optional, Sequence, TextIO, Tupl
 from re import subn
 
 # my funcs
-from utils.init import LoggingStyleAdapter
+from utils.log_init import LoggingStyleAdapter
 from hdf5_alt.h5tocsv import ctd2csv
 
 sys.path.append(r'C:\Work\Python\AB_SIO_RAS\tcm')

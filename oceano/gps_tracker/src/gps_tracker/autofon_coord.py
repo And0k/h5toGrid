@@ -52,12 +52,12 @@ from utils.init import (
     ExitStatus,
     FakeContextIfOpen,
     GetMutex,
-    LoggingStyleAdapter,
     call_with_valid_kwargs,
     set_field_if_no,
 )
 
 from gps_tracker.mail_parse import spot_from_gmail, spot_tracker_data_from_mbox
+from utils.log_init import LoggingStyleAdapter
 
 # from inclinometer.incl_h5clc import dekart2polar_df_uv
 

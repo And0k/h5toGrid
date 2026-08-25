@@ -11,11 +11,12 @@ from typing import Any
 
 import pandas as pd
 import xarray as xr
+from utils import log_init
 
-from tcm import _constants, stage_ctx, utils2init
+from tcm import _constants, stage_ctx
 from tcm._xr import dataset, filters, nc_utils
 
-lf = utils2init.LoggingStyleAdapter(__name__)
+lf = log_init.LoggingStyleAdapter(__name__)
 
 
 def load_raw(

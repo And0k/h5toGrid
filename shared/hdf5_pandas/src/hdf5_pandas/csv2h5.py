@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 from dask import delayed, compute, persist
 # my:
-from utils.init import my_logging, init_logging, init_file_names, Ex_nothing_done, set_field_if_no, \
+from utils.init import init_file_names, Ex_nothing_done, set_field_if_no, \
     cfg_from_args, my_argparser_common_part, this_prog_basename, standard_error_info
 from hdf5_pandas import h5
 from hdf5_pandas.h5_dask_pandas import filter_global_minmax, filter_local
@@ -29,6 +29,7 @@ import hdf5_pandas.csv_specific_proc
 from utils import time_corr as utils_time_corr
 
 import dask
+from utils.log_init import init_logging, my_logging
 dask.config.set(scheduler='synchronous')  # !!! for debug
 
 if __name__ == '__main__':

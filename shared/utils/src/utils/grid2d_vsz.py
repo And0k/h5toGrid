@@ -41,10 +41,11 @@ from hdf5_pandas.ctd_calc import add_ctd_params
 from hdf5_pandas import h5
 # my
 from utils.init import (
-    init_logging, Ex_nothing_done, standard_error_info, my_argparser_common_part,
+    Ex_nothing_done, standard_error_info, my_argparser_common_part,
     init_file_names, cfg_from_args,
     dir_create_if_need, this_prog_basename
 )
+from utils.log_init import init_logging
 from utils.time import datetime_fun, timezone_view, multiindex_timeindex, check_time_diff
 from utils.veuszPropagate import load_vsz_closure, export_images  # , veusz_data
 

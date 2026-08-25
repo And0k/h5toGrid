@@ -11,7 +11,7 @@ import pandas as pd
 import gsw
 from itertools import takewhile
 # my funcs
-from utils.init import st, pairwise, LoggingStyleAdapter
+from utils.init import st, pairwise
 from utils import veuszPropagate
 from hdf5_pandas.csv2h5 import main as csv2h5
 from hdf5_pandas.gpx2h5 import main as gpx2h5
@@ -22,6 +22,7 @@ from utils.grid2d_vsz import main as grid2d_vsz
 from hdf5_pandas import h5
 from utils import cfg_dataclasses as cfg_d
 from hdf5_alt.nmea2h5 import main as nmea2h5
+from utils.log_init import LoggingStyleAdapter
 
 st.go = True   # False #
 st.start = 8   # 1 5 30 70 80 115

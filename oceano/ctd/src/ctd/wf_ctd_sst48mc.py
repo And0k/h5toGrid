@@ -6,7 +6,8 @@ import pandas as pd
 import gsw
 from itertools import takewhile
 # my funcs
-from utils.init import st, format_to_glob
+from utils.init import st
+from utils.paths import format_to_glob
 from utils import veuszPropagate
 from hdf5_pandas.csv2h5 import main as csv2h5
 from hdf5_pandas.gpx2h5 import main as gpx2h5

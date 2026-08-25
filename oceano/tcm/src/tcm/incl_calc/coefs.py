@@ -12,11 +12,12 @@ from typing import (
 import numpy as np
 import pandas as pd
 from omegaconf import OmegaConf
+from utils import log_init
 
-from tcm import schema, _constants, format, policy, to_omegaconf, utils2init
+from tcm import _constants, format, policy, schema, to_omegaconf
 from tcm._xr import coefs as _xr_coefs
 
-lf = utils2init.LoggingStyleAdapter(__name__)
+lf = log_init.LoggingStyleAdapter(__name__)
 
 
 def coef_rotate(*A, Z):

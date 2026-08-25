@@ -21,12 +21,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
+from utils import log_init
 
-from tcm import utils2init
 from tcm.calibration import robust  # calibrate,
 from tcm.calibration.calibrate import SensorCalibration, calibrate_channel, coef2str
 
-lf = utils2init.LoggingStyleAdapter(__name__)
+lf = log_init.LoggingStyleAdapter(__name__)
 
 
 # --------------------------------------------------------------------------- #

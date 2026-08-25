@@ -13,6 +13,5 @@ from . import (
     to_omegaconf,
     utils_time,
     utils_time_corr,
-    utils2init,
     veuszPropagate,
 )

@@ -20,10 +20,11 @@ from typing import Any, Callable, Iterator, Mapping, MutableMapping, Optional, S
 
 import numpy as np
 import pandas as pd
+from utils.log_init import init_logging
 import vaex
 
 from utils.init import init_file_names, Ex_nothing_done, set_field_if_no, cfg_from_args, my_argparser_common_part, \
-    this_prog_basename, init_logging, standard_error_info
+    this_prog_basename, standard_error_info
 from utils import time_corr as utils_time_corr
 
 if __name__ == '__main__':

@@ -88,6 +88,7 @@ _FIELD_SECTIONS: frozenset[str] = frozenset(
         for n, t in get_type_hints(schema.ConfigIn_InclProc).items()
         if dataclasses.is_dataclass(_unwrap(t))
     }
+    | {"metadata"}
 )
 
 # ``## ``input.coefs`` — subtitle``.

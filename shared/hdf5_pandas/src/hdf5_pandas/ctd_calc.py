@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Mapping, MutableMapping, Optional, Sequence,
 from pathlib import PurePath, Path
 import numpy as np
 import pandas as pd
+from utils.log_init import init_logging
 
 if __debug__:
     from matplotlib import pyplot as plt
@@ -29,7 +30,6 @@ from utils.init import (
     cfg_from_args,
     this_prog_basename,
     init_file_names,
-    init_logging,
     Ex_nothing_done,
     set_field_if_no,
     dir_create_if_need,

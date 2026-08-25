@@ -14,7 +14,7 @@ from googleapiclient.discovery import build
 # import email
 # from datetime import datetime
 # from bs4 import BeautifulSoup
-from utils.init import LoggingStyleAdapter
+from utils.log_init import LoggingStyleAdapter
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
 

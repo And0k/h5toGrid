@@ -27,6 +27,7 @@ from omegaconf import OmegaConf
 from tcm import cli, config_yaml, processing
 from tcm._constants import RAW_DIR_NAME
 from tcm.schema import Return
+import utils.log_init
 
 
 # --------------------------------------------------------------------------- #
@@ -434,7 +435,7 @@ class TestScanTabs:
 
         added: list[str] = []
 
-        def _fake_add_page(stem, cfg, yaml_path=None):
+        def _fake_add_page(stem, cfg, yaml_path=None, metadata=None, sync_status=None, metadata_path=None):
             added.append(stem)
             app._tab_of[stem] = object()
 
@@ -1116,7 +1117,7 @@ class TestQueueHandlerDedup:
 class TestQueueHandlerFreezeMutableMessage:
     """QueueHandler.emit freezes the rendered text onto the LogRecord.
 
-    :class:`tcm.utils2init.LoggingStyleAdapter` calls ``logger._log(level,
+    :class:`utils.init.LoggingStyleAdapter` calls ``logger._log(level,
     self.message, ())`` — i.e. it passes the same ``Message`` instance to
     every log call and mutates its ``fmt``/``args`` in place.  By the time
     :func:`tcm_gui.log_bridge.drain` runs (later, on the GUI poll thread)
@@ -1133,7 +1134,7 @@ class TestQueueHandlerFreezeMutableMessage:
 
     def test_subsequent_records_render_orig_text_not_mutated(self):
         """Two consecutive log calls on one adapter → drain shows each original text."""
-        from tcm import utils2init
+        from utils import init
         from tcm_gui.log_bridge import QueueHandler
         from tcm_gui.runtime import PauseGate
 
@@ -1145,7 +1146,7 @@ class TestQueueHandlerFreezeMutableMessage:
         root.addHandler(h)
         root.setLevel(logging.DEBUG)
         try:
-            lf = utils2init.LoggingStyleAdapter("test_freeze_message")
+            lf = utils.log_init.LoggingStyleAdapter("test_freeze_message")
 
             def func_alpha():
                 lf.info("alpha message {}", 1)
@@ -1177,7 +1178,7 @@ class TestQueueHandlerFreezeMutableMessage:
 
     def test_consecutive_same_text_still_dedups_after_freeze(self):
         """Freeze preserves the consecutive-dedup invariant from TestQueueHandlerDedup."""
-        from tcm import utils2init
+        from utils import init
         from tcm_gui.log_bridge import QueueHandler
         from tcm_gui.runtime import PauseGate
 
@@ -1189,7 +1190,7 @@ class TestQueueHandlerFreezeMutableMessage:
         root.addHandler(h)
         root.setLevel(logging.DEBUG)
         try:
-            lf = utils2init.LoggingStyleAdapter("test_freeze_dup")
+            lf = utils.log_init.LoggingStyleAdapter("test_freeze_dup")
 
             def func_same():
                 lf.debug("repeated same")
@@ -1294,7 +1295,7 @@ class TestQueueHandlerPersistsAcrossTasks:
     """
 
     def test_main_thread_logs_reach_queue_without_worker(self):
-        from tcm import utils2init
+        from utils import init
         from tcm_gui.log_bridge import install
         from tcm_gui.runtime import PauseGate
 
@@ -1305,7 +1306,7 @@ class TestQueueHandlerPersistsAcrossTasks:
         root = logging.getLogger()
         root.setLevel(logging.DEBUG)
         try:
-            lf = utils2init.LoggingStyleAdapter("test_main_thread_reach")
+            lf = utils.log_init.LoggingStyleAdapter("test_main_thread_reach")
             lf.error("coef table not found for {}", "incl_67")
             lf.warning("user edited coefs path")
         finally:

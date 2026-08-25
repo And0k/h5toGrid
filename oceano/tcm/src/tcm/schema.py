@@ -100,7 +100,7 @@ class ConfigInCalib_InclProc:
     g0xyz: Annotated[list[float], 3] | None = None
     time_ranges_zeroing: list[str] | None = field(default_factory=list)
     time_ranges_azimuth: list[str] | None = field(default_factory=list)
-    coordinates: list[float] | None = None
+    coordinates: Annotated[list[float], 2] | None = None
     azimuth_add: float = 0
 
 
@@ -115,7 +115,7 @@ class ConfigIn_InclProc:
     Sugar fields ``min_date`` / ``max_date`` and ``M`` shorthand in ``min``/``max``
     dicts are **not** in this structured schema — they are merged into source-of-truth
     fields (``time_ranges``, ``Mx``/``My``/``Mz``) at compose time by
-    :func:`tcm._xr.filters.expand_m_shorthand` and :func:`tcm.utils2init.update_cfg_time_ranges`.
+    :func:`tcm._xr.filters.expand_m_shorthand` and :func:`utils.init.update_cfg_time_ranges`.
     Override via ``+`` prefix: ``+input.min_date=2024-01-01``.
 
     ``dt_from_utc``: time shift from UTC in **seconds** (not hours).

@@ -55,11 +55,14 @@ class SafeStringFormatter(logging.Formatter):
         # Sanitize the message to handle problematic characters
         record.msg = self.sanitize_message(record.msg)
 
-        # Also sanitize any arguments
+        # Also sanitize string arguments; keep non-strings (e.g. ints for %d) intact.
         if record.args:
             sanitized_args = []
             for arg in record.args:
-                sanitized_args.append(self.sanitize_message(arg))
+                if isinstance(arg, str):
+                    sanitized_args.append(self.sanitize_message(arg))
+                else:
+                    sanitized_args.append(arg)
             record.args = tuple(sanitized_args)
 
         # Store original name and funcName

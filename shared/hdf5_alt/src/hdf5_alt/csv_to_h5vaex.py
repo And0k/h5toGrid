@@ -16,6 +16,7 @@ import glob
 import h5py
 import numpy as np
 import pandas as pd
+from utils.log_init import LoggingStyleAdapter, init_logging
 import vaex, vaex.ml as vml
 # import pyarrow as pa
 import re
@@ -26,7 +27,7 @@ from collections import defaultdict
 
 # my:
 from utils.init import init_file_names, Ex_nothing_done, set_field_if_no, cfg_from_args, my_argparser_common_part, \
-    this_prog_basename, init_logging, open_csv_or_archive_of_them, LoggingStyleAdapter, FakeContextIfOpen, standard_error_info
+    this_prog_basename, open_csv_or_archive_of_them, FakeContextIfOpen, standard_error_info
 
 try:
     # this need for determine_messytables_types() - initial step that can done in special python environment

@@ -45,12 +45,12 @@ from omegaconf import (
 
 from utils.init import (
     Ex_nothing_done,
-    LoggingStyleAdapter,
     ini2dict,
     init_file_names,
     standard_error_info,
     this_prog_basename,
 )
+from utils.log_init import LoggingStyleAdapter
 
 lf = LoggingStyleAdapter(__name__)
 

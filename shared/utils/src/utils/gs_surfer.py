@@ -16,6 +16,7 @@ from tempfile import TemporaryDirectory
 import numpy as np
 import pandas as pd
 
+from utils.log_init import LoggingStyleAdapter
 from win32com.client import constants, Dispatch, CastTo, pywintypes, gencache, GetObject, VARIANT
 import pythoncom
 
@@ -24,7 +25,7 @@ import pythoncom
 # Use these commands in Python code to auto generate .py support
 
 
-from utils.init import standard_error_info, LoggingStyleAdapter
+from utils.init import standard_error_info
 
 lf = LoggingStyleAdapter(__name__)
 Surfer = None

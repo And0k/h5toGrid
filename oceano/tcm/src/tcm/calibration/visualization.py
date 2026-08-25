@@ -10,12 +10,13 @@ Ported from ``tcm._dask_legacy.incl_calibr_hy`` (``plotEllipsoid``,
 """
 from __future__ import annotations
 
-from typing import Optional, Sequence, Tuple
+from collections.abc import Sequence
 
 import numpy as np
+from utils import init
 
-from tcm import utils2init
-from tcm.calibration.vis_common import residual_colors, to_lonlat, _attach_external_colorbar
+from tcm.calibration.vis_common import _attach_external_colorbar, residual_colors, to_lonlat
+import utils.log_init
 
 # Lazy matplotlib — never import at module level to keep core math fast
 try:
@@ -23,8 +24,8 @@ try:
     import matplotlib.axes
     import matplotlib.figure
     from matplotlib import pyplot as plt
-    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
     from matplotlib.colors import LogNorm, TwoSlopeNorm
+    from mpl_toolkits.mplot3d import Axes3D
 
     MATPLOTLIB_AVAILABLE = True
 except ImportError:
@@ -40,7 +41,7 @@ else:
     matplotlib.interactive(True)
     plt.style.use('bmh')
 
-lf = utils2init.LoggingStyleAdapter(__name__)
+lf = utils.log_init.LoggingStyleAdapter(__name__)
 
 # --------------------------------------------------------------------------- #
 # 3-D ellipsoid rendering
@@ -50,14 +51,14 @@ def plot_ellipsoid(
     center: np.ndarray,
     radii: np.ndarray,
     rotation: np.ndarray,
-    ax: "Optional[matplotlib.axes.Axes]" = None,
+    ax: matplotlib.axes.Axes | None = None,
     *,
     plot_axes: bool = False,
     cage_color: str = "b",
     cage_alpha: float = 0.2,
     n_u: int = 100,
     n_v: int = 100,
-) -> "matplotlib.axes.Axes":
+) -> matplotlib.axes.Axes:
     """Render an ellipsoid wireframe on a 3-D axes.
 
     Parameters
@@ -116,8 +117,8 @@ def plot_ellipsoid(
 # --------------------------------------------------------------------------- #
 
 def axes_connect_on_move(
-    ax1: "matplotlib.axes.Axes",
-    ax2: "matplotlib.axes.Axes",
+    ax1: matplotlib.axes.Axes,
+    ax2: matplotlib.axes.Axes,
 ) -> int:
     """Link camera rotation of two 3-D axes so rotating one rotates the other.
 
@@ -159,16 +160,16 @@ def calibrate_plot(
     raw3d: np.ndarray,
     gain: np.ndarray,
     bias: np.ndarray,
-    fig: "Optional[matplotlib.figure.Figure]" = None,
+    fig: matplotlib.figure.Figure | None = None,
     *,
-    window_title: Optional[str] = None,
+    window_title: str | None = None,
     clear: bool = True,
-    raw3d_other: Optional[np.ndarray] = None,
+    raw3d_other: np.ndarray | None = None,
     raw3d_other_color: str = "r",
     marker_size: float = 5.0,
     projection: str = "sphere",
     field_magnitude: float = 1.0,
-) -> "matplotlib.figure.Figure":
+) -> matplotlib.figure.Figure:
     """Two-panel plot: source data with fitted ellipsoid + calibrated on unit sphere.
 
     Convention: ``gain @ (raw3d - bias)`` maps samples onto the sphere
@@ -303,13 +304,13 @@ def calibrate_plot(
 def coverage_heatmap(
     directions: np.ndarray,
     density: np.ndarray,
-    fig: "Optional[matplotlib.figure.Figure]" = None,
+    fig: matplotlib.figure.Figure | None = None,
     *,
     projection: str = "mollweide",
-    window_title: Optional[str] = None,
-    sample_directions: "np.ndarray | None" = None,
-    uncertainty: "dict | None" = None,
-) -> "Optional[matplotlib.figure.Figure]":
+    window_title: str | None = None,
+    sample_directions: np.ndarray | None = None,
+    uncertainty: dict | None = None,
+) -> matplotlib.figure.Figure | None:
     """Two-subplot figure: coverage density (left) + calibration uncertainty (right).
 
     Left panel shows Voronoi-patch density from :func:`robust.coverage_at`;
@@ -406,11 +407,11 @@ def plot_despiked_channels(
     data_3d: np.ndarray,
     *,
     mask_good: np.ndarray,
-    fig: "Optional[matplotlib.figure.Figure]" = None,
-    fig_save_prefix: Optional[str] = None,
-    window_title: Optional[str] = None,
+    fig: matplotlib.figure.Figure | None = None,
+    fig_save_prefix: str | None = None,
+    window_title: str | None = None,
     labels: Sequence[str] = ("x", "y", "z"),
-) -> Tuple["matplotlib.figure.Figure", np.ndarray]:
+) -> tuple[matplotlib.figure.Figure, np.ndarray]:
     """Plot each channel with despiked points overlaid.
 
     Parameters
@@ -461,6 +462,6 @@ def plot_despiked_channels(
             try:
                 fig.savefig(f'{fig_save_prefix}despike({label}).png', dpi=300, bbox_inches="tight")
             except Exception as e:
-                lf.warning("Cannot save fig: {}", utils2init.standard_error_info(e))
+                lf.warning("Cannot save fig: {}", init.standard_error_info(e))
 
     return fig, np.array(axes)

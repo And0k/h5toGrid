@@ -17,7 +17,8 @@ import re
 from hdf5_pandas.h5_dask_pandas import filterGlobal_minmax
 from hdf5_pandas import h5
 # my
-from utils.init import cfg_from_args, my_argparser_common_part, this_prog_basename, init_logging, Ex_nothing_done
+from utils.init import cfg_from_args, my_argparser_common_part, this_prog_basename, Ex_nothing_done
+from utils.log_init import init_logging
 from utils.time import timezone_view, pd_period_to_timedelta
 
 if __name__ != '__main__':

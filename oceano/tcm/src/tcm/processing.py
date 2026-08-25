@@ -18,9 +18,10 @@ import numpy as np
 import xarray as xr
 from omegaconf import DictConfig, OmegaConf
 from tqdm.dask import TqdmCallback
+from utils import log_init
 
 import tcm._xr.nc_utils
-from tcm import _constants, cli, config_yaml, format, paths, policy, schema, stage_ctx, utils2init
+from tcm import _constants, cli, config_yaml, format, paths, policy, schema, stage_ctx
 from tcm._xr import coefs as xr_coefs
 from tcm._xr import dataset, physical, storage
 from tcm._xr import io as xr_io
@@ -45,7 +46,7 @@ except ImportError:
 
     progress_bridge = DumbChain()  # fallback (GUI not installed)
 
-lf = utils2init.LoggingStyleAdapter(__name__)
+lf = log_init.LoggingStyleAdapter(__name__)
 
 # Extensions that carry their own coefs (no text-file config discovery).
 _EXT_BINARY = _constants.EXT_NC | _constants.EXT_HDF5
@@ -459,7 +460,10 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
             config_yaml.save_config_to_yaml(cfg, [path_in])
             cfgs_existed = config_yaml.get_existed_cfgs(dir_cfgs)
         # Sync time_ranges (idempotent: configs with existing ranges are skipped).
-        config_yaml.sync_yamls_devmeta_and_hydra(dir_raw.parent, dir_cfgs, cfgs_existed)
+        sync_result = config_yaml.sync_yamls_devmeta_and_hydra(dir_raw.parent, dir_cfgs, cfgs_existed)
+        # Stash for GUI scan path (CFG_FROM_ARGS) — picked up after process_loading_yaml.
+        # _sync_result is read after process_loading_yaml for the scan return path
+        _sync_result = sync_result
         # Warn about orphan configs pointing to non-existing files.
         still_stale = config_yaml.find_stale_cfgs(cfgs_existed, dir_cfgs) if stale else {}
         if still_stale:
@@ -558,7 +562,13 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
     if _rt:
         _rt.progress_overall.set(1, 1, ScanStage.DONE)
     if cfg["program"]["return_"] == schema.Return.CFG_FROM_ARGS:
-        return processed_pcids, failed_pcids, last_cfg, collected
+        # Attach sync_result as 5th element for GUI scan (None when no metadata)
+        sr = locals().get("_sync_result")
+        return (
+            (processed_pcids, failed_pcids, last_cfg, collected, sr)
+            if sr is not None
+            else (processed_pcids, failed_pcids, last_cfg, collected)
+        )
 
     # Combine distinct probes. Requires HDF5/netCDF4 backend.
     distinct_pcids = list(dict.fromkeys(processed_pcids))

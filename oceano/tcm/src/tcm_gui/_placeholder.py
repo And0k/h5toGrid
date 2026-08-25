@@ -101,6 +101,19 @@ class CellPlaceholder:
             sheet.dehighlight_cells(row=row, column=col, canvas="table", redraw=redraw)
             sheet.set_cell_data(row, col, "", redraw=redraw)
 
+    def untrack(self, sheet: Sheet, row: int, col: int) -> None:
+        """Drop placeholder tracking for ``(row, col)`` WITHOUT blanking the cell.
+
+        Use when real data has been written into a previously-placeholdered
+        cell (e.g. a hovered-field commit): :meth:`clear` would wipe the
+        fresh value, here only the dim highlight is removed.
+        """
+        if (row, col) not in self._cells:
+            return
+        self._cells.discard((row, col))
+        with suppress(TclError):
+            sheet.dehighlight_cells(row=row, column=col, canvas="table", redraw=False)
+
     def restore(
         self, sheet: Sheet, row: int, col: int, text: str, dim_fg: str
     ) -> None:

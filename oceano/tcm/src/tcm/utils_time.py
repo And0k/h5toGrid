@@ -1,28 +1,28 @@
 #!/usr/bin/env python
-# coding:utf-8
 """
   Author:  Andrey Korzh <ao.korzh@gmail.com>
   Purpose: pandas time convert utils
   Created: 26.02.2016
 """
-import logging
 import re
-from typing import Optional, Union, Tuple, Sequence
+from collections.abc import Sequence
 from datetime import datetime, timedelta
+
 import numpy as np
 import pandas as pd
-from pandas.tseries.frequencies import to_offset
+
 # from  pandas.tseries.offsets import DateOffset
 from dateutil.tz import tzoffset
+from pandas.tseries.frequencies import to_offset
 
 # from future.moves.itertools import zip_longest
 # from builtins import input
 # from debug import __debug___print
-
 # my:
-from .utils2init import LoggingStyleAdapter, standard_error_info
+from utils import init
+import utils.log_init
 
-lf = LoggingStyleAdapter(__name__)
+lf = utils.log_init.LoggingStyleAdapter(__name__)
 
 dt64_1s = np.int64(1e9)
 
@@ -141,17 +141,17 @@ def pd_period_to_timedelta(period: str) -> pd.Timedelta:
         number_and_units = (int(number_and_units[0]), number_and_units[1])
     try:
         return pd.Timedelta(*number_and_units)
-    except Exception as e:  # pandas._libs.tslibs.np_datetime.OutOfBoundsTimedelta: Cannot cast 365100 from D to 'ns' without overflow.
+    except Exception:  # pandas._libs.tslibs.np_datetime.OutOfBoundsTimedelta: Cannot cast 365100 from D to 'ns' without overflow.
         out_frac = pd.Timedelta(number_and_units[0]/1000, number_and_units[1], resolution='ms')
         return out_frac * 1000
 
 def intervals_from_period(
-    datetime_range: Optional[np.ndarray] = None,
-    min_date: Optional[pd.Timestamp] = None,
-    max_date: Optional[pd.Timestamp] = None,
-    period: Optional[str] = '999D',
+    datetime_range: np.ndarray | None = None,
+    min_date: pd.Timestamp | None = None,
+    max_date: pd.Timestamp | None = None,
+    period: str | None = '999D',
     **kwargs
-) -> Tuple[pd.Timestamp, pd.DatetimeIndex]:
+) -> tuple[pd.Timestamp, pd.DatetimeIndex]:
     """
     Divide datetime_range on intervals of period, normalizes starts[1:] if period>1D and returns them in tuple's 2nd element
     :param period: pandas offset string 'D' (D, 5D, h, ...) if None such field must be in cfg_in
@@ -228,12 +228,12 @@ def minInterval(range1: Sequence, range2: Sequence, length: int):
 
 
 def check_time_diff(
-        t_queried: Union[pd.Series, np.ndarray], t_found: Union[pd.Series, np.ndarray],
-        dt_warn: Union[pd.Timedelta, np.timedelta64, timedelta],
+        t_queried: pd.Series | np.ndarray, t_found: pd.Series | np.ndarray,
+        dt_warn: pd.Timedelta | np.timedelta64 | timedelta,
         msg: str = ('Bad nav. data time coverage at {} points where time difference [{units}] to nearest data exceeds '
                     '{dt_warn}:'),
         return_diffs: bool = False, max_msg_rows=1000
-) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
     """
     Check time difference between found and requested time points and prints info if big difference is found
 
@@ -268,7 +268,7 @@ def check_time_diff(
                 units = 's'
                 dt_div = 1
             msg = '\n'.join([msg.format(n=n, dt_warn=dt_warn, units=units)] + [
-                '{}. {}:\t{}{:.1f}'.format(i, tdat, m, dt / dt_div) for i, tdat, m, dt in zip(
+                f'{i}. {tdat}:\t{m}{dt / dt_div:.1f}' for i, tdat, m, dt in zip(
                     np.flatnonzero(bbad)[:max_msg_rows], t_queried[bbad], np.where(dt_arr[bbad].astype(np.int64) < 0, '-', '+'),
                     np.abs(dt_arr[bbad]) / np.timedelta64(1, 's')
                 )] + ['...' if n > max_msg_rows else ''])
@@ -311,7 +311,7 @@ def date_from_filename(file_stem: str, century: str = '20'):
 # ---------------------------------------------------------------------------
 
 def chars_array_to_datetimeindex(
-    date: Union[np.ndarray, pd.Series], dtype: np.dtype, format: str = "%Y-%m-%dT%H:%M:%S"
+    date: np.ndarray | pd.Series, dtype: np.dtype, format: str = "%Y-%m-%dT%H:%M:%S"
 ) -> pd.DatetimeIndex:
     """
     Error-corrected date-string → DatetimeIndex conversion.
@@ -343,9 +343,9 @@ def chars_array_to_datetimeindex(
     try:
         date = date.astype(dtype)
     except TypeError as e:
-        print(f"Date strings converting to {dtype} error: ", standard_error_info(e))
+        print(f"Date strings converting to {dtype} error: ", init.standard_error_info(e))
     except ValueError as e:
-        print("Bad date: ", standard_error_info(e))
+        print("Bad date: ", init.standard_error_info(e))
 
     try:
         date = pd.to_datetime(date, format=format, errors="coerce")
@@ -357,7 +357,7 @@ def chars_array_to_datetimeindex(
         if date.dtype != dtype:
             date = date.astype(dtype)
     except Exception as e:
-        print("to_datetime not works", standard_error_info(e))
+        print("to_datetime not works", init.standard_error_info(e))
         raise
     return pd.DatetimeIndex(date)
 

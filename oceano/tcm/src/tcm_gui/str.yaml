@@ -15,10 +15,10 @@ default_page.stem: "default values"
 
 # ── Chrome widget tooltips / hover status ─────────────────────────────────
 path_lbl.tooltip: "Search path"
-path_field.tooltip: "Raw data/processing configurations search path"
+path_field.tooltip: "Raw data/their processing configurations search path"
 path_field.status: "Changing data path rescans and **resets all config tabs below**"
 path_field.status_shift: "Browse **files**; **YAML configs** load into tabs"
-path_field.placeholder: "D:/data"
+path_field.placeholder: "D:/data/_raw"
 path_field.placeholder_shift: "D:/data/_raw/(i*raw_file1[.]txt|i*raw_file2[.]txt)"
 path_field.placeholder_probe: "i_01_measurement.txt"
 overall_lbl.status: "Overall and current configuration processing state"
@@ -119,7 +119,7 @@ stage.loading: "Loading"
 scan_stage.default: "Processing configuration: generate/find by entering above directory\\file/glob/regex for data/configuration"
 scan_stage.default_full: "Processing configuration: update by entering the path above or edit manually (full editing mode enabled)"
 scan_stage.scan: "Search/generation of configurations…"
-scan_stage.done: "Generated configurations for processing found data"
+scan_stage.done: "Configurations for processing found data"
 
 # ── Stage tree ────────────────────────────────────────────────────────────
 stage_tree.heading.stage: "Stage"
@@ -129,6 +129,13 @@ stage_tree.pending: "\u2014"
 stage_tree.done: "\u2714"
 stage_tree.running: "\u2026"
 stage_tree.interrupted: "interrupted"
+
+# ── Device metadata sync ───────────────────────────────────────────────────
+time_ranges.hover.broader: "broader than info_devices [{s}, {e}] — review"
+time_ranges.hover.differs: "differs from info_devices [{s}, {e}] — narrowed or shifted"
+time_ranges.hover.written: "filled from info_devices [{s}, {e}]"
+time_ranges.hover.kept: "matches info_devices [{s}, {e}]"
+metadata.status: "Device deployment metadata (info_devices.yaml) — edit before Run"
 
 # ── Tooltip ───────────────────────────────────────────────────────────────
 prog_status.tooltip: "Current processing stage"

@@ -22,14 +22,14 @@ import pynmea2
 
 from utils import cfg_dataclasses
 
-from utils.init import standard_error_info, LoggingStyleAdapter, \
-    call_with_valid_kwargs
+from utils.init import standard_error_info, call_with_valid_kwargs
 
 # from csv2h5_vaex import argparser_files, with_prog_config
 from hdf5_pandas import h5
 from hdf5_pandas.gpx2h5 import df_rename_cols, h5_sort_filt_append
 from utils.filters import b1spike
 from hdf5_pandas.h5_dask_pandas import filter_local
+from utils.log_init import LoggingStyleAdapter
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
 enc = 'cp1251'  # conversion that will be used for not unicode friendly console logging

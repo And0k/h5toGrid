@@ -96,6 +96,8 @@ Multiple pairs are accepted (`[s1, e1, s2, e2, ...]`) for disjoint intervals.
 with a unified diff. Pass `out.overwrite_db=splice` to force reprocessing.
 When `time_ranges` extends beyond existing data, only the new tail is appended.
 
+**GUI hover** (compared live to `info_devices`): _matches_ (`kept`) when equal, _broader than_ when extending beyond either end (warning tint), _differs_ when narrowed or shifted — the status bar text is recomputed on every hover/edit, never cached from the scan.  See [GUI internals](../project_developer_guide/GUI.md#coef_sheetpy--composition-root--treeeditrow-space-core).
+
 **End-bound semantics**: end values are **inclusive** in the config. Internally
 they are converted to exclusive bounds (whole-second ends get +1 s) to prevent
 boundary data loss from CF float64 precision drift.
@@ -346,6 +348,62 @@ typed despike overrides:
 | `return_` = `'<end>'` | Pipeline exit point. Run partial processing for debugging (e.g. `'<saved_raw>'` to verify data ingestion). See [Phase-stopping](config_tuning.md#phase-stopping). |
 
 Field types: [`ConfigProgram` dataclass](../../src/tcm/schema.py).
+
+## `metadata` — Device deployment metadata (per-probe `info_devices.yaml`)
+
+Paired GUI rows ↔ 11-array indices (see `tcm/_meta_pairs.py:PAIRS`).
+
+| Field = Default | Indices | Purpose |
+|-----------------|---------|---------|
+| `path` = — | — | Device file path (directory of `info_devices.yaml`) — browseable |
+| `point` = `?` | 0 | Station point identifier |
+| `symbol` = `?` | 3 | Modification / instrument symbol (e.g. `↟`) |
+| `sea_depth` = `?` | 1 | Sea depth (m) |
+| `h_above` = `?` | 2 | Height above bottom (m) |
+| `lat` = `?` | 4 | Latitude, decimal degrees |
+| `lon` = `?` | 5 | Longitude, decimal degrees |
+| `time_range` = `?` | 6, 7 | Deployment interval `[time_st, time_en]` ISO |
+| `burst_dt` = `?` | 8 | Burst sampling dt (s) |
+| `bursts_t` = `?` | 9 | Burst interval T (s) |
+| `comment` = `?` | 10 | Free-form comment |
+
+In the GUI the paired rows show `point, symbol | sea depth, h_above | lat, lon | time_range | burst_dt/t | comment` with gray example placeholders (e.g. `P3, 7.5, 54.62`) that vanish on edit — identical to `CellPlaceholder` for dates. `?, -, "", ~ (null)` are placeholders; required `0..time_en(7)` writes `~` when placeholder, optional tail `8..10` is trimmed if empty. `time_range` ↔ `input.time_ranges[[0,-1]]` bidirectionally synced.
+
+### `metadata.path`
+Directory containing `info_devices.yaml` (parent of `_raw`). Click to browse — same floating editor as `input.path`.
+
+### `metadata.point`
+Station / point identifier (deployment location name).
+
+### `metadata.symbol`
+Modification / instrument symbol (e.g. `↟`).
+
+### `metadata.sea_depth`
+Sea depth at deployment point (m).
+
+### `metadata.h_above`
+Height above bottom (m).
+
+### `metadata.lat`
+Latitude, decimal degrees.
+
+### `metadata.lon`
+Longitude, decimal degrees.
+
+### `metadata.time_range`
+Deployment time interval — start and end timestamps (`YYYY-MM-DDTHH:MM:SS`).
+
+#### Detailed
+When `info_devices.yaml` provides `time_range` but the run YAML's `input.time_ranges` is missing or has <2 elements, absent ends are filled from device metadata. Device `time_range` is edited in the `metadata` node; `time_ranges` remains the processing window.
+
+### `metadata.burst_dt`
+Burst sampling dt (s).
+
+### `metadata.bursts_t`
+Bursts interval T (s).
+
+### `metadata.comment`
+Free-form comment for the deployment.
 
 ### `program.return_`
 Pipeline exit point — run partial processing for debugging.

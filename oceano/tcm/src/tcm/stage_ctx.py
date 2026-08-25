@@ -362,5 +362,5 @@ class StageContextFilter(logging.Filter):
 
 
 def _is_message(msg: object) -> bool:
-    """True if *msg* is a :class:`tcm.utils2init.Message` instance."""
+    """True if *msg* is a :class:`utils.init.Message` instance."""
     return hasattr(msg, "fmt") and hasattr(msg, "args") and not isinstance(msg, str)

@@ -31,12 +31,13 @@ from utils.h5_to_gpx import save_to_gpx  # gpx_track_create
 from hdf5_pandas import h5
 
 from utils import cfg_dataclasses
-from utils.init import Ex_nothing_done, FakeContextIfOpen, LoggingStyleAdapter, set_field_if_no, call_with_valid_kwargs, ExitStatus, GetMutex
+from utils.init import Ex_nothing_done, FakeContextIfOpen, set_field_if_no, call_with_valid_kwargs, ExitStatus, GetMutex
 
 # from csv2h5_vaex import argparser_files, with_prog_config
 from hdf5_pandas import h5
 from hdf5_pandas.gpx2h5 import h5_sort_filt_append  # df_rename_cols,
 from gps_tracker.mail_parse import spot_tracker_data_from_mbox, spot_from_gmail
+from utils.log_init import LoggingStyleAdapter
 # from inclinometer.incl_h5clc import dekart2polar_df_uv
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))

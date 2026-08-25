@@ -29,9 +29,21 @@ Background thread: `call_in_raw_dir` for Scan and Run
 
 `ScanStage(StrEnum)` — scan lifecycle labels (`DEFAULT`, `SCAN`, `DONE`), value = `scan_stage.*` i18n key in `str.yaml`; `Stage(StrEnum)` — per-probe processing phase labels, value = display text
 
-### `coef_sheet.py`
+### `coef_sheet.py` — composition root + tree/edit/row-space core
 
-tksheet treeview: type-aware widgets (checkbox/dropdown/align), node + metadata bg; row-geometry-free styling via `_row_map()`; floated `PathField` hover-edit on browse rows
+Wires the tksheet widget, builds the tree from a config dict and owns row-space resolution (`_row_map` internal vs display), item-hook open-state oracle, edit lifecycle (`_on_edit`/`_on_begin_edit_cell`/`_on_end_edit_cell`) and dirty tracking.  Composes three mixins (external imports unchanged): `_sheet_tint.SheetTintMixin`, `_sheet_status.SheetHoverMixin`, `_sheet_styles.SheetStylesMixin`.  **Metadata node** — top-level `metadata <info_devices.yaml>` (browseable path row, `check=exists`, `browse=True`) + 6 paired children (`point,symbol|sea depth,h_above|lat,lon|time_range|burst_dt/t|comment` from `tcm/_meta_pairs.PAIRS` 11-array).  Empty cells show gray example ghosts via `CellPlaceholder` (`_meta_pairs.EXAMPLES`: `P3, 7.5, ↟, 54.62, 19.84, 2026-07-11T12:20:12, 60, 600, deployment note` — `get_edited_metadata` reads ghost as `""` → `~`), `time_range` columns are `has_date` validated.  Public getters (`get_edited_input_path`/`is_path_valid`/`get_edited_metadata`) read via `_cell_str` — ghost never leaks as real data; deletion via the floated field commits `""` and the ghost is restored by `_restore_placeholder`.
+
+### `_sheet_tint.py` — defaults, tint, placeholders, live sync
+
+`SheetTintMixin`: `_cell_str` (ghost→`""`), `_own_cols` (scalar vs `time_ranges` sizing), `_time_ranges_iid`/`_sheet_time_ranges` (live sheet window), `_time_ranges_relation`/`_time_ranges_detail` (equal/broader/differs recomputed on every hover/edit — no scan-time cache), `_metadata_time_range_default` (DRY `time_ranges[0,-1]` for cell and node tint), `_default_for_cell` (metadata empty→`""`, calib empty-list→`""` per cell — empty means at-default), `_node_at_default` (ghost-aware, empty metadata subtree → blue), `_apply_default_fg`/`_apply_edit_value`/`_apply_end_edit_style`, placeholders `_placeholder_for`/`_apply_placeholders`/`_restore_placeholder`/`_on_editor_closed`, sync tint `apply_time_ranges_sync_status`/`_apply_time_ranges_tint`.  `_PH_BY_FIELD` registry lives here.
+
+### `_sheet_status.py` — hover status + floated PathField overlay
+
+`SheetHoverMixin`: status publication (`_publish_status`/`_clear_status`, tree vs data `_help_candidates`/`_resolve_detail`/`_coefs_status_hint`/Shift/F1), floated browse-row overlay (`_ensure_hover_field`/`_show_hover_field`/`_field_place_kw`/`_btn_place_kw`/`_pointer_in_field`/`_hover_read`/`_hover_write`/`_hover_btn_status`/`_restore_hover_placement`/schedule/hide) — `PathField` empty commits propagate to `_hover_write` which writes `""` + ghost, motion branch refreshes `f.set(_hover_read())`.
+
+### `_sheet_styles.py` — alignment/widgets, node fg, path validation
+
+`SheetStylesMixin`: `_apply_open`, `_cell_spec_for` (numeric metadata via `_meta_pairs.NUMERIC_IDXS`), `_apply_styles` (tree fg blue/black, browse bg, date align), `_apply_validations` (red `check:"exists"` via `_cell_str` — ghost skipped, sentinel-aware), `_path_exists` (``~`` + glob).
 
 ### `_path_field.py`
 
@@ -209,7 +221,7 @@ Click Run while processing → PauseGate
 | `_cell_spec_for` → bool/enum/text/number | walks dataclass tree via `spec_for_path`; `bool` → checkbox, `Enum` → dropdown, `str`/`Path` → left-align |
 | node column bg = header bg | `highlight_cells(canvas="index")` in `_apply_styles`; `resolved_frame_bg()` (TFrame background) for all rows including `input` |
 | metadata row bg up to last date cell | all cells from col 0 through last `meta_date_cols` entry share the bg |
-| ordering `_apply_open()` → `_row_map()` → `_apply_styles()` → `_apply_default_fg()` → `_apply_validations()` | invariant: build tree → set open states → compute row map → apply styles → gray defaults → red-flag failed path checks → redraw |
+| ordering `_apply_open()` → `_row_map()` → `_apply_styles()` → `_apply_default_fg()` → `_apply_time_ranges_tint()` → `_apply_validations()` | invariant: build tree → set open states → compute row map → apply styles → gray defaults → warning tint for broader-than-info_devices window → red-flag failed path checks → redraw |
 | `date` independent of `max_col` | coefs parent has `max_col=0`; styling in dedicated section before `max_col` loop |
 | PathField = 1×1 Sheet for display, `ttk.Entry` for editing | Display: left-aligned default; on hover tksheet widget shrinks (`place(width=frame−btn_w)`) + right-align + `xview_moveto(1.0)` — filename ends before button.  Edit: `ttk.Entry` is inherently single-line (no wrapping), native horizontal scroll, cursor always visible.  tksheet's `tk.Text` editor cannot disable wrapping (`table_wrap` is display-only).  Veto via `return None` from `begin_edit_cell` callback |
 | `SheetHoverBinder` extracted from ConfigSheet | three MT binds + churn veto reusable by PathField and any future sheet-hover site |
@@ -347,7 +359,7 @@ hover-time read reflects the live state and language.
 ### Config cells: doc-driven hover (no widget_meta needed)
 
 Config cells have ``_meta[iid]["path"]`` (dotted Hydra path) — that IS the
-help key.  ``coef_sheet._publish_status`` calls ``help_for_path(path)``,
+help key.  ``_sheet_status._publish_status`` (via `ConfigSheet`) calls ``help_for_path(path)``,
 which returns a ``HelpEntry(short, body)`` parsed once from the tables in
 ``config_reference.md``:
 
@@ -369,8 +381,8 @@ which returns a ``HelpEntry(short, body)`` parsed once from the tables in
    empty cache → no hover text (graceful degradation).
 6. Array indices stripped at lookup time: ``Ag[0]`` / ``Ag[1][2]`` → ``Ag``.
 
-Fallback chain in ``_publish_status``:
-``hover_status[ident]`` → ``help_for_path(candidate).short`` → ``key`` / ``label`` / ``path``.
+Fallback chain in ``_publish_status`` (now in ``_sheet_status``):
+``help_for_path(candidate).short`` → ``key`` / ``label`` / ``path`` (no `hover_status` cache — `time_ranges` detail is live via `_time_ranges_detail`).
 No ``set_widget_meta`` calls on config cells — the entire chain is read-only
 from the parsed doc.
 

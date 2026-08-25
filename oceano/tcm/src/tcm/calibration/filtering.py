@@ -11,13 +11,15 @@ Extracted from ``tcm._dask_legacy.incl_calibr_hy.filter_channes``
 """
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from collections.abc import Mapping
+from typing import Any
 
 import numpy as np
+from utils import log_init
 
-from tcm import filters_scipy, utils2init
+from tcm import filters_scipy
 
-lf = utils2init.LoggingStyleAdapter(__name__)
+lf = log_init.LoggingStyleAdapter(__name__)
 
 
 def despike_channels(
@@ -26,9 +28,9 @@ def despike_channels(
     blocks: tuple[int, ...] = (21, 7),
     offsets: tuple[float, ...] = (1.5, 2),
     std_smooth_sigma: float = 4.0,
-    x: Optional[Mapping[str, Any]] = None,
-    y: Optional[Mapping[str, Any]] = None,
-    z: Optional[Mapping[str, Any]] = None,
+    x: Mapping[str, Any] | None = None,
+    y: Mapping[str, Any] | None = None,
+    z: Mapping[str, Any] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Despike each channel (x, y, z) by forward+backward ``despike``.
 

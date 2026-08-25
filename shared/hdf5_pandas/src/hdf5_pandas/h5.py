@@ -36,6 +36,7 @@ import pandas as pd
 from tables import NaturalNameWarning
 from tables.exceptions import HDF5ExtError, ClosedFileError, NodeError, FileModeError
 from tables.scripts.ptrepack import main as ptrepack
+from utils.log_init import LoggingStyleAdapter
 
 warnings.catch_warnings()
 warnings.simplefilter("ignore", category=NaturalNameWarning)
@@ -48,7 +49,6 @@ from utils.init import (
     getDirBaseOut,
     Ex_nothing_done,
     standard_error_info,
-    LoggingStyleAdapter,
     ExitStatus
 )
 from utils.time import check_time_diff, minInterval, multiindex_timeindex, multiindex_replace, timezone_view

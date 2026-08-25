@@ -18,7 +18,7 @@ logger = setup_logging()
 
 def _format_for_devices_meta_file(content: Dict[str, Any]) -> Dict[str, List]:
     """
-    Format content for JSON output by converting content values to the lists of expected format,
+    Format content for YAML/JSON output by converting content values to the lists of expected format,
     trims metadata to expected format (11 elements)
     While the internal metadata may have additional elements for raw HDF5 data (coef_date, time_raw_st,
     time_raw_en), the expected format should have 11 elements:

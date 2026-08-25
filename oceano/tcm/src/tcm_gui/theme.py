@@ -323,6 +323,18 @@ def mix_hex(a: str, b: str, t: float) -> str:
     return "#{:02x}{:02x}{:02x}".format(*(round(x + (y - x) * t) for x, y in zip(ca, cb)))
 
 
+# Ghost/placeholder tint — 1/3 DEFAULT_FG + 2/3 background: ≈3× fainter than
+# the gray default, so hints stay noticeably below real data (lighter in the
+# light theme, darker in dark).  Resolved live — never snapshot the result:
+# apply_theme_defaults() swaps DEFAULT_FG and the bg fallbacks.
+_GHOST_TOWARD_BG: float = 2 / 3
+
+
+def ghost_fg(bg: str) -> str:
+    """Placeholder fg above *bg* — call at render time, see :data:`_GHOST_TOWARD_BG`."""
+    return mix_hex(DEFAULT_FG, bg, _GHOST_TOWARD_BG)
+
+
 def scaled(px: int) -> int:
     """Scale manual pixel geometry (Canvas art, fixed heights) by UI_SCALE.
 

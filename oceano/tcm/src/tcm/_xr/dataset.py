@@ -1,22 +1,23 @@
 from __future__ import annotations
 
-import logging
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Dict, Iterator, Mapping, Optional, Sequence, Union
+from typing import Any
 
 import pandas as pd
 import xarray as xr
+from utils import log_init
 
-from tcm import format, csv_load, utils2init, _constants
+from tcm import _constants, csv_load, format
 
-lf = utils2init.LoggingStyleAdapter(__name__)
+lf = log_init.LoggingStyleAdapter(__name__)
 
 
 # --------------------------------------------------------------------------- #
 # DataFrame ↔ Dataset conversion
 # --------------------------------------------------------------------------- #
 
-def dataframe_to_ds(df: pd.DataFrame, chunk_time: Optional[int] = None) -> xr.Dataset:
+def dataframe_to_ds(df: pd.DataFrame, chunk_time: int | None = None) -> xr.Dataset:
     """Convert a time-indexed DataFrame to an (optionally chunked) xarray Dataset."""
     if df.index.name != "time":
         df = df.rename_axis("time")
@@ -38,15 +39,15 @@ def dataframe_to_ds(df: pd.DataFrame, chunk_time: Optional[int] = None) -> xr.Da
 # --------------------------------------------------------------------------- #
 
 def _resolve_csv_files_dict(
-    path: Union[str, Path, Sequence[Union[str, Path]]],
+    path: str | Path | Sequence[str | Path],
     text_type: str = "i",
-) -> tuple[Dict, str]:
+) -> tuple[dict, str]:
     """Build ``csv_files_dict`` and ``text_type`` from *path* argument.
 
     :return: ``(csv_files_dict, text_type)`` ready for :func:`csv_load.load_from_csv_gen`.
     """
     if isinstance(path, (list, tuple)):
-        csv_files_dict_raw: Dict = {}
+        csv_files_dict_raw: dict = {}
         for p in path:
             p = Path(p)
             if (identity := format.probe_from_name(p.stem.lower())) is None:
@@ -68,11 +69,11 @@ def _resolve_csv_files_dict(
 # --------------------------------------------------------------------------- #
 
 def open_csv(
-    path: Union[str, Path, Sequence[Union[str, Path]]],
+    path: str | Path | Sequence[str | Path],
     *,
     text_type: str = "i",
-    cfg_in: Optional[Mapping[str, Any]] = None,
-    chunk_time: Optional[int] = None,
+    cfg_in: Mapping[str, Any] | None = None,
+    chunk_time: int | None = None,
 ) -> xr.Dataset:
     """Load raw inclinometer CSV file(s) into a single :class:`xarray.Dataset`.
 
@@ -123,11 +124,11 @@ def open_csv(
 # --------------------------------------------------------------------------- #
 
 def open_csv_chunks(
-    path: Union[str, Path, Sequence[Union[str, Path]]],
+    path: str | Path | Sequence[str | Path],
     *,
     text_type: str = "i",
-    cfg_in: Optional[Mapping[str, Any]] = None,
-    chunk_time: Optional[int] = None,
+    cfg_in: Mapping[str, Any] | None = None,
+    chunk_time: int | None = None,
 ) -> Iterator[tuple[xr.Dataset, tuple[int, str, Path]]]:
     """Yield ``(xr.Dataset, (i1_pid, pcid, path_csv))`` per CSV chunk.
 
@@ -172,12 +173,12 @@ def open_csv_chunks(
 # --------------------------------------------------------------------------- #
 
 def open_nc(
-    path: Union[str, Path],
+    path: str | Path,
     *,
     tbl: str = "",
-    chunk_time: Optional[int] = None,
+    chunk_time: int | None = None,
     engine: str = _constants.nc_engine,
-) -> tuple[xr.Dataset, Optional[Dict[str, Any]]]:
+) -> tuple[xr.Dataset, dict[str, Any] | None]:
     """Load data and coefs from a NetCDF4 file.
 
     Reads data variables from the ``/{tbl}/`` group (or root if *tbl* is
@@ -219,7 +220,7 @@ def open_nc(
 # Merge probes
 # --------------------------------------------------------------------------- #
 
-def merge_probes(ds_dict: Dict[str, xr.Dataset]) -> xr.Dataset:
+def merge_probes(ds_dict: dict[str, xr.Dataset]) -> xr.Dataset:
     """Concatenate per-probe Datasets along a new ``probe`` dimension."""
     if not ds_dict:
         raise ValueError("merge_probes requires at least one probe Dataset")

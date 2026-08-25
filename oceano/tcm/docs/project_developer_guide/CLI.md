@@ -33,7 +33,7 @@ tcm/
                               find_dir_raw_absolute
     _constants.py           ← RAW_DIR_NAME, version info, optional-dependency flags
     to_omegaconf.py         ← to_omegaconf_merge_compatible, to_omegaconf_compatible_types
-    utils2init.py           ← LoggingStyleAdapter, type_fix, ini2dict, Ex_nothing_done,
+    ../../shared/utils/init.py           ← LoggingStyleAdapter, type_fix, ini2dict, Ex_nothing_done,
                               standard_error_info, this_prog_basename, call_with_valid_kwargs
     stage_ctx.py            ← context-var driven state tracking: set_probe/set_stage/set_sublevel/tick,
                               boundary marks (## / ###), StageContextFilter, progress bar positioning
@@ -553,25 +553,7 @@ converts the `DictConfig` to a plain `dict` with resolved types.  This is the
 **single conversion point** — downstream code never needs to re-convert.
 
 The conversion chain: `main_init` → `ini2dict` → `type_fix` (per key).
-
-Key name-driven conversions by `type_fix` (`utils2init.py`):
-
-| Prefix/Suffix | Converts to | Name change | Example |
-|---|---|---|---|
-| `dt_*` (prefix) | `timedelta` | suffix stripped if unit name, else kept | `dt_hole_warning=600` → `timedelta(600s)` |
-| `*_path` / `path_*` | `Path` | kept | `path="/raw/i.txt"` → `Path("/raw/i.txt")` |
-| `*_date` / `*_time` | `datetime` | suffix stripped | `min_date="2024-01-01"` → `datetime(2024,1,1)` |
-| `*_int` / `*_integer` / `*_index` | `int` | suffix stripped | `count_int="5"` → `5` |
-| `*_float` | `float` | suffix stripped | `ratio_float="1.5"` → `1.5` |
-| `*_bool` / `*_b` | `bool` | suffix stripped | `flag_b="True"` → `True` |
-| `*_list` / `*_names` | `list` | suffix stripped, comma-split | `ids_list="a,b"` → `["a","b"]` |
-| `*_dict` | `dict` | suffix stripped, colon-split | `cfg_dict="k:v"` → `{"k":"v"}` |
-| `min_*` / `max_*` / `fixed_*` / `float_*` (catch-all) | `float` | kept | `min_Mx="0.1"` → `0.1` |
-
-**Important `dt_*` detail**: ALL `dt_*`-prefixed keys become `timedelta`, even
-when the suffix is not a recognised duration unit (e.g. `dt_hole_warning`,
-`dt_bins`).  The default unit is `seconds`.  Consumers must handle `timedelta`
-values — use `val.total_seconds()` to extract numeric seconds.
+Key name-driven conversions by `type_fix` (`shared/utils` module `init.py`) see in `shared/utils/readme.md`.
 
 After `ini2dict`, `main_init` also:
 - Expands `M` shorthand → `Mx/My/Mz` in min/max dicts (`sugar_expand_m`)
@@ -653,13 +635,19 @@ warning, preventing manually-copied or renamed configs (e.g.
 After config generation, `processing.run()` calls
 `config_yaml.sync_yamls_devmeta_and_hydra(dev_dir, dir_cfgs, cfgs_existed)`
 to push `time_ranges` from `info_devices.yaml/.json` into any run YAML that
-lacks them. Idempotent: configs with existing `input.time_ranges` are skipped.
-Missing metadata file is handled EAFP (logged at DEBUG, returns cleanly).
-Malformed YAML (e.g. tab characters) in `info_devices.yaml` is caught at two
-levels: `metadata.load_file_meta` catches `yaml.YAMLError` (logged WARNING
-with traceback, returns `{}`), and `sync_yamls_devmeta_and_hydra` has a
-broad `except Exception` guard that skips time_ranges sync on any
-unexpected error instead of crashing the pipeline.
+lacks them. Bidirectional: when device `time_range[6,7]` exists but
+`input.time_ranges` is absent or has an empty end, that end is filled from
+the device file (`[0]` or `[-1]` only — never overwrites existing ends).
+Returns `SyncResult {stem: {status, meta_tr, existing_tr?}}` (`written/kept/broader`)
+for the GUI scan path (`CFG_FROM_ARGS` 5th tuple element).
+
+Idempotent; missing metadata file is EAFP (DEBUG, returns `None`).
+Malformed YAML (e.g. tab characters) is caught at two levels:
+`metadata.load_file_meta` catches `yaml.YAMLError` (WARNING + traceback →
+`{}`), and `sync_yamls_devmeta_and_hydra`'s outer `except Exception` skips
+the sync instead of crashing the pipeline. The GUI reuses the same device dir
+(`paths.find_dir_raw_absolute(path).parent`) via `App._load_device_meta()`
+(also for `metadata` path row + dirty-wins write) — see GUI Internals.
 
 The sync function logs at INFO per probe:
 ```
@@ -671,7 +659,7 @@ When all configs already have time_ranges matching metadata, only the
 `info_devices` line appears (per-stem "already configured" → DEBUG).
 When a config's existing range is **broader** than metadata, a WARNING is
 emitted showing the broader range — this signals a mismatch that may need
-manual review.
+manual review (also `INVALID_FG` tint on that `time_ranges` row in the GUI).
 
 Uses `tcm.metadata` — local extraction of `get_path_in_parents`,
 `load_file_meta`, `extract_devices_info` from `veusz_helpers.common.metadata`.

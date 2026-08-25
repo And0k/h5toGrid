@@ -6,8 +6,9 @@ Replaces ``tcm._dask_legacy.incl_calc.physical`` with pure
 """
 
 import time as _time
+from collections.abc import Mapping, Sequence
 from datetime import timedelta
-from typing import Any, List, Mapping, Optional, Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -20,13 +21,14 @@ try:
 except ImportError:
     get_tqdm_class = lambda: None
 
-from tcm import utils2init
+from utils import log_init
+
 import tcm.calibration.orientation
-from tcm.incl_calc import calc
 from tcm._xr import calc as calc_xr
 from tcm._xr.filters import filter_local
+from tcm.incl_calc import calc
 
-lf = utils2init.LoggingStyleAdapter(__name__)
+lf = log_init.LoggingStyleAdapter(__name__)
 
 
 # --------------------------------------------------------------------------- #
@@ -41,10 +43,10 @@ def calc_velocity(
     Cg: np.ndarray,
     Ah: np.ndarray,
     Ch: np.ndarray,
-    kVabs: Optional[Sequence] = None,
+    kVabs: Sequence | None = None,
     azimuth_shift_deg: float = 0,
     calc_version: str = "trigonometric(incl)",
-    filt_max: Optional[Mapping[str, float]] = None,
+    filt_max: Mapping[str, float] | None = None,
     **kwargs,
 ) -> xr.Dataset:
     """
@@ -169,7 +171,7 @@ def add_vabs_vdir(ds: xr.Dataset) -> xr.Dataset:
 
 def calc_pressure(
     ds: xr.Dataset,
-    P_t: Optional[np.ndarray] = None,
+    P_t: np.ndarray | None = None,
     bad_p_at_bursts_starts_period: str = "",
     **kwargs,
 ) -> xr.Dataset:
@@ -245,12 +247,12 @@ def process(
     ds_raw: xr.Dataset,
     *,
     coefs: Mapping[str, Any],
-    coef_zeroing_matrix: Optional[np.ndarray] = None,
-    cfg_filter: Optional[Mapping[str, Any]] = None,
+    coef_zeroing_matrix: np.ndarray | None = None,
+    cfg_filter: Mapping[str, Any] | None = None,
     dt_bins: Sequence[timedelta] = (timedelta(0),),
     dt_min_binning_proc: timedelta = timedelta(seconds=2),
     pcid: str = "",
-) -> List[Optional[xr.Dataset]]:
+) -> list[xr.Dataset | None]:
     """
     Full pipeline: filter → velocity → pressure → binning.
 
@@ -296,7 +298,7 @@ def process(
     dt_bins_remaining = list(dt_bins)
 
     d = None  # the "calc-then-bin" source (physical domain)
-    d_avgs: List[Optional[xr.Dataset]] = []
+    d_avgs: list[xr.Dataset | None] = []
 
     if need_d_out:
         dt_bins_remaining = dt_bins_remaining[1:]
@@ -350,7 +352,7 @@ def process(
         pbar.set_postfix_str(f"{bin_label} done ({dt_s:.1f}s)")
 
     # 4. Assemble: noAvg (if requested) + binned results
-    result: List[Optional[xr.Dataset]] = []
+    result: list[xr.Dataset | None] = []
     if need_d_out:
         if d is None and not velocity_computed:
             t0 = _time.monotonic()

@@ -4,7 +4,8 @@ import csv
 import logging
 import lxml.etree
 from utils.init import init_file_names, Ex_nothing_done, cfg_from_args, my_argparser_common_part, \
-    this_prog_basename, init_logging
+    this_prog_basename
+from utils.log_init import init_logging
 
 ''' From http://stackoverflow.com/questions/20714038/xml-to-csv-in-python:
 

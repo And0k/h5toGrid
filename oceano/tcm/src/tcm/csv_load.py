@@ -7,18 +7,18 @@ from datetime import UTC, datetime
 from functools import update_wrapper
 from itertools import chain, dropwhile, groupby, islice
 from pathlib import Path
-from typing import (
-    Any,
-)
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 # My
-from . import format, utils_time_corr
-from .utils2init import ExitStatus, LoggingStyleAdapter, set_field_if_no, update_cfg_time_ranges
+from utils import init
+import utils.log_init
 
-lf = LoggingStyleAdapter(__name__)
+from . import format, utils_time_corr
+
+lf = utils.log_init.LoggingStyleAdapter(__name__)
 
 from tcm.format_loaded import (
     correct_txt,
@@ -176,7 +176,7 @@ def init_input_cols(cfg_in: MutableMapping[str, Any] | None = None):
 
     if cfg_in is None:
         cfg_in = dict()
-    set_field_if_no(cfg_in, "max_text_width", 2000)
+    init.set_field_if_no(cfg_in, "max_text_width", 2000)
 
     dtype_text_max = "|S{:.0f}".format(cfg_in["max_text_width"])  # '2000 #np.str
 
@@ -190,7 +190,7 @@ def init_input_cols(cfg_in: MutableMapping[str, Any] | None = None):
 
     # Default parameters dependent from ['cols']
     cols_load_b = np.ones(len(cfg_in["cols"]), np.bool_)
-    set_field_if_no(cfg_in, "comments", '"')
+    init.set_field_if_no(cfg_in, "comments", '"')
 
     # assign data type of input columns
     b_was_no_dtype = "dtype" not in cfg_in
@@ -284,7 +284,7 @@ def init_input_cols(cfg_in: MutableMapping[str, Any] | None = None):
     # Get index name for saving Pandas frame
     b_index_exist = cfg_in.get("coltime") is not None
     if b_index_exist:
-        set_field_if_no(cfg_in, "col_index_name", cfg_in["cols"][cfg_in["coltime"]])
+        init.set_field_if_no(cfg_in, "col_index_name", cfg_in["cols"][cfg_in["coltime"]])
 
     # Mask of only needed output columns
 
@@ -1130,7 +1130,7 @@ def load_from_csv_gen(
     """
     if (n_probes := len(csv_files_dict)) == 0:
         lf.warning("No raw files {:s} found!", str(cfg_in["path"]))
-        sys.exit(ExitStatus.failure)
+        sys.exit(init.ExitStatus.failure)
 
     # Optional return file list without any processing or configure to return only edge rows
     if return_:
@@ -1221,7 +1221,7 @@ def load_from_csv_gen(
         cfg_in_cur = {**cfg_in, "files": paths_csv}
         if cfg_in_probe and pid in cfg_in_probe:
             cfg_in_cur.update(cfg_in_probe[pid])
-        update_cfg_time_ranges(cfg_in_cur, cfg_in_cur.get("min_date"), cfg_in_cur.get("max_date"))
+        init.update_cfg_time_ranges(cfg_in_cur, cfg_in_cur.get("min_date"), cfg_in_cur.get("max_date"))
         if cfg_in_cur.get("date_to_from"):
             t_to, t_from = cfg_in_cur["date_to_from"][:2]
             cfg_in_cur["dt_from_utc"] = t_from - t_to

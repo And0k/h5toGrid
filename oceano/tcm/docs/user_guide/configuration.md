@@ -8,10 +8,11 @@ tables, see [Config Tuning](../reference/config_tuning.md).
 
 ## Config system overview
 
-Four configuration groups control the pipeline:
+Four configuration groups control the pipeline (`metadata` is a GUI-only per-probe device file, not a `Config` group — see [Reference](../reference/config_reference.md#metadata--device-deployment-metadata-per-probe-infodevicesyaml)):
 
 | Group | What it controls | Key fields |
 |-------|------------------|------------|
+| `metadata` | Device deployment (GUI only, `info_devices.yaml` per probe) | `path, point, symbol, sea_depth, h_above, lat, lon, time_range, burst_dt, bursts_t, comment` |
 | `input` | Source files, calibration, time ranges | `path`, `ids`, `coefs`, `time_ranges`, `calib` |
 | `out` | Output format, binning, text export | `dt_bins`, `text_path`, `overwrite_db` |
 | `filter` | Data quality thresholds | `min`, `max`, `corr_time_mode` |

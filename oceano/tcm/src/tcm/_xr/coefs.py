@@ -16,21 +16,22 @@ All functions avoid importing ``dask.dataframe``.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping
-
-from tcm import policy
-from tcm._constants import _h5py
+from typing import Any
 
 import numpy as np
 import pandas as pd
 import xarray as xr
-from tcm._xr import filters as filters_xr
-from tcm.utils2init import LoggingStyleAdapter
-from tcm.calibration import orientation, calibrate
+from utils import log_init
 
-lf = LoggingStyleAdapter(__name__)
+from tcm import policy
+from tcm._constants import _h5py
+from tcm._xr import filters as filters_xr
+from tcm.calibration import calibrate, orientation
+
+lf = log_init.LoggingStyleAdapter(__name__)
 
 # Keys that _coefs_to_h5_dict renames or skips when building the flat dict.
 # "date" (singular) is excluded from the catch-all numpy-array comprehension
@@ -137,7 +138,7 @@ def save_coefs_to_nc(
     lf.info("Coefs saved to {}//{}: {} datasets", nc_path, tbl, len(h5_dict))
 
 
-def _read_coefs_from_coef_group(coef_grp: "_h5py.Group") -> dict[str, Any]:
+def _read_coefs_from_coef_group(coef_grp: _h5py.Group) -> dict[str, Any]:
     """Walk ``/{tbl}/coef/`` HDF5 group and return coefs dict (without ``date``).
 
     Shared traversal for :func:`load_coefs_from_nc` (NC4 files) and
@@ -336,7 +337,7 @@ def prepare_coefs(
     time_ranges_azimuth: list | None = None,
     azimuth_add: float | None = None,
     coordinates: tuple | None = None,
-    data_date: "datetime | None" = None,
+    data_date: datetime | None = None,
 ) -> tuple[dict, np.ndarray | None, dict, str]:
     """Prepare coefficients: apply zeroing rotation and azimuth correction.
 

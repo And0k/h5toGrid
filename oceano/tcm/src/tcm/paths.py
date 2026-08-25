@@ -18,10 +18,11 @@ from pathlib import Path
 from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
+from utils import log_init
 
-from tcm import _constants, utils2init
+from tcm import _constants
 
-lf = utils2init.LoggingStyleAdapter(__name__)
+lf = log_init.LoggingStyleAdapter(__name__)
 
 
 class PathLayout:

@@ -26,7 +26,7 @@ if __debug__:
 
 # my:
 from utils.filters import l
-from utils.init import LoggingStyleAdapter
+from utils.log_init import LoggingStyleAdapter
 
 lf = LoggingStyleAdapter(logging.getLogger(__name__))
 dt64_1s = np.int64(1e9)

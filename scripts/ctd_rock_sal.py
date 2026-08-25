@@ -2,7 +2,7 @@
 import sys
 from pathlib import Path
 # my funcs
-from utils.init import LoggingStyleAdapter
+from utils.log_init import LoggingStyleAdapter
 from hdf5_alt.h5tocsv import ctd2csv
 sys.path.append(r'C:\Work\Python\AB_SIO_RAS\tcm')
 from tcm.csv_load import load_from_csv_gen

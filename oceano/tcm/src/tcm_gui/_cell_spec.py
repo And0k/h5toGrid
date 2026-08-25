@@ -84,6 +84,12 @@ def classify_type(tp: Any) -> CellSpec:
             return NUMBER_SPEC
         if issubclass(tp, (date, datetime, time)):
             return DATE_SPEC
+    # List[T] → classify by inner type (calib vectors like list[float] → number, list[str]→text)
+    origin = get_origin(tp)
+    if origin is list:
+        inner = get_args(tp)[0] if get_args(tp) else None
+        if inner is not None:
+            return classify_type(inner)
     return TEXT_SPEC
 
 

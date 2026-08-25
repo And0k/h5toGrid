@@ -20,6 +20,7 @@ from typing import Any, Callable, Iterator, Mapping, Optional, Sequence, Tuple, 
 
 import numpy as np
 import pandas as pd
+from utils.log_init import LoggingStyleAdapter, init_logging
 import vaex
 
 from dataclasses import dataclass
@@ -33,7 +34,7 @@ from sigtools.wrappers import decorator
 import pynmea2
 
 from utils.init import init_file_names, Ex_nothing_done, set_field_if_no, cfg_from_args, my_argparser_common_part, \
-    this_prog_basename, init_logging, standard_error_info, LoggingStyleAdapter
+    this_prog_basename, standard_error_info
 from utils import time_corr as utils_time_corr
 
 #from csv2h5_vaex import argparser_files , with_prog_config
