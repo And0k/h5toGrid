@@ -592,10 +592,9 @@ class App:
 
     def _scan(self) -> None:
         path = self._path_field.get().strip()
-        # if path:
-        # Shift+browse stores comma-separated paths; reformat as regex
-        # alternation so find_dir_raw_absolute can resolve the _raw/ anchor.
-        if "," in path:
+        if path and "," in path:
+            # Shift+browse stores comma-separated paths; reformat as regex
+            # alternation so find_dir_raw_absolute can resolve the _raw/ anchor.
             path = self._fmt_multi(tuple(path.split(",")))
             self._path_field.set(path)
         self._clear_log()
@@ -603,14 +602,11 @@ class App:
         # so a GUI browse selection of ``_raw`` rescans that directory.
         # YAML auto-detection (`.yaml`/`.yml` → `input.yaml_path` filter)
         # happens in processing.run — no GUI-side plumbing needed.
+        # An EMPTY path is forwarded as-is: it means "./" and the pipeline
+        # owns the verdict (cli.call_in_raw_dir rejects anchors inside the
+        # code project) — the failure surfaces like any other scan error
+        # instead of freezing the "Loading…" stage.
         self.wk.scan(self._original_argv, path)
-        # else:
-        #     # Empty path — no worker would spawn, leaving the "Loading…"
-        #     # stage frozen: surface the same failure as a wrong path (red
-        #     # field, error floater, DEFAULT stage reset).  Message mirrors
-        #     # tcm.paths' no-resolved-paths FileNotFoundError.
-        #     self._clear_log()
-        #     self._on_scan_error(FileNotFoundError("Not found stored data: []"))
 
     # ── §2 page management ──────────────────────────────────────────
 

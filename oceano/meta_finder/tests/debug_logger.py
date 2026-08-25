@@ -1,5 +1,5 @@
 import logging
-from meta_finder.logging_config import setup_logging
+from utils.logging_config import setup_logging
 
 
 def debug_logger():

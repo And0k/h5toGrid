@@ -1,3 +1,4 @@
+import logging
 import functools
 import json
 import shutil
@@ -13,9 +14,8 @@ from ruamel.yaml.representer import RoundTripRepresenter
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString as DQ
 
 from .config import DEVICES_FILE_NAME, DEVICES_FILE_NAME_UPD
-from .logging_config import setup_logging
 
-logger = setup_logging()
+logger = logging.getLogger(__name__)
 
 # Common encodings to try for reading metadata files with special characters
 # Includes UTF-8 variants and common legacy encodings for international character sets

@@ -51,10 +51,34 @@ EXT_NC = {".nc"}  # , ".nc4" not need
 # Canonical name for the directory that anchors all relative processing paths.
 RAW_DIR_NAME: str = "_raw"
 
-# Project root — parent of ``scripts/`` dir (where pyproject.toml lives).
-# Used by :func:`safe_cfg_dir` to guard against polluting the repo.
+# Package directory (``…/tcm/src/tcm`` in the src layout) — home of the
+# bundled ``cfg/`` tree; NOT the repo root (see :data:`REPO_ROOT`).
 PROJECT_ROOT: Path = Path(__file__).resolve().parent
 CFG_PATH = PROJECT_ROOT / "cfg"
+
+
+def _repo_root() -> Path:
+    """Protected code-project root — processing must never create files in it.
+
+    * **Frozen distributive** — the executable's own directory: ``__file__``
+      lives in the transient ``_MEIPASS`` extraction, and the app folder is
+      the only "project dir" a double-clicked exe can pollute (an empty
+      ``input.path`` means ``./`` = the launch cwd).
+    * **Dev / installed** — outermost ancestor of this file still carrying a
+      ``pyproject.toml`` (``oceano/`` in the src layout; also found from envs
+      nested inside the repo).  Falls back to :data:`PROJECT_ROOT` for bare
+      installs, so at least the package tree itself stays protected.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    root = PROJECT_ROOT
+    for anc in PROJECT_ROOT.parents:
+        if (anc / "pyproject.toml").is_file():
+            root = anc
+    return root
+
+
+REPO_ROOT: Path = _repo_root()
 
 # Module path for @hydra.main
 # Requires tcm/cfg/__init__.py and tcm/cfg/cfg_proc/__init__.py for pkg:// resolution.

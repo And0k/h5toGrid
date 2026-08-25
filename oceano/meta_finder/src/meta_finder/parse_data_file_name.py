@@ -2,14 +2,14 @@
 Filename parsing functions for TCM Metadata Processor.
 """
 
+import logging
 import re
 from typing import Any, Dict, List, Optional
 
 from meta_finder import config
 
-from .logging_config import setup_logging
 
-logger = setup_logging()
+logger = logging.getLogger(__name__)
 
 
 def normalize_device_id(
@@ -34,7 +34,7 @@ def normalize_device_id(
     ):
         return None
 
-    if (prefix_found := "".join(v for k in ("type", "model") if ((v := v[0]) if (v := m[k]) else ""))):
+    if prefix_found := "".join(v for k in ("type", "model") if ((v := v[0]) if (v := m[k]) else "")):
         if prefix is None:
             prefix = prefix_found
     elif validate:  # validation: neither type nor model present
@@ -89,6 +89,7 @@ re_device_group = re.compile(
     re.VERBOSE | re.IGNORECASE,
 )
 
+
 def parse_device_group(group: str) -> List[str]:
     """
     Parse a device group string into a list of normalized device IDs.
@@ -117,9 +118,9 @@ def parse_device_group(group: str) -> List[str]:
     if not (g := group.strip()):
         return []
 
-    if (m := re_device_group.match(g)):
+    if m := re_device_group.match(g):
         items = (
-            [m["first"]] + (re.split(r"[,;]", rest) if (rest:=m["rest"]) else [])
+            [m["first"]] + (re.split(r"[,;]", rest) if (rest := m["rest"]) else [])
             if (content := m["content"]) is None
             else re.split("[,;]", content)
         )
@@ -139,9 +140,11 @@ def split_top_level(s: str) -> list[str]:
     """
     tokens, depth, start = [], 0, 0
     for i, ch in enumerate(s):
-        if   ch == '(': depth += 1
-        elif ch == ')': depth -= 1
-        elif ch in ',;' and depth == 0 and not s[i+1].isdigit():
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch in ",;" and depth == 0 and not s[i + 1].isdigit():
             tokens.append(s[start:i].strip())
             start = i + 1
     return tokens + [s[start:].strip()]
@@ -161,14 +164,16 @@ def parse_device_id_groups(devices_str, validate=True):
 
     devices = []
     for group in split_top_level(devices_str):
-        if (gr := group.strip()):  # why need strip?
+        if gr := group.strip():  # why need strip?
             # Normalize all parsed device IDs and validate against device pattern
             for dev_id in parse_device_group(gr):
                 if (device_id := normalize_device_id(dev_id, validate=validate)) is None:
                     logger.warning(
                         "Extracted device ID '%s' %s, skipping...",
                         dev_id,
-                        "has no device type or model" if validate else "does not match expected device pattern",
+                        "has no device type or model"
+                        if validate
+                        else "does not match expected device pattern",
                     )
                     continue
                 devices.append(device_id)
@@ -210,13 +215,12 @@ def parse_filename_for_metadata(filename: str) -> Dict[str, Any]:
     # Pattern building blocks for filename parsing
     # Each block is a reusable component that can be combined in different ways
     # Build extension pattern from config for text and archive files
-    ext_ptn = '|'.join(
-        re.escape(ext.lstrip('.')) for ext in (config.extensions_text | config.extensions_archive)
+    ext_ptn = "|".join(
+        re.escape(ext.lstrip(".")) for ext in (config.extensions_text | config.extensions_archive)
     )
 
     # Pattern for date and optional time range: YYMMDD[_hhmm][-dd][_hhmm]
     datetime_ptn = "^(?P<datetime>(?:{ptn_dated_prefix})?(?:{ptn_time_range})?)".format_map(config.__dict__)
-
 
     # Pattern for device separator: @, #, or _ (optional when device type/model present)
     device_sep_ptn = r"[@#_]?"
@@ -226,7 +230,8 @@ def parse_filename_for_metadata(filename: str) -> Dict[str, Any]:
     device_ptn = [
         f"(?P<devices{v}>(?:(?:{{ptn_devices_groups_part}})|{{ptn_device_type_model}}))|".format_map(
             config.__dict__
-        ) for v in ("", "1")
+        )
+        for v in ("", "1")
     ]
     # Pattern (2 names) for bin interval: `bin<digits>[optional decimal]s`
     bin_interval_ptn = [rf"bin(?P<averaging_interval{v}>\d+(?:\.\d+)?)s?" for v in ("", "1")]
@@ -234,15 +239,17 @@ def parse_filename_for_metadata(filename: str) -> Dict[str, Any]:
     # Combine all patterns into comprehensive filename pattern
     # Separator is optional: device type/model prefix is sufficient to identify the device part,
     # e.g. "180418_1000inclPres11.txt" parses as datetime=180418_1000, device=inclPres11 -> i11
-    pattern = "".join((
-        datetime_ptn,
-        r"(?:(?:",  # Start non-capturing group for device and bin interval (two possible orders)
-        rf"(?:{device_sep_ptn}{device_ptn[0]})?[-_]?(?:{bin_interval_ptn[0]})?",  # Order 1: device then bin
-        r")|(?:",  # OR
-        rf"(?:{bin_interval_ptn[1]})?(?:{device_sep_ptn}{device_ptn[1]})?",  # Order 2: bin then device
-        r"))?",  # End non-capturing group for device and bin interval
-        rf"\.(?:{ext_ptn})$",  # File extension from config (text and archive files)
-    ))
+    pattern = "".join(
+        (
+            datetime_ptn,
+            r"(?:(?:",  # Start non-capturing group for device and bin interval (two possible orders)
+            rf"(?:{device_sep_ptn}{device_ptn[0]})?[-_]?(?:{bin_interval_ptn[0]})?",  # Order 1: device then bin
+            r")|(?:",  # OR
+            rf"(?:{bin_interval_ptn[1]})?(?:{device_sep_ptn}{device_ptn[1]})?",  # Order 2: bin then device
+            r"))?",  # End non-capturing group for device and bin interval
+            rf"\.(?:{ext_ptn})$",  # File extension from config (text and archive files)
+        )
+    )
     if not (match := re.match(pattern, filename, re.IGNORECASE)):
         return {}
 
@@ -257,7 +264,6 @@ def parse_filename_for_metadata(filename: str) -> Dict[str, Any]:
     metadata.pop("devices1", None)
     metadata.pop("averaging_interval1", None)
 
-
     # Extract interval (can be integer or decimal, e.g., "2s" or "2.5s")
     if metadata["averaging_interval"] is not None:
         interval_str = metadata["averaging_interval"]
@@ -269,7 +275,7 @@ def parse_filename_for_metadata(filename: str) -> Dict[str, Any]:
             metadata["averaging_interval"] = 0
 
     # Extract and process devices
-    if not (devices_str := metadata.get('devices')):
+    if not (devices_str := metadata.get("devices")):
         # Combined file with all devices
         metadata["devices"] = ["*"]
     # elif isinstance(devices_str, list):
@@ -292,7 +298,7 @@ def parse_filename_for_metadata(filename: str) -> Dict[str, Any]:
         # Single device ID
         if not (device_id := normalize_device_id(devices_str.rstrip(".-"))):
             logger.debug(f"Failed to parse device ID from {devices_str}")
-            device_id = '*'
+            device_id = "*"
         metadata["devices"] = [device_id]
         metadata["device_id"] = device_id
     else:
@@ -325,7 +331,7 @@ def extract_device_ids_from_prefixed_name(devices_with_prefix_str: str, msg_what
     match_prefix = re.match(
         rf"^(?:[^@#]*[@#])|(?:(?:{config.ptn_dated_prefix})?[_-]?)", devices_with_prefix_str, re.IGNORECASE
     )
-    devices_str = devices_with_prefix_str[match_prefix.end():] if match_prefix else devices_with_prefix_str
+    devices_str = devices_with_prefix_str[match_prefix.end() :] if match_prefix else devices_with_prefix_str
 
     # Extract the full matched device part suffix
     if not (match := re.match(config.ptn_devices_groups_part, devices_str, re.IGNORECASE)):

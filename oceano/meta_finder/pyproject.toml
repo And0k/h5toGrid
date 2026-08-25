@@ -5,7 +5,7 @@ name = "absioras-meta_finder"
 version = "0.1.0"
 license = "MIT"
 requires-python = ">= 3.11"
-dependencies = ["ruamel-yaml>=0.19.1"]
+dependencies = ["ruamel-yaml>=0.19.1", "absioras-utils"]
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-mock"]

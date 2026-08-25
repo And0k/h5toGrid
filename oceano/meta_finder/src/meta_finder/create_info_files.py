@@ -13,8 +13,9 @@ from . import config
 from . import io_info_files
 from .config import DEVICES_FILE_NAME_UPD, DEVICES_FILE_NAME_YAML
 from datetime import datetime
-from .logging_config import setup_logging
-logger = setup_logging()
+
+logger = logging.getLogger(__name__)
+
 
 def _format_for_devices_meta_file(content: Dict[str, Any]) -> Dict[str, List]:
     """
@@ -43,7 +44,9 @@ def _format_for_devices_meta_file(content: Dict[str, Any]) -> Dict[str, List]:
     """
     formatted_content = {}
     for device_id, device_entry in content.items():
-        logger.debug(f"Formatting device {device_id}: type={type(device_entry)}, keys={list(device_entry.keys())}")
+        logger.debug(
+            f"Formatting device {device_id}: type={type(device_entry)}, keys={list(device_entry.keys())}"
+        )
         if not isinstance(device_entry, dict):
             raise ValueError("device_entry must be a dict")
 
@@ -109,7 +112,10 @@ def _content_data_equals(a: Dict[str, Any], b: Dict[str, Any], normalize_keys: b
     def _to_station_lists(entry: Any) -> Dict[str, list]:
         """Convert any device entry to {station_id: [values]} form."""
         if isinstance(entry, dict) and any(io_info_files.iter_station_id_items(entry)):
-            return {sid: io_info_files._station_metadata_to_list(v) for sid, v in io_info_files.iter_station_id_items(entry)}
+            return {
+                sid: io_info_files._station_metadata_to_list(v)
+                for sid, v in io_info_files.iter_station_id_items(entry)
+            }
         if isinstance(entry, (list, tuple)):
             return {"0": list(entry)}
         return {}
@@ -178,9 +184,7 @@ def _sort_devices_by_key(content: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _merge_device_metadata(
-    existing_content: Dict[str, Any],
-    new_content: Dict[str, Any],
-    normalize_keys: bool = False
+    existing_content: Dict[str, Any], new_content: Dict[str, Any], normalize_keys: bool = False
 ) -> Dict[str, Any]:
     """
     Merge device metadata from new content into existing content.
@@ -212,14 +216,10 @@ def _merge_device_metadata(
             new_vals = new_content[lookup_id]
 
             # Check if existing_vals or new_vals is a nested dict (multiple intervals)
-            existing_is_nested = (
-                isinstance(existing_vals, dict)
-                and any(io_info_files.iter_station_id_items(existing_vals))
+            existing_is_nested = isinstance(existing_vals, dict) and any(
+                io_info_files.iter_station_id_items(existing_vals)
             )
-            new_is_nested = (
-                isinstance(new_vals, dict)
-                and any(io_info_files.iter_station_id_items(new_vals))
-            )
+            new_is_nested = isinstance(new_vals, dict) and any(io_info_files.iter_station_id_items(new_vals))
             logger.debug(
                 f"Device {d_id} (lookup: {lookup_id}): existing_is_nested={existing_is_nested}, "
                 f"new_is_nested={new_is_nested}"
@@ -252,9 +252,7 @@ def _merge_device_metadata(
                         new_list = new_stations[station_id]
                         merged_dict[station_id] = [
                             new_val if existing_val in ["?", "", None, "-"] else existing_val
-                            for existing_val, new_val in zip_longest(
-                                existing_list, new_list, fillvalue="?"
-                            )
+                            for existing_val, new_val in zip_longest(existing_list, new_list, fillvalue="?")
                         ]
                     else:
                         merged_dict[station_id] = existing_list
@@ -277,9 +275,7 @@ def _merge_device_metadata(
             merged_content[output_id] = vals
 
     # Collect new devices not yet in merged_content, then append them sorted by type/model and number
-    new_device_items = {
-        d_id: vals for d_id, vals in new_content.items() if d_id not in merged_content
-    }
+    new_device_items = {d_id: vals for d_id, vals in new_content.items() if d_id not in merged_content}
     for d_id, vals in sorted(new_device_items.items(), key=lambda item: _device_sort_key(item[0])):
         merged_content[d_id] = vals
 
@@ -309,14 +305,13 @@ def update_devices_meta_file(device_dir: Path, content: Dict[str, List]) -> bool
         logger.warning(f"Skipping {device_dir} as it is not a directory")
         return False
 
-
     # Check if file already exists
     file_out = device_dir / DEVICES_FILE_NAME_UPD
     file_keep = device_dir / DEVICES_FILE_NAME_YAML
     # Whether info_devices.yaml exists — determines if @meta_finder can be deleted as duplicate
     have_file_keep = file_keep.exists()
 
-    if (have_file_out := file_out.exists()):
+    if have_file_out := file_out.exists():
         if not config.overwrite_bad_devs_in_info_files:
             logger.info(
                 f"Skipping update existed {file_out.name}: config.overwrite_bad_devs_in_info_files is 0"
@@ -330,8 +325,7 @@ def update_devices_meta_file(device_dir: Path, content: Dict[str, List]) -> bool
         if content_is_bad:
             # New content is just a placeholder, don't overwrite existing with device info
             logger.warning(
-                f"New content {str(content)} has only placeholders, skipping overwrite of "
-                f"existing {file_out}"
+                f"New content {str(content)} has only placeholders, skipping overwrite of existing {file_out}"
             )
             # Log the content of existing file that will be preserved
             if logger.isEnabledFor(logging.DEBUG):
@@ -371,6 +365,7 @@ def update_devices_meta_file(device_dir: Path, content: Dict[str, List]) -> bool
                     exc_info=True,
                 )
                 import sys, traceback
+
                 print(
                     f"ERROR: Encoding error reading existing info file {file_out.name}: {e}", file=sys.stderr
                 )
@@ -380,6 +375,7 @@ def update_devices_meta_file(device_dir: Path, content: Dict[str, List]) -> bool
             except Exception as e:
                 logger.error(f"Error reading existing info file {file_out}: {e}", exc_info=True)
                 import sys, traceback
+
                 print(f"ERROR: Error reading existing info file {file_out.name}: {e}", file=sys.stderr)
                 print("Traceback (most recent call last):", file=sys.stderr)
                 traceback.print_exc(file=sys.stderr)
@@ -416,9 +412,7 @@ def update_devices_meta_file(device_dir: Path, content: Dict[str, List]) -> bool
             else:
                 # Both existing YAML and new content have real data, do selective overwrite
                 logger.debug(f"Merging new content with existing {file_keep.name}")
-                content_write = _merge_device_metadata(
-                    existing_content, content_use, normalize_keys=True
-                )
+                content_write = _merge_device_metadata(existing_content, content_use, normalize_keys=True)
         else:
             # No existing YAML file, use new content sorted by type/model and number
             content_write = _sort_devices_by_key(content_use)
@@ -442,17 +436,11 @@ def update_devices_meta_file(device_dir: Path, content: Dict[str, List]) -> bool
     if have_file_out:
         if have_file_keep:
             logger.info(
-                f"Deleting {file_out.name} in {device_dir}: "
-                f"content is identical to info_devices.yaml"
+                f"Deleting {file_out.name} in {device_dir}: content is identical to info_devices.yaml"
             )
             file_out.unlink()
         else:
-            logger.debug(
-                f"Keeping {file_out.name} in {device_dir}: "
-                f"no info_devices.yaml to compare against"
-            )
+            logger.debug(f"Keeping {file_out.name} in {device_dir}: no info_devices.yaml to compare against")
     else:
-        logger.info(
-            f"Not creating {file_out.name} as content is unchanged from existing source"
-        )
+        logger.info(f"Not creating {file_out.name} as content is unchanged from existing source")
     return False

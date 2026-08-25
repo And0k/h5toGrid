@@ -20,19 +20,19 @@ from meta_finder.io_info_files import (
     _remove_trailing_empty_fields,
 )
 
-from meta_finder.logging_config import setup_logging
+from utils.logging_config import setup_logging
 
 logger = setup_logging(log_level=logging.DEBUG)
 
 
 def _extract_base_name(device_id: str) -> str:
     """Extract base device name without trailing underscores."""
-    return device_id.rstrip('_')
+    return device_id.rstrip("_")
 
 
 def _count_trailing_underscores(device_id: str) -> int:
     """Count number of trailing underscores in device identifier."""
-    return len(device_id) - len(device_id.rstrip('_'))
+    return len(device_id) - len(device_id.rstrip("_"))
 
 
 def _get_base_name_order(device_ids: list) -> list:
@@ -75,14 +75,14 @@ def _convert_to_read_format(content: dict) -> dict:
 
 # Shared test data for order preservation tests
 ORDER_TEST_CONTENT = {
-    "ip7": ['?', '?', '?', '?', '?', '?', '?', '?', '', '', ''],
-    "w2": ['?', '?', '?', '?', '?', '?', '2013-05-10 10:00:00', '2013-05-10 17:06:27', '-', '-', '?'],
-    "ip7_": ['?', '?', '?', '?', '?', '?', '?', '?', '', '', '?'],
-    "ip7__": ['?', '?', '?', '?', '?', '?', '?', '?', '', '', ''],
-    "w1": ['?', '?', '?', '?', '?', '?', '2013-05-10 10:00:00', '2013-05-19 15:01:15', '-', '-', '?'],
-    "i15": ['?', '?', '?', '?', '?', '?', '?', '?', '', '', '?'],
-    "ip1_": ['?', '?', '?', '?', '?', '?', '?', '?', '', '', ''],
-    "i1": ['?', '?', '?', '?', '?', '?', '2013-05-10 10:00:00', '2013-05-10 14:17:19:59', '-', '-', '?'],
+    "ip7": ["?", "?", "?", "?", "?", "?", "?", "?", "", "", ""],
+    "w2": ["?", "?", "?", "?", "?", "?", "2013-05-10 10:00:00", "2013-05-10 17:06:27", "-", "-", "?"],
+    "ip7_": ["?", "?", "?", "?", "?", "?", "?", "?", "", "", "?"],
+    "ip7__": ["?", "?", "?", "?", "?", "?", "?", "?", "", "", ""],
+    "w1": ["?", "?", "?", "?", "?", "?", "2013-05-10 10:00:00", "2013-05-19 15:01:15", "-", "-", "?"],
+    "i15": ["?", "?", "?", "?", "?", "?", "?", "?", "", "", "?"],
+    "ip1_": ["?", "?", "?", "?", "?", "?", "?", "?", "", "", ""],
+    "i1": ["?", "?", "?", "?", "?", "?", "2013-05-10 10:00:00", "2013-05-10 14:17:19:59", "-", "-", "?"],
 }
 
 
@@ -95,17 +95,17 @@ ORDER_TEST_CONTENT = {
         ),
         (
             {
-                "device3": ['a', 'b', 'c'],
-                "device1": ['d', 'e', 'f'],
-                "device2": ['g', 'h', 'i'],
+                "device3": ["a", "b", "c"],
+                "device1": ["d", "e", "f"],
+                "device2": ["g", "h", "i"],
             },
             "Order preservation without underscore suffixes",
         ),
         (
             {
-                "device1_": ['a', 'b', 'c'],
-                "device1": ['d', 'e', 'f'],
-                "device1__": ['g', 'h', 'i'],
+                "device1_": ["a", "b", "c"],
+                "device1": ["d", "e", "f"],
+                "device1__": ["g", "h", "i"],
             },
             "Order preservation with underscore suffixes only",
         ),
@@ -206,9 +206,9 @@ def test_json_to_yaml_order_preservation(tmp_path, original_content, test_descri
 def test_yaml_file_content_order(tmp_path):
     """Test that the YAML file content preserves device order at the file level."""
     content = {
-        "device3": ['a', 'b', 'c'],
-        "device1": ['d', 'e', 'f'],
-        "device2": ['g', 'h', 'i'],
+        "device3": ["a", "b", "c"],
+        "device1": ["d", "e", "f"],
+        "device2": ["g", "h", "i"],
     }
 
     yaml_file = tmp_path / "test_order.yaml"
@@ -217,15 +217,14 @@ def test_yaml_file_content_order(tmp_path):
 
     write_devices_meta_yaml(tmp_path, yaml_file, content)
 
-    with open(yaml_file, 'r', encoding='utf-8') as f:
+    with open(yaml_file, "r", encoding="utf-8") as f:
         yaml_lines = f.readlines()
 
     device_lines = [
-        line for line in yaml_lines
-        if any(d in line for d in ('"device1":', '"device2":', '"device3":'))
+        line for line in yaml_lines if any(d in line for d in ('"device1":', '"device2":', '"device3":'))
     ]
 
-    devices_in_file = [line.split(':')[0].strip().strip('"') for line in device_lines]
+    devices_in_file = [line.split(":")[0].strip().strip('"') for line in device_lines]
 
     logger.debug(f"Devices in YAML file order: {devices_in_file}")
 

@@ -3,6 +3,7 @@
 Test script to test HDF5 date extraction functionality with real h5 files from BalticSea dataset.
 This tests the functionality to extract dates from {device_id}/coef/date paths in HDF5 files.
 """
+
 import pytest
 from pathlib import Path
 import sys
@@ -12,17 +13,19 @@ import logging
 # Add the project source directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+
 def test_real_hdf5_date_extraction():
     """Test HDF5 date extraction functionality with real files from the BalticSea dataset."""
 
     # Using centralized logging configuration
-    from meta_finder.logging_config import setup_logging
-    logger = setup_logging(__name__, include_function_name=True, log_file_sfx="test_hdf5_date_extraction")
+    from utils.logging_config import setup_logging
+
+    logger = setup_logging(__name__, log_file_sfx="test_hdf5_date_extraction")
 
     # Define the real HDF5 file paths
     hdf5_files = [
         Path("D:/WorkData/BalticSea/_Pregolya,Lagoon/191210@i07,23,30,32/191210incl.h5"),
-        Path("D:/WorkData/BalticSea/250415_ABP60@i,t-chain/inclinometer/_raw/250415.raw.h5")
+        Path("D:/WorkData/BalticSea/250415_ABP60@i,t-chain/inclinometer/_raw/250415.raw.h5"),
     ]
 
     # Check if files exist before testing
@@ -33,7 +36,7 @@ def test_real_hdf5_date_extraction():
             continue  # Skip this file if it doesn't exist
 
     print(f"Testing HDF5 date extraction functionality with files: {hdf5_files}")
-    print("="*80)
+    print("=" * 80)
 
     # Test date extraction from HDF5 files
     print("1. Testing date extraction from HDF5 files...")
@@ -44,6 +47,7 @@ def test_real_hdf5_date_extraction():
         print(f"  Testing file: {hdf5_file.name}")
         try:
             import tables
+
             with tables.open_file(str(hdf5_file), mode="r") as h5file:
                 print(f"    File structure:")
 
@@ -62,19 +66,21 @@ def test_real_hdf5_date_extraction():
 
                             print(f"          Raw dates: {dates}")
                             print(f"          Date type: {type(dates)}")
-                            print(f"          Date shape: {dates.shape if hasattr(dates, 'shape') else 'N/A'}")
+                            print(
+                                f"          Date shape: {dates.shape if hasattr(dates, 'shape') else 'N/A'}"
+                            )
 
                             # Process dates to find max non-NaN date
                             processed_dates = []
                             for date_val in dates:
-                                if hasattr(date_val, 'decode'):
+                                if hasattr(date_val, "decode"):
                                     # Handle byte strings
-                                    date_str = date_val.decode('utf-8')
+                                    date_str = date_val.decode("utf-8")
                                     processed_dates.append(date_str)
                                     print(f"            Decoded date: {date_str}")
-                                elif hasattr(date_val, 'astype') and 'datetime64' in str(date_val.dtype):
+                                elif hasattr(date_val, "astype") and "datetime64" in str(date_val.dtype):
                                     # Handle numpy datetime
-                                    date_str = str(date_val.astype('datetime64[s]')).replace('T', ' ')
+                                    date_str = str(date_val.astype("datetime64[s]")).replace("T", " ")
                                     processed_dates.append(date_str)
                                     print(f"            Converted datetime: {date_str}")
                                 elif np.isscalar(date_val) and np.isnan(date_val):
@@ -88,13 +94,19 @@ def test_real_hdf5_date_extraction():
                                         if date_val > 1e10:  # Likely nanosecond timestamp
                                             date_timestamp = date_val / 1e9
                                             from datetime import datetime
-                                            date_str = datetime.fromtimestamp(date_timestamp).strftime('%Y-%m-%d %H:%M:%S')
+
+                                            date_str = datetime.fromtimestamp(date_timestamp).strftime(
+                                                "%Y-%m-%d %H:%M:%S"
+                                            )
                                             processed_dates.append(date_str)
                                             print(f"            Converted ns timestamp: {date_str}")
                                         else:
                                             # Regular number, maybe it's seconds
                                             from datetime import datetime
-                                            date_str = datetime.fromtimestamp(date_val).strftime('%Y-%m-%d %H:%M:%S')
+
+                                            date_str = datetime.fromtimestamp(date_val).strftime(
+                                                "%Y-%m-%d %H:%M:%S"
+                                            )
                                             processed_dates.append(date_str)
                                             print(f"            Converted timestamp: {date_str}")
                                     except (ValueError, OSError, OverflowError):
@@ -107,18 +119,21 @@ def test_real_hdf5_date_extraction():
                                     print(f"            Raw value: {date_val}")
 
                             # Filter out NaN values and get max date
-                            non_nan_dates = [d for d in processed_dates if d and d != 'nan' and str(d).lower() != 'nan']
+                            non_nan_dates = [
+                                d for d in processed_dates if d and d != "nan" and str(d).lower() != "nan"
+                            ]
                             if non_nan_dates:
                                 # For string dates, we need to sort them properly
                                 # Convert to datetime for proper comparison
                                 from datetime import datetime
+
                                 date_objects = []
                                 for date_str in non_nan_dates:
                                     try:
-                                        if 'T' in date_str:
-                                            dt = datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S')
+                                        if "T" in date_str:
+                                            dt = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
                                         else:
-                                            dt = datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S')
+                                            dt = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
                                         date_objects.append((dt, date_str))
                                     except ValueError:
                                         # If parsing fails, skip this date
@@ -139,37 +154,57 @@ def test_real_hdf5_date_extraction():
                     for table_node in h5file.walk_nodes(where=node._v_pathname, classname="Table"):
                         print(f"        Table: {table_node._v_pathname}")
                         # Show column names if it's a table
-                        if hasattr(table_node, 'cols') and hasattr(table_node.cols, '_v_colnames'):
+                        if hasattr(table_node, "cols") and hasattr(table_node.cols, "_v_colnames"):
                             print(f"          Columns: {table_node.cols._v_colnames}")
         except Exception as e:
             print(f"    Error reading file {hdf5_file}: {e}")
 
     print()
 
-    print("="*80)
+    print("=" * 80)
     print("HDF5 date extraction test completed.")
 
 
-@pytest.mark.parametrize("input_dates,expected_max_date,comment", [
-    (["2023-01-01", "2023-01-02", "2023-01-03"], "2023-01-03", "should return the latest date when all dates are valid"),
-    (["2023-01-03", "2023-01-01", "2023-01-02"], "2023-01-03", "should return the latest date when dates are in different order"),
-    (["2023-01-01", "nan", "2023-01-03"], "2023-01-03", "should return max date when NaN values are present"),
-    (["nan", "2023-01-01", "nan"], "2023-01-01", "should return only valid date when other values are NaN"),
-    (["nan", "nan", "nan"], None, "should return None when all values are NaN"),
-], ids=["all_valid", "unordered", "with_nan", "single_valid", "all_nan"])
+@pytest.mark.parametrize(
+    "input_dates,expected_max_date,comment",
+    [
+        (
+            ["2023-01-01", "2023-01-02", "2023-01-03"],
+            "2023-01-03",
+            "should return the latest date when all dates are valid",
+        ),
+        (
+            ["2023-01-03", "2023-01-01", "2023-01-02"],
+            "2023-01-03",
+            "should return the latest date when dates are in different order",
+        ),
+        (
+            ["2023-01-01", "nan", "2023-01-03"],
+            "2023-01-03",
+            "should return max date when NaN values are present",
+        ),
+        (
+            ["nan", "2023-01-01", "nan"],
+            "2023-01-01",
+            "should return only valid date when other values are NaN",
+        ),
+        (["nan", "nan", "nan"], None, "should return None when all values are NaN"),
+    ],
+    ids=["all_valid", "unordered", "with_nan", "single_valid", "all_nan"],
+)
 def test_find_max_date_from_list(input_dates, expected_max_date, comment):
     """Test finding maximum date from a list of date strings."""
     from datetime import datetime
 
     # Filter out NaN values and get max date
-    non_nan_dates = [d for d in input_dates if d and d != 'nan' and str(d).lower() != 'nan']
+    non_nan_dates = [d for d in input_dates if d and d != "nan" and str(d).lower() != "nan"]
 
     if non_nan_dates:
         # Convert to datetime for proper comparison
         date_objects = []
         for date_str in non_nan_dates:
             try:
-                dt = datetime.strptime(date_str, '%Y-%m-%d')
+                dt = datetime.strptime(date_str, "%Y-%m-%d")
                 date_objects.append((dt, date_str))
             except ValueError:
                 # If parsing fails, skip this date
@@ -183,4 +218,6 @@ def test_find_max_date_from_list(input_dates, expected_max_date, comment):
     else:
         actual_max_date = None
 
-    assert actual_max_date == expected_max_date, f"find_max_date_from_list should return {expected_max_date} as per: {comment}"
+    assert actual_max_date == expected_max_date, (
+        f"find_max_date_from_list should return {expected_max_date} as per: {comment}"
+    )

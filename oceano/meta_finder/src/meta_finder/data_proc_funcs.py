@@ -2,6 +2,7 @@
 Specific file processing functions for TCM Metadata Processor.
 """
 
+import logging
 from typing import List, Dict, Any, Tuple, Optional, Union
 from pathlib import Path, PurePosixPath
 import re
@@ -11,9 +12,9 @@ from . import config
 from meta_finder.parse_data_file_name import parse_device_id_groups, parse_filename_for_metadata
 from . import utils_sys
 from .parse_data_file_name import normalize_device_id
-from .logging_config import setup_logging
 
-logger = setup_logging()
+logger = logging.getLogger(__name__)
+
 
 def serial_to_datetime(serial: float) -> str:
     """
@@ -37,7 +38,7 @@ def serial_to_datetime(serial: float) -> str:
     else:
         # MATLAB Serial Date (эпоха: 0001-01-01)
         base_epoch_datetime = datetime.min.replace(year=1)
-        adjusted_serial = serial - 366 - 1   # -1 - поправка в данных для совместимости с Excel
+        adjusted_serial = serial - 366 - 1  # -1 - поправка в данных для совместимости с Excel
 
     days_part = int(adjusted_serial)
     fractional_day = adjusted_serial - days_part
@@ -45,6 +46,7 @@ def serial_to_datetime(serial: float) -> str:
         days=days_part, seconds=round(fractional_day * total_seconds_per_day)
     )
     return result_datetime.isoformat()
+
 
 # Cache for _find_dated_files_with_same_pattern_generic to avoid reprocessing same file groups
 # Key: (parent_dir_path, device_id, extension) -> Result: [path_min, path_max]
@@ -85,24 +87,23 @@ def _build_dated_mask_pattern(filename: str) -> re.Pattern:
     """
     # Match the full dated prefix: YYMMDD[_HHMM][-DD[_HHMM]]
     # This covers: 180418, 180418_0710, 180418_0710-18_2304, etc.
-    prefix_match = re.match(
-        r'^(\d{4,6}(?:\.\.\d{2,6})?(?:_\d+(?:-\d+(?:_\d+)?)?)?)', filename
-    )
+    prefix_match = re.match(r"^(\d{4,6}(?:\.\.\d{2,6})?(?:_\d+(?:-\d+(?:_\d+)?)?)?)", filename)
     if not prefix_match:
-        return re.compile(rf'^{re.escape(filename)}$', re.IGNORECASE)
+        return re.compile(rf"^{re.escape(filename)}$", re.IGNORECASE)
 
     dated_prefix = prefix_match.group(1)
-    suffix = filename[len(dated_prefix):]
+    suffix = filename[len(dated_prefix) :]
 
     # Build mask: each digit -> \d, keep separators literal
-    masked_prefix = re.sub(r'\d', r'\\d', dated_prefix)
+    masked_prefix = re.sub(r"\d", r"\\d", dated_prefix)
 
     # Escape the remaining suffix for regex safety
-    return re.compile(rf'^{masked_prefix}{re.escape(suffix)}$', re.IGNORECASE)
+    return re.compile(rf"^{masked_prefix}{re.escape(suffix)}$", re.IGNORECASE)
 
 
 def _find_dated_files_with_same_pattern_generic(
-    base_name: str, paths: list,
+    base_name: str,
+    paths: list,
 ) -> list:
     r"""Find files sharing the same dated-part pattern, returning first and last.
 
@@ -120,14 +121,14 @@ def _find_dated_files_with_same_pattern_generic(
     pattern = _build_dated_mask_pattern(base_name)
 
     # Extract timestamp prefix (digits before first non-digit separator) for ordering
-    ts_re = re.compile(r'^(\d{4,6}(?:\.\.\d{2,6})?(?:_\d+(?:-\d+(?:_\d+)?)?)?)')
+    ts_re = re.compile(r"^(\d{4,6}(?:\.\.\d{2,6})?(?:_\d+(?:-\d+(?:_\d+)?)?)?)")
 
     ts_min: Optional[str] = None
     ts_max: Optional[str] = None
     path_min = path_max = None
 
     for path in paths:
-        name = path.name if hasattr(path, 'name') else str(path)
+        name = path.name if hasattr(path, "name") else str(path)
         if not pattern.match(name):
             continue
 
@@ -146,7 +147,7 @@ def _find_dated_files_with_same_pattern_generic(
     # Fallback: if pattern matched nothing, try exact name match
     if path_min is None:
         for path in paths:
-            name = path.name if hasattr(path, 'name') else str(path)
+            name = path.name if hasattr(path, "name") else str(path)
             if name == base_name:
                 return [path]
         return []
@@ -205,9 +206,7 @@ def _find_matching_files_in_archive(dir_archive: Path, rel_path: PurePosixPath) 
     return _find_dated_files_with_same_pattern_generic(base_name, rel_paths)
 
 
-def _get_last_lines_efficiently(
-    file_handle, num_lines: int = 1, skip_nan_rows: bool = True
-) -> List[str]:
+def _get_last_lines_efficiently(file_handle, num_lines: int = 1, skip_nan_rows: bool = True) -> List[str]:
     """
     Read the last N lines of a file efficiently without loading the entire file into memory.
     Optionally skips trailing rows that contain only NaN data.
@@ -244,10 +243,10 @@ def _get_last_lines_efficiently(
             buffer = chunk + buffer
 
             # Count newlines in buffer
-            lines_found = buffer.count('\n')
+            lines_found = buffer.count("\n")
 
         # Split buffer into lines
-        lines = buffer.split('\n')
+        lines = buffer.split("\n")
 
         # If requested, skip trailing rows with only NaN data
         if skip_nan_rows and lines:
@@ -295,13 +294,13 @@ def _get_last_lines_efficiently(
                     # Find last num_lines lines with valid data
                     filtered_lines = []
                     for line in reversed(all_lines):
-                        if line.strip() and not _row_has_only_nan_data(line.rstrip('\n'), sep):
-                            filtered_lines.append(line.rstrip('\n'))
+                        if line.strip() and not _row_has_only_nan_data(line.rstrip("\n"), sep):
+                            filtered_lines.append(line.rstrip("\n"))
                             if len(filtered_lines) >= num_lines:
                                 break
                     return list(reversed(filtered_lines))
                 # Return last num_lines lines
-                return [line.rstrip('\n') for line in all_lines[-num_lines:]]
+                return [line.rstrip("\n") for line in all_lines[-num_lines:]]
         except MemoryError:
             logger.error("MemoryError when reading file. File may be too large.")
             raise
@@ -309,7 +308,9 @@ def _get_last_lines_efficiently(
     return []
 
 
-def _get_last_line_efficiently(file_handle, skip_nan_rows: bool = True, is_raw: bool = False) -> Optional[str]:
+def _get_last_line_efficiently(
+    file_handle, skip_nan_rows: bool = True, is_raw: bool = False
+) -> Optional[str]:
     """
     Read the last line of a file efficiently without loading the entire file into memory.
     Optionally skips trailing rows that contain only NaN data.
@@ -340,8 +341,7 @@ def _get_last_line_efficiently(file_handle, skip_nan_rows: bool = True, is_raw: 
     start_idx = len(lines) - 1
     max_attempts = 10
     time_result = _find_valid_time_line(
-        lines, start_idx, direction="backward",
-        max_attempts=max_attempts, is_raw=is_raw, sep=sep
+        lines, start_idx, direction="backward", max_attempts=max_attempts, is_raw=is_raw, sep=sep
     )
     if time_result:
         # Return the line with valid timestamp
@@ -365,7 +365,9 @@ def _is_raw_format(dir_archive: Path, rel_path: PurePosixPath) -> bool:
     return "_raw" in str(dir_archive).lower() or "_raw" in str(rel_path).lower()
 
 
-def _read_first_last_lines(matching_files: List[Path], max_lines: Optional[int] = None, skip_nan_rows: bool = True) -> Tuple[List[str], Optional[str]]:
+def _read_first_last_lines(
+    matching_files: List[Path], max_lines: Optional[int] = None, skip_nan_rows: bool = True
+) -> Tuple[List[str], Optional[str]]:
     """
     Read lines from split files in a directory, optionally skipping trailing NaN rows.
 
@@ -421,7 +423,12 @@ def _read_first_last_lines(matching_files: List[Path], max_lines: Optional[int] 
     return lines, last_line
 
 
-def _read_first_last_lines_from_archived_files(dir_archive: Path, matching_files: List[PurePosixPath], max_lines: Optional[int] = None, skip_nan_rows: bool = True) -> Tuple[List[str], Optional[str]]:
+def _read_first_last_lines_from_archived_files(
+    dir_archive: Path,
+    matching_files: List[PurePosixPath],
+    max_lines: Optional[int] = None,
+    skip_nan_rows: bool = True,
+) -> Tuple[List[str], Optional[str]]:
     """
     Read lines from split files in an archive, optionally skipping trailing NaN rows.
 
@@ -476,6 +483,7 @@ def _read_first_last_lines_from_archived_files(dir_archive: Path, matching_files
 
         # Fallback: extract files to temporary directory
         import tempfile
+
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_dir_path = Path(temp_dir)
 
@@ -489,11 +497,13 @@ def _read_first_last_lines_from_archived_files(dir_archive: Path, matching_files
             if dir_archive.suffix.lower() in config.extensions_archive:
                 if dir_archive.suffix.lower() == ".zip":
                     import zipfile
+
                     with zipfile.ZipFile(dir_archive) as zf:
                         for file_path in files_to_extract:
                             zf.extract(str(file_path), path=temp_dir_path)
                 elif dir_archive.suffix.lower() == ".7z":
                     import py7zr
+
                     with py7zr.SevenZipFile(dir_archive, mode="r") as archive:
                         archive.extract(path=temp_dir_path, targets=[str(fp) for fp in files_to_extract])
             else:
@@ -516,7 +526,7 @@ def read_file_lines_universal(
     max_lines: Optional[int] = None,
     skip_nan_rows: bool = True,
     max_burst_time_detection: Optional[int] = None,
-    seconds_per_line: Optional[int|float] = None,
+    seconds_per_line: Optional[int | float] = None,
 ) -> Tuple[List[str], Optional[str], Optional[str]]:
     """
     Read lines from a file, handling both regular files and archives.
@@ -546,8 +556,13 @@ def read_file_lines_universal(
         is_raw = _is_raw_format(dir_archive, rel_path)
         skip_header = 4 if is_raw else 0
         calculated_max_lines = utils_sys.calculate_lines_for_burst_time(
-            dir_archive, rel_path, max_burst_time_detection,
-            parse_datetime_from_row, skip_header=skip_header, is_raw=is_raw, seconds_per_line=seconds_per_line
+            dir_archive,
+            rel_path,
+            max_burst_time_detection,
+            parse_datetime_from_row,
+            skip_header=skip_header,
+            is_raw=is_raw,
+            seconds_per_line=seconds_per_line,
         )
         if calculated_max_lines is not None:
             max_lines = calculated_max_lines
@@ -558,7 +573,7 @@ def read_file_lines_universal(
         if Path(dir_archive).is_dir():
             # Regular files
             parent_dir = dir_archive / rel_path.parent
-            if (matching_files := _find_matching_files_in_directory(parent_dir, base_name)):
+            if matching_files := _find_matching_files_in_directory(parent_dir, base_name):
                 # Check cache for reading results using the same key as file discovery
                 # For split files, all files in the same group will have same device and extension
                 # Extract device_id and extension from base_name for cache key
@@ -577,7 +592,9 @@ def read_file_lines_universal(
                     logger.debug(f"Using cached read result for {base_name}-like files in {parent_dir}")
                     return _read_file_lines_cache[cache_key]
 
-                lines, last_line = _read_first_last_lines(matching_files, max_lines, skip_nan_rows=skip_nan_rows)
+                lines, last_line = _read_first_last_lines(
+                    matching_files, max_lines, skip_nan_rows=skip_nan_rows
+                )
                 _read_file_lines_cache[cache_key] = (lines, last_line, last_error)
             else:
                 logger.warning(
@@ -586,7 +603,7 @@ def read_file_lines_universal(
                 )
         else:
             # Archive files
-            if (matching_files := _find_matching_files_in_archive(dir_archive, rel_path)):
+            if matching_files := _find_matching_files_in_archive(dir_archive, rel_path):
                 # Check cache for reading results using the same key as file discovery
                 # Extract device_id and extension from base_name for cache key
                 base_meta = parse_filename_for_metadata(base_name)
@@ -622,14 +639,16 @@ def read_file_lines_universal(
                 else ""
             )
             logger.info(
-                "".join([
-                    "Have read lines",
-                    f" (max: {max_lines})" if max_lines else "",
-                    " from ",
-                    (f"{n_files} {rel_path}-like files" if n_files > 1 else f"{rel_path}"),
-                    f" in {dir_archive.name}/" if dir_archive.name != "text_output" else "",
-                    file_names_str
-                ])
+                "".join(
+                    [
+                        "Have read lines",
+                        f" (max: {max_lines})" if max_lines else "",
+                        " from ",
+                        (f"{n_files} {rel_path}-like files" if n_files > 1 else f"{rel_path}"),
+                        f" in {dir_archive.name}/" if dir_archive.name != "text_output" else "",
+                        file_names_str,
+                    ]
+                )
             )
     except Exception as e:
         last_error = f"{type(e).__name__}: {e}"
@@ -659,7 +678,7 @@ def _row_has_only_nan_data(line: str, sep: str) -> bool:
     # Skip first column (Time), check all data columns
     for value in parts[1:]:
         stripped = value.strip()
-        if stripped and stripped not in ('NaN', 'nan', '-', '?', ''):
+        if stripped and stripped not in ("NaN", "nan", "-", "?", ""):
             return False  # Found valid data
     return True  # All data columns are NaN/empty
 
@@ -717,10 +736,10 @@ def _extract_burst_info_from_lines(
     gap_threshold = max(10, averaging_interval * 2)  # Sensible and longer than averaging interval
 
     # Track minimum time difference for validation
-    min_time_diff = float('inf')
+    min_time_diff = float("inf")
 
     for i in range(1, len(timestamps)):
-        prev_time = timestamps[i-1]
+        prev_time = timestamps[i - 1]
         curr_time = timestamps[i]
         # timestamps contains tuples of (timestamp_str, datetime), use datetime part (index 1)
         time_diff = (curr_time[1] - prev_time[1]).total_seconds()
@@ -730,12 +749,14 @@ def _extract_burst_info_from_lines(
             min_time_diff = time_diff
 
         if time_diff > gap_threshold:
-            gaps.append({
-                'index': i,
-                'prev_timestamp': prev_time[0],
-                'curr_timestamp': curr_time[0],
-                'gap_duration': time_diff
-            })
+            gaps.append(
+                {
+                    "index": i,
+                    "prev_timestamp": prev_time[0],
+                    "curr_timestamp": curr_time[0],
+                    "gap_duration": time_diff,
+                }
+            )
 
     # Validate that minimum delta time is not significantly larger than averaging interval
     if min_time_diff > averaging_interval:
@@ -762,10 +783,10 @@ def _extract_burst_info_from_lines(
             gap_j = gaps[i + 1]
 
             # Extract timestamps from gaps
-            time_before_gap_i = datetime.strptime(gap_i['prev_timestamp'], "%Y-%m-%d %H:%M:%S")
-            time_after_gap_i = datetime.strptime(gap_i['curr_timestamp'], "%Y-%m-%d %H:%M:%S")
-            time_before_gap_j = datetime.strptime(gap_j['prev_timestamp'], "%Y-%m-%d %H:%M:%S")
-            time_after_gap_j = datetime.strptime(gap_j['curr_timestamp'], "%Y-%m-%d %H:%M:%S")
+            time_before_gap_i = datetime.strptime(gap_i["prev_timestamp"], "%Y-%m-%d %H:%M:%S")
+            time_after_gap_i = datetime.strptime(gap_i["curr_timestamp"], "%Y-%m-%d %H:%M:%S")
+            time_before_gap_j = datetime.strptime(gap_j["prev_timestamp"], "%Y-%m-%d %H:%M:%S")
+            time_after_gap_j = datetime.strptime(gap_j["curr_timestamp"], "%Y-%m-%d %H:%M:%S")
 
             # Calculate burst interval (time between consecutive burst starts)
             # For the first gap pair, use first data point as burst start
@@ -835,7 +856,7 @@ def _find_valid_time_line(
     direction: str = "forward",
     max_attempts: int = 10,
     is_raw: bool = False,
-    sep: str = "\t"
+    sep: str = "\t",
 ) -> Optional[Tuple[int, datetime]]:
     """
     Find a line with a valid timestamp, searching forward or backward from start index.
@@ -855,11 +876,14 @@ def _find_valid_time_line(
     """
     # Search forward/backward from start_idx
     for i in range(
-        start_idx, *(
-            [min(start_idx + max_attempts, len(lines))] if direction == "forward" else
-            [max(start_idx - max_attempts, -1), -1]
-        )):
-        if (datetime_out := parse_datetime_from_row(lines[i], is_raw=is_raw, sep=sep)):
+        start_idx,
+        *(
+            [min(start_idx + max_attempts, len(lines))]
+            if direction == "forward"
+            else [max(start_idx - max_attempts, -1), -1]
+        ),
+    ):
+        if datetime_out := parse_datetime_from_row(lines[i], is_raw=is_raw, sep=sep):
             return (i, datetime_out)
 
     return None
@@ -901,7 +925,7 @@ def parse_datetime_from_row(line: str, is_raw: bool = False, sep="\t") -> Option
         # For raw inclinometer format, use regex to split by multiple possible separators at once
         # This handles both comma and tab separators commonly used in raw format
         # Split by comma, tab or space (most common separators for raw format)
-        time_parts = re.split(r'[,\t ]', line.strip())
+        time_parts = re.split(r"[,\t ]", line.strip())
         if len(time_parts) >= 6:
             return parse_inclinometer_time_format(time_parts)
         else:
@@ -916,7 +940,7 @@ def parse_datetime_from_row(line: str, is_raw: bool = False, sep="\t") -> Option
             return datetime.fromisoformat(timestamp_str)
         except ValueError as e:
             # return None without attempting further parsing for intentionally not time values
-            if timestamp_str.upper() == 'NAN':
+            if timestamp_str.upper() == "NAN":
                 return None
             # Detect header lines by checking if the first column contains non-numeric text
             # Headers typically have column names like "Time", "Date", "Year", etc.
@@ -926,15 +950,15 @@ def parse_datetime_from_row(line: str, is_raw: bool = False, sep="\t") -> Option
                 return None
             # Check if the error is due to timezone offset format without colon
             # Format like: 2016-02-19T16:02:30.000000+0200 (should be +02:00)
-            if '+' in timestamp_str or timestamp_str.endswith('Z'):
+            if "+" in timestamp_str or timestamp_str.endswith("Z"):
                 # Try to fix timezone offset format by adding colon if needed
                 # Pattern: +HHMM or -HHMM at the end of the string
-                tz_pattern = re.compile(r'([+-])(\d{2})(\d{2})$')
+                tz_pattern = re.compile(r"([+-])(\d{2})(\d{2})$")
                 match = tz_pattern.search(timestamp_str)
                 if match:
                     # Reconstruct timestamp with colon in timezone offset
                     sign, hours, minutes = match.groups()
-                    fixed_timestamp = tz_pattern.sub(rf'{sign}{hours}:{minutes}', timestamp_str)
+                    fixed_timestamp = tz_pattern.sub(rf"{sign}{hours}:{minutes}", timestamp_str)
                     try:
                         return datetime.fromisoformat(fixed_timestamp)
                     except ValueError:
@@ -978,8 +1002,11 @@ def extract_time_info_from_text_file(
         # the time interval, then compute how many lines are needed to cover the configured time
         # Read lines using universal function (with skip_nan_rows=True to exclude trailing NaN rows)
         lines, last_line, read_error = read_file_lines_universal(
-            dir_archive, rel_path, max_burst_time_detection=config.max_burst_time_detection,
-            skip_nan_rows=True, seconds_per_line=averaging_interval
+            dir_archive,
+            rel_path,
+            max_burst_time_detection=config.max_burst_time_detection,
+            skip_nan_rows=True,
+            seconds_per_line=averaging_interval,
         )
         if not lines:
             logger.warning(
@@ -997,8 +1024,7 @@ def extract_time_info_from_text_file(
         # Find start time by using helper function to search for valid time entry
         start_idx, max_attempts = _get_time_search_params(is_raw)
         start_result = _find_valid_time_line(
-            lines, start_idx, direction="forward",
-            max_attempts=max_attempts, is_raw=is_raw, sep=sep
+            lines, start_idx, direction="forward", max_attempts=max_attempts, is_raw=is_raw, sep=sep
         )
         if start_result:
             start_time = to_utc_naive(start_result[1])
@@ -1060,7 +1086,6 @@ def _extract_device_ids_from_groups_in_data(devices_str: str) -> List[str]:
         List of normalized device IDs extracted from the column name
     """
 
-
     # Replace ALL underscores between ALL digits with commas for parse_device_group
     # This handles cases like 'i05_14_27' -> 'i05,14,27'
     dev_groups_str = re.sub(r"(\d)_(\d)", r"\1,\2", devices_str)
@@ -1068,7 +1093,7 @@ def _extract_device_ids_from_groups_in_data(devices_str: str) -> List[str]:
     # Extract the full matched device part suffix
     if not (
         match := re.match(config.ptn_devices_groups_part, dev_groups_str, re.IGNORECASE)
-        ) or not match.group(0):  # type regex group is required
+    ) or not match.group(0):  # type regex group is required
         return []
     dev_groups_validated = match.group()
     try:
@@ -1099,8 +1124,10 @@ def _extract_device_ids_from_column_name(column_name: str) -> List[str]:
 
 
 def extract_time_ranges_from_combined_file(
-    dir_archive: Path, rel_path: PurePosixPath, dev_ids: List[str],
-    averaging_interval: Optional[int|float] = None
+    dir_archive: Path,
+    rel_path: PurePosixPath,
+    dev_ids: List[str],
+    averaging_interval: Optional[int | float] = None,
 ) -> Tuple[Dict[str, Optional[Tuple[str, str, int | str, int | str]]], Dict[str, Any]]:
     """
     Extracts device-specific time ranges from a combined data file that contains data for multiple devices.
@@ -1117,9 +1144,7 @@ def extract_time_ranges_from_combined_file(
           Burst values are integers or "-" if not found.
         - _combined_comments: A dictionary about combined device columns.
     """
-    logger.info(
-        f"Extracting time ranges from combined file {dir_archive / rel_path} for devices {dev_ids}"
-    )
+    logger.info(f"Extracting time ranges from combined file {dir_archive / rel_path} for devices {dev_ids}")
     logger.debug(f"Processing combined file: {dir_archive / rel_path}, requested devices: {dev_ids}")
 
     result = {}
@@ -1184,13 +1209,17 @@ def extract_time_ranges_from_combined_file(
                 # The read_file_lines_universal function will read lines 1 and 20 to calculate
                 # the time interval, then compute how many lines are needed to cover the configured time
                 burst_lines, _, _ = read_file_lines_universal(
-                    dir_archive, rel_path, max_burst_time_detection=config.max_burst_time_detection,
-                    seconds_per_line=averaging_interval
+                    dir_archive,
+                    rel_path,
+                    max_burst_time_detection=config.max_burst_time_detection,
+                    seconds_per_line=averaging_interval,
                 )
                 if len(burst_lines) > 1:
                     # Determine if this is a raw inclinometer format file based on path
                     is_raw = _is_raw_format(dir_archive, rel_path)
-                    bursts_t, burst_dt = _extract_burst_info_from_lines(burst_lines, averaging_interval, is_raw=is_raw)
+                    bursts_t, burst_dt = _extract_burst_info_from_lines(
+                        burst_lines, averaging_interval, is_raw=is_raw
+                    )
                     # Store burst info for all devices (same for all in combined file)
                     bursts_info = {"bursts_t": bursts_t, "burst_dt": burst_dt}
 
@@ -1272,7 +1301,7 @@ def _extract_device_time_ranges_from_large_combined_file(dir_archive, rel_path, 
                 return device_time_ranges, combined_comments
 
             # Parse header line to identify device columns
-            header = header_line.strip().split('\t')
+            header = header_line.strip().split("\t")
 
             # Identify device-specific columns
             device_columns = {}  # Maps device_id to list of column indices
@@ -1307,7 +1336,9 @@ def _extract_device_time_ranges_from_large_combined_file(dir_archive, rel_path, 
             if not any(norm_id in device_columns for norm_id in dev_ids) and dev_ids:
                 # For combined files without device-specific column names, we can't determine
                 # which columns belong to which devices, so we return None for all devices
-                logger.warning(f"No device-specific columns found in {file_path} for requested devices {dev_ids}")
+                logger.warning(
+                    f"No device-specific columns found in {file_path} for requested devices {dev_ids}"
+                )
                 for dev_id in dev_ids:
                     device_time_ranges[dev_id] = None
 
@@ -1332,8 +1363,12 @@ def _extract_device_time_ranges_from_large_combined_file(dir_archive, rel_path, 
                 sample_lines.append(line)
 
             time_result = _find_valid_time_line(
-                sample_lines, start_line, direction="forward",
-                max_attempts=max_attempts, is_raw=is_raw, sep=sep
+                sample_lines,
+                start_line,
+                direction="forward",
+                max_attempts=max_attempts,
+                is_raw=is_raw,
+                sep=sep,
             )
             if time_result:
                 # Found first valid data line, skip to it
@@ -1345,14 +1380,13 @@ def _extract_device_time_ranges_from_large_combined_file(dir_archive, rel_path, 
 
             # Process file line by line to avoid memory issues
             for line_num, line in enumerate(f, 1):  # Start counting from 1 for the first data line
-
                 if not line.strip():
                     continue
 
                 if is_raw:
-                    columns = line.strip().split(',')
+                    columns = line.strip().split(",")
                 else:
-                    columns = line.strip().split('\t')
+                    columns = line.strip().split("\t")
                 if not columns:
                     continue
 
@@ -1383,7 +1417,7 @@ def _extract_device_time_ranges_from_large_combined_file(dir_archive, rel_path, 
                         if col_index < len(columns) and columns[col_index].strip():
                             # Consider non-empty values as data
                             value = columns[col_index].strip()
-                            if value and value.lower() not in ['nan', 'null']:
+                            if value and value.lower() not in ["nan", "null"]:
                                 has_data = True
                                 break
 
@@ -1453,7 +1487,7 @@ def _extract_device_time_ranges_from_combined_content(dir_archive, rel_path, lin
         is_raw = _is_raw_format(dir_archive, rel_path)
 
         # Parse header line to identify device columns
-        header = lines[0].strip().split('\t')
+        header = lines[0].strip().split("\t")
 
         # Identify device-specific columns
         device_columns = {}  # Maps device_id to list of column indices
@@ -1488,7 +1522,9 @@ def _extract_device_time_ranges_from_combined_content(dir_archive, rel_path, lin
         if not any(norm_id in device_columns for norm_id in dev_ids) and dev_ids:
             # For combined files without device-specific column names, we can't determine
             # which columns belong to which devices, so we return None for all devices
-            logger.warning(f"No device-specific columns found in {dir_archive / rel_path} for requested devices {dev_ids}")
+            logger.warning(
+                f"No device-specific columns found in {dir_archive / rel_path} for requested devices {dev_ids}"
+            )
             for dev_id in dev_ids:
                 device_time_ranges[dev_id] = None
 
@@ -1504,8 +1540,7 @@ def _extract_device_time_ranges_from_combined_content(dir_archive, rel_path, lin
         start_line, max_attempts = _get_time_search_params(is_raw)
         sep = "\t" if "\t" in lines[0] else "," if "," in lines[0] else " "
         time_result = _find_valid_time_line(
-            lines, start_line, direction="forward",
-            max_attempts=max_attempts, is_raw=is_raw, sep=sep
+            lines, start_line, direction="forward", max_attempts=max_attempts, is_raw=is_raw, sep=sep
         )
         if time_result:
             start_line = time_result[0]
@@ -1515,9 +1550,9 @@ def _extract_device_time_ranges_from_combined_content(dir_archive, rel_path, lin
                 continue
 
             if is_raw:
-                columns = line.strip().split(',')
+                columns = line.strip().split(",")
             else:
-                columns = line.strip().split('\t')
+                columns = line.strip().split("\t")
             if not columns:
                 continue
 
@@ -1532,7 +1567,7 @@ def _extract_device_time_ranges_from_combined_content(dir_archive, rel_path, lin
                     else:
                         continue  # Skip this line if time parsing fails
                 else:
-                    continue # Skip if not enough columns for time info
+                    continue  # Skip if not enough columns for time info
             else:
                 # For standard format, use the existing time pattern matching
                 time_match = time_pattern.match(columns[0]) if columns else None
@@ -1548,7 +1583,7 @@ def _extract_device_time_ranges_from_combined_content(dir_archive, rel_path, lin
                     if col_index < len(columns) and columns[col_index].strip():
                         # Consider non-empty values as data
                         value = columns[col_index].strip()
-                        if value and value.lower() not in ['nan', 'null']:
+                        if value and value.lower() not in ["nan", "null"]:
                             has_data = True
                             break
 
@@ -1637,7 +1672,6 @@ def process_text_output_directory(
                     else:
                         # Handle case where we're discovering devices from files skipping generic markers
                         for dev_id in devices_in_file:
-
                             is_combined = dev_id in ["*", "i", "w", "p"]
                             if not is_combined:
                                 # Collect all file candidates for each device, then prioritize
@@ -1658,9 +1692,9 @@ def process_text_output_directory(
                 avg_interval = config.default_text_file_averaging
 
             # Additional priority factors
-            devices_in_file = metadata.get('devices', []) if metadata else []
+            devices_in_file = metadata.get("devices", []) if metadata else []
             is_combined = any(char in devices_in_file for char in "*iwp")
-            num_devices = len(devices_in_file) if devices_in_file else float('inf')
+            num_devices = len(devices_in_file) if devices_in_file else float("inf")
             return (avg_interval, is_combined, num_devices)
 
         # Sort candidates by priority (ascending - best first)

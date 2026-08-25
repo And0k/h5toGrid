@@ -193,16 +193,15 @@ This document provides a comprehensive analysis of the meta_finder codebase, map
 
 ---
 
-### 14. `logging_config.py`
-**Functionality:** Logging configuration
-- Sets up application logging
-- Configures log levels and formats
-- Manages logging utilities
+### 14. Logging (`shared/utils`)
+**Functionality:** Unified monorepo logging — `meta_finder` keeps no local logger
+- Modules use plain `logging.getLogger(__name__)`; records propagate to the host config (hydra colorlog / tcm_gui queue / standalone)
+- Standalone CLIs call `utils.logging_config.setup_logging()` once at entry
+- Handler/formatter layer: `shared/utils/src/utils/logging_config.py`; message-style adapters: `shared/utils/log_init.py` (see its readme)
 
 **Test Coverage:**
-- `test_enhanced_logging.py` - Tests enhanced logging features
+- `test_logging_no_side_effects.py` - importing meta_finder never configures logging
 - `test_logging_line_numbers.py` - Tests line number reporting
-- `test_logging_with_exception.py` - Tests exception logging
 
 ---
 

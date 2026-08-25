@@ -3,10 +3,9 @@ import re
 from typing import MutableMapping, Dict, Tuple, Optional
 from pathlib import PurePath
 
-from .logging_config import setup_logging
 from . import config
 
-logger = setup_logging()
+logger = logging.getLogger(__name__)
 
 
 # Number of date components and their cumulative character lengths
@@ -35,7 +34,7 @@ def parse_dated_dir(dir_name) -> Dict[str, str]:
         r"(?P<YY>\d{2})(?P<MM>\d{2})(?P<rest>.*)",  # YYMM only (4 digits)
         r"\d{2}(?P<YY>\d{2})-(?P<MM>\d{2})(-(?P<DD>\d{2}))?(?P<rest>.*)",  # ISO date with optional `-DD`
     ]:
-        if (match := re.match(date_ptn, dir_name)):
+        if match := re.match(date_ptn, dir_name):
             break
     else:
         raise ValueError("Cruise directory must start with date YYMMDD, YYMM, or YYYY-MM")
@@ -95,7 +94,7 @@ def strip_devices_sfx_and_get_type0(name: str) -> Tuple[str, str | None]:
         return out_name, (dev_t.lstrip("@#")[0] if dev_t else None)
 
     # Fall back to bare @ or # separator (e.g., "test@device" with no keyword/type match)
-    if (match := re.search(r"[@#]", name)):
+    if match := re.search(r"[@#]", name):
         out_name = name[: match.start(0)].strip(";,._ ")
         return out_name, None
     # No device pattern found — return name as-is with no device type
@@ -229,7 +228,7 @@ def add_dataset_name(
             dev_type = dev_type_new
 
     # Build the right part: cruise_parts joined with "/" or fallback to @device_type
-    if (cruise_parts := list(reversed(cruise_parts))):
+    if cruise_parts := list(reversed(cruise_parts)):
         right_part = "/".join(cruise_parts)
         has_no_digits = not any(ch.isdigit() for ch in cruise_parts[0])
     else:
@@ -279,18 +278,14 @@ def add_dataset_name(
     # - never for device type fallback "@{type}" — handled inside _build_dataset_name
     sep_char = "/" if has_no_digits and bool(cruise_parts) else None
 
-    def _displace_parent_to_min(
-        entry_a_path: PurePath, entry_b_path: PurePath
-    ) -> bool:
+    def _displace_parent_to_min(entry_a_path: PurePath, entry_b_path: PurePath) -> bool:
         """Try to free a colliding name by moving the parent (shallower) path to its minimal name.
 
         The parent is the entry with fewer path parts. Its name is rebuilt with progressively
         fewer date parts (removing DD first, then YYMM) until a free name is found.
         Returns True if displacement succeeded.
         """
-        parent_path = (
-            entry_a_path if len(entry_a_path.parts) <= len(entry_b_path.parts) else entry_b_path
-        )
+        parent_path = entry_a_path if len(entry_a_path.parts) <= len(entry_b_path.parts) else entry_b_path
         parent_date = next(
             (
                 dp
@@ -301,9 +296,7 @@ def add_dataset_name(
         )
         if not parent_date:
             return False
-        parent_old_name = next(
-            (n for n, p in list(used_datasets_paths.items()) if p == parent_path), None
-        )
+        parent_old_name = next((n for n, p in list(used_datasets_paths.items()) if p == parent_path), None)
         if not parent_old_name:
             return False
         # Try progressively shorter date prefixes: current-1, current-2, ..., 0
@@ -318,8 +311,7 @@ def add_dataset_name(
                     del same_right[parent_old_name]
                 same_right[rebuilt] = parent_path
                 logger.info(
-                    f"Displaced parent {parent_old_name!r} -> {rebuilt!r} "
-                    f"(reduced to {try_n} date parts)"
+                    f"Displaced parent {parent_old_name!r} -> {rebuilt!r} (reduced to {try_n} date parts)"
                 )
                 return True
         return False
@@ -389,12 +381,8 @@ def add_dataset_name(
                     # The child keeps the longer prefix; parent keeps the shorter one.
                     continue
                 # Child colliding with parent — fall back to date suffix.
-                renamed = _make_unique_with_date_suffix(
-                    renamed, entry_yymm, entry_dd, used_datasets_paths
-                )
-                logger.warning(
-                    f"Rename collision for {path}: using {renamed!r} (date suffix)"
-                )
+                renamed = _make_unique_with_date_suffix(renamed, entry_yymm, entry_dd, used_datasets_paths)
+                logger.warning(f"Rename collision for {path}: using {renamed!r} (date suffix)")
             used_datasets_paths.pop(name, None)
             used_datasets_paths[renamed] = path
             if name in same_right:
@@ -417,9 +405,7 @@ def add_dataset_name(
             yymm, dd = date_components[0], date_components[1] if len(date_components) > 1 else ""
             if not _displace_parent_to_min(device_dir, occupant_path):
                 dataset_name = _make_unique_with_date_suffix(dataset_name, yymm, dd, used_datasets_paths)
-            logger.warning(
-                f"All date components exhausted for {device_dir}: using {dataset_name!r}"
-            )
+            logger.warning(f"All date components exhausted for {device_dir}: using {dataset_name!r}")
 
     used_datasets_paths[dataset_name] = device_dir
 

@@ -116,8 +116,7 @@ def test_parse_arguments(
         for attr, expected_value in expected_attrs.items():
             actual_value = getattr(args, attr)
             assert actual_value == expected_value, (
-                f"Attribute '{attr}' mismatch for {comment}: "
-                f"expected {expected_value}, got {actual_value}"
+                f"Attribute '{attr}' mismatch for {comment}: expected {expected_value}, got {actual_value}"
             )
 
 
@@ -286,9 +285,7 @@ def test_process_directory_success(
     output_suffix = "_mapping.tsv"
 
     with caplog.at_level(logging.INFO):
-        exit_code = process_directory(
-            sample_directory, output_suffix, sample_directory, 0.3, "*_TCM.tsv"
-        )
+        exit_code = process_directory(sample_directory, output_suffix, sample_directory, 0.3, "*_TCM.tsv")
 
     assert exit_code == 0, "Should return 0 for success"
 
@@ -307,9 +304,7 @@ def test_process_directory_no_tsv_files(
     output_suffix = "_mapping.tsv"
 
     with caplog.at_level(logging.WARNING):
-        exit_code = process_directory(
-            tmp_path, output_suffix, tmp_path, 0.3, "*_TCM.tsv"
-        )
+        exit_code = process_directory(tmp_path, output_suffix, tmp_path, 0.3, "*_TCM.tsv")
 
     assert exit_code == 0, "Should return 0 even with no files"
     assert "No TSV files found" in caplog.text, "Should log warning about no files"
@@ -327,9 +322,7 @@ def test_process_directory_mixed_results(
     output_suffix = "_mapping.tsv"
 
     with caplog.at_level(logging.INFO):
-        exit_code = process_directory(
-            tmp_path, output_suffix, tmp_path, 0.3, "*.tsv"
-        )
+        exit_code = process_directory(tmp_path, output_suffix, tmp_path, 0.3, "*.tsv")
 
     assert exit_code == 1, "Should return 1 when there are errors"
     assert "Processing complete" in caplog.text, "Should log processing summary"
@@ -438,7 +431,8 @@ def test_main_keyboard_interrupt(
 ) -> None:
     """Test main function handling keyboard interrupt."""
     # Set up logging before calling main
-    from meta_finder.logging_config import setup_logging
+    from utils.logging_config import setup_logging
+
     setup_logging(log_level=logging.INFO)
 
     with patch("meta_finder.path_checker_main.process_single_file", side_effect=KeyboardInterrupt):
@@ -457,7 +451,8 @@ def test_main_unexpected_error(
 ) -> None:
     """Test main function handling unexpected errors."""
     # Set up logging before calling main
-    from meta_finder.logging_config import setup_logging
+    from utils.logging_config import setup_logging
+
     setup_logging(log_level=logging.ERROR)
 
     # Create a test file to avoid FileNotFoundError

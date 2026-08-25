@@ -5,7 +5,7 @@ import logging
 import sys
 from pathlib import Path
 
-from meta_finder.logging_config import setup_logging
+from utils.logging_config import setup_logging
 from meta_finder import create_info_files
 
 setup_logging(__name__, console_level=logging.DEBUG, file_level=logging.DEBUG)

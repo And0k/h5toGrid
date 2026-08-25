@@ -122,6 +122,7 @@ absioras-get_datasets = { path = "oceano/get_datasets", editable = true }
 
 [tool.pixi.feature.manage.pypi-dependencies]
 absioras-meta_finder = { path = "oceano/meta_finder", editable = true }
+absioras-utils = { path = "shared/utils", editable = true }
 
 [tool.pixi.feature.arc.dependencies]
 libarchive = ">=3.8.6,<4"
@@ -140,6 +141,7 @@ nodejs = ">=20,<25"
 [tool.pixi.feature.tcm.pypi-dependencies]
 absioras-tcm = { path = "oceano/tcm", editable = true }
 absioras-meta_finder = { path = "oceano/meta_finder", editable = true }
+absioras-utils = { path = "shared/utils", editable = true }
 pygeomag = ">=1.1.0,<2"
 
 [tool.pixi.feature.notebook.dependencies]

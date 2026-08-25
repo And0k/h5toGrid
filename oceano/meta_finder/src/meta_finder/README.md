@@ -78,7 +78,7 @@ The test suite includes a global output directory fixture that standardizes wher
 - **Session-Level Cleanup**: The fixture automatically cleans up all files at the beginning of the test session to ensure a clean test environment
 - **Session-Level Logging**: All log files are redirected to `test_data/meta_temp/logs/` for the entire test session to keep them centralized with other test outputs. For this use centralized logging configuration:
 ```python
-from meta_finder.logging_config import setup_logging
+from utils.logging_config import setup_logging
 logger = setup_logging(__name__, console_level=logging.DEBUG, file_level=logging.DEBUG)
 ```
 - **Consistent Naming**: Test files have been renamed to follow a consistent pattern reflecting the specific functions they test

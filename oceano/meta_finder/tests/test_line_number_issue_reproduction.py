@@ -2,13 +2,14 @@
 Test to reproduce the specific logging line number issue from the original problem.
 This test verifies that the error is logged with the correct line number.
 """
+
 import pytest
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 from meta_finder.data_proc_funcs import _extract_device_time_ranges_from_combined_content
-from meta_finder.logging_config import setup_logging
+from utils.logging_config import setup_logging
 
 
 @pytest.mark.parametrize(
@@ -16,7 +17,7 @@ from meta_finder.logging_config import setup_logging
     [
         ("original_issue", "Reproduce the original logging line number issue"),
     ],
-    ids=["original_issue"]
+    ids=["original_issue"],
 )
 def test_original_logging_line_number_issue(test_id, description):
     """Test that reproduces the original logging line number issue."""
@@ -32,13 +33,17 @@ def test_original_logging_line_number_issue(test_id, description):
         # This will cause the error at line 59: header = lines[0].strip().split('\t')
         # when lines[0] is a list instead of string
         lines = [
-            ["202-03-27 10:10:00", "value1", "value2"],  # This is the problematic line - it's a list, not a string
-            "2022-03-27 10:11:00\tvalue3\tvalue4\n"  # Normal line
+            [
+                "202-03-27 10:10:00",
+                "value1",
+                "value2",
+            ],  # This is the problematic line - it's a list, not a string
+            "2022-03-27 10:11:00\tvalue3\tvalue4\n",  # Normal line
         ]
         device_ids = []
 
         # Capture log output to verify line numbers
-        with patch('meta_finder.data_proc_funcs.logger') as mock_logger:
+        with patch("meta_finder.data_proc_funcs.logger") as mock_logger:
             try:
                 result = _extract_device_time_ranges_from_combined_content(
                     dir_archive, rel_path, lines, device_ids
@@ -58,4 +63,6 @@ def test_original_logging_line_number_issue(test_id, description):
                     error_logged = True
                     break
 
-            assert error_logged, f"Error message should contain 'list' object has no attribute 'strip'. Calls: {mock_logger.error.call_args_list}"
+            assert error_logged, (
+                f"Error message should contain 'list' object has no attribute 'strip'. Calls: {mock_logger.error.call_args_list}"
+            )

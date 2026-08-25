@@ -8,13 +8,14 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from meta_finder.logging_config import setup_logging
+from utils.logging_config import setup_logging
 from meta_finder import metadata_extractor
 from meta_finder import io_info_files
 
 # Enable debug logging
 setup_logging(__name__, console_level=logging.DEBUG, file_level=logging.DEBUG)
 logger = setup_logging()
+
 
 def test_simplified_structure():
     """Test that the simplified nested dict structure works correctly."""
@@ -46,8 +47,12 @@ def test_simplified_structure():
     assert isinstance(converted["i10"], dict), "Device i10 should be a dict"
     assert "0" in converted["i10"], "Device i10 should have station_id '0'"
     assert "1" in converted["i10"], "Device i10 should have station_id '1'"
-    assert converted["i10"]["0"][6] == "2018-10-17 16:30:00", f"Station 0 time_st should be 2018-10-17 16:30:00, got {converted['i10']['0'][6]}"
-    assert converted["i10"]["1"][6] in ["2018-10-22 12:03:00", "2018-10-22T12:03:00"], f"Station 1 time_st should be 2018-10-22 12:03:00 or 2018-10-22T12:03:00, got {converted['i10']['1'][6]}"
+    assert converted["i10"]["0"][6] == "2018-10-17 16:30:00", (
+        f"Station 0 time_st should be 2018-10-17 16:30:00, got {converted['i10']['0'][6]}"
+    )
+    assert converted["i10"]["1"][6] in ["2018-10-22 12:03:00", "2018-10-22T12:03:00"], (
+        f"Station 1 time_st should be 2018-10-22 12:03:00 or 2018-10-22T12:03:00, got {converted['i10']['1'][6]}"
+    )
     logger.info("✓ Test 1 passed: Nested dict structure is correct")
 
     # Test 2: Single interval device
@@ -127,6 +132,7 @@ def test_simplified_structure():
 
     logger.info("\n✓ All tests passed!")
     return True
+
 
 if __name__ == "__main__":
     try:

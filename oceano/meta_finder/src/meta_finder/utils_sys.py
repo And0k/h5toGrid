@@ -2,6 +2,7 @@
 System utility functions for working with directories and files including archives in Windows
 """
 
+import logging
 import zipfile
 from io import TextIOWrapper
 import subprocess
@@ -11,12 +12,13 @@ from typing import Optional, List, Dict, Any, Generator, Tuple
 from pathlib import Path, PurePosixPath
 
 from . import config
-from .logging_config import setup_logging
-logger = setup_logging()
+
+logger = logging.getLogger(__name__)
 
 # Try to import libarchive for better archive handling
 try:
     import libarchive as la
+
     HAS_LIBARCHIVE = True
     logger.debug("libarchive-c is available for archive handling")
 except ImportError:
@@ -30,10 +32,7 @@ except ImportError:
 
 
 def _read_from_libarchive(
-    archive_path: Path,
-    target: str,
-    n_head: Optional[int] = None,
-    skip_header: int = 0
+    archive_path: Path, target: str, n_head: Optional[int] = None, skip_header: int = 0
 ) -> Tuple[List[str], Optional[str]]:
     """
     Read lines from a file inside an archive using libarchive.
@@ -99,17 +98,11 @@ def _list_libarchive_contents(archive_path: Path) -> Generator[Dict[str, Any], N
     """
     with la.file_reader(str(archive_path)) as entries:
         for entry in entries:
-            yield {
-                "rel_path": PurePosixPath(entry.pathname),
-                "is_folder": bool(entry.pathname.endswith("/"))
-            }
+            yield {"rel_path": PurePosixPath(entry.pathname), "is_folder": bool(entry.pathname.endswith("/"))}
 
 
 def _read_sample_lines_from_file(
-    dir_archive: Path,
-    rel_path: PurePosixPath,
-    num_lines: int,
-    skip_header: int = 0
+    dir_archive: Path, rel_path: PurePosixPath, num_lines: int, skip_header: int = 0
 ) -> List[str]:
     """
     Read a sample of lines from a file (directory or archive).
@@ -141,10 +134,7 @@ def _read_sample_lines_from_file(
                 lines.append(line.rstrip("\n"))
     else:
         # Archive file - use read_archive_file_lines
-        lines, _ = read_archive_file_lines(
-            dir_archive, rel_path,
-            max_lines=num_lines + skip_header
-        )
+        lines, _ = read_archive_file_lines(dir_archive, rel_path, max_lines=num_lines + skip_header)
         # Remove header lines if skip_header > 0
         if skip_header > 0 and len(lines) > skip_header:
             lines = lines[skip_header:]
@@ -153,8 +143,8 @@ def _read_sample_lines_from_file(
 
 
 def get_sampling_dt(
-        lines: List[str], parse_datetime_func, is_raw, sample_shift: int, msg_add=""
-    ) -> float|None:
+    lines: List[str], parse_datetime_func, is_raw, sample_shift: int, msg_add=""
+) -> float | None:
     """
     Calculate seconds per line
     """
@@ -182,9 +172,7 @@ def get_sampling_dt(
     else:
         idx_line_sample1 = 0
     if not time_sample1 or not time_sample2:
-        logger.debug(
-            f"Failed to parse timestamps for time interval calculation{msg_add}"
-        )
+        logger.debug(f"Failed to parse timestamps for time interval calculation{msg_add}")
         return None
 
     # Calculate time difference in seconds between line 1 and line 20
@@ -208,7 +196,7 @@ def calculate_lines_for_burst_time(
     parse_datetime_func,
     skip_header: int = 1,
     is_raw: bool = False,
-    seconds_per_line: Optional[int|float] = None,
+    seconds_per_line: Optional[int | float] = None,
 ) -> Optional[int]:
     """
     Calculate the number of lines needed to read to cover max_burst_time_detection seconds.
@@ -233,14 +221,15 @@ def calculate_lines_for_burst_time(
         if not seconds_per_line:
             # Use common helper to read sample lines
             lines = _read_sample_lines_from_file(
-                dir_archive, rel_path,
-                num_lines=sample_shift * 2 + skip_header,
-                skip_header=skip_header
+                dir_archive, rel_path, num_lines=sample_shift * 2 + skip_header, skip_header=skip_header
             )
             if not (
                 seconds_per_line := get_sampling_dt(
-                    lines, parse_datetime_func, is_raw, sample_shift,
-                    msg_add=f" in {dir_archive.name}/{rel_path}"
+                    lines,
+                    parse_datetime_func,
+                    is_raw,
+                    sample_shift,
+                    msg_add=f" in {dir_archive.name}/{rel_path}",
                 )
             ):
                 return None
@@ -249,7 +238,7 @@ def calculate_lines_for_burst_time(
         lines_needed = int(max_burst_time_detection / seconds_per_line)
 
         # Ensure we read at least sample_shift*2 lines for accurate burst detection
-        lines_needed = max(lines_needed, sample_shift*2)
+        lines_needed = max(lines_needed, sample_shift * 2)
 
         logger.debug(
             f"Time-based burst calculation for {dir_archive.name}/{rel_path}: "
@@ -260,9 +249,7 @@ def calculate_lines_for_burst_time(
         return lines_needed
 
     except Exception as e:
-        logger.debug(
-            f"Error calculating lines for burst time in {dir_archive.name}/{rel_path}: {e}"
-        )
+        logger.debug(f"Error calculating lines for burst time in {dir_archive.name}/{rel_path}: {e}")
         return None
 
 
@@ -296,7 +283,9 @@ def read_first_last_lines(archive_path: Path, inner_file: str | PurePosixPath, s
             first = lines[0] if lines else None
             return first, last_line
         except Exception as e:
-            logger.debug(f"libarchive reading failed for {archive_path}: {e}, falling back to standard method")
+            logger.debug(
+                f"libarchive reading failed for {archive_path}: {e}, falling back to standard method"
+            )
 
     chunk_size = 10 * 1024 * 1024  # 10 MB chunks
 
@@ -323,6 +312,7 @@ def read_first_last_lines(archive_path: Path, inner_file: str | PurePosixPath, s
                 raise ImportError(f"py7zr was not found to extract {archive_path}")
 
             import tempfile
+
             # Create a temporary directory for extraction
             with tempfile.TemporaryDirectory() as temp_dir:
                 temp_dir_path = Path(temp_dir)
@@ -335,7 +325,7 @@ def read_first_last_lines(archive_path: Path, inner_file: str | PurePosixPath, s
                     if not extracted_file_path.exists():
                         raise FileNotFoundError(f"File {inner_file} not found in archive")
 
-                    with open(extracted_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    with open(extracted_file_path, "r", encoding="utf-8", errors="ignore") as f:
                         file_content = f.read()
 
                     # Split into lines
@@ -369,7 +359,9 @@ def gen_from_archive(archive_path: Path) -> Generator[Dict[str, Any], None, None
             yield from _list_libarchive_contents(archive_path)
             return
         except Exception as e:
-            logger.debug(f"libarchive listing failed for {archive_path}: {e}, falling back to standard method")
+            logger.debug(
+                f"libarchive listing failed for {archive_path}: {e}, falling back to standard method"
+            )
 
     archive_suffix = archive_path.suffix.lower()
     if archive_suffix in config.extensions_archive:
@@ -377,10 +369,7 @@ def gen_from_archive(archive_path: Path) -> Generator[Dict[str, Any], None, None
             if archive_suffix == ".zip":
                 with zipfile.ZipFile(archive_path) as zf:
                     for item in zf.namelist():
-                        yield {
-                            "rel_path": PurePosixPath(item),
-                            "is_folder": bool(item.endswith("/"))
-                        }
+                        yield {"rel_path": PurePosixPath(item), "is_folder": bool(item.endswith("/"))}
             elif archive_suffix == ".7z":
                 if py7zr is None:
                     raise ImportError(f"py7zr was not found to extract {archive_path}")
@@ -406,6 +395,7 @@ def list_archive_recursive(archive_path: Path) -> List[Dict[str, Any]]:
         'children': []  # only for folders (but we flatten the structure)
     }
     """
+
     def build(node, path="", result=None):
         if result is None:
             result = []
@@ -443,19 +433,26 @@ def list_archive_recursive(archive_path: Path) -> List[Dict[str, Any]]:
                 result = []
             for k, v in node.items():
                 entry_path = f"{path}/{k}" if path else k
-                entry = {"rel_path": PurePosixPath(entry_path), "name": k, "is_folder": bool(v), "children": []}
+                entry = {
+                    "rel_path": PurePosixPath(entry_path),
+                    "name": k,
+                    "is_folder": bool(v),
+                    "children": [],
+                }
                 result.append(entry)
                 if v:
                     build(v, entry_path, result)
             return result
-        return build(tree)
 
+        return build(tree)
 
     if HAS_LIBARCHIVE:
         try:
             return list(_list_libarchive_contents(archive_path))
         except Exception as e:
-            logger.debug(f"libarchive listing failed for {archive_path}: {e}, falling back to standard method")
+            logger.debug(
+                f"libarchive listing failed for {archive_path}: {e}, falling back to standard method"
+            )
 
     try:
         archive_suffix = archive_path.suffix.lower()
@@ -464,7 +461,6 @@ def list_archive_recursive(archive_path: Path) -> List[Dict[str, Any]]:
                 with zipfile.ZipFile(archive_path) as zf:
                     return zip_walk(zf)
             elif archive_suffix == ".7z":
-
                 if py7zr is None:
                     raise ImportError(f"py7zr was not found to extract {archive_path}")
 
@@ -490,7 +486,6 @@ def list_archive_recursive(archive_path: Path) -> List[Dict[str, Any]]:
                             node[parts[-1]] = {}
                     return build(tree)
 
-
                 with py7zr.SevenZipFile(archive_path, mode="r") as archive:
                     return py7zr_walk(archive)
         raise ValueError(f"Unsupported archive format, only {config.extensions_archive} supported")
@@ -499,7 +494,9 @@ def list_archive_recursive(archive_path: Path) -> List[Dict[str, Any]]:
         return []  # Return empty list instead of None when there's an error
 
 
-def read_archive_file_lines(archive_path: Path, inner_file: str | PurePosixPath, max_lines: Optional[int] = None):
+def read_archive_file_lines(
+    archive_path: Path, inner_file: str | PurePosixPath, max_lines: Optional[int] = None
+):
     """
     Reads lines from a file inside a ZIP or 7z archive.
 
@@ -519,7 +516,9 @@ def read_archive_file_lines(archive_path: Path, inner_file: str | PurePosixPath,
         try:
             return _read_from_libarchive(archive_path, target, n_head=max_lines, skip_header=0)
         except Exception as e:
-            logger.debug(f"libarchive reading failed for {archive_path}: {e}, falling back to standard method")
+            logger.debug(
+                f"libarchive reading failed for {archive_path}: {e}, falling back to standard method"
+            )
 
     # --- ZIP case ---
     if archive_path.suffix.lower() == ".zip":
@@ -567,19 +566,19 @@ def read_archive_file_lines(archive_path: Path, inner_file: str | PurePosixPath,
                 if not extracted_file_path.exists():
                     raise FileNotFoundError(f"File {inner_file} not found in archive")
 
-                with open(extracted_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                with open(extracted_file_path, "r", encoding="utf-8", errors="ignore") as f:
                     if max_lines is not None:
                         # Read first max_lines lines
                         for i in range(max_lines):
                             line = f.readline()
                             if not line:
                                 break
-                            lines.append(line.rstrip('\n'))
+                            lines.append(line.rstrip("\n"))
 
                         # Read the rest to get the last line
                         remaining_lines = f.readlines()
                         # Strip newlines
-                        remaining_lines = [line.rstrip('\n') for line in remaining_lines]
+                        remaining_lines = [line.rstrip("\n") for line in remaining_lines]
                         if remaining_lines:
                             last_line = remaining_lines[-1]
                         elif lines:
@@ -588,7 +587,7 @@ def read_archive_file_lines(archive_path: Path, inner_file: str | PurePosixPath,
                         # Read all lines
                         lines = f.readlines()
                         # Strip newlines
-                        lines = [line.rstrip('\n') for line in lines]
+                        lines = [line.rstrip("\n") for line in lines]
                         if lines:
                             last_line = lines[-1]
 
@@ -613,17 +612,15 @@ def extract_archive_with_command_line(src: Path, dst: Path, command: str) -> boo
         # Make sure destination directory exists
         dst.mkdir(parents=True, exist_ok=True)
 
-        if command == '7z':
-            result = subprocess.run(['7z', 'x', str(src), f'-o{dst}', '-y'],
-                                  capture_output=True, text=True)
+        if command == "7z":
+            result = subprocess.run(["7z", "x", str(src), f"-o{dst}", "-y"], capture_output=True, text=True)
             if result.returncode == 0:
                 return True
             else:
                 print(f"Error extracting archive {src} with 7z command: {result.stderr}")
                 return False
-        elif command == 'unzip':
-            result = subprocess.run(['unzip', '-o', str(src), '-d', str(dst)],
-                                  capture_output=True, text=True)
+        elif command == "unzip":
+            result = subprocess.run(["unzip", "-o", str(src), "-d", str(dst)], capture_output=True, text=True)
             if result.returncode == 0:
                 return True
             else:
@@ -648,7 +645,7 @@ def extract_zip_archive(src: Path, dst: Path) -> bool:
         True if extraction was successful, False otherwise
     """
     # Try command line tool as fallback
-    return extract_archive_with_command_line(src, dst, 'unzip')
+    return extract_archive_with_command_line(src, dst, "unzip")
 
 
 def extract_7z_archive(src: Path, dst: Path) -> bool:
@@ -663,14 +660,14 @@ def extract_7z_archive(src: Path, dst: Path) -> bool:
     """
     if py7zr is not None:
         try:  # Pure Python extraction
-            with py7zr.SevenZipFile(src, mode='r') as archive:
+            with py7zr.SevenZipFile(src, mode="r") as archive:
                 archive.extractall(path=dst)
             return True
         except Exception as e:
             logger.debug(f"Pure Python 7z extraction failed: {e}")
 
     # Fall back to command line tool
-    return extract_archive_with_command_line(src, dst, '7z')
+    return extract_archive_with_command_line(src, dst, "7z")
 
 
 def create_temp_directory(base_dir: Optional[Path] = None) -> Path:

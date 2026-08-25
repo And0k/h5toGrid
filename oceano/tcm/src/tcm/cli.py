@@ -24,6 +24,7 @@ from omegaconf import DictConfig, MissingMandatoryValue, OmegaConf
 
 from tcm import format, policy, schema
 from utils.log_init import LoggingStyleAdapter
+from utils.logging_config import SafeStringFormatter, upgrade_loggers
 
 # Optional GUI bridge for scan progress — no-op when GUI is not installed.
 try:
@@ -93,12 +94,13 @@ def as_filename(s: str, fallback: str = "_") -> str:
 # ANSI/SGR escape sequence: ESC '[' params 'm' — matches colour, bold, italic…
 _ANSI_RE: re.Pattern[str] = re.compile("\033\\[[0-9;]*m")
 
-# Format matching the legacy "simple" formatter in colorlog.yaml
-_FILE_LOG_FMT = "%(asctime)s|%(name)s|%(levelname)s|%(message)s"
+# File format mirrors the console's module.funcName:row style (prefix stripped by
+# AnsiStrippedFormatter → SafeStringFormatter)
+_FILE_LOG_FMT = "%(asctime)s|%(name)s.%(funcName)s:%(lineno)d|%(levelname)s|%(message)s"
 _FILE_LOG_DATEFMT = "%H:%M:%S"
 
 
-class AnsiStrippedFormatter(logging.Formatter):
+class AnsiStrippedFormatter(SafeStringFormatter):
     """File-safe formatter that strips ANSI colour codes from exception text.
 
     ``colorlog.ColoredFormatter`` (the *console* handler) colours tracebacks
@@ -106,7 +108,12 @@ class AnsiStrippedFormatter(logging.Formatter):
     ``logging`` caches the coloured text on ``record.exc_text`` — every later
     handler reuses the cache.  Stripping here keeps console output coloured
     while guaranteeing a clean file regardless of handler order.
+    Inherits ``package_prefix`` stripping and clickable tracebacks from
+    :class:`utils.logging_config.SafeStringFormatter`.
     """
+
+    def __init__(self, **kwargs):
+        super().__init__(package_prefix="tcm.", **kwargs)
 
     def formatException(self, exc_info) -> str:  # noqa: D401
         return _ANSI_RE.sub("", super().formatException(exc_info))
@@ -155,6 +162,7 @@ def _setup_file_handler(cfg: Mapping[str, Any]) -> None:
     fh.setLevel(logging.DEBUG)
     fh.addFilter(stage_ctx.StageContextFilter())
     root.addHandler(fh)
+    upgrade_loggers("tcm.")  # CustomLogger: exception-origin lineno, caller>callee
     # lf.debug("Log file: {}", run_dir / filename)
 
 
@@ -197,22 +205,37 @@ def parse_data_path(argv: list[str]) -> tuple[Path | None, list[str]]:
     return path_in, remaining
 
 
+def inside_repo(path: Path) -> bool:
+    """True when *path* resolves inside the protected code project.
+
+    The check runs on the **resolved** path, so an empty/relative input
+    (empty ``input.path`` means ``./``) is judged by its real target.
+    Covers dev checkouts, envs nested in the repo and the frozen
+    distributive alike — see :data:`_constants.REPO_ROOT`.
+    """
+    resolved = path.resolve()
+    return resolved == _constants.REPO_ROOT or _constants.REPO_ROOT in resolved.parents
+
+
 def safe_cfg_dir(path: Path) -> Path:
     """Create *path* only if it is outside the code project.
 
     Universal guard for ``cfg_proc/`` subdirectories (``run/``, ``log/``, …).
     Call this instead of ``path.mkdir(parents=True, exist_ok=True)`` for any
-    config/log directory derived from data paths.
+    config/log directory derived from data paths.  Last line of defence —
+    :func:`call_in_raw_dir` rejects repo-internal anchors up front.
 
-    :raises SystemExit: if *path* resolves inside :data:`_constants.PROJECT_ROOT`.
+    :raises SystemExit: if *path* resolves inside :data:`_constants.REPO_ROOT`.
     """
-    if (resolved := path.resolve()) == _constants.PROJECT_ROOT or _constants.PROJECT_ROOT in resolved.parents:
+    if inside_repo(path):
+        resolved = path.resolve()
         print(
-            f"Error: refusing to create {resolved} inside code project {_constants.PROJECT_ROOT}.\n"
+            f"Error: refusing to create {resolved} inside code project {_constants.REPO_ROOT}.\n"
             "Move your data outside the project tree.",
             file=sys.stderr,
         )
         sys.exit(1)
+    resolved = path.resolve()
     resolved.mkdir(parents=True, exist_ok=True)
     return resolved
 
@@ -397,6 +420,25 @@ def _print_usage_error(data_dir: Path | None, path_in: Path | None) -> None:
     sys.exit(1)
 
 
+def _require_nonempty_path(raw: str) -> Path:
+    """``Path(raw)`` or :exc:`FileNotFoundError` when *raw* is blank.
+
+    An EMPTY path (the GUI's cleared search field) would mean ``./`` — but
+    the process cwd is never a meaningful data anchor:
+    :func:`call_in_raw_dir` chdirs to the last ``data_dir``, so ``./``
+    would silently rescan the SAME directory (and pollute the code project
+    when launched from the repo).  Same verdict as a wrong path — the user
+    must point at their data.  Checked on the RAW string: ``Path("")``
+    normalizes to ``Path(".")`` and would hide the emptiness.
+    """
+    if not str(raw).strip():
+        raise FileNotFoundError(
+            "Empty data path: the current directory is not a data anchor. "
+            "Enter the path to your data — a directory, glob, or regex."
+        )
+    return Path(raw)
+
+
 def call_in_raw_dir(fun, yaml_path: Path | None = None, **kwargs) -> Any:
     """Bootstrap CLI → Hydra runtime for a processing entry point.
 
@@ -479,10 +521,10 @@ def call_in_raw_dir(fun, yaml_path: Path | None = None, **kwargs) -> Any:
 
     # Extract input.path: from overrides dict or from sys.argv.
     try:
-        path_in = Path(overrides["input"]["path"])
+        path_in = _require_nonempty_path(overrides["input"]["path"])
     except KeyError:
         try:
-            path_in = Path(hydra_main_kwargs["overrides"]["input"]["path"])
+            path_in = _require_nonempty_path(hydra_main_kwargs["overrides"]["input"]["path"])
         except (KeyError, AttributeError, TypeError):
             # If any '-' prefixed arg is present, it's a Hydra/argparse flag.
             # Delegate to Hydra directly without consuming positional args
@@ -497,13 +539,37 @@ def call_in_raw_dir(fun, yaml_path: Path | None = None, **kwargs) -> Any:
             if path_in is None:
                 # No positional path and no flags → user error.
                 _print_usage_error(data_dir=None, path_in=None)
-            path_in = path_in.resolve() if not path_in.is_absolute() else path_in
+            if str(path_in) in ("", "."):
+                # Positional ""/"." — Path("") normalizes to "."; same
+                # verdict as an empty override (see _require_nonempty_path).
+                raise FileNotFoundError(
+                    "Empty data path: the current directory is not a data anchor. "
+                    "Enter the path to your data — a directory, glob, or regex."
+                )
         else:
             # overrides dict provided path — keep sys.argv as-is (Worker
             # sets it to [script] + hydra_args before each call).
             remaining_argv = list(sys.argv)
     else:
         remaining_argv = list(sys.argv)
+
+    # Resolve relative inputs against the real cwd so the anchor check
+    # below judges the actual target, and overrides-branch paths get the
+    # same treatment the argv branch always had.
+    path_in = path_in.resolve()
+
+    # Reject repo-internal paths BEFORE anchor resolution — otherwise
+    # find_dir_raw_absolute logs a misleading "Not standard input path"
+    # warning for what is really a project-tree violation (a pasted repo
+    # path, or a relative one while cwd is the repo — dev or distributive).
+    # Otherwise cfg_proc/, Hydra outputs and logs would pollute the code
+    # project.
+    if inside_repo(path_in):
+        raise FileNotFoundError(
+            f"Not a data directory: '{path_in}' is inside the code project "
+            f"({_constants.REPO_ROOT}). "
+            "Point input.path at your data outside the project tree."
+        )
 
     # Resolve the nearest `_raw/` ancestor.
     data_dir = paths.find_dir_raw_absolute(path_in)

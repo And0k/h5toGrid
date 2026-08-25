@@ -1,6 +1,7 @@
 """
 Tests for the new collect.py implementation functions that replace the complex get_absent_meta function.
 """
+
 from pathlib import Path
 import tempfile
 import json
@@ -19,10 +20,10 @@ from meta_finder.collect import (
     extract_time_metadata_from_prioritized_sources,
     update_device_metadata_with_time_info,
     get_absent_meta,
-    process_all_metadata
+    process_all_metadata,
 )
 from meta_finder import config
-from meta_finder.logging_config import setup_logging
+from utils.logging_config import setup_logging
 
 # Using centralized mocked logging configuration
 logger = setup_logging(__name__, console_level=logging.DEBUG, file_level=logging.DEBUG)
@@ -120,8 +121,7 @@ def test_add_all_data_paths():
 
         # Create sample text file
         (text_output_dir / "230508_120bin2s_i03.tsv").write_text(
-            "Time\tVabs\tVdir\tv\tu\tInclination\tTemp\n"
-            "2023-05-08 12:00:00\t0.1\t90\t0.05\t0.08\t5.0\t20.0\n"
+            "Time\tVabs\tVdir\tv\tu\tInclination\tTemp\n2023-05-08 12:00:00\t0.1\t90\t0.05\t0.08\t5.0\t20.0\n"
         )
 
         # Input metadata with existing device info - using normalized device ID
@@ -130,7 +130,7 @@ def test_add_all_data_paths():
                 "point": "test_point",
                 "sea_depth": 10.0,
                 "height_above_bottom": 1.0,
-                "modification_symbol": "test"
+                "modification_symbol": "test",
             }
         }
 
@@ -150,7 +150,9 @@ def test_get_prioritized_data_sources_for_time_extraction():
         "i3": {
             "data_paths": {
                 (Path("dir1"), Path("file2_600s.tsv")): {"averaging_interval": 600},
-                (Path("dir1"), Path("file1_2s.tsv")): {"averaging_interval": 2},  # Higher priority due to lower averaging
+                (Path("dir1"), Path("file1_2s.tsv")): {
+                    "averaging_interval": 2
+                },  # Higher priority due to lower averaging
             }
         }
     }
@@ -166,7 +168,7 @@ def test_get_prioritized_data_sources_for_time_extraction():
     assert first_meta["averaging_interval"] == 2
 
 
-@patch.object(_collect, 'extract_time_info_from_text_file')
+@patch.object(_collect, "extract_time_info_from_text_file")
 def test_extract_time_metadata_from_prioritized_sources(mock_extract):
     """Test extraction of time metadata from prioritized sources."""
     # Mock the time extraction function to return specific values
@@ -184,29 +186,26 @@ def test_extract_time_metadata_from_prioritized_sources(mock_extract):
         "time_st": "2023-05-08 12:00:00",
         "time_en": "2023-05-08 14:00:00",
         "burst_dt": 3600,
-        "bursts_t": 2
+        "bursts_t": 2,
     }
 
 
 def test_update_device_metadata_with_time_info():
     """Test updating device metadata with time info."""
-    devices_data = {
-        "i03": {
-            "data_paths": {},
-            "point": "test_point"
-        }
-    }
+    devices_data = {"i03": {"data_paths": {}, "point": "test_point"}}
 
     # Mock time info to add
-    with patch.object(_collect, 'extract_time_metadata_from_prioritized_sources') as mock_extract:
+    with patch.object(_collect, "extract_time_metadata_from_prioritized_sources") as mock_extract:
         mock_extract.return_value = {
             "time_st": "2023-05-08 12:00:00",
             "time_en": "2023-05-08 14:00:00",
             "burst_dt": 3600,
-            "bursts_t": 2
+            "bursts_t": 2,
         }
 
-        with patch.object(_collect, 'get_prioritized_data_sources_for_time_extraction') as mock_get_prioritized:
+        with patch.object(
+            _collect, "get_prioritized_data_sources_for_time_extraction"
+        ) as mock_get_prioritized:
             mock_get_prioritized.return_value = {"i03": []}
 
             update_device_metadata_with_time_info(devices_data)
@@ -229,8 +228,7 @@ def test_get_absent_meta_simple():
 
         # Create sample text file
         (text_output_dir / "230508_1200bin2s_i03.tsv").write_text(
-            "Time\tVabs\tVdir\tv\tu\tInclination\tTemp\n"
-            "2023-05-08 12:00:00\t0.1\t90\t0.05\t0.08\t5.0\t20.0\n"
+            "Time\tVabs\tVdir\tv\tu\tInclination\tTemp\n2023-05-08 12:00:00\t0.1\t90\t0.05\t0.08\t5.0\t20.0\n"
         )
 
         # Input metadata
@@ -239,7 +237,7 @@ def test_get_absent_meta_simple():
                 "point": "test_point",
                 "sea_depth": 10.0,
                 "height_above_bottom": 1.0,
-                "modification_symbol": "test"
+                "modification_symbol": "test",
             }
         }
 
@@ -252,9 +250,12 @@ def test_get_absent_meta_simple():
         assert len(result["i03"]["data_paths"]) >= 0  # May have time info extracted
 
 
-@pytest.mark.parametrize("test_id,comment", [
-    ("collect_new_impl_process_all_metadata", "Test process_all_metadata with new implementation"),
-])
+@pytest.mark.parametrize(
+    "test_id,comment",
+    [
+        ("collect_new_impl_process_all_metadata", "Test process_all_metadata with new implementation"),
+    ],
+)
 def test_process_all_metadata_new_implementation(test_id, comment, common_test_cruises_dir):
     """Test process_all_metadata function with the new implementation."""
     # Use the common test data setup
@@ -277,7 +278,7 @@ def test_process_all_metadata_new_implementation(test_id, comment, common_test_c
         from_data=True,
         extract_hdf5_times=False,
         extract_hdf5_coef_dates=False,
-        create_info_files=False
+        create_info_files=False,
     )
 
     # Should process the metadata correctly

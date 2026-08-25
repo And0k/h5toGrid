@@ -477,6 +477,29 @@ class TestScanTabs:
         app._surface_error.assert_called_once()
         app._set_cfg_ui_disabled.assert_called_once_with(True)
 
+    def test_scan_empty_path_forwards_to_worker(self):
+        """Empty search path is forwarded to the pipeline — no GUI short-circuit.
+
+        Regression: ``_on_path_changed`` shows "Loading…"; skipping the
+        worker for an empty path froze the stage row forever.  The empty
+        path means "./" and the pipeline owns the verdict
+        (``cli.call_in_raw_dir`` rejects repo-internal anchors), so the
+        failure surfaces through the normal ``scan_error`` channel.
+        """
+        from unittest.mock import MagicMock
+
+        from tcm_gui.app import App
+
+        app = App.__new__(App)
+        app._path_field = MagicMock()
+        app._path_field.get.return_value = "   "  # whitespace-only → empty
+        app._clear_log = MagicMock()
+        app.wk = MagicMock()
+        app._original_argv = ["prog"]
+        app._scan()
+        app.wk.scan.assert_called_once_with(["prog"], "")
+        app._clear_log.assert_called_once()
+
     def test_run_exit_on_error_false(self, gui_project, monkeypatch, mocker):
         """``exit_on_error=False`` on run propagates exceptions."""
         tmp_path, raw_dir, csv_file, run_dir = gui_project

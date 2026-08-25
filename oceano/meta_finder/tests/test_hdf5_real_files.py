@@ -2,6 +2,7 @@
 """
 Test script to test HDF5 fallback functionality with real h5 files from BalticSea dataset.
 """
+
 import sys
 from pathlib import Path
 import logging
@@ -14,15 +15,17 @@ from meta_finder.hdf5_processor import (
     extract_devices_from_hdf5_groups,
     find_hdf5_files,
     extract_time_range_from_hdf5_table,
-    extract_time_ranges_from_hdf5_combined
+    extract_time_ranges_from_hdf5_combined,
 )
+
 
 def test_real_hdf5_files():
     """Test HDF5 fallback functionality with real files from the BalticSea dataset."""
 
     # Using centralized logging configuration
-    from meta_finder.logging_config import setup_logging
-    logger = setup_logging(__name__, include_function_name=True, log_file_sfx="test_hdf5_real_files")
+    from utils.logging_config import setup_logging
+
+    logger = setup_logging(__name__, log_file_sfx="test_hdf5_real_files")
 
     # Define the real HDF5 directory path
     hdf5_dir = Path("D:/WorkData/BalticSea/250415_ABP60@i,t-chain/inclinometer")
@@ -33,7 +36,7 @@ def test_real_hdf5_files():
         return
 
     print(f"Testing HDF5 fallback functionality with files from: {hdf5_dir}")
-    print("="*80)
+    print("=" * 80)
 
     # 1. Test finding HDF5 files
     print("1. Finding HDF5 files in directory...")
@@ -81,6 +84,7 @@ def test_real_hdf5_files():
             print(f"  Processing file: {h5_file.name} (type: {h5_type})")
             try:
                 import tables
+
                 with tables.open_file(str(h5_file), mode="r") as h5file:
                     print(f"    File structure:")
                     for node in h5file.walk_nodes(where="/", classname="Group"):
@@ -89,7 +93,7 @@ def test_real_hdf5_files():
                         for table_node in h5file.walk_nodes(where=node._v_pathname, classname="Table"):
                             print(f"        Table: {table_node._v_pathname}")
                             # Show column names if it's a table
-                            if hasattr(table_node, 'cols') and hasattr(table_node.cols, '_v_colnames'):
+                            if hasattr(table_node, "cols") and hasattr(table_node.cols, "_v_colnames"):
                                 print(f"          Columns: {table_node.cols._v_colnames}")
             except Exception as e:
                 print(f"    Error reading file {h5_file}: {e}")
@@ -108,5 +112,5 @@ def test_real_hdf5_files():
                 start_time, end_time, bursts_t, burst_dt = time_range
                 print(f"     Device {dev_id}: {start_time} to {end_time}")
 
-    print("="*80)
+    print("=" * 80)
     print("HDF5 fallback test completed.")

@@ -1,11 +1,16 @@
+"""
+Message-style layer of unified monorepo logging: str.format()-style records,
+caller-context filters and duplicate-suppression options used at call sites
+(``lf = LoggingStyleAdapter(__name__)``).  Handler/formatter/root-logger setup
+lives in :mod:`utils.logging_config`.
+"""
+
 from dataclasses import dataclass
 import logging
 from inspect import currentframe
 
-from utils.init import dir_create_if_need, l, this_prog_basename
-import os
-import sys
-from pathlib import Path
+# Setup API implementation lives in logging_config; re-exported for legacy call sites
+from .logging_config import init_logging as init_logging
 
 
 @dataclass(repr=False)  # , slots=True
@@ -20,11 +25,13 @@ class Message:
             try:
                 return self.fmt.format_map(self.args[0])
             except IndexError:
-                return self.fmt + '\n- Bad format string!\n' + (
-                    f'Logging arguments: {self.args}' if len(self.args) else ''
-                    )
+                return (
+                    self.fmt
+                    + "\n- Bad format string!\n"
+                    + (f"Logging arguments: {self.args}" if len(self.args) else "")
+                )
         except (TypeError, IndexError):
-            print('Logging error due to wrong format string:', self.fmt, 'for arguments:', self.args)
+            print("Logging error due to wrong format string:", self.fmt, "for arguments:", self.args)
             raise
 
 
@@ -36,13 +43,15 @@ class LoggingContextFilter(logging.Filter):
         frame = currentframe().f_back
         try:
             # Walk back through multiple levels of logging.
-            while "logging" in frame.f_code.co_filename or frame.f_code.co_name.startswith((
-                "log",
-                "<module>",
-            )):
+            while "logging" in frame.f_code.co_filename or frame.f_code.co_name.startswith(
+                (
+                    "log",
+                    "<module>",
+                )
+            ):
                 # print(frame.f_code.co_filename, frame.f_code.co_name)
                 frame = frame.f_back
-        except:
+        except Exception:  # any frame-walk failure → keep last valid frame
             pass
         # Create the overrides
         # record.filename = full_name
@@ -159,81 +168,3 @@ def my_logging(name, logger=None):
     logger = logging.getLogger(name)
     logger.addFilter(LoggingFilter_DuplicatesOption())
     return LoggingStyleAdapter(logger)
-
-
-def init_logging(logger="", log_file=None, level_file="INFO", level_console=None):
-    """
-    Logging to file flogD/flogN.log and console with piorities level_file and levelConsole
-    :param logger: name of logger or logger. Default: '' - name of root logger.
-    :param log_file: name of log file. Default: & + "this program file name"
-    :param level_file: 'INFO'
-    :param level_console: 'WARN'
-    :return: logging Logger
-
-    Call example:
-    l= init_logging('', None, args.verbose)
-    l.warning(msgFile)
-    """
-    global l
-    if log_file:
-        if not os.path.isabs(log_file):
-            # if flogD is None:
-            flogD = os.path.dirname(sys.argv[0])
-            log_file = os.path.join(flogD, log_file)
-    else:
-        # if flogD is None:
-        flogD = os.path.join(os.path.dirname(sys.argv[0]), "log")
-        dir_create_if_need(flogD)
-        log_file = os.path.join(flogD, f"&{this_prog_basename()}.log")  # '&' is for autoname indication
-
-    if logger is None:
-        logger = sys._getframe(1).f_back.f_globals["__name__"]  # replace with name of caller
-    elif isinstance(logger, str) and __name__ == "__main__":
-        logger = ""
-
-    was_l = bool(l)
-    if was_l:
-        try:  # a bit more check that we already have logger
-            l = logging.getLogger(logger) if isinstance(logger, str) else logger
-        except Exception:
-            pass
-        if l and l.hasHandlers():
-            l.handlers.clear()  # or if we have good handlers return l?
-    else:
-        l = logging.getLogger(logger) if isinstance(logger, str) else logger
-
-    try:
-        filename = Path(log_file)
-        b_default_path = not filename.parent.exists()
-    except FileNotFoundError:
-        b_default_path = True
-    if b_default_path:
-        filename = Path(__file__).parent / "logs" / filename.name
-
-    # Create handlers if there no them in root
-    if not l.root.hasHandlers():
-        # Force UTF-8 for file handler — system encoding (e.g. cp1251) can't encode e.g. ×
-        logging.basicConfig(
-            filename=filename,
-            format="%(asctime)s %(message)s",
-            level=level_file,
-            encoding="utf-8",
-        )
-
-        # set up logging to console — reconfigure stderr to UTF-8 for PyInstaller frozen builds
-        if hasattr(sys.stderr, "reconfigure"):
-            sys.stderr.reconfigure(encoding="utf-8")
-        console = logging.StreamHandler()
-        console.setLevel(level_console or "INFO")  # default INFO regardless of file level
-        # set a format which is simpler for console use
-        formatter = logging.Formatter("%(message)s")  # %(name)-12s: %(levelname)-8s ...
-        console.setFormatter(formatter)
-        l.addHandler(console)
-
-    # Or do not use root handlers:
-    # l.propagate = not l.root.hasHandlers()  # to default
-
-    if b_default_path:
-        l.warning("Bad log path: %s! Using new path with default dir: %s", log_file, filename)
-
-    return l

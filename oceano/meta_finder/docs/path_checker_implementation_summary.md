@@ -172,7 +172,7 @@ UNCERTAIN_MARKER = "/?"                  # Uncertain match marker
   - [`HIGH_CONFIDENCE_THRESHOLD`](C:/Work/Python/AB_SIO_RAS/cruises_organizer/match_dirs/src/matcher.py:8)
   - [`LOW_CONFIDENCE_THRESHOLD`](C:/Work/Python/AB_SIO_RAS/cruises_organizer/match_dirs/src/matcher.py:9)
 
-- **Logging**: Uses existing [`logging_config`](src/meta_finder/logging_config.py:1) module
+- **Logging**: Uses the unified [`utils.logging_config`](../../../shared/utils/src/utils/logging_config.py) module (setup at CLI entry only; modules just `getLogger(__name__)`)
 - **Conventions**: Follows meta_finder coding standards and PEP 8
 
 ## Output Format

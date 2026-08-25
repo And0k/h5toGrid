@@ -478,15 +478,74 @@ class TestMainEndToEnd:
         )
 
     def test_main_rejects_data_inside_project(self, tmp_path, monkeypatch, mocker):
-        """main() rejects data directory inside the code project."""
+        """Data inside the code project is rejected up front (before Hydra).
 
+        The guard reads :data:`_constants.REPO_ROOT` — dev checkout, envs
+        nested in the repo, and the frozen distributive (exe dir) alike.
+        """
         raw_dir = tmp_path / _constants.RAW_DIR_NAME
         raw_dir.mkdir()
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(sys, "argv", ["prog", str(raw_dir / "*I*.txt")])
-        monkeypatch.setattr(_constants, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(_constants, "REPO_ROOT", tmp_path)
 
-
-
-        with pytest.raises(SystemExit):
+        mock_run = mocker.patch.object(processing, "run")
+        with pytest.raises(FileNotFoundError, match="inside the code project"):
             cli.call_in_raw_dir(processing.run)
+        mock_run.assert_not_called()
+
+    def test_empty_path_means_cwd_rejected_inside_project(self, tmp_path, monkeypatch, mocker):
+        """Empty input.path means "./" — rejected when cwd is in the project.
+
+        Regression: an empty path skipped the worker in the GUI and anchored
+        the pipeline at the launch cwd, creating cfg_proc/ in the repo.
+        """
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys, "argv", ["prog"])
+        monkeypatch.setattr(_constants, "REPO_ROOT", tmp_path)
+
+        mock_run = mocker.patch.object(processing, "run")
+        with pytest.raises(FileNotFoundError, match="inside the code project"):
+            cli.call_in_raw_dir(processing.run, input={"path": ""})
+        mock_run.assert_not_called()
+
+    def test_empty_path_means_cwd_allowed_outside_project(self, tmp_path, monkeypatch, mocker):
+        """Empty input.path = "./" is a legitimate scan when cwd holds data."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys, "argv", ["prog"])
+        # Project lives elsewhere — cwd is plain data territory.
+        monkeypatch.setattr(_constants, "REPO_ROOT", tmp_path / "somewhere_else")
+
+        mock_run = mocker.patch.object(processing, "run")
+        cli.call_in_raw_dir(processing.run, input={"path": ""})
+        mock_run.assert_called_once()
+        # "./" resolved to the real cwd before reaching the pipeline
+        cfg = mock_run.call_args[0][0]
+        assert Path(cfg.input.path) == tmp_path.resolve()
+
+
+@pytest.mark.xr
+class TestSafeCfgDir:
+    """Last-line guard: cfg_proc/ subdirs are never created in the project."""
+
+    def test_refuses_inside_repo(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(_constants, "REPO_ROOT", tmp_path)
+        with pytest.raises(SystemExit):
+            cli.safe_cfg_dir(tmp_path / "cfg_proc" / "run")
+        assert not (tmp_path / "cfg_proc").exists()
+
+    def test_creates_outside_repo(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(_constants, "REPO_ROOT", tmp_path / "repo")
+        target = tmp_path / "data" / "cfg_proc" / "run"
+        created = cli.safe_cfg_dir(target)
+        assert created == target.resolve()
+        assert target.is_dir()
+
+    def test_repo_root_frozen_distributive(self, monkeypatch, tmp_path):
+        """Frozen build: the protected root is the executable's directory."""
+        exe = tmp_path / "dist" / "tcm_proc.exe"
+        exe.parent.mkdir(parents=True)
+        exe.touch()
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "executable", str(exe))
+        assert _constants._repo_root() == exe.parent.resolve()

@@ -98,6 +98,8 @@ a = Analysis(
     hiddenimports=[
         "colorlog",
         "colorlog.formatter",
+        "utils.log_init",
+        "utils.logging_config",
         "omegaconf",
         "ruamel.yaml",
         "dask",

@@ -1,3 +1,4 @@
+import logging
 from typing import List, Dict, Tuple, Any, Optional, Union, Sequence
 from pathlib import Path, PurePosixPath
 from datetime import datetime
@@ -23,11 +24,11 @@ from .hdf5_processor import (
     extract_time_range_from_hdf5_table,
 )
 from .parse_cruise_dir_name import add_dataset_name
-from .logging_config import setup_logging
 from .file_writer import write_files_list, write_metadata_table
 
 
-logger = setup_logging()
+logger = logging.getLogger(__name__)
+
 
 def get_all_data_files_for_device_dir(
     device_dir: Path,
@@ -57,7 +58,7 @@ def get_all_data_files_for_device_dir(
     # Convert to the expected format: Dict[str, Dict[Tuple[Path, PurePosixPath], Dict[str, Any]]]
     data_paths = {}
     for device_id, file_tuples in text_output_devices.items():
-        if device_id not in ['*', 'i', 'w', 'p']:  # Skip generic device types
+        if device_id not in ["*", "i", "w", "p"]:  # Skip generic device types
             if device_id not in data_paths:
                 data_paths[device_id] = {}
             for dir_path, rel_path in file_tuples:
@@ -73,7 +74,7 @@ def get_all_data_files_for_device_dir(
     # Also look for raw directory files
     raw_devices_dict = find_raw_directory_files(device_dir)
     for device_id, paths_dict in raw_devices_dict.items():
-        if device_id not in ['*', 'i', 'w', 'p']:  # Skip generic device types
+        if device_id not in ["*", "i", "w", "p"]:  # Skip generic device types
             if device_id not in data_paths:
                 data_paths[device_id] = {}
             for dir_path, file_paths in paths_dict.items():
@@ -88,7 +89,7 @@ def get_all_data_files_for_device_dir(
         # Convert it to same output format as the original code
         for dev_id, h5_data in extract_metadata_from_hdf5(device_dir, extract_time_info=False).items():
             # Skip generic device types
-            if dev_id in ['*', 'i', 'w', 'p']:
+            if dev_id in ["*", "i", "w", "p"]:
                 logger.warning(f"generic device type ({dev_id}) found in HDF5 extraction: skip")
                 continue
             if dev_id not in data_paths:
@@ -102,9 +103,9 @@ def get_all_data_files_for_device_dir(
                     h5_type, _ = get_h5_type_and_priority(h5_file_path)
                 except ValueError:
                     # Fallback to 'raw' if file pattern is not recognized
-                    h5_type = 'raw'
+                    h5_type = "raw"
 
-                data_paths[dev_id][path_tuple] = {'h5_type': h5_type}
+                data_paths[dev_id][path_tuple] = {"h5_type": h5_type}
     logger.debug(f"Found data for devices: {str(data_paths)}")
     return data_paths
 
@@ -132,7 +133,10 @@ def add_all_data_paths(meta_in: Dict[str, Any], device_dir: Path) -> Dict[str, A
         } for dev_id in all_dev_ids
     }
 
-def get_prioritized_data_sources_for_time_extraction(devices_data: Dict[str, Dict[str, Any]]) -> Dict[str, List[Tuple[Tuple[Path, PurePosixPath], Dict]]]:
+
+def get_prioritized_data_sources_for_time_extraction(
+    devices_data: Dict[str, Dict[str, Any]],
+) -> Dict[str, List[Tuple[Tuple[Path, PurePosixPath], Dict]]]:
     """
     Get prioritized data sources for time extraction for each device, using the sort_data_paths function for proper prioritization.
 
@@ -226,7 +230,11 @@ def _update_time_fields(target: Dict[str, Any], time_info: Dict[str, Any]) -> No
             target[key] = value
 
 
-def update_device_metadata_with_time_info(devices_meta: Dict[str, Dict[str, Any]], extract_hdf5_times: bool = True, extract_hdf5_coef_dates: bool = False):
+def update_device_metadata_with_time_info(
+    devices_meta: Dict[str, Dict[str, Any]],
+    extract_hdf5_times: bool = True,
+    extract_hdf5_coef_dates: bool = False,
+):
     """
     Update devices_data with time metadata extracted from prioritized data sources, while preserving all data paths for each device.
 
@@ -250,10 +258,7 @@ def update_device_metadata_with_time_info(devices_meta: Dict[str, Dict[str, Any]
             pass
         else:
             time_info = extract_time_metadata_from_prioritized_sources(
-                dev_id,
-                prioritized_sources,
-                extract_hdf5_times,
-                extract_hdf5_coef_dates
+                dev_id, prioritized_sources, extract_hdf5_times, extract_hdf5_coef_dates
             )
 
             # Try to update time fields for nested dict structure (multiple intervals)
@@ -298,9 +303,7 @@ def update_device_metadata_with_time_info(devices_meta: Dict[str, Dict[str, Any]
 
         if device_dir:
             raw_hdf5_metadata = extract_raw_hdf5_metadata(
-                device_dir,
-                list(devices_meta.keys()),
-                config.raw_hdf5_cols
+                device_dir, list(devices_meta.keys()), config.raw_hdf5_cols
             )
 
             # Update devices_data with raw HDF5 metadata
@@ -359,6 +362,7 @@ def get_absent_meta(
     logger.debug(f"get_absent_meta result: {content}")
     return content
 
+
 def _apply_combined_comments_to_devices(content: Dict[str, Any]) -> None:
     """
     Apply combined file comments to device metadata where appropriate.
@@ -389,12 +393,12 @@ def _apply_combined_comments_to_devices(content: Dict[str, Any]) -> None:
 
 
 def process_all_metadata(
-        cruise_and_its_dev_dirs: Dict[Path, List[Path]],
-        from_data: bool = True,
-        extract_hdf5_times: bool = True,
-        extract_hdf5_coef_dates: bool = False,
-        create_info_files: bool = False,
-    ) -> Tuple[Dict[Path, Dict[str, Any]], Dict[str, Any]]:
+    cruise_and_its_dev_dirs: Dict[Path, List[Path]],
+    from_data: bool = True,
+    extract_hdf5_times: bool = True,
+    extract_hdf5_coef_dates: bool = False,
+    create_info_files: bool = False,
+) -> Tuple[Dict[Path, Dict[str, Any]], Dict[str, Any]]:
     """
     Process all metadata from Cruises directories of known structure using the new simplified functions.
     This function replicates functionality of original process_all_metadata but using the new
@@ -412,7 +416,9 @@ def process_all_metadata(
     """
 
     total_device_dirs = sum(len(device_dirs) for device_dirs in cruise_and_its_dev_dirs.values())
-    logger.info(f"Processing {len(cruise_and_its_dev_dirs)} cruises having {total_device_dirs} device directories")
+    logger.info(
+        f"Processing {len(cruise_and_its_dev_dirs)} cruises having {total_device_dirs} device directories"
+    )
     processed_meta = {}
 
     # Statistics collection
@@ -449,14 +455,15 @@ def process_all_metadata(
                         extract_hdf5_coef_dates=extract_hdf5_coef_dates,
                     )
                     # Track new devices found (in extracted data but not in info-file metadata)
-                    new_devices_in_dir = [d_id for d_id in extracted_devices_data if d_id not in meta_from_info_file]
+                    new_devices_in_dir = [
+                        d_id for d_id in extracted_devices_data if d_id not in meta_from_info_file
+                    ]
                     if new_devices_in_dir:
                         stats["new_devices_found"][str(device_dir)] = new_devices_in_dir
                 else:
                     # Only use metadata from existing info-files without extracting from data files
                     extracted_devices_data = {
-                        dev_id: {**meta, "data_paths": {}}
-                        for dev_id, meta in meta_from_info_file.items()
+                        dev_id: {**meta, "data_paths": {}} for dev_id, meta in meta_from_info_file.items()
                     }
 
                 # Process combined file comments for each device based on their sorted data paths
@@ -480,11 +487,10 @@ def process_all_metadata(
 
             except Exception as e:
                 logger.error(f"Error processing {device_dir}: {e}", exc_info=True)
-                stats["processing_errors"].append({
-                    "device_dir": str(device_dir), "error": str(e), "error_type": type(e).__name__
-                })
+                stats["processing_errors"].append(
+                    {"device_dir": str(device_dir), "error": str(e), "error_type": type(e).__name__}
+                )
                 continue
-
 
     # Build unique dataset names per device dir from cruise and device dir names.
     # add_dataset_name may rename earlier entries during disambiguation.
@@ -499,9 +505,9 @@ def process_all_metadata(
                 )
             except Exception as e:
                 logger.error(f"Error building dataset name for {device_dir}: {e}", exc_info=True)
-                stats["processing_errors"].append({
-                    "device_dir": str(device_dir), "error": str(e), "error_type": type(e).__name__
-                })
+                stats["processing_errors"].append(
+                    {"device_dir": str(device_dir), "error": str(e), "error_type": type(e).__name__}
+                )
 
     # Set processed_meta items "setup_name" to final dataset names
     # Also map setup_names (used_datasets_paths keys) to to their dates (dev_dir_dates values) to sort later
@@ -519,11 +525,7 @@ def process_all_metadata(
 
 
 def _add_gpx_reference_to_metadata(
-    metadata_dict: Dict[str, Any],
-    cruise_dir: Path,
-    device_dir: Path,
-    dev_id: str,
-    station_id: str = None
+    metadata_dict: Dict[str, Any], cruise_dir: Path, device_dir: Path, dev_id: str, station_id: str = None
 ) -> bool:
     """Add GPX file reference to metadata when coordinates are missing.
 
@@ -540,7 +542,7 @@ def _add_gpx_reference_to_metadata(
     lat = metadata_dict.get("lat", "?")
     lon = metadata_dict.get("lon", "?")
 
-    if lat != '?' and lon != '?':
+    if lat != "?" and lon != "?":
         return False
 
     gpx_files = find_navigation_files(device_dir)
@@ -559,7 +561,7 @@ def _add_gpx_reference_to_metadata(
     gpx_paths = ",".join(str(p.relative_to(cruise_dir)) for p in gpx_files)
     new_comment = (
         f"{cmt}; GPX: {gpx_paths}"
-        if (cmt := metadata_dict.get("comment", "")) and cmt not in ['?', '-', '']
+        if (cmt := metadata_dict.get("comment", "")) and cmt not in ["?", "-", ""]
         else f"GPX: {gpx_paths}"
     )
     metadata_dict["comment"] = new_comment
@@ -579,9 +581,7 @@ def coord_fallback_from_gpx(cruise_dir: Path, device_dir: Path, devices_data: Di
             # Convert to field-name dict if station_metadata is a list;
             # if already a dict (from info_meta_list_to_dict), use directly
             if isinstance(station_metadata, dict):
-                _add_gpx_reference_to_metadata(
-                    station_metadata, cruise_dir, device_dir, dev_id, station_id
-                )
+                _add_gpx_reference_to_metadata(station_metadata, cruise_dir, device_dir, dev_id, station_id)
             else:
                 station_metadata_dict = info_meta_list_to_dict(station_metadata)
                 if _add_gpx_reference_to_metadata(
@@ -622,6 +622,7 @@ def main(**kwargs):
     logger.info("Configuration parameters:")
     logger.info("=" * 80)
     from dataclasses import fields
+
     for field in fields(Config):
         value = getattr(config, field.name)
         logger.info(f"  {field.name}: {value}")
@@ -662,31 +663,28 @@ def main(**kwargs):
     except Exception as e:
         # Catch critical errors at main level
         logger.error(f"Critical error in main processing: {e}", exc_info=True)
-        stats["processing_errors"].append({
-            "location": "main",
-            "error": str(e),
-            "error_type": type(e).__name__
-        })
+        stats["processing_errors"].append(
+            {"location": "main", "error": str(e), "error_type": type(e).__name__}
+        )
         dataset_date_map = {}
 
     finally:
         # Always attempt to save collected data, even if errors occurred
         # Print statistics and warnings at the end
-        if stats.get('info_files_modified'):
-            logger.info("\n".join(["Info-file files modified: "] + [
-                f" {f}" for f in stats['info_files_modified']]))
-        if stats.get('new_devices_found'):
-            # New devices were discovered and processed in this run - time data already extracted
+        if stats.get("info_files_modified"):
             logger.info(
-                f"New devices found and processed in {len(stats['new_devices_found'])} directories:"
+                "\n".join(["Info-file files modified: "] + [f" {f}" for f in stats["info_files_modified"]])
             )
-            for device_dir, new_devices in stats['new_devices_found'].items():
+        if stats.get("new_devices_found"):
+            # New devices were discovered and processed in this run - time data already extracted
+            logger.info(f"New devices found and processed in {len(stats['new_devices_found'])} directories:")
+            for device_dir, new_devices in stats["new_devices_found"].items():
                 logger.info(f"  {device_dir}: {', '.join(new_devices)}")
 
         # Log processing errors if any
-        if stats.get('processing_errors'):
+        if stats.get("processing_errors"):
             logger.error(f"*** Processing completed with {len(stats['processing_errors'])} errors: ***")
-            for error_info in stats['processing_errors']:
+            for error_info in stats["processing_errors"]:
                 logger.error(
                     "  {}: {}".format(
                         error_info["device_dir" if "device_dir" in error_info else "location"],
@@ -703,7 +701,9 @@ def main(**kwargs):
         # Save collected data if any exists
         if meta:
             # Prepare output directory
-            output_dir = Path(config.output_dir if (hasattr(config, 'output_dir') and config.output_dir) else "meta")
+            output_dir = Path(
+                config.output_dir if (hasattr(config, "output_dir") and config.output_dir) else "meta"
+            )
             output_dir.mkdir(parents=True, exist_ok=True)
 
             # Write files list (using timestamp generated at start)
@@ -719,11 +719,13 @@ def main(**kwargs):
                     logger.info(f"Saved metadata table to {meta_tcm_path}")
                 except Exception as write_error:
                     logger.error(f"Error writing output files: {write_error}", exc_info=True)
-                    stats["processing_errors"].append({
-                        "location": "output_writing",
-                        "error": str(write_error),
-                        "error_type": type(write_error).__name__
-                    })
+                    stats["processing_errors"].append(
+                        {
+                            "location": "output_writing",
+                            "error": str(write_error),
+                            "error_type": type(write_error).__name__,
+                        }
+                    )
         else:
             logger.warning("No metadata collected - skipping output file generation")
             files_tcm_path = None

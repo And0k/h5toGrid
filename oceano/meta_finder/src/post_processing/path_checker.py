@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Iterator, List, Optional, Tuple
 
-from meta_finder.logging_config import setup_logging
+from utils.logging_config import setup_logging
 
 
 # Add match_dirs to path to import matcher functions
@@ -29,16 +29,14 @@ TSV_DELIMITER: str = "\t"
 ENCODING: str = "utf-8"
 
 # Constants for output format
-UNCERTAIN_MARKER: str="/?"
+UNCERTAIN_MARKER: str = "/?"
 
 
 logger = logging.getLogger(__name__)
 
 
 def find_best_match(
-    old_path: str,
-    candidate_paths: List[str],
-    cutoff: float = MATCH_CUTOFF
+    old_path: str, candidate_paths: List[str], cutoff: float = MATCH_CUTOFF
 ) -> Tuple[Optional[str], float]:
     """Find the best matching path from candidates.
 
@@ -70,9 +68,7 @@ def find_best_match(
 
 
 def find_similar_path_in_parent(
-    old_path: str,
-    base_search_dir: Path,
-    cutoff: float = MATCH_CUTOFF
+    old_path: str, base_search_dir: Path, cutoff: float = MATCH_CUTOFF
 ) -> Tuple[Optional[str], float]:
     """Search for similar paths in parent directories.
 
@@ -145,9 +141,7 @@ def read_tsv_paths(tsv_path: Path) -> List[str]:
 
 
 def check_path_availability(
-    path: str,
-    base_search_dir: Path,
-    cutoff: float = MATCH_CUTOFF
+    path: str, base_search_dir: Path, cutoff: float = MATCH_CUTOFF
 ) -> Tuple[bool, Optional[str], float]:
     """Check if a path exists and find similar path if not.
 
@@ -177,9 +171,7 @@ def check_path_availability(
 
 
 def generate_path_mapping(
-    old_paths: List[str],
-    base_search_dir: Path,
-    cutoff: float = MATCH_CUTOFF
+    old_paths: List[str], base_search_dir: Path, cutoff: float = MATCH_CUTOFF
 ) -> Iterator[Tuple[str, str]]:
     """Generate mapping from old paths to new paths.
 
@@ -219,9 +211,7 @@ def generate_path_mapping(
 
 
 def write_mapping_tsv(
-    mappings: Iterator[Tuple[str, str]],
-    output_path: Path,
-    delimiter: str = TSV_DELIMITER
+    mappings: Iterator[Tuple[str, str]], output_path: Path, delimiter: str = TSV_DELIMITER
 ) -> None:
     """Write path mappings to a TSV file.
 
@@ -240,10 +230,7 @@ def write_mapping_tsv(
 
 
 def check_paths_from_tsv(
-    tsv_path: Path,
-    output_path: Path,
-    base_search_dir: Optional[Path] = None,
-    cutoff: float = MATCH_CUTOFF
+    tsv_path: Path, output_path: Path, base_search_dir: Optional[Path] = None, cutoff: float = MATCH_CUTOFF
 ) -> None:
     """Main function to check paths from TSV and generate mapping.
 
@@ -290,7 +277,7 @@ def process_all_tsv_files(
     directory: Path,
     output_suffix: str = "_path_mapping.tsv",
     base_search_dir: Optional[Path] = None,
-    cutoff: float = MATCH_CUTOFF
+    cutoff: float = MATCH_CUTOFF,
 ) -> None:
     """Process all TSV files in a directory.
 

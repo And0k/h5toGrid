@@ -6,7 +6,7 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import Dict, List, Optional, Set, Tuple
 
-from meta_finder.logging_config import setup_logging
+from utils.logging_config import setup_logging
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if (MATCH_DIRS_PATH := PROJECT_ROOT.parent / "match_dirs" / "src") not in sys.path:
     sys.path.insert(0, str(MATCH_DIRS_PATH))
 import matcher
-    
+
 FILE_EXTENSIONS: Set[str] = {
     ".csv",
     ".txt",
@@ -50,9 +50,7 @@ def parse_args() -> argparse.Namespace:
         default=MATCH_CUTOFF,
         help=f"Minimum similarity threshold (default: {MATCH_CUTOFF})",
     )
-    parser.add_argument(
-        "--output", "-o", type=Path, default=None, help="Output report file path"
-    )
+    parser.add_argument("--output", "-o", type=Path, default=None, help="Output report file path")
     parser.add_argument(
         "symlinks_dir",
         nargs="?",
@@ -98,9 +96,7 @@ def _longest_common_parent(paths: List[str]) -> Path:
     return common[0]
 
 
-def _filter_nested(
-    target_map: Dict[str, Path], logger: logging.Logger
-) -> Dict[str, Path]:
+def _filter_nested(target_map: Dict[str, Path], logger: logging.Logger) -> Dict[str, Path]:
     items = sorted(target_map.items(), key=lambda kv: str(kv[1]))
     filtered: Dict[str, Path] = {}
     for dd, target in items:
@@ -131,9 +127,7 @@ def main() -> int:
     setup_logging(log_level=log_level)
     logger = logging.getLogger(__name__)
 
-    def find_similar_in_parent(
-        old_path: str, cutoff: float = MATCH_CUTOFF
-    ) -> Tuple[Optional[str], float]:
+    def find_similar_in_parent(old_path: str, cutoff: float = MATCH_CUTOFF) -> Tuple[Optional[str], float]:
         old_path_obj = Path(old_path)
         parent = old_path_obj.parent
         old_name = old_path_obj.name
@@ -155,9 +149,7 @@ def main() -> int:
 
         scores: List[Tuple[str, float]] = []
         for candidate in candidate_dirs:
-            sim = matcher.hierarchical_weighed_similarity(
-                old_name, Path(candidate).name
-            )
+            sim = matcher.hierarchical_weighed_similarity(old_name, Path(candidate).name)
             if sim >= cutoff:
                 scores.append((candidate, sim))
 
@@ -165,9 +157,7 @@ def main() -> int:
             return None, 0.0
         return max(scores, key=lambda x: x[1])
 
-    def check_device_dir(
-        device_dir: str, cutoff: float = MATCH_CUTOFF
-    ) -> Tuple[str, Optional[str], float]:
+    def check_device_dir(device_dir: str, cutoff: float = MATCH_CUTOFF) -> Tuple[str, Optional[str], float]:
         if Path(device_dir).exists():
             return "OK", None, 0.0
 
@@ -225,9 +215,7 @@ def main() -> int:
         similar_str = similar or ""
         score_str = f"{score:.2f}" if similar else ""
         sources_str = "; ".join(sources)
-        lines.append(
-            f"{status}\t{device_dir}\t{similar_str}\t{score_str}\t{sources_str}"
-        )
+        lines.append(f"{status}\t{device_dir}\t{similar_str}\t{score_str}\t{sources_str}")
 
     lines.append("")
     lines.append(f"Total: {len(all_device_dirs)}")
@@ -253,11 +241,7 @@ def main() -> int:
 
         target_map: Dict[str, Path] = {}
         for status, device_dir, similar, score, sources in results:
-            target = (
-                Path(str(similar))
-                if status in ("RENAMED", "UNCERTAIN")
-                else Path(device_dir)
-            )
+            target = Path(str(similar)) if status in ("RENAMED", "UNCERTAIN") else Path(device_dir)
             if not target.exists():
                 logger.warning(f"Symlink target does not exist, skipping: {target}")
                 continue
@@ -267,8 +251,7 @@ def main() -> int:
 
         if len(filtered_map) < 2:
             logger.warning(
-                "Fewer than 2 non-nested device dirs; cannot determine common parent, "
-                "creating flat symlinks"
+                "Fewer than 2 non-nested device dirs; cannot determine common parent, creating flat symlinks"
             )
             symlinks_dir.mkdir(parents=True, exist_ok=True)
             created, skipped, failed = 0, 0, 0
@@ -280,23 +263,14 @@ def main() -> int:
                     skipped += 1
                     continue
                 try:
-                    os.symlink(
-                        str(target_resolved), str(link_path), target_is_directory=True
-                    )
+                    os.symlink(str(target_resolved), str(link_path), target_is_directory=True)
                     created += 1
                 except OSError as e:
-                    logger.error(
-                        f"Failed to create symlink {link_path} -> {target_resolved}: {e}"
-                    )
+                    logger.error(f"Failed to create symlink {link_path} -> {target_resolved}: {e}")
                     failed += 1
-            logger.info(
-                f"Symlinks in {symlinks_dir}: {created} created, "
-                f"{skipped} skipped, {failed} failed"
-            )
+            logger.info(f"Symlinks in {symlinks_dir}: {created} created, {skipped} skipped, {failed} failed")
         else:
-            common_parent = _longest_common_parent(
-                [str(t) for t in filtered_map.values()]
-            )
+            common_parent = _longest_common_parent([str(t) for t in filtered_map.values()])
             logger.info(f"Common parent directory: {common_parent}")
 
             created, skipped, failed = 0, 0, 0
@@ -323,14 +297,10 @@ def main() -> int:
                     continue
 
                 try:
-                    os.symlink(
-                        str(target_resolved), str(link_path), target_is_directory=True
-                    )
+                    os.symlink(str(target_resolved), str(link_path), target_is_directory=True)
                     created += 1
                 except OSError as e:
-                    logger.error(
-                        f"Failed to create symlink {link_path} -> {target_resolved}: {e}"
-                    )
+                    logger.error(f"Failed to create symlink {link_path} -> {target_resolved}: {e}")
                     failed += 1
 
             logger.info(

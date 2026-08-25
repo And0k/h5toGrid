@@ -3,6 +3,7 @@ Test to reproduce the logging line number issue in _extract_device_time_ranges_f
 This test will specifically check the scenario where a list object is passed when a string is expected,
 causing the "'list' object has no attribute 'strip'" error, and verify that the line number is reported correctly.
 """
+
 import pytest
 import logging
 from pathlib import Path
@@ -13,7 +14,8 @@ import io
 
 # Import the modules to test following project structure
 from meta_finder.data_proc_funcs import _extract_device_time_ranges_from_combined_content
-from meta_finder.logging_config import setup_logging
+from utils.logging_config import setup_logging
+
 
 def test_logging_line_numbers_for_list_strip_error():
     """
@@ -33,13 +35,17 @@ def test_logging_line_numbers_for_list_strip_error():
     # This would cause the 'list' object has no attribute 'strip' error in the processing logic
     lines = [
         "datetime\tcol1\tcol2\n",  # Header line
-        ["2022-03-27 10:10:00", "value1", "value2"],  # This is the problematic line - it's a list, not a string
-        "2022-03-27 10:11:00\tvalue3\tvalue4\n"  # Normal line
+        [
+            "2022-03-27 10:10:00",
+            "value1",
+            "value2",
+        ],  # This is the problematic line - it's a list, not a string
+        "2022-03-27 10:11:00\tvalue3\tvalue4\n",  # Normal line
     ]
     device_ids = []
 
     # Capture log output to verify line numbers
-    with patch('meta_finder.data_proc_funcs.logger') as mock_logger:
+    with patch("meta_finder.data_proc_funcs.logger") as mock_logger:
         try:
             # This should trigger the error and log it with the correct line number
             result = _extract_device_time_ranges_from_combined_content(
@@ -71,12 +77,12 @@ def test_logging_line_numbers_accuracy():
     similar to the issue seen in the log file where line 649 was reported.
     """
     # Set up logger
-    logger = setup_logging("test.line_numbers")
+    logger = setup_logging("test.line_numbers", use_custom_logger=True, force=True)
 
     # Capture log output to check line number accuracy
     captured_output = io.StringIO()
     handler = logging.StreamHandler(captured_output)
-    formatter = logging.Formatter('%(funcName)s:%(lineno)d - %(message)s')
+    formatter = logging.Formatter("%(funcName)s:%(lineno)d - %(message)s")
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(logging.ERROR)
@@ -87,7 +93,7 @@ def test_logging_line_numbers_accuracy():
     lines = ["header\n", ["list_item"], "normal_line\n"]  # Contains a list that will cause the error
     device_ids = []
 
-    with patch('meta_finder.data_proc_funcs.logger') as mock_logger:
+    with patch("meta_finder.data_proc_funcs.logger") as mock_logger:
         try:
             result = _extract_device_time_ranges_from_combined_content(
                 dir_archive, rel_path, lines, device_ids

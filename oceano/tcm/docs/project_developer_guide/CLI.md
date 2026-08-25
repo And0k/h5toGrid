@@ -33,8 +33,10 @@ tcm/
                               find_dir_raw_absolute
     _constants.py           ← RAW_DIR_NAME, version info, optional-dependency flags
     to_omegaconf.py         ← to_omegaconf_merge_compatible, to_omegaconf_compatible_types
-    ../../shared/utils/init.py           ← LoggingStyleAdapter, type_fix, ini2dict, Ex_nothing_done,
+    ../../shared/utils/init.py           ← type_fix, ini2dict, Ex_nothing_done,
                               standard_error_info, this_prog_basename, call_with_valid_kwargs
+    ../../shared/utils/log_init.py       ← LoggingStyleAdapter ({}`-style `lf` used across the package)
+    ../../shared/utils/logging_config.py ← setup_logging/colored_formatter/load_yaml_logging (handler layer)
     stage_ctx.py            ← context-var driven state tracking: set_probe/set_stage/set_sublevel/tick,
                               boundary marks (## / ###), StageContextFilter, progress bar positioning
     incl_calc/

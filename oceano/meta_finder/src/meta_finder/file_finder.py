@@ -18,9 +18,8 @@ from meta_finder.parse_data_file_name import (
 )
 from meta_finder.parse_cruise_dir_name import parse_dated_dir
 from . import utils_sys
-from .logging_config import setup_logging
 
-logger = setup_logging()
+logger = logging.getLogger(__name__)
 
 
 def find_cruise_directories(top_search_dirs: List[Union[Path, str]]) -> List[Path]:
@@ -42,20 +41,14 @@ def find_cruise_directories(top_search_dirs: List[Union[Path, str]]) -> List[Pat
             if not dir_path.is_dir():
                 continue
             # Check if directory matches any exclusion pattern
-            if any(
-                re.search(pattern, dir_path.name) for pattern in config.ptn_dir_exclude
-            ):
-                logger.debug(
-                    f"Excluding directory '{dir_path.name}': matches exclusion pattern"
-                )
+            if any(re.search(pattern, dir_path.name) for pattern in config.ptn_dir_exclude):
+                logger.debug(f"Excluding directory '{dir_path.name}': matches exclusion pattern")
                 excluded_count += 1
                 continue
             cruise_dirs.append(dir_path)
 
     if excluded_count > 0:
-        logger.info(
-            f"Excluded {excluded_count} directories based on exclusion patterns"
-        )
+        logger.info(f"Excluded {excluded_count} directories based on exclusion patterns")
     logger.info(f"Found {len(cruise_dirs)} cruise directories")
     # Sort by date extracted from directory name (YYMMDD pattern)
     return sorted(cruise_dirs, key=lambda x: x.name[:6])
@@ -87,9 +80,7 @@ def find_device_dirs(
     # Use device_dirs_top if provided, otherwise use cruise_dir
     if not device_dirs_top:
         if not cruise_dir.is_dir():
-            logger.warning(
-                f'Not a dir "{cruise_dir}" passed to find device directories inside'
-            )
+            logger.warning(f'Not a dir "{cruise_dir}" passed to find device directories inside')
             return []
 
         # Search for top level device directories in the cruise directory - `{cruise_dir}\*device*`
@@ -101,27 +92,20 @@ def find_device_dirs(
             """Search inside a dated directory for device-matching subdirectories and append them."""
             for subpath in dated_parent.iterdir():
                 if not subpath.is_dir() or any(
-                    re.search(pattern, subpath.name)
-                    for pattern in config.ptn_dir_exclude
+                    re.search(pattern, subpath.name) for pattern in config.ptn_dir_exclude
                 ):
                     continue
                 if device_dir_search_re.search(subpath.name) is not None:
                     device_dirs_top.append(subpath)
-                    logger.debug(
-                        f"Found device directory under dated subdir: {subpath}"
-                    )
+                    logger.debug(f"Found device directory under dated subdir: {subpath}")
 
         device_dirs_top = []  # Possible directories to search for data
         for path in cruise_dir.iterdir():
             # Check if directory matches any exclusion pattern
-            if not path.is_dir() or any(
-                re.search(pattern, path.name) for pattern in config.ptn_dir_exclude
-            ):
+            if not path.is_dir() or any(re.search(pattern, path.name) for pattern in config.ptn_dir_exclude):
                 continue
             is_dated = re.match(config.glob_dated_dir, path.name, re.IGNORECASE)
-            if (m := device_dir_search_re.search(path.name)) is not None and m[
-                "device"
-            ]:
+            if (m := device_dir_search_re.search(path.name)) is not None and m["device"]:
                 device_dirs_top.append(path)
                 # A dated directory (e.g. "130822@ADCP,t-chain,i") can match the device
                 # pattern via broader_dev_list but not be a valid device dir itself — its
@@ -131,9 +115,7 @@ def find_device_dirs(
                     _collect_subdevice_dirs(path)
             elif is_dated:
                 _collect_subdevice_dirs(path)
-            elif path.name not in ["text_output", "_raw"] and not path.stem.startswith(
-                "vsz"
-            ):
+            elif path.name not in ["text_output", "_raw"] and not path.stem.startswith("vsz"):
                 logger.debug(f"Skipping non-device directory: {path}")
 
         # If the cruise directory name contains device identifiers, add the cruise directory itself
@@ -196,17 +178,13 @@ def find_raw_directory_files(
             if not entry.is_file():
                 continue
             # Only process supported file types
-            if entry.suffix.lower() in (
-                config.extensions_text | config.extensions_hdf5
-            ):
+            if entry.suffix.lower() in (config.extensions_text | config.extensions_hdf5):
                 dev_id = extract_device_id_from_raw_file_name(entry.name)
                 if entry.suffix.lower() in config.extensions_hdf5:
                     # HDF5 files usually contain device names internally only.
                     # save path, but entirely in key to fill relative
                     # path from their internal structure later
-                    devices[dev_id or "*"][
-                        PurePosixPath(entry.as_posix())
-                    ]  # init empty list
+                    devices[dev_id or "*"][PurePosixPath(entry.as_posix())]  # init empty list
                     # If they not encode it in file name, then we saved them under generic id
                 elif dev_id:
                     # Group files by their parent directory to maintain directory structure
@@ -222,12 +200,9 @@ def find_raw_directory_files(
                     for item in utils_sys.gen_from_archive(archive_path):
                         if (
                             not item["is_folder"]
-                            and (rel_path := item["rel_path"]).suffix.lower()
-                            in config.extensions_text
+                            and (rel_path := item["rel_path"]).suffix.lower() in config.extensions_text
                         ):
-                            if dev_id := extract_device_id_from_raw_file_name(
-                                rel_path.name
-                            ):
+                            if dev_id := extract_device_id_from_raw_file_name(rel_path.name):
                                 devices[dev_id][archive_path].append(rel_path)
                 except Exception:
                     logger.exception(f"Error listing contents of archive {entry}")
@@ -242,11 +217,7 @@ def find_raw_directory_files(
             " + ".join(
                 (
                     ([f"{len(result)} device(s): {device_list}"] if device_list else [])
-                    + (
-                        [f"{len(result['*'])} general file(s)"]
-                        if "*" in result.keys()
-                        else []
-                    )
+                    + ([f"{len(result['*'])} general file(s)"] if "*" in result.keys() else [])
                 )
             ),
         )
@@ -327,9 +298,7 @@ def _resolve_device_ids_from_file_content(
 
     try:
         # Read just the header line to identify devices from column names
-        lines, _, read_error = read_file_lines_universal(
-            dir_path, rel_path, max_lines=1
-        )
+        lines, _, read_error = read_file_lines_universal(dir_path, rel_path, max_lines=1)
 
         if not lines:
             logger.warning(
@@ -351,17 +320,13 @@ def _resolve_device_ids_from_file_content(
                 resolved_devices.extend(_extract_device_ids_from_column_name(col))
 
             # Normalize all resolved device IDs
-            normalized_devices = [
-                normalize_device_id(dev_id) for dev_id in resolved_devices
-            ]
+            normalized_devices = [normalize_device_id(dev_id) for dev_id in resolved_devices]
             unique_devices = list(set(normalized_devices))
             logger.debug(f"Resolved unique devices from content: {unique_devices}")
             return unique_devices
         else:
             # If it's not a structured format, return empty list
-            logger.debug(
-                f"File {dir_path / rel_path.name} is not in a structured format"
-            )
+            logger.debug(f"File {dir_path / rel_path.name} is not in a structured format")
             return []
 
     except Exception as e:
@@ -473,18 +438,13 @@ def extract_devices_from_text_output(
     trackers: Dict[str, _PatternMinMaxTracker] = {}
 
     text_output_dirs = list(device_dir.glob("text_output*"))
-    logger.debug(
-        f"Found {len(text_output_dirs)} text_output directories/archives: {text_output_dirs}"
-    )
+    logger.debug(f"Found {len(text_output_dirs)} text_output directories/archives: {text_output_dirs}")
 
     for text_output_dir in text_output_dirs:
         logger.debug(f"Processing text_output directory/archive: {text_output_dir}")
 
         # Determine directories and archives to scan
-        if (
-            text_output_dir.is_file()
-            and text_output_dir.suffix.lower() in config.extensions_archive
-        ):
+        if text_output_dir.is_file() and text_output_dir.suffix.lower() in config.extensions_archive:
             directories: list[Path] = []
             archives = [text_output_dir]
         elif text_output_dir.is_dir():
@@ -505,27 +465,18 @@ def extract_devices_from_text_output(
                 return
             if not filename_meta.get("devices"):
                 return
-            specific = _resolve_specific_devices(
-                base_dir, rel_path, filename_meta["devices"]
-            )
+            specific = _resolve_specific_devices(base_dir, rel_path, filename_meta["devices"])
             for dev in specific:
-                trackers.setdefault(dev, _PatternMinMaxTracker()).add(
-                    base_dir, rel_path, filename_meta
-                )
+                trackers.setdefault(dev, _PatternMinMaxTracker()).add(base_dir, rel_path, filename_meta)
 
         # Walk directories in a single pass
         for subdir in sorted(directories):
             try:
                 for entry in subdir.rglob("*"):
-                    if (
-                        entry.is_file()
-                        and entry.suffix.lower() in config.extensions_text
-                    ):
+                    if entry.is_file() and entry.suffix.lower() in config.extensions_text:
                         _process_file(
                             text_output_dir,
-                            PurePosixPath(
-                                entry.relative_to(text_output_dir).as_posix()
-                            ),
+                            PurePosixPath(entry.relative_to(text_output_dir).as_posix()),
                         )
             except Exception:
                 logger.exception(f"Error reading directory {subdir}")
@@ -533,10 +484,7 @@ def extract_devices_from_text_output(
         # Walk archives in a single pass
         for archive_path in sorted(archives):
             for item in utils_sys.gen_from_archive(archive_path):
-                if (
-                    not item["is_folder"]
-                    and item["rel_path"].suffix.lower() in config.extensions_text
-                ):
+                if not item["is_folder"] and item["rel_path"].suffix.lower() in config.extensions_text:
                     _process_file(archive_path, item["rel_path"])
 
     # Collect results from trackers — each entry carries its own base_dir
@@ -551,9 +499,7 @@ def extract_devices_from_text_output(
             )
 
     if dev_files:
-        device_info = ", ".join(
-            f"{device}: {len(files)}" for device, files in dev_files.items()
-        )
+        device_info = ", ".join(f"{device}: {len(files)}" for device, files in dev_files.items())
         logger.info(f"  Device files found from text_output sources: {device_info}")
     return dev_files
 
@@ -576,14 +522,10 @@ def parse_path_for_metadata(rel_path: PurePosixPath) -> Dict[str, Any]:
     if filename_meta:
         if "datetime" in filename_meta:
             # Continue resolving device if it is not an exact device
-            has_generic_device = any(
-                device in ["*", "i", "w", "p"] for device in filename_meta["devices"]
-            )
+            has_generic_device = any(device in ["*", "i", "w", "p"] for device in filename_meta["devices"])
             if has_generic_device and rel_path.parent != PurePosixPath("."):
                 if resolved_device := _find_specific_device_in_path_parts(rel_path):
-                    logger.debug(
-                        f"Found specific device from path parts: {resolved_device}"
-                    )
+                    logger.debug(f"Found specific device from path parts: {resolved_device}")
                     # Replace generic device patterns with the resolved specific device
                     filename_meta["devices"] = [
                         resolved_device if device in ["*", "i", "w", "p"] else device
@@ -595,22 +537,16 @@ def parse_path_for_metadata(rel_path: PurePosixPath) -> Dict[str, Any]:
     return None
 
 
-def validate_dev_ids(
-    pre_extracted_devices, dev_files, rel_path, filename_meta, dir_path
-):
+def validate_dev_ids(pre_extracted_devices, dev_files, rel_path, filename_meta, dir_path):
     """not used"""
-    filename_devices = [
-        dev for dev in filename_meta["devices"] if dev not in ["*", "i", "w", "p"]
-    ]
+    filename_devices = [dev for dev in filename_meta["devices"] if dev not in ["*", "i", "w", "p"]]
     # Only extract subdirectory devices if we need to validate
     # Use pre-extracted devices if file is directly in the directory/archive
     if rel_path.parent == PurePosixPath("."):
         subdir_devices = pre_extracted_devices
     else:
         # File is in a subdirectory, extract from that subdirectory
-        subdir_devices = _extract_device_id_from_subdirectory_name(
-            Path(dir_path), rel_path
-        )
+        subdir_devices = _extract_device_id_from_subdirectory_name(Path(dir_path), rel_path)
 
     if subdir_devices and filename_devices:
         # Both sources have device information - verify they match
@@ -724,9 +660,7 @@ def _find_specific_device_in_path_parts(rel_path: PurePosixPath) -> Optional[str
     deepest_part, deepest_devices = parts_with_devices[0]
 
     if len(deepest_devices) == 1:
-        logger.debug(
-            f"Found specific device {deepest_devices[0]} in path part: {deepest_part}"
-        )
+        logger.debug(f"Found specific device {deepest_devices[0]} in path part: {deepest_part}")
         return deepest_devices[0]
 
     # Deepest part is ambiguous — warn if shallower parts mention devices not in the
@@ -749,9 +683,7 @@ def _find_specific_device_in_path_parts(rel_path: PurePosixPath) -> Optional[str
     return None
 
 
-def _extract_device_id_from_subdirectory_name(
-    dir_path: Path, rel_path: PurePosixPath
-) -> List[str]:
+def _extract_device_id_from_subdirectory_name(dir_path: Path, rel_path: PurePosixPath) -> List[str]:
     """
     Extract device ID from subdirectory name as a fallback when filename doesn't contain device information.
 
@@ -769,9 +701,7 @@ def _extract_device_id_from_subdirectory_name(
     Returns:
         List of normalized device IDs extracted from subdirectory name, or empty list if not found
     """
-    logger.debug(
-        f"Attempting to extract device ID from subdirectory name for: {rel_path}"
-    )
+    logger.debug(f"Attempting to extract device ID from subdirectory name for: {rel_path}")
 
     # Determine the directory/archive name to extract devices from
     # This handles cases like text_output/130510/i03/file.txt where i03 is the device directory
@@ -882,9 +812,7 @@ def discover_datafiles_for_all_dev_in_dev_dir(
                                     logger.debug(
                                         f"Device {device} found in both _raw and HDF5, using _raw files"
                                     )
-                        logger.info(
-                            f"Found devices from HDF5 file {h5_file_path}: {list(h5_devices.keys())}"
-                        )
+                        logger.info(f"Found devices from HDF5 file {h5_file_path}: {list(h5_devices.keys())}")
                     else:
                         # Create device mapping with HDF5 file as the associated file
                         dev_files = {}
@@ -902,24 +830,16 @@ def discover_datafiles_for_all_dev_in_dev_dir(
                                         PurePosixPath(h5_file_path.name),
                                     )
                                 ]
-                        logger.info(
-                            f"Found devices from HDF5 file {h5_file_path}: {list(dev_files.keys())}"
-                        )
+                        logger.info(f"Found devices from HDF5 file {h5_file_path}: {list(dev_files.keys())}")
                     break
             if dev_files:
                 break
 
     # Log the number of files for each device
     if dev_files:
-        device_info = ", ".join(
-            [f"{device}: {len(files)}" for device, files in dev_files.items()]
-        )
-        logger.info(
-            f"  Total data files for devices (of all types sufficient for next proc.): {device_info}"
-        )
-        device_info = ",\n".join(
-            [f"{device}: {str(files)}" for device, files in dev_files.items()]
-        )
+        device_info = ", ".join([f"{device}: {len(files)}" for device, files in dev_files.items()])
+        logger.info(f"  Total data files for devices (of all types sufficient for next proc.): {device_info}")
+        device_info = ",\n".join([f"{device}: {str(files)}" for device, files in dev_files.items()])
         logger.debug(f"  {device_info}")
     else:
         # Warn if no data was found in this device directory
@@ -960,9 +880,7 @@ def discover_device_dirs(
     cruise_devices = {}
     for cruise_dir in found_cruise_dirs:
         if device_dirs := find_device_dirs(cruise_dir):
-            logger.info(
-                f"Found {len(device_dirs)} device directories in {cruise_dir.name}"
-            )
+            logger.info(f"Found {len(device_dirs)} device directories in {cruise_dir.name}")
             cruise_devices[cruise_dir] = device_dirs
         else:
             logger.debug(f"No device directories found in {cruise_dir.name}")
@@ -986,9 +904,7 @@ def discover_device_dirs(
                     f"(_raw or text_output subdirectories found)"
                 )
                 # Search cruise directory among parents, or the directory itself if at root
-                cruise_parent = (
-                    "9999-01-01"  # use some fake if valid cruise dir will not be found
-                )
+                cruise_parent = "9999-01-01"  # use some fake if valid cruise dir will not be found
                 for cruise_parent in [input_path] + list(input_path.parents):
                     try:
                         _ = parse_dated_dir(cruise_parent.name)
@@ -1004,9 +920,7 @@ def discover_device_dirs(
                     f"(no _raw or text_output subdirectories found)"
                 )
 
-    logger.debug(
-        f"Scan complete. Found {len(cruise_devices)} cruises with device directories"
-    )
+    logger.debug(f"Scan complete. Found {len(cruise_devices)} cruises with device directories")
     return cruise_devices
 
 
@@ -1041,9 +955,7 @@ def _gpx_filename_contains_device_identifiers(file_name_stem: str) -> bool:
         return True
 
     # Has separators but doesn't match pattern - exclude this file
-    logger.debug(
-        f"Excluding GPX file '{file_name_stem}': doesn't match GPX search pattern"
-    )
+    logger.debug(f"Excluding GPX file '{file_name_stem}': doesn't match GPX search pattern")
     return False
 
 

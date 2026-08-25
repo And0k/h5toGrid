@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from meta_finder.logging_config import setup_logging
+from utils.logging_config import setup_logging
 from post_processing.path_checker import (
     check_paths_from_tsv,
     find_tsv_files,
@@ -62,13 +62,15 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--directory", "-d",
+        "--directory",
+        "-d",
         action="store_true",
         help="Process all TSV files in the specified directory",
     )
 
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         type=Path,
         help=(
             "Output path for mapping file. For single file mode, specifies the "
@@ -77,7 +79,8 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--search-dir", "-s",
+        "--search-dir",
+        "-s",
         type=Path,
         help=(
             "Base directory for similarity search when paths don't exist. "
@@ -86,7 +89,8 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--cutoff", "-c",
+        "--cutoff",
+        "-c",
         type=float,
         default=MATCH_CUTOFF,
         help=(
@@ -96,22 +100,22 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--pattern", "-p",
+        "--pattern",
+        "-p",
         default="*_TCM.tsv",
-        help=(
-            "Glob pattern for finding TSV files in directory mode "
-            "(default: *_TCM.tsv)"
-        ),
+        help=("Glob pattern for finding TSV files in directory mode (default: *_TCM.tsv)"),
     )
 
     parser.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="store_true",
         help="Enable verbose logging output",
     )
 
     parser.add_argument(
-        "--quiet", "-q",
+        "--quiet",
+        "-q",
         action="store_true",
         help="Suppress non-error logging output",
     )
@@ -154,12 +158,7 @@ def validate_arguments(args: argparse.Namespace) -> Optional[str]:
     return None
 
 
-def process_single_file(
-    tsv_path: Path,
-    output_path: Path,
-    search_dir: Optional[Path],
-    cutoff: float
-) -> int:
+def process_single_file(tsv_path: Path, output_path: Path, search_dir: Optional[Path], cutoff: float) -> int:
     """Process a single TSV file.
 
     Args:
@@ -184,11 +183,7 @@ def process_single_file(
 
 
 def process_directory(
-    directory: Path,
-    output_suffix: str,
-    search_dir: Optional[Path],
-    cutoff: float,
-    pattern: str
+    directory: Path, output_suffix: str, search_dir: Optional[Path], cutoff: float, pattern: str
 ) -> int:
     """Process all TSV files in a directory.
 
@@ -224,9 +219,7 @@ def process_directory(
                 error_count += 1
                 logger.error(f"Error processing {tsv_path}: {e}", exc_info=True)
 
-        logger.info(
-            f"Processing complete: {success_count} succeeded, {error_count} failed"
-        )
+        logger.info(f"Processing complete: {success_count} succeeded, {error_count} failed")
 
         return 0 if error_count == 0 else 1
 
@@ -244,9 +237,7 @@ def main() -> int:
     args = parse_arguments()
 
     # Set up logging
-    log_level = logging.DEBUG if args.verbose else (
-        logging.WARNING if args.quiet else logging.INFO
-    )
+    log_level = logging.DEBUG if args.verbose else (logging.WARNING if args.quiet else logging.INFO)
     setup_logging(log_level=log_level)
 
     # Validate arguments
@@ -264,13 +255,7 @@ def main() -> int:
             if args.output:
                 output_suffix = args.output.name
 
-            return process_directory(
-                input_path,
-                output_suffix,
-                args.search_dir,
-                args.cutoff,
-                args.pattern
-            )
+            return process_directory(input_path, output_suffix, args.search_dir, args.cutoff, args.pattern)
         else:
             # Single file mode
             output_path = args.output
@@ -279,12 +264,7 @@ def main() -> int:
                 output_path = input_path.with_suffix("").with_suffix("")
                 output_path = output_path.with_name(f"{output_path.name}_path_mapping.tsv")
 
-            return process_single_file(
-                input_path,
-                output_path,
-                args.search_dir,
-                args.cutoff
-            )
+            return process_single_file(input_path, output_path, args.search_dir, args.cutoff)
 
     except KeyboardInterrupt:
         logger.info("Operation cancelled by user")

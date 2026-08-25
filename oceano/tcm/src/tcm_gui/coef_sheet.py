@@ -523,6 +523,7 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
         """Capture current cell data as the clean baseline."""
         self._snap = self._data_snapshot()
 
+    @property
     def is_dirty(self) -> bool:
         """True when any editable cell differs from last load/save snapshot."""
         return self._data_snapshot() != self._snap
@@ -711,8 +712,14 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
 
                 from tcm import paths as _paths
 
-                _probe = (_P(str((self._cfg.get("input", {}) or {}).get("path") or ""))).absolute()
-                _ddir = _paths.find_dir_raw_absolute(_probe).parent if _probe != _P(".") else None
+                # EMPTY path (pre-scan default page) means "./" — probing it
+                # would anchor find_dir_raw_absolute at the launch cwd (the
+                # code project in dev) and log a bogus "Not standard input
+                # path" warning.  Check the RAW string: Path("") == Path(".")
+                # and .absolute() hides the emptiness before any comparison.
+                _probe_str = str((self._cfg.get("input", {}) or {}).get("path") or "").strip()
+                _probe = _P(_probe_str).absolute() if _probe_str and _probe_str != "." else None
+                _ddir = _paths.find_dir_raw_absolute(_probe).parent if _probe is not None else None
                 _path = str(_ddir / "info_devices.yaml") if _ddir else ""
             except Exception:
                 _path = ""

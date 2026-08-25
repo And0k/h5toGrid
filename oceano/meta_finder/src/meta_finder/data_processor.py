@@ -2,13 +2,15 @@
 High-level data processing orchestration for TCM Metadata Processor.
 """
 
+import logging
 from typing import List, Dict, Any, Tuple, Optional
 from pathlib import Path, PurePath
 
 from . import config
-from .logging_config import setup_logging
-logger = setup_logging()
+
+logger = logging.getLogger(__name__)
 h5_sfx_priority_map = {".proc_noAvg": 2, ".proc_Avg": 3, ".proc": 4, ".raw": 5}
+
 
 def get_h5_type_and_priority(h5_file_path: Path):
     """Determine HDF5 file type and priority from file path.
@@ -30,7 +32,6 @@ def get_h5_type_and_priority(h5_file_path: Path):
     Raises:
         ValueError: If the file path does not match any known HDF5 pattern
     """
-
 
     # Convert to Path object if string is provided
     if not isinstance(h5_file_path, PurePath):
@@ -55,7 +56,8 @@ def get_h5_type_and_priority(h5_file_path: Path):
                 # Raise ValueError for unrecognized HDF5 files as documented
                 raise ValueError(
                     f"Unrecognized HDF5 file pattern: {h5_file_path}: name must contain one of "
-                    f"{list(h5_sfx_priority_map)} suffix or file must be under _raw directory")
+                    f"{list(h5_sfx_priority_map)} suffix or file must be under _raw directory"
+                )
 
     elif last_suffix == ".mat":
         h5_type = "raw"
@@ -68,10 +70,10 @@ def get_h5_type_and_priority(h5_file_path: Path):
 
 
 def sort_input_dirs(path):
-    stem = path.name.split('.')[0]  # базовое имя без расширения
+    stem = path.name.split(".")[0]  # базовое имя без расширения
     suffix = path.suffix
     # Задаем приоритет: папка < .zip < .7z
-    priority = {'': 0, '.zip': 1, '.7z': 2}.get(suffix, 0)
+    priority = {"": 0, ".zip": 1, ".7z": 2}.get(suffix, 0)
     return (stem, priority)
 
 
@@ -120,7 +122,7 @@ def sort_data_paths(paths_meta: dict, devices_needed: set) -> list:
         is_raw = _is_raw_source(parent_path, rel_path)
 
         # Level 2: averaging interval — distance from optimal 2 s bin
-        avg_interval = dataname_metadata.get('averaging_interval', config.default_text_file_averaging)
+        avg_interval = dataname_metadata.get("averaging_interval", config.default_text_file_averaging)
         if avg_interval is None:
             avg_interval = config.default_text_file_averaging
         try:
@@ -140,7 +142,7 @@ def sort_data_paths(paths_meta: dict, devices_needed: set) -> list:
                     f"Empty rel_path is not allowed: dir_path={parent_path}, rel_path={rel_path}"
                 )
 
-            if container_suffix in ['.zip', '.7z', '.rar']:
+            if container_suffix in [".zip", ".7z", ".rar"]:
                 priority = 9 if is_raw else 1  # raw archives lowest; text_output archives above HDF5
             elif container_suffix in config.extensions_hdf5:
                 priority = 7
@@ -155,7 +157,7 @@ def sort_data_paths(paths_meta: dict, devices_needed: set) -> list:
         else:
             avg_distance = abs(avg_interval - _OPTIMAL_BIN_S)
 
-        filename_devices = set(dataname_metadata.get('devices', []))
+        filename_devices = set(dataname_metadata.get("devices", []))
 
         # Level 4: specificity — combined files (wildcards) are lower priority
         is_combined = any(d in filename_devices for d in ("*", "i", "w", "p"))

@@ -2,6 +2,7 @@
 """
 Debug script to check HDF5 table attributes to determine index type.
 """
+
 import sys
 from pathlib import Path
 import logging
@@ -13,12 +14,14 @@ import tables
 import numpy as np
 from datetime import datetime
 
+
 def debug_hdf5_index_attributes():
     """Debug the HDF5 table attributes to understand index type."""
 
     # Using centralized logging configuration
-    from meta_finder.logging_config import setup_logging
-    logger = setup_logging(__name__, include_function_name=True, log_file_sfx="debug_hdf5_index_attributes")
+    from utils.logging_config import setup_logging
+
+    logger = setup_logging(__name__, log_file_sfx="debug_hdf5_index_attributes")
 
     # Define the real HDF5 directory path
     hdf5_dir = Path("D:/WorkData/BalticSea/250415_ABP60@i,t-chain/inclinometer")
@@ -28,7 +31,7 @@ def debug_hdf5_index_attributes():
         return
 
     print("Debugging HDF5 table attributes...")
-    print("="*80)
+    print("=" * 80)
 
     # Test the proc_noAvg file specifically
     proc_file = hdf5_dir / "250415.proc_noAvg.h5"
@@ -52,12 +55,12 @@ def debug_hdf5_index_attributes():
                     print(f"  {attr_name}: <could not read>")
 
             # Check specifically for index_kind
-            if hasattr(table_node._v_attrs, 'index_kind'):
+            if hasattr(table_node._v_attrs, "index_kind"):
                 index_kind = table_node._v_attrs.index_kind
                 print(f"\nFound index_kind: {index_kind}")
 
                 # Now read the index column and convert based on the index_kind
-                if 'datetime64[ns]' in str(index_kind):
+                if "datetime64[ns]" in str(index_kind):
                     print("Index is stored as nanosecond timestamps")
 
                     # Read the index values
@@ -76,12 +79,13 @@ def debug_hdf5_index_attributes():
                             print(f" Value {i}: {val} -> ERROR: {e}")
 
             # Also check the pandas info attribute which has timezone info
-            if hasattr(table_node._v_attrs, 'info'):
+            if hasattr(table_node._v_attrs, "info"):
                 info = table_node._v_attrs.info
                 print(f"\nPandas info: {info}")
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("Debugging completed.")
+
 
 if __name__ == "__main__":
     debug_hdf5_index_attributes()

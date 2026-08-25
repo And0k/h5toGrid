@@ -1,6 +1,8 @@
 """
 HDF5 processing functions for TCM Metadata Processor.
 """
+
+import logging
 from pathlib import Path, PurePosixPath
 from typing import List, Dict, Optional, Tuple, Any
 import re
@@ -9,13 +11,14 @@ import numpy as np
 from datetime import datetime, timedelta
 import warnings
 from .data_proc_funcs import _extract_device_ids_from_column_name
-from .logging_config import setup_logging
 from .parse_data_file_name import extract_device_ids_from_prefixed_name
 from . import config
-logger = setup_logging()
+
+logger = logging.getLogger(__name__)
 
 warnings.filterwarnings("ignore", category=tables.exceptions.DataTypeWarning, module="tables")
 warnings.filterwarnings("ignore", message=r"dtype\(\).*align=0", module="tables|numpy")
+
 
 def _convert_timestamps(time_values, table_attrs, start_idx=0, end_idx=None):
     """
@@ -101,7 +104,7 @@ def _convert_numeric_timestamp_fallback(value):
     """
     try:
         # Handle numpy scalars properly
-        if hasattr(value, 'item'):
+        if hasattr(value, "item"):
             value = value.item()  # Convert numpy scalar to Python scalar
 
         if value >= 1e17:
@@ -147,7 +150,9 @@ def _convert_matlab_serial_date(matlab_datenum):
     return day + dayfrac
 
 
-def _validate_and_format_date(dt: datetime, h5_file_path: Path, dev_group_name: str, source_description: str) -> Optional[str]:
+def _validate_and_format_date(
+    dt: datetime, h5_file_path: Path, dev_group_name: str, source_description: str
+) -> Optional[str]:
     """
     Validate date is in reasonable range and format it as string.
 
@@ -168,7 +173,7 @@ def _validate_and_format_date(dt: datetime, h5_file_path: Path, dev_group_name: 
             f"is outside the reasonable range (2010 to {current_year}). Date year: {dt.year}"
         )
         return None
-    return dt.strftime('%Y-%m-%d %H:%M:%S')
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def extract_devices_from_hdf5_groups(h5_file_path: Path) -> Dict[str, List[PurePosixPath]]:
@@ -192,11 +197,13 @@ def extract_devices_from_hdf5_groups(h5_file_path: Path) -> Dict[str, List[PureP
                 if node._v_pathname == "/":
                     continue  # Skip root
                 # Check if this is a direct child of root by counting path separators
-                path_parts = node._v_pathname.strip('/').split('/')
+                path_parts = node._v_pathname.strip("/").split("/")
                 if len(path_parts) == 1:  # Only one part means it's directly under root
                     group_path = PurePosixPath(node._v_pathname)
                     # Extract device name from group name using the same logic as for text files
-                    for device_id in extract_device_ids_from_prefixed_name(group_path.name, msg_what="group name "):
+                    for device_id in extract_device_ids_from_prefixed_name(
+                        group_path.name, msg_what="group name "
+                    ):
                         if device_id not in device_groups:
                             device_groups[device_id] = []
                         device_groups[device_id].append(group_path)
@@ -204,7 +211,6 @@ def extract_devices_from_hdf5_groups(h5_file_path: Path) -> Dict[str, List[PureP
         logger.exception(f"Error reading HDF5 file {h5_file_path}")
 
     return device_groups
-
 
 
 def _extract_time_range_from_table_path(h5_file_path: Path, table_path: str) -> Optional[Tuple[str, str]]:
@@ -230,14 +236,14 @@ def _extract_time_range_from_table_path(h5_file_path: Path, table_path: str) -> 
             # Get the table
             table = h5file.get_node(table_path)
 
-            if hasattr(table, 'cols') and hasattr(table.cols, '_v_colnames'):
+            if hasattr(table, "cols") and hasattr(table.cols, "_v_colnames"):
                 # For pandas HDF5 stores, the datetime index is often in a column named 'index'
                 # or the first column if it's a datetime
                 time_col = None
 
                 # Look for common time column names
                 for col_name in table.cols._v_colnames:
-                    if 'time' in col_name.lower() or 'date' in col_name.lower() or col_name == 'index':
+                    if "time" in col_name.lower() or "date" in col_name.lower() or col_name == "index":
                         time_col = col_name
                         break
 
@@ -246,7 +252,7 @@ def _extract_time_range_from_table_path(h5_file_path: Path, table_path: str) -> 
                     first_col_name = table.cols._v_colnames[0]
                     first_col = getattr(table.cols, first_col_name)
                     # Check if it's a datetime type
-                    if hasattr(first_col, 'dtype') and 'time' in str(first_col.dtype).lower():
+                    if hasattr(first_col, "dtype") and "time" in str(first_col.dtype).lower():
                         time_col = first_col_name
 
                 if time_col:
@@ -257,7 +263,7 @@ def _extract_time_range_from_table_path(h5_file_path: Path, table_path: str) -> 
                             # Read first time value
                             first_time_values = getattr(table.cols, time_col)[0:1]
                             # Read last time value
-                            last_time_values = getattr(table.cols, time_col)[n_rows-1:n_rows]
+                            last_time_values = getattr(table.cols, time_col)[n_rows - 1 : n_rows]
 
                             # Get the actual values from the arrays
                             first_time_val = first_time_values[0]
@@ -274,26 +280,30 @@ def _extract_time_range_from_table_path(h5_file_path: Path, table_path: str) -> 
 
                                 return start_time, end_time
                             else:
-                                logger.warning(f"No time values in HDF5 file {h5_file_path}, table: {table_path}")
+                                logger.warning(
+                                    f"No time values in HDF5 file {h5_file_path}, table: {table_path}"
+                                )
                                 return None
                         except MemoryError as me:
-                            logger.error(f"MemoryError when allocating array for HDF5 file {h5_file_path}, table: {table_path}: {me}")
-                            logger.error(f"Unable to allocate memory for an array with shape ({n_rows},) and data type {getattr(table.cols, time_col).dtype}")
+                            logger.error(
+                                f"MemoryError when allocating array for HDF5 file {h5_file_path}, table: {table_path}: {me}"
+                            )
+                            logger.error(
+                                f"Unable to allocate memory for an array with shape ({n_rows},) and data type {getattr(table.cols, time_col).dtype}"
+                            )
                             return None
                         except Exception as e:
-                            logger.error(f"Error reading time column from HDF5 file {h5_file_path}, table: {table_path}: {e}")
+                            logger.error(
+                                f"Error reading time column from HDF5 file {h5_file_path}, table: {table_path}: {e}"
+                            )
                             return None
                     else:
                         logger.warning(f"No rows in HDF5 file {h5_file_path}, table: {table_path}")
                         return None
                 else:
-                    logger.warning(
-                        f"Not found time col in HDF5 file {h5_file_path}, table: {table_path}"
-                    )
+                    logger.warning(f"Not found time col in HDF5 file {h5_file_path}, table: {table_path}")
             else:
-                logger.warning(
-                    f"Not found any cols in HDF5 file {h5_file_path}, table: {table_path}"
-                )
+                logger.warning(f"Not found any cols in HDF5 file {h5_file_path}, table: {table_path}")
     except MemoryError as me:
         logger.error(f"MemoryError when accessing HDF5 file {h5_file_path}, table: {table_path}: {me}")
         return None
@@ -301,7 +311,6 @@ def _extract_time_range_from_table_path(h5_file_path: Path, table_path: str) -> 
         logger.error(f"Error extracting time range from HDF5 file {h5_file_path}, table: {table_path}: {e}")
 
     return None
-
 
 
 def extract_time_range_from_hdf5_table(
@@ -349,7 +358,7 @@ def add_device_result(
         averaging_interval: Optional averaging interval in seconds (extracted from group names like i04bin2s)
     """
 
-    if (b_new := device_id not in device_results):
+    if b_new := device_id not in device_results:
         device_results[device_id] = {"time_info": time_range, "data_paths": {}}
     # Create metadata for the HDF5 file with averaging interval if available
     metadata: Dict[str, Any] = {"devices": [device_id]}
@@ -382,14 +391,14 @@ def extract_device_ids_from_hdf5_table_columns(h5_file_path: Path, table_path: s
                 return []
 
             table = h5file.get_node(table_path)
-            if hasattr(table, 'cols') and hasattr(table.cols, '_v_colnames'):
+            if hasattr(table, "cols") and hasattr(table.cols, "_v_colnames"):
                 # For combined HDF5 tables, columns typically represent different devices
                 col_names = table.cols._v_colnames
 
                 # Process each column name to extract device IDs
                 for col_name in col_names:
                     # Look for time column and skip it
-                    if 'time' in col_name.lower() or 'date' in col_name.lower() or col_name == 'index':
+                    if "time" in col_name.lower() or "date" in col_name.lower() or col_name == "index":
                         continue
 
                     # Extract device ID from column name
@@ -403,7 +412,9 @@ def extract_device_ids_from_hdf5_table_columns(h5_file_path: Path, table_path: s
     return device_ids
 
 
-def extract_time_ranges_from_hdf5_combined(h5_file_path: Path, table_path: str, dev_ids: List[str]) -> Dict[str, Optional[Tuple[str, str, str, str]]]:
+def extract_time_ranges_from_hdf5_combined(
+    h5_file_path: Path, table_path: str, dev_ids: List[str]
+) -> Dict[str, Optional[Tuple[str, str, str, str]]]:
     """
     Extract device-specific time ranges from a combined HDF5 table that contains data for multiple devices.
 
@@ -427,14 +438,14 @@ def extract_time_ranges_from_hdf5_combined(h5_file_path: Path, table_path: str, 
 
             table = h5file.get_node(table_path)
 
-            if hasattr(table, 'cols') and hasattr(table.cols, '_v_colnames'):
+            if hasattr(table, "cols") and hasattr(table.cols, "_v_colnames"):
                 # For combined HDF5 tables, columns typically represent different devices
                 col_names = table.cols._v_colnames
                 time_col = None
 
                 # Look for time column (usually 'index' in pandas HDF5 stores)
                 for col_name in col_names:
-                    if 'time' in col_name.lower() or 'date' in col_name.lower() or col_name == 'index':
+                    if "time" in col_name.lower() or "date" in col_name.lower() or col_name == "index":
                         time_col = col_name
                         break
 
@@ -448,35 +459,45 @@ def extract_time_ranges_from_hdf5_combined(h5_file_path: Path, table_path: str, 
                             # Read first time value
                             first_time_values = getattr(table.cols, time_col)[0:1]
                             # Read last time value
-                            last_time_values = getattr(table.cols, time_col)[n_rows-1:n_rows]
+                            last_time_values = getattr(table.cols, time_col)[n_rows - 1 : n_rows]
 
                             # Get the actual values from the arrays
                             if len(first_time_values) > 0:
                                 first_time_val = first_time_values[0]
                             else:
-                                logger.warning(f"No first time value found in HDF5 file {h5_file_path}, table: {table_path}")
+                                logger.warning(
+                                    f"No first time value found in HDF5 file {h5_file_path}, table: {table_path}"
+                                )
                                 return {dev_id: None for dev_id in dev_ids}
 
                             if len(last_time_values) > 0:
                                 last_time_val = last_time_values[0]
                             else:
-                                logger.warning(f"No last time value found in HDF5 file {h5_file_path}, table: {table_path}")
+                                logger.warning(
+                                    f"No last time value found in HDF5 file {h5_file_path}, table: {table_path}"
+                                )
                                 return {dev_id: None for dev_id in dev_ids}
 
                             # Create a combined array with just first and last values for _convert_timestamps
                             time_values = [first_time_val, last_time_val] if n_rows > 1 else [first_time_val]
                         except MemoryError as me:
-                            logger.error(f"MemoryError when allocating time array for HDF5 file {h5_file_path}, table: {table_path}: {me}")
-                            logger.error(f"Unable to allocate memory for time column with shape ({n_rows},) and data type {getattr(table.cols, time_col).dtype}")
+                            logger.error(
+                                f"MemoryError when allocating time array for HDF5 file {h5_file_path}, table: {table_path}: {me}"
+                            )
+                            logger.error(
+                                f"Unable to allocate memory for time column with shape ({n_rows},) and data type {getattr(table.cols, time_col).dtype}"
+                            )
                             return {dev_id: None for dev_id in dev_ids}
                         except Exception as e:
-                            logger.error(f"Error reading time column from HDF5 file {h5_file_path}, table: {table_path}: {e}")
+                            logger.error(
+                                f"Error reading time column from HDF5 file {h5_file_path}, table: {table_path}: {e}"
+                            )
                             return {dev_id: None for dev_id in dev_ids}
 
                     # Process each device column
                     for col_name in col_names:
                         if col_name == time_col:
-                            continue # Skip time column
+                            continue  # Skip time column
 
                         # Extract device ID from column name
                         col_device_ids = _extract_device_ids_from_column_name(col_name)
@@ -491,26 +512,32 @@ def extract_time_ranges_from_hdf5_combined(h5_file_path: Path, table_path: str, 
                                     if n_rows > 0:
                                         # Get the data for this device column (read first and last values only)
                                         first_device_values = getattr(table.cols, col_name)[0:1]
-                                        last_device_values = getattr(table.cols, col_name)[n_rows-1:n_rows]
+                                        last_device_values = getattr(table.cols, col_name)[
+                                            n_rows - 1 : n_rows
+                                        ]
 
                                         # Get the actual values from the arrays
                                         first_device_val = first_device_values[0]
                                         last_device_val = last_device_values[0]
 
                                         # Create a combined array with just first and last values
-                                        device_data = [first_device_val, last_device_val] if n_rows > 1 else [first_device_val]
+                                        device_data = (
+                                            [first_device_val, last_device_val]
+                                            if n_rows > 1
+                                            else [first_device_val]
+                                        )
 
                                     # Check if there's valid data (not all NaN or empty)
                                     has_data = False
-                                    if hasattr(device_data, '__len__') and len(device_data) > 0:
+                                    if hasattr(device_data, "__len__") and len(device_data) > 0:
                                         # For our limited data, check first and last values
                                         for val in device_data:
-                                            if hasattr(val, 'dtype') and np.issubdtype(val.dtype, np.number):
+                                            if hasattr(val, "dtype") and np.issubdtype(val.dtype, np.number):
                                                 # For numeric data, check if not NaN
                                                 if not np.isnan(val):
                                                     has_data = True
                                                     break
-                                            elif val and str(val).lower() not in ['nan', 'null', '']:
+                                            elif val and str(val).lower() not in ["nan", "null", ""]:
                                                 # For other data types, check if not empty/NaN
                                                 has_data = True
                                                 break
@@ -518,19 +545,27 @@ def extract_time_ranges_from_hdf5_combined(h5_file_path: Path, table_path: str, 
                                     if has_data and len(time_values) > 0:
                                         # For combined files, if we have valid data, we use the full time range
                                         # since we only read first and last values
-                                        start_time, end_time = _convert_timestamps(time_values, table._v_attrs, 0, -1)
+                                        start_time, end_time = _convert_timestamps(
+                                            time_values, table._v_attrs, 0, -1
+                                        )
 
                                         # Default burst info for HDF5 files
                                         bursts_t, burst_dt = "-", "-"
 
                                         result[device_id] = (start_time, end_time, burst_dt, bursts_t)
                                 except MemoryError as me:
-                                    logger.error(f"MemoryError when allocating device data array for HDF5 file {h5_file_path}, table: {table_path}, column: {col_name}: {me}")
-                                    logger.error(f"Unable to allocate memory for device column with shape ({n_rows},) and data type {getattr(table.cols, col_name).dtype}")
+                                    logger.error(
+                                        f"MemoryError when allocating device data array for HDF5 file {h5_file_path}, table: {table_path}, column: {col_name}: {me}"
+                                    )
+                                    logger.error(
+                                        f"Unable to allocate memory for device column with shape ({n_rows},) and data type {getattr(table.cols, col_name).dtype}"
+                                    )
                                     # Continue with other columns
                                     continue
                                 except Exception as e:
-                                    logger.error(f"Error reading device column {col_name} from HDF5 file {h5_file_path}, table: {table_path}: {e}")
+                                    logger.error(
+                                        f"Error reading device column {col_name} from HDF5 file {h5_file_path}, table: {table_path}: {e}"
+                                    )
                                     # Continue with other columns
                                     continue
 
@@ -538,7 +573,9 @@ def extract_time_ranges_from_hdf5_combined(h5_file_path: Path, table_path: str, 
         logger.error(f"MemoryError when accessing HDF5 file {h5_file_path}, table: {table_path}: {me}")
         return {dev_id: None for dev_id in dev_ids}
     except Exception as e:
-        logger.error(f"Error extracting time ranges from combined HDF5 table {h5_file_path}:{table_path}: {e}")
+        logger.error(
+            f"Error extracting time ranges from combined HDF5 table {h5_file_path}:{table_path}: {e}"
+        )
 
     return result
 
@@ -574,15 +611,15 @@ def _categorize_hdf5_file(file_path: Path) -> Optional[str]:
     Returns None if file doesn't end with .h5 extension.
     """
     name = file_path.name.lower()
-    if not name.endswith('.h5'):
+    if not name.endswith(".h5"):
         return None
-    if name.endswith('.proc_noavg.h5'):
-        return 'proc_noAvg'
-    if name.endswith('.proc_avg.h5'):
-        return 'proc_Avg'
-    if name.endswith('.proc.h5'):
-        return 'proc'
-    return 'raw'
+    if name.endswith(".proc_noavg.h5"):
+        return "proc_noAvg"
+    if name.endswith(".proc_avg.h5"):
+        return "proc_Avg"
+    if name.endswith(".proc.h5"):
+        return "proc"
+    return "raw"
 
 
 def _iter_hdf5_search_directories(device_dir: Path):
@@ -620,10 +657,10 @@ def _iter_hdf5_search_directories(device_dir: Path):
                 if (
                     subentry.is_dir()
                     and not _is_excluded_by_dir_patterns(subentry.name)
-                    and re.search(r'\bh5\b', subentry.name, re.IGNORECASE)
+                    and re.search(r"\bh5\b", subentry.name, re.IGNORECASE)
                 ):
                     yield (subentry, True)
-        elif re.search(r'\bh5\b', entry.name, re.IGNORECASE):
+        elif re.search(r"\bh5\b", entry.name, re.IGNORECASE):
             yield (entry, False)
 
 
@@ -655,10 +692,10 @@ def find_hdf5_files(device_dir: Path) -> Dict[str, List[Path]]:
 
             if is_raw_dir:
                 # All valid .h5 files in _raw and its h5 subdirs are raw files
-                result['raw'].append(file_path)
+                result["raw"].append(file_path)
             # Categorize by filename suffix
-            elif (category := _categorize_hdf5_file(file_path)):
-                    result[category].append(file_path)
+            elif category := _categorize_hdf5_file(file_path):
+                result[category].append(file_path)
 
     return result
 
@@ -673,7 +710,7 @@ def extract_averaging_seconds_from_h5group(h5group: str) -> Optional[int]:
     Returns:
         Averaging seconds as integer or None if not found
     """
-    match = re.search(r'bin(\d+)', h5group, re.IGNORECASE)
+    match = re.search(r"bin(\d+)", h5group, re.IGNORECASE)
     if match:
         return int(match.group(1))
     return None
@@ -758,7 +795,7 @@ def _process_standard_h5_file(
                 if not extract_time_info or time_range:
                     # Extract averaging interval from group name for .proc_Avg.h5 files
                     averaging_interval = None
-                    if h5_file_path.name.endswith('.proc_Avg.h5'):
+                    if h5_file_path.name.endswith(".proc_Avg.h5"):
                         averaging_interval = extract_averaging_seconds_from_h5group(group_path.name)
 
                     add_device_result(
@@ -771,7 +808,9 @@ def _process_standard_h5_file(
         logger.warning(f"Error reading HDF5 file {h5_file_path}: {e}")
 
 
-def extract_metadata_from_hdf5(device_dir: Path, dev_ids: List[str] = None, extract_time_info: bool = True) -> Dict[str, Any]:
+def extract_metadata_from_hdf5(
+    device_dir: Path, dev_ids: List[str] = None, extract_time_info: bool = True
+) -> Dict[str, Any]:
     """
     Extract devices paths and optionally time ranges from HDF5 files. Searches all sources in device
     directory, and collects metadata according to priority order.
@@ -790,7 +829,7 @@ def extract_metadata_from_hdf5(device_dir: Path, dev_ids: List[str] = None, extr
 
     logger.debug(
         "Trying HDF5 files for %s",
-        'time range extraction' if extract_time_info else 'device and path discovery'
+        "time range extraction" if extract_time_info else "device and path discovery",
     )
     h5_files = find_hdf5_files(device_dir)
     logger.debug(f"Found HDF5 files: {h5_files}")
@@ -803,7 +842,7 @@ def extract_metadata_from_hdf5(device_dir: Path, dev_ids: List[str] = None, extr
         for h5_file_path in h5_file_paths:
             logger.debug(f"Trying HDF5 file: {h5_file_path} for type: {h5_type}")
             # .proc.h5: devices in column names; .proc_Avg.h5 and others: devices in group names
-            if h5_file_path.name.endswith('.proc.h5'):
+            if h5_file_path.name.endswith(".proc.h5"):
                 _process_proc_h5_file(h5_file_path, dev_ids_list, extract_time_info, device_results)
             else:
                 _process_standard_h5_file(h5_file_path, dev_ids_list, extract_time_info, device_results)
@@ -812,6 +851,7 @@ def extract_metadata_from_hdf5(device_dir: Path, dev_ids: List[str] = None, extr
             if dev_ids_list and all(device_id in device_results for device_id in dev_ids_list):
                 return device_results
     return device_results
+
 
 def extract_coef_date_from_hdf5(h5_file_path: Path, dev_group_name: str) -> Optional[str]:
     """
@@ -834,7 +874,7 @@ def extract_coef_date_from_hdf5(h5_file_path: Path, dev_group_name: str) -> Opti
                 try:
                     date_node = h5file.get_node(coef_date_path)
                     # Check if the node is a dataset (Array, CArray, EArray, etc.) that can be indexed
-                    if hasattr(date_node, 'shape'):
+                    if hasattr(date_node, "shape"):
                         # It's a dataset, read all values
                         if date_node.shape == ():
                             # Scalar dataset - read as scalar
@@ -845,14 +885,14 @@ def extract_coef_date_from_hdf5(h5_file_path: Path, dev_group_name: str) -> Opti
                     else:
                         # If it doesn't have a shape attribute, it might be a different type of node
                         # Try to read as a scalar or attribute
-                        dates = [date_node[()]] if hasattr(date_node, '__getitem__') else []
+                        dates = [date_node[()]] if hasattr(date_node, "__getitem__") else []
 
                     # Process dates to find max non-NaN date
                     processed_dates = []
                     for date_val in dates:
-                        if hasattr(date_val, 'decode'):
+                        if hasattr(date_val, "decode"):
                             # Handle byte strings
-                            date_str = date_val.decode('utf-8')
+                            date_str = date_val.decode("utf-8")
                             try:
                                 # Try to parse the string date to datetime object
                                 dt = datetime.fromisoformat(date_str)
@@ -893,7 +933,7 @@ def extract_coef_date_from_hdf5(h5_file_path: Path, dev_group_name: str) -> Opti
                                 except (ValueError, OSError, OverflowError):
                                     # If conversion fails, skip this date
                                     continue
-                        elif hasattr(date_val, 'astype') and 'datetime64' in str(date_val.dtype):
+                        elif hasattr(date_val, "astype") and "datetime64" in str(date_val.dtype):
                             # Handle numpy datetime
                             dt = date_val[~np.isnan(date_val)].astype("datetime64[s]").item()
                             processed_dates.append(dt)
@@ -911,7 +951,9 @@ def extract_coef_date_from_hdf5(h5_file_path: Path, dev_group_name: str) -> Opti
                     valid_dates = [d for d in processed_dates if d is not None]
                     if valid_dates:
                         max_date = max(valid_dates)
-                        return _validate_and_format_date(max_date, h5_file_path, dev_group_name, "coef/date dataset")
+                        return _validate_and_format_date(
+                            max_date, h5_file_path, dev_group_name, "coef/date dataset"
+                        )
                     else:
                         return None
                 except Exception as e:
@@ -925,7 +967,9 @@ def extract_coef_date_from_hdf5(h5_file_path: Path, dev_group_name: str) -> Opti
                     try:
                         date_node = h5file.get_node(coef_date_path)
                         max_date = max(_convert_matlab_serial_date(d.item()) for d in date_node[:])
-                        return _validate_and_format_date(max_date, h5_file_path, dev_group_name, "coef/TimeProcessed dataset")
+                        return _validate_and_format_date(
+                            max_date, h5_file_path, dev_group_name, "coef/TimeProcessed dataset"
+                        )
                     except Exception as e:
                         logger.warning(
                             f"Error reading coef. date from {coef_date_path} in {h5_file_path}: {e}"
@@ -941,14 +985,16 @@ def extract_coef_date_from_hdf5(h5_file_path: Path, dev_group_name: str) -> Opti
                         if timestamp_attr is not None:
                             # Handle byte strings
                             if isinstance(timestamp_attr, bytes):
-                                timestamp_str = timestamp_attr.decode('utf-8')
+                                timestamp_str = timestamp_attr.decode("utf-8")
                             else:
                                 timestamp_str = str(timestamp_attr)
 
                             # Parse the timestamp string
                             try:
                                 dt = datetime.fromisoformat(timestamp_str)
-                                return _validate_and_format_date(dt, h5_file_path, dev_group_name, "Vabs0 timestamp attribute")
+                                return _validate_and_format_date(
+                                    dt, h5_file_path, dev_group_name, "Vabs0 timestamp attribute"
+                                )
                             except ValueError as e:
                                 logger.warning(
                                     f"Failed to parse timestamp attribute '{timestamp_str}' from "
@@ -1015,7 +1061,7 @@ def extract_coef_dates_from_raw_hdf5_files(h5_files: List[Path], dev_ids: List[s
 
 def extract_raw_hdf5_metadata(
     device_dir: Path, dev_ids: List[str], raw_hdf5_cols: set
-    ) -> Dict[str, Dict[str, str]]:
+) -> Dict[str, Dict[str, str]]:
     """
     Extract raw HDF5 metadata for devices based on the raw_hdf5_cols configuration.
     from data that have raw time resolution (no averaging, i.e. "proc_noAvg.h5" and "raw.h5" files)
@@ -1095,7 +1141,7 @@ def extract_time_range_from_hdf5_index(
 
                         # Only process root-level groups (not subgroups), regardless of file type
                         # This ensures we only get direct children of root like /i01, /i04, etc., not /i01/coef
-                        path_parts = node._v_pathname.strip('/').split('/')
+                        path_parts = node._v_pathname.strip("/").split("/")
                         if len(path_parts) > 1:
                             continue  # only processing root-level groups
 
@@ -1106,10 +1152,11 @@ def extract_time_range_from_hdf5_index(
                         logger.debug(f"Extracted device_ids: {dev_ids_cur} from group: {group_name}")
 
                         # Filter to only requested device IDs not yet found in higher priority files
-                        if not (dev_ids_cur := [
-                            did for did in dev_ids_cur
-                            if did in dev_ids and did not in found_devices
-                        ]):
+                        if not (
+                            dev_ids_cur := [
+                                did for did in dev_ids_cur if did in dev_ids and did not in found_devices
+                            ]
+                        ):
                             continue
 
                         # Look for tables within this group that might have time index
@@ -1122,10 +1169,7 @@ def extract_time_range_from_hdf5_index(
 
                             logger.debug(f"Found table node: {table_node._v_pathname}")
 
-
-                            time_range_result = _extract_time_range_from_table_path(
-                                h5_file_path, table_path
-                            )
+                            time_range_result = _extract_time_range_from_table_path(h5_file_path, table_path)
                             if not time_range_result:
                                 continue
                             start_time, end_time = time_range_result
@@ -1135,15 +1179,21 @@ def extract_time_range_from_hdf5_index(
                             for device_id in dev_ids_cur:
                                 if device_id not in results:
                                     results[device_id] = (start_time, end_time)
-                                    found_devices.add(device_id)  # Mark this device as found in this priority level
-                                    logger.debug(f"Found initial time range for {device_id}: {start_time} to {end_time}")
+                                    found_devices.add(
+                                        device_id
+                                    )  # Mark this device as found in this priority level
+                                    logger.debug(
+                                        f"Found initial time range for {device_id}: {start_time} to {end_time}"
+                                    )
                                 else:
                                     # Compare with existing range and extend if necessary
                                     existing_start, existing_end = results[device_id]
                                     new_start = min(start_time, existing_start)
                                     new_end = max(end_time, existing_end)
                                     results[device_id] = (new_start, new_end)
-                                    logger.debug(f"Updated time range for {device_id}: {new_start} to {new_end}")
+                                    logger.debug(
+                                        f"Updated time range for {device_id}: {new_start} to {new_end}"
+                                    )
             except Exception as e:
                 logger.error(f"Error reading HDF5 file {h5_file_path}: {e}")
 

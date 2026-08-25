@@ -7,11 +7,10 @@ from typing import List, Dict, Any, Union
 from pathlib import Path
 
 from .config import config
-from .logging_config import setup_logging
 from . import io_info_files
 from .io_info_files import info_devices_field_names_extended
 
-logger = setup_logging()
+logger = logging.getLogger(__name__)
 
 
 def write_files_list(
@@ -62,9 +61,7 @@ def write_files_list(
     # If dataset_date_map is not provided or setup_name not in map, use dataset name as fallback
     sorted_names = sorted(
         dataset.keys(),
-        key=(lambda x: (dataset_date_map.get(x, ""), x))
-        if dataset_date_map
-        else (lambda x: ""),
+        key=(lambda x: (dataset_date_map.get(x, ""), x)) if dataset_date_map else (lambda x: ""),
     )
 
     with open(out_path, "w", encoding="utf-8") as f:
@@ -77,9 +74,7 @@ def write_files_list(
                 f.write(f"{dev_dir_path.as_posix()}\n")
 
                 # For all devices of current json sorted by device_id (skip None keys from malformed YAML)
-                for device_id in sorted(
-                    k for k in devices_data.keys() if k is not None
-                ):
+                for device_id in sorted(k for k in devices_data.keys() if k is not None):
                     device_info = devices_data[device_id]
                     # data_paths is a dictionary mapping path tuples to metadata
                     b_one_written = False
@@ -133,9 +128,7 @@ def write_metadata_table(
     data_path_field = "data_file_path" if write_1st_paths else "data_paths"
 
     # Start with all the fields from the extended list (excluding 'data_paths')
-    all_fields = [
-        field for field in info_devices_field_names_extended if field != "data_paths"
-    ]
+    all_fields = [field for field in info_devices_field_names_extended if field != "data_paths"]
 
     # Create headers with data_file_path, quality (new field), comment, modification_symbol in that order
     # starting after the position of the element where comment originally was
@@ -145,10 +138,7 @@ def write_metadata_table(
     ]
     comment_original_idx = info_devices_field_names_extended.index("comment")
     adjusted_comment_idx = comment_original_idx
-    if (
-        info_devices_field_names_extended.index("modification_symbol")
-        < comment_original_idx
-    ):
+    if info_devices_field_names_extended.index("modification_symbol") < comment_original_idx:
         adjusted_comment_idx -= 1
     # Insert quality column before comment
     headers = (
@@ -180,9 +170,7 @@ def write_metadata_table(
             field_value = meta.get(field_name, "?")
             # Handle burst values: if missing or empty, set to '-'
             if field_name in ["bursts_t", "burst_dt"]:
-                entry[field_name] = (
-                    "-" if (not field_value or field_value == "?") else field_value
-                )
+                entry[field_name] = "-" if (not field_value or field_value == "?") else field_value
             else:
                 entry[field_name] = "" if field_value is None else field_value
 
@@ -202,15 +190,11 @@ def write_metadata_table(
 
     for devices_data in dev_dir_meta.values():
         for device_id, meta in devices_data.items():
-            logger.debug(
-                f"meta for {device_id} found: {str([k for k, v in meta.items() if v != '?'])}"
-            )
+            logger.debug(f"meta for {device_id} found: {str([k for k, v in meta.items() if v != '?'])}")
             # Try to process as nested dict structure (multiple intervals)
             # If no station items are found, fall back to single interval structure
             has_nested = False
-            for station_id, station_metadata in io_info_files.iter_station_id_items(
-                meta
-            ):
+            for station_id, station_metadata in io_info_files.iter_station_id_items(meta):
                 has_nested = True
                 # Build field-name dict from station_metadata (list or dict)
                 # When station_metadata is already a field-name dict (from
@@ -223,9 +207,7 @@ def write_metadata_table(
                         if val not in ("?", "", None, "-", "None"):
                             station_metadata_dict[field_name] = val
                         else:
-                            station_metadata_dict[field_name] = meta.get(
-                                field_name, "?"
-                            )
+                            station_metadata_dict[field_name] = meta.get(field_name, "?")
                 else:
                     station_metadata_dict = {}
                     for idx, field_name in enumerate(info_devices_field_names_extended):
@@ -234,13 +216,9 @@ def write_metadata_table(
                             if val not in ("?", "", None, "-", "None"):
                                 station_metadata_dict[field_name] = val
                             else:
-                                station_metadata_dict[field_name] = meta.get(
-                                    field_name, "?"
-                                )
+                                station_metadata_dict[field_name] = meta.get(field_name, "?")
                         else:
-                            station_metadata_dict[field_name] = meta.get(
-                                field_name, "?"
-                            )
+                            station_metadata_dict[field_name] = meta.get(field_name, "?")
                 # Preserve all special metadata keys (setup_name, data_paths, combined_comments)
                 for special_key in io_info_files._SPECIAL_METADATA_KEYS:
                     if special_key in meta:
@@ -251,13 +229,9 @@ def write_metadata_table(
                     interval_index=int(station_id),
                     data_paths=meta.get("data_paths", {}),
                 )
-            if (
-                not has_nested
-            ):  # Device has single interval structure - create one entry
+            if not has_nested:  # Device has single interval structure - create one entry
                 logger.debug(f"  Device {device_id}: single interval structure")
-                _process_device_entry(
-                    device_id, meta, data_paths=meta.get("data_paths", {})
-                )
+                _process_device_entry(device_id, meta, data_paths=meta.get("data_paths", {}))
 
     # Process data paths and quality for all device entries
     logger.debug(f"Processing {len(all_devices)} device entries for TCV output")
@@ -332,9 +306,7 @@ def find_latest_meta_file(output_dir: Union[str, Path]) -> str:
         logger.info("No existing meta_TCM_*.tsv files found")
         return None
     files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
-    logger.info(
-        f"Found {len(files)} existing meta_TCM_*.tsv files, returning the newest one"
-    )
+    logger.info(f"Found {len(files)} existing meta_TCM_*.tsv files, returning the newest one")
     return str(files[0])
 
 
@@ -350,9 +322,7 @@ def load_existing_metadata(
         Dictionary mapping device keys to metadata dictionaries
     """
     logger.info(f"Loading existing metadata from {meta_file_path}")
-    meta_file_path_obj = (
-        Path(meta_file_path) if isinstance(meta_file_path, str) else meta_file_path
-    )
+    meta_file_path_obj = Path(meta_file_path) if isinstance(meta_file_path, str) else meta_file_path
 
     existing_metadata = {}
     try:
@@ -370,14 +340,9 @@ def load_existing_metadata(
         for line in lines[1:]:
             if line.strip():
                 values = line.strip().split("\t")
-                row_data = {
-                    header: values[i] if i < len(values) else "?"
-                    for i, header in enumerate(headers)
-                }
+                row_data = {header: values[i] if i < len(values) else "?" for i, header in enumerate(headers)}
                 if "device_id" in row_data and row_data["device_id"] != "?":
-                    device_key = (
-                        f"{row_data.get('setup_name', '?')}_{row_data['device_id']}"
-                    )
+                    device_key = f"{row_data.get('setup_name', '?')}_{row_data['device_id']}"
                     existing_metadata[device_key] = row_data
 
         logger.info(f"Loaded existing metadata for {len(existing_metadata)} devices")

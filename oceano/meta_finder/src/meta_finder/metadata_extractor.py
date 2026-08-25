@@ -8,10 +8,11 @@ import xml.etree.ElementTree as ET
 from typing import Dict, Any, Optional, Tuple, Union
 from pathlib import Path
 from .parse_data_file_name import normalize_device_id
-from .logging_config import setup_logging
 from . import io_info_files
 from .config import DEVICES_FILE_NAME, DEVICES_FILE_NAME_YAML, DEVICES_FILE_NAME_UPD
-logger = setup_logging()
+
+logger = logging.getLogger(__name__)
+
 
 def info_meta_list_to_dict(json_metadata_list):
     """Add fields from metadata list"""
@@ -19,13 +20,14 @@ def info_meta_list_to_dict(json_metadata_list):
         field_name: val
         for field_name, val in zip(io_info_files.info_devices_field_names_extended, json_metadata_list)
     }
-    for field_name in io_info_files.info_devices_field_names_extended[len(json_metadata_list):]:
+    for field_name in io_info_files.info_devices_field_names_extended[len(json_metadata_list) :]:
         entry[field_name] = (
             "" if field_name in ("burst_dt", "bursts_t", "coef_date", "time_raw_st", "time_raw_en") else "?"
         )
 
     # Parse and format datetime fields correctly
     from datetime import datetime
+
     datetime_fields = ["time_st", "time_en", "coef_date", "time_raw_st", "time_raw_en"]
     for field_name in datetime_fields:
         if field_name in entry and entry[field_name] not in ["?", "", None, "-", "None"]:
@@ -45,12 +47,17 @@ def info_meta_list_to_dict(json_metadata_list):
                     formatted_dt = entry[field_name].strftime("%Y-%m-%d %H:%M:%S")
                     entry[field_name] = formatted_dt
                 else:
-                    logger.warning(f"Could not parse datetime field {field_name} with value '{entry[field_name]}': {e}")
+                    logger.warning(
+                        f"Could not parse datetime field {field_name} with value '{entry[field_name]}': {e}"
+                    )
             except Exception as e:
                 # If parsing fails for other reasons, leave as-is but log warning
-                logger.warning(f"Could not parse datetime field {field_name} with value '{entry[field_name]}': {e}")
+                logger.warning(
+                    f"Could not parse datetime field {field_name} with value '{entry[field_name]}': {e}"
+                )
 
     return entry
+
 
 def read_metadata_files(json_path: Path) -> Dict[str, Any]:
     """Extract metadata from metadata files in priority order:
@@ -68,7 +75,7 @@ def read_metadata_files(json_path: Path) -> Dict[str, Any]:
     metadata_paths = [
         json_path.with_name(DEVICES_FILE_NAME_UPD),  # Highest priority: @meta_finder.yaml
         json_path.with_name(DEVICES_FILE_NAME_YAML),  # Second priority: .yaml
-        json_path  # Lowest priority: original .json
+        json_path,  # Lowest priority: original .json
     ]
 
     meta = None
@@ -92,7 +99,9 @@ def read_metadata_files(json_path: Path) -> Dict[str, Any]:
     # Log results
     if logger.isEnabledFor(logging.DEBUG):
         if meta:
-            logger.debug(f"Successfully extracted metadata from file containing {len(meta)} device entries: {list(meta.keys())}")
+            logger.debug(
+                f"Successfully extracted metadata from file containing {len(meta)} device entries: {list(meta.keys())}"
+            )
             # Log the actual content for debugging, focusing on important fields like time
             for device_id, metadata_list in meta.items():
                 logger.debug(f'  Device "{device_id}": {metadata_list}')
@@ -100,6 +109,7 @@ def read_metadata_files(json_path: Path) -> Dict[str, Any]:
             logger.debug("No valid metadata found in any checked files")
 
     return meta if meta is not None else {}
+
 
 def read_metadata_files_to_dict(json_path: Path) -> Dict[str, Dict[str, Any]]:
     """Extract metadata from json_path (or DEVICES_FILE_NAME_UPD instead if exists) file and convert lists to dictionaries.
@@ -136,7 +146,7 @@ def read_metadata_files_to_dict(json_path: Path) -> Dict[str, Dict[str, Any]]:
     # Space-prefixed device IDs are already filtered by read_metadata_file()
     for device_id, metadata_list in json_data.items():
         # Normalize device_id, to prevent overwriting, only if has no trailing underscores
-        result_device_id = device_id if device_id.endswith('_') else normalize_device_id(device_id)
+        result_device_id = device_id if device_id.endswith("_") else normalize_device_id(device_id)
 
         # Handle formats:
         # 1. List/tuple: Single interval device, convert to dict
@@ -148,9 +158,7 @@ def read_metadata_files_to_dict(json_path: Path) -> Dict[str, Dict[str, Any]]:
             # Nested dict structure from read_metadata_file: {station_id: metadata_list}
             # Convert each metadata list to a field-name dict
             converted_metadata = {
-                str(k): (
-                    info_meta_list_to_dict(v) if isinstance(v, (list, tuple)) else v
-                )
+                str(k): (info_meta_list_to_dict(v) if isinstance(v, (list, tuple)) else v)
                 for k, v in metadata_list.items()
             }
         else:
@@ -168,6 +176,7 @@ def read_metadata_files_to_dict(json_path: Path) -> Dict[str, Dict[str, Any]]:
         )
     return result
 
+
 # Not used: Process devices with trailing '_' suffixes to construct comments for corresponding devices
 # result = process_trailing_underscore_devices(result)
 
@@ -180,6 +189,7 @@ def read_metadata_files_to_dict(json_path: Path) -> Dict[str, Dict[str, Any]]:
 #             device_id,
 #             {k: v for k, v in metadata_dict.items() if v not in [None, "", "?"]},
 #         )
+
 
 def extract_coordinates_from_gpx(gpx_path: Path, points) -> Optional[Tuple[float, float]]:
     """Extract coordinates from a .gpx file.
@@ -197,14 +207,14 @@ def extract_coordinates_from_gpx(gpx_path: Path, points) -> Optional[Tuple[float
         root = tree.getroot()
 
         # Define namespace
-        ns = {'gpx': 'http://www.topografix.com/GPX/1/1'}
+        ns = {"gpx": "http://www.topografix.com/GPX/1/1"}
 
         # Try to find waypoints first
-        waypoints = root.findall('.//gpx:wpt', ns)
+        waypoints = root.findall(".//gpx:wpt", ns)
         for waypoint in waypoints:
             if waypoint in points:
-                points[waypoint]["lat"] = lat = float(waypoint.get('lat'))
-                points[waypoint]["lon"] = lon = float(waypoint.get('lon'))
+                points[waypoint]["lat"] = lat = float(waypoint.get("lat"))
+                points[waypoint]["lon"] = lon = float(waypoint.get("lon"))
                 logger.debug(f"Found coordinates in waypoint: lat={lat}, lon={lon}")
 
         # Check if any coordinates were found

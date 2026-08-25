@@ -2,9 +2,16 @@
 version: 1
 formatters:
   colorlog:
-    '()': 'colorlog.ColoredFormatter'
-    format: '%(cyan)s%(asctime)s%(reset)s|%(blue)s%(funcName)s%(reset)s|%(log_color)s%(message)s'
+    # utils factory = colorlog colouring + SafeStringFormatter options:
+    # 'tcm.' prefix stripped from names, module.funcName:row shown,
+    # VSCode-clickable tracebacks, caller>callee for same-module calls
+    # (the latter two also need CustomLogger — installed by tcm.cli._setup_file_handler
+    # via utils.logging_config.upgrade_loggers, since dictConfig can't set logger classes)
+    '()': utils.logging_config.colored_formatter
+    fmt: '%(cyan)s%(asctime)s%(reset)s|%(blue)s%(name)s.%(funcName)s:%(lineno)d%(reset)s|%(log_color)s%(message)s'
     datefmt: '%H:%M:%S'
+    package_prefix: 'tcm.'
+    caller_callee: true
     log_colors:
       DEBUG: purple
       INFO: green

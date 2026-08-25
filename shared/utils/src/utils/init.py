@@ -150,9 +150,9 @@ def dir_walker(
 
 
 # Used in next two functions
-bGood_NameEdge = lambda name, namesBadAtEdge: all([
-    name[-len(notUse) :] != notUse and name[: len(notUse)] != notUse for notUse in namesBadAtEdge
-])
+bGood_NameEdge = lambda name, namesBadAtEdge: all(
+    [name[-len(notUse) :] != notUse and name[: len(notUse)] != notUse for notUse in namesBadAtEdge]
+)
 
 
 def bGood_dir(dirName, namesBadAtEdge):
@@ -550,9 +550,12 @@ def type_fix(name: str, opt: Any) -> tuple[str, Any]:
             #         return name_out, [n.strip() for n in opt.split(',')]
         if isinstance(opt, Mapping):
             if opt:
-                opt_out = dict([
-                    val_type_fix(name[:-1] if name.endswith("lists") else name, n, v) for n, v in opt.items()
-                ])
+                opt_out = dict(
+                    [
+                        val_type_fix(name[:-1] if name.endswith("lists") else name, n, v)
+                        for n, v in opt.items()
+                    ]
+                )
                 # Note: global name_out was changed during val_type_fix()
             else:  # Call type_fix() only to set name_out
                 name_out, val = type_fix(name[:-1] if name.endswith("lists") else name, None)
@@ -574,11 +577,13 @@ def type_fix(name: str, opt: Any) -> tuple[str, Any]:
                 return name_out, {}  # None value to empty dict
             elif isinstance(opt, str):
                 sep = "\n," if ",\n" in opt else ","
-                dict_fixed = dict([
-                    val_type_fix(name_new, *n.strip().split(": " if ": " in n else ":", maxsplit=1))
-                    for n in opt.split(sep)
-                    if len(n)
-                ])
+                dict_fixed = dict(
+                    [
+                        val_type_fix(name_new, *n.strip().split(": " if ": " in n else ":", maxsplit=1))
+                        for n in opt.split(sep)
+                        if len(n)
+                    ]
+                )
                 return name_out, dict_fixed
             else:
                 return type_fix(name_new, opt)  # ???
@@ -1140,6 +1145,8 @@ def my_argparser_common_part(varargs, version="?"):  # description, version='?',
     varargs.setdefault("epilog", "")
 
     try:
+        import configargparse
+
         # varargs.setdefault('default_config_files', [])
         # varargs.setdefault('formatter_class', configargparse.ArgumentDefaultsRawHelpFormatter)
         # formatter_class= configargparse.ArgumentDefaultsHelpFormatter,
@@ -1147,7 +1154,7 @@ def my_argparser_common_part(varargs, version="?"):  # description, version='?',
         # varargs.setdefault('write_out_config_file_arg_help_message',
         #                    "takes the current command line arguments and writes them out to a configuration file the given path, then exits. But this file have no section headers. So to use this file you need to add sections manually. Sections are listed here in help message: [in], [out] ...")
         # varargs.setdefault('ignore_unknown_config_file_keys', True)
-        # p = configargparse.ArgumentParser(**varargs)
+        p = configargparse.ArgumentParser(**varargs)
     except ImportError:
         from argparse import ArgumentParser
 
@@ -1434,6 +1441,7 @@ def init_file_names(
 
 # File management ##############################################################
 
+
 def set_cfg_path_filemask(
     path=None, filemask=None, ext=None, cfg_search_parent: MutableMapping[str, Any] | None = None
 ):
@@ -1492,8 +1500,6 @@ def splitPath(path, default_filemask):
         else:
             Dlast = os.path.basename(D)
     return D, mask, Dlast
-
-
 
 
 def this_prog_basename(path=sys.argv[0]):
@@ -1686,6 +1692,7 @@ def update_cfg_time_ranges(cfg_in_cur, min_date=None, max_date=None):
 
 
 # Depreciated funcions
+
 
 def prep(args, default_input_filemask="*.pdf", msgFound_n_ext_dir="Process {n} {ext}{files} from {dir}"):
     """
