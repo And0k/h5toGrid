@@ -280,6 +280,12 @@ class SheetHoverMixin:
 
         self._apply_edit_value(iid, 0, text)
 
+        # Content changed under the pointer (edit commit / browse) —
+        # re-sync the overlay's content-aware align (ghost left, path right).
+        if (f := self._hover_field) is not None and f.winfo_ismapped():
+            f.update_idletasks()
+            self._sync_floated_align()
+
         if not text:
             # The cell beneath now shows the ghost — hide the identical
             # overlay instead of leaving a second, covering surface.
@@ -311,6 +317,30 @@ class SheetHoverMixin:
 
     # ── floated PathField lifecycle ───────────────────────────────────
 
+    def _sync_floated_align(self) -> None:
+        """Content-aware align for the floated overlay field only.
+
+        Real paths right-align + scroll to the filename end (it sits next
+        to the browse button — long directory prefixes scroll away);
+        ghosts stay left-aligned like the cell underneath.
+
+        Overlay-only by construction: it touches the floated field's own
+        1×1 sheet, never the standalone top field.  ``table_align`` resets
+        any per-cell override; the follow-up scroll needs finalized geometry,
+        so callers run it AFTER ``place`` + ``update_idletasks``.
+        """
+        f = self._hover_field
+        if f is None:
+            return
+        if f._ph.has(0, 0):
+            f.sh.table_align("w", redraw=False)
+            f.sh.redraw()
+            f._scroll_to_left()
+        else:
+            f.sh.table_align("e", redraw=False)
+            f.sh.redraw()
+            f._scroll_to_right()
+
     def _ensure_hover_field(self) -> _path_field.PathField:
         """The single PathField instance for the text surface + a separate
         ``BrowseOverlay`` button at the sheet's right edge.  Both are
@@ -341,6 +371,18 @@ class SheetHoverMixin:
             # same row — re-publish row status instead of leaving it empty.
             # True sheet leave is handled by _on_sheet_leave.
             f.sh.MT.bind("<Leave>", self._on_field_leave, add="+")
+            # Overlay-only: after PathField's own <Configure> handling, re-sync
+            # the content-aware align — the HEAD handler scrolls LEFT for
+            # align="w" fields, which pushes a right-aligned path off-screen
+            # on any resize while the overlay is mapped.
+            f.unbind("<Configure>")
+
+            def _floated_configure(event, _f=f) -> None:
+                _f._on_configure(event)
+                if not _f._editing:
+                    self._sync_floated_align()
+
+            f.bind("<Configure>", _floated_configure, add="+")
             self._hover_field = f
             # Status callback for browse button Shift hint — wraps
             # on_hover_status(msg, md) into the on_status(text) signature.
@@ -411,6 +453,8 @@ class SheetHoverMixin:
         f.set(val)
         f.place(**self._field_place_kw(hit_row, fallback_y, val))
         f.lift()
+        f.update_idletasks()  # finalize geometry before the content-aware scroll
+        self._sync_floated_align()
         if self._hover_btn is not None:
             self._hover_btn.show(**self._btn_place_kw(hit_row, fallback_y))
         # Publish status so the help text is visible even when the pointer

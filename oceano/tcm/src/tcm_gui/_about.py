@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import logging
 import re
-import sys
 import tkinter as tk
 from collections import defaultdict
 from collections.abc import Callable
@@ -41,7 +40,7 @@ from ._i18n import STRINGS as _S
 from ._i18n import resolve_lang
 from ._rtf_clipboard import copy_rich
 from .browser import open_md_link
-from .const import UIScale
+from .const import UIScale, work_area
 from .md_label import MarkdownLabel
 from .theme import _opt_into_dark_titlebar, mix_hex
 
@@ -160,39 +159,6 @@ def _folder_label(folder: str) -> str:
     return folder.replace("_", " ").capitalize()
 
 
-def _work_area(widget: tk.Misc) -> tuple[int, int, int, int]:
-    """Work area ``(left, top, right, bottom)`` of the monitor holding *widget*.
-
-    Per-monitor (``MonitorFromWindow`` + ``GetMonitorInfo``), taskbar excluded
-    — ``SPI_GETWORKAREA`` only knows the PRIMARY monitor, wrong on multi-monitor
-    setups.  This process is DPI-unaware, so both Tk and WinAPI speak the same
-    virtualized coordinates.
-    """
-    if sys.platform == "win32":
-        try:
-            import ctypes
-            from ctypes import wintypes
-
-            class _MONITORINFO(ctypes.Structure):
-                _fields_ = [
-                    ("cbSize", wintypes.DWORD),
-                    ("rcMonitor", wintypes.RECT),
-                    ("rcWork", wintypes.RECT),
-                    ("dwFlags", wintypes.DWORD),
-                ]
-
-            user32 = ctypes.windll.user32
-            hwnd = user32.GetAncestor(widget.winfo_id(), 2) or widget.winfo_id()  # GA_ROOT
-            hmon = user32.MonitorFromWindow(hwnd, 2)  # MONITOR_DEFAULTTONEAREST
-            info = _MONITORINFO(cbSize=ctypes.sizeof(_MONITORINFO))
-            if user32.GetMonitorInfoW(hmon, ctypes.byref(info)):
-                r = info.rcWork
-                return r.left, r.top, r.right, r.bottom
-        except OSError:
-            pass
-    return 0, 0, widget.winfo_screenwidth(), widget.winfo_screenheight()
-
-
 def _wrap_px(text: str, measure: Callable[[str], int], max_px: int) -> list[str]:
     """Greedy word-wrap of *text* to *max_px* px (``measure`` = font.measure)."""
     lines, cur = [], ""
@@ -270,7 +236,7 @@ class AboutDialog(tk.Toplevel):
         # Center on the SCREEN work area (taskbar excluded; _refit re-centers
         # whenever the fitted height changes); show only when fully laid out.
         self.update_idletasks()
-        left, top, right, bottom = _work_area(self)
+        left, top, right, bottom = work_area(self)
         x = left + max(right - left - _W, 0) // 2
         y = top + max(bottom - top - _H, 0) // 2
         self.geometry(f"{_W}x{_H}+{x}+{y}")
@@ -452,7 +418,7 @@ class AboutDialog(tk.Toplevel):
         docs_px = h1 + max(lines - 1, 0) * row_px
 
         # chrome = pads only (no separator, no window spare → no feedback)
-        left, top, right, bottom = _work_area(self)
+        left, top, right, bottom = work_area(self)
         need = min(hdr_px + docs_px + sum(_PADS), bottom - top)
         x, _y = self._pos()
         x = max(left, min(x, right - self.winfo_width()))  # stay on the monitor

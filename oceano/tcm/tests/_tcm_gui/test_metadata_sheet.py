@@ -125,6 +125,73 @@ def test_run_does_not_crash_on_metadata_time_range(tmp_path, monkeypatch, mocker
         assert got_dates == {}
 
 
+def test_build_metadata_empty_path_does_not_probe_cwd(tmp_path):
+    """No-args GUI launch must NOT anchor-probe the cwd for the device file.
+
+    Regression: the metadata-path default did ``Path(path or "").absolute()``
+    BEFORE the empty check — ``Path("").absolute()`` is the cwd, which
+    differs from ``Path(".")``, so the guard never matched and
+    ``find_dir_raw_absolute`` logged "Not standard input path <project
+    root>" on every argless startup.  Repo-internal paths are skipped too.
+    """
+    import tcm_gui.coef_sheet as coef_sheet
+
+    # (path, probe expected?) — empty/"." and repo-internal paths skip the
+    # probe; a normal outside path still derives the device-file default.
+    cases = [("", False), (".", False), (str(tmp_path), True), (str(Path(__file__).resolve()), False)]
+    for path_val, expect_probe in cases:
+        mock_sh = MagicMock()
+        _items: dict = {}
+
+        def _insert(_items=_items, **kw):
+            iid = f"iid_{len(_items)}"
+            _items[iid] = {"values": kw.get("values", ()), "text": kw.get("text", "")}
+            return iid
+
+        mock_sh.insert.side_effect = _insert
+        cs = coef_sheet.ConfigSheet.__new__(coef_sheet.ConfigSheet)
+        cs.sh = mock_sh
+        cs._meta = {}
+        cs._nv = 6
+        cs._full = False
+        cs._cfg = {"input": {"path": path_val}}
+        cs._config_root = Config
+        cs._return_enum = Return
+        cs._snap = ()
+        cs._snap_meta = ()
+        cs._fg_default = "#000000"
+        cs._int_row_of = {}
+        cs._vis = ()
+        cs._col_resize = MagicMock()
+        cs.on_edit_begin = None
+        cs._readonly = False
+        cs._status_iid = None
+        cs._status_hint = ""
+        cs._metadata = None
+        cs._sync_status = None
+        cs._rebuild_row_caches = MagicMock()
+        cs._apply_open = MagicMock()
+        cs._apply_styles = MagicMock()
+        cs._apply_default_fg = MagicMock()
+        cs._apply_placeholders = MagicMock()
+        cs._apply_validations = MagicMock()
+        cs._stretch_last_col = MagicMock()
+        cs._hide_hover_field = MagicMock()
+        cs._clear_status = MagicMock()
+        cs._take_snapshot = MagicMock()
+        with patch("tcm.paths.find_dir_raw_absolute") as spy:
+            cs._build_metadata()
+        if expect_probe:
+            spy.assert_called_once()
+        else:
+            spy.assert_not_called()  # no probe → no "Not standard input path" warning
+        meta_iid = next(i for i, m in cs._meta.items() if m.get("is_metadata_root"))
+        if not expect_probe:
+            assert _items[meta_iid]["values"][0] == "", (
+                f"device-file default must stay empty for path={path_val!r}"
+            )
+
+
 def test_metadata_sheet_shows_device_not_fallback(tmp_path, monkeypatch, mocker):
     """With cruise/info_devices.yaml, burst_dt/t must be 60/600, not '?'.
 

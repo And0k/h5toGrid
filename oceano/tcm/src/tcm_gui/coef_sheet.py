@@ -32,7 +32,7 @@ import numpy as np
 from tksheet import Sheet
 
 import tcm_gui.theme
-from tcm import _meta_pairs
+from tcm import _meta_pairs, _constants
 from tcm_gui import _path_field
 from tcm_gui._cell_spec import any2str, as_date, parse_float
 from tcm_gui.cli_cfg import COEF_SHAPES, COEFS_TYPE
@@ -712,13 +712,17 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
 
                 from tcm import paths as _paths
 
-                # EMPTY path (pre-scan default page) means "./" — probing it
-                # would anchor find_dir_raw_absolute at the launch cwd (the
-                # code project in dev) and log a bogus "Not standard input
-                # path" warning.  Check the RAW string: Path("") == Path(".")
-                # and .absolute() hides the emptiness before any comparison.
+                # Judge the RAW string before resolving — ``Path("").absolute()``
+                # is the cwd, so a no-path GUI launch would otherwise probe the
+                # launch directory and ``find_dir_raw_absolute`` would log the
+                # misleading "Not standard input path" warning on the project
+                # root.  Repo-internal paths are skipped too: their default
+                # device file would land in the code tree — the scan owns that
+                # error verdict, not this default derivation.
                 _probe_str = str((self._cfg.get("input", {}) or {}).get("path") or "").strip()
                 _probe = _P(_probe_str).absolute() if _probe_str and _probe_str != "." else None
+                if _probe is not None and (_probe == _constants.REPO_ROOT or _constants.REPO_ROOT in _probe.parents):
+                    _probe = None
                 _ddir = _paths.find_dir_raw_absolute(_probe).parent if _probe is not None else None
                 _path = str(_ddir / "info_devices.yaml") if _ddir else ""
             except Exception:

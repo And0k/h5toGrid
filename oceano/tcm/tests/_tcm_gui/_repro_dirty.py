@@ -65,21 +65,43 @@ frame = ttk.Frame(root)
 cs = ConfigSheet(frame)
 cs.sh.pack(fill="both", expand=True)
 
-cs.load(cfg, full=True, config_root=schema.Config, return_enum=schema.Return)
-dump(cs, "FULL right after load")
+from tcm_gui.cli_cfg import default_cfg
 
-root.update_idletasks()
-dump(cs, "FULL after update_idletasks")
+md = [None] * 11  # no info_devices.yaml at startup
 
-root.update()
-dump(cs, "FULL after update")
+# ── Real App reproduction: auto-scan via CLI path (Worker thread) ──
+sys.argv = ["tcm_gui", str(tmp / "_raw" / "*i*.txt")]
+from tcm_gui.app import App
 
-# App post-load extras (from _add_page)
-try:
-    cs.apply_time_ranges_sync_status(None)
-    dump(cs, "FULL after sync status")
-except Exception as e:
-    print("sync_status failed:", e)
+app = App(argv=sys.argv)
+root = app.root
+root.withdraw()
+print("initial pages:", list(app._pages))
+
+
+def dump_app(tag: str) -> None:
+    for stem, cs in app._pages.items():
+        cur = cs._data_snapshot()
+        snap = dict(cs._snap)
+        print(f"[{tag}] {stem!r}: is_dirty={cs.is_dirty} meta={cs.is_metadata_dirty()} "
+              f"snap_n={len(cs._snap)}")
+        for iid, vals in cur:
+            if snap.get(iid) != vals:
+                print(f"  DIFF iid={iid!r}\n    snap={snap.get(iid)}\n    cur ={vals}")
+
+
+import time
+t0 = time.time()
+i = 0
+while time.time() - t0 < 15:
+    root.update()
+    i += 1
+    if i % 200 == 0:
+        dump_app(f"cycle{i}")
+print("final pages:", list(app._pages))
+dump_app("final")
+
+
 
 root.destroy()
 

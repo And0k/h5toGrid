@@ -539,13 +539,13 @@ def call_in_raw_dir(fun, yaml_path: Path | None = None, **kwargs) -> Any:
             if path_in is None:
                 # No positional path and no flags → user error.
                 _print_usage_error(data_dir=None, path_in=None)
-            if str(path_in) in ("", "."):
-                # Positional ""/"." — Path("") normalizes to "."; same
-                # verdict as an empty override (see _require_nonempty_path).
-                raise FileNotFoundError(
-                    "Empty data path: the current directory is not a data anchor. "
-                    "Enter the path to your data — a directory, glob, or regex."
-                )
+            #if str(path_in) in ("", "."):
+            #    # Positional ""/"." — Path("") normalizes to "."; same
+            #    # verdict as an empty override (see _require_nonempty_path).
+            #    raise FileNotFoundError(
+            #        "Empty data path: the current directory is not a data anchor. "
+            #        "Enter the path to your data — a directory, glob, or regex."
+            #    )
         else:
             # overrides dict provided path — keep sys.argv as-is (Worker
             # sets it to [script] + hydra_args before each call).

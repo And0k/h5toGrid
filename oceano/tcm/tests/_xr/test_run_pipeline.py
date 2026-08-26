@@ -477,11 +477,13 @@ class TestMainEndToEnd:
             f"Expected 'Using deepest dir as anchor' warning in log, got: {caplog.text}"
         )
 
-    def test_main_rejects_data_inside_project(self, tmp_path, monkeypatch, mocker):
+    def test_main_rejects_data_inside_project(self, tmp_path, monkeypatch, mocker, caplog):
         """Data inside the code project is rejected up front (before Hydra).
 
         The guard reads :data:`_constants.REPO_ROOT` — dev checkout, envs
         nested in the repo, and the frozen distributive (exe dir) alike.
+        It must fire BEFORE ``find_dir_raw_absolute`` — otherwise the
+        misleading "Not standard input path" warning precedes the error.
         """
         raw_dir = tmp_path / _constants.RAW_DIR_NAME
         raw_dir.mkdir()
@@ -490,9 +492,13 @@ class TestMainEndToEnd:
         monkeypatch.setattr(_constants, "REPO_ROOT", tmp_path)
 
         mock_run = mocker.patch.object(processing, "run")
-        with pytest.raises(FileNotFoundError, match="inside the code project"):
-            cli.call_in_raw_dir(processing.run)
+        with caplog.at_level("WARNING"):
+            with pytest.raises(FileNotFoundError, match="inside the code project"):
+                cli.call_in_raw_dir(processing.run)
         mock_run.assert_not_called()
+        assert "Not standard input path" not in caplog.text, (
+            f"inside-repo rejection must precede anchor resolution, got: {caplog.text}"
+        )
 
     def test_empty_path_means_cwd_rejected_inside_project(self, tmp_path, monkeypatch, mocker):
         """Empty input.path means "./" — rejected when cwd is in the project.

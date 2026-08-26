@@ -8,7 +8,8 @@ tksheet widget shrinks to ``viewport − button`` (same
 ``_field_place_kw`` pattern as ConfigSheet's floated field) and
 switches to right-aligned scroll-to-filename.  Editing uses a plain
 ``ttk.Entry`` overlaid on the cell — native single-line scroll, no
-wrapping, cursor always visible, justify follows the field's ``align``.
+wrapping, cursor always visible, right-justified with the cursor at
+the path end.
 
 Reuses the floating-button stack: ``BrowseButtonManager`` (editor-
 anchored, during edit) and ``BrowseOverlay`` + ``SheetHoverBinder``
@@ -47,8 +48,8 @@ class PathField(ttk.Frame):
     widget is shrunk to ``frame − button`` (``place(width=…)``) and
     switches to right-aligned — filename ends right before the browse
     button, same geometry as ConfigSheet's ``_field_place_kw``.
-    Editing uses a plain ``ttk.Entry`` overlay whose justify follows
-    ``align`` (left by default).
+    Editing uses a plain ``ttk.Entry`` overlay, always right-justified
+    with the cursor at the path end.
 
     When the cell is empty, a dim-gray *placeholder* text is shown
     (e.g. ``"D:/data/_raw/"``) — it vanishes on first keystroke or
@@ -59,7 +60,7 @@ class PathField(ttk.Frame):
     Parameters
     ----------
     align : ``"w"`` | ``"e"``
-        Initial cell alignment — also the justify of the edit Entry.
+        Initial cell alignment (the edit Entry is always right-justified).
         Standalone and ConfigSheet floated fields are ``"w"`` (left,
         matching the cells they cover); ``"e"`` is kept for the transient
         hover-shrink right-align-scroll-to-filename mode.
@@ -91,7 +92,7 @@ class PathField(ttk.Frame):
         self._on_commit = on_commit
         self._on_begin_edit_cb = on_begin_edit
         self._on_end_edit_cb = on_end_edit
-        self._align = align  # "w" standalone, "w" floated; also the Entry justify
+        self._align = align  # "w" standalone, "w" floated (display only)
         self._pre_edit = ""
         self._editing = False
         self._entry: ttk.Entry | None = None
@@ -220,24 +221,8 @@ class PathField(ttk.Frame):
         """Constrained tksheet width: frame minus button."""
         return max(self.winfo_width() - self._get_btn_w(), self._MIN_W)
 
-    def _hover_align(self) -> str:
-        """Hover-mode align: ghosts stay LEFT; real paths right-align so the
-        filename end sits next to the browse button."""
-        return "w" if self._ph.has(0, 0) else "e"
-
-    def _apply_hover_layout(self) -> None:
-        """Align + scroll for the current hover content (ghost ↔ path)."""
-        align = self._hover_align()
-        self.sh.table_align(align, redraw=False)
-        self.update_idletasks()  # force geometry so scroll targets the viewport
-        self.sh.redraw()
-        if align == "e":
-            self._scroll_to_right()
-        else:
-            self._scroll_to_left()
-
     def _switch_to_hover_shrink(self) -> None:
-        """Shrink tksheet widget + content-aware align + scroll.
+        """Shrink tksheet widget + right-align + scroll-to-filename.
 
         Mirrors ``ConfigSheet._field_place_kw``: the field width ends
         where the browse button starts.
@@ -245,9 +230,12 @@ class PathField(ttk.Frame):
         if self._hovering:
             return
         self._hovering = True
+        self.sh.table_align("e", redraw=False)
         self.sh.pack_forget()
         self.sh.place(relx=0, rely=0, relheight=1, width=self._hover_shrink_width())
-        self._apply_hover_layout()
+        self.update_idletasks()  # force geometry so scroll targets the new viewport
+        self.sh.redraw()  # explicit render with right-align at new width
+        self._scroll_to_right()
 
     def _restore_default_layout(self) -> None:
         """Restore left-align + full-width tksheet (pack)."""
@@ -273,11 +261,12 @@ class PathField(ttk.Frame):
         if self._editing:
             return
         if self._hovering:
-            # viewport resized — re-constrain tksheet width + re-align/scroll
+            # viewport resized — re-constrain tksheet width
             self.sh.place(width=self._hover_shrink_width())
-            self._apply_hover_layout()
+            self.update_idletasks()  # force geometry before scroll
+            self._scroll_to_right()
         elif self.sh.MT.align == "ne":
-            # right-aligned non-hover (floated field) — keep scrolled
+            # right-aligned non-hover — keep scrolled
             self._scroll_to_right()
         else:
             # left-align default — ensure viewport at left
@@ -374,9 +363,7 @@ class PathField(ttk.Frame):
             self._clear_placeholder()
             self.sh.set_cell_data(0, 0, value)
         self.sh.redraw()
-        if self._hovering:
-            self._apply_hover_layout()
-        elif self.sh.MT.align == "ne":
+        if self.sh.MT.align == "ne":
             self._scroll_to_right()
         else:
             self._scroll_to_left()
@@ -453,13 +440,13 @@ class PathField(ttk.Frame):
     def _open_entry(self) -> None:
         """Create and place a ``ttk.Entry`` filling the PathField frame."""
         bold = self.sh.font()
-        # ttk.Entry justify is left/center/right — NOT tksheet's "w"/"e"
-        # (regression: justify="w" raised TclError, wedging ``_editing``).
-        ent = ttk.Entry(self, font=bold, justify="right" if self._align == "e" else "left")
+        # always right-justified, cursor at the path end so the
+        # filename stays visible while editing long paths.  (``justify`` takes
+        # left/center/right — NOT tksheet's "w"/"e", which raised TclError.)
+        ent = ttk.Entry(self, font=bold, justify="right")
         ent.insert(0, self._pre_edit)
         ent.icursor("end")
-        if self._align == "e":
-            ent.xview_moveto(1.0)
+        ent.xview_moveto(1.0)
         ent.place(relx=0, rely=0, relwidth=1, relheight=1)
         ent.bind("<Return>", lambda _e: self._commit_entry())
         ent.bind("<Escape>", lambda _e: self._commit_entry(cancel=True))
@@ -493,9 +480,7 @@ class PathField(ttk.Frame):
             self._clear_placeholder()
             self.sh.set_cell_data(0, 0, "")
         self.sh.redraw()
-        if self._hovering:
-            self._apply_hover_layout()
-        elif self.sh.MT.align == "ne":
+        if self.sh.MT.align == "ne":
             self._scroll_to_right()
         else:
             self._scroll_to_left()

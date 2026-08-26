@@ -131,6 +131,89 @@ def configure_ui(root: tk.Misc) -> ttk.Style:
     return style
 
 
+# ── screen work area / window placement ─────────────────────────────────────
+
+
+def work_area(widget: tk.Misc) -> tuple[int, int, int, int]:
+    """Work area ``(left, top, right, bottom)`` of the monitor holding *widget*.
+
+    Per-monitor (``MonitorFromWindow`` + ``GetMonitorInfoW``), taskbar excluded
+    — ``SPI_GETWORKAREA`` only knows the PRIMARY monitor, wrong on multi-monitor
+    setups.  This process is DPI-unaware, so both Tk and WinAPI speak the same
+    virtualized coordinates.
+    """
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class _MONITORINFO(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", wintypes.DWORD),
+                    ("rcMonitor", wintypes.RECT),
+                    ("rcWork", wintypes.RECT),
+                    ("dwFlags", wintypes.DWORD),
+                ]
+
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetAncestor(widget.winfo_id(), 2) or widget.winfo_id()  # GA_ROOT
+            hmon = user32.MonitorFromWindow(hwnd, 2)  # MONITOR_DEFAULTTONEAREST
+            info = _MONITORINFO(cbSize=ctypes.sizeof(_MONITORINFO))
+            if user32.GetMonitorInfoW(hmon, ctypes.byref(info)):
+                r = info.rcWork
+                return r.left, r.top, r.right, r.bottom
+        except OSError:
+            pass
+    return 0, 0, widget.winfo_screenwidth(), widget.winfo_screenheight()
+
+
+def fit_to_workarea(root: tk.Misc, width: int, height: int) -> None:
+    """Place *root* fully inside the visible work area (taskbar excluded).
+
+    Clamps *width*×*height* to :func:`work_area` and centers within it.  Tk's
+    ``geometry`` sets the CLIENT rect while the work area bounds the OUTER
+    one — title bar + borders are unknown until the window maps, so a
+    ``<Map>`` pass re-fits with the measured chrome.  That pass writes
+    SIZE-ONLY geometry: an explicit ``+x+y`` would stay stored in Tk, which
+    re-applies it on every later content-resize — the window jumped back to
+    its startup spot whenever the user dragged it elsewhere.
+    """
+
+    def _apply(dx: int, dy: int, *, pin_pos: bool) -> None:
+        # dx/dy = px of chrome eating into the work area (borders ×2 + title bar)
+        left, top, right, bottom = work_area(root)
+        w, h = max(min(width, right - left - dx), 1), max(min(height, bottom - top - dy), 1)
+        x, y = left + max(right - left - w, 0) // 2, top + max(bottom - top - h, 0) // 2
+        root.geometry(f"{w}x{h}" + (f"+{x}+{y}" if pin_pos else ""))
+
+    _apply(0, 0, pin_pos=True)  # pre-map guess — chrome unknown yet
+
+    def _recap() -> None:
+        # client-origin minus manager-position offsets = measured chrome;
+        # position NOT re-pinned — the user owns it from now on
+        b = max(root.winfo_rootx() - root.winfo_x(), 0)  # side border
+        _apply(2 * b, max(root.winfo_rooty() - root.winfo_y(), 0) + b, pin_pos=False)
+
+    root.bind("<Map>", lambda _e: root.after_idle(_recap), add="+")
+
+
+def nudge_window(win: tk.Misc, dx: int, dy: int) -> None:
+    """Shift *win* by ``(dx, dy)`` px from its current position.
+
+    ``update_idletasks`` first: Tk applies ``geometry`` requests in an idle
+    pass, so without the flush rapid key repeats all read the PRE-MOVE
+    position and the window stops after one step.  Live ``winfo_x/y`` then
+    match the ``+x+y`` coordinate space exactly (verified on Windows).
+
+    A mouse drag cannot carry the title bar above the screen top — the shell
+    clamps every app's interactive drags there.  This can, so keyboard
+    nudges (Alt+Arrows) park the window partly off-screen.
+    """
+    win.update_idletasks()
+    win.geometry(f"+{win.winfo_x() + dx}+{win.winfo_y() + dy}")
+
+
+# ── font helpers ────────────────────────────────────────────────────────────
 # ── font helpers ────────────────────────────────────────────────────────────
 
 

@@ -958,3 +958,80 @@ class TestBrowseInitialDir:
     def test_absent_value_falls_back_to_parent(self, monkeypatch):
         captured = self._capturing(monkeypatch, "B:/no/such/dir")
         assert captured["initialdir"] == "B:/no/such"
+
+
+# ── floated overlay content-aware align (regression) ────────────────────────
+
+
+class TestFloatedFieldAlign:
+    """Overlay-only content-aware align: real paths right-align + scroll to
+    the filename end, ghosts stay left-aligned like the covered cell.
+
+    The mechanism lives in the HOST (``_sheet_status``), not in
+    ``PathField`` — an earlier attempt inside ``PathField`` damaged the
+    standalone top search field.  These tests pin the boundary: the sync
+    touches only ``cs._hover_field`` (the floated field's own 1×1 sheet).
+    """
+
+    @staticmethod
+    def _sheet_with_field():
+        cs, _ = TestCoefsPathChildRow._make_loaded_sheet()
+        cs._hover_field = MagicMock()
+        cs._hover_field._editing = False
+        cs._hover_field.winfo_ismapped.return_value = True
+        cs._hover_btn = MagicMock()
+        cs.on_hover_status = MagicMock()
+        return cs
+
+    def test_ghost_aligns_left_scrolls_left(self):
+        """Placeholder active → left align + viewport at the left edge."""
+        cs = self._sheet_with_field()
+        f = cs._hover_field
+        f._ph.has.return_value = True
+        cs._sync_floated_align()
+        f.sh.table_align.assert_called_once_with("w", redraw=False)
+        f._scroll_to_left.assert_called_once()
+        f._scroll_to_right.assert_not_called()
+
+    def test_data_aligns_right_scrolls_right(self):
+        """Real path → right align + viewport at the filename end."""
+        cs = self._sheet_with_field()
+        f = cs._hover_field
+        f._ph.has.return_value = False
+        cs._sync_floated_align()
+        f.sh.table_align.assert_called_once_with("e", redraw=False)
+        f._scroll_to_right.assert_called_once()
+        f._scroll_to_left.assert_not_called()
+
+    def test_no_field_is_noop(self):
+        """Overlay never created → the sync must not raise."""
+        cs, _ = TestCoefsPathChildRow._make_loaded_sheet()
+        cs._hover_field = None
+        cs._sync_floated_align()  # no exception
+
+    def test_show_hover_field_syncs_align(self):
+        """Showing the overlay on a row applies the content-aware align
+        AFTER placement (scroll needs finalized geometry)."""
+        cs = self._sheet_with_field()
+        with patch.object(cs, "_sync_floated_align") as sync:
+            iid = next(i for i, m in cs._meta.items() if m.get("type") == "input")
+            cs._show_hover_field(iid, 0, 10)
+        sync.assert_called_once()
+
+    def test_hover_write_resyncs_align(self):
+        """Edit commit / browse write while mapped → align re-synced to the
+        new content (ghost ↔ path flip must not leave stale scroll)."""
+        cs = self._sheet_with_field()
+        cs._field_iid = next(i for i, m in cs._meta.items() if m.get("type") == "input")
+        with patch.object(cs, "_sync_floated_align") as sync:
+            cs._hover_write("/data/new_file.txt")
+        sync.assert_called_once()
+
+    def test_hover_write_skips_sync_when_unmapped(self):
+        """Deferred commit after hide — field unmapped → no sync round-trip."""
+        cs = self._sheet_with_field()
+        cs._hover_field.winfo_ismapped.return_value = False
+        cs._field_iid = next(i for i, m in cs._meta.items() if m.get("type") == "input")
+        with patch.object(cs, "_sync_floated_align") as sync:
+            cs._hover_write("/data/new_file.txt")
+        sync.assert_not_called()

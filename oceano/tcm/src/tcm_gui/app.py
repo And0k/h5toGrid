@@ -31,7 +31,9 @@ from .coef_sheet import ConfigSheet
 from .const import (
     UIScale,
     configure_ui,
+    fit_to_workarea,
     get_widget_meta,
+    nudge_window,
     set_widget_meta,
     widget_meta,
 )
@@ -52,6 +54,7 @@ def _tip_body(path: str, **kwargs: str) -> str:
 
 class App:
     APP_ID = "Vendor.Product"  # todo: Fix, not hardcode here
+    GEOMETRY = (1100, 800)  # desired initial size — clamped to work area at start
     POLL = 300  # ms
     _DWELL_MS = 4000  # dwell tooltip delay — show detailed help after hover
     _DWELL_HIDE_MS = 1500  # dwell tooltip auto-close delay after show
@@ -66,7 +69,13 @@ class App:
         configure_ui(self.root)
         self._theme = apply_theme_defaults(self.root)  # dark/light log colors
         self.root.title(_S.get("window.title", "TCM"))
-        self.root.geometry("1100x800")
+        # Fit within screen space minus taskbar, centered — never off-edge
+        fit_to_workarea(self.root, *self.GEOMETRY)
+        lf.debug("Root geometry %s after work-area clamp", self.root.geometry())
+        # Alt+←/→/↑/↓ shifts the window (Shift = ×10) — a mouse drag can't
+        # carry the title bar above the screen top, keyboard nudges can
+        for key, d in (("Left", (-1, 0)), ("Right", (1, 0)), ("Up", (0, -1)), ("Down", (0, 1))):
+            self.root.bind(f"<Alt-KeyPress-{key}>", lambda e, d=d: self._on_nudge(e, d))
 
         # use exe icon
         self._icons: tuple[int, ...] = ()
@@ -144,6 +153,14 @@ class App:
             or self._chrome_hovering is not None
             or self._browse_hovering
         )
+
+    # ── window movement ─────────────────────────────────────────────
+
+    def _on_nudge(self, event: tk.Event, d: tuple[int, int]) -> str:
+        """Alt+Arrow → shift the window by 10 px (Shift = ×10) in *d* direction."""
+        step = 100 if event.state & 0x1 else 10
+        nudge_window(self.root, d[0] * step, d[1] * step)
+        return "break"
 
     # ── layout ──────────────────────────────────────────────────────
 
