@@ -19,7 +19,7 @@ from tcm.schema import Config, Return
 
 def _write_info_devices(cruise: Path):
     (cruise / "info_devices.yaml").write_text(
-        '# Instrument_ID: [Point, Sea_depth, H_above_bot, Symbol, Lat, Lon, Time_st, Time_en, Burst_dt, Bursts_t, Comment]\n'
+        "# Instrument_ID: [Point, Sea_depth, H_above_bot, Symbol, Lat, Lon, Time_st, Time_en, Burst_dt, Bursts_t, Comment]\n"
         '"i67": ["", ~, 0, "↟", ~, ~, "2026-07-11T12:24:52", "2026-07-20T13:27:27", 60, 600]\n'
         '"i90": ["", ~, 0, "↟", ~, ~, "2026-07-11T12:20:12", "2026-07-20T10:34:06", 60, 600]\n',
         encoding="utf-8",
@@ -47,10 +47,10 @@ def test_run_does_not_crash_on_metadata_time_range(tmp_path, monkeypatch, mocker
     _kids2: dict = {}
 
     def _insert2(**kw):
-        iid = f"iid_{kw.get('text','x')}_{len(_items2)}"
+        iid = f"iid_{kw.get('text', 'x')}_{len(_items2)}"
         parent = kw.get("parent") or ""
         _kids2.setdefault(parent, []).append(iid)
-        _items2[iid] = {"values": kw.get("values", ()), "text": kw.get("text","")}
+        _items2[iid] = {"values": kw.get("values", ()), "text": kw.get("text", "")}
         return iid
 
     mock_sh.insert.side_effect = _insert2
@@ -67,7 +67,13 @@ def test_run_does_not_crash_on_metadata_time_range(tmp_path, monkeypatch, mocker
     mock_sh.item.side_effect = _item2
     mock_sh.get_children.side_effect = lambda parent="": list(_kids2.get(parent or "", ()))
     # Minimal cfg with time_ranges so _build_metadata would also create time_range row
-    cfg = {"input": {"path": str(tmp_path / "dummy.txt"), "time_ranges": ["2026-07-11T12:00:00", "2026-07-20T12:00:00"], "coefs": {}}}
+    cfg = {
+        "input": {
+            "path": str(tmp_path / "dummy.txt"),
+            "time_ranges": ["2026-07-11T12:00:00", "2026-07-20T12:00:00"],
+            "coefs": {},
+        }
+    }
     # Provide a fake date cell so _ph.get returns something (to trigger the has_date branch)
     with patch.object(coef_sheet, "Sheet", return_value=mock_sh):
         cs = coef_sheet.ConfigSheet.__new__(coef_sheet.ConfigSheet)
@@ -243,7 +249,11 @@ def test_metadata_sheet_shows_device_not_fallback(tmp_path, monkeypatch, mocker)
             if cand in device_meta:
                 ent = device_meta[cand]
                 if isinstance(ent, dict):
-                    sid = str(stems_by_pcid.get(pcid, [stem]).index(stem)) if stem in stems_by_pcid.get(pcid, []) else "0"
+                    sid = (
+                        str(stems_by_pcid.get(pcid, [stem]).index(stem))
+                        if stem in stems_by_pcid.get(pcid, [])
+                        else "0"
+                    )
                     if sid in ent:
                         return list(ent[sid])
                     if "0" in ent:
@@ -273,7 +283,7 @@ def test_metadata_sheet_shows_device_not_fallback(tmp_path, monkeypatch, mocker)
     _kids: dict = {}
 
     def _insert(**kw):
-        iid = f"iid_{kw.get('text','x')}_{len(_items)}"
+        iid = f"iid_{kw.get('text', 'x')}_{len(_items)}"
         parent = kw.get("parent") or ""
         _kids.setdefault(parent, []).append(iid)
         _items[iid] = {"values": kw.get("values", ()), "text": kw.get("text", "")}
@@ -337,3 +347,237 @@ def test_metadata_sheet_shows_device_not_fallback(tmp_path, monkeypatch, mocker)
         assert vals[1] == "600", f"bursts_t should be 600, got {vals[1]!r}"
         tr_iid = next((i for i, m in cs._meta.items() if m.get("label") == "time_range"), None)
         assert md0[6] in _items[tr_iid]["values"], f"time_range missing {md0[6]!r}"
+
+
+# ── metadata node (re)insertion must not flag the tab dirty ──────────────────
+
+
+def test_metadata_rebuild_keeps_tab_clean(_session_tk_root, tmp_path):
+    """Regression: rebuilding the ``metadata`` subtree left ``is_dirty`` True.
+
+    ``_rebuild_metadata_rows`` deletes old rows and inserts new ones with
+    fresh iids but retook only ``_snap_meta`` — the iid-keyed coefs snapshot
+    ``_snap`` kept stale/deleted iids, so ``is_dirty`` compared unequal
+    forever: rail showed ``*`` without any user edit and Run rewrote YAML.
+    Fix under test: rebuild retakes both snapshots.
+    """
+    import tkinter as tk
+
+    from tcm_gui.cli_cfg import default_cfg
+    from tcm_gui.coef_sheet import ConfigSheet
+
+    if _session_tk_root is None:
+        pytest.skip("Tk not available")
+        return
+    root = _session_tk_root
+    try:
+        root.geometry("600x300+40+40")
+        root.deiconify()
+    except tk.TclError:
+        pytest.skip("Tk not available")
+        return
+
+    info = tmp_path / "info_devices.yaml"
+    _write_info_devices(tmp_path)
+
+    sheet = ConfigSheet(root)
+    sheet.sh.pack(fill="both", expand=True)
+    try:
+        sheet.load(default_cfg(), full=False, config_root=Config, return_enum=Return, metadata_path=str(info))
+        root.update_idletasks()
+        root.update()
+        assert not sheet.is_dirty, "tab dirty right after clean load"
+        assert not sheet.is_metadata_dirty()
+
+        # Hover-commit on metadata_path → subtree rebuilt with fresh iids
+        sheet._reload_metadata_from(str(info))
+        root.update_idletasks()
+        root.update()
+        assert not sheet.is_dirty, "metadata node insertion flagged tab dirty"
+        assert not sheet.is_metadata_dirty()
+
+        # Direct rebuild entry (browse select) — same invariant
+        sheet._rebuild_metadata_rows()
+        root.update_idletasks()
+        root.update()
+        assert not sheet.is_dirty
+        assert not sheet.is_metadata_dirty()
+    finally:
+        sheet.sh.destroy()
+
+
+def test_poll_dirty_tabs_propagates_real_bool(_session_tk_root):
+    """Regression: ``_poll_dirty_tabs`` stored a bound method in ``TabRail``
+    state because ``is_metadata_dirty`` was referenced without ``()`` — a bound
+    method is always truthy, so ``_full_label`` appended ``*`` to EVERY tab
+    forever (clean sheet included).  A clean sheet must propagate
+    ``set_dirty(stem, False)`` (a real bool).
+    """
+    import tkinter as tk
+
+    from unittest.mock import MagicMock
+
+    from tcm_gui.app import App
+    from tcm_gui.cli_cfg import default_cfg
+    from tcm_gui.coef_sheet import ConfigSheet
+
+    if _session_tk_root is None:
+        pytest.skip("Tk not available")
+        return
+    root = _session_tk_root
+    try:
+        root.geometry("600x300+40+40")
+        root.deiconify()
+    except tk.TclError:
+        pytest.skip("Tk not available")
+        return
+
+    sheet = ConfigSheet(root)
+    sheet.sh.pack(fill="both", expand=True)
+    try:
+        sheet.load(default_cfg(), full=False, config_root=Config, return_enum=Return)
+        root.update_idletasks()
+        assert not sheet.is_dirty
+        assert not sheet.is_metadata_dirty()
+
+        app = App.__new__(App)
+        app._pages = {"default": sheet}
+        app._rail = MagicMock()
+        app._poll_dirty_tabs()
+        app._rail.set_dirty.assert_called_once_with("default", False)
+        # the stored value must be a real bool, never a truthy object
+        assert app._rail.set_dirty.call_args.args[1] is False
+    finally:
+        sheet.sh.destroy()
+
+
+def test_edit_coef_date_marks_tab_dirty(_session_tk_root):
+    """Regression: editing a coef date cell (tksheet col 1 on a date-only row
+    with ``max_col=0``) left ``is_dirty`` False — ``_data_snapshot`` skipped
+    the whole row, so the date edit was invisible to dirty tracking.
+    """
+    import tkinter as tk
+
+    from tcm_gui._sheet_tint import _DATE_PH_COL
+    from tcm_gui.cli_cfg import COEF_SHAPES
+    from tcm_gui.coef_sheet import ConfigSheet
+
+    if _session_tk_root is None:
+        pytest.skip("Tk not available")
+        return
+    root = _session_tk_root
+    try:
+        root.geometry("700x400+40+40")
+        root.deiconify()
+    except tk.TclError:
+        pytest.skip("Tk not available")
+        return
+
+    coefs: dict = {}
+    for name, shape in COEF_SHAPES.items():
+        if not shape:
+            coefs[name] = 0.0
+        elif len(shape) == 2:
+            coefs[name] = [[0.0] * shape[1] for _ in range(shape[0])]
+        else:
+            coefs[name] = [0.0] * shape[0]
+    cfg = {"input": {"path": "D:/x/dummy.txt", "coefs": coefs}}
+
+    sheet = ConfigSheet(root)
+    sheet.sh.pack(fill="both", expand=True)
+    try:
+        sheet.load(cfg, full=False, config_root=Config, return_enum=Return)
+        root.update_idletasks()
+        root.update()
+        assert not sheet.is_dirty, "tab dirty right after clean load"
+
+        date_rows = [
+            (iid, m) for iid, m in sheet._meta.items() if m.get("has_date") and m.get("max_col", 0) == 0
+        ]
+        assert date_rows, "expected at least one date-only coef row"
+        iid, _ = date_rows[0]
+        r = sheet._internal_row(iid)
+        assert r is not None
+
+        # Simulate a real date edit: begin-edit clears the ghost, then commit
+        sheet._ph.clear(sheet.sh, r, _DATE_PH_COL)
+        sheet.sh.set_cell_data(r, _DATE_PH_COL, "2026-08-02T03:04:05", redraw=True)
+        root.update()
+        assert sheet.is_dirty, "editing a coef date did not mark the tab dirty"
+
+        # Revert to the ghost-empty original → clean again
+        sheet.mark_clean()
+        assert not sheet.is_dirty
+    finally:
+        sheet.sh.destroy()
+
+
+def test_autofilled_metadata_dirty_but_not_coefs(_session_tk_root, tmp_path, mocker):
+    """Regression: metadata autofilled from an absent info_devices.yaml was
+    never saved on Run because ``is_metadata_dirty()`` was False after the load
+    snapshot.  New/autofilled metadata must be treated as dirty — but it must
+    NOT mark the coefs dirty (separate flags), so ``_write_coefs`` won't rewrite
+    an unchanged run YAML.  ``_write_metadata`` persists it as a new device file.
+    """
+    import tkinter as tk
+
+    from meta_finder import io_info_files
+
+    from tcm_gui.app import App
+    from tcm_gui.coef_sheet import ConfigSheet
+
+    if _session_tk_root is None:
+        pytest.skip("Tk not available")
+        return
+    root = _session_tk_root
+    try:
+        root.geometry("700x400+40+40")
+        root.deiconify()
+    except tk.TclError:
+        pytest.skip("Tk not available")
+        return
+
+    # time_ranges present → autofill fills the metadata time_range row
+    cfg = {
+        "input": {
+            "path": "D:/x/_raw/dummy.txt",
+            "time_ranges": ["2026-07-11T12:20:12", "2026-07-11T12:20:13"],
+            "coefs": {},
+        }
+    }
+    md_path = tmp_path / "info_devices.yaml"
+
+    sheet = ConfigSheet(root)
+    sheet.sh.pack(fill="both", expand=True)
+    try:
+        sheet.load(
+            cfg,
+            full=False,
+            config_root=Config,
+            return_enum=Return,
+            metadata_path=str(md_path),
+        )
+        root.update_idletasks()
+        root.update()
+
+        # separate dirty flags: new metadata dirty, coefs still clean
+        assert sheet.is_metadata_dirty() is True, "autofilled metadata must be dirty"
+        assert not sheet.is_dirty, "autofilled metadata must not mark coefs dirty"
+
+        # Run writes the absent info_devices.yaml from the autofilled values
+        app = App.__new__(App)
+        app._pages = {"240613_1200@i_01": sheet}
+        mocker.patch.object(app, "_load_device_meta", return_value=(None, tmp_path, md_path))
+        app._write_metadata()
+
+        assert md_path.is_file(), "Run must create absent info_devices.yaml"
+        data = io_info_files.read_metadata_file(md_path)
+        entry = data.get("i01", {}).get("0")
+        assert entry is not None, f"expected i01.0 entry, got {data!r}"
+        assert str(entry[6]) == "2026-07-11T12:20:12", f"time_st wrong: {entry[6]!r}"
+        assert str(entry[7]) == "2026-07-11T12:20:13", f"time_en wrong: {entry[7]!r}"
+
+        # persisted → no longer dirty
+        assert not sheet.is_metadata_dirty(), "after write metadata must be clean"
+    finally:
+        sheet.sh.destroy()

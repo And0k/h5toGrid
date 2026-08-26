@@ -89,7 +89,7 @@ class SheetStylesMixin:
                 continue
             if (r := self._row_map().get(iid)) is None:
                 continue
-            dirty = getattr(self, "is_metadata_dirty", False) and self.is_metadata_dirty
+            dirty = getattr(self, "is_metadata_dirty", False) and self.is_metadata_dirty()
             label = "metadata*" if dirty else "metadata"
             # Tree label via highlight is fg only; update text via item
             with suppress(Exception):

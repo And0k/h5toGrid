@@ -168,33 +168,33 @@ def work_area(widget: tk.Misc) -> tuple[int, int, int, int]:
 
 
 def fit_to_workarea(root: tk.Misc, width: int, height: int) -> None:
-    """Place *root* fully inside the visible work area (taskbar excluded).
+    """Place *root* in the visible work area ONCE at startup — no handler left
+    behind, so the user's mouse resize/move is never touched again.
 
-    Clamps *width*×*height* to :func:`work_area` and centers within it.  Tk's
     ``geometry`` sets the CLIENT rect while the work area bounds the OUTER
-    one — title bar + borders are unknown until the window maps, so a
-    ``<Map>`` pass re-fits with the measured chrome.  That pass writes
-    SIZE-ONLY geometry: an explicit ``+x+y`` would stay stored in Tk, which
-    re-applies it on every later content-resize — the window jumped back to
-    its startup spot whenever the user dragged it elsewhere.
+    window, so we map first, measure the chrome (title bar + borders) and
+    re-clamp the client size to fit.  The last call writes SIZE-ONLY geometry:
+    an explicit ``+x+y`` stays stored in Tk and is re-applied on every later
+    content resize — the window would jump back after the user drags it.
     """
+    left, top, right, bottom = work_area(root)
 
-    def _apply(dx: int, dy: int, *, pin_pos: bool) -> None:
-        # dx/dy = px of chrome eating into the work area (borders ×2 + title bar)
-        left, top, right, bottom = work_area(root)
-        w, h = max(min(width, right - left - dx), 1), max(min(height, bottom - top - dy), 1)
-        x, y = left + max(right - left - w, 0) // 2, top + max(bottom - top - h, 0) // 2
-        root.geometry(f"{w}x{h}" + (f"+{x}+{y}" if pin_pos else ""))
+    def _center(_dx: int, _dy: int) -> tuple[int, int, int, int]:
+        w = max(min(width, right - left - _dx), 1)
+        h = max(min(height, bottom - top - _dy), 1)
+        _x, _y = left + (right - left - w) // 2, top + (bottom - top - h) // 2
+        return w, h, _x, _y
 
-    _apply(0, 0, pin_pos=True)  # pre-map guess — chrome unknown yet
+    w, h, x, y = _center(0, 0)  # chrome unknown pre-map — first guess
+    root.geometry(f"{w}x{h}+{x}+{y}")
+    root.deiconify()
+    root.update()  # map → chrome measurable
 
-    def _recap() -> None:
-        # client-origin minus manager-position offsets = measured chrome;
-        # position NOT re-pinned — the user owns it from now on
-        b = max(root.winfo_rootx() - root.winfo_x(), 0)  # side border
-        _apply(2 * b, max(root.winfo_rooty() - root.winfo_y(), 0) + b, pin_pos=False)
-
-    root.bind("<Map>", lambda _e: root.after_idle(_recap), add="+")
+    b = max(root.winfo_rootx() - root.winfo_x(), 0)  # side border px
+    dy = max(root.winfo_rooty() - root.winfo_y(), 0) + b  # title bar + border
+    w, h, _x, _y = _center(2 * b, dy)
+    root.geometry(f"{w}x{h}+{_x}+{_y}")  # chrome-accurate final placement
+    root.geometry(f"{w}x{h}")  # size-only → release position: free dragging
 
 
 def nudge_window(win: tk.Misc, dx: int, dy: int) -> None:
@@ -214,8 +214,6 @@ def nudge_window(win: tk.Misc, dx: int, dy: int) -> None:
 
 
 # ── font helpers ────────────────────────────────────────────────────────────
-# ── font helpers ────────────────────────────────────────────────────────────
-
 
 def tk_font_family(widget: tk.Text) -> str:
     """Extract the real family name from the widget font (e.g. 'Consolas').

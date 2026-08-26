@@ -69,9 +69,6 @@ class App:
         configure_ui(self.root)
         self._theme = apply_theme_defaults(self.root)  # dark/light log colors
         self.root.title(_S.get("window.title", "TCM"))
-        # Fit within screen space minus taskbar, centered — never off-edge
-        fit_to_workarea(self.root, *self.GEOMETRY)
-        lf.debug("Root geometry %s after work-area clamp", self.root.geometry())
         # Alt+←/→/↑/↓ shifts the window (Shift = ×10) — a mouse drag can't
         # carry the title bar above the screen top, keyboard nudges can
         for key, d in (("Left", (-1, 0)), ("Right", (1, 0)), ("Up", (0, -1)), ("Down", (0, 1))):
@@ -142,6 +139,11 @@ class App:
                 for cs in self._pages.values():
                     cs.set_readonly(True)
                 self._set_cfg_ui_disabled(True)
+        # Fit within screen space minus taskbar, centered (one-shot, after the
+        # window is built so the chrome-measured size is final) — no geometry
+        # handler is left behind, so the user's mouse resize/move is untouched
+        fit_to_workarea(self.root, *self.GEOMETRY)
+        lf.debug("Root geometry %s after work-area clamp", self.root.geometry())
         self._poll()
 
     @property
@@ -809,7 +811,7 @@ class App:
         for pcid, stems in stems_by_pcid.items():
             stems.sort()
         for stem, cs in self._pages.items():
-            if not getattr(cs, "is_metadata_dirty", False) or not cs.is_metadata_dirty:
+            if not getattr(cs, "is_metadata_dirty", False) or not cs.is_metadata_dirty():
                 continue
             try:
                 pcid = format.to_pcid_from_name(format.stem_to_pcid(stem))
@@ -885,7 +887,7 @@ class App:
             io_info_files.write_metadata_file(device_dir, info_path, merged)
             lf.info("Wrote metadata for %s to %s", ", ".join(new_content), info_path.name)
             for cs in self._pages.values():
-                if getattr(cs, "is_metadata_dirty", False) and cs.is_metadata_dirty:
+                if getattr(cs, "is_metadata_dirty", False) and cs.is_metadata_dirty():
                     cs.mark_metadata_clean()
                     # Refresh ``metadata*`` → ``metadata`` label
                     with __import__("contextlib").suppress(Exception):
@@ -908,7 +910,7 @@ class App:
     def _poll_dirty_tabs(self) -> None:
         """Sync dirty indicator on rail cells (coefs dirty OR metadata* dirty)."""
         for stem, cs in self._pages.items():
-            dirty = cs.is_dirty or (getattr(cs, "is_metadata_dirty", False) and cs.is_metadata_dirty)
+            dirty = cs.is_dirty or (getattr(cs, "is_metadata_dirty", False) and cs.is_metadata_dirty())
             self._rail.set_dirty(stem, dirty)
 
     def _on_log_motion(self, _event: tk.Event) -> None:

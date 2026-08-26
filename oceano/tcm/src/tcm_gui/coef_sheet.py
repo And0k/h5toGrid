@@ -235,6 +235,8 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
         self._return_enum: type | None = None
         # Snapshot of all editable cells for dirty tracking — populated at end of load()
         self._snap: tuple = ()
+        # New/autofilled metadata (from an absent info_devices.yaml) — unsaved until Run
+        self._metadata_unsaved: bool = False
         # Normal (non-default) text color — "clear" side of gray/blue toggles
         self._fg_default: str = tcm_gui.theme.FG_DEFAULT
 
@@ -486,7 +488,10 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
         return _meta_pairs.to_storage(paired, base=base)
 
     def is_metadata_dirty(self) -> bool:
-        """True when metadata rows differ from load snapshot (separate file)."""
+        """True when metadata rows differ from load snapshot, or were autofilled
+        from an absent info_devices.yaml (new — saved by ``_write_metadata``)."""
+        if getattr(self, "_metadata_unsaved", False):
+            return True
         snap = getattr(self, "_snap_meta", None)
         if snap is None:
             return False
@@ -503,14 +508,27 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
         return self.get_edited_coefs(), self.get_edited_dates(), self.get_edited_input_path()
 
     def _data_snapshot(self) -> tuple[tuple, ...]:
-        """Hashable snapshot of ALL editable leaf cell values."""
+        """Hashable snapshot of ALL editable **coef** value cells (not metadata).
+
+        Metadata rows/root are tracked independently via :meth:`is_metadata_dirty`
+        — a metadata edit must not mark the coefs dirty (separate YAML write).
+        Numeric cells live on rows with ``max_col>0``; coef date-only rows
+        (``coefs``/2d/1d parents) carry ``max_col=0`` but an editable date at
+        tksheet col ``_DATE_PH_COL`` — captured here so a date edit marks the
+        tab dirty (ghost placeholder reads as ``""`` via ``_cell_str``).
+        """
         parts = []
 
         for iid, m in self._meta.items():
+            if m.get("is_metadata") or m.get("is_metadata_root"):
+                continue
             max_col = int(m.get("max_col") or m.get("len") or 0)
             if m.get("type") == "scalar":
                 max_col = 1
             if max_col == 0:
+                if not m.get("has_date"):
+                    continue
+                parts.append((iid, ("date", self._cell_str(iid, _DATE_PH_COL))))
                 continue
 
             with suppress(ValueError):
@@ -533,6 +551,7 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
         self._take_snapshot()
 
     def mark_metadata_clean(self) -> None:
+        self._metadata_unsaved = False
         self._take_metadata_snapshot()
 
     def set_readonly(self, readonly: bool) -> None:
@@ -692,7 +711,8 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
         on edit (``CellPlaceholder``), never persisted as ``"?"``.
         """
         md_list: list[Any] | None = getattr(self, "_metadata", None)
-        if md_list is None or (len(md_list) < 8 and not any(md_list or [])):
+        autofilled = md_list is None or (len(md_list) < 8 and not any(md_list or []))
+        if autofilled:
             tr = (self._cfg.get("input", {}) or {}).get("time_ranges") or []
             if tr and len(tr) >= 2:
                 base = [None] * 11
@@ -702,6 +722,8 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
                 md_list = [None] * 11
         if len(md_list) < 11:
             md_list = list(md_list) + [None] * (11 - len(md_list))
+        # Autofilled from an absent info_devices.yaml — persist on Run until saved.
+        self._metadata_unsaved = autofilled and any(not _meta_pairs.is_placeholder(v) for v in md_list)
         paired = _meta_pairs.to_display(md_list)
         # Device-file path — always editable (default when file absent).
         _path = getattr(self, "_metadata_path", None)
@@ -721,7 +743,9 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
                 # error verdict, not this default derivation.
                 _probe_str = str((self._cfg.get("input", {}) or {}).get("path") or "").strip()
                 _probe = _P(_probe_str).absolute() if _probe_str and _probe_str != "." else None
-                if _probe is not None and (_probe == _constants.REPO_ROOT or _constants.REPO_ROOT in _probe.parents):
+                if _probe is not None and (
+                    _probe == _constants.REPO_ROOT or _constants.REPO_ROOT in _probe.parents
+                ):
                     _probe = None
                 _ddir = _paths.find_dir_raw_absolute(_probe).parent if _probe is not None else None
                 _path = str(_ddir / "info_devices.yaml") if _ddir else ""
@@ -832,7 +856,10 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
         self._apply_validations()
         with suppress(Exception):
             self.sh.redraw()
+        # Rebuilt subtree got fresh iids — stale `_snap` would flag the tab
+        # dirty (and rewrite YAML on Run) without any user edit.
         self._take_metadata_snapshot()
+        self._take_snapshot()
 
     def _build_full(self, cfg: dict) -> None:
         for sec, val in cfg.items():
