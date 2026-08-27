@@ -15,6 +15,7 @@ Mixin for :class:`tcm_gui.coef_sheet.ConfigSheet`.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
@@ -34,6 +35,8 @@ from ._browse_button import (
 from ._i18n import STRINGS as _S
 
 _INTENT_MS: Final[int] = 120  # hover-intent delay for the floated PathField (ms)
+
+_l = logging.getLogger(__name__)
 
 
 class SheetHoverMixin:
@@ -559,13 +562,17 @@ class SheetHoverMixin:
             self.on_hover_status("", True)
 
     def _on_field_edit_start(self) -> None:
-        """User clicked the overlay field to edit — hide button, expand field.
+        """User clicked the overlay field to edit — freeze status, hide button, expand field.
 
-        Cancels any pending hide (armed by ``<Leave>`` when the pointer
-        stepped onto the Entry) and forces geometry so ``PathField``
-        reads the correct ``winfo_width()`` for its column constraint.
+        Fires ``on_edit_begin`` (App freezes hover status + hides the dwell
+        tip — full parity with cell editing) and cancels any pending hide
+        (armed by ``<Leave>`` when the pointer stepped onto the Entry), then
+        forces geometry so ``PathField`` reads the correct ``winfo_width()``
+        for its column constraint.
         """
         self._cancel_field_hide_job()
+        if (cb := self.on_edit_begin) is not None:
+            cb()
         if self._hover_btn is not None:
             self._hover_btn.hide()
         if (f := self._hover_field) is not None and f.winfo_ismapped():
@@ -573,7 +580,19 @@ class SheetHoverMixin:
             f.update_idletasks()
 
     def _on_field_edit_end(self) -> None:
-        """Entry edit finished — restore hover width, re-show button."""
+        """Entry edit finished (commit / Esc / click-away) — unfreeze status, restore width.
+
+        Fires ``on_edit_end`` (App releases the edit-time status freeze —
+        also reached via ``cancel_edit()`` from ``_hide_hover_field``),
+        then restores hover width and re-shows the button.  Guarded like the
+        ``_sheet_tint`` close funnel: end fires inside teardown paths where a
+        callback error must not break the hide.
+        """
+        if (cb := self.on_edit_end) is not None:
+            try:
+                cb()
+            except Exception:
+                _l.exception("on_edit_end callback failed")
         self._restore_hover_placement()
 
     def _restore_hover_placement(self) -> None:

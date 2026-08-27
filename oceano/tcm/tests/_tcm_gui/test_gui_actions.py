@@ -1132,7 +1132,7 @@ class TestQueueHandlerDedup:
 # deferred drain-time getMessage() returns the message that was actually
 # logged at emit time, not whatever the shared Message was last mutated to.
 # Without this freeze, every record from a given logger would render as the
-# *last* message that logger produced (see docs/project_developer_guide/GUI.md → log_bridge).
+# *last* message that logger produced (see docs/project_developer_guide/GUI/decisions.md → log_bridge).
 # --------------------------------------------------------------------------- #
 
 

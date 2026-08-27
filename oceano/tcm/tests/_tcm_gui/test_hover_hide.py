@@ -25,9 +25,9 @@ We check ``grid_info()`` instead — ``grid_remove()`` clears it to ``{}``.
 from __future__ import annotations
 
 import sys
+import tkinter as tk
 
 import pytest
-import tkinter as tk
 
 _mod = sys.modules[__name__]
 _mod._root = None
@@ -100,6 +100,181 @@ class _FakeRT:
 
 class _FakeWorker:
     busy = False
+
+
+def _build_status_ns(root):
+    """Minimal object exposing the debounced/dwell status methods + a recording label.
+
+    Mirrors the pieces of ``App`` that own ``_status_hovering`` gating, so the
+    freeze regressions can be asserted without a full App (threads, configs).
+    """
+    from tcm_gui.app import App
+
+    ns = type("NS", (), {})()
+    ns.root = root
+    ns._tip_active = False
+    ns._status_hovering = False
+    ns._dwell_active = False
+    ns._dwell_widget = None
+    ns._status_job = None
+    ns._dwell_job = None
+    ns._dwell_hide_job = None
+    ns._STATUS_SETTLE_MS = 10
+    ns._DWELL_MS = 0
+    ns._DWELL_HIDE_MS = 0
+    ns._labels: list[str] = []
+    ns._status_lbl = type("L", (), {"set_text": lambda self, t, raw=False, base=None: ns._labels.append(t)})()
+
+    ns._cancel_status_job = App._cancel_status_job.__get__(ns)
+    ns._cancel_dwell_job = App._cancel_dwell_job.__get__(ns)
+    ns._cancel_dwell_hide_job = App._cancel_dwell_hide_job.__get__(ns)
+    ns._cancel_dwell = App._cancel_dwell.__get__(ns)
+    ns._show_dwell_tip = App._show_dwell_tip.__get__(ns)
+    ns._clear_dwell_now = App._clear_dwell_now.__get__(ns)
+    ns._hide_tip = App._hide_tip.__get__(ns)
+    ns._on_status_enter = App._on_status_enter.__get__(ns)
+    ns._on_status_leave = App._on_status_leave.__get__(ns)
+    ns._apply_status = App._apply_status.__get__(ns)
+    ns._set_status = App._set_status.__get__(ns)
+    # doc_path used only as the markdown base for status — not exercised here
+    ns._help_doc_path = None
+    return ns
+
+
+def _pump_status(ns, ms=40):
+    from time import monotonic
+
+    deadline = monotonic() + ms / 1000
+    while monotonic() < deadline:
+        ns.root.update()
+
+
+class TestStatusFreeze:
+    """regression: editing / dwell-Esc must not leave the normal status frozen.
+
+    Two independent stale-``_status_hovering`` leaks:
+      1. an editor close (commit/Esc/click-away) must release the edit-begin
+         freeze (:meth:`App._unfreeze_status` via ``on_edit_end``);
+      2. dismissing a dwell tip (Esc/auto) releases the pointer hold even when
+         the label collapses under a stationary pointer (no ``<Leave>`` fire).
+    """
+
+    def test_dwell_esc_releases_hover_hold(self):
+        """Esc-dismissed dwell must not leave `_status_hovering` set."""
+        ns = _build_status_ns(_mod._root)
+        ns._show_dwell_tip("detail")  # pointer was over the label → hold set
+        ns._on_status_enter()  # simulate pointer over _status_lbl
+        assert ns._status_hovering is True
+        # Esc funnel: _hide_tip + _cancel_dwell
+        ns._hide_tip()
+        ns._cancel_dwell()
+        assert ns._status_hovering is False, "stale hold froze normal status after Esc"
+        # normal status must resume
+        ns._apply_status("NORMAL", raw=True)
+        _pump_status(ns)
+        assert ns._labels and ns._labels[-1] == "NORMAL"
+
+    def test_dwell_auto_close_releases_hold(self):
+        """Dwell auto-close (pointer never leaves a collapsed label) releases too."""
+        ns = _build_status_ns(_mod._root)
+        ns._dwell_active = True
+        ns._status_hovering = True
+        ns._clear_dwell_now()
+        assert ns._status_hovering is False
+        ns._apply_status("OK", raw=True)
+        _pump_status(ns)
+        assert ns._labels and ns._labels[-1] == "OK"
+
+    def test_double_esc_no_tip_releases(self):
+        """Even with no active tip, Esc must clear a stray hold."""
+        ns = _build_status_ns(_mod._root)
+        ns._status_hovering = True
+        ns._tip_active = False
+        ns._dwell_active = False
+        ns._hide_tip()  # early-return path must still release the hold
+        assert ns._status_hovering is False
+
+    def test_edit_end_releases_freeze(self):
+        """Editor close releases the edit-begin freeze; normal status resumes.
+
+        While a cell editor is active ``_status_hovering`` is set (freeze);
+        closing the editor must clear it so hover status returns — this is the
+        primary "editing a cell then removing focus froze status" fix.
+        """
+        ns = _build_status_ns(_mod._root)
+        from tcm_gui.app import App
+
+        ns._hide_progress_widgets = App._hide_progress_widgets.__get__(ns)
+        ns._unfreeze_status = App._unfreeze_status.__get__(ns)
+        ns._hide_stage_progress = App._hide_stage_progress.__get__(ns)
+
+        # Fakes for the widgets _hide_progress_widgets collapses.
+        class _W:
+            grid_info = lambda self: {"row": 1}
+            grid_remove = lambda self: None
+            configure = lambda self, **_: None
+
+        ns._prog_stage = ns._prog_stage_text = ns._overall_lbl = _W()
+        ns._stage_hovering = False
+        ns._hide_progress_widgets()  # edit began → freeze both flags
+        assert ns._status_hovering is True
+        ns._unfreeze_status()  # editor closed → release the status freeze
+        assert ns._status_hovering is False
+        ns._apply_status("HOVER", raw=True)
+        _pump_status(ns)
+        assert ns._labels and ns._labels[-1] == "HOVER"
+
+    def test_floated_field_edit_freezes_and_releases(self):
+        """Overlay PathField editing acts as a cell edit: freeze on begin, release on end.
+
+        The floated-field hooks (``_on_field_edit_start``/``_on_field_edit_end``)
+        must fire ``on_edit_begin``/``on_edit_end`` — the same App wiring cell
+        edits use — so hover status freezes while the Entry is open and resumes
+        after it closes, including the ``cancel_edit()`` teardown from
+        ``_hide_hover_field`` (pointer left the row mid-edit).
+        """
+        ns = _build_status_ns(_mod._root)
+        from tcm_gui.app import App
+
+        ns._hide_progress_widgets = App._hide_progress_widgets.__get__(ns)
+        ns._unfreeze_status = App._unfreeze_status.__get__(ns)
+        ns._hide_stage_progress = App._hide_stage_progress.__get__(ns)
+
+        # Fakes for the widgets _hide_progress_widgets collapses.
+        class _W:
+            grid_info = lambda self: {"row": 1}
+            grid_remove = lambda self: None
+            configure = lambda self, **_: None
+
+        ns._prog_stage = ns._prog_stage_text = ns._overall_lbl = _W()
+        ns._stage_hovering = False
+
+        from tcm_gui._path_field import PathField
+        from tcm_gui._sheet_status import SheetHoverMixin
+
+        # SheetHoverMixin state the floated-field hooks touch; App wiring parity.
+        ns._field_show_job = ns._field_hide_job = ns._field_pending = None
+        ns._hover_btn = None
+        ns.on_edit_begin = lambda: (ns._hide_tip(), ns._hide_progress_widgets())
+        ns.on_edit_end = ns._unfreeze_status
+        ns._on_field_start = SheetHoverMixin._on_field_edit_start.__get__(ns)
+        ns._on_field_end = SheetHoverMixin._on_field_edit_end.__get__(ns)
+        ns._hide_hover_field_m = SheetHoverMixin._hide_hover_field.__get__(ns)
+        ns._cancel_field_hide_job = SheetHoverMixin._cancel_field_hide_job.__get__(ns)
+        ns._restore_hover_placement = SheetHoverMixin._restore_hover_placement.__get__(ns)
+
+        pf = PathField(_mod._root, on_begin_edit=ns._on_field_start, on_end_edit=ns._on_field_end)
+        ns._hover_field = pf
+        try:
+            pf._on_begin_edit(None)  # user clicked the overlay field → Entry editor opens
+            assert pf._editing and pf._entry is not None
+            assert ns._status_hovering is True, "overlay edit start must freeze status"
+
+            ns._hide_hover_field_m()  # pointer left the row → teardown cancels the edit
+            assert not pf._editing
+            assert ns._status_hovering is False, "edit teardown must release the freeze"
+        finally:
+            pf.destroy()
 
 
 def _build_app_minimal(root):
@@ -250,7 +425,13 @@ class TestHoverHide:
         assert not _is_gridded(ns._prog_stage), "row must stay hidden after leave"
 
     def test_hide_progress_widgets_collapses_and_flags(self):
-        """Edit/browse start collapses the row and sets both hover flags."""
+        """Edit/browse start collapses the stage row and freezes hover status.
+
+        ``_status_hovering`` is set so cell-hover hints don't overwrite the
+        label while an editor holds focus; released on edit-end
+        (``_unfreeze_status``).  ``_stage_hovering`` keeps the row hidden until
+        progress advance.
+        """
         ns = _build_app_minimal(_mod._root)
         ns._hide_progress_widgets()
         assert ns._stage_hovering is True and ns._status_hovering is True

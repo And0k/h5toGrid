@@ -121,4 +121,4 @@ See [Config Tuning](../reference/config_tuning.md) for the full contracts.
 
 - [CLI Reference](../reference/cli.md) — exhaustive argument spec, exit codes
 - [CLI Guide](cli.md) — task-oriented CLI usage
-- [Processing](processing.md) — pipeline stages, re-run behavior details
+- [Processing Guide](processing.md) — pipeline stages, re-run behavior details

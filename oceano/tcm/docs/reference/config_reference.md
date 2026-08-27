@@ -1,4 +1,4 @@
-# Config YAML Field Reference
+# Configuration Schema and Device Metadata Reference
 
 Each run YAML (`cfg_proc/run/{source_stem}.yaml`) is a structured Hydra/OmegaConf config.
 All fields are defined in `tcm/schema.py` via the `Config` dataclass and registered groups
@@ -8,8 +8,8 @@ Every run YAML starts with `# @package _global_` so Hydra merges it into the top
 
 > **Behavior tuning & decision tables** (phase-stopping, time correction modes,
 > column order, `overwrite_db`, azimuth calibration, YAML examples) are in
-> [config_tuning.md](config_tuning.md).  Implementation internals live in
-> [../project_developer_guide/CLI.md](../project_developer_guide/CLI.md).
+> [Config Tuning — Decision Tables & Behavior](config_tuning.md).  Implementation
+> internals live in [CLI Internals](../project_developer_guide/CLI.md).
 
 ## `input` — Data source & parameters
 
@@ -96,7 +96,7 @@ Multiple pairs are accepted (`[s1, e1, s2, e2, ...]`) for disjoint intervals.
 with a unified diff. Pass `out.overwrite_db=splice` to force reprocessing.
 When `time_ranges` extends beyond existing data, only the new tail is appended.
 
-**GUI hover** (compared live to `info_devices`): _matches_ (`kept`) when equal, _broader than_ when extending beyond either end (warning tint), _differs_ when narrowed or shifted — the status bar text is recomputed on every hover/edit, never cached from the scan.  See [GUI internals](../project_developer_guide/GUI.md#coef_sheetpy--composition-root--treeeditrow-space-core).
+**GUI hover** (compared live to `info_devices`): _matches_ (`kept`) when equal, _broader than_ when extending beyond either end (warning tint), _differs_ when narrowed or shifted — the status bar text is recomputed on every hover/edit, never cached from the scan.  See [GUI architecture](../project_developer_guide/GUI_architecture.md#coef_sheetpy--composition-root--treeeditrow-space-core).
 
 **End-bound semantics**: end values are **inclusive** in the config. Internally
 they are converted to exclusive bounds (whole-second ends get +1 s) to prevent
@@ -287,7 +287,7 @@ Controls how the pipeline handles existing processed output when re-running.
 When processing parameters changed and `overwrite_db=None`, the pipeline
 compares stored `/param_spans/{tbl}` interval table to the current values
 and raises `ValueError` with a unified diff. See
-[config_tuning.md](config_tuning.md) for the full contract including
+[§Re-run behavior](config_tuning.md#re-run-behavior) for the full contract including
 incremental append positions and log-based dedup.
 
 ## `filter` — Process-stage quality thresholds

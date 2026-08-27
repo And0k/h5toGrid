@@ -209,7 +209,7 @@ Defined in [Config Reference §`input.coefs`](../reference/config_reference.md#i
 
 ## See also
 
-- [Config Reference](../reference/config_reference.md) — all YAML fields with descriptions
-- [Config Tuning](../reference/config_tuning.md) — behavior decision tables, overwrite_db
-- [Processing](processing.md) — pipeline stages, zeroing workflow
-- [I/O Formats](../reference/io_formats.md) — coefficient source priority, NC storage
+- [Configuration Schema and Device Metadata Reference](../reference/config_reference.md) — all YAML fields with descriptions
+- [Config Tuning — Decision Tables & Behavior](../reference/config_tuning.md) — behavior decision tables, overwrite_db
+- [Processing Guide](processing.md) — pipeline stages, zeroing workflow
+- [Input / Output Format Specification](../reference/io_formats.md) — coefficient source priority, NC storage

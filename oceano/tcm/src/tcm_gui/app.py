@@ -65,6 +65,8 @@ class App:
             shell32.SetCurrentProcessExplicitAppUserModelID(self.APP_ID)
 
         self.root = tk.Tk()
+        self.root.withdraw()  # unmapped while building — fit_to_workarea deiconifies
+        # once the geometry is final (no top-left default-size blink at start)
         self.ui = UIScale(self.root)
         configure_ui(self.root)
         self._theme = apply_theme_defaults(self.root)  # dark/light log colors
@@ -141,7 +143,8 @@ class App:
                 self._set_cfg_ui_disabled(True)
         # Fit within screen space minus taskbar, centered (one-shot, after the
         # window is built so the chrome-measured size is final) — no geometry
-        # handler is left behind, so the user's mouse resize/move is untouched
+        # handler is left behind, so the user's mouse resize/move is untouched;
+        # its deiconify() reveals the built window — first pixels on screen
         fit_to_workarea(self.root, *self.GEOMETRY)
         lf.debug("Root geometry %s after work-area clamp", self.root.geometry())
         self._poll()
@@ -182,6 +185,7 @@ class App:
             f0,
             on_commit=self._on_path_changed,
             on_begin_edit=self._hide_progress_widgets,
+            on_end_edit=self._unfreeze_status,
             on_browse_click=self._hide_progress_widgets,
             filetypes=SEARCH_FILETYPES,
             on_status=self._on_browse_status,
@@ -468,13 +472,26 @@ class App:
     def _hide_progress_widgets(self) -> None:
         """Collapse the stage progress row on user interaction (edit/browse start).
 
-        Sets the hover flags so the widgets stay hidden until programmatic
-        activation (progress advance / explicit placement).  Called when the
-        user starts editing tksheet cells, the path field, or clicks browse.
+        Freezes hover status (``_status_hovering``) so the label does not
+        switch to cell-hover hints while an editor has focus; released on
+        edit-end (see :meth:`_unfreeze_status`).  Also hides the stage row via
+        ``_stage_hovering`` until programmatic activation (progress advance /
+        explicit placement).  Called when the user starts editing tksheet
+        cells, the path field, or clicks browse.
         """
         self._status_hovering = True
         self._stage_hovering = True
         self._hide_stage_progress()
+
+    def _unfreeze_status(self) -> None:
+        """Release the edit-time status freeze (editor closed).
+
+        Keeps ``_stage_hovering`` untouched — the stage row resumes only on
+        progress advance.  Normal hover status resumes once no editor holds the
+        freeze, while the true pointer hold (the status label ``<Leave>``) is
+        tracked independently by ``_on_status_enter``/``_on_status_leave``.
+        """
+        self._status_hovering = False
 
     def _on_status_motion(self, event: tk.Event) -> None:
         """Hover-hide the stage widgets under the live pointer.
@@ -685,6 +702,7 @@ class App:
                 pass
         cs.on_hover_status = lambda msg, md=False: self._on_cell_status(cs, msg, md)
         cs.on_edit_begin = lambda: (self._hide_tip(), self._hide_progress_widgets())
+        cs.on_edit_end = self._unfreeze_status
         cs.on_validity_change = self._update_run_btn_state
         cs._empty_area_hint = _S[
             "empty_area.synced"
@@ -1221,7 +1239,16 @@ class App:
         Also clears any active dwell tip — both are tooltip overlays in
         ``_status_lbl`` and share the same dismissal triggers (Esc, new
         scan/run, path change, cell edit begin).
+
+        Releases the status-hover hold unconditionally (before the no-op
+        guard): dismissing the overlay empties the label, which collapses to
+        ~0 width under a stationary pointer — Tk emits no ``<Leave>`` for a
+        widget shrinking beneath a cursor, so a stale ``_status_hovering``
+        would keep ``_apply_status`` blocked even if only an empty tip was
+        dismissed (regression: Esc after any detail dwell froze the normal
+        status while detailed tips kept working).
         """
+        self._status_hovering = False
         was_active = self._tip_active or self._dwell_active
         if not was_active:
             return
@@ -1270,11 +1297,17 @@ class App:
         self._dwell_widget = None
 
     def _clear_dwell_now(self) -> None:
-        """Hard-dismiss: cancel pending dwell jobs AND clear an active tooltip."""
+        """Hard-dismiss: cancel pending dwell jobs AND clear an active tooltip.
+
+        Also releases the status-hover hold — same stale-``<Leave>`` trap as
+        :meth:`_hide_tip`: the label collapses under a stationary pointer, so
+        the hold would otherwise keep ``_apply_status`` blocked.
+        """
         self._cancel_dwell_job()
         self._cancel_dwell_hide_job()
         if self._dwell_active:
             self._dwell_active = False
+            self._status_hovering = False
             self._status_lbl.set_text("", raw=True)
         self._dwell_widget = None
 

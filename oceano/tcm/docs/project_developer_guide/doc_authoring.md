@@ -61,6 +61,18 @@ highlight.js are vendored (generated into `_build/browser-runtime` by
   → `-`; or explicit `{#my-id}` suffix on the heading. Cross-file:
   `io_formats.md#file-name-parsing`.
 - **Source line anchors**: `file.py#L42` scrolls the source view to line 42.
+- **Display text**:
+  - Content lists (navigation enumerating documents): text = the target's H1,
+    verbatim; an em-dash topic list after the link only when the target covers
+    many topics (`[GUI Internals](GUI/_index.md) — module map, data flow, …`),
+    otherwise absorb the description into the target's H1 and leave the link
+    bare (`[GUI Key Decisions with Rationale and Regression Notes](GUI_decisions.md)`).
+  - File name as text is discouraged — acceptable only when the name is itself
+    the identifier the reader meets in code (e.g. `config_reference.md`, parsed
+    by `_help.py`).
+  - Elsewhere: text clarifies what the reader finds in the target in the
+    context of the link — free wording, no requirement to match any existing
+    text exactly.
 
 
 ## Images
@@ -123,4 +135,4 @@ General rules:
 | `<mode>probe</mode>` | Per-probe processing meaning — what the field does, how it affects the result | GUI coef hover, popup |
 | `<mode>search</mode>` | Input specification patterns — glob, regex, directory, YAML | GUI path field, CLI help |
 
-Parser internals: [§Field detail sections in GUI.md](GUI.md#field-detail-sections-in-config_referencemd).
+Parser internals: [§Field detail sections](GUI_help_system.md#field-detail-sections-in-config_referencemd).

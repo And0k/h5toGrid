@@ -1,6 +1,6 @@
 # Описание журнала работы tcm_proc
 
-Разбор INFO/WARNING сообщений из лога обработки. Для понимания сокращений см. [readme_Ru.md](../readme_Ru.md), [config_reference_ru.md](../reference/config_reference_ru.md), [../project_developer_guide/CLI.md](../project_developer_guide/CLI.md). Отладочные (DEBUG) сообщения здесь не рассматриваются — они в файле `cfg_proc/log/{timestamp}/processing.log`.
+Разбор INFO/WARNING сообщений из лога обработки. Для понимания сокращений см. [описание дистрибутива](../../readme_Ru.md), [config_reference_Ru.md](../reference/config_reference_Ru.md), [устройство CLI](../project_developer_guide/CLI.md). Отладочные (DEBUG) сообщения здесь не рассматриваются — они в файле `cfg_proc/log/{timestamp}/processing.log`.
 
 ---
 
@@ -31,7 +31,7 @@ i90: INKL_090.TXT
 14:49:48|correct_raw_files|No raw files to correct for i64 (all already @-prefixed)
 ```
 
-При генерации конфигов (edge-row режим) проверяется была ли проверка табличного синтаксиса и его коррекция по всем исходным файлам, после которого записываются "корректные" файлы c префиксом `@`. Здесь они уже все есть — этап пропущен. См. [../project_developer_guide/CLI.md §CSV correction](../project_developer_guide/CLI.md#csv-correction).
+При генерации конфигов (edge-row режим) проверяется была ли проверка табличного синтаксиса и его коррекция по всем исходным файлам, после которого записываются "корректные" файлы c префиксом `@`. Здесь они уже все есть — этап пропущен. См. [§CSV correction](../project_developer_guide/CLI.md#csv-correction).
 
 ---
 
@@ -42,7 +42,7 @@ i90: INKL_090.TXT
 14:49:48|prep_cfg_for_probe|Coefs for i64: paths=[calibration.h5, yaml_export], date=2025-06-23 12:50:24
 ```
 
-Для каждого датчика при генерации конфига читаются первая и последняя строки CSV для получения диапазона времени (2 значения → `time_ranges`). Затем загружаются калибровочные коэффициенты. `paths` — цепочка источников (см. [../project_developer_guide/CLI.md §Coefficient loading](../project_developer_guide/CLI.md#coefficient-loading)). `date` — дата калибровки из найденного набора коэффициентов.
+Для каждого датчика при генерации конфига читаются первая и последняя строки CSV для получения диапазона времени (2 значения → `time_ranges`). Затем загружаются калибровочные коэффициенты. `paths` — цепочка источников (см. [§Coefficient loading](../project_developer_guide/CLI.md#coefficient-loading)). `date` — дата калибровки из найденного набора коэффициентов.
 
 Аналогично для i67 и i90 — каждый со своим диапазоном и датой.
 
@@ -56,7 +56,7 @@ i90: INKL_090.TXT
 14:50:04|correct_raw_files|Corrected 1 file for i67
 ```
 
-Файл `I_067.TXT` — «сырой» (без `@`). Запущена коррекция: чтение построчно, фильтрация строк, не проходящих по regex столбцов (см. `text_line_regex` в [config_tuning.md §Text type → column layout](../reference/config_tuning.md#text-type--column-layout)). Удалено 2 бракованные строки, результат записан как `@i_67.TXT`.
+Файл `I_067.TXT` — «сырой» (без `@`). Запущена коррекция: чтение построчно, фильтрация строк, не проходящих по regex столбцов (см. `text_line_regex` в [§Text type → column layout](../reference/config_tuning.md#text-type--column-layout)). Удалено 2 бракованные строки, результат записан как `@i_67.TXT`.
 
 ```
 14:50:04|rep_in_file|preliminary correcting csv file INKL_090.TXT by removing irregular rows, writing to @i_90.TXT
@@ -145,7 +145,7 @@ TCM processing started.
 14:50:55|_snap_to_grid|6038 interpolated outlier position(s) non-monotone after snap (masked)
 ```
 
-После удаления выбросов оставшиеся точки интерполируются и «привязываются к сетке» (`_snap_to_grid`): каждому сегменту назначается равномерная сетка `t_k = origin + k·dt_step`. 6038 интерполированных позиций после привязки нарушают монотонность (получили одинаковое или «заднее» время из-за ограничения точности float64 CF-кодирования — см. [../project_developer_guide/CLI.md §Float64-seconds precision limit](../project_developer_guide/CLI.md#float64-seconds-precision-limit)). Эти точки замаскированы (исключены).
+После удаления выбросов оставшиеся точки интерполируются и «привязываются к сетке» (`_snap_to_grid`): каждому сегменту назначается равномерная сетка `t_k = origin + k·dt_step`. 6038 интерполированных позиций после привязки нарушают монотонность (получили одинаковое или «заднее» время из-за ограничения точности float64 CF-кодирования — см. [§Float64-seconds precision limit](../project_developer_guide/CLI.md#float64-seconds-precision-limit)). Эти точки замаскированы (исключены).
 
 ```
 14:50:55|_correct_time|time correction: 4093982/4100020 monotone (in-range=4100020); 0.1% removed (spikes=6038, backward=0); correction [-0.099, 1.092]s; 386621 pts > alarm 0.80s

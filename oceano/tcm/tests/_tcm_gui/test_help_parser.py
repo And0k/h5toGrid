@@ -303,7 +303,7 @@ class TestRealReferenceDetailed:
 
 _SAMPLE = textwrap.dedent(
     """\
-    # Config YAML Field Reference
+    # Configuration Schema and Device Metadata Reference
 
     Intro prose — should NOT contribute any field entries.
 

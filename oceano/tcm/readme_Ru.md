@@ -29,30 +29,32 @@
 
 ### [Руководства пользователя](docs/user_guide/)
 
-- [Начало работы](docs/user_guide/getting_started.md)
-- [Руководство по GUI](docs/user_guide/gui.md)
-- [Руководство по CLI](docs/user_guide/cli.md)
-- [Ввод / Вывод](docs/user_guide/input_output.md)
-- [Конфигурация](docs/user_guide/configuration.md)
-- [Обработка](docs/user_guide/processing.md)
-- [Сообщения консоли](docs/user_guide/console_messages.md)
+- [Getting Started](docs/user_guide/getting_started.md)
+- [GUI Guide](docs/user_guide/gui.md)
+- [CLI Guide](docs/user_guide/cli.md)
+- [Input / Output Guide](docs/user_guide/input_output.md)
+- [Configuration Guide](docs/user_guide/configuration.md)
+- [Processing Guide](docs/user_guide/processing.md)
+- [Console Messages](docs/user_guide/console_messages.md)
 - [Описание журнала работы tcm_proc](docs/user_guide/log_description_ru.md)
 
 ### [Справочные материалы](docs/reference/)
 
 Точные, авторитетные спецификации.
 
-- [Справочник полей конфигурации YAML](docs/reference/config_reference_Ru.md)
-- [Настройка поведения](docs/reference/config_tuning.md)
-- [Спецификация CLI](docs/reference/cli.md)
-- [Форматы ввода / вывода](docs/reference/io_formats.md)
+- [Справочник по полям схемы конфигурации и метаданным устройств](docs/reference/config_reference_Ru.md)
+- [Config Tuning — Decision Tables & Behavior](docs/reference/config_tuning.md)
+- [CLI Reference](docs/reference/cli.md)
+- [Input / Output Format Specification](docs/reference/io_formats.md)
 
 ### [Методология](docs/methodology/)
 
 Теория алгоритмов, а не их использование.
 
-- [Калибровка: теория и метод](docs/methodology/calibration_wiki.md)
-- [Алгоритм `_estimate_freq_np` (режим B)](docs/methodology/estimate_freq_logic.md)
+- [Calibration Wiki: Theory and Method](docs/methodology/calibration_wiki.md)
+- [Algorithm of frequency estimation `utils_time_corr._estimate_freq_np`](docs/methodology/estimate_freq_logic.md)
+- [Вычисление скорости течения по данным акселерометра и магнетометра](docs/methodology/velocity_Ru.md)
+- [Вычисление давления по полиному `P_t`](docs/methodology/pressure_Ru.md)
 
 ### [Руководство для Python-разработчиков](docs/python_developer_guide/)
 
@@ -63,7 +65,7 @@
 
 Внутренняя архитектура и инструкции по сборке.
 
-- [Архитектура CLI](docs/project_developer_guide/CLI.md)
-- [Архитектура GUI](docs/project_developer_guide/GUI.md)
-- [Контракт написания документации](docs/project_developer_guide/doc_authoring.md)
+- [CLI Internals](docs/project_developer_guide/CLI.md)
+- [GUI Internals](docs/project_developer_guide/GUI/_index.md)
+- [Правила создания документации](docs/project_developer_guide/doc_authoring_Ru.md)
 - [Сборка минимального дистрибутива `tcm_proc`](docs/project_developer_guide/build_tcm_clc_txt_Ru.md)

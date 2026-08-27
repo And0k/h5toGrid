@@ -1353,7 +1353,7 @@ transparent migration from HDF5 to NC without config changes.
 ## CSV correction {#csv-correction}
 
 For the user-facing description of input file handling, see
-[Input/Output Guide](../user_guide/input_output.md).
+[Input / Output Guide](../user_guide/input_output.md).
 
 `csv_load.correct_raw_files()` → `(corrected_paths, params)`:
 
@@ -1390,7 +1390,7 @@ to match the data.  This prevents `ValueError` in `init_input_cols` and
 ## Coefficient loading {#coefficient-loading}
 
 For the coefficient source priority and user-facing description, see
-[I/O Formats Reference §Coefficient source priority](../reference/io_formats.md#coefficient-source-priority).
+[§Coefficient source priority](../reference/io_formats.md#coefficient-source-priority).
 
 `incl_calc.coefs.get_coefs_from_cfg()` builds a three-tier fallback chain:
 1. `input.coefs` in YAML (highest priority)
@@ -1476,7 +1476,7 @@ Without this, numpy broadcasting silently produces `(3, 3)` and the subsequent
 ## File name parsing
 
 For the user-facing naming rules and normalization examples, see
-[I/O Formats Reference §File name parsing](../reference/io_formats.md#file-name-parsing).
+[§File name parsing](../reference/io_formats.md#file-name-parsing).
 
 `format.parse_name(name)` in `tcm/format.py` extracts probe identity parts.
 Three regex steps (first match wins):

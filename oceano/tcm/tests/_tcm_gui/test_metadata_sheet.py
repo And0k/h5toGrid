@@ -1,7 +1,7 @@
 """Style: test_coef_sheet.py, test_gui_actions.py (gui_project fixture).
 
 Reference: docs/reference/config_reference.md (metadata section)
-Guides: docs/project_developer_guide/GUI.md
+Guides: docs/project_developer_guide/GUI/architecture.md, docs/project_developer_guide/GUI/decisions.md
 """
 
 from __future__ import annotations

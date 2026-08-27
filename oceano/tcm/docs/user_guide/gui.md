@@ -132,5 +132,5 @@ overrides are not re-applied.
 
 ## See also
 
-- [Config field reference](../reference/config_reference.md) — all YAML fields with hover tooltips
-- [GUI internals](../project_developer_guide/GUI.md) — programmer-facing architecture
+- [Configuration Schema and Device Metadata Reference](../reference/config_reference.md) — all YAML fields with hover tooltips
+- [GUI Internals](../project_developer_guide/GUI/_index.md) — programmer-facing architecture

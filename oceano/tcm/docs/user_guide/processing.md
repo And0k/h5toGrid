@@ -144,7 +144,7 @@ Pressure, Temp, Battery, ...               ← remaining sensor variables
 
 ## See also
 
-- [Config Tuning](../reference/config_tuning.md) — overwrite_db contracts, incremental append
-- [Configuration](configuration.md) — config system, zeroing setup
+- [Config Tuning — Decision Tables & Behavior](../reference/config_tuning.md) — overwrite_db contracts, incremental append
+- [Configuration Guide](configuration.md) — config system, zeroing setup
 - [Console Messages](console_messages.md) — log messages, exit codes
-- [I/O Formats](../reference/io_formats.md) — output file structure
+- [Input / Output Format Specification](../reference/io_formats.md) — output file structure

@@ -76,11 +76,11 @@ data_dir/_raw/        ← raw files (conventional name)
 |------|-------|
 | Use GUI | [GUI Guide](gui.md) |
 | Use CLI | [CLI Guide](cli.md) |
-| Understand input/output | [Input/Output](input_output.md) |
-| Edit configuration | [Configuration](configuration.md) |
-| Processing details | [Processing](processing.md) |
+| Understand input/output | [Input / Output Guide](input_output.md) |
+| Edit configuration | [Configuration Guide](configuration.md) |
+| Processing details | [Processing Guide](processing.md) |
 | Console messages | [Console Messages](console_messages.md) |
-| Config field spec | [Config Reference](../reference/config_reference.md) |
-| Config behavior tables | [Config Tuning](../reference/config_tuning.md) |
+| Config field spec | [Configuration Schema and Device Metadata Reference](../reference/config_reference.md) |
+| Config behavior tables | [Config Tuning — Decision Tables & Behavior](../reference/config_tuning.md) |
 | CLI argument spec | [CLI Reference](../reference/cli.md) |
-| I/O format spec | [I/O Formats](../reference/io_formats.md) |
+| I/O format spec | [Input / Output Format Specification](../reference/io_formats.md) |

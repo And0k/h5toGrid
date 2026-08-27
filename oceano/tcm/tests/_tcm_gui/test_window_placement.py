@@ -35,12 +35,19 @@ def _placed(root: tk.Tk) -> tuple[int, int, int, int, int, int]:
 
 
 def test_clamps_oversized_window_inside_chrome(root: tk.Tk, monkeypatch: pytest.MonkeyPatch):
-    """Size larger than work area → clamped to work area MINUS window chrome."""
-    monkeypatch.setattr(const, "work_area", lambda _w: (100, 50, 900, 650))
+    """Size larger than work area → clamped to work area MINUS window chrome.
+
+    Position is asserted by INVARIANT, not exact px: when the chrome-inflated
+    outer size still overflows the work area (high DPI — the work-area MINUS
+    chrome is itself OS-relocated), the window manager moves the window to
+    keep it fully visible, so a hardcoded ``+x+y`` is machine-dependent.
+    """
+    left, top, right, bottom = 100, 50, 900, 650
+    monkeypatch.setattr(const, "work_area", lambda _w: (left, top, right, bottom))
     const.fit_to_workarea(root, 1100, 800)
     w, h, x, y, dx, dy = _placed(root)
-    assert (w, h) == (800 - dx, 600 - dy)
-    assert (x, y) == (100, 50)  # pre-map centered pos KEPT — position released
+    assert (w, h) == (right - left - dx, bottom - top - dy)
+    assert left <= x and top <= y and x + w <= right and y + h <= bottom  # fits inside
 
 
 def test_centers_within_workarea(root: tk.Tk, monkeypatch: pytest.MonkeyPatch):

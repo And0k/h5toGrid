@@ -135,7 +135,7 @@ def test_default_root_covers_docs_cross_links():
     """``../../readme.md``-style links land above ``docs/`` → root must be the package."""
     db = DocumentationBrowser()
     assert db.is_allowed(resource_root() / "readme.md")
-    assert db.is_allowed(resource_root() / "docs" / "project_developer_guide" / "GUI.md")
+    assert db.is_allowed(resource_root() / "docs" / "project_developer_guide" / "GUI" / "_index.md")
 
 
 @pytest.mark.skipif(

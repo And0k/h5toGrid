@@ -249,8 +249,11 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
         # False for plain strings (STR labels, Hydra paths).
         self.on_hover_status: Callable[[str, bool], None] | None = None
         # Fired when the user starts editing any cell (double-click / keypress).
-        # App wires this to hide progress widgets during editing.
+        # App wires this to freeze status / hide progress widgets during editing.
         self.on_edit_begin: Callable[[], None] | None = None
+        # Fired when an editor closes (commit / Escape / click-away / FocusOut) —
+        # the counterpart of ``on_edit_begin``.  App wires this to unfreeze status.
+        self.on_edit_end: Callable[[], None] | None = None
         # Fired after every validation pass — App wires this to re-evaluate
         # the Run button enabled state across all config tabs.
         self.on_validity_change: Callable[[], None] | None = None

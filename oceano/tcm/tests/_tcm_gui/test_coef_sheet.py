@@ -319,8 +319,9 @@ class TestApplyStyles:
     def test_date_cells_right_aligned(self, mock_resolve):
         """Date cells (coefs parent with has_date) are right-aligned (``e``).
 
-        See :func:`_apply_styles` section 3 and the CellSpec.kind table in
-        docs/project_developer_guide/GUI.md — ``"date"`` is right-aligned, not left.
+        See :func:`_apply_styles` docs/project_developer_guide/GUI/decisions.md and the CellSpec.kind table in
+        docs/project_developer_guide/GUI/architecture.md ## Type-aware cell rendering — ``"date"`` is
+        right-aligned, not left.
         """
         cs, mock_sh = self._make_loaded_sheet()
         cs._apply_styles()

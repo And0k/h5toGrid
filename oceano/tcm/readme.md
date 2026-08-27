@@ -1,5 +1,8 @@
 <p align="center"><img src="docs/images/logo.png" alt="TCM" width="128"></p>
 
+[Russian readme](readme.ru)
+
+
 # TCM Data Processing
 
 Convert raw data files measured by AB SIO RAS tilt current meters (TCM) to
@@ -39,8 +42,7 @@ configurations, depending on the environment:
 
 Exact, authoritative specs.
 
-- [Config YAML Field Reference](docs/reference/config_reference.md)
-- [Справочник полей конфигурации YAML](docs/reference/config_reference_Ru.md)
+- [Configuration Schema and Device Metadata Reference](docs/reference/config_reference.md)
 - [Config Tuning — Decision Tables & Behavior](docs/reference/config_tuning.md)
 - [CLI Reference](docs/reference/cli.md)
 - [Input / Output Format Specification](docs/reference/io_formats.md)
@@ -51,11 +53,12 @@ Theory behind the algorithms, not usage.
 
 - [Calibration Wiki: Theory and Method](docs/methodology/calibration_wiki.md)
 - [Algorithm of frequency estimation `utils_time_corr._estimate_freq_np`](docs/methodology/estimate_freq_logic.md)
+- [Velocity computation from accelerometer and magnetometer](docs/methodology/velocity.md)
+- [Pressure computation from the `P_t` polynomial](docs/methodology/pressure.md)
 
 ### [Python developer guide](docs/python_developer_guide/)
 
 - [Magnetometer/Accelerometer Calibration — Usage Guide](docs/python_developer_guide/calibration.md)
-- [Калибровка магнитометра/акселерометра: сценарий использования и ограничения](docs/python_developer_guide/calibration_Ru.md)
 - [Examples](docs/python_developer_guide/examples.py)
 
 ### [Project developer guide](docs/project_developer_guide/)
@@ -63,6 +66,6 @@ Theory behind the algorithms, not usage.
 Internal architecture and build instructions.
 
 - [CLI Internals](docs/project_developer_guide/CLI.md)
-- [GUI Internals](docs/project_developer_guide/GUI.md)
+- [GUI Internals](docs/project_developer_guide/GUI/_index.md)
 - [Documentation Authoring Contract](docs/project_developer_guide/doc_authoring.md)
 - [Сборка минимального дистрибутива `tcm_proc`](docs/project_developer_guide/build_tcm_clc_txt_Ru.md)

@@ -391,8 +391,20 @@ class SheetTintMixin:
             self.sh.redraw()
 
     def _on_editor_closed(self, redraw: bool = True) -> None:
-        """Restore the ghost when an editor closed on an empty cell (unified hook)."""
+        """Restore the ghost when an editor closed on an empty cell (unified hook).
+
+        ``MT.hide_text_editor_and_dropdown`` is the single funnel EVERY edit
+        close (Escape, Enter-commit, click-away, FocusOut) goes through —
+        ``open_text_editor`` calls plain ``hide_text_editor``, so no false fire
+        mid-open.  Also notifies ``on_edit_end`` (App releases the edit-time
+        status freeze here).
+        """
         self._mt_close_editor_orig(redraw=redraw)
+        if (cb := self.on_edit_end) is not None:
+            try:
+                cb()
+            except Exception:
+                _l.exception("on_edit_end callback failed")
         with suppress(AttributeError, TypeError, IndexError, TclError):
             r, c = self.sh.MT.text_editor.coords
             if (iid := self._iid_at_row(r)) is not None and (int_row := self._internal_row(iid)) is not None:

@@ -1,8 +1,8 @@
 # Config Tuning — Decision Tables & Behavior
 
 Decision tables, behavior tuning, and YAML examples for the processing pipeline.
-Field definitions are in [config_reference.md](config_reference.md); implementation
-internals are in [../project_developer_guide/CLI.md](../project_developer_guide/CLI.md).
+Field definitions are in [Configuration Schema and Device Metadata Reference](config_reference.md); implementation
+internals are in [CLI Internals](../project_developer_guide/CLI.md).
 
 ## Phase-stopping
 
@@ -47,7 +47,7 @@ For example, `program.return_='<saved_raw>'` to verify raw data ingestion.
 | `dt_interp_between` | `1.5s` | Minimum gap to detect a real hole (vs jitter within a segment) |
 | `corr_time_outlier_threshold_s` | `0.6s` | Spike/backward detection threshold |
 
-See `../project_developer_guide/CLI.md` (§Time correction) for the correction pipeline internals,
+See [§Time correction](../project_developer_guide/CLI.md#time-correction) for the correction pipeline internals,
 diagnostics bitmask, and edge-row detection behavior.
 
 ## Config filtering
@@ -99,7 +99,7 @@ matches any inclinometer `.txt` file. Corrected `@`-prefixed files are always fo
 independently — `@?i.*\.txt` and `i.*\.txt` produce identical results because the
 `@` prefix is stripped before pattern matching.
 
-See `../project_developer_guide/CLI.md` (§Discovery) for the implementation in `csv_load._pattern_to_regex()`.
+See [§Discovery](../project_developer_guide/CLI.md#discovery) for the implementation in `csv_load._pattern_to_regex()`.
 
 ## Column order
 
@@ -302,4 +302,4 @@ directive tells Hydra to merge this YAML's contents at the Config root rather th
 `run` namespace.
 
 Minimal viable config, azimuth calibration, and filter expansion are
-documented in [../user_guide/configuration.md](../user_guide/configuration.md).
+documented in [the configuration guide](../user_guide/configuration.md).

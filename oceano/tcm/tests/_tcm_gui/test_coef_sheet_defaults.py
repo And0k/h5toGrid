@@ -315,7 +315,7 @@ class TestOnEndEditGrayToggle:
         """Editing a default-valued cell to a non-default value -> gray cleared.
 
         Clear side uses :attr:`_fg_default` explicitly (never ``fg=None`` —
-        that's a per-key merge no-op in tksheet 7.x; see docs/project_developer_guide/GUI.md).
+        that's a per-key merge no-op in tksheet 7.x: docs/project_developer_guide/GUI/decisions.md).
         """
         cs, mock_sh = self._make_loaded_sheet()
         azimuth_iid = self._find_iid(cs, "input.coefs.azimuth_shift_deg")
@@ -379,7 +379,7 @@ class TestOnEndEditGrayToggle:
         """Container nodes (input.coefs) resolve to a dict default -> handler
         returns early (no highlight_cells calls).  The ``input`` row itself is
         *not* in this category: ``_default_for_cell`` appends ``.path`` to
-        resolve it as a leaf cell (see docs/project_developer_guide/GUI.md, two-row system).
+        resolve it as a leaf cell (see docs/project_developer_guide/GUI/decisions.md, two-row system).
         """
         cs, mock_sh = self._make_loaded_sheet()
         coefs_iid = self._find_iid(cs, "input.coefs")
@@ -429,7 +429,7 @@ class TestOnEndEditGrayToggle:
 
         The walk consults ``sh.get_children`` + the open-state bookkeeping in
         ``_meta[iid]["open"]`` (the ``item()`` wrapper); ``get_row_from_iid``
-        is NOT consulted here (see docs/project_developer_guide/GUI.md, two-row system).
+        is NOT consulted here (see docs/project_developer_guide/GUI/decisions.md, two-row system).
         """
         cs, mock_sh = self._make_loaded_sheet()
         visible = list(cs._vis)

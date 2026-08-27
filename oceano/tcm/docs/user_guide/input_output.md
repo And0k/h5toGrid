@@ -74,6 +74,6 @@ dimension) → `*.proc.nc`. Non-averaged (`dt_bin=0`) data is never combined.
 
 ## See also
 
-- [I/O Formats Reference](../reference/io_formats.md) — full format contracts
-- [Configuration](configuration.md) — config system, YAML editing
-- [Processing](processing.md) — pipeline stages, binning, combined output
+- [Input / Output Format Specification](../reference/io_formats.md) — full format contracts
+- [Configuration Guide](configuration.md) — config system, YAML editing
+- [Processing Guide](processing.md) — pipeline stages, binning, combined output

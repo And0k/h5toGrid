@@ -108,6 +108,6 @@ for the full decision matrix.
 ## See also
 
 - [CLI Reference](../reference/cli.md) — exhaustive argument spec
-- [I/O Formats](../reference/io_formats.md) — input/output format contracts
-- [Configuration](configuration.md) — config system guide
-- [Processing](processing.md) — pipeline stages, zeroing, time correction
+- [Input / Output Format Specification](../reference/io_formats.md) — input/output format contracts
+- [Configuration Guide](configuration.md) — config system guide
+- [Processing Guide](processing.md) — pipeline stages, zeroing, time correction
