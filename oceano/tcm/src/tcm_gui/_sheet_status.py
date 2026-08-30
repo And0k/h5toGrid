@@ -16,6 +16,7 @@ Mixin for :class:`tcm_gui.coef_sheet.ConfigSheet`.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
@@ -61,6 +62,7 @@ class SheetHoverMixin:
         """Reset hover status tracking and clear the status bar."""
         self._status_iid = None
         self._status_source = None
+        self._status_col = None
         self._hover_detail = ""
         self._publish_status(None)
 
@@ -78,7 +80,7 @@ class SheetHoverMixin:
         self._hide_hover_field()
         self._clear_status()
 
-    def _help_candidates(self, iid: Any, *, tree: bool = False) -> list[str]:
+    def _help_candidates(self, iid: Any, *, tree: bool = False, col: int | None = None) -> list[str]:
         """Ordered ``help_for_path`` candidates for *iid*.
 
         Single source for ``_on_tree_motion`` and ``_publish_status`` — paired
@@ -86,16 +88,29 @@ class SheetHoverMixin:
         ``metadata.symbol``, the ``metadata`` root tries ``metadata.path``,
         otherwise the node's own ``path``.  Tree motion shows the first field
         only; data-cell hover fans both.
+
+        *col* selects the field for metadata paired rows: the candidate whose
+        column is hovered is tried first, so col 1 (``symbol``) shows the
+        ``metadata.symbol`` short instead of always the first field.
         """
         m = self._meta.get(iid, {})
         path = str(m.get("path") or "")
         if m.get("is_metadata_root"):
-            return ["metadata.path"]
+            # Tree column shows the ``metadata`` section (status + dwell tooltip);
+            # the data cell (path field) keeps ``metadata.path``.
+            return ["metadata"] if tree else ["metadata.path"]
         if m.get("is_metadata") and (lbl := m.get("label")):
-            parts = [s.strip().replace(" ", "_").replace("/", "_") for s in lbl.split(",")]
-            cands = [f"metadata.{parts[0]}"]
-            if not tree and len(parts) > 1:
-                cands.append(f"metadata.{parts[1]}")
+            # Label separators: ``,`` pairs fields, ``/`` the burst row's
+            # shortened second field (``burst_dt/t`` → ``bursts_t`` key).
+            parts = [s.strip().replace(" ", "_") for s in re.split(r"[,/]", lbl) if s.strip()]
+            field_cands = [f"metadata.{parts[0]}"]
+            if not tree:
+                # ``t`` is the label-shortened ``bursts_t`` doc key.
+                field_cands += [f"metadata.{p if p != 't' else 'bursts_t'}" for p in parts[1:]]
+            # Column-specific: put the hovered field first so it wins in _publish_status.
+            if not tree and col is not None and 0 <= col < len(field_cands):
+                field_cands = [field_cands[col]] + field_cands[:col] + field_cands[col + 1 :]
+            cands = field_cands
             if path not in cands:
                 cands.append(path)
             return cands
@@ -108,7 +123,13 @@ class SheetHoverMixin:
         return cands
 
     def _on_tree_motion(self, event) -> None:
-        """Hover over tree column (index canvas) — show help for that node."""
+        """Hover over tree column (index canvas) — show help for that node.
+
+        For metadata paired rows (``point, symbol`` …) the tree column shows
+        the first field's short text; a ``", …"`` suffix is appended when the
+        row documents more than one editable column, signalling the second
+        field shown on data-cell hover.
+        """
         if (hit := self._hover_resolve(event)) is None:
             self._clear_status()
             return
@@ -119,13 +140,15 @@ class SheetHoverMixin:
 
         self._status_iid = iid
         self._status_source = "tree"
+        m = self._meta.get(iid, {})
+        multi = m.get("is_metadata") and m.get("max_col", 1) > 1
         for cand in self._help_candidates(iid, tree=True):
             if cand and (h := _help.help_for_path(cand)) and h.short:
                 self._hover_detail = self._resolve_detail(cand)
                 if self.on_hover_status is not None:
-                    self.on_hover_status(h.short, True)
+                    txt = f"{h.short}{_S['metadata.tree_suffix']}" if multi else h.short
+                    self.on_hover_status(txt, True)
                 return
-        m = self._meta.get(iid, {})
         if self.on_hover_status is not None:
             self._hover_detail = ""
             self.on_hover_status(str(m.get("key") or m.get("label") or m.get("path") or ""), False)
@@ -133,12 +156,43 @@ class SheetHoverMixin:
     def _coefs_status_hint(self) -> str:
         """Mode-aware status hint for ``coefs_path`` browse button.
 
-        Shift held → ``file`` mode; default → ``dir`` mode.
-        Content from ``config_reference.md`` ``<mode>`` sections.
+        General = ``### `input.coefs_path` `` short body (pre-``####``) from
+        ``config_reference.md``; suffix = mode-specific GUI hint from ``STR``
+        (``input.coefs_path.status.dir/files``).  Shift held → ``file`` mode;
+        default → ``dir`` mode.  Same augmentation pattern as ``path_field``
+        and ``time_ranges.hover.*``.
         """
+
+        def _suffix_for(m: str) -> str:
+            # Robust lookup: accept plural/singular and coefs/coef typo variants.
+            for key in (
+                f"input.coefs_path.status.{m}s",
+                f"input.coefs_path.status.{m}",
+                f"input.coef_path.status.{m}s",
+                f"input.coef_path.status.{m}",
+            ):
+                if (v := _S.get(key)):
+                    return str(v)
+            return ""
+
         mode = "file" if _is_shift_pressed() else "dir"
-        if (h := _help.help_for_path("input.coefs_path", mode=mode)) and h.body:
-            return str(h.body)
+        # Doc general (fallback to _NO_MODE when mode-specific section absent)
+        base = ""
+        if (h := _help.help_for_path("input.coefs_path", mode=mode)) and isinstance(h.body, str) and h.body:
+            base = str(h.body)
+        elif (ge := _help.help_for_path("input.coefs_path")) and isinstance(getattr(ge, "body", None), Mapping):
+            raw = ge.body.get(_help._NO_MODE)  # type: ignore[attr-defined]
+            if isinstance(raw, _help.ModeBody):
+                base = raw.short
+            elif isinstance(raw, str):
+                base = raw
+        suffix = _suffix_for(mode)
+        if base and suffix:
+            return f"{base} {suffix}"
+        if base:
+            return base
+        if suffix:
+            return suffix
         return _S["browse_btn.status_files" if mode == "file" else "browse_btn.status"]
 
     def _on_shift_toggle(self, _event) -> None:
@@ -164,25 +218,56 @@ class SheetHoverMixin:
             return
         self._publish_status(iid)
 
-    def _on_f1_help(self, _event=None) -> None:
-        """F1 over a sheet row — open the doc browser at its ``config_reference`` heading.
+    def _f1_anchor(self) -> str:
+        """Anchor of the ``config_reference`` section F1 should open.
 
-        Uses the hovered row (``_status_iid``) so no pointer event is needed;
-        ``help_for_path`` strips array indices and returns the section anchor
-        (GitHub-style slug, mirrors ``browser/web/viewer.js::slugify``).  The
-        doc MUST be the same localized file the entries were parsed from
-        (``doc_path(resolve_lang())`` — exactly what ``_load`` reads); plain
-        ``doc_path()`` always serves the English file and a localized anchor
-        then finds no element — the page opens but never scrolls.
+        Target = the selected row (``sh.tree_selected`` — the current
+        selection box's iid); if nothing selected but the mouse is inside
+        the dwell tooltip widget (``_hover_field``), use that row
+        (``_status_iid``).  Mouse over other sheet elements is not tracked
+        for F1 — nothing selected and no tooltip hover means the App opens
+        the readme.  Resolution fans :meth:`_help_candidates` (paired
+        metadata rows try every split label) then walks ``meta["parent"]`` —
+        child rows of an undocumented node inherit their ancestor's section
+        (``Ag[0]`` → ``input.coefs.Ag`` → the ``input.coefs`` group).
+        ``help_for_path`` strips array indices; ``entry.anchor`` is the
+        GitHub-style slug mirroring ``browser/web/viewer.js::slugify``.
+        ``""`` when nothing documents the chain — the App then opens the
+        readme instead.
         """
-        if (iid := self._status_iid) is None:
-            return
-        if not (path := str(self._meta.get(iid, {}).get("path") or "")):
-            return
-        anchor = entry.anchor if (entry := _help.help_for_path(path)) else ""
-        from tcm_gui.browser import get_documentation_browser
+        iid = self.sh.tree_selected or (self._status_iid if self._pointer_in_field() else None)
+        return self._f1_anchor_for_iid(iid)
 
-        get_documentation_browser().open(_help.doc_path(_help.resolve_lang()), anchor=anchor or None)
+    def _f1_help_candidates(self, iid: Any) -> list[str]:
+        """F1 candidate ordering — node's own path first for metadata rows.
+
+        Status text uses :meth:`_help_candidates` (metadata.X first).  F1
+        prefers the specific field (e.g. ``input.time_ranges``) over the
+        generic ``metadata.time_ranges`` — the same row documents the field,
+        not the metadata group.
+        """
+        cands = self._help_candidates(iid)
+        m = self._meta.get(iid, {})
+        path = str(m.get("path") or "")
+        if path and m.get("is_metadata") and path in cands:
+            cands = [path] + [c for c in cands if c != path]
+        return cands
+
+    def _f1_anchor_for_iid(self, iid: Any) -> str:
+        """Resolve the F1 anchor for the given *iid* (or ``""`` if undocumented).
+
+        Shared resolution logic: fan out :meth:`_f1_help_candidates` (node's
+        own path first for metadata rows), then walk ``meta["parent"]`` — child
+        rows of an undocumented node inherit their ancestor's section.  Used by
+        :meth:`_f1_anchor` (selection / dwell tooltip) and by the App when the
+        mouse is over the status label.
+        """
+        while iid is not None:
+            for cand in self._f1_help_candidates(iid):
+                if cand and (e := _help.help_for_path(cand)):
+                    return e.anchor
+            iid = self._meta.get(iid, {}).get("parent")
+        return ""
 
     @staticmethod
     def _resolve_detail(path: str) -> str:
@@ -193,14 +278,21 @@ class SheetHoverMixin:
         ``Detailed`` block.  Section short bodies and group prose never arm
         the dwell — regression: every coef row showed the ``input.coefs``
         group text instead of nothing.  Returns ``""`` — the caller skips arming.
+
+        A bare ``### Detailed`` heading (no backticks, e.g. the RU doc's
+        ``metadata`` section) stores its content as the mode body's ``short``
+        under the ``"Detailed"`` tag — check that too.
         """
         if (e := _help.help_for_path(path)) and isinstance(e.body, Mapping):
-            for val in e.body.values():
-                if isinstance(val, _help.ModeBody) and (d := val.details.get("Detailed")):
-                    return str(d)
+            for tag, val in e.body.items():
+                if isinstance(val, _help.ModeBody):
+                    if tag == "Detailed":
+                        return val.short
+                    if d := val.details.get("Detailed"):
+                        return str(d)
         return ""
 
-    def _publish_status(self, iid: Any) -> None:
+    def _publish_status(self, iid: Any, col: int | None = None) -> None:
         """Status text for the hovered element (data cells on MT canvas).
 
         Fallback chain: ``help_for_path(path).short`` (from
@@ -209,6 +301,9 @@ class SheetHoverMixin:
         :meth:`_time_ranges_detail`; ``coefs_path`` shows Shift-toggled
         dir/file content.  Tree-column hover is handled by ``_on_tree_motion``
         which always uses the section-level path.
+
+        *col* selects which field of a metadata paired row is shown — without
+        it the first field always wins.
         """
         if self.on_hover_status is None:
             return
@@ -224,7 +319,7 @@ class SheetHoverMixin:
         # time_ranges: doc short + live sync detail — recomputed, never cached
         if m.get("label") == "time_ranges" or str(m.get("path") or "") == "input.time_ranges":
             sync = self._time_ranges_detail()
-            for cand in self._help_candidates(iid, tree=False):
+            for cand in self._help_candidates(iid, tree=False, col=col):
                 if cand and (h := _help.help_for_path(cand)) and h.short:
                     txt = f"{h.short} — {sync}" if sync else h.short
                     self._hover_detail = self._resolve_detail(cand) or self._resolve_detail(
@@ -243,7 +338,7 @@ class SheetHoverMixin:
             self.on_hover_status(txt, True)
             return
 
-        for cand in self._help_candidates(iid, tree=False):
+        for cand in self._help_candidates(iid, tree=False, col=col):
             if cand and (h := _help.help_for_path(cand)) and h.short:
                 self._hover_detail = self._resolve_detail(cand) or self._resolve_detail(
                     str(m.get("path") or "")
@@ -681,12 +776,21 @@ class SheetHoverMixin:
             return
 
         iid, row, y = hit
+        col = self._raw_col(event)
 
-        # Re-publish when row OR source (tree ↔ data) changes.
-        if iid != self._status_iid or self._status_source != "data":
+        # Re-publish when row, source (tree ↔ data), or (for metadata paired
+        # rows) the hovered column changes — each column documents a different
+        # field, so col 0 → metadata.point but col 1 → metadata.symbol.
+        m = self._meta.get(iid, {})
+        if (
+            iid != self._status_iid
+            or self._status_source != "data"
+            or (m.get("is_metadata") and m.get("max_col", 1) > 1 and col != self._status_col)
+        ):
             self._status_iid = iid
             self._status_source = "data"
-            self._publish_status(iid)
+            self._status_col = col
+            self._publish_status(iid, col)
 
         # Readonly mode: no hover overlays (editing is blocked anyway).
         if self._readonly:

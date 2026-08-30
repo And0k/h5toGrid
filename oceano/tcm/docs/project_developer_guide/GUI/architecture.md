@@ -2,10 +2,10 @@
 
 Optional Tkinter frontend wrapping `tcm.cli.call_in_raw_dir` in a background
 thread.  No custom CLI parsing — Hydra handles all config keys natively via
-`sys.argv` (see [CLI entry point](../../readme.md)).
+`sys.argv` (see [CLI entry point](../../../readme.md)).
 
-Companion pages: [GUI Widgets](GUI_widgets.md) · [GUI Help System](GUI_help_system.md) ·
-[GUI Key Decisions with Rationale and Regression Notes](GUI_decisions.md) — index: [GUI Internals](_index.md).
+Companion pages: [GUI Widgets](widgets.md) · [GUI Help System](help_system.md) ·
+[GUI Key Decisions with Rationale and Regression Notes](decisions.md) — index: [GUI Internals](_index.md).
 
 ## Architecture
 
@@ -14,7 +14,7 @@ File - Purpose
 
 ### `app.py`
 
-Tk root, layout §1–6, 300 ms polling, argv prefill, startup placement via `App.GEOMETRY` → `const.fit_to_workarea` (size clamped + centered in the taskbar-excluded work area, chrome re-fit on `<Map>` — never off-screen at start); the root is `withdraw()`n right after creation and `_build()` runs unmapped — `fit_to_workarea`'s `deiconify()` is the FIRST show (no top-left default-size blink; same pattern as `AboutDialog`), `Alt+Arrows` nudges the window 10px (`Shift` ×10) via `const.nudge_window` — a shell drag can't carry the title bar above the screen top (OS clamps ALL apps' interactive drags there; programmatic moves aren't limited), `_initial_scan` flag (immediate stage-row show), collapsible §2 status row (`_overall_lbl` + `_prog_stage` + `_prog_stage_text` gridded together, 400 ms delay for run); manual `ttk.Frame` + `tk.Text` + `ttk.Scrollbar` log container (replaces `ScrolledText` for ttk-styled scrollbar); `_log_autoscroll` flag + `<MouseWheel>`/`<Button-4/5>` bindings for scroll-aware auto-follow; `_cfg_state: ScanStage` enum drives dual-purpose label at row=1; Run button floats via `place(in_=self._main)`; page stack + `tkraise()` (no Notebook); **§1 search path row**: `path_lbl` + `path_field` + vertical separator + `_button_bar` frame (extensible container) with `?` help button (opens `AboutDialog`); `_set_cfg_ui_disabled` — inert look (dim rail + caption) in simple mode until configs exist: enabled by `_on_path_changed`/`_on_scan_ok`, re-dimmed by `_on_scan_error` when `not _yaml_paths`
+Tk root, layout §1–6, 300 ms polling, argv prefill, startup placement via `App.GEOMETRY` → `const.fit_to_workarea` (size clamped + centered in the taskbar-excluded work area, chrome re-fit on `<Map>` — never off-screen at start); the root is `withdraw()`n right after creation and `_build()` runs unmapped — `fit_to_workarea`'s `deiconify()` is the FIRST show (no top-left default-size blink; same pattern as `AboutDialog`), `Alt+Arrows` nudges the window 10px (`Shift` ×10) via `const.nudge_window` — a shell drag can't carry the title bar above the screen top (OS clamps ALL apps' interactive drags there; programmatic moves aren't limited), `_initial_scan` flag (immediate stage-row show), collapsible §2 status row (`_overall_lbl` + `_prog_stage` + `_prog_stage_text` gridded together, 400 ms delay for run); manual `ttk.Frame` + `tk.Text` + `ttk.Scrollbar` log container (replaces `ScrolledText` for ttk-styled scrollbar); `_log_autoscroll` flag + `<MouseWheel>`/`<Button-4/5>` bindings for scroll-aware auto-follow; `_cfg_state: ScanStage` enum drives dual-purpose label at row=1; Run button floats via `place(in_=self._main)`; page stack + `tkraise()` (no Notebook); **§1 search path row**: `path_lbl` + `path_field` + vertical separator + `_button_bar` frame (extensible container) with `?` help button (opens `AboutDialog`); `_set_cfg_ui_disabled` — inert look (dim rail + caption) in simple mode until configs exist: enabled by `_on_path_changed`/`_on_scan_ok`, re-dimmed by `_on_scan_error` when `not _yaml_paths`; root `<F1>` dispatch (`_on_f1_help` + `_within` master walk): focus inside `_path_field` → `path_field` anchor, else mouse over ``_status_lbl`` → ``_status_lbl_f1_anchor`` forged at display time (``_apply_status``/``_show_dwell_tip``/``_show_tip`` keep anchor in sync with what is shown), else the focused (or current) page's `ConfigSheet._f1_anchor`, else the localized readme (`_about.local_readme`) — one binding for all tabs (per-sheet bindings fired once per opened page)
 
 ### `md_label.py`
 
@@ -34,7 +34,7 @@ Background thread: `call_in_raw_dir` for Scan and Run
 
 ### `coef_sheet.py` — composition root + tree/edit/row-space core
 
-Wires the tksheet widget, builds the tree from a config dict and owns row-space resolution (`_row_map` internal vs display), item-hook open-state oracle, edit lifecycle (`_on_edit`/`_on_begin_edit_cell`/`_on_end_edit_cell`) and dirty tracking — **two independent flags** (separate Run writes): `is_dirty` covers coefs (values + dates + `input.path`; `_data_snapshot()` vs `_snap`, both iid-keyed, retaken together by `load()`/`mark_clean()`/`_rebuild_metadata_rows()`), and `is_metadata_dirty` covers the metadata node.  `_data_snapshot()` skips `is_metadata*` rows so a metadata edit never marks the coefs dirty (no spurious run-YAML rewrite).  It captures the date cell (tksheet col `_DATE_PH_COL`) of date-only coef rows (`coefs`/2d/1d parents, `max_col=0`) via `_cell_str`, so a coef-date edit marks the tab dirty.  `is_metadata_dirty()` is also True when the metadata was **autofilled from an absent `info_devices.yaml`** (`_metadata_unsaved` set in `_build_metadata`) so `_write_metadata` persists the new device entry on Run — cleared by `mark_metadata_clean()`.  `App._poll_dirty_tabs()` forwards `cs.is_dirty or cs.is_metadata_dirty()` to `TabRail.set_dirty` — both members must be **called**; a bare bound method is always truthy, so referencing `is_metadata_dirty` without `()` would store the method object in rail state and render `*` on every tab forever.  Composes three mixins (external imports unchanged): `_sheet_tint.SheetTintMixin`, `_sheet_status.SheetHoverMixin`, `_sheet_styles.SheetStylesMixin`.  **Metadata node** — top-level `metadata <info_devices.yaml>` (browseable path row, `check=exists`, `browse=True`) + 6 paired children (`point,symbol|sea depth,h_above|lat,lon|time_range|burst_dt/t|comment` from `tcm/_meta_pairs.PAIRS` 11-array).  Empty cells show gray example ghosts via `CellPlaceholder` (`_meta_pairs.EXAMPLES`: `P3, 7.5, ↟, 54.62, 19.84, 2026-07-11T12:20:12, 60, 600, deployment note` — `get_edited_metadata` reads ghost as `""` → `~`), `time_range` columns are `has_date` validated.  Public getters (`get_edited_input_path`/`is_path_valid`/`get_edited_metadata`) read via `_cell_str` — ghost never leaks as real data; deletion via the floated field commits `""` and the ghost is restored by `_restore_placeholder`.
+Wires the tksheet widget, builds the tree from a config dict and owns row-space resolution (`_row_map` internal vs display), item-hook open-state oracle, edit lifecycle (`_on_edit`/`_on_begin_edit_cell`/`_on_end_edit_cell`) and dirty tracking — **two independent flags** (separate Run writes): `is_dirty` covers coefs (values + dates + `input.path`; `_data_snapshot()` vs `_snap`, both iid-keyed, retaken together by `load()`/`mark_clean()`/`_rebuild_metadata_rows()`), and `is_metadata_dirty` covers the metadata node.  `_data_snapshot()` skips `is_metadata*` rows so a metadata edit never marks the coefs dirty (no spurious run-YAML rewrite).  It captures the date cell (tksheet col `_DATE_PH_COL`) of date-only coef rows (`coefs`/2d/1d parents, `max_col=0`) via `_cell_str`, so a coef-date edit marks the tab dirty.  `is_metadata_dirty()` is True only when the user edits metadata rows (snapshot comparison); autofilled metadata from an absent `info_devices.yaml` is the **clean baseline** after load (`_metadata_unsaved` reset in `load()`) — no dirty indicator on tab until the user actually changes something.  `App._write_metadata` still persists autofilled metadata when the device file doesn't exist yet (existence check, not dirty flag).  `App._poll_dirty_tabs()` forwards `cs.is_dirty or cs.is_metadata_dirty()` to `TabRail.set_dirty` — both members must be **called**; a bare bound method is always truthy, so referencing `is_metadata_dirty` without `()` would store the method object in rail state and render `*` on every tab forever.  Composes three mixins (external imports unchanged): `_sheet_tint.SheetTintMixin`, `_sheet_status.SheetHoverMixin`, `_sheet_styles.SheetStylesMixin`.  **Metadata node** — top-level `metadata <info_devices.yaml>` (browseable path row, `check=exists`, `browse=True`) + 6 paired children (`point,symbol|sea depth,h_above|lat,lon|time_range|burst_dt/t|comment` from `tcm/_meta_pairs.PAIRS` 11-array).  Empty cells show gray example ghosts via `CellPlaceholder` (`_meta_pairs.EXAMPLES`: `P3, 7.5, ↟, 54.62, 19.84, 2026-07-11T12:20:12, 60, 600, deployment note` — `get_edited_metadata` reads ghost as `""` → `~`), `time_range` columns are `has_date` validated.  Public getters (`get_edited_input_path`/`is_path_valid`/`get_edited_metadata`) read via `_cell_str` — ghost never leaks as real data; deletion via the floated field commits `""` and the ghost is restored by `_restore_placeholder`.
 
 ### `_sheet_tint.py` — defaults, tint, placeholders, live sync
 
@@ -42,7 +42,7 @@ Wires the tksheet widget, builds the tree from a config dict and owns row-space 
 
 ### `_sheet_status.py` — hover status + floated PathField overlay
 
-`SheetHoverMixin`: status publication (`_publish_status`/`_clear_status`, tree vs data `_help_candidates`/`_resolve_detail`/`_coefs_status_hint`/Shift/F1), floated browse-row overlay (`_ensure_hover_field`/`_show_hover_field`/`_field_place_kw`/`_btn_place_kw`/`_pointer_in_field`/`_hover_read`/`_hover_write`/`_hover_btn_status`/`_restore_hover_placement`/schedule/hide) — `PathField` empty commits propagate to `_hover_write` which writes `""` + ghost, motion branch refreshes `f.set(_hover_read())`.
+`SheetHoverMixin`: status publication (`_publish_status`/`_clear_status`, tree vs data `_help_candidates`/`_resolve_detail`/`_coefs_status_hint`/Shift), F1 anchor resolution (`_f1_anchor` — selected row via `sh.tree_selected`, or if nothing selected the mouse inside the dwell tooltip widget via `_pointer_in_field`; `_f1_anchor_for_iid` shared resolution for status-label hover; `_help_candidates` fan-out + `meta["parent"]` walk, dispatched by `App._on_f1_help`), floated browse-row overlay (`_ensure_hover_field`/`_show_hover_field`/`_field_place_kw`/`_btn_place_kw`/`_pointer_in_field`/`_hover_read`/`_hover_write`/`_hover_btn_status`/`_restore_hover_placement`/schedule/hide) — `PathField` empty commits propagate to `_hover_write` which writes `""` + ghost, motion branch refreshes `f.set(_hover_read())`.
 
 ### `_sheet_styles.py` — alignment/widgets, node fg, path validation
 
@@ -86,7 +86,7 @@ Immutable user settings (`UI_SCALE`, `FONT_SCALE`, `TTK_THEME`, `COLOR_MODE`); `
 
 ### `theme.py`
 
-Mutable runtime state: color globals (`FUNC_COLOR`, `FG_DEFAULT`, `BLUE_FG`, `DEFAULT_FG`, `FRAME_BG_FALLBACK`, `ENTRY_BG_FALLBACK`, `CELL_NON_DATA_BG`); `THEME`; `TAG_COLORS`; `widget_meta` registry; `STR` i18n surface; `get_widget_meta` (callable-resolving); `apply_theme_defaults` (dark/light via `COLOR_MODE` or Windows registry); `_apply_ttk_dark` (clam + dark ttk.Style); `_opt_into_dark_titlebar` (`DwmSetWindowAttribute`); `tk_color_to_rgb`/`tk_color_to_hex`; `resolved_frame_bg`/`resolved_entry_bg`
+Mutable runtime state: color globals (`FUNC_COLOR`, `FG_DEFAULT`, `BLUE_FG`, `DEFAULT_FG`, `LINK_FG`, `LINK_SEL_FG`, `CODE_FG`, `CODE_BG`, `CODE_SEL_FG`, `CODE_SEL_BG`, `FRAME_BG_FALLBACK`, `ENTRY_BG_FALLBACK`, `CELL_NON_DATA_BG`); `THEME`; `TAG_COLORS`; `widget_meta` registry; `STR` i18n surface; `get_widget_meta` (callable-resolving); `apply_theme_defaults` (dark/light via `COLOR_MODE` or Windows registry); `_apply_ttk_dark` (clam + dark ttk.Style); `_opt_into_dark_titlebar` (`DwmSetWindowAttribute`); `tk_color_to_rgb`/`tk_color_to_hex`; `resolved_frame_bg`/`resolved_entry_bg`
 
 ### `cli_cfg.py`
 
@@ -212,7 +212,7 @@ are already in the scaled coordinate system — no multiplier needed.
 
 | Layer | What it styles | Mechanism |
 |---|---|---|
-| **theme globals** | Log tags, per-cell highlights, log ``tk.Text`` bg/fg, `MarkdownLabel` bg/fg, `tk.Frame`/`tk.Label` bg/fg | `_DARK` / `_LIGHT` palettes → `setattr` on theme module globals (`FUNC_COLOR`, `DEFAULT_FG`, `BLUE_FG`, `FG_DEFAULT`, `FRAME_BG_FALLBACK`, `ENTRY_BG_FALLBACK`, `CELL_NON_DATA_BG`, `THEME`) + `TAG_COLORS.update()` |
+| **theme globals** | Log tags, per-cell highlights, log ``tk.Text`` bg/fg, `MarkdownLabel` bg/fg, `tk.Frame`/`tk.Label` bg/fg | `_DARK` / `_LIGHT` palettes → `setattr` on theme module globals (`FUNC_COLOR`, `DEFAULT_FG`, `BLUE_FG`, `LINK_FG`, `LINK_SEL_FG`, `CODE_FG`, `CODE_BG`, `CODE_SEL_FG`, `CODE_SEL_BG`, `FG_DEFAULT`, `FRAME_BG_FALLBACK`, `ENTRY_BG_FALLBACK`, `CELL_NON_DATA_BG`, `THEME`) + `TAG_COLORS.update()` |
 | **ttk.Style** | All `ttk.Frame`, `ttk.Label`, `ttk.Button`, `ttk.Entry`, `ttk.Notebook`, `ttk.Progressbar` | `theme._apply_ttk_dark(root)` → switches to ``clam`` theme (native themes ``vista``/``xpnative`` ignore ``Style().configure()`` for rendering), then ``ttk.Style().configure()`` with bg/fg from theme globals + ``style.map()`` for active/selected states; root window ``bg`` set directly |
 | **tksheet** | Sheet canvas (table, header, index, scrollbars, selection) | `ConfigSheet.__init__` calls `self.sh.change_theme("dark")` when `theme.THEME == "dark"` + `scrollbar_theme_inheritance="default"` so tksheet's canvas scrollbars inherit the same ttk theme as `App.Vertical.TScrollbar`; `PathField` uses explicit `table_bg`/`table_fg` from theme at construction (no `change_theme` needed — headers/index/scrollbars hidden) |
 
@@ -254,7 +254,7 @@ at runtime.
 | Status / progress text | `status.*` | `status.ready: "Ready"` |
 | Completion template | `overall_lbl.done_detail` | `" - Done {pct}% ({ok}/{n} ok)"` |
 | Error prefixes | `error.*` | `error.scan: "Scan: {p}"` |
-| PathField placeholder | `path_field.placeholder` / `path_field.placeholder_shift` | `"D:/data"` / `"D:/data/_raw/(i*raw_file1[.]txt\|i*raw_file2[.]txt)"` |
+| PathField placeholder | `path_field.placeholder` / `path_field.placeholder_files` | `"D:/data"` / `"D:/data/_raw/(i*raw_file1[.]txt\|i*raw_file2[.]txt)"` |
 
 ### Locale switching
 
@@ -280,15 +280,17 @@ To add a language: create `str_{lang}.yaml` with the same keys as `str.yaml`.
 
 When the path field is empty, a dim-gray placeholder example is shown
 (`path_field.placeholder` from str.yaml — simple directory hint).  Holding
-**Shift** swaps to `path_field.placeholder_shift` (advanced pattern syntax);
+**Shift** swaps to `path_field.placeholder_files` (advanced pattern syntax);
 releasing Shift restores the simple one.  The swap only applies when the
 placeholder is visible (cell empty) and no edit is active — it does not
 alter `_has_placeholder` state.
 
-`path_field.status` and `path_field.status_shift` are two separate i18n keys:
-normal hover status and Shift-held status (YAML config loading hint).  PathField
-reads both from ``STR`` at init; `_on_shift_press`/`_on_shift_release` swap the
-status bar text alongside the placeholder.
+`path_field.status` / `path_field.status_shift` are doc+STR: PathField reads
+the config_reference `path_field` general short (pre-``####``) and appends
+STR suffixes `path_field.status.dirs` (default) / `path_field.status.files`
+(Shift-held variant) at init (`_status_body` — same augmentation as
+`time_ranges.hover.*`); `_on_shift_press`/`_on_shift_release` swap the
+status bar text alongside the placeholder. See [help_system.md](help_system.md).
 
 The placeholder clears on first keystroke or double-click edit, and
 reappears when the field is committed empty.  `PathField.get()` returns
@@ -308,7 +310,7 @@ The `input.yaml_path` config field has been removed.  Callers pass
 it); ``Path("(file1[.]yaml|file2[.]yaml)").stem`` gives
 ``"(file1[.]yaml|file2"`` — broken.  Correct: ``(file1|file2).yaml``.
 
-See [config_reference.md `input.path`](../reference/config_reference.md#input--data-source--parameters)
+See [config_reference.md `input.path`](../../reference/config_reference.md#input--data-source--parameters)
 for the CLI equivalent.
 
 ### `states.py` enum values
@@ -330,7 +332,7 @@ through `progress_overall` / `progress_stage` and are translated by the GUI
 
 | CellSpec.kind | Rendering | Example fields |
 |---|---|---|
-| `"bool"` | tksheet checkbox | `program.b_interact`, `out.b_incremental_update` |
+| `"bool"` | tksheet checkbox | `program.b_interact`|
 | `"enum"` | tksheet dropdown | `program.return_` (7 `Return` values) |
 | `"text"` | left-aligned | `input.path`, `out.text_path`, `program.log` |
 | `"number"` | right-aligned (default) | `input.calib.azimuth_add`, coefs matrices |

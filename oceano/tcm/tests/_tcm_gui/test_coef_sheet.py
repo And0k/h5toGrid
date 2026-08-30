@@ -801,7 +801,226 @@ class TestHoverBtnStatusHints:
         assert cs.on_hover_status.call_count == 1
 
 
-# ── _hover_detail must be set BEFORE the status callback (regression) ───────
+# ── _help_candidates: metadata label → doc keys (regression) ────────────────
+
+
+class TestMetadataHelpCandidates:
+    """Paired-row labels must fan out to the per-field ``metadata.*`` doc keys.
+
+    Regression: the burst row's label ``burst_dt/t`` was mangled to the
+    single key ``metadata.burst_dt_t`` — no doc entry, so hover showed the
+    raw label instead of help.  ``/`` separates the two fields like ``,``
+    and the shortened ``t`` maps to the ``bursts_t`` key.
+    """
+
+    @staticmethod
+    def _sheet():
+        cs = TestCellSpecFor._make_sheet()
+        cs._meta["iid_burst"] = {
+            "label": "burst_dt/t",
+            "path": "metadata.burst_dt_t",
+            "is_metadata": True,
+            "max_col": 2,
+        }
+        cs._meta["iid_pair"] = {
+            "label": "point, symbol",
+            "path": "metadata.point_symbol",
+            "is_metadata": True,
+            "max_col": 2,
+        }
+        cs._meta["iid_single"] = {
+            "label": "comment",
+            "path": "metadata.comment",
+            "is_metadata": True,
+            "max_col": 1,
+        }
+        return cs
+
+    def test_burst_row_fans_both_fields(self):
+        cs = self._sheet()
+        assert cs._help_candidates("iid_burst") == [
+            "metadata.burst_dt",
+            "metadata.bursts_t",
+            "metadata.burst_dt_t",
+        ]
+
+    def test_burst_row_tree_shows_first_only(self):
+        cs = self._sheet()
+        assert cs._help_candidates("iid_burst", tree=True) == [
+            "metadata.burst_dt",
+            "metadata.burst_dt_t",
+        ]
+
+    def test_comma_pair_unaffected(self):
+        cs = self._sheet()
+        assert cs._help_candidates("iid_pair")[:2] == ["metadata.point", "metadata.symbol"]
+
+    def test_candidates_resolve_in_bundled_doc(self):
+        """Both burst keys carry help in ``config_reference.md``."""
+        from tcm_gui import _help
+
+        _help.reload_cache()
+        cs = self._sheet()
+        for cand in cs._help_candidates("iid_burst")[:2]:
+            e = _help.help_for_path(cand)
+            assert e is not None and e.short, f"{cand} must parse with a non-empty short"
+
+    # ── column-aware ordering: col selects the field shown on data-cell hover ──
+
+    def test_col_reorders_pair_to_second_field(self):
+        """col=1 puts ``metadata.symbol`` first — its short wins in status."""
+        cs = self._sheet()
+        assert cs._help_candidates("iid_pair", col=1)[0] == "metadata.symbol"
+
+    def test_col_zero_keeps_first_field_first(self):
+        cs = self._sheet()
+        assert cs._help_candidates("iid_pair", col=0)[0] == "metadata.point"
+
+    def test_col_ignores_out_of_range(self):
+        """col beyond the field count falls back to default order."""
+        cs = self._sheet()
+        assert cs._help_candidates("iid_pair", col=5) == [
+            "metadata.point",
+            "metadata.symbol",
+            "metadata.point_symbol",
+        ]
+
+    def test_col_ignored_for_tree(self):
+        """Tree hover always shows the first field regardless of col."""
+        cs = self._sheet()
+        assert cs._help_candidates("iid_pair", tree=True, col=1) == [
+            "metadata.point",
+            "metadata.point_symbol",
+        ]
+
+    def test_col_ignored_for_single_field_row(self):
+        cs = self._sheet()
+        assert cs._help_candidates("iid_single", col=0) == ["metadata.comment"]
+
+
+# ── tree column: suffix for multi-field metadata rows ──────────────────────
+
+
+class TestMetadataTreeSuffix:
+    """Tree-column hover appends `", …"` only when the row has >1 editable col.
+
+    The suffix signals that data-cell hover shows a per-field status (the
+    second field, e.g. ``metadata.symbol`` for ``point, symbol``).
+    """
+
+    @staticmethod
+    def _sheet():
+        cs = TestCellSpecFor._make_sheet()
+        cs._meta["iid_pair"] = {
+            "label": "point, symbol",
+            "path": "metadata.point_symbol",
+            "is_metadata": True,
+            "max_col": 2,
+        }
+        cs._meta["iid_single"] = {
+            "label": "comment",
+            "path": "metadata.comment",
+            "is_metadata": True,
+            "max_col": 1,
+        }
+        return cs
+
+    def test_pair_gets_suffix(self, monkeypatch):
+        from tcm_gui import _help
+        from tcm_gui._i18n import STRINGS
+
+        monkeypatch.setattr("tcm_gui._help.resolve_lang", lambda: "en")
+        _help.reload_cache("en")
+        cs = self._sheet()
+        cs.on_hover_status = MagicMock()
+        cs._status_iid = None
+        # _on_tree_motion uses _hover_resolve → returns None without a real
+        # sheet; drive the publication path directly.
+        cs._status_source = None
+        iid = "iid_pair"
+        for cand in cs._help_candidates(iid, tree=True):
+            if cand and (h := _help.help_for_path(cand)) and h.short:
+                m = cs._meta[iid]
+                multi = m.get("is_metadata") and m.get("max_col", 1) > 1
+                txt = f"{h.short}{STRINGS['metadata.tree_suffix']}" if multi else h.short
+                cs.on_hover_status(txt, True)
+                break
+        msg = cs.on_hover_status.call_args.args[0]
+        assert msg == f"Station point identifier{STRINGS['metadata.tree_suffix']}", msg
+
+    def test_single_field_no_suffix(self, monkeypatch):
+        from tcm_gui import _help
+        from tcm_gui._i18n import STRINGS
+
+        monkeypatch.setattr("tcm_gui._help.resolve_lang", lambda: "en")
+        _help.reload_cache("en")
+        cs = self._sheet()
+        cs.on_hover_status = MagicMock()
+        iid = "iid_single"
+        for cand in cs._help_candidates(iid, tree=True):
+            if cand and (h := _help.help_for_path(cand)) and h.short:
+                m = cs._meta[iid]
+                multi = m.get("is_metadata") and m.get("max_col", 1) > 1
+                txt = f"{h.short}{STRINGS['metadata.tree_suffix']}" if multi else h.short
+                cs.on_hover_status(txt, True)
+                break
+        msg = cs.on_hover_status.call_args.args[0]
+        assert not msg.endswith(STRINGS["metadata.tree_suffix"]), msg
+
+
+# ── _publish_status: col selects the field of a metadata paired row ────────
+
+
+class TestPublishStatusColumnAware:
+    """``_publish_status(iid, col)`` shows the hovered column's field short.
+
+    Regression: paired metadata rows (``point, symbol``) always showed the
+    first field's text regardless of the hovered column — the second cell's
+    status was never shown.  *col* reorders ``_help_candidates`` so the
+    hovered field wins.
+    """
+
+    @staticmethod
+    def _sheet():
+        cs = TestCellSpecFor._make_sheet()
+        cs._meta["iid_pair"] = {
+            "label": "point, symbol",
+            "path": "metadata.point_symbol",
+            "is_metadata": True,
+            "max_col": 2,
+        }
+        cs.on_hover_status = MagicMock()
+        return cs
+
+    def test_col0_shows_first_field(self, monkeypatch):
+        from tcm_gui import _help
+
+        monkeypatch.setattr("tcm_gui._help.resolve_lang", lambda: "en")
+        _help.reload_cache("en")
+        cs = self._sheet()
+        cs._publish_status("iid_pair", col=0)
+        msg = cs.on_hover_status.call_args.args[0]
+        assert msg == "Station point identifier", msg
+
+    def test_col1_shows_second_field(self, monkeypatch):
+        from tcm_gui import _help
+
+        monkeypatch.setattr("tcm_gui._help.resolve_lang", lambda: "en")
+        _help.reload_cache("en")
+        cs = self._sheet()
+        cs._publish_status("iid_pair", col=1)
+        msg = cs.on_hover_status.call_args.args[0]
+        assert msg == "Modification / instrument symbol (e.g. `↟`)", msg
+
+    def test_col_none_defaults_to_first_field(self, monkeypatch):
+        from tcm_gui import _help
+
+        monkeypatch.setattr("tcm_gui._help.resolve_lang", lambda: "en")
+        _help.reload_cache("en")
+        cs = self._sheet()
+        cs._publish_status("iid_pair")
+        msg = cs.on_hover_status.call_args.args[0]
+        assert msg == "Station point identifier", msg
 
 
 class TestHoverDetailPublishOrder:

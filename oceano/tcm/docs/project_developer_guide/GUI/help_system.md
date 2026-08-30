@@ -1,22 +1,40 @@
 # GUI Help System
 
+**Content doctrine**: status / dwell text = purpose + what editing the field
+affects + when/why to edit. Provenance narration not impotant;
+only effects of the user's actions belong in help text. GUI behavior
+(live comparisons, tints) is shown intuitively at viewing time — never
+narrated in help text, and so not to gui.md. Links of user-relevant behavior → user_guide pages
+(e.g. configuration.md), to the CLI docs - are encouraged, but not to the development docs
+
+`config_reference*.md` is mandatory — no STR fallback for doc-driven texts.
+
 Two independent help sources — one per widget category:
 
 | Source | Widgets | Key derivation | i18n mechanism |
 |---|---|---|---|
-| `STR` (``const.py``) | Chrome widgets (`self._path_lbl`, `_path_field`, `_overall_lbl`, `_run_btn`) + dynamic tabs | Attribute name → role → ``STR["{role}.tooltip"]`` / ``STR["{role}.status"]`` | Replace ``STR`` dict wholesale at build for target language |
-| ``_help.py`` (``config_reference.md``) | Config cells (``_meta[iid]["path"]`` keys) | ``help_for_path(strip_index(path)).short`` | Replace ``config_reference_<lang>.md`` |
+| `STR` (``const.py``) | Chrome widgets (`self._path_lbl`, `_path_field`, `_overall_lbl`, `_run_btn`) + dynamic tabs | Attribute name → role (aliased via `_CHROME_ALIAS`) → ``STR["{role}.tooltip"]`` / ``STR["{role}.status"]`` | Replace ``STR`` dict wholesale at build for target language |
+| ``_help.py`` (``config_reference.md``) | Config cells (``_meta[iid]["path"]`` keys) + PathField statuses | ``help_for_path(strip_index(path)).short`` | Replace ``config_reference_<lang>.md`` |
 
-Companion pages: [GUI Architecture](GUI_architecture.md) ·
-[GUI Widgets](GUI_widgets.md) ·
-[GUI Key Decisions with Rationale and Regression Notes](GUI_decisions.md) —
+Companion pages: [GUI Architecture](architecture.md) ·
+[GUI Widgets](widgets.md) ·
+[GUI Key Decisions with Rationale and Regression Notes](decisions.md) —
 index: [GUI Internals](_index.md).
 
 ## Chrome widgets: auto-registration
 
 ``App._register_chrome_help()`` runs once at the end of ``_build()``.  It walks
 ``vars(self)`` for all ``tk.Misc`` instances whose attribute name (minus the
-leading ``_``) has entries in ``STR``.  For each match:
+leading ``_``), after ``_CHROME_ALIAS`` resolution, has entries in ``STR``.
+
+**`_CHROME_ALIAS`** — chrome role → help source: ``{"path_lbl": "path_field"}``.
+The search-path label shares the PathField's help — one source, no duplicated
+STR keys.  For aliased roles:
+
+* ``tooltip`` = ``STR["{src}.tooltip"]``.
+* ``status`` is **doc + STR** = the config_reference ``path_field`` general short (pre-``####``) plus ``STR["path_field.status.dirs"]`` (default) / ``STR["path_field.status.files"]`` (Shift) — see ``_path_field._status_body`` (same augmentation as ``time_ranges.hover.*``).
+
+For every other match:
 
 * ``tooltip`` = ``STR["{role}.tooltip"]`` (static string).
 * ``status``  = ``STR["{role}.status"]`` (static string) **or** a bound method
@@ -40,10 +58,10 @@ Tab hover is wired via ``TabRail._on_hover`` → ``App._on_rail_hover`` which re
 ``_on_rail_hover`` calls ``set_text(status, raw=True)`` to bypass Markdown
 parsing — the template itself stays literal (no ``**bold**`` there).
 
-Static ``STR["{role}.status"]`` strings (defined by chrome widgets — e.g.
-``path_field.status``) **do** go through the Markdown parser by default at
-``_on_chrome_hover`` / ``_on_path_hover_in``, so ``**bold**`` segments in
-those STR entries render bold.
+Static ``STR["{role}.status"]`` strings **do** go through the Markdown parser
+by default at ``_on_chrome_hover`` / ``_on_path_hover_in``, so ``**bold**``
+segments render bold — same for the doc+STR ``path_field`` statuses
+(``help_for_path("path_field", mode="dirs").body`` + ``STR["path_field.status.*"]``).
 
 ## MetaValue: callable status support
 
@@ -77,6 +95,12 @@ which returns a ``HelpEntry(short, body)`` parsed once from the tables in
    detail content into ``body[mode]``; a modeless section is stored under
    ``body[_NO_MODE]``.  Authoring contract: [§Field detail sections in
    doc_authoring.md](doc_authoring.md#structure).
+   - **New**: `#### <mode>value</mode>` nested under a `### \`field.path\``
+     heading inherits the parent field path — equivalent to a separate
+     `### \`field.path\` <mode>value</mode>` heading but nests the mode
+     detail under the general field description.  The general description
+     (stored under the modeless key `_NO_MODE`) is accessible via
+     `help_general_for_path()` for field-associated error messages.
 4. CamelCase field names (``Ag``, ``Cg``, ``Rz``) parse identically to
    lowercase Hydra names.
 5. ``_DOC_PATH`` resolves to ``config_reference.md`` at
@@ -100,6 +124,7 @@ Index) canvas, which is separate from the MT canvas.  ``_on_tree_motion``
 | ``input`` node (data cell) | ``input.path``, ``input`` | "File path, glob, or regex pattern…" |
 | ``input.coefs`` parent (date cell) | ``input.coefs.date``, ``input.coefs.path``, ``input.coefs`` | "Overall calibration date" |
 | ``input.coefs.Ag`` | ``input.coefs.Ag.path``, ``input.coefs.Ag`` | "Accelerometer scale matrix…" |
+| ``metadata`` burst pair (``burst_dt/t``) | ``metadata.burst_dt``, ``metadata.bursts_t`` | both cells fan like ``,``-pairs — ``/`` splits too, shortened ``t`` maps to the ``bursts_t`` key |
 
 ``_status_source`` (``"tree"`` / ``"data"`` / ``None``) tracks which canvas owns
 the current status so moving between tree column and data cell on the SAME row
@@ -118,6 +143,12 @@ section documents the parser and consumer internals.
 Regex (mode group optional):
 ``^###\s+`([A-Za-z_]\w*(?:\.\w+)*)`(?:\s+<mode>([a-z_]+)</(?:mode)?>)?``
 
+New: ``#### <mode>value</mode>`` under a ``### `dotted.field.path` `` heading
+inherits the parent field path:
+``^####\s+<mode>([a-z_]+)</(?:mode)?>``
+Its child detail uses ``#####`` (one level deeper):
+``^#####\s+(?P<tag>.+?)\s*$``
+
 **Parser behavior**:
 - ``_FIELD_MODE_HEAD`` is checked **before** ``_ANY_HEADING`` — a ``###``
   field section (tagged or modeless) does not close the parent ``##`` section.
@@ -129,19 +160,61 @@ Regex (mode group optional):
   ``###`` section — they do NOT close it.  A section carrying any ``####``
   block is stored as ``_ModeBody(short=<pre-#### lines>, details={tag: body})``;
   without ``####`` it stays a plain ``str``.
-- Next ``###`` or ``##`` closes the previous accumulation.
+- **Bare `### Detailed`** (no backticks) under a `## ` section starts a mode
+  for the current section with tag `"Detailed"` — its content becomes the
+  section's tooltip (stored as the mode body's `short`).  Unlike a
+  `` ### `path` `` heading it does **not** close the section, so subsequent
+  `` ### `` path blocks still parse.  Detected before the generic heading
+  check, so it does not close the section.
+- **Post-heading paragraph**: the paragraph between a `## ` heading and its
+  table is captured as the section's `short` (falls back to the subtitle).
+- **Citation blockquote** (`>`): a line starting with `>` finalizes the current
+  accumulation (post-heading paragraph or mode body) and is itself discarded.
+  Subsequent headings still start new sections.
+- **New**: ``#### <mode>mode</mode>`` under a ``### `field.path` `` heading
+  closes the current mode (saving the general description under ``_NO_MODE``)
+  and opens a new mode with the inherited field path (level 4).  Its child
+  detail uses ``#####`` (e.g. ``##### Detailed``).  This is equivalent to a
+  separate ``### `field.path` <mode>mode</mode>`` heading (whose child is
+  ``#### Detailed``) but keeps the general description.  A ``####`` heading
+  after a ``#### <mode>`` section is a sibling, not a detail — it closes the
+  mode, so `#### Detailed` under `#### <mode>` must be `##### Detailed`.
+- Next ``###`` or ``##`` (or a `####` sibling of a `#### <mode>` section)
+  closes the previous accumulation.
 - Fields without ``###`` sections get ``body={}``.
 
 **Consumer API** — ``help_for_path(path, *, mode=None, detail=None)``:
 
 | Call | Return |
 |------|--------|
-| ``help_for_path("input.path")`` | ``HelpEntry(body={"probe": "...", "search": _ModeBody(...)})`` |
-| ``help_for_path("input.path", mode="probe")`` | ``HelpEntry(body="...")`` — probe content (no #### → str) |
-| ``help_for_path("input.path", mode="search")`` | ``HelpEntry(body="...")`` — search short body (pre-#### lines only) |
-| ``help_for_path("input.path", mode="search", detail="Detailed")`` | ``HelpEntry(body="...")`` — the ``#### Detailed`` block body |
+| ``help_for_path("input.path")`` | ``HelpEntry(body={"detail": _ModeBody(...)})`` — modeless section |
+| ``help_for_path("path_field")`` | ``HelpEntry(body={"detail": _ModeBody(short="Search path...", details={"Detailed": "...", "Important": "..."})})`` — non-Hydra, modeless only; STR ``path_field.status.dirs/files`` supplies GUI dirs/files variants |
+| ``help_for_path("path_field", mode="dirs")`` | ``HelpEntry(body="...")`` — general short (fallback to ``_NO_MODE``) — GUI appends ``STR["path_field.status.dirs"]`` via ``_path_field._status_body`` for hover status |
+| ``help_for_path("path_field", mode="dirs", detail="Detailed")`` | ``HelpEntry(body="...")`` — the ``#### Detailed`` (general) block body — dwell tooltip (both dirs/files fallback to same) |
 | ``help_for_path("program.return_", mode=_NO_MODE, detail="Detailed")`` | ``HelpEntry(body="...")`` — a modeless section's Detailed block |
-| ``help_for_path("input.path", mode="search", detail="Unknown")`` | ``HelpEntry(body="")`` — unknown detail → empty (caller no-ops) |
+| ``help_for_path("path_field", detail="Unknown")`` | ``HelpEntry(body="")`` — unknown detail → empty (caller no-ops) |
+
+**Non-Hydra sections**: ``path_field`` (GUI search path) is not a schema field
+— it registers via the explicit ``{"metadata", "path_field"}`` membership of
+``_FIELD_SECTIONS``.  No ``## `` heading or table row is required: the first
+``### `path_field` `` heading auto-opens the section and creates the entry
+(the anchor is the heading slug minus the ``<mode>`` tail; mode bodies attach
+only to existing entries).  Its general short (``_NO_MODE``) plus STR suffixes
+``path_field.status.dirs/files`` feed the PathField hover statuses
+(``_path_field._status_body``) and the ``path_lbl`` chrome status (same concat);
+the scan/run error hint shows the ``#### Important`` detail of the general
+section (via ``help_general_for_path``), while ``#### Detailed`` feeds the
+dwell tooltip.
+
+**New API** — ``help_general_for_path(path)`` returns the general (modeless)
+description for a config path — the ``### `field` `` short body before any
+``#### <mode>`` or ``### `field` <mode>mode</mode>`` section.  Used for
+field-associated error messages (e.g. ``FileNotFoundError`` on a failed
+data/config search) where the mode-specific body is irrelevant.
+
+Likewise ``##`` section headings accept plain titles (backticks optional):
+a heading registers a field section iff its name is in ``_FIELD_SECTIONS``,
+so general prose headings (CLI keys, "See also") pass through unregistered.
 
 To add a new mode: (1) add a ``### `field.path` <mode>new_mode</mode>``
 subsection in ``config_reference.md``; (2) call ``help_for_path(path,
@@ -161,18 +234,21 @@ under the sentinel key ``_FIELD_DETAIL = "_"``.
 
 **Consumer** — ``_resolve_detail`` in ``coef_sheet.py`` scans every section of
 the field (mode-tagged, modeless, field-level) and returns the first
-``#### Detailed`` body:
+``#### Detailed`` body, or the content of a bare ``### Detailed`` block:
 
 ```python
 if (e := _help.help_for_path(path)) and isinstance(e.body, Mapping):
-    for val in e.body.values():
-        if isinstance(val, _help.ModeBody) and (d := val.details.get("Detailed")):
-            return str(d)
+    for tag, val in e.body.items():
+        if isinstance(val, _help.ModeBody):
+            if tag == "Detailed":
+                return val.short
+            if d := val.details.get("Detailed"):
+                return str(d)
 return ""
 ```
 
-``#### Detailed`` is the **only** body that arms the dwell tooltip — section
-short bodies and group prose never do.
+``#### Detailed`` (and bare ``### Detailed``) is the **only** body that arms the
+dwell tooltip — section short bodies and group prose never do.
 
 ## Error tooltip in `_status_lbl`
 
@@ -213,8 +289,8 @@ callback.  Subsequent motion within the same widget does NOT reset the timer
 | Widget category | Dwell text source |
 |---|---|
 | Chrome widgets | ``widget_meta[w]["tooltip"]`` (``STR["{role}.tooltip"]``) |
-| PathField | ``STR["path_field.tooltip"]`` |
-| ConfigSheet cells | :meth:`ConfigSheet._resolve_detail` — ``#### Detailed`` blocks only from ``config_reference.md`` (mode ``probe`` → mode ``search`` → field-level).  Mode short bodies and parent-group prose never arm the dwell — a tooltip exists ⟺ the field carries a ``Detailed`` block (regression: every coef row showed the ``input.coefs`` group text) |
+| PathField | ``help_for_path("path_field", detail="Detailed")`` (``mode="dirs"/"files"`` fallback to same) — ``#### Detailed`` (general) (fallback to ``STR["path_field.tooltip"]``) |
+| ConfigSheet cells | :meth:`ConfigSheet._resolve_detail` — ``####/##### Detailed`` blocks only from ``config_reference.md`` (mode ``probe`` → mode ``search`` → field-level).  Mode short bodies and parent-group prose never arm the dwell — a tooltip exists ⟺ the field carries a ``Detailed`` block (regression: every coef row showed the ``input.coefs`` group text) |
 | Log | ``STR["log.tooltip"]`` (if defined) |
 
 **Suppression**: while ``_dwell_active`` is True, the debounced
@@ -240,32 +316,80 @@ countdown **pauses while the pointer is on the status label itself**
 also yields while ``_status_hovering``).  The status label carries no
 ``status_lbl.*`` STR keys — hovering it must not replace the tip it renders.
 
-**Architecture**:
+**Architecture** — anchor is forged at **display time**, not hover time, so it always
+matches what is currently shown in ``_status_lbl`` (short status vs dwell
+tooltip for different rows can otherwise diverge):
 
 ```
-_on_chrome_hover(A) → _cancel_dwell() + _set_status(A.status) + _arm_dwell(A.tooltip)
-  → _DWELL_MS timer fires → _show_dwell_tip(A.tooltip) → _dwell_active = True (stays while hovered)
+_on_chrome_hover(A) → _cancel_dwell() + _set_status(A.status, A.anchor) + _arm_dwell(A.tooltip, A.anchor)
+  → _DWELL_MS timer fires → _show_dwell_tip(A.tooltip, A.anchor) → _dwell_active = True (stays while hovered)
 _on_chrome_leave(A) → _cancel_dwell() → clear scheduled after _DWELL_HIDE_MS (3 s linger)
-_on_chrome_hover(B) → _cancel_dwell() + _set_status(B.status) + _arm_dwell(B.tooltip)
+_on_chrome_hover(B) → _cancel_dwell() + _set_status(B.status, B.anchor) + _arm_dwell(B.tooltip, B.anchor)
   → _apply_status fires after _STATUS_SETTLE_MS (0.3 s) — dwell still owns the label:
-    clear scheduled at _DWELL_HIDE_MS, the switch re-queues itself right after it
+    clear scheduled at _DWELL_HIDE_MS, the switch re-queues itself right after it (anchor threaded too)
 ```
+
+``_set_status(text, anchor)`` → debounced ``_apply_status(text, anchor)`` sets
+``_status_lbl_f1_anchor = anchor`` only when the text is actually rendered;
+``_arm_dwell(text, anchor)`` freezes ``anchor`` via the ``after`` lambda so
+``_show_dwell_tip(text, anchor)`` applies the anchor for the tooltip that is
+actually shown; ``_show_tip(text, anchor)`` does the same for error tooltips.
+``_hide_tip`` / ``_clear_dwell_now`` clear the anchor when the label is emptied.
+Chrome/path/log handlers also mirror ``_status_lbl_f1_anchor = f1`` immediately
+for F1 before the debounce fires (same value ``_apply_status`` will re-apply).
 
 ConfigSheet cells: ``_publish_status`` resolves ``_hover_detail`` (detailed
-body from ``config_reference.md``) and passes it through ``on_hover_status``
-→ ``App._on_cell_status`` → ``_arm_dwell(detail)``.
+body from ``config_reference.md``) and ``_f1_anchor_for_iid(iid)``, passes both
+through ``on_hover_status`` → ``App._on_cell_status`` → ``_set_status(msg, anchor)`` +
+``_arm_dwell(detail, anchor)``.
 
-## F1 — doc browser at the hovered row's heading
+## F1 — doc browser for the focused/selected widget
 
-``ConfigSheet._on_f1_help`` (toplevel ``<F1>`` binding): the hovered row
-(``_status_iid``) resolves its config path → ``help_for_path(path).anchor``
-(section heading slug — ``_help._slug`` mirrors ``viewer.js::slugify``;
-``{#explicit-id}`` wins, field rows inherit the section anchor) →
-``get_documentation_browser().open(doc_path(resolve_lang()), anchor=…)``.
-The doc MUST be the same localized file the entries were parsed from —
-``doc_path()`` without a lang always serves English, and a localized anchor
-then finds no element (page opens, never scrolls).  Complex formulas
-live on methodology pages: the ``#### Detailed`` bodies link there (e.g.
-[Pressure computation from the `P_t` polynomial](../methodology/pressure.md)) because the Tk
+One root-level binding (``App._on_f1_help``; pages bind nothing — per-sheet
+bindings fired once per opened tab).  Resolution order:
+
+1. **Top path field** — keyboard focus inside ``_path_field``'s subtree
+   (``App._within`` master walk) → ``help_for_path("path_field").anchor``.
+2. **Status label** — mouse over ``_status_lbl`` (shows both the short status
+   and the dwell tooltip) → ``_status_lbl_f1_anchor`` for **what is currently
+   displayed**.  The anchor is forged at **display time**: hover handlers
+   (``_on_cell_status``, ``_on_chrome_hover``, ``_on_path_hover_in``,
+   ``_on_log_motion``) resolve the anchor and pass it to
+   ``_set_status(text, anchor)`` / ``_arm_dwell(text, anchor)``; the anchor is
+   applied only when the text is actually rendered —
+   ``_apply_status(text, anchor)`` for short status (debounced, re-queued
+   after dwell linger with the same anchor), ``_show_dwell_tip(text, anchor)``
+   for dwell tooltips (anchor frozen via the ``after`` lambda), and
+   ``_show_tip(text, anchor)`` for error tooltips.  While a dwell tooltip for
+   row A is still showing, hovering row B does NOT make F1 open B — the
+   displayed A tooltip keeps anchor A until it clears.  Cleared by
+   ``_hide_tip`` / ``_clear_dwell_now`` when the label is emptied.
+3. **Sheet row** — the page owning the focus (else the current page) asks
+   ``ConfigSheet._f1_anchor``: target = the selected row
+   (``sh.tree_selected`` — current selection box's iid); if nothing selected
+   but the mouse is inside the dwell tooltip widget (``_hover_field``), use
+   that row (``_status_iid``).  Mouse over other sheet elements is not
+   tracked for F1 — nothing selected and no tooltip hover falls through to
+   the readme.  Anchors resolve through the same
+   ``_help_candidates`` fan-out as hover status (paired metadata rows try
+   every split label), then walk ``meta["parent"]`` — child rows of an
+   undocumented node inherit their ancestor's section (``Ag[0]`` →
+   ``input.coefs.Ag`` → the ``input.coefs`` group).
+   ``_f1_help_candidates`` reorders the fan-out for F1: a metadata row's own
+   path (``input.time_ranges``) is tried before ``metadata.time_ranges`` so
+   F1 opens the field's section, while status text still prefers
+   ``metadata.*`` first.
+4. **nothing is selected/tooltip-hovered or nothing documents
+   the target** — then **Readme** using ``_about.local_readme()``
+   (localized by ``resolve_lang``, base ``readme.md`` fallback) opens instead.
+
+Anchors are section-heading slugs — ``_help._slug`` mirrors
+``viewer.js::slugify``; ``{#explicit-id}`` wins, field rows inherit the
+section anchor.  The doc MUST be the same localized file the entries were
+parsed from — ``doc_path()`` without a lang always serves English, and a
+localized anchor then finds no element (page opens, never scrolls).
+Complex formulas live on methodology pages: the ``#### Detailed`` bodies
+link there (e.g.
+[Pressure computation from the `P_t` polynomial](../../methodology/pressure.md)) because the Tk
 ``MarkdownLabel`` tooltip renders plain text only — the browser typesets them
 with MathJax.

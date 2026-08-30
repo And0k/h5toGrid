@@ -3,9 +3,9 @@
 Interactive overlay widgets floating above the tksheet surfaces — browse
 button, path field, hover binder, tab rail, rich clipboard.
 
-Companion pages: [GUI Architecture](GUI_architecture.md) ·
-[GUI Help System](GUI_help_system.md) ·
-[GUI Key Decisions with Rationale and Regression Notes](GUI_decisions.md) —
+Companion pages: [GUI Architecture](architecture.md) ·
+[GUI Help System](help_system.md) ·
+[GUI Key Decisions with Rationale and Regression Notes](decisions.md) —
 index: [GUI Internals](_index.md).
 
 ## Floating browse button (`_browse_button.py`)
@@ -349,6 +349,18 @@ NOT `<Control-c>`.  Tk maps `<Control-Key-c>` → `<<Copy>>` via
 keypresses.  `_log` is `state='disabled'` → never gets keyboard focus →
 widget-scoped binding would never fire.  Root `<<Copy>>` fires for any
 focused widget.
+
+**Layout-independent Ctrl+C.** Tk's `<<Copy>>` only fires for the Latin
+`c` keysym.  On Cyrillic/Greek layouts the physical `C` key produces a
+different character, so `<<Copy>>` never fires and copy is broken for
+`tksheet`, `_log` RTF, and the About dialog.  `App._on_ctrl_keypress`
+(bound via `bind_all("<Control-KeyPress>", ...)` on root) detects the
+physical `C` key by its platform `keycode` (:data:`const.VK_C`): when the
+keycode matches but `keysym.lower() != "c"`, it calls
+`event.widget.event_generate("<<Copy>>")` and returns `"break"`.  The
+focused widget then performs its own copy (Entry/Text/tksheet all handle
+`<<Copy>>` natively).  Latin layouts pass through (`keysym` is `c`) so Tk
+handles them unchanged — no double-fire.
 
 `tksheet` binds `<Control-c>` (not `<<Copy>>`) on its canvas, so its
 `ctrl_c` handler runs for `<Control-c>` dispatches but **not** for real

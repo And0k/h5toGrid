@@ -11,16 +11,23 @@
 
 # ── Window chrome ──────────────────────────────────────────────────────────
 window.title: "TCM"
-default_page.stem: "default values"
+default_page.stem: "Default values"
 
 # ── Chrome widget tooltips / hover status ─────────────────────────────────
-path_lbl.tooltip: "Search path"
-path_field.tooltip: "Raw data/their processing configurations search path"
-path_field.status: "Changing data path rescans and **resets all config tabs below**"
-path_field.status_shift: "Browse **files**; **YAML configs** load into tabs"
+path_lbl.text: "Search path"
+# path_field=path_lbl status = doc-driven general (`config_reference.md` `path_field`) + STR suffix.
+path_field.tooltip: "Edit by Enter or double-clicking or select using the browse button"
 path_field.placeholder: "D:/data/_raw"
-path_field.placeholder_shift: "D:/data/_raw/(i*raw_file1[.]txt|i*raw_file2[.]txt)"
+path_field.placeholder_files: "D:/data/_raw/(i*raw_file1[.]txt|i*raw_file2[.]txt)"
 path_field.placeholder_probe: "i_01_measurement.txt"
+path_field.status.dirs: "**(Re)loads configurations into tabs**. The `Browse` button opens a directory picker to search for data with default mask `*i*.txt`. Hold `Shift` to select files"
+path_field.status.files: "**(Re)loads configurations into tabs**. The `Browse` button opens a picker for individual **files**: data or their configs `{pcid}*.yaml` (the data path is already inside them)"
+input.coefs_path.status.dirs: "The `Browse` button opens a dialog to select a directory of YAML files. Hold `Shift` to select files"
+input.coefs_path.status.files: "The `Browse` button opens a dialog to select individual **files**"
+input.coefs_path.status.dir: "The `Browse` button opens a dialog to select a directory of YAML files. Hold `Shift` to select files"
+input.coefs_path.status.file: "The `Browse` button opens a dialog to select individual **files**"
+input.coef_path.status.dirs: "The `Browse` button opens a dialog to select a directory of YAML files. Hold `Shift` to select files"
+input.coef_path.status.files: "The `Browse` button opens a dialog to select individual **files**"
 overall_lbl.status: "Overall and current configuration processing state"
 run.tooltip: "Run button"
 run.start: "Start processing"
@@ -136,6 +143,7 @@ time_ranges.hover.differs: "differs from info_devices [{s}, {e}] — narrowed or
 time_ranges.hover.written: "filled from info_devices [{s}, {e}]"
 time_ranges.hover.kept: "matches info_devices [{s}, {e}]"
 metadata.status: "Device deployment metadata (info_devices.yaml) — edit before Run"
+metadata.tree_suffix: ", …"
 
 # ── Tooltip ───────────────────────────────────────────────────────────────
 prog_status.tooltip: "Current processing stage"

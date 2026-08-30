@@ -27,6 +27,11 @@ _l = logging.getLogger(__name__)
 DEFAULT_FG: str = "#999999"  # cell value == config default
 BLUE_FG: str = "#0055CC"  # header text + node label when subtree at default
 LINK_FG: str = "#0066CC"  # markdown links (MarkdownLabel) + doc-tree leaves
+LINK_SEL_FG: str = "#FFFFFF"  # link text during selection (light)
+CODE_FG: str = "#465E5A"  # inline code text (MarkdownLabel)
+CODE_BG: str = "#F9F2F4"  # inline code background (MarkdownLabel, light theme)
+CODE_SEL_FG: str = "#FFFFFF"  # inline code text during selection (light)
+CODE_SEL_BG: str = "#3399FF"  # inline code background during selection (light)
 FG_DEFAULT: str = "#000000"  # normal (non-default) text color
 FUNC_COLOR: str = "#0070A0"  # function name in log bridge
 INVALID_FG: str = "#CC0000"  # cell value failed validation (e.g. path not found)
@@ -35,6 +40,8 @@ INVALID_FG: str = "#CC0000"  # cell value failed validation (e.g. path not found
 FRAME_BG_FALLBACK: str = "#F0F0F0"  # TFrame background fallback
 ENTRY_BG_FALLBACK: str = "#FFFFFF"  # TEntry fieldbackground fallback
 CELL_NON_DATA_BG: str = "#E8E8E8"  # subtle gray for read-only cells
+META_TREE_BG: str = "#ECEBDD"  # metadata tree column tint — greenish-brown (light)
+CONFIG_TREE_BG: str = "#E8E7F0"  # non-metadata config tree column tint — cool lavender (light)
 # Detected theme — set by :func:`apply_theme_defaults`, read by widget modules
 # to choose tksheet theme, configure ttk.Style, etc.
 THEME: str = "light"
@@ -55,11 +62,18 @@ _DARK: dict[str, str] = {
     "DEFAULT_FG": "#808080",
     "BLUE_FG": "#4DA6FF",
     "LINK_FG": "#66AAFF",
+    "LINK_SEL_FG": "#FFFFFF",
+    "CODE_FG": "#6FB3B2",
+    "CODE_BG": "#2A1A1E",
+    "CODE_SEL_FG": "#FFFFFF",
+    "CODE_SEL_BG": "#264F78",
     "FG_DEFAULT": "#D4D4D4",
     "INVALID_FG": "#FF6B6B",
     "FRAME_BG_FALLBACK": "#2D2D2D",
     "ENTRY_BG_FALLBACK": "#1E1E1E",
     "CELL_NON_DATA_BG": "#383838",
+    "META_TREE_BG": "#3E3D31",
+    "CONFIG_TREE_BG": "#373640",
     "THEME": "dark",
     "debug": "#707070",
     "info": "#D4D4D4",
@@ -72,11 +86,18 @@ _LIGHT: dict[str, str] = {
     "DEFAULT_FG": "#999999",
     "BLUE_FG": "#0055CC",
     "LINK_FG": "#0066CC",
+    "LINK_SEL_FG": "#FFFFFF",
+    "CODE_FG": "#465E5A",
+    "CODE_BG": "#F9F2F4",
+    "CODE_SEL_FG": "#FFFFFF",
+    "CODE_SEL_BG": "#3399FF",
     "FG_DEFAULT": "#000000",
     "INVALID_FG": "#CC0000",
     "FRAME_BG_FALLBACK": "#F0F0F0",
     "ENTRY_BG_FALLBACK": "#FFFFFF",
     "CELL_NON_DATA_BG": "#E8E8E8",
+    "META_TREE_BG": "#ECEBDD",
+    "CONFIG_TREE_BG": "#E8E7F0",
     "THEME": "light",
     "debug": "#808080",
     "info": "#1a1a1a",
@@ -91,11 +112,18 @@ _GLOBAL_KEYS = (
     "DEFAULT_FG",
     "BLUE_FG",
     "LINK_FG",
+    "LINK_SEL_FG",
+    "CODE_FG",
+    "CODE_BG",
+    "CODE_SEL_FG",
+    "CODE_SEL_BG",
     "FG_DEFAULT",
     "INVALID_FG",
     "FRAME_BG_FALLBACK",
     "ENTRY_BG_FALLBACK",
     "CELL_NON_DATA_BG",
+    "META_TREE_BG",
+    "CONFIG_TREE_BG",
     "THEME",
 )
 

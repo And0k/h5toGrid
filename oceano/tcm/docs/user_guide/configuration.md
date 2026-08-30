@@ -197,6 +197,32 @@ tcm_proc.exe "_raw/*i*.txt" \
   'program.return_="<saved_coefs>"'
 ```
 
+## Deployment journal — `info_devices.yaml` and the processing window
+
+`info_devices.yaml` (next to the cruise data, parent of `_raw`) is the
+**deployment journal** of the station — one record per probe: point, depth,
+coordinates, burst settings, the period of correct operation. The GUI
+`metadata` group edits this record; it is saved back on Run and goes into
+the output files.
+
+**`time_range` vs `input.time_ranges`** — two different things:
+
+| Field | Meaning | Effect |
+|-------|---------|--------|
+| `metadata.time_range` | Journal record: start/end of the correct operation of the device at the station | Never changes a window that is already set |
+| `input.time_ranges` | The processing window of the run | Everything outside is skipped |
+
+The journal record helps only when the window is not set yet: on **Scan**
+(config discovery), if `input.time_ranges` is empty or incomplete, its
+missing ends are filled from `time_range`. How the window got its current
+contents — journal, data edges, or manual typing — makes no difference:
+**Run** never fills or overrides the window, it uses it exactly as it stands
+in the YAML (empty window = the whole record is processed). So if the
+journal record is wrong, correct it **before** clearing/emptying the window;
+a filled window is yours alone.
+
+Field descriptions: [Reference §`metadata`](../reference/config_reference.md#metadata--device-deployment-metadata-per-probe-infodevicesyaml).
+
 ## Coefficient resolution priority
 
 Defined in [Config Reference §`input.coefs`](../reference/config_reference.md#inputcoefs--calibration-coefficients)

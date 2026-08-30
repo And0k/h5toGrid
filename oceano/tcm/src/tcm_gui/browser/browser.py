@@ -159,7 +159,7 @@ def open_md_link(url: str, base: str | os.PathLike[str] | None = None) -> None:
     Handles any ``[text](target)`` link rendered by the GUI: external schemes
     (``http(s)/mailto/ftp/file``) via the system default browser; local
     document paths (relative ones resolved against *base* — the source
-    ``.md``'s directory) via :class:`DocumentationBrowser`'s localhost server,
+    ``.md`` file's path) via :class:`DocumentationBrowser`'s localhost server,
     also shown in the OS browser; a ``#anchor`` fragment scrolls to the
     heading.  Failures are logged, never raised — links live in tooltips.
     """
@@ -180,7 +180,11 @@ def open_md_link(url: str, base: str | os.PathLike[str] | None = None) -> None:
         return
     path = Path(file_part)
     if not path.is_absolute() and base:
-        path = Path(base) / path
+        # Anchor-only link (#foo): base is the source .md file path, use it
+        # directly.  Relative link (doc.md#foo): resolve against base's parent
+        # directory.
+        base_path = Path(base)
+        path = base_path if not file_part else base_path.parent / path
     try:
         get_documentation_browser().open(path, anchor=anchor or None)
     except (OSError, ValueError):

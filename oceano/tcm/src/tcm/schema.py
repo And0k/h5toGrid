@@ -216,8 +216,6 @@ class ConfigOut_InclProc:
     raw_db_path: Path | None = None
     table: str = ""
     tables_log: list[str] = field(default_factory=lambda: ["{}/logFiles"])
-    b_incremental_update: bool = True
-    b_overwrite: bool | None = False  # legacy h5 pipeline only
     overwrite_db: str | None = None
     """NC overwrite mode — controls how existing data is handled.
 

@@ -327,8 +327,9 @@ def gen_metadata(
                 for del_field in [
                     "tables",
                     "nfiles",
-                    "b_del_temp_db",
                     "temp_db_path",
+                    "overwrite_db",
+                    "b_del_temp_db",
                     "b_incremental_update",
                 ]:
                     cfg1["out"].pop(del_field, None)
@@ -377,12 +378,13 @@ def gen_metadata(
 
             cfg1["out"]["dt_bins"] = cfg["out"].get("dt_bins", [0, 2, 600, 3600, 7200])
 
-            # Delete fields not in structured config
+            # Delete fields not in structured config or which we enforce to be specified explicitly
             for del_field in [
                 "tables",
                 "nfiles",
-                "b_del_temp_db",
                 "temp_db_path",
+                "overwrite_db",
+                "b_del_temp_db",
                 "b_incremental_update",
             ]:
                 cfg1["out"].pop(del_field, None)

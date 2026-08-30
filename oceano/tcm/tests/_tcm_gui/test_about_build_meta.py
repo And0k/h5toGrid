@@ -357,11 +357,11 @@ class TestLocalReadme:
             (readmes / "readme_Ru.md").write_text("# RU", encoding="utf-8")
             monkeypatch.setattr(about, "DOC_DIR", readmes / "docs")
             monkeypatch.setattr(about, "resolve_lang", lambda: "ru")
-            assert about.AboutDialog._local_readme() == readmes / "readme_Ru.md"
+            assert about.local_readme() == readmes / "readme_Ru.md"
             monkeypatch.setattr(about, "resolve_lang", lambda: "en")
-            assert about.AboutDialog._local_readme() == readmes / "readme.md"
+            assert about.local_readme() == readmes / "readme.md"
             monkeypatch.setattr(about, "resolve_lang", lambda: "fr")  # no _fr file → base
-            assert about.AboutDialog._local_readme() == readmes / "readme.md"
+            assert about.local_readme() == readmes / "readme.md"
         finally:
             sys.path.pop(0)
 

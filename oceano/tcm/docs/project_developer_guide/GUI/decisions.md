@@ -1,7 +1,7 @@
 # GUI Key Decisions with Rationale and Regression Notes
 
-Companion pages: [GUI Widgets](GUI_widgets.md) ·
-[GUI Architecture](GUI_architecture.md) · [GUI Help System](GUI_help_system.md) —
+Companion pages: [GUI Widgets](widgets.md) ·
+[GUI Architecture](architecture.md) · [GUI Help System](help_system.md) —
 index: [GUI Internals](_index.md).
 
 ## Key decisions
@@ -70,7 +70,7 @@ index: [GUI Internals](_index.md).
 | `_status_source` tracks hover canvas | `"tree"` (RI) / `"data"` (MT) — re-publishes status on source change for same row |
 | `_any_hovering` property | combines `_path_hovering`, `_nb_hovering`, `_chrome_hovering`, `_browse_hovering` — single guard against poll clobbering |
 | `_bind_chrome_hover` wires status to Run/progress/labels | `<Motion>`/`<Leave>` on all registered chrome widgets; skips `_path_field` + `nb` (own handlers) |
-| **Dwell tooltip** | `_arm_dwell(text)` schedules `after()` on hover-enter; `_dwell_widget` prevents re-arming on motion within same widget; stays while hovered — while a tip owns the label, any debounced switch (`_apply_status`, 0.3 s) waits out the `_DWELL_HIDE_MS` = 3 s linger before the new text applies (a pending arm from the new row stays untouched); cleared on `<Leave>` / Esc / `_hide_tip()`. Error tips (`_tip_active`) take precedence. ConfigSheet cells provide detailed body via `_hover_detail` → `_resolve_detail` |
+| **Dwell tooltip** | `_arm_dwell(text, anchor)` schedules `after()` on hover-enter; `anchor` frozen via lambda so ``_show_dwell_tip`` applies what is actually shown; `_dwell_widget` prevents re-arming on motion within same widget; stays while hovered — while a tip owns the label, any debounced switch (`_apply_status(text, anchor)`, 0.3 s) waits out the `_DWELL_HIDE_MS` = 3 s linger before the new text+anchor applies (a pending arm from the new row stays untouched); cleared on Esc / `_hide_tip()`. `<Leave>` cancels ONLY when the pointer leaves the dwelling widget's hierarchy — moving to the widget's edge, an ancestor frame, or the root background (gap between widgets) does NOT dismiss the tip (`_pointer_in_dwell_hierarchy` walks up from `_dwell_widget` to detect this). Error tips (`_tip_active`) take precedence. ConfigSheet cells provide detailed body via `_hover_detail` → `_resolve_detail` and F1 anchor via `_f1_anchor_for_iid` |
 | `_on_cell_status` wraps ConfigSheet callback | App reads `cs._hover_detail` DURING the callback to arm the dwell — `_publish_status`/`_on_tree_motion` therefore assign `_hover_detail` BEFORE calling `on_hover_status` (regression: assign-after-call armed the previous row's detail — P_t showed the coefs-priority text, kVabs showed P_t's Detailed) |
 | **Floated PathField on browse rows** | one reusable `PathField` for text + separate `BrowseOverlay` for button; intent-delayed (120 ms); focus strictly opt-in; full edit parity free; button stays at sheet right edge while field text stops at button's left edge; `_do_field_hide` vetoes hide during `f._editing`; edit start/end fire `on_edit_begin`/`on_edit_end` — status-freeze parity with cell editing; `_on_field_edit_end` → `_restore_hover_placement` (show button first, `update_idletasks`, then `f.place` at shortened width) |
 | `_field_iid` survives hide | `_hide_hover_field` keeps `_field_iid` — `PathField._notify` queues via `after_idle`, so a commit in flight still writes to its row; `_hover_btn` (browse button) is hidden separately |

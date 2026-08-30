@@ -9,7 +9,10 @@ For each field section heading of the form:
     ## `input`
     ## `input.coefs`
 
-the parser scans markdown table rows whose first cell is a backticked field
+Backticks are optional — a plain heading registers iff its name is in
+:data:`_FIELD_SECTIONS` (general prose sections stay non-registered).
+
+The parser scans markdown table rows whose first cell is a backticked field
 identifier:
 
     | `field_name` = default | ... | Purpose / Physical meaning |
@@ -24,8 +27,8 @@ Detailed documentation lives in ``###`` subsections of a field.  The
 the consumer context (one section per context); a modeless ``### `field` ``
 section is the single-context default and is stored under :data:`_NO_MODE`:
 
-    ### `input.path` <mode>probe</mode>
-    ### `input.path` <mode>search</mode>
+    ### `input.path`
+    ### `path_field` <mode>dirs</mode>
     ### `input.coefs.P_t`
 
 These are stored in :attr:`HelpEntry.body` keyed by mode.
@@ -81,6 +84,8 @@ _l = logging.getLogger(__name__)
 # not a ``Config`` field and decision-table sections carry non-identifier first
 # columns (``Stage``, ``Column``, …) — both stay excluded by construction.
 # ``_unwrap`` resolves the ``X | None`` union around nested group hints.
+# ``metadata`` and ``path_field`` are non-schema sections: per-probe deployment
+# journal and the GUI search path (its ``<mode>`` bodies feed PathField statuses).
 _FIELD_SECTIONS: frozenset[str] = frozenset(
     {n for n, t in get_type_hints(schema.Config).items() if dataclasses.is_dataclass(_unwrap(t))}
     | {
@@ -88,11 +93,15 @@ _FIELD_SECTIONS: frozenset[str] = frozenset(
         for n, t in get_type_hints(schema.ConfigIn_InclProc).items()
         if dataclasses.is_dataclass(_unwrap(t))
     }
-    | {"metadata"}
+    | {"metadata", "path_field"}
 )
 
-# ``## ``input.coefs`` — subtitle``.
-_RE_SECTION_HEAD = re.compile(r"^##\s+`(?P<section>[A-Za-z_]\w*(?:\.\w+)*)`\s*(?:—\s*(?P<subtitle>.+))?\s*$")
+# ``## ``input.coefs`` — subtitle``.  Backticks optional around the section
+# name and the subtitle — a plain heading registers iff its name is in
+# :data:`_FIELD_SECTIONS` (non-schema sections carry plain titles).
+_RE_SECTION_HEAD = re.compile(
+    r"^##\s+`?(?P<section>[A-Za-z_]\w*(?:\.\w+)*)`?\s*(?:[—-]\s*(?P<subtitle>.+))?\s*$"
+)
 # ``### `input.path` <mode>probe</mode>`` — the <mode> tag is optional (a
 # modeless ``### `field` `` section is the single-context default); ``</>``
 # shorthand is accepted.
@@ -100,8 +109,17 @@ _RE_FIELD_MODE_HEAD = re.compile(
     r"^###\s+`(?P<path>[A-Za-z_]\w*(?:\.\w+)*)`(?:\s+<mode>(?P<mode>[a-z_]+)</(?:mode)?>)?"
 )
 
-# ``#### Detailed`` or any other named detail block.
+# ``#### <mode>dirs</mode>`` — mode tag under a ``### `field` `` heading.  Inherits
+# the parent field path, equivalent to a separate ``### `field` <mode>dirs</mode>``
+# heading but nests the mode detail under the general field description.
+# Its child detail blocks use ``#####`` (one level deeper) to avoid ambiguity
+# with ``####`` siblings of the parent ``###`` section.
+_RE_MODE_IN_DETAIL = re.compile(r"^####\s+<mode>(?P<mode>[a-z_]+)</(?:mode)?>")
+
+# ``#### Detailed`` or any other named detail block (child of a ``###`` mode).
 _RE_DETAIL_HEAD = re.compile(r"^####\s+(?P<tag>.+?)\s*$")
+# ``##### Detailed`` — child of a ``#### <mode>`` section.
+_RE_DETAIL_HEAD5 = re.compile(r"^#####\s+(?P<tag>.+?)\s*$")
 # Any markdown heading.  Checked only after mode/detail headings so that
 # ``###`` mode headers and ``####`` detail headers do not close their parent.
 _RE_ANY_HEADING = re.compile(r"^#{1,6}\s")
@@ -130,6 +148,17 @@ _RE_ANCHOR_ID = re.compile(r"\{#([^{}]+)\}\s*$")
 # GitHub-style slug drops: everything but word chars (unicode letters/digits/_),
 # whitespace and hyphens — mirrors ``browser/web/viewer.js::slugify``.
 _RE_SLUG_DROP = re.compile(r"[^\w\s-]", re.UNICODE)
+
+
+def slugify(text: str) -> str:
+    """Heading anchor — explicit ``{#id}`` wins, else the GitHub-style slug.
+
+    Mirrors ``browser/web/viewer.js::slugify``: lowercase, drop punctuation,
+    each space → one dash (so ``a — b`` → ``a--b``).  Public alias for the
+    parser's internal ``_slug`` — use it to derive table-row anchors that
+    match the viewer's heading ids (dots are dropped: ``input.path`` → ``inputpath``).
+    """
+    return _slug(text)
 
 
 def _slug(text: str) -> str:
@@ -195,8 +224,14 @@ class _State:
     in_field_section: bool = False
     fence: bool = False
 
+    # Paragraph text between a ``## `` heading and its table (the section's
+    # short description). Captured until a table row or the next heading.
+    capture_post_heading: bool = False
+    post_heading_para: list[str] = field(default_factory=list)
+
     mode_path: str | None = None
     mode_tag: str | None = None
+    mode_level: int | None = None  # 3 for ``### `field` <mode>``, 4 for ``#### <mode>``
     short_lines: list[str] = field(default_factory=list)
 
     detail_tag: str | None = None
@@ -216,7 +251,7 @@ class _State:
 
     def clear_mode(self) -> None:
         """Reset mode/detail accumulation buffers."""
-        self.mode_path = self.mode_tag = self.detail_tag = None
+        self.mode_path = self.mode_tag = self.mode_level = self.detail_tag = None
         self.short_lines.clear()
         self.detail_lines.clear()
         self.details.clear()
@@ -256,13 +291,34 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
 
         if (path := st.mode_path) and (tag := st.mode_tag) and path in entries:
             short = "\n".join(st.short_lines).strip()
-            bodies[path][tag] = short if not st.details else ModeBody(short=short, details=dict(st.details))
+            if tag == "Detailed":
+                # Bare ``### Detailed`` has no nested ``#### `` block — store its
+                # content as the mode body's short so _resolve_detail finds it.
+                bodies[path][tag] = ModeBody(short=short, details=dict(st.details))
+            else:
+                bodies[path][tag] = short if not st.details else ModeBody(short=short, details=dict(st.details))
+            # Entries created from a ``### `` subsection without a table row (e.g.
+            # ``metadata.path``) have no short of their own — populate it from the
+            # subsection's lead-in text so the status bar shows it.
+            if not entries[path].short and short:
+                entries[path] = replace(entries[path], short=short)
 
         st.clear_mode()
 
     def flush_any_detail() -> None:
         """Freeze the active ``####`` buffer — mode detail inside a mode, field-level otherwise."""
         (flush_detail if st.in_mode else flush_section_detail)()
+
+    def _finalize_post_heading() -> None:
+        """Set the current section's short from its post-heading paragraph (if any)."""
+        if not st.capture_post_heading or st.section not in entries:
+            return
+        if st.post_heading_para:
+            para = "\n".join(st.post_heading_para).strip()
+            if para:
+                entries[st.section] = replace(entries[st.section], short=para)
+        st.capture_post_heading = False
+        st.post_heading_para.clear()
 
     def flush_section_detail() -> None:
         """Freeze the active field-level ``####`` block into ``st.field_details``."""
@@ -284,6 +340,14 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
             st.fence = not st.fence
             continue
 
+        # Citation blockquote — cut the section before it: finalize whatever is
+        # being accumulated (post-heading paragraph or mode body) and ignore the
+        # citation line. Subsequent headings still start new sections.
+        if not st.fence and line.lstrip().startswith(">"):
+            _finalize_post_heading()
+            close_mode()
+            continue
+
         if not st.fence and (m := _RE_SECTION_HEAD.match(line)):
             flush_any_detail()
             close_mode()
@@ -301,6 +365,10 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
                     short=subtitle or section,
                     anchor=st.section_anchor,
                 )
+                # Capture the paragraph between this heading and its table to use
+                # as the section's short description (falls back to subtitle if empty).
+                st.capture_post_heading = True
+                st.post_heading_para.clear()
             else:
                 st.section_anchor = ""
 
@@ -310,11 +378,64 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
         if not st.fence and (m := _RE_FIELD_MODE_HEAD.match(line)):
             flush_any_detail()
             close_mode()
-            st.mode_path, st.mode_tag = m["path"], m["mode"] or _NO_MODE
+            path = m["path"]
+            # Bare ``### `path_field` `` opens its own section when the doc
+            # carries no ``## `path_field` `` heading — the section registers
+            # iff its name is in :data:`_FIELD_SECTIONS`.
+            if st.section != path and path in _FIELD_SECTIONS:
+                st.section, st.in_field_section = path, True
+                st.last_field_path = None
+                # Anchor = heading minus the ``<mode>`` tail (the viewer's
+                # slugify would otherwise bake the tag into the anchor).
+                st.section_anchor = _slug(re.sub(r"\s*<mode>.*$", "", line))
+                if path not in entries:
+                    entries[path] = HelpEntry(path=path, short="", anchor=st.section_anchor)
+            elif st.section is not None and st.section != path and path.startswith(st.section + "."):
+                # Child subsection without its own table row (e.g. ``metadata.path``
+                # after it was moved from the table into a ``### `` block). Register
+                # an entry so its short body + ``#### Detailed`` are preserved.
+                if path not in entries:
+                    anchor = _slug(re.sub(r"\s*<mode>.*$", "", line))
+                    entries[path] = HelpEntry(path=path, short="", anchor=anchor)
+            st.mode_path, st.mode_tag, st.mode_level = path, m["mode"] or _NO_MODE, 3
+            continue
+
+        # Bare `### Detailed` heading: tooltip for the current parent section.
+        # Does not close the section — subsequent ``### `` path blocks still work.
+        if not st.fence and st.in_field_section and line.strip() == "### Detailed":
+            flush_any_detail()
+            close_mode()
+            st.mode_path, st.mode_tag, st.mode_level = st.section, "Detailed", 3
+            continue
+
+        # ``#### <mode>dirs</mode>`` under ``### `field` `` — inherits parent field
+        # path.  Equivalent to a separate ``### `field` <mode>dirs</mode>`` heading
+        # but nests the mode detail under the general field description.
+        # Its child details use ``#####`` (one level deeper).
+        if not st.fence and st.mode_path is not None and st.mode_path in entries and (m := _RE_MODE_IN_DETAIL.match(line)):
+            flush_any_detail()
+            # Save current mode content (general description under _NO_MODE).
+            if st.mode_tag is not None:
+                short = "\n".join(st.short_lines).strip()
+                bodies[st.mode_path][st.mode_tag] = (
+                    short if not st.details else ModeBody(short=short, details=dict(st.details))
+                )
+            # Reset detail buffers but keep mode_path for the new mode.
+            st.detail_tag = None
+            st.detail_lines.clear()
+            st.details.clear()
+            st.short_lines.clear()
+            st.mode_tag, st.mode_level = m["mode"], 4
             continue
 
         # Meaningful only inside an open mode; otherwise it is a heading.
-        if not st.fence and st.in_mode and (m := _RE_DETAIL_HEAD.match(line)):
+        # ``####`` details belong to ``###`` modes (level 3), ``#####`` to ``#### <mode>`` modes (level 4).
+        if not st.fence and st.in_mode and st.mode_level == 3 and (m := _RE_DETAIL_HEAD.match(line)):
+            flush_detail()
+            st.detail_tag = m["tag"].strip()
+            st.detail_lines.clear()
+            continue
+        if not st.fence and st.in_mode and st.mode_level == 4 and (m := _RE_DETAIL_HEAD5.match(line)):
             flush_detail()
             st.detail_tag = m["tag"].strip()
             st.detail_lines.clear()
@@ -330,10 +451,20 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
         if not st.fence and st.section is not None and _RE_ANY_HEADING.match(line):
             flush_any_detail()
             close_mode()
+            _finalize_post_heading()
             st.section, st.in_field_section = None, False
             st.last_field_path = None
             st.section_anchor = ""
             continue
+
+        # Capture the paragraph between a ## heading and its table. Finalize
+        # when the table (or any heading) starts.
+        if st.capture_post_heading:
+            if _RE_FIELD_ROW.match(line) or line.lstrip().startswith("|"):
+                _finalize_post_heading()
+            else:
+                st.post_heading_para.append(line.strip())
+                continue
 
         if st.in_mode:
             target = st.detail_lines if st.detail_tag is not None else st.short_lines
@@ -460,7 +591,7 @@ def help_for_path(
 
     Args:
         path: Dotted Hydra path, e.g. ``input.coefs.Ag[0]``.
-        mode: Optional mode selector, e.g. ``"probe"`` or ``"search"``.
+        mode: Optional mode selector, e.g. ``"files"`` or ``"dirs"``.
         detail: Optional ``####`` detail tag inside *mode*, e.g.
             ``"Detailed"``.
 
@@ -483,6 +614,12 @@ def help_for_path(
 
     raw = entry.body.get(mode) if isinstance(entry.body, Mapping) else None
 
+    # Modeless ``### `field` `` section is the fallback for any requested mode
+    # without a tagged section (keeps statuses armed when only one context is
+    # documented).
+    if raw is None and isinstance(entry.body, Mapping):
+        raw = entry.body.get(_NO_MODE)
+
     if raw is None:
         return replace(entry, body="")
 
@@ -492,3 +629,29 @@ def help_for_path(
         body = raw.details.get(detail, "") if isinstance(raw, ModeBody) else ""
 
     return replace(entry, body=body)
+
+
+def help_general_for_path(path: str) -> str:
+    """Return the general (modeless) description for a config path.
+
+    This is the ``### `field` `` body — the text before any
+    ``#### <mode>`` or ``### `field` <mode>mode</mode>`` section.  For
+    ``path_field`` the ``#### Important`` sub-block (if present) is the
+    content shown on field-associated errors (e.g. ``FileNotFoundError`` on a
+    failed data/config search); otherwise the short pre-``####`` body is used.
+    Mode-specific bodies are irrelevant for this call.
+
+    Array indices are stripped before lookup, mirroring :func:`help_for_path`.
+    """
+    entry = _load().get(_RE_ARR_INDEX.sub("", path))
+    if entry is None:
+        return ""
+    if isinstance(entry.body, Mapping):
+        raw = entry.body.get(_NO_MODE, "")
+        if isinstance(raw, ModeBody):
+            # ``path_field`` uses ``#### Important`` as the error hint.
+            if isinstance(raw.details, Mapping) and "Important" in raw.details:
+                return raw.details["Important"]
+            return raw.short
+        return raw if isinstance(raw, str) else ""
+    return ""

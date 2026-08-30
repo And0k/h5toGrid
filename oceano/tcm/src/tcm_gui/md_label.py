@@ -363,8 +363,10 @@ class MarkdownLabel(tk.Text):
         self.tag_configure(
             "code",
             font=self._fonts["code"],
-            foreground="#C7254E" if theme.THEME == "light" else "#FF6B8A",
-            background="#F9F2F4" if theme.THEME == "light" else "#2A1A1E",
+            foreground=theme.CODE_FG,
+            background=theme.CODE_BG,
+            selectforeground=theme.CODE_SEL_FG,
+            selectbackground=theme.CODE_SEL_BG,
         )
 
         self.tag_configure(
@@ -385,7 +387,7 @@ class MarkdownLabel(tk.Text):
 
         self.tag_configure("table_header", font=self._fonts["bold"])
         self.tag_configure("table_cell", font=self._fonts["plain"])
-        self.tag_configure("link", foreground=theme.LINK_FG, underline=True)
+        self.tag_configure("link", foreground=theme.LINK_FG, selectforeground=theme.LINK_SEL_FG, underline=True)
 
     def _raise_span_tags(self) -> None:
         for tag in ("code", "bold", "italic", "link"):

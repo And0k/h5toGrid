@@ -38,6 +38,7 @@ class TestEnsureDimScalesIdempotent:
         if not src.exists():
             pytest.skip("Real data not available")
         tmp = Path(r"C:\Users\User\AppData\Local\Temp\kilo") / "test_real.nc"
+        tmp.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, tmp)
 
         size_before = tmp.stat().st_size

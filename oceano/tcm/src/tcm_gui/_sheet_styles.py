@@ -102,6 +102,8 @@ class SheetStylesMixin:
         sh = self.sh
 
         bg = tcm_gui.theme.resolved_frame_bg(sh)
+        meta_bg = tcm_gui.theme.META_TREE_BG
+        config_bg = tcm_gui.theme.CONFIG_TREE_BG
         self._fg_default = tcm_gui.theme.FG_DEFAULT
 
         with suppress(AttributeError, TypeError):
@@ -112,20 +114,36 @@ class SheetStylesMixin:
         total_cols = sh.total_columns()
         resize_cells: set[tuple[int, int]] = set()
 
+        # Metadata root + all its descendants get the tinted tree column.
+        meta_roots = {iid for iid, m in self._meta.items() if m.get("is_metadata_root")}
+        meta_descendants = set(meta_roots)
+        for iid, m in self._meta.items():
+            if iid in meta_descendants:
+                continue
+            cur = m.get("parent")
+            while cur:
+                if cur in meta_descendants:
+                    meta_descendants.add(iid)
+                    break
+                cur = self._meta.get(cur, {}).get("parent")
+
         for iid, m in self._meta.items():
             if (r := row_of.get(iid)) is None:
                 continue
 
             is_input = m.get("type") == "input"
             is_browse = is_input or m.get("browse")
+            is_meta = iid in meta_descendants
 
             # ── 1) node label — treeview column = "index" canvas ──
             # Input row: button-face bg + normal black fg; other rows: blue/black fg
+            # Metadata subtree gets a tinted tree column to visually separate it;
+            # non-metadata config nodes get a cooler lavender tint.
             sh.highlight_cells(
                 row=r,
                 column=0,
                 canvas="index",
-                bg=bg,
+                bg=meta_bg if is_meta else config_bg,
                 fg=(
                     tcm_gui.theme.FG_DEFAULT
                     if is_input

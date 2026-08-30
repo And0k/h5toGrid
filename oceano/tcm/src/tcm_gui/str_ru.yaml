@@ -8,15 +8,22 @@
 
 # ── Window chrome ──────────────────────────────────────────────────────────
 window.title: "ТСМ"
-default_page.stem: "значения по умолчанию"
+default_page.stem: "Значения по умолчанию"
 
 # ── Chrome widget tooltips / hover status ─────────────────────────────────
-path_lbl.tooltip: "Путь поиска"
-path_field.tooltip: "Путь поиска исходных данных / конфигураций их обработки"
-path_field.status: "Смена пути пересканирует и **сбрасывает все вкладки конфигураций**"
-path_field.status_shift: "Выбор индивидуальных **файлов**: данных (с автогенерирацией/загрузкой их конфигураций) или их конфигураций `{pcid}*.yaml` (путь к даннным содержится внутри них)"
+path_lbl.text: "Путь поиска"
+# path_field=path_lbl status = doc-driven general (`config_reference.md` `path_field`) + STR suffix.
+path_field.tooltip: "Редактируйте по Enter или двойному клику или выберите кнопкой обзора"
 path_field.placeholder: "D:/data/_raw"
-path_field.placeholder_shift: "D:/data/_raw/(i*raw_file1[.]txt|i*raw_file2[.]txt)"
+path_field.status.dirs: "**(Пере)загружает конфигурации во вкладки**. Кнопка `Обзор` открывает диалог выбора директории для поиска в ней данных с маской по умолчанию `*i*.txt`. Для выбора файлов нажмите c `Shift`"
+path_field.status.files: "**(Пере)загружает конфигурации во вкладки**. Кнопка `Обзор` открывает диалог выбора индивидуальных **файлов**: данных или их конфигураций `{pcid}*.yaml` (путь к данным - уже у них внутри)"
+input.coefs_path.status.dirs: "Кнопка `Обзор` открывает диалог выбора каталога YAML-файлов. Для выбора файлов нажмите клавишу `Shift`"
+input.coefs_path.status.files: "Кнопка `Обзор` открывает диалог выбора индивидуальных **файлов**"
+input.coefs_path.status.dir: "Кнопка `Обзор` открывает диалог выбора каталога YAML-файлов. Для выбора файлов нажмите клавишу `Shift`"
+input.coefs_path.status.file: "Кнопка `Обзор` открывает диалог выбора индивидуальных **файлов**"
+input.coef_path.status.dirs: "Кнопка `Обзор` открывает диалог выбора каталога YAML-файлов. Для выбора файлов нажмите клавишу `Shift`"
+input.coef_path.status.files: "Кнопка `Обзор` открывает диалог выбора индивидуальных **файлов**"
+path_field.placeholder_files: "D:/data/_raw/(i*raw_file1[.]txt|i*raw_file2[.]txt)"
 path_field.placeholder_probe: "i_01_измерение.txt"
 overall_lbl.status: "Cостояние обработки: в общем и текущей конфигурации"
 run.tooltip: "Кнопка запуска"
@@ -133,6 +140,7 @@ time_ranges.hover.differs: "отличается от info_devices [{s}, {e}] �
 time_ranges.hover.written: "заполнено из info_devices [{s}, {e}]"
 time_ranges.hover.kept: "совпадает с info_devices [{s}, {e}]"
 metadata.status: "Метаданные развертывания (info_devices.yaml) — правьте до Запуска"
+metadata.tree_suffix: ", …"
 
 # ── Tooltip ───────────────────────────────────────────────────────────────
 prog_status.tooltip: "Текущий этап обработки"

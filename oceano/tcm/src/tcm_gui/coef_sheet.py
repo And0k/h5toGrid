@@ -263,6 +263,9 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
         # Track which canvas owns the current status: "tree" (RI) or "data" (MT).
         # Moving between tree column and data cell on the SAME row must re-publish.
         self._status_source: str | None = None
+        # Data column of the hovered cell (MT). For metadata paired rows each
+        # column documents a different field — re-publish when it changes.
+        self._status_col: int | None = None
         # Detailed body text for dwell tooltip (App reads via _on_cell_status).
         # Set by _publish_status / _on_tree_motion; cleared by _clear_status.
         self._hover_detail: str = ""
@@ -287,8 +290,6 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
         root.bind("<KeyPress-Shift_L>", self._on_shift_toggle, add="+")
         root.bind("<KeyRelease-Shift_L>", self._on_shift_toggle, add="+")
         root.bind("<KeyRelease-Shift_R>", self._on_shift_toggle, add="+")
-        # F1 — open the doc browser at the hovered row's config_reference heading.
-        root.bind("<F1>", self._on_f1_help, add="+")
 
         # Row-space caches — rebuilt on load and expand/collapse.
         self._loading = False
@@ -382,6 +383,9 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
             self._loading = False
 
         self._take_snapshot()
+        # Take metadata snapshot too — without it, edits to metadata loaded from
+        # an existing file would never be detected as dirty (snap stays None).
+        self._take_metadata_snapshot()
         self._stretch_last_col()
 
     def get_edited_coefs(self) -> dict[str, Any]:

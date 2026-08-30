@@ -1,35 +1,62 @@
 # Configuration Schema and Device Metadata Reference
 
-Each run YAML (`cfg_proc/run/{source_stem}.yaml`) is a structured Hydra/OmegaConf config.
+## CLI keys outside the typed configuration (not in YAML)
+
+| Field | Purpose |
+|-------|---------|
+| `path_field` = — | Data/config search path — required first CLI argument (optional for the GUI, where the search field sets it). [More](#path_field) |
+| `+input.min_date` = `None` | Processing interval start (an alternative to the `input.time_ranges` start — merged with it when that is set too). |
+| `+input.max_date` = `None` | Processing interval end (an alternative to the `input.time_ranges` end — merged with it when that is set too). |
+
+### `path_field`
+
+Search path for raw data / their processing configs: processing configs will be created in `cfg_proc/run/` subfolder if absent.
+
+#### Detailed
+
+If the path contains a subfolder named `_raw` output files will be one level above.
+
+#### Important
+
+The search path must be an absolute path to:
+- a **directory** (e.g. `B:\Cruises\BalticSea\inclinometer\260624@ip05-Press\_raw`)
+- raw file(s) via **glob** (`*i*.txt`) / **regex** (`i.*\.txt`) — file-name filtering
+- config(s) (must end in **`.yaml`**) — load ready configs directly from the `cfg_proc/run/` subfolder
+
+Expected input data layout ([more](io_formats.md#directory-layout)):
+```text
+├── _raw\            ← raw data (.txt/.csv/.h5/.nc) — REQUIRED
+├── cfg_proc\
+│   └── run\         ← per-probe YAML configs (auto-generated on first scan)
+```
+
+## YAML file and command-line configuration fields (typed configuration via Hydra/OmegaConf)
+
+YAML configs live at `cfg_proc/run/{source_stem}.yaml` inside the raw data directory,
+next to the `source_stem.{txt or other extension}` files.
+
 All fields are defined in `tcm/schema.py` via the `Config` dataclass and registered groups
 (`input`, `out`, `filter`, `program`).
 
 Every run YAML starts with `# @package _global_` so Hydra merges it into the top-level Config.
 
-> **Behavior tuning & decision tables** (phase-stopping, time correction modes,
-> column order, `overwrite_db`, azimuth calibration, YAML examples) are in
-> [Config Tuning — Decision Tables & Behavior](config_tuning.md).  Implementation
-> internals live in [CLI Internals](../project_developer_guide/CLI.md).
-
 ## `input` — Data source & parameters
 
 | Field = Default | Purpose |
 |-----------------|---------|
-| `path` = — | Absolute path to the data file. Determines probe identity (pcid). |
+| `path` = — | Absolute path to the data file. Determines probe identity (pcid). [More](#inputpath) |
 | `tables` = `['incl*']` | Table groups in binary (NC/HDF5) input; glob allowed (`incl*` = all inclinometer groups). Auto-derived from the filename for text input. |
 | `ids` = `None` | Process only these probe IDs (e.g. `[i01, i_p02]`). Re-run a single problematic probe without touching others. |
 | `prefix` = `'I*[_0]'` | Filename prefix filter for CSV file discovery. |
 | `text_type` = `None` | Column layout variant (`i`, `p`, `b`, `d`, `w`). Auto-detected from file header; override here if detection fails. |
 | `text_line_regex` = `None` | Custom regex for raw text line parsing. Only needed when auto-detection fails on unusual file formats. |
-| `coefs` = see [§coefs](#inputcoefs--calibration-coefficients) | Calibration coefficients — the heart of measurement accuracy. Auto-loaded on first run; edit here to fine-tune a specific probe. |
-| `coefs_path` = `tcm/cfg/coef/calibration.h5` | Coefficient source — a directory of per-probe YAMLs or a single HDF5/NC/YAML file; see the dir/file details below. |
-| `date_to_from` = `None` | Two timestamps `[real_time, raw_time]` — their offset becomes `dt_from_utc`. |
-| `dt_from_utc` = `0` | UTC offset in seconds. Set to your timezone to convert instrument time to UTC. |
-| `min_date` = `None` | Convenience shorthand for `time_ranges` — automatically merged. |
-| `max_date` = `None` | Convenience shorthand for `time_ranges` — automatically merged. |
-| `time_ranges` = `None` | Time window for processing `[start, end, …]` in ISO format. Auto-populated from data on first run — narrow it to focus on specific periods. |
-| `min` = `{}` | Hard lower bounds on raw sensor values. Rows outside bounds are **removed entirely** (not just NaN'd). `M` expands to `Mx`/`My`/`Mz`. |
-| `max` = `{}` | Hard upper bounds on raw sensor values. Same `M` expansion as `min`. |
+| `coefs` = see [§coefs](#inputcoefs--calibration-coefficients) | Calibration coefficients. Loaded from the calibration file on first run; edit here for a specific probe. |
+| `coefs_path` = `tcm/cfg/coef/calibration.h5` | Coefficient source — a directory of per-probe YAMLs or a single HDF5/NC/YAML file. [More](#inputcoefs_path) |
+| `date_to_from` = `None` | Two timestamps of one moment — [true, instrument reading]: the difference becomes the clock offset `dt_from_utc`. Fill when the instrument clock is off. |
+| `dt_from_utc` = `0` | Offset from UTC in seconds. Set the timezone to convert instrument time to UTC. |
+| `time_ranges` = `None` | Processing time window `[start, end, …]` in ISO format. Auto-filled from the data on first run — narrow it to process the needed period, give several pairs to skip the gaps between them. [More](#inputtime_ranges) |
+| `min` = `{}` | Hard lower bounds on raw sensor values. Rows outside bounds are **removed entirely** (not just NaN'd). `M` expands to `Mx`/`My`/`Mz`. [More](#input-min-max) |
+| `max` = `{}` | Hard upper bounds on raw sensor values. Same `M` expansion as `min`. [More](#inputmax) |
 | `corr_time_mode` = `True` | Integer-second timestamp handling: `True` = snap to sub-second grid, `None` = mask-only, `"delete_inversions"` = clean but keep timestamps. |
 | `corr_time_outlier_threshold_s` = `0.6` | Spike detection sensitivity (seconds). Lower = stricter. Samples deviating more than this from neighbors are flagged. |
 | `dt_interp_between` = `1.5` | Minimum gap (seconds) to distinguish a real data hole from jitter within a burst. |
@@ -43,44 +70,23 @@ Only `coefs` is non-optional — all other fields fall back to their defaults.
 Field types: [`ConfigIn_InclProc` dataclass](../../src/tcm/schema.py)
 (load-stage + calib: `ConfigInCalib_InclProc`).
 
-### `input.path` <mode>probe</mode>
+### `input.path`
 Absolute path to the data file.  The filename **determines probe identity** (pcid):
 the pipeline extracts the leading type letter (`i` for inclinometer, `w` for wave gauge),
 an optional model letter (`p`, `b`, `d`), and the probe number — e.g. `i_01.txt` → pcid
 `i01`, `i_p05_data.txt` → pcid `i_p05`.  A wrong filename maps to the wrong table and
 wrong coefficients.
 
-### `input.path` <mode>search</mode>
-supports glob (`*i*.txt`), regex (`i.*\.txt`), or directory.
-`.yaml` suffix filters existing configs by stem.
+### `input.coefs_path`
+Coefficient source — a directory of per-probe YAMLs or a single YAML file. Or NetCDF/HDF5: the group {g} matching the probe is selected.
 
 #### Detailed
-The search path anchors data + config discovery. Accepted forms:
-- **directory** (e.g. `B:\Cruises\BalticSea\`) — scan for raw data files and a
-  `cfg_proc/run/` subfolder; expects a `_raw`/`proc` layout (below).
-- **glob** (`*i*.txt`) / **regex** (`i.*\.txt`) — match data files by name.
-- **`.yaml`** path — load existing configs directly, skip discovery.
 
-Expected directory layout ([see also](io_formats.md#directory-layout)):
-```text
-├── _raw\            ← raw data files (.txt/.csv/.h5/.nc) — REQUIRED
-├── cfg_proc\
-│   └── run\         ← per-probe YAML configs (auto-generated on first scan)
-```
+Path to the configuration file. Must contain `input.coefs` coefficients. Possible:
 
-### `input.coefs_path` <mode>dir</mode>
-Directory of per-probe coefficient YAMLs — the pipeline reads `{tbl}.yaml`
-(e.g. `incl_p05.yaml`) following the `input.coefs` structure. No file for the
-probe here → the next source of the [resolution
-chain](io_formats.md#coefficient-source-priority) is used (bundled
-`yaml_export/`, then defaults); values already set in the probe's own config
-take priority over this directory.
-
-### `input.coefs_path` <mode>file</mode>
-Single coefficient source file: HDF5 (`.h5`), NetCDF4 (`.nc`), or
-exported YAML (`.yaml`).  All probes share the file — the pipeline
-selects the group by table name.  Comma-separated paths are accepted
-(fallback chain, first match wins).
+- single coefficient source file: HDF5 (`.h5`), NetCDF4 (`.nc`) or coefficient YAML config (`.yaml`).
+- directory of per-probe YAMLs must contain files `{g}.yaml`, where {g} is the probe identifier (`incl_{model#}.yaml`)
+- missing/incorrect path — allowed if all required parameters are already set manually (they have priority over file data), another attempt will be made to find the needed coefficients from the bundled `yaml_export/`: [priority chain](io_formats.md#coefficient-source-priority).
 
 ### `input.time_ranges`
 Time window for processing — restricts to data within it; auto-populated from
@@ -90,17 +96,12 @@ data edge rows on first run.
 Two-element list `[start, end]` in ISO format (`"YYYY-MM-DDTHH:MM:SS"`).
 Multiple pairs are accepted (`[s1, e1, s2, e2, ...]`) for disjoint intervals.
 
-**Interaction with `overwrite_db`**: when `overwrite_db=None` and
-`time_ranges` is a subset of existing NC data, the pipeline checks stored
-`/param_spans/{tbl}` parameters — if they changed, `ValueError` is raised
-with a unified diff. Pass `out.overwrite_db=splice` to force reprocessing.
-When `time_ranges` extends beyond existing data, only the new tail is appended.
+- The interval end is processed inclusively.
 
-**GUI hover** (compared live to `info_devices`): _matches_ (`kept`) when equal, _broader than_ when extending beyond either end (warning tint), _differs_ when narrowed or shifted — the status bar text is recomputed on every hover/edit, never cached from the scan.  See [GUI architecture](../project_developer_guide/GUI_architecture.md#coef_sheetpy--composition-root--treeeditrow-space-core).
-
-**End-bound semantics**: end values are **inclusive** in the config. Internally
-they are converted to exclusive bounds (whole-second ends get +1 s) to prevent
-boundary data loss from CF float64 precision drift.
+- Re-run (when working with NetCDF): extending the interval appends only the new data;
+the previous or a narrowed window is not recomputed — as long as you have not changed
+coefficients or parameters: otherwise, without explicitly setting the behavior via
+`out.overwrite_db`, the program stops. Mechanics — [re-run behavior](config_tuning.md#re-run-behavior).
 
 ### `input.min` {#input-min-max}
 Hard lower bound on raw sensor values — load-stage **DROP**: entire rows outside
@@ -128,14 +129,13 @@ Field types: [`ConfigInCalib_InclProc` dataclass](../../src/tcm/schema.py).
 
 | Field = Default | Physical meaning |
 |-----------------|------------------|
-| `g0xyz` = `None` | User-defined gravity reference vector. When set, overrides `Rz` with a computed rotation. |
-| `time_ranges_zeroing` = `[]` | Intervals where the instrument hung level. Pipeline computes a rotation to align sensor Z with gravity (`Rz`). |
-| `time_ranges_azimuth` = `[]` | Intervals where the instrument was tilted in a known direction. Pipeline calibrates the azimuth shift (`azimuth_shift_deg`) from mag+accel unit vectors. |
-| `coordinates` = `None` | Station `[Lat, Lon]` — enables magnetic declination correction (true-north velocity directions). |
-| `azimuth_add` = `0` | Manual azimuth° fine-tuning, added on top of the data-calibrated shift. |
+| `g0xyz` = `None` | User-defined gravity reference vector. When set, overrides `Rz` with a computed rotation. [More](#inputcalibg0xyz) |
+| `time_ranges_zeroing` = `[]` | Intervals where the instrument hung level. Pipeline computes a rotation to align sensor Z with gravity (`Rz`). [More](#inputcalibtime_ranges_zeroing) |
+| `time_ranges_azimuth` = `[]` | Intervals where the instrument was tilted in a known direction. Pipeline calibrates the azimuth shift (`azimuth_shift_deg`) from mag+accel unit vectors. [More](#inputcalibtime_ranges_azimuth) |
+| `coordinates` = `None` | Station `[Lat, Lon]` — enables magnetic declination correction (true-north velocity directions). [More](#inputcalibcoordinates) |
+| `azimuth_add` = `0` | Manual azimuth° fine-tuning, added on top of the data-calibrated shift. [More](#inputcalibazimuth_add) |
 
 ### `input.calib.g0xyz`
-User-defined gravity reference vector.
 
 #### Detailed
 Raw accelerometer vector `[Ax, Ay, Az]` measured at known zero tilt. When set,
@@ -174,7 +174,6 @@ Applied on top of the data-computed azimuth shift together with
 order.
 
 ### `input.calib.azimuth_add`
-Manual azimuth° fine-tuning, added on top of the data-calibrated shift.
 
 #### Detailed
 Layering: `azimuth_add` (manual offset, degrees) and `coordinates` (magnetic
@@ -195,6 +194,7 @@ input:
 
 Loaded from the coefficient file and copied into each per-probe YAML on first run.
 Edit these to update a probe's calibration — changes are persisted automatically.
+[Azimuth calibration and re-run behavior](config_tuning.md).
 
 | Field = Default | Physical meaning |
 |-----------------|------------------|
@@ -204,11 +204,11 @@ Edit these to update a probe's calibration — changes are persisted automatical
 | `Ch` = `[10, 10, 10]` | Magnetometer bias vector |
 | `Rz` = Identity | Sensor-to-instrument alignment rotation applied after calibration |
 | `kVabs` = `[10, −10, −10, −3, 3, 70]` | Velocity polynomial `Vabs(inclination)`, formula (3) — see [§Velocity computation](../methodology/velocity.md) |
-| `P_t` = `None` | Pressure–temperature 2‑D polynomial for `p`‑type probes; when set it supersedes `P`/`PBattery`/`PTemp`. |
+| `P_t` = `None` | Pressure–temperature 2‑D polynomial for `p`‑type probes; when set it supersedes `P`/`PBattery`/`PTemp`. [More](#inputcoefsp_t) |
 | `P` = `[0, 1]` | Auxiliary sensor #1 linear correction: `y = P[0] + P[1]·x` |
 | `PBattery` = `[0, 1]` | Battery voltage linear correction |
 | `PTemp` = `[0, 1]` | Temperature linear correction |
-| `azimuth_shift_deg` = `180` | Azimuth° correction — converts tilt direction from sensor to geographic coordinates; compensates magnetometer sign inversion at load time. See [Azimuth calibration](config_tuning.md#azimuth-calibration). |
+| `azimuth_shift_deg` = `180` | Azimuth° correction — converts tilt direction from sensor to geographic coordinates; compensates magnetometer sign inversion at load time. See [Azimuth calibration](config_tuning.md#azimuth-calibration). [More](#inputcoefsazimuth_shift_deg) |
 | `dates` = `{}` | Per‑component calibration dates |
 | `date` = `None` | Overall calibration date |
 
@@ -250,10 +250,8 @@ Formula and provenance: [§Pressure computation](../methodology/pressure.md).
 | `raw_db_path` = `None` | Raw data archive (`.raw.nc`) — unprocessed readings + calibration coefficients for later reprocessing. |
 | `table` = `''` | Override output table name. When non-empty, replaces the auto-derived pcid for text-file suffixes and HDF5 group names. |
 | `tables_log` = `['{}/logFiles']` | NC log group name template(s) for output storage (`{}` → table name). |
-| `b_incremental_update` = `True` | Incremental-append mode of the HDF5 pipeline — replaced in the NC pipeline by the `overwrite_db` decision logic. |
-| `b_overwrite` = `False` | HDF5-pipeline overwrite flag — replaced by `overwrite_db`; unused by the NC pipeline. |
 | `dt_bins` = `[0, 2, 600, 3600, 7200]` | Time averaging bins (seconds). `0` = full resolution. Multiple values produce separate outputs (e.g. `[0, 600, 3600]` = full + 10 min + 1 h). |
-| `dt_bins_min_save_text` = `1` | Minimum bin size (seconds) for TSV export. Bin=0 skipped when >0. Set to 0 to include full-resolution data in text output. |
+| `dt_bins_min_save_text` = `1` | Minimum averaging bin (s) for the text export (`*.TSV`). Full-resolution data is saved only when this is 0. |
 | `split_period` = `''` | Split output into time blocks (e.g. `'1D'` = daily files). Empty = single continuous output. |
 | `text_path` = `'text_output'` | Directory for TSV output files. Created automatically if missing. |
 | `text_date_format` = `'%Y-%m-%d %H:%M:%S.%f'` | Date format string for TSV timestamps. |
@@ -262,7 +260,7 @@ Formula and provenance: [§Pressure computation](../methodology/pressure.md).
 | `b_overwrite_text` = `True` | Overwrite existing TSV files. Set `False` to keep previous exports. |
 | `b_split_by_time_ranges` = `False` | Split output by `time_ranges` boundaries — each interval gets its own file. |
 | `b_del_temp_db` = `False` | Delete temporary HDF5 files after processing. |
-| `overwrite_db` = `None` | NC overwrite strategy. `None` = append-only (safe). `"splice"` = replace overlapping, keep rest. `"trim"` = delete outside `time_ranges`. `"export"` = TSV only, no NC writes. See [§overwrite_db](#outoverwrite_db). |
+| `overwrite_db` = `None` | NC overwrite strategy. `None` = append-only (safe). `"splice"` = replace overlapping, keep rest. `"trim"` = delete outside `time_ranges`. `"export"` = TSV only, no NC writes. See [§overwrite_db](#outoverwrite_db). [More](#outoverwrite_db) |
 
 Non-optional: `dt_bins` and `text_path`. Field types:
 [`ConfigOut_InclProc` dataclass](../../src/tcm/schema.py).
@@ -284,11 +282,10 @@ Controls how the pipeline handles existing processed output when re-running.
 | `"trim"` | — | extends | **Trim + append** — trim existing, process/append new |
 | `"export"` | — | any | **Export only** — block NC writes, export TSV |
 
-When processing parameters changed and `overwrite_db=None`, the pipeline
-compares stored `/param_spans/{tbl}` interval table to the current values
-and raises `ValueError` with a unified diff. See
-[§Re-run behavior](config_tuning.md#re-run-behavior) for the full contract including
-incremental append positions and log-based dedup.
+A re-run of the computation (when NetCDF read/write available) with changed parameters inside a
+previously written window goes through `"splice"` only.
+Full contract (append positions, log-based dedup) —
+[re-run behavior](config_tuning.md#re-run-behavior).
 
 ## `filter` — Process-stage quality thresholds
 
@@ -299,9 +296,9 @@ different semantics.
 
 | Field = Default | Purpose |
 |-----------------|---------|
-| `min` = `{}` | Lower bounds: values with `\|col\| < min[col]` set to NaN. |
-| `bad_p_at_bursts_starts_period` = `''` | Pressure burst cleanup period (e.g. `'1h'`). Nulls first 2 samples per burst to remove startup artifacts. Empty disables. |
-| `max` = `{'g_minus_1': 1, 'h_minus_1': 8}` | Upper bounds. `M` expands to `Mx`/`My`/`Mz`. |
+| `min` = `{}` | Lower thresholds: readings below the threshold become NaN (rows kept). |
+| `max` = `{'g_minus_1': 1, 'h_minus_1': 8}` | Upper thresholds: readings above the threshold become NaN (rows kept). [More](#filtermax) |
+| `bad_p_at_bursts_starts_period` = `''` | Pressure burst cleanup period in pandas format (e.g. `'1h'`). Nulls the first 2 samples per burst to remove startup artifacts. Empty disables. |
 
 Field types: [`ConfigFilter_InclProc` dataclass](../../src/tcm/schema.py).
 
@@ -345,68 +342,57 @@ typed despike overrides:
 | `log` = `''` | Log file path base (without extension); empty = auto-named under `cfg_proc/log/`. |
 | `verbose` = `'INFO'` | Console log verbosity. `'DEBUG'` for troubleshooting, `'INFO'` for normal runs. |
 | `use_h5` = `'auto'` | Binary I/O policy. `auto` = use if available, skip silently. `off` = disable NC/HDF5. `require` = error if unavailable. `prefer` = warn and fall back. |
-| `return_` = `'<end>'` | Pipeline exit point. Run partial processing for debugging (e.g. `'<saved_raw>'` to verify data ingestion). See [Phase-stopping](config_tuning.md#phase-stopping). |
+| `return_` = `'<end>'` | How far to run the processing (e.g. `'<saved_raw>'` — to verify the raw data ingestion). See [Phase-stopping](config_tuning.md#phase-stopping). |
 
 Field types: [`ConfigProgram` dataclass](../../src/tcm/schema.py).
 
 ## `metadata` — Device deployment metadata (per-probe `info_devices.yaml`)
 
-Paired GUI rows ↔ 11-array indices (see `tcm/_meta_pairs.py:PAIRS`).
+Fields describe the instrument deployment and are saved to `info_devices.yaml` above the
+raw data directory — the journal accompanying the data.
 
 | Field = Default | Indices | Purpose |
 |-----------------|---------|---------|
-| `path` = — | — | Device file path (directory of `info_devices.yaml`) — browseable |
 | `point` = `?` | 0 | Station point identifier |
 | `symbol` = `?` | 3 | Modification / instrument symbol (e.g. `↟`) |
 | `sea_depth` = `?` | 1 | Sea depth (m) |
 | `h_above` = `?` | 2 | Height above bottom (m) |
 | `lat` = `?` | 4 | Latitude, decimal degrees |
 | `lon` = `?` | 5 | Longitude, decimal degrees |
-| `time_range` = `?` | 6, 7 | Deployment interval `[time_st, time_en]` ISO |
-| `burst_dt` = `?` | 8 | Burst sampling dt (s) |
-| `bursts_t` = `?` | 9 | Burst interval T (s) |
+| `time_range` = `?` | 6, 7 | The start and end of the correct operation of the device at the station. [More](#metadatatime_range) |
+| `burst_dt` = `?` | 8 | Duration of the active (continuous) recording (s) when working with interruptions |
+| `bursts_t` = `?` | 9 | Recording start period (s) when working with interruptions |
 | `comment` = `?` | 10 | Free-form comment |
 
-In the GUI the paired rows show `point, symbol | sea depth, h_above | lat, lon | time_range | burst_dt/t | comment` with gray example placeholders (e.g. `P3, 7.5, 54.62`) that vanish on edit — identical to `CellPlaceholder` for dates. `?, -, "", ~ (null)` are placeholders; required `0..time_en(7)` writes `~` when placeholder, optional tail `8..10` is trimmed if empty. `time_range` ↔ `input.time_ranges[[0,-1]]` bidirectionally synced.
+
+### Detailed
+
+[Device deployment metadata](../user_guide/configuration.md#deployment-journal--info_devicesyaml-and-the-processing-window), stored in `info_devices.yaml` as an 11-element array or less: a trailing NaN after the 8th element is not written. `?, -, "", ~` are equivalent to NaN, written in YAML as `~`.
+
+`?, -, "", ~` are equivalents of missing data (NaN — written to YAML as `~`; an all-NaN tail after the 8th element is not written at all).
+
+> In the GUI the rows are paired: `point, symbol | sea depth, h_above | lat, lon | time_range | burst_dt/t | comment`. You can specify your own save path, not the one from which metadata is loaded when searching for data. `time_range` ↔ `input.time_ranges[[0,-1]]` are bidirectionally synced where unset, on scan.
 
 ### `metadata.path`
-Directory containing `info_devices.yaml` (parent of `_raw`). Click to browse — same floating editor as `input.path`.
 
-### `metadata.point`
-Station / point identifier (deployment location name).
-
-### `metadata.symbol`
-Modification / instrument symbol (e.g. `↟`).
-
-### `metadata.sea_depth`
-Sea depth at deployment point (m).
-
-### `metadata.h_above`
-Height above bottom (m).
-
-### `metadata.lat`
-Latitude, decimal degrees.
-
-### `metadata.lon`
-Longitude, decimal degrees.
-
-### `metadata.time_range`
-Deployment time interval — start and end timestamps (`YYYY-MM-DDTHH:MM:SS`).
+Path to the deployment metadata: loaded from `info_devices.yaml` when scaned for data.
 
 #### Detailed
-When `info_devices.yaml` provides `time_range` but the run YAML's `input.time_ranges` is missing or has <2 elements, absent ends are filled from device metadata. Device `time_range` is edited in the `metadata` node; `time_ranges` remains the processing window.
+By default, changes are saved to the same location they were downloaded from: `info_devices.yaml` in the parent directory of the `_raw` directory or the raw data file directory, if not in a (sub)directory of `_raw`. Don't change the path if you want to save metadata changes in the file that is automatically loaded during scan. Write - on run the processing.
+### `metadata`
 
-### `metadata.burst_dt`
-Burst sampling dt (s).
 
-### `metadata.bursts_t`
-Bursts interval T (s).
 
-### `metadata.comment`
-Free-form comment for the deployment.
+### `metadata.time_range`
+
+#### Detailed
+Does not affect the current processing interval — a record for the deployment journal
+`info_devices.yaml` only.
+On scan only (not a processing run): when the `input.time_ranges` in the config file is
+unset or incomplete, its missing ends are updated from this record. Details —
+[deployment metadata](../user_guide/configuration.md#deployment-journal--info_devicesyaml-and-the-processing-window).
 
 ### `program.return_`
-Pipeline exit point — run partial processing for debugging.
 
 #### Detailed
 | `return_` value | Stops after | Typical use |
@@ -417,3 +403,8 @@ Pipeline exit point — run partial processing for debugging.
 | `<saved_noavg>` | No-avg output | Diagnostic without full binning |
 | `<saved_all>` | All binned NC writes | Skip combined output |
 | `<end>` (default) | Full pipeline | Normal processing |
+
+## See also
+> **Behavior tuning** (phase-stopping, time correction modes, column order,
+> `overwrite_db`, azimuth calibration, YAML examples) — in [config tuning](config_tuning.md).
+> Internals — in [CLI internals](../project_developer_guide/CLI.md).

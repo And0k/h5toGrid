@@ -66,7 +66,7 @@ highlight.js are vendored (generated into `_build/browser-runtime` by
     verbatim; an em-dash topic list after the link only when the target covers
     many topics (`[GUI Internals](GUI/_index.md) — module map, data flow, …`),
     otherwise absorb the description into the target's H1 and leave the link
-    bare (`[GUI Key Decisions with Rationale and Regression Notes](GUI_decisions.md)`).
+    bare (`[GUI Key Decisions with Rationale and Regression Notes](GUI/decisions.md)`).
   - File name as text is discouraged — acceptable only when the name is itself
     the identifier the reader meets in code (e.g. `config_reference.md`, parsed
     by `_help.py`).
@@ -116,23 +116,70 @@ General rules:
 
 | Doc element | GUI consumer |
 |---|---|
-| Table cell — one concise sentence | status bar message |
+| Paragraph between a `## ` heading and its table | status bar message (falls back to the `## ` subtitle when absent) |
+| `### Detailed` — bare heading (no backticks) under a `## ` section | parent section's dwell tooltip; does not close the section |
 | `### \`field.path\`` — modeless, single-context detail | browser/doc view; its `#### Detailed` body arms the dwell tooltip |
-| `### \`field.path\` <mode>value</mode>` — one section per consumer context | consumer selects by mode (e.g. `coefs_path` dir/file status hints) |
+| `### \`field.path\` <mode>value</mode>` — one section per consumer context | consumer selects by mode (e.g. hypothetical context-dependent field); its `#### Detailed` arms dwell |
+| `#### <mode>value</mode>` nested under `### \`field.path\`` — inherits parent field path | same as `### \`field.path\` <mode>value</mode>` but keeps general description; its `##### Detailed` arms dwell |
 
 - The `<mode>` tag is **optional**: use it only when the field's meaning
-  depends on the consumer context; otherwise write a modeless section.
+  depends on the consumer context; otherwise write a modeless section. A
+  modeless body is also the fallback for any requested mode that has no
+  tagged section.
 - Heading syntax: `` ### `dotted.field.path` `` optionally followed by
   `<mode>value</mode>` (`</>` shorthand accepted) and an explicit `{#id}`.
-- `#### <Tag>` blocks nest inside the active `###` section; `#### Detailed`
-  is the only body that arms the dwell tooltip.
+- `##` section headings accept plain titles (backticks optional): a heading
+  registers a field section iff its name is a known config group or
+  `metadata` / `path_field`; general prose headings (CLI keys, "See also")
+  are free-form.
+- A `` ### `path_field` `` heading alone opens its section — no `##` heading
+  or table row needed (its `###` bodies attach to the auto-created entry).
+- `#### <Tag>`` / `##### <Tag>` blocks nest inside the active section; `#### Detailed`
+  (child of `###`) and `##### <Tag>` (child of `#### <mode>`) are the only bodies
+  that arm the dwell tooltip.  Heading level = parent level + 1, so a `#### <mode>`
+  detail must be `#####`.
+- **Bare `### Detailed`** (no backticks) under a `## ` section is the parent
+  section's tooltip: the parser starts a mode for the current section with tag
+  `"Detailed"` and stores the content as the mode body's short.  Unlike a
+  `` ### `path` `` heading it does **not** close the section, so subsequent
+  `` ### `` path blocks (e.g. `` ### `metadata.path` ``) still parse.  Use this
+  when the tooltip text should not itself be a navigable field row.
+- **Post-heading paragraph**: the paragraph between a `## ` heading and its
+  table becomes the section's status-bar short (the `## ` subtitle is the
+  fallback when the paragraph is absent).  Keep it to one concise sentence.
+- **Citation blockquote** (`>`): a line starting with `>` finalizes the current
+  section (post-heading paragraph or mode body) and discards the citation line
+  itself.  Subsequent headings still start new sections.  Use it to exclude
+  supplementary asides from GUI status/tooltip text.
+- **New**: `#### <mode>value</mode>` under a `### \`field.path\`` heading
+  inherits the parent field path — equivalent to a separate
+  `### \`field.path\` <mode>value</mode>` heading but nests the mode detail
+  under the general field description.  This lets the general description
+  (stored under the modeless key; its `#### Important` sub-block is the error hint)
+  be shown on field-associated errors (e.g. ``FileNotFoundError``) while the
+  mode-specific bodies feed consumer statuses.
+- **Exception** — `path_field` and `input.coefs_path`: carry only a modeless `###` section
+  (CLI/general docs). GUI mode suffixes live in `str.yaml` as
+  `path_field.status.dirs/files` and `input.coefs_path.status.dir/files`
+  (also `*.dirs/files` plural aliases and `coef_path` typo alias) and are
+  appended to the general short body at runtime — same augmentation pattern as
+  `time_ranges.hover.*` on `metadata.time_range` (md base + STR suffix).
 - Parser: a `###` section does not close the parent `##` field section; the
-  next `###`/`##` closes the accumulation; any `[a-z_]+` mode value is
-  recognized, no code changes needed in `_help.py`.
+  next `###`/`##` (or a `####` sibling of a `#### <mode>` section) closes the
+  accumulation; any `[a-z_]+` mode value is recognized, no code changes needed
+  in `_help.py`.
+- A bare `### Detailed` heading (no backticks) starts a mode for the current
+  section with tag `"Detailed"` — its content becomes the section's tooltip.
+  It does not close the section, so subsequent `###` path blocks still parse.
+- The paragraph between a `##` heading and its table is captured as the
+  section's short (falls back to the subtitle).  A `>` citation line
+  finalizes the current accumulation and is itself discarded.
 
 | Mode | Content regime | Example consumer |
 |-------|---------|-------------------|
-| `<mode>probe</mode>` | Per-probe processing meaning — what the field does, how it affects the result | GUI coef hover, popup |
-| `<mode>search</mode>` | Input specification patterns — glob, regex, directory, YAML | GUI path field, CLI help |
+| `<mode>dirs</mode>` (STR `path_field.status.dirs`) | Input data directory + GUI browse-dir hint | GUI path field (default) — md general + STR suffix |
+| `<mode>files</mode>` (STR `path_field.status.files`) | Individual file selection — data files or their configs + GUI browse-files hint | GUI path field with Shift — md general + STR suffix |
+| `<mode>dir</mode>` / `<mode>file</mode>` (STR `input.coefs_path.status.*`) | Coefficient source: directory vs single file | `input.coefs_path` status hints (md general + STR suffix) |
+| - | Input specification patterns — glob, regex, directory, YAML | General field information, error message, CLI help |
 
-Parser internals: [§Field detail sections](GUI_help_system.md#field-detail-sections-in-config_referencemd).
+Parser internals: [§Field detail sections](GUI/help_system.md#field-detail-sections-in-config_referencemd).

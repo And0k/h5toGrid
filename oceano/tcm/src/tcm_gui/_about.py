@@ -105,6 +105,17 @@ def _lang_parts(stem: str) -> tuple[str, str | None]:
     return stem, None
 
 
+def local_readme() -> Path:
+    """Bundled readme for :func:`resolve_lang`, else the base ``readme.md``.
+
+    Uses the same :func:`_lang_parts` matching as doc discovery so any
+    future ``readme_<lang>.md`` is picked up without further changes.
+    """
+    lang = resolve_lang()
+    candidates = [p for p in DOC_DIR.parent.glob("readme*.md") if _lang_parts(p.stem)[1] == lang]
+    return candidates[0] if candidates else DOC_DIR.parent / "readme.md"
+
+
 def _lang_filter(docs: list[tuple[str, str, Path]], lang: str) -> list[tuple[str, str, Path]]:
     """Language-relevant subset of *docs* (already sorted by path).
 
@@ -368,7 +379,7 @@ class AboutDialog(tk.Toplevel):
             items.append(
                 f"**{_S['about.documentation']}** "
                 f"([{_S['about.docs_internet']}]({meta['docs_url']}) / "
-                f"[{_S['about.docs_local']}]({self._local_readme().as_posix()}))"
+                f"[{_S['about.docs_local']}]({local_readme().as_posix()}))"
             )
         self._meta_lbl.set_text("\n".join(f"- {it}" for it in items))
         # Hover → main status bar shows the URL under the pointer
@@ -498,17 +509,6 @@ class AboutDialog(tk.Toplevel):
             self._refit()
         elif self._vbar_shown:
             self._place_vbar()  # height-only resize: re-glue the bar
-
-    @staticmethod
-    def _local_readme() -> Path:
-        """Bundled readme for :func:`resolve_lang`, else the base ``readme.md``.
-
-        Uses the same :func:`_lang_parts` matching as doc discovery so any
-        future ``readme_<lang>.md`` is picked up without further changes.
-        """
-        lang = resolve_lang()
-        candidates = [p for p in (DOC_DIR.parent).glob("readme*.md") if _lang_parts(p.stem)[1] == lang]
-        return candidates[0] if candidates else DOC_DIR.parent / "readme.md"
 
     def _fit_label_height(
         self, label: MarkdownLabel, *, min_lines: int = 1, bottom: int | None = None

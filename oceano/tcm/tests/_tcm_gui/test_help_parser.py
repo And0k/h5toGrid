@@ -77,7 +77,7 @@ class TestRealReference:
         from tcm_gui._help import help_for_path, reload_cache
 
         reload_cache()
-        # ``input.path`` has ``<mode>probe</mode>`` and ``<mode>search</mode>`` sections.
+        # ``input.path`` has a modeless ``###`` section (body under ``_NO_MODE``).
         e = help_for_path("input.path")
         if e is None:
             pytest.skip("input.path not in bundled doc — version drift")
@@ -90,11 +90,11 @@ class TestRealReference:
         from tcm_gui._help import help_for_path, reload_cache
 
         reload_cache()
-        e = help_for_path("input.path", mode="probe")
+        e = help_for_path("path_field", mode="dirs")
         if e is None:
-            pytest.skip("input.path not in bundled doc — version drift")
+            pytest.skip("path_field not in bundled doc — version drift")
         assert isinstance(e.body, str), f"mode-resolved body should be str, got {type(e.body).__name__}"
-        assert e.body, f"input.path probe body should be non-empty, got {e.body!r}"
+        assert e.body, f"path_field search body should be non-empty, got {e.body!r}"
 
     def test_section_level_entries_emitted(self, monkeypatch):
         """Section-level entries resolve for bare paths like ``input``, ``out``, ``filter``."""
@@ -104,11 +104,11 @@ class TestRealReference:
         reload_cache("en")
         for section, expected_substring in (
             ("input", "Data source"),
-            ("input.coefs", "Calibration coefficients"),
+            ("input.coefs", "Loaded from the coefficient file"),
             ("out", "Output configuration"),
-            # Real doc subtitle: "Process-stage quality thresholds" — values exceeding
-            # become NaN (body explains); subtitle was reworded from older "NaN-out".
-            ("filter", "quality thresholds"),
+            # Real doc: the post-heading paragraph is now the short (values exceeding
+            # thresholds become NaN...); the old subtitle "quality thresholds" is gone.
+            ("filter", "process-stage"),
             ("program", "Runtime flags"),
         ):
             e = help_for_path(section)
@@ -137,19 +137,19 @@ class TestRealReference:
 
 
 class TestRealReferenceDetailed:
-    """Real-doc checks for the ``#### Detailed`` sub-block under ``input.path`` search mode."""
+    """Real-doc checks for the ``#### Detailed`` sub-block under ``path_field`` search mode."""
 
     def test_search_mode_detailed_block_reachable(self):
-        """``help_for_path("input.path", mode="search", detail="Detailed")`` returns str."""
+        """``help_for_path("path_field", mode="dirs", detail="Detailed")`` returns str."""
         from tcm_gui._help import help_for_path, reload_cache
 
         reload_cache()
-        e = help_for_path("input.path", mode="search", detail="Detailed")
+        e = help_for_path("path_field", mode="dirs", detail="Detailed")
         if e is None:
-            pytest.skip("input.path not in bundled doc — version drift")
+            pytest.skip("path_field not in bundled doc — version drift")
         assert isinstance(e.body, str), f"detail-resolved body should be str, got {type(e.body).__name__}"
         assert e.body, (
-            "input.path search #### Detailed body should be non-empty — "
+            "path_field search #### Detailed body should be non-empty — "
             "did config_reference.md gain the Detailed sub-block?"
         )
         # Detailed content must mention the directory layout anchor, not the
@@ -157,13 +157,13 @@ class TestRealReferenceDetailed:
         assert "_raw" in e.body, f"Detailed body should mention _raw directory layout; got {e.body!r}"
 
     def test_search_mode_short_lines_excludes_detailed(self):
-        """``mode="search"`` (no detail) returns SHORT lines only — pre-#### text."""
+        """``mode="dirs"`` (no detail) returns SHORT lines only — pre-#### text."""
         from tcm_gui._help import help_for_path, reload_cache
 
         reload_cache()
-        e = help_for_path("input.path", mode="search")
+        e = help_for_path("path_field", mode="dirs")
         if e is None:
-            pytest.skip("input.path not in bundled doc — version drift")
+            pytest.skip("path_field not in bundled doc — version drift")
         assert isinstance(e.body, str), f"mode-resolved short body should be str, got {type(e.body).__name__}"
         assert e.body, "search short body should be non-empty (pre-#### one-liner)"
         # The Detailed directory-layout text must NOT have leaked into the short body.
@@ -172,22 +172,22 @@ class TestRealReferenceDetailed:
         )
 
     def test_search_mode_has_details_in_full_body(self):
-        """Full ``help_for_path("input.path")`` body[search] is a _ModeBody (has details)."""
-        from tcm_gui._help import ModeBody, help_for_path, reload_cache
+        """Full ``help_for_path("path_field")`` body[detail] is a _ModeBody (has details)."""
+        from tcm_gui._help import _NO_MODE, ModeBody, help_for_path, reload_cache
 
         reload_cache()
-        e = help_for_path("input.path")
+        e = help_for_path("path_field")
         if e is None:
-            pytest.skip("input.path not in bundled doc — version drift")
+            pytest.skip("path_field not in bundled doc — version drift")
         assert isinstance(e.body, dict), f"full body should be dict, got {type(e.body).__name__}"
-        search = e.body.get("search")
-        assert isinstance(search, ModeBody), (
-            "search mode now carries #### Detailed → body[search] should be ModeBody; "
-            f"got {type(search).__name__}"
+        general = e.body.get(_NO_MODE)
+        assert isinstance(general, ModeBody), (
+            "general (modeless) now carries #### Detailed → body[_NO_MODE] should be ModeBody; "
+            f"got {type(general).__name__}"
         )
-        assert search.details, f"search ModeBody should have details, got {search.details!r}"
-        assert "Detailed" in search.details, (
-            f"search details should include 'Detailed' tag; got {sorted(search.details)!r}"
+        assert general.details, f"general ModeBody should have details, got {general.details!r}"
+        assert "Detailed" in general.details, (
+            f"general details should include 'Detailed' tag; got {sorted(general.details)!r}"
         )
 
     def test_detail_resolution_for_unknown_detail_returns_empty_str(self):
@@ -195,27 +195,26 @@ class TestRealReferenceDetailed:
         from tcm_gui._help import help_for_path, reload_cache
 
         reload_cache()
-        e = help_for_path("input.path", mode="search", detail="Nonexistent")
+        e = help_for_path("path_field", mode="dirs", detail="Nonexistent")
         if e is None:
-            pytest.skip("input.path not in bundled doc — version drift")
+            pytest.skip("path_field not in bundled doc — version drift")
         assert isinstance(e.body, str), (
             f"unknown-detail body should be str (empty), got {type(e.body).__name__}"
         )
         assert e.body == "", f"unknown detail should resolve to '', got {e.body!r}"
 
-    def test_probe_mode_without_detailed_stays_str(self):
-        """Modes without ``####`` (probe) keep backward-compat: body == whole str."""
-        from tcm_gui._help import ModeBody, help_for_path, reload_cache
+    def test_files_mode_without_detailed_stays_str(self):
+        """Non-Hydra ``path_field`` section registers with its mode bodies."""
+        from tcm_gui._help import help_for_path, reload_cache
 
         reload_cache()
-        e = help_for_path("input.path", mode="probe")
+        e = help_for_path("path_field", mode="files")
         if e is None:
-            pytest.skip("input.path not in bundled doc — version drift")
-        assert isinstance(e.body, str), f"probe body (no ####) should stay str, got {type(e.body).__name__}"
-        # Sanity: ModeBody must NOT be returned for modes without #### sub-blocks.
-        assert not isinstance(e.body, ModeBody), (
-            "probe mode has no #### sub-blocks — body must be a plain str, not ModeBody"
+            pytest.skip("path_field not in bundled doc — version drift")
+        assert isinstance(e.body, str), (
+            f"files body (no ####) should stay str, got {type(e.body).__name__}"
         )
+        assert e.body, "files short body should be non-empty"
 
     def test_field_level_detailed_block_reachable(self, monkeypatch):
         """``filter.max`` modeless-section ``#### Detailed`` block is reachable."""
@@ -374,10 +373,16 @@ class TestParseReference:
         )
 
     def test_section_level_entries_emitted(self):
-        """Section headings emit entries keyed by section name, subtitle as short."""
-        # Sample contains input, input.coefs, out, filter sections.
+        """Section headings emit entries keyed by section name.
+
+        Short = the paragraph between the ``## `` heading and its table (falls back
+        to the subtitle when no paragraph is present).
+        """
+        # Sample contains input, input.coefs, out, filter sections. Only `input`
+        # carries a post-heading paragraph, so its short is that paragraph; the
+        # others fall back to their subtitle.
         for section, expected_substring in (
-            ("input", "Data source"),
+            ("input", "Narrative for input"),
             ("input.coefs", "Calibration coefficients"),
             ("out", "Output configuration"),
             ("filter", "NaN-out"),
@@ -491,7 +496,7 @@ _DETAIL_SAMPLE = textwrap.dedent(
     |-------|------|---------|----------|---------|
     | `path` | `str` | — | **Yes** | File path. |
 
-    ### `input.path` <mode>search</mode>
+    ### `input.path` <mode>dirs</mode>
     Short one-liner here.
 
     #### Detailed
@@ -520,7 +525,7 @@ class TestDetailSubblock:
         self.entries = parse_reference(_DETAIL_SAMPLE)
 
     def test_detailed_block_nested_not_closing_mode(self):
-        """``#### Detailed`` does NOT close the ``### … <mode>search</mode>`` mode.
+        """``#### Detailed`` does NOT close the ``### … <mode>dirs</mode>`` mode.
 
         The Detailed content must reach the entry's search-mode body as a
         detail block, NOT be dropped as plain prose outside any section.
@@ -529,7 +534,7 @@ class TestDetailSubblock:
 
         e = self.entries["input.path"]
         assert isinstance(e.body, dict), "input.path should have mode-tagged body"
-        search = e.body["search"]
+        search = e.body["dirs"]
         assert isinstance(search, ModeBody), (
             f"search mode carries #### → body[search] should be ModeBody; got {type(search).__name__}"
         )
@@ -547,7 +552,7 @@ class TestDetailSubblock:
         """A mode may carry several ``####`` blocks — each addressed by its tag."""
         from tcm_gui._help import ModeBody
 
-        search = self.entries["input.path"].body["search"]
+        search = self.entries["input.path"].body["dirs"]
         assert isinstance(search, ModeBody)
         assert set(search.details) == {"Detailed", "Other"}, (
             f"search should have both detail tags; got {sorted(search.details)!r}"

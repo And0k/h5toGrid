@@ -111,9 +111,11 @@ available (only `input.path` gates it).
 - **Hover** a row: the status bar shows the field's short help; staying on the
   row opens a detailed tooltip (auto-closes after 3 s; status switches settle
   in 0.3 s so quick pointer passes don't flicker).
-- **F1** with the mouse over a row: opens the documentation browser at that
-  field's section in the config reference. Complex formulas live on methodology
-  pages (e.g. pressure `P_t`) and are linked from the tooltip.
+- **F1**: opens the documentation browser — at the selected row's section in
+  the config reference (child rows open their parent's section), at the
+  `path_field` section when the path entry has focus, or the readme when
+  nothing specific applies. Complex formulas live on methodology pages
+  (e.g. pressure `P_t`) and are linked from the tooltip.
 
 ## CLI reference
 

@@ -41,6 +41,32 @@ from ._placeholder import CellPlaceholder
 _COL_W = 4096  # wider than any viewport — scrollable when right-aligned
 
 
+def _status_body(mode: str) -> str:
+    """``path_field`` status = doc general + STR suffix (``path_field.status.<mode>``).
+
+    General = ``### `path_field` `` short body (pre-``####``) from
+    ``config_reference.md``; suffix = mode-specific GUI hint from ``STR``.
+    Mirrors ``time_ranges.hover.*`` pattern — md-driven base plus STR augmentation.
+    """
+    e = help_for_path("path_field", mode=mode)
+    base = e.body if e and isinstance(e.body, str) and e.body else ""
+    # Fallback when mode body absent — help_for_path already falls back to
+    # ``_NO_MODE`` short when the requested mode has no tagged section.
+    if not base:
+        if (ge := help_for_path("path_field")) and isinstance(ge.body, dict):
+            from tcm_gui._help import _NO_MODE, ModeBody
+
+            raw = ge.body.get(_NO_MODE)
+            if isinstance(raw, ModeBody):
+                base = raw.short
+            elif isinstance(raw, str):
+                base = raw
+    suffix = _S.get(f"path_field.status.{mode}", "")
+    if base and suffix:
+        return f"{base} {suffix}"
+    return base or suffix
+
+
 class PathField(ttk.Frame):
     """A single-cell tksheet posing as the path field.
 
@@ -85,7 +111,7 @@ class PathField(ttk.Frame):
         on_shift: Callable[[bool], None] | None = None,
         on_browse_click: Callable[[], None] | None = None,
         placeholder: str = _S.get("path_field.placeholder", ""),
-        placeholder_shift: str = _S.get("path_field.placeholder_shift", ""),
+        placeholder_shift: str = _S.get("path_field.placeholder_files", ""),
         shift_swap: bool = True,  # False for floated fields in ConfigSheet
     ) -> None:
         super().__init__(parent)
@@ -98,13 +124,10 @@ class PathField(ttk.Frame):
         self._entry: ttk.Entry | None = None
         self._hovering = False
         self._btn_w: int | None = None
-        # Hover status: doc-driven (config_reference.md `input.path` search mode
-        # short lines); fall back to str.yaml when the doc is absent.
-        _h = help_for_path("input.path", mode="search")
-        self._path_status = (
-            _h.body if _h and isinstance(_h.body, str) and _h.body else _S.get("path_field.status", "")
-        )
-        self._shift_status = _S.get("path_field.status_shift", "")
+        # Hover status: doc-driven from the config_reference ``path_field``
+        # section — ``dir`` mode short body (changes to ``files`` on Shift-held).
+        self._path_status = _status_body("dirs")
+        self._shift_status = _status_body("files")
         self._browse_hint = status_hint
         self._browse_hint_files = status_hint_files
 
@@ -112,9 +135,8 @@ class PathField(ttk.Frame):
         self._shift_swap = shift_swap
         self._on_browse_click = on_browse_click
         # Status callback — shared with BrowseOverlay; also called by Shift handlers.
-        # Two dedicated keys: normal status and Shift-held status (no separator parsing).
         self._on_status = on_status
-        self._path_status_shift = _S.get("path_field.status_shift", self._path_status)
+        self._path_status_shift = self._shift_status or self._path_status
         # Placeholder state — two levels: simple (default) and advanced (Shift held).
         self._placeholder_simple = placeholder
         self._placeholder_shift = placeholder_shift or placeholder
@@ -205,7 +227,20 @@ class PathField(ttk.Frame):
         self.pack_propagate(False)
         self.sh.pack(fill="both", expand=True)
         with suppress(AttributeError, TclError):
-            self.configure(height=self.sh.MT.row_positions[1])
+            # Shrink the frame to the font's text height, not the padded
+            # tksheet row height (min_row_height = max(6, font_h, index_h) + 6).
+            # On some Windows display settings the +6 padding dwarfs the font,
+            # leaving the path field much taller than its text.  Override
+            # tksheet's min_row_height floor and reset the single row so it
+            # shrinks to fit the font exactly — anchored at the top: the
+            # browse button (rely=0.0, anchor="ne") and edit Entry
+            # (relheight=1) follow the shorter frame, other grid elements
+            # (label, separator, button bar) are unaffected.
+            font_height = self.sh.MT.table_txt_height
+            self.sh.MT.min_row_height = font_height
+            self.sh.default_row_height(font_height)
+            self.sh.MT.reset_row_positions()
+            self.configure(height=font_height)
         # Show placeholder if no initial value was set.
         if self._placeholder_simple:
             self._show_placeholder()

@@ -129,6 +129,7 @@ def _build_status_ns(root):
     ns._cancel_dwell_job = App._cancel_dwell_job.__get__(ns)
     ns._cancel_dwell_hide_job = App._cancel_dwell_hide_job.__get__(ns)
     ns._cancel_dwell = App._cancel_dwell.__get__(ns)
+    ns._pointer_in_dwell_hierarchy = App._pointer_in_dwell_hierarchy.__get__(ns)
     ns._show_dwell_tip = App._show_dwell_tip.__get__(ns)
     ns._clear_dwell_now = App._clear_dwell_now.__get__(ns)
     ns._hide_tip = App._hide_tip.__get__(ns)

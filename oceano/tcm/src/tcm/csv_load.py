@@ -1084,8 +1084,6 @@ cfg_default = {
         "verbose": "INFO",
         # 'dask_scheduler': 'synchronous'
     },
-    # Warning! If True and b_incremental_update= True then not replace temporary file with result before proc.
-    # '--log', 'log/csv2h5_inclin_Kondrashov.log'  # log operations
 }
 
 

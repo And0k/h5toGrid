@@ -19,17 +19,18 @@ from tcm import cli, config_yaml, format, incl_calc, paths, schema, to_omegaconf
 from tcm.states import ScanStage
 from tcm_gui.cli_cfg import default_cfg
 
-from ._about import AboutDialog
+from ._about import AboutDialog, local_readme
 from ._browse_button import DATA_FILETYPES, SEARCH_FILETYPES, BrowseButtonManager, _is_shift_pressed
-from ._help import doc_path, help_for_path
-from ._i18n import STRINGS as _S  # Chrome with auto-detection of OS locale if LANG=auto
+from ._help import doc_path, help_for_path, help_general_for_path
+from ._i18n import STRINGS as _S, resolve_lang  # Chrome with auto-detection of OS locale if LANG=auto
 from ._path_field import PathField
 from ._rtf_clipboard import copy_rich
 from ._tab_rail import TabRail
-from .browser import open_md_link
+from .browser import get_documentation_browser, open_md_link
 from .coef_sheet import ConfigSheet
 from .const import (
     UIScale,
+    VK_C,
     configure_ui,
     fit_to_workarea,
     get_widget_meta,
@@ -52,6 +53,11 @@ def _tip_body(path: str, **kwargs: str) -> str:
     return e.body if e and isinstance(e.body, str) and e.body else ""
 
 
+# Chrome role → help source: ``path_lbl`` shares the PathField help — one source
+# (config_reference ``path_field`` modes + STR tooltip), no duplicated keys.
+_CHROME_ALIAS: dict[str, str] = {"path_lbl": "path_field"}
+
+
 class App:
     APP_ID = "Vendor.Product"  # todo: Fix, not hardcode here
     GEOMETRY = (1100, 800)  # desired initial size — clamped to work area at start
@@ -70,6 +76,8 @@ class App:
         self.ui = UIScale(self.root)
         configure_ui(self.root)
         self._theme = apply_theme_defaults(self.root)  # dark/light log colors
+        # Custom label style matching the config tree column tint.
+        ttk.Style().configure("Overall.TLabel", background=tcm_gui.theme.CONFIG_TREE_BG)
         self.root.title(_S.get("window.title", "TCM"))
         # Alt+←/→/↑/↓ shifts the window (Shift = ×10) — a mouse drag can't
         # carry the title bar above the screen top, keyboard nudges can
@@ -179,7 +187,7 @@ class App:
         f0 = ttk.Frame(r)
         f0.grid(row=0, column=0, sticky="ew", padx=4, pady=2)
         f0.columnconfigure(1, weight=1)
-        self._path_lbl = ttk.Label(f0, text=_S["path_lbl.tooltip"])
+        self._path_lbl = ttk.Label(f0, text=_S["path_lbl.text"])
         self._path_lbl.grid(row=0, column=0, padx=(0, 4))
         self._path_field = PathField(
             f0,
@@ -221,10 +229,13 @@ class App:
         f1.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 0))
         f1.columnconfigure(0, weight=1)
         self._status_hovering = False  # pointer on _status_lbl — hold the dwell tip
+        self._status_lbl_f1_anchor: str | None = None  # F1 anchor for what's shown in _status_lbl
         self._stage_hovering = False  # pointer over the stage widgets — keep them hidden
         self._prog_show_job: str | None = None  # after() id for delayed show
         # Use mode-specific default stage text: full mode is editable, non-full is readonly.
-        self._overall_lbl = ttk.Label(f1, text=self._default_stage_text(), anchor="center")
+        self._overall_lbl = ttk.Label(
+            f1, text=self._default_stage_text(), anchor="center", style="Overall.TLabel"
+        )
         self._overall_lbl.grid(row=0, column=0, sticky="ew")
         # §2b Stage progress — never gridded at build; only active stages grid
         # them (see _show_stage_progress), so the row starts collapsed.
@@ -305,6 +316,18 @@ class App:
         # propagation.  Otherwise it falls through so the focused widget
         # (e.g. ``_path_field`` ttk.Entry) keeps normal copy behaviour.
         self.root.bind("<<Copy>>", self._on_copy_rich, add="+")
+        # Layout-independent Ctrl+C: on non-Latin keyboards (Cyrillic, Greek…)
+        # the physical ``C`` key produces a different character, so Tk's
+        # ``<<Copy>>`` never fires.  We detect the physical key by its platform
+        # ``keycode`` (see :data:`const.VK_C`) and re-emit ``<<Copy>>`` on the
+        # event widget — which lets the focused widget (Entry, Text, tksheet)
+        # perform its own copy.  Latin layouts are skipped: ``keysym`` is already
+        # ``c``, so Tk handles it natively and we must not double-fire.
+        self._copy_binding_id = self.root.bind_all("<Control-KeyPress>", self._on_ctrl_keypress, add="+")
+        # F1 — context help: top path_field / focused-or-current sheet row
+        # (selection first) / readme fallback.  One root binding — pages
+        # bind nothing (per-sheet F1 bindings fired once per opened tab).
+        self.root.bind("<F1>", self._on_f1_help, add="+")
 
         # §6 GUI status — MarkdownLabel overlaid bottom-left, dynamic width.
         self._status_lbl = MarkdownLabel(
@@ -322,7 +345,7 @@ class App:
         self._status_lbl.bind("<Leave>", self._on_status_leave, add="+")
 
         # Esc dismisses the error detail tooltip shown in _status_lbl.
-        r.bind("<Escape>", lambda _e: (self._hide_tip(), self._cancel_dwell()), add="+")
+        r.bind("<Escape>", lambda _e: (self._hide_tip(), self._cancel_dwell(force=True)), add="+")
         # Hover-hide: root <Motion> hides ONLY when the live pointer is over the
         # visible stage widgets; motion anywhere else never hides them.  <Enter>
         # bindings proved unreliable — _poll_progress re-grids the widgets
@@ -330,6 +353,12 @@ class App:
         # Once hidden, only programmatic activation restores (progress advance /
         # explicit placement) — pointer leave alone never re-shows.
         r.bind("<Motion>", self._on_status_motion, add="+")
+        # Root <Leave> fires when the pointer exits the window from the gap
+        # between widgets (root border).  Without it, a dwell tip shown while
+        # hovering a widget would never start its linger if the pointer left
+        # via the root border — the widget <Leave> is suppressed by the
+        # root-border guard, so no one schedules the auto-close.
+        r.bind("<Leave>", lambda _e: self._cancel_dwell(), add="+")
 
         # One pass: bind every chrome ``self._*`` widget to its help text / status
         # from STR.  No per-widget ``set_widget_meta`` calls above — role is derived
@@ -362,14 +391,19 @@ class App:
         w = event.widget
         if status := get_widget_meta(w, "status"):
             self._chrome_hovering = w
+            # Widget's F1 anchor (if any) — stored for both status and dwell.
+            f1 = get_widget_meta(w, "f1_anchor")
             # Widget changed → clear previous dwell before updating status.
             if self._dwell_widget is not w:
                 self._cancel_dwell()
                 self._dwell_widget = w
-                self._set_status(status)
-                self._arm_dwell(get_widget_meta(w, "tooltip"))
+                self._set_status(status, f1)
+                self._arm_dwell(get_widget_meta(w, "tooltip"), f1)
             else:
-                self._set_status(status)
+                self._set_status(status, f1)
+            # Store the widget's F1 anchor if it has one (status label shows its help).
+            if f1:
+                self._status_lbl_f1_anchor = f1
 
     def _on_chrome_leave(self, _event: tk.Event) -> None:
         """Generic chrome leave: clear hover flag + cancel dwell."""
@@ -380,9 +414,12 @@ class App:
     def _register_chrome_help(self) -> None:
         """Bind chrome widgets to help text / status in one pass.
 
-        Role = attribute name without the leading underscore.  ``tooltip`` is a
-        static ``str`` from STR; ``status`` is either a static ``str`` from STR
-        or a bound method returning the live caption (Run button: busy/paused).
+        Role = attribute name without the leading underscore, aliased via
+        :data:`_CHROME_ALIAS` (``path_lbl`` → ``path_field`` — the label shows
+        the field's own help).  ``tooltip`` is a static ``str`` from STR;
+        ``status`` is either a static ``str`` from STR, a bound method returning
+        the live caption (Run button: busy/paused) or doc-driven
+        (``path_field``: config_reference search-mode short body).
         Dynamic ``status`` callables are resolved by :func:`get_widget_meta`
         at hover time — one read sees current state AND current language (STR).
         Widgets whose role has no STR entries get no binding → no help ("не ко всему").
@@ -391,13 +428,19 @@ class App:
             if not isinstance(w, tk.Misc):
                 continue
             role = attr.lstrip("_")
-            tooltip = _S.get(f"{role}.tooltip")
+            src = _CHROME_ALIAS.get(role, role)
+            tooltip = _S.get(f"{src}.tooltip")
             status: object
             if role == "run_btn":
                 # Dynamic: reflected busy / paused at hover time, not registration.
                 status = self._run_btn_status
+            elif src == "path_field":
+                # Doc general + STR suffix — identical to PathField hover status.
+                base = _tip_body("path_field", mode="dirs")
+                suffix = _S.get("path_field.status.dirs", "")
+                status = f"{base} {suffix}".strip() if base and suffix else (base or suffix or None)
             else:
-                status = _S.get(f"{role}.status")
+                status = _S.get(f"{src}.status")
             if tooltip is None and status is None:
                 continue
             kwargs: dict[str, object] = {}
@@ -405,6 +448,10 @@ class App:
                 kwargs["tooltip"] = tooltip
             if status is not None:
                 kwargs["status"] = status
+            # F1 anchor for this chrome role (path_field uses its own entry).
+            f1_src = "path_field" if src == "path_field" else src
+            if f1_entry := help_for_path(f1_src):
+                kwargs["f1_anchor"] = f1_entry.anchor
             set_widget_meta(w, **kwargs)
 
     def _run_btn_status(self) -> str:
@@ -448,8 +495,21 @@ class App:
         if _is_shift_pressed() and self._path_field._shift_status:
             status = self._path_field._shift_status
         self._cancel_dwell()
-        self._set_status(status)
-        self._arm_dwell(_S.get("path_field.tooltip", ""))
+        f1 = e.anchor if (e := help_for_path("path_field")) else None
+        self._set_status(status, f1)
+        self._status_lbl_f1_anchor = f1
+        # Dwell: doc-driven Detailed for the current pathField regime (dirs/files),
+        # fallback to generic STR tooltip.
+        _mode = "files" if _is_shift_pressed() and self._path_field._shift_status else "dirs"
+        if (
+            (de := help_for_path("path_field", mode=_mode, detail="Detailed"))
+            and isinstance(de.body, str)
+            and de.body
+        ):
+            _tip = de.body
+        else:
+            _tip = _S.get("path_field.tooltip", "")
+        self._arm_dwell(_tip, f1)
 
     def _on_path_hover_out(self) -> None:
         """Mouse leaves Entry — clear hover flag + cancel dwell (status restored by poll)."""
@@ -547,6 +607,48 @@ class App:
             and w.winfo_rooty() <= event.y_root <= w.winfo_rooty() + w.winfo_height()
         )
 
+    def _pointer_in_dwell_hierarchy(self) -> bool:
+        """True when the pointer is within the dwelling widget's hierarchy.
+
+        Covers three cases where a ``<Leave>`` on the dwelling widget must NOT
+        cancel the dwell (the tip stays so the user can keep reading):
+
+        1. Pointer is still on the dwelling widget itself — Tk can fire
+           ``<Leave>`` while the pointer is at the widget's edge (premature
+           leave, before the resize cursor would appear).
+        2. Pointer moved to an ancestor (parent frame) — the user perceives
+           this as "still in the gap", not on another interactive widget.
+        3. Pointer moved to the root window background.
+
+        The root is an ancestor of every widget, so walking up from the
+        dwelling widget and checking for the pointer's widget covers all
+        three cases in one pass.
+        """
+        if self._dwell_widget is None:
+            return False
+        pw = self._pointer_widget()
+        if pw is None:
+            return False
+        return self._within(self._dwell_widget, pw)
+
+    def _pointer_on_status_label(self) -> bool:
+        """True when the pointer is over the status label or a descendant.
+
+        The status label shows both short status and the markdown dwell
+        tooltip; F1 resolves the anchor from the row whose help is shown
+        there.  A ``MarkdownLabel`` is a ``tk.Text`` that may embed link
+        windows — the master walk reaches ``_status_lbl`` for any of them.
+        """
+        pw = self._pointer_widget()
+        if pw is None:
+            return False
+        return self._within(pw, self._status_lbl)
+
+    def _pointer_widget(self) -> tk.Widget | None:
+        """Topmost widget under the pointer, or ``None`` if outside the window."""
+        x, y = self.root.winfo_pointerxy()
+        return self.root.winfo_containing(x, y)
+
     def _on_top_shift(self, is_file: bool) -> None:
         """Top PathField Shift state changed — swap status text.
 
@@ -571,6 +673,55 @@ class App:
         dlg.bind(
             "<Destroy>", lambda e: e.widget is dlg and self._set_status(_S["status.ready"], raw=True), add="+"
         )
+
+    @staticmethod
+    def _within(widget, ancestor) -> bool:
+        """True iff *widget* is *ancestor* or nested in it (master walk)."""
+        while widget is not None:
+            if widget is ancestor:
+                return True
+            widget = getattr(widget, "master", None)
+        return False
+
+    def _on_f1_help(self, _event=None) -> None:
+        """F1 — open the doc browser for the focused/selected widget.
+
+        Resolution: top path field (focus inside its subtree) → mouse over
+        the status label (``_status_lbl`` — shows both the short status and
+        the dwell tooltip; detected by pointer position at press time, not a
+        tracked flag) → focused or current page's SELECTED row, or if
+        nothing selected the mouse is inside the dwell tooltip widget
+        (``_hover_field``) — (:meth:`ConfigSheet._f1_anchor`; child rows walk
+        up to the parent's section) → localized readme when nothing is
+        selected or the tooltip is not hovered.  The served doc MUST be the
+        same localized file the entries were parsed from
+        (``doc_path(resolve_lang())`` — exactly what ``_help._load`` reads);
+        plain ``doc_path()`` always serves English and a localized anchor
+        then finds no element — the page opens but never scrolls.
+        """
+        try:
+            w = self.root.focus_get()  # KeyError on menu focus, TclError on dead widgets
+        except Exception:  # noqa: BLE001 — focus anomalies degrade to no-focus
+            w = None
+        if self._within(w, self._path_field):
+            anchor = e.anchor if (e := help_for_path("path_field")) else ""
+        elif self._pointer_on_status_label() and self._status_lbl_f1_anchor:
+            # Mouse over the status label (short status or dwell tooltip) — use the stored anchor.
+            anchor = self._status_lbl_f1_anchor
+        else:
+            # Focused page owns the answer; no focus inside any sheet → current page.
+            cs = next((p for p in self._pages.values() if self._within(w, p.sh)), None) or self._pages.get(
+                self._current
+            )
+            anchor = cs._f1_anchor() if cs else ""
+        try:
+            br = get_documentation_browser()
+            if anchor:
+                br.open(doc_path(resolve_lang()), anchor=anchor)
+            else:
+                br.open(local_readme())
+        except (OSError, ValueError):
+            lf.exception("F1: failed to open documentation")
 
     # ── §3 rail ↔ page stack sync ────────────────────────────────────
 
@@ -813,7 +964,10 @@ class App:
 
         Collects per-stem 11-arrays from dirty ``metadata*`` nodes, merges into
         the device file via ``meta_finder`` (preserving other devices), and
-        marks metadata clean on success.  Frozen build includes ``meta_finder``
+        marks metadata clean on success.  Also writes autofilled metadata when
+        the device file doesn't exist yet (dirty flag is True after load for
+        autofilled metadata; the existence check covers edge cases).
+        Frozen build includes ``meta_finder``
         (see ``pyproject.toml: tcm`` feature + ``tcm_gui.spec``).
         """
         # Gather per-pcid new content: {pcid: {sid: [11-array]}}
@@ -828,25 +982,7 @@ class App:
             stems_by_pcid.setdefault(pcid, []).append(stem)
         for pcid, stems in stems_by_pcid.items():
             stems.sort()
-        for stem, cs in self._pages.items():
-            if not getattr(cs, "is_metadata_dirty", False) or not cs.is_metadata_dirty():
-                continue
-            try:
-                pcid = format.to_pcid_from_name(format.stem_to_pcid(stem))
-            except Exception:
-                continue
-            sid = (
-                str(stems_by_pcid.get(pcid, [stem]).index(stem))
-                if stem in stems_by_pcid.get(pcid, [])
-                else "0"
-            )
-            arr = cs.get_edited_metadata()
-            if not arr:
-                continue
-            new_content.setdefault(pcid, {})[sid] = arr
-        if not new_content:
-            return
-        # Prefer per-page browsed path (user may have retargeted device file)
+        # Resolve the target info_devices.yaml path early — needed for existence check
         browsed: Path | None = next(
             (Path(cs.get_metadata_path()) for cs in self._pages.values() if cs.get_metadata_path().strip()),
             None,
@@ -868,6 +1004,28 @@ class App:
             existing_fallback = None
         if device_dir is None or info_path is None:
             lf.warning("Cannot resolve device dir for metadata write — skipping")
+            return
+        # File doesn't exist → also collect from pages with autofilled (not-dirty) metadata
+        file_absent = not info_path.is_file()
+        for stem, cs in self._pages.items():
+            is_dirty = getattr(cs, "is_metadata_dirty", False) and cs.is_metadata_dirty()
+            # Write if dirty OR if the device file doesn't exist yet (autofilled metadata)
+            if not is_dirty and not file_absent:
+                continue
+            try:
+                pcid = format.to_pcid_from_name(format.stem_to_pcid(stem))
+            except Exception:
+                continue
+            sid = (
+                str(stems_by_pcid.get(pcid, [stem]).index(stem))
+                if stem in stems_by_pcid.get(pcid, [])
+                else "0"
+            )
+            arr = cs.get_edited_metadata()
+            if not arr:
+                continue
+            new_content.setdefault(pcid, {})[sid] = arr
+        if not new_content:
             return
         try:
             from meta_finder import io_info_files
@@ -907,10 +1065,11 @@ class App:
             for cs in self._pages.values():
                 if getattr(cs, "is_metadata_dirty", False) and cs.is_metadata_dirty():
                     cs.mark_metadata_clean()
-                    # Refresh ``metadata*`` → ``metadata`` label
-                    with __import__("contextlib").suppress(Exception):
-                        cs._apply_metadata_dirty_label()
-                        cs.sh.redraw()
+                # Refresh ``metadata*`` → ``metadata`` label and clear red path validation
+                with __import__("contextlib").suppress(Exception):
+                    cs._apply_metadata_dirty_label()
+                    cs._apply_validations()  # path now exists → remove red fg
+                    cs.sh.redraw()
         except Exception:
             lf.exception("Failed to write metadata to info_devices.yaml")
 
@@ -933,13 +1092,18 @@ class App:
 
     def _on_log_motion(self, _event: tk.Event) -> None:
         """Show log status text while mouse is actively moving; fade on pause."""
+        # Log's F1 anchor (if any) — stored for both status and dwell.
+        f1 = get_widget_meta(self._log, "f1_anchor")
         if (status := get_widget_meta(self._log, "status")) is not None:
             self._cancel_dwell()
-            self._set_status(status)
+            self._set_status(status, f1)
         # Arm dwell with log tooltip (if defined) on first motion.
         if self._dwell_widget is not self._log:
             self._dwell_widget = self._log
-            self._arm_dwell(_S.get("log.tooltip", ""))
+            self._arm_dwell(_S.get("log.tooltip", ""), f1)
+        # Store the log's F1 anchor (status label shows its help).
+        if f1:
+            self._status_lbl_f1_anchor = f1
         # Reset the fade timer on every motion tick.
         if self._log_status_job is not None:
             self.root.after_cancel(self._log_status_job)
@@ -998,6 +1162,23 @@ class App:
         )
         if target is not None:
             copy_rich(target)
+            return "break"
+        return None
+
+    def _on_ctrl_keypress(self, event: tk.Event) -> str | None:
+        """Re-emit ``<<Copy>>`` when Ctrl+C is pressed on a non-Latin layout.
+
+        Tk's ``<<Copy>>`` virtual event only fires for ``<Control-Key-c>`` — the
+        Latin ``c``.  On Cyrillic/Greek layouts the same physical key yields a
+        different ``keysym``, so ``<<Copy>>`` never fires and copy is broken.
+        We detect the physical ``C`` key by its platform ``keycode`` (see
+        :data:`const.VK_C`): if it matches AND the ``keysym`` is not already
+        Latin ``c``/``C``, we generate ``<<Copy>>`` on the event widget and
+        return ``'break'`` to stop the untranslated key from propagating.
+        Latin layouts pass through (``keysym`` is ``c``) so Tk handles them.
+        """
+        if event.keycode == VK_C and event.keysym.lower() != "c":
+            event.widget.event_generate("<<Copy>>")
             return "break"
         return None
 
@@ -1153,8 +1334,12 @@ class App:
         error = self._stage_error_text(exc)
         self._prog_stage_text.config(text=f"{current}\n{error}" if current else error)
         self._show_stage_progress()
-        if tip := _tip_body("input.path", mode="search", detail="Detailed"):
-            self._show_tip(tip)
+        # On field-associated errors (e.g. FileNotFoundError on a failed
+        # data/config search), show the general field description — not the
+        # mode-specific "Detailed" block.
+        if tip := help_general_for_path("path_field"):
+            f1 = e.anchor if (e := help_for_path("path_field")) else None
+            self._show_tip(tip, f1)
         else:
             self._hide_tip()
 
@@ -1163,18 +1348,20 @@ class App:
         short = f"{type(exc).__name__}: {exc}"
         return _S.get("stage.error", 'Error "{msg}".').format(msg=short)
 
-    def _set_status(self, text: str, *, raw: bool = False) -> None:
+    def _set_status(self, text: str, anchor: str | None = None, *, raw: bool = False) -> None:
         """Debounced status switch/close — applied by :meth:`_apply_status` after
         :attr:`_STATUS_SETTLE_MS`.
 
         All chrome-hover, poll, and config-cell callers route through here so a
         quick pointer pass does not flicker the label; the latest text wins.
         ``_show_tip`` / ``_show_dwell_tip`` write to ``_status_lbl`` directly and
-        cancel the pending job, bypassing this debounce.
+        cancel the pending job, bypassing this debounce.  *anchor* is the F1 anchor
+        for the text — applied together at display time so it always matches.
         """
         self._cancel_status_job()
         self._status_job = self.root.after(
-            self._STATUS_SETTLE_MS, lambda t=text, r=raw: self._apply_status(t, raw=r)
+            self._STATUS_SETTLE_MS,
+            lambda t=text, a=anchor, r=raw: self._apply_status(t, anchor=a, raw=r),
         )
 
     def _cancel_status_job(self) -> None:
@@ -1183,7 +1370,7 @@ class App:
             self.root.after_cancel(self._status_job)
             self._status_job = None
 
-    def _apply_status(self, text: str, *, raw: bool = False) -> None:
+    def _apply_status(self, text: str, anchor: str | None = None, *, raw: bool = False) -> None:
         """Fire after :attr:`_STATUS_SETTLE_MS` — error tooltip and a reader on
         the status label win.  While a dwell tooltip owns the label, ANY switch
         (row move on the sheet, leave) first waits out the linger window
@@ -1200,10 +1387,12 @@ class App:
             self._dwell_widget = None
             self._cancel_status_job()
             self._status_job = self.root.after(
-                self._DWELL_HIDE_MS, lambda t=text, r=raw: self._apply_status(t, raw=r)
+                self._DWELL_HIDE_MS,
+                lambda t=text, a=anchor, r=raw: self._apply_status(t, anchor=a, raw=r),
             )
             return
-        self._status_lbl.set_text(text, raw=raw, base=doc_path().parent)
+        self._status_lbl.set_text(text, raw=raw, base=doc_path())
+        self._status_lbl_f1_anchor = anchor
 
     # ── status-label hover — hold the dwell tip while reading / clicking ─────
 
@@ -1219,7 +1408,7 @@ class App:
             self._cancel_dwell_hide_job()
             self._dwell_hide_job = self.root.after(self._DWELL_HIDE_MS, self._clear_dwell_now)
 
-    def _show_tip(self, text: str) -> None:
+    def _show_tip(self, text: str, anchor: str | None = None) -> None:
         """Show error detail tooltip in ``_status_lbl``; suppress status updates.
 
         While ``_tip_active`` is True, :meth:`_set_status` is a no-op so hover
@@ -1230,8 +1419,10 @@ class App:
         self._clear_dwell_now()  # error takes precedence over dwell
         self._cancel_status_job()  # error tip shows immediately — drop pending switch
         self._tip_active = True
-        # Relative links in the body resolve against config_reference_*.md's dir.
-        self._status_lbl.set_text(text, base=doc_path().parent)
+        # Relative links in the body resolve against config_reference_*.md.
+        self._status_lbl.set_text(text, base=doc_path())
+        if anchor is not None:
+            self._status_lbl_f1_anchor = anchor
 
     def _hide_tip(self) -> None:
         """Dismiss the error tooltip; resume normal status updates.
@@ -1258,20 +1449,24 @@ class App:
         self._cancel_dwell_job()
         self._cancel_dwell_hide_job()
         self._status_lbl.set_text("", raw=True)
+        # Clear the stored F1 anchor — status label no longer shows row help.
+        self._status_lbl_f1_anchor = None
 
     # ── dwell tooltip ────────────────────────────────────────────────
 
-    def _arm_dwell(self, text: str) -> None:
+    def _arm_dwell(self, text: str, anchor: str | None = None) -> None:
         """Schedule dwell tooltip — show *text* in ``_status_lbl`` after :attr:`_DWELL_MS`.
 
         Only armed when *text* is non-empty.  Cancels any pending dwell job
         first (widget changed or re-entry).  The actual show is done by
         :meth:`_show_dwell_tip` which fires from the ``after()`` callback.
+        *anchor* is frozen via the ``after`` lambda so F1 resolves the section
+        for what is actually shown when the tip fires.
         """
         self._cancel_dwell_job()
         if not text or self._tip_active:
             return
-        self._dwell_job = self.root.after(self._DWELL_MS, lambda: self._show_dwell_tip(text))
+        self._dwell_job = self.root.after(self._DWELL_MS, lambda: self._show_dwell_tip(text, anchor))
 
     def _cancel_dwell_job(self) -> None:
         """Cancel a pending dwell ``after()`` job (does NOT clear an active tip)."""
@@ -1285,11 +1480,19 @@ class App:
             self.root.after_cancel(self._dwell_hide_job)
             self._dwell_hide_job = None
 
-    def _cancel_dwell(self) -> None:
+    def _cancel_dwell(self, *, force: bool = False) -> None:
         """Soft-dismiss: cancel the pending arm; an ACTIVE tip lingers
         :attr:`_DWELL_HIDE_MS` (reading / clicking links) before
         :meth:`_clear_dwell_now` clears it.  A re-show (:meth:`_show_dwell_tip`)
-        or a non-empty status replacement cancels the pending clear."""
+        or a non-empty status replacement cancels the pending clear.
+
+        When the pointer is within the dwelling widget's hierarchy (the
+        widget itself, an ancestor frame, or the root background), the dwell
+        is NOT cancelled — the tip stays so the user can keep reading.
+        *force* bypasses this guard (Esc key)."""
+        if not force and self._pointer_in_dwell_hierarchy():
+            self._cancel_dwell_hide_job()  # drop any pending linger — tip stays
+            return
         self._cancel_dwell_job()
         if self._dwell_active:
             self._cancel_dwell_hide_job()
@@ -1297,21 +1500,26 @@ class App:
         self._dwell_widget = None
 
     def _clear_dwell_now(self) -> None:
-        """Hard-dismiss: cancel pending dwell jobs AND clear an active tooltip.
+        """Hard-dismiss linger + active tip; preserve pending dwell arm.
 
-        Also releases the status-hover hold — same stale-``<Leave>`` trap as
-        :meth:`_hide_tip`: the label collapses under a stationary pointer, so
-        the hold would otherwise keep ``_apply_status`` blocked.
+        Via ``_dwell_hide_job`` after A→B move: ``_dwell_job`` is single-slot
+        current arm — cancelling kills B's dwell (A linger → B never fires
+        until re-hover, reported bug). Stale impossible: next hover cancels,
+        error absorbed by ``_show_dwell_tip``'s ``_tip_active`` guard. True
+        hard-dismiss still via :meth:`_hide_tip`/:meth:`_cancel_dwell`.
+        Also releases stale ``_status_hovering`` like :meth:`_hide_tip`
+        (label collapses under pointer, no ``<Leave>``).
         """
-        self._cancel_dwell_job()
         self._cancel_dwell_hide_job()
         if self._dwell_active:
             self._dwell_active = False
             self._status_hovering = False
             self._status_lbl.set_text("", raw=True)
+            # Clear the stored F1 anchor — status label no longer shows row help.
+            self._status_lbl_f1_anchor = None
         self._dwell_widget = None
 
-    def _show_dwell_tip(self, text: str) -> None:
+    def _show_dwell_tip(self, text: str, anchor: str | None = None) -> None:
         """Fire after :attr:`_DWELL_MS` — render *text* in ``_status_lbl``.
 
         Suppressed while ``_tip_active`` (error tooltip takes precedence).
@@ -1325,20 +1533,25 @@ class App:
         self._dwell_active = True
         self._cancel_status_job()  # dwell takes the label — drop the pending switch
         self._cancel_dwell_hide_job()  # a deferred clear must not kill the re-shown tip
-        # Relative links in the body resolve against config_reference_*.md's dir.
-        self._status_lbl.set_text(text, base=doc_path().parent)
+        # Relative links in the body resolve against config_reference_*.md.
+        self._status_lbl.set_text(text, base=doc_path())
+        if anchor is not None:
+            self._status_lbl_f1_anchor = anchor
 
     def _on_cell_status(self, cs: ConfigSheet, msg: str, md: bool = False) -> None:
         """ConfigSheet hover callback — debounced status switch + arm dwell.
 
         Row switch cancels the pending dwell arm from the previous row; the
         debounced :meth:`_apply_status` replaces a still-active dwell tooltip,
-        so a stale tip never outlives its row.
+        so a stale tip never outlives its row.  Anchor is forged at display
+        time — passed to :meth:`_set_status` / :meth:`_arm_dwell` so it matches
+        what is actually shown.
         """
         self._cancel_dwell_job()
-        self._set_status(msg, raw=not md)
+        a = cs._f1_anchor_for_iid(cs._status_iid) if cs._status_iid is not None else None
+        self._set_status(msg, a, raw=not md)
         if detail := getattr(cs, "_hover_detail", ""):
-            self._arm_dwell(detail)
+            self._arm_dwell(detail, a)
 
     def _on_scan_ok(self, result) -> None:
         if not result or len(result) < 4:

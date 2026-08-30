@@ -521,10 +521,10 @@ def call_in_raw_dir(fun, yaml_path: Path | None = None, **kwargs) -> Any:
 
     # Extract input.path: from overrides dict or from sys.argv.
     try:
-        path_in = _require_nonempty_path(overrides["input"]["path"])
+        path_in = Path(overrides["input"]["path"])
     except KeyError:
         try:
-            path_in = _require_nonempty_path(hydra_main_kwargs["overrides"]["input"]["path"])
+            path_in = Path(hydra_main_kwargs["overrides"]["input"]["path"])
         except (KeyError, AttributeError, TypeError):
             # If any '-' prefixed arg is present, it's a Hydra/argparse flag.
             # Delegate to Hydra directly without consuming positional args

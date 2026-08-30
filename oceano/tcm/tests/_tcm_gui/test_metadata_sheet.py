@@ -513,9 +513,7 @@ def test_edit_coef_date_marks_tab_dirty(_session_tk_root):
 
 
 def test_autofilled_metadata_dirty_but_not_coefs(_session_tk_root, tmp_path, mocker):
-    """Regression: metadata autofilled from an absent info_devices.yaml was
-    never saved on Run because ``is_metadata_dirty()`` was False after the load
-    snapshot.  New/autofilled metadata must be treated as dirty — but it must
+    """New/autofilled metadata must be treated as dirty — but it must
     NOT mark the coefs dirty (separate flags), so ``_write_coefs`` won't rewrite
     an unchanged run YAML.  ``_write_metadata`` persists it as a new device file.
     """

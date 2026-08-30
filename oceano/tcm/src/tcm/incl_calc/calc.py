@@ -252,7 +252,7 @@ def i_bursts_starts(
         Largest inter-sample gap among detected boundaries.
         Zero when no gaps are found.
     """
-    dt_zero = np.timedelta64(0)
+    dt_zero = np.timedelta64(0, 'ns')
     max_hole = dt_zero
 
     # Unwrap DatetimeIndex to numpy array

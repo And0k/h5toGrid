@@ -158,7 +158,7 @@ def test_open_appends_anchor_fragment(monkeypatch):
 
 
 def test_open_md_link_relative_resolves_against_base(monkeypatch):
-    """A relative link ``io_formats.md#anchor`` resolves against the base dir."""
+    """A relative link ``io_formats.md#anchor`` resolves against the base file's parent."""
     calls: list[tuple[Path, str | None]] = []
 
     class _Fake:
@@ -166,10 +166,25 @@ def test_open_md_link_relative_resolves_against_base(monkeypatch):
             calls.append((Path(path), anchor))
 
     monkeypatch.setattr("tcm_gui.browser.browser.get_documentation_browser", lambda: _Fake())
-    open_md_link("io_formats.md#directory-layout", base="R:/docs/reference")
+    open_md_link("io_formats.md#directory-layout", base="R:/docs/reference/config_reference.md")
     assert len(calls) == 1
     assert calls[0][0] == Path("R:/docs/reference/io_formats.md")
     assert calls[0][1] == "directory-layout"
+
+
+def test_open_md_link_anchor_only_uses_base(monkeypatch):
+    """An anchor-only link ``#anchor`` uses the base file path directly."""
+    calls: list[tuple[Path, str | None]] = []
+
+    class _Fake:
+        def open(self, path, anchor=None):
+            calls.append((Path(path), anchor))
+
+    monkeypatch.setattr("tcm_gui.browser.browser.get_documentation_browser", lambda: _Fake())
+    open_md_link("#input.path", base="R:/docs/reference/config_reference.md")
+    assert len(calls) == 1
+    assert calls[0][0] == Path("R:/docs/reference/config_reference.md")
+    assert calls[0][1] == "input.path"
 
 
 def test_open_md_link_absolute_path(monkeypatch):

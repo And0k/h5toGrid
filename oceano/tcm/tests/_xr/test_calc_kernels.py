@@ -150,7 +150,7 @@ class Test_i_bursts_starts:
         i_b, ms, mh = i_bursts_starts(tim)
         np.testing.assert_array_equal(i_b, [0])
         assert ms == 20
-        assert mh == np.timedelta64(0)
+        assert mh == np.timedelta64(0, 'ns')
 
     @pytest.mark.parametrize(
         ("dt_blocks", "expected_i_bursts", "expected_mean_size", "expected_max_hole_s"),
@@ -178,4 +178,4 @@ class Test_i_bursts_starts:
         i_b, ms, mh = i_bursts_starts(pd.DatetimeIndex([]))
         np.testing.assert_array_equal(i_b, np.int32([]))
         assert ms == 0
-        assert mh == np.timedelta64(0)
+        assert mh == np.timedelta64(0, 'ns')
