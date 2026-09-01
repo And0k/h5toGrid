@@ -78,14 +78,14 @@ class SheetTintMixin:
         return cur.strip()
 
     def _own_cols(self, m: Mapping[str, Any], *, with_len: bool = True) -> int:
-        """Editable value-cell count of a row: scalar→1, ``time_ranges``→``_nv``.
+        """Editable value-cell count of a row: scalar→1, ``time_ranges*``→``_nv``.
 
         ``with_len=False`` — container rows (``1d`` parents carrying ``len``
         for shape only) report 0; their child row holds the values.
         """
         if m.get("type") == "scalar":
             return 1
-        if m.get("label") == "time_ranges":
+        if m.get("label", "").startswith("time_ranges"):
             return int(m.get("max_col", self._nv))
         return int(m.get("max_col") or (m.get("len") if with_len else 0) or 0)
 
@@ -190,6 +190,10 @@ class SheetTintMixin:
         ``None``/empty-list defaults ⇒ every cell defaults to ``""`` — so an
         emptied ``time_ranges_*`` row reads as at-default, not as modified.
         """
+        if m.get("key") == "path" and str(m.get("path") or "") == "input.coefs.path":
+            return NO_DEFAULT
+        if m.get("key") == "coefs" and col_idx == 0:
+            return NO_DEFAULT
         if m.get("is_metadata_root"):
             return NO_DEFAULT
         if m.get("is_metadata"):
@@ -217,8 +221,21 @@ class SheetTintMixin:
         default IS empty) are at default → blue label; a child holding real
         data breaks the chain.  Parents without own defaults (``metadata``
         root, ``coefs`` container) defer to their children.
+
+        ``input.coefs.path`` — the ``coefs`` node's path cell — is the
+        source locator whose file supplies missing matrices
+        (``get_coefs_from_cfg``); tint reflects the matrix values and
+        ignores the locator string and ``dates`` metadata — a file
+        bringing non-default values for not-yet-shown coefs appears
+        as new matrix rows after the immediate path-triggered reload
+        (``notify_path_changed`` → ``get_coefs`` → ``load``), then
+        tint updates.
         """
         m = self._meta.get(iid, {})
+        # Legacy path child (now the coefs node's path cell) is handled via
+        # _default_for_cell → NO_DEFAULT, not a forced True here.
+        if m.get("key") == "path" and str(m.get("path") or "") == "input.coefs.path":
+            return True
         own_ok, has_defined = True, False
         for j in range(self._own_cols(m, with_len=False)):
             if (dv := self._default_for_cell(iid, m, j)) is NO_DEFAULT:
@@ -227,7 +244,8 @@ class SheetTintMixin:
             if any2str(self._cell_str(iid, j)) != any2str(dv):
                 own_ok = False
                 break
-        kids = [k for k, km in self._meta.items() if km.get("parent") == iid]
+        # Exclude path child from subtree check
+        kids = [k for k, km in self._meta.items() if km.get("parent") == iid and km.get("key") != "path"]
         if not has_defined and kids:
             return all(self._node_at_default(k) for k in kids)
         if kids:
@@ -251,7 +269,7 @@ class SheetTintMixin:
                     continue
                 if any2str(cur) == any2str(dv):
                     self.sh.highlight_cells(
-                        row=r, column=j, fg=tcm_gui.theme.DEFAULT_FG, redraw=False, overwrite=False
+                        row=r, column=j, fg=tcm_gui.theme.CELL_DEFAULT_VAL_FG, redraw=False, overwrite=False
                     )
 
     def _apply_edit_value(self, iid: Any, col: int, value: str) -> None:
@@ -272,7 +290,7 @@ class SheetTintMixin:
             self.sh.highlight_cells(
                 row=ri,
                 column=col,
-                fg=tcm_gui.theme.DEFAULT_FG if any2str(value) == any2str(dv) else self._fg_default,
+                fg=tcm_gui.theme.CELL_DEFAULT_VAL_FG if any2str(value) == any2str(dv) else self._fg_default,
                 redraw=False,
                 overwrite=False,
             )
@@ -286,7 +304,11 @@ class SheetTintMixin:
                 node_fg = (
                     tcm_gui.theme.FG_DEFAULT
                     if nm.get("type") == "input"
-                    else (tcm_gui.theme.BLUE_FG if self._node_at_default(node) else self._fg_default)
+                    else (
+                        tcm_gui.theme.NODE_DEFAULT_VALS_FG
+                        if self._node_at_default(node)
+                        else self._fg_default
+                    )
                 )
                 self.sh.highlight_cells(
                     row=nr, column=0, canvas="index", fg=node_fg, redraw=False, overwrite=False
@@ -347,8 +369,10 @@ class SheetTintMixin:
                 return _DATE_FMT
             if spec.kind == "number":
                 return "0"
+            # Multi-col text lists: date placeholder only for date-like fields (time_ranges*)
             if spec.kind == "text" and m.get("is_string") and int(m.get("max_col", 0)) > 1:
-                return _DATE_FMT
+                if "time_ranges" in path:
+                    return _DATE_FMT
         return None
 
     def _apply_placeholders(self) -> None:
@@ -358,14 +382,16 @@ class SheetTintMixin:
         for iid, m in self._meta.items():
             if (r := row_of.get(iid)) is None:
                 continue
-            # date-only parent (kVabs-style, max_col 0) → single date cell
-            maxc = (
-                _DATE_PH_COL + 1
-                if m.get("has_date") and not (m.get("max_col") or m.get("len"))
-                else self._own_cols(m)
-            )
+            # date-only parents (2d/1d with has_date, max_col 0) — only date cell, no value ghosts
+            if m.get("has_date") and m.get("max_col", 0) == 0:
+                maxc = _DATE_PH_COL + 1
+            else:
+                maxc = self._own_cols(m)
             vals = self.sh.item(iid).get("values") or ()
             for c in range(maxc):
+                # date-only parents have no value columns — only date at _DATE_PH_COL
+                if m.get("has_date") and m.get("max_col", 0) == 0 and c != _DATE_PH_COL:
+                    continue
                 if c < len(vals) and str(vals[c]).strip():
                     continue
                 if self._ph.has(r, c):

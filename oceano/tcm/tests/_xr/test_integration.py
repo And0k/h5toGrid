@@ -69,8 +69,7 @@ def _base_cfg(raw_dir, path=None):
         "input": {
             "path": path or raw_dir / "i_01.txt",
             "tables": ["incl*"],
-            "coefs_path": None,
-            "coefs": {},
+            "coefs": {"path": None},
             "text_type": None,
             "text_line_regex": None,
             "prefix": None,
@@ -218,8 +217,7 @@ class TestPipelineIntegration:
             {
                 "input": {
                     "path": str(csv_file),
-                    "coefs_path": None,
-                    "coefs": {},
+                    "coefs": {"path": None},
                     "tables": ["incl*"],
                     "text_type": None,
                     "text_line_regex": None,
@@ -364,8 +362,7 @@ class TestCoefPersistence:
             "input": {
                 "path": Path(env.cfg.input.path),
                 "tables": ["incl01"],
-                "coefs_path": None,
-                "coefs": {},
+                "coefs": {"path": None},
                 "dt_from_utc": pd.Timedelta(0),
                 "corr_time_mode": None,
                 "calib": {"time_ranges_zeroing": env.cfg.input.calib.time_ranges_zeroing},
@@ -437,8 +434,7 @@ class TestCoefPersistence:
             "input": {
                 "path": Path(env.cfg.input.path),
                 "tables": ["incl01"],
-                "coefs_path": None,
-                "coefs": {},
+                "coefs": {"path": None},
                 "dt_from_utc": pd.Timedelta(0),
                 "corr_time_mode": None,
                 "calib": {"time_ranges_zeroing": env.cfg.input.calib.time_ranges_zeroing},

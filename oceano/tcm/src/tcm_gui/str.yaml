@@ -22,12 +22,27 @@ path_field.placeholder_files: "D:/data/_raw/(i*raw_file1[.]txt|i*raw_file2[.]txt
 path_field.placeholder_probe: "i_01_measurement.txt"
 path_field.status.dirs: "**(Re)loads configurations into tabs**. The `Browse` button opens a directory picker to search for data with default mask `*i*.txt`. Hold `Shift` to select files"
 path_field.status.files: "**(Re)loads configurations into tabs**. The `Browse` button opens a picker for individual **files**: data or their configs `{pcid}*.yaml` (the data path is already inside them)"
+input.coefs.path.status.dirs: "The `Browse` button opens a dialog to select a directory of YAML files. Hold `Shift` to select files"
+input.coefs.path.status.files: "The `Browse` button opens a dialog to select individual **files**"
+input.coefs.path.status.dir: "The `Browse` button opens a dialog to select a directory of YAML files. Hold `Shift` to select files"
+input.coefs.path.status.file: "The `Browse` button opens a dialog to select individual **files**"
 input.coefs_path.status.dirs: "The `Browse` button opens a dialog to select a directory of YAML files. Hold `Shift` to select files"
 input.coefs_path.status.files: "The `Browse` button opens a dialog to select individual **files**"
-input.coefs_path.status.dir: "The `Browse` button opens a dialog to select a directory of YAML files. Hold `Shift` to select files"
-input.coefs_path.status.file: "The `Browse` button opens a dialog to select individual **files**"
 input.coef_path.status.dirs: "The `Browse` button opens a dialog to select a directory of YAML files. Hold `Shift` to select files"
 input.coef_path.status.files: "The `Browse` button opens a dialog to select individual **files**"
+# Coefs node date suffix — appended to the doc-driven short when hovering the coefs node.
+input.coefs.date.status: "Recorded: {date}"
+# Component-specific date status for coef rows with a date cell (replaces the
+# generic "Per-component calibration dates" fallback).  Ag+Cg share Ag's date
+# cell; Ah+Ch share Ah's.
+input.coefs.date.accelerometer: "Accelerometer calibration date"
+input.coefs.date.magnetometer: "Magnetometer calibration date"
+input.coefs.date.alignment: "Alignment calibration date"
+input.coefs.date.pressure: "Pressure calibration date"
+input.coefs.date.velocity: "Velocity calibration date"
+# GUI behaviour for input.coefs.path — appended to config_reference.md short/detailed.
+input.coefs.path.status.gui: "Sheet values take precedence over file values on Run (file at path is not overwritten); missing coefs are loaded from here and appear as new rows after the immediate reload."
+input.coefs.path.detailed.gui: "Source file is never overwritten — effective coefs are file values merged with sheet overrides, sheet wins. Changing the path triggers an immediate reload that adds rows for file values not yet shown, then tint updates."
 overall_lbl.status: "Overall and current configuration processing state"
 run.tooltip: "Run button"
 run.start: "Start processing"
@@ -40,9 +55,13 @@ prog_stage.status: "Current stage progress within the active configuration"
 tab.status: "Configuration: `{path}`"  # template — _add_page formats {path}
 browse_btn.status: "Hold **Shift** to select files instead of directory"
 browse_btn.status_files: "Browse files"
-empty_area.synced: "Edit the calculation configuration (changes will be saved to the corresponding YAML file on Run)"
-empty_area.unsaved: "Read-only - please specify the path above first (simplified mode is enabled, requiring sequential filling)"
-empty_area.unsaved_full: "Editable — provide a data path above to scan"
+empty_area.synced: >-
+  Edit the table (changes will be saved on Run).
+  {#sheet_default}■ default{/} · {#sheet_placeholder}■ placeholder{/} · {#sheet_changed}■ changed{/} · {#sheet_invalid}■ invalid{/} · {#sheet_warning}■ warning{/}
+empty_area.unsaved: "Read-only — please specify the path above first (simplified mode is enabled, requiring sequential filling)"
+empty_area.unsaved_full: >-
+  Editable — provide a data path above to scan.
+  {#sheet_default}■ default{/} · {#sheet_placeholder}■ placeholder{/} · {#sheet_changed}■ changed{/} · {#sheet_invalid}■ invalid{/} · {#sheet_warning}■ warning{/}
 rail.status: "Configuration rail — click a tab to switch; vertical fill = processing progress (top→down)"
 help_btn.tooltip: "Help / About"
 help_btn.status: "Open About dialog with version info and documentation"
@@ -126,7 +145,7 @@ stage.loading: "Loading"
 scan_stage.default: "Processing configuration: generate/find by entering above directory\\file/glob/regex for data/configuration"
 scan_stage.default_full: "Processing configuration: update by entering the path above or edit manually (full editing mode enabled)"
 scan_stage.scan: "Search/generation of configurations…"
-scan_stage.done: "Configurations for processing found data"
+scan_stage.done: "Configurations for processing the found data are presented"
 
 # ── Stage tree ────────────────────────────────────────────────────────────
 stage_tree.heading.stage: "Stage"

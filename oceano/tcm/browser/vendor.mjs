@@ -27,7 +27,8 @@
  *                                             stub + chtml/woff2 (font faces) + chtml/dynamic (lazy chunks)
  *     highlight/highlight.min.js              cdnjs build pinned to the locked version — the npm
  *                                             package ships no browser bundle (lib/ is CommonJS)
- *     highlight/default.min.css               highlight.js styles/
+ *     highlight/default.min.css               highlight.js styles/ (light: default, dark: github-dark)
+ *     highlight/github-dark.min.css           via <link media="(prefers-color-scheme: …)"> in web/index.html
  *     each package's LICENSE file          under its runtime subdirectory
  *
  * MathJax constraints (learned the hard way):
@@ -59,6 +60,7 @@ const FILES = [
     [nm("mathjax", "tex-chtml.js"), "mathjax/tex-chtml.js"],
     [nm("@mathjax", "mathjax-newcm-font", "chtml.js"), "mathjax/output/fonts/mathjax-newcm/chtml.js"],
     [nm("highlight.js", "styles", "default.min.css"), "highlight/default.min.css"],
+    [nm("highlight.js", "styles", "github-dark.min.css"), "highlight/github-dark.min.css"],
     [nm("highlight.js", "LICENSE"), "highlight/LICENSE"],
 ];
 const DIRS = [

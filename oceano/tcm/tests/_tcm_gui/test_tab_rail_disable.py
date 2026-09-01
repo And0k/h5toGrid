@@ -127,7 +127,7 @@ class TestAppCfgUiDisabled:
         fn = App._set_cfg_ui_disabled.__get__(ns)
 
         fn(True)
-        assert str(ns._overall_lbl.cget("foreground")) == tcm_gui.theme.DEFAULT_FG
+        assert str(ns._overall_lbl.cget("foreground")) == tcm_gui.theme.CELL_DEFAULT_VAL_FG
         assert rail._disabled is True
         fn(False)
         assert str(ns._overall_lbl.cget("foreground")) == tcm_gui.theme.FG_DEFAULT

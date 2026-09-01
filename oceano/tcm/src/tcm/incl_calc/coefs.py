@@ -205,7 +205,8 @@ def get_coefs(coefs_paths: Sequence, tbl: str, coefs_ovr: Mapping[str, Any] | No
     defaults = {
         k: v_def
         for k, v in schema.ConfigInCoefs_InclProc.__dataclass_fields__.items()
-        if (v_def := to_omegaconf.get_field_default(v)) is not None
+        if k != "path"
+        and (v_def := to_omegaconf.get_field_default(v)) is not None
         and not (isinstance(v_def, (list, dict)) and ((not v_def) or not any(lst != [] for lst in v_def)))
     }
 
@@ -347,7 +348,7 @@ def coefs_format_for_h5(coef: Mapping[str, Any], pcid: str = None, date: str | N
     elif "Rz" not in coef and ("Ag" in coef or "Ah" in coef):
         coef["Rz"] = np.eye(3)
 
-    coef_renamed_or_skip = {"Ag", "Cg", "Ah", "Ch", "azimuth_shift_deg", "kVabs", "dates", "i"}
+    coef_renamed_or_skip = {"Ag", "Cg", "Ah", "Ch", "azimuth_shift_deg", "kVabs", "dates", "i", "path"}
     return {
         **{
             f"//coef//{ch_u}//{m}": coef[f"{m}{ch}"]
@@ -370,9 +371,9 @@ def coefs_format_for_h5(coef: Mapping[str, Any], pcid: str = None, date: str | N
 
 
 def get_coefs_from_cfg(cfg_in: dict, pcid: str) -> dict:
-    """Resolve coefficients: ``coefs_path`` file → ``input.coefs`` override.
+    """Resolve coefficients: ``input.coefs.path`` file → ``input.coefs`` override.
     1. Build a ``coefs_paths`` fallback chain:
-    explicit ``coefs_path`` from YAML → class-default HDF5 path → sibling "yaml_export/" dir.
+    explicit ``input.coefs.path`` from YAML → class-default HDF5 path → sibling "yaml_export/" dir.
     2. merge logic + converts YAML list values to numpy arrays
 
     The "yaml_export/" dir should have same coefficients as in default HDF5 path to be used silently in the
@@ -382,21 +383,32 @@ def get_coefs_from_cfg(cfg_in: dict, pcid: str) -> dict:
     :param pcid: probe column ID (e.g. ``"i_01"``).
     :return: merged coefficients dict with array values as numpy ndarrays.
     """
+    # Hard break: old key input.coefs_path is removed
+    if "coefs_path" in cfg_in:
+        lf.error(
+            "Unknown key 'input.coefs_path' — renamed to 'input.coefs.path'. "
+            "Move the value into input.coefs.path (Path | None)."
+        )
+        raise KeyError("input.coefs_path is removed, use input.coefs.path")
+    coefs_cfg = cfg_in.get("coefs") or {}
+    # OmegaConf / dataclass → plain dict safe
+    if OmegaConf.is_config(coefs_cfg):
+        coefs_cfg = OmegaConf.to_container(coefs_cfg, resolve=True)
     coefs_paths: list = []
-    if cp := cfg_in.get("coefs_path"):
-        coefs_paths.append(cp)
-    cp_default = schema.ConfigIn_InclProc.coefs_path
+    if cp := coefs_cfg.get("path"):
+        coefs_paths.append(Path(cp) if not isinstance(cp, Path) else cp)
+    cp_default = schema.ConfigInCoefs_InclProc.__dataclass_fields__["path"].default
     if cp_default and cp_default not in coefs_paths:
         # Skip H5 path when binary I/O is unavailable/disabled
-        if cp_default.suffix not in _constants.EXT_HDF5 or policy.io():
-            coefs_paths.append(cp_default)
+        if Path(cp_default).suffix not in _constants.EXT_HDF5 or policy.io():
+            coefs_paths.append(Path(cp_default))
     # Always add yaml_export dir as fallback (may be the only working source
     # when io().h5 is False or the H5 file is missing in dist builds).
     if cp_default:
         yaml_dir = Path(cp_default).parent / "yaml_export"
         if yaml_dir not in coefs_paths:
             coefs_paths.append(yaml_dir)
-    coefs_ovr = cfg_in.get("coefs") or None
+    coefs_ovr = {k: v for k, v in coefs_cfg.items() if k != "path"} or None
     cfg_in_coefs = get_coefs(
         coefs_paths,
         tbl=format.pcid_to_raw_name(pcid),

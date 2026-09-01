@@ -324,7 +324,7 @@ class AboutDialog(tk.Toplevel):
         )
         style.map(
             "Docs.Treeview",
-            background=[("selected", mix_hex(theme.ENTRY_BG_FALLBACK, theme.BLUE_FG, 0.3))],
+            background=[("selected", mix_hex(theme.ENTRY_BG_FALLBACK, theme.NODE_DEFAULT_VALS_FG, 0.3))],
             foreground=[("selected", theme.FG_DEFAULT)],
         )
         self._vbar_shown = False

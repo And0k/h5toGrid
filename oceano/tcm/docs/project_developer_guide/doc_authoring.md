@@ -158,12 +158,19 @@ General rules:
   (stored under the modeless key; its `#### Important` sub-block is the error hint)
   be shown on field-associated errors (e.g. ``FileNotFoundError``) while the
   mode-specific bodies feed consumer statuses.
-- **Exception** — `path_field` and `input.coefs_path`: carry only a modeless `###` section
-  (CLI/general docs). GUI mode suffixes live in `str.yaml` as
-  `path_field.status.dirs/files` and `input.coefs_path.status.dir/files`
-  (also `*.dirs/files` plural aliases and `coef_path` typo alias) and are
-  appended to the general short body at runtime — same augmentation pattern as
-  `time_ranges.hover.*` on `metadata.time_range` (md base + STR suffix).
+- **When mode differences belong in STR vs markdown ``<mode>`` tags** — the
+  split follows the interface-neutrality rule above.  When the field's
+  **meaning itself** depends on the consumer context (one interpretation per
+  context), each meaning lives in its own ``<mode>`` section in markdown —
+  the doc captures the semantic difference.  But when the meaning is
+  mode-neutral and only the **GUI action** differs (e.g. "browse directory"
+  vs "browse file" — same field, same meaning, just a different dialog on
+  click), the mode-specific verb is an interface concern that belongs in
+  ``str.yaml``: write a single modeless ``### `` section for the field, then
+  augment it at runtime with ``STR["{field}.status.{mode}"]`` (e.g.
+  ``path_field.status.dirs``, ``input.coefs.path.status.dir``).  The doc stays
+  clean; the GUI action hint is localized like any other chrome string.  The
+  same pattern applies to ``time_ranges.hover.*`` on ``metadata.time_range``.
 - Parser: a `###` section does not close the parent `##` field section; the
   next `###`/`##` (or a `####` sibling of a `#### <mode>` section) closes the
   accumulation; any `[a-z_]+` mode value is recognized, no code changes needed
@@ -179,7 +186,7 @@ General rules:
 |-------|---------|-------------------|
 | `<mode>dirs</mode>` (STR `path_field.status.dirs`) | Input data directory + GUI browse-dir hint | GUI path field (default) — md general + STR suffix |
 | `<mode>files</mode>` (STR `path_field.status.files`) | Individual file selection — data files or their configs + GUI browse-files hint | GUI path field with Shift — md general + STR suffix |
-| `<mode>dir</mode>` / `<mode>file</mode>` (STR `input.coefs_path.status.*`) | Coefficient source: directory vs single file | `input.coefs_path` status hints (md general + STR suffix) |
+| `<mode>dir</mode>` / `<mode>file</mode>` (STR `input.coefs.path.status.*`) | Coefficient source: directory vs single file | `input.coefs.path` status hints (md general + STR suffix) |
 | - | Input specification patterns — glob, regex, directory, YAML | General field information, error message, CLI help |
 
 Parser internals: [§Field detail sections](GUI/help_system.md#field-detail-sections-in-config_referencemd).

@@ -131,7 +131,7 @@ def _mock_pipeline(cfg, env, mocker, pcid="i_01"):
         "input": {
             "path": Path(cfg.input.path) if cfg.input.path else None,
             "tables": list(cfg.input.tables) if cfg.input.tables else ["incl*"],
-            "coefs_path": cfg.input.get("coefs_path"),
+            "coefs": {"path": cfg.input.get("path")},
             "coefs": dict(cfg.input.get("coefs") or {}),
             "dt_from_utc": timedelta(seconds=int(cfg.input.get("dt_from_utc") or 0)),
             "corr_time_mode": cfg.input.get("corr_time_mode"),
@@ -229,7 +229,7 @@ def pipeline_env(tmp_path):
         proc_dir=proc_dir, raw_dir=raw_dir, csv_file=csv_file,
         synthetic_ds=synthetic_ds, coefs=coefs, cfg=DictConfig({
             "input": {
-                "path": str(csv_file), "coefs_path": None, "coefs": {},
+                "path": str(csv_file), "coefs": {"path": None}, "coefs": {},
                 "tables": ["incl*"], "text_type": None, "text_line_regex": None,
                 "prefix": None, "dt_from_utc": 0,
                 "corr_time_mode": None,  # moved from filter

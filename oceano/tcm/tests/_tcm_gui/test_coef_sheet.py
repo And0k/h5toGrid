@@ -336,7 +336,7 @@ class TestApplyStyles:
 
     @patch.object(theme, "tk_color_to_hex", return_value="#F0F0F0")
     def test_header_highlighted(self, mock_resolve):
-        """Node labels styled with BLUE_FG via highlight_cells on index canvas."""
+        """Node labels styled with NODE_DEFAULT_VALS_FG via highlight_cells on index canvas."""
         from tcm_gui.cli_cfg import default_for_path
 
         ag_default = default_for_path("input.coefs.Ag")
@@ -344,35 +344,34 @@ class TestApplyStyles:
         cs, mock_sh = self._make_loaded_sheet(cfg)
         cs._apply_styles()
 
-        # Node labels use BLUE_FG on index canvas for at-default nodes
+        # Node labels use NODE_DEFAULT_VALS_FG on index canvas for at-default nodes
         index_calls = [c for c in mock_sh.highlight_cells.call_args_list if c.kwargs.get("canvas") == "index"]
         blue_calls = [c for c in index_calls if c.kwargs.get("fg") == "#0055CC"]
-        assert len(blue_calls) > 0, f"expected BLUE_FG on index canvas, got: {index_calls}"
+        assert len(blue_calls) > 0, f"expected NODE_DEFAULT_VALS_FG on index canvas, got: {index_calls}"
 
 
-# ── coefs_path as child row of input ────────────────────────────────────────
+# ── path as child row of coefs (hidden when collapsed) ────────────────────────────────────────
 
 
 class TestCoefsPathChildRow:
-    """``coefs_path`` must appear as a separate child row under ``input``,
-    not as a second column in the ``input`` node row.
+    """``path`` must appear in the ``coefs`` node row (column 0),
+    not as a separate child row under ``coefs``.
 
-    Regression: putting it in ``values[1]`` of the ``input`` node made the
-    value invisible to the user (the ``input`` row shows only ``path`` in
-    column 0; the second column is not visually prominent).
+    The ``coefs`` node now shows the path in column 0 (like ``input`` node
+    shows the data path in column 0). The date is no longer shown in the
+    tksheet — it is displayed in the status bar as a suffix.
     """
 
     @staticmethod
     def _make_loaded_sheet(cfg: dict | None = None):
-        """Load a config with ``coefs_path`` into ConfigSheet (non-full mode)."""
+        """Load a config with ``path`` into ConfigSheet (non-full mode)."""
         from tcm_gui.coef_sheet import ConfigSheet
 
         if cfg is None:
             cfg = {
                 "input": {
                     "path": "/data",
-                    "coefs_path": "/coefs/calibration.h5",
-                    "coefs": {"Ag": [[0.001, 0, 0], [0, 0.001, 0], [0, 0, 0.001]]},
+                    "coefs": {"path": "/coefs/calibration.h5", "Ag": [[0.001, 0, 0], [0, 0.001, 0], [0, 0, 0.001]]},
                 }
             }
 
@@ -428,74 +427,47 @@ class TestCoefsPathChildRow:
             m["open"] = True
         return cs, mock_sh
 
-    def test_coefs_path_is_meta_entry(self):
-        """``coefs_path`` exists as a row in _meta with its own iid."""
+    def test_path_is_in_coefs_node(self):
+        """``coefs`` node has the path in column 0 (no child row)."""
         cs, _ = self._make_loaded_sheet()
-        coefs_path_iids = [iid for iid, m in cs._meta.items() if m.get("key") == "coefs_path"]
-        assert len(coefs_path_iids) == 1, (
-            f"expected exactly one 'coefs_path' entry in _meta, found {len(coefs_path_iids)}: "
-            f"{[cs._meta[i].get('key') for i in coefs_path_iids]}"
+        coefs_iid = next(iid for iid, m in cs._meta.items() if m.get("key") == "coefs")
+        # The coefs node should have max_col=1 (path in col 0) and no child path row
+        assert cs._meta[coefs_iid].get("max_col") == 1, (
+            f"coefs node max_col should be 1 (path in col 0), got {cs._meta[coefs_iid].get('max_col')}"
+        )
+        # No child row with key="path" should exist
+        path_children = [
+            iid for iid, m in cs._meta.items()
+            if m.get("key") == "path" and m.get("parent") == coefs_iid
+        ]
+        assert len(path_children) == 0, (
+            f"coefs node should not have a child path row, found {len(path_children)}"
         )
 
-    def test_coefs_path_is_child_of_input(self):
-        """``coefs_path`` iid's parent is the ``input`` node iid."""
-        cs, _ = self._make_loaded_sheet()
-        input_iid = next(iid for iid, m in cs._meta.items() if m.get("type") == "input")
-        coefs_path_iid = next(iid for iid, m in cs._meta.items() if m.get("key") == "coefs_path")
-        assert cs._meta[coefs_path_iid].get("parent") == input_iid, (
-            f"coefs_path parent should be input iid={input_iid!r}, "
-            f"got {cs._meta[coefs_path_iid].get('parent')!r}"
-        )
-
-    def test_coefs_path_value_displayed(self):
-        """``coefs_path`` row shows the config value in column 0."""
+    def test_path_value_displayed(self):
+        """``coefs`` node row shows the config path value in column 0."""
         _, mock_sh = self._make_loaded_sheet()
-        insert_calls = [c for c in mock_sh.insert.call_args_list if c.kwargs.get("text") == "coefs_path"]
-        assert len(insert_calls) == 1, f"expected 1 insert for coefs_path, got {len(insert_calls)}"
+        insert_calls = [c for c in mock_sh.insert.call_args_list if c.kwargs.get("text") == "coefs"]
+        assert len(insert_calls) == 1, f"expected 1 insert for coefs, got {len(insert_calls)}"
         values = insert_calls[0].kwargs.get("values")
         assert values and values[0] == "/coefs/calibration.h5", (
-            f"coefs_path values[0] should be '/coefs/calibration.h5', got {values!r}"
+            f"coefs values[0] should be '/coefs/calibration.h5', got {values!r}"
         )
 
-    def test_input_node_max_col_unchanged(self):
-        """``input`` node keeps ``max_col=1`` (only path in column 0)."""
+    def test_coefs_node_has_browse_flag(self):
+        """``coefs`` node meta carries ``browse: True`` for the browse button."""
         cs, _ = self._make_loaded_sheet()
-        input_iid = next(iid for iid, m in cs._meta.items() if m.get("type") == "input")
-        assert cs._meta[input_iid].get("max_col") == 1, (
-            f"input node max_col should be 1 (not 2), got {cs._meta[input_iid].get('max_col')}"
-        )
-
-    def test_input_values_unchanged(self):
-        """``input`` node row shows only ``path`` in column 0."""
-        _, mock_sh = self._make_loaded_sheet()
-        input_insert = [c for c in mock_sh.insert.call_args_list if c.kwargs.get("text") == "input"]
-        assert len(input_insert) == 1
-        values = input_insert[0].kwargs.get("values")
-        assert values[0] == "/data", f"input values[0] should be '/data', got {values[0]!r}"
-        assert all(v == "" for v in values[1:]), f"input values[1:] should all be empty, got {values[1:]!r}"
-
-    def test_input_node_has_browse_flag(self):
-        """``input`` node meta carries ``browse: True`` for the browse button."""
-        cs, _ = self._make_loaded_sheet()
-        input_iid = next(iid for iid, m in cs._meta.items() if m.get("type") == "input")
-        assert cs._meta[input_iid].get("browse") is True, (
-            f"input node should have browse=True, got {cs._meta[input_iid].get('browse')!r}"
-        )
-
-    def test_coefs_path_has_browse_flag(self):
-        """``coefs_path`` child meta carries ``browse: True`` for the browse button."""
-        cs, _ = self._make_loaded_sheet()
-        coefs_path_iid = next(iid for iid, m in cs._meta.items() if m.get("key") == "coefs_path")
-        assert cs._meta[coefs_path_iid].get("browse") is True, (
-            f"coefs_path should have browse=True, got {cs._meta[coefs_path_iid].get('browse')!r}"
+        coefs_iid = next(iid for iid, m in cs._meta.items() if m.get("key") == "coefs")
+        assert cs._meta[coefs_iid].get("browse") is True, (
+            f"coefs node should have browse=True, got {cs._meta[coefs_iid].get('browse')!r}"
         )
 
     def test_non_path_rows_lack_browse_flag(self):
-        """Rows like ``Ag``, ``coefs`` must NOT have ``browse: True``."""
+        """Rows like ``Ag`` must NOT have ``browse: True`` (only input and coefs)."""
         cs, _ = self._make_loaded_sheet()
         browse_keys = [m.get("key") or m.get("path") for m in cs._meta.values() if m.get("browse")]
-        assert sorted(browse_keys) == sorted(["input", "coefs_path"]), (
-            f"only input and coefs_path should have browse flag, got {browse_keys!r}"
+        assert sorted(browse_keys) == sorted(["input", "coefs"]), (
+            f"only input and coefs should have browse flag, got {browse_keys!r}"
         )
 
 
@@ -566,7 +538,7 @@ class TestBrowseButtonLifecycle:
 
     def test_end_edit_detaches_unconditionally(self):
         """``_on_end_edit_cell`` must call ``mgr.detach()`` for ANY row,
-        not just coefs_path — prevents ghost buttons on non-path rows."""
+        not just path — prevents ghost buttons on non-path rows."""
 
         cs, mock_sh = TestCoefsPathChildRow._make_loaded_sheet()
         cs._mgr = MagicMock()
@@ -755,11 +727,11 @@ class TestHoverBtnStatusHints:
         return cs
 
     def test_coefs_btn_gets_button_hints(self):
-        """coefs_path row → dir/file button hints from str.yaml (not row text)."""
+        """coefs (path) row → dir/file button hints from str.yaml (not row text)."""
         from tcm_gui._i18n import STRINGS
 
         cs = self._sheet_with_hover()
-        iid = next(i for i, m in cs._meta.items() if m.get("key") == "coefs_path")
+        iid = next(i for i, m in cs._meta.items() if m.get("key") == "coefs")
         cs._show_hover_field(iid, 1, 10)
         assert cs._hover_btn._status_hint == STRINGS["browse_btn.status"]
         assert cs._hover_btn._status_hint_files == STRINGS["browse_btn.status_files"]
@@ -783,7 +755,7 @@ class TestHoverBtnStatusHints:
         returned although the pointer never moved.
         """
         cs = self._sheet_with_hover()
-        iid = next(i for i, m in cs._meta.items() if m.get("key") == "coefs_path")
+        iid = next(i for i, m in cs._meta.items() if m.get("key") == "coefs")
         cs._status_iid = iid
         cs._hover_btn._hovered = True
         cs._on_shift_toggle(None)
@@ -793,7 +765,7 @@ class TestHoverBtnStatusHints:
         """Shift pressed with pointer on the row (button not hovered) →
         row text is re-published as before."""
         cs = self._sheet_with_hover()
-        iid = next(i for i, m in cs._meta.items() if m.get("key") == "coefs_path")
+        iid = next(i for i, m in cs._meta.items() if m.get("key") == "coefs")
         cs._status_iid = iid
         cs._hover_btn._hovered = False
         with patch.object(cs, "_pointer_in_field", return_value=True):
@@ -1057,8 +1029,10 @@ class TestHoverDetailPublishOrder:
             return next(i for i, m in cs._meta.items() if m.get("key") == key)
 
         cs._publish_status(_iid("coefs"))
-        assert snapshots[-1] == "", (
-            "coefs parent has no #### Detailed → no dwell (group prose must not arm it); "
+        # coefs node now hosts the path cell (like input) → its Detailed is
+        # the path's Detailed (browse-source description), so dwell is armed
+        assert "Path to the configuration file" in snapshots[-1], (
+            "coefs node now shows path Detailed (same row as path); "
             f"got {snapshots[-1]!r}"
         )
         cs._publish_status(_iid("P_t"))
@@ -1078,7 +1052,7 @@ class TestHideHoverFieldCancelsEdit:
     """An open floated-field Entry must be cancelled on immediate teardown.
 
     Regression: double-clicking a browse row (``input.path`` /
-    ``input.coefs_path``) opened the Entry, then double-clicking any other row
+    ``input.path``) opened the Entry, then double-clicking any other row
     ran ``_hide_hover_field`` which only ``place_forget``-ed the field.  The
     orphaned Entry left ``_editing=True`` — every ``_editing``-guarded path
     (``_show_hover_field``, ``_do_field_hide``, ``_on_sheet_motion``)
@@ -1255,3 +1229,76 @@ class TestFloatedFieldAlign:
         with patch.object(cs, "_sync_floated_align") as sync:
             cs._hover_write("/data/new_file.txt")
         sync.assert_not_called()
+
+
+# ── _publish_status: precise date status for coef rows with a date cell ─────
+
+
+class TestCoefDatePreciseStatus:
+    """Coef rows with ``has_date=True`` show a component-specific date status
+    instead of the generic "Per-component calibration dates" fallback.
+
+    Regression: every coef date cell (Ag, Ah, …) showed the same generic
+    ``input.coefs.dates`` short — the user could not tell which component the
+    date belongs to.  Ag+Cg share Ag's date cell; Ah+Ch share Ah's.
+    """
+
+    @staticmethod
+    def _sheet(monkeypatch):
+        from tcm_gui import _help
+        from tcm_gui._i18n import load_str
+
+        monkeypatch.setattr("tcm_gui._help.resolve_lang", lambda: "en")
+        _help.reload_cache("en")
+        # STRINGS are cached at import time → patch i18n lang + reload so _S
+        # picks up English (str.yaml); _i18n.resolve_lang is distinct from _help's.
+        monkeypatch.setattr("tcm_gui._i18n.resolve_lang", lambda: "en")
+        load_str.cache_clear()
+        monkeypatch.setattr("tcm_gui._sheet_status._S", load_str(), raising=False)
+        cfg = {
+            "input": {
+                "path": "/data",
+                "coefs": {
+                    "Ag": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                    "Ah": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                    "Cg": [10, 10, 10],
+                    "Ch": [10, 10, 10],
+                },
+            }
+        }
+        cs, _ = TestCoefsPathChildRow._make_loaded_sheet(cfg)
+        cs.on_hover_status = MagicMock()
+        return cs
+
+    def test_ag_shows_accelerometer(self, monkeypatch):
+        cs = self._sheet(monkeypatch)
+        iid = next(i for i, m in cs._meta.items() if m.get("key") == "Ag")
+        cs._publish_status(iid)
+        msg = cs.on_hover_status.call_args.args[0]
+        assert msg == "Accelerometer calibration date", msg
+
+    def test_ah_shows_magnetometer(self, monkeypatch):
+        cs = self._sheet(monkeypatch)
+        iid = next(i for i, m in cs._meta.items() if m.get("key") == "Ah")
+        cs._publish_status(iid)
+        msg = cs.on_hover_status.call_args.args[0]
+        assert msg == "Magnetometer calibration date", msg
+
+    def test_generic_fallback_for_unmapped_coef(self, monkeypatch):
+        """Coef key not in ``_COEF_DATE_LABELS`` keeps the generic doc short."""
+        cs = self._sheet(monkeypatch)
+        # azimuth_shift_deg has no date cell; use a synthetic has_date row
+        # with an unmapped key to verify the fallback path.
+        cs._meta["iid_unmapped"] = {
+            "key": "Xx",
+            "type": "2d",
+            "has_date": True,
+            "max_col": 0,
+            "shape": (2, 3),
+            "path": "input.coefs.Xx",
+            "parent": next(i for i, m in cs._meta.items() if m.get("key") == "coefs"),
+        }
+        cs._publish_status("iid_unmapped")
+        msg = cs.on_hover_status.call_args.args[0]
+        # Falls through to the generic input.coefs.dates short (non-breaking hyphen)
+        assert msg == "Per\u2011component calibration dates", msg

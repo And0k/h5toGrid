@@ -34,8 +34,8 @@ from tcm.calibration import calibrate, orientation
 lf = log_init.LoggingStyleAdapter(__name__)
 
 # Keys that _coefs_to_h5_dict renames or skips when building the flat dict.
-# "date" (singular) is excluded from the catch-all numpy-array comprehension
-# because it is always written as a fixed-length string dataset at line 66.
+# "date" and "path" are excluded from datasets — stored as HDF5 attributes
+# on the ``/{tbl}/coef`` group (write-only for ``path``).
 _RENAMED_OR_SKIP = frozenset(
     {
         "Ag",
@@ -47,6 +47,7 @@ _RENAMED_OR_SKIP = frozenset(
         "date",
         "dates",
         "i",
+        "path",
     }
 )
 
@@ -67,7 +68,12 @@ def _coefs_to_h5_dict(coef: Mapping[str, Any], pcid: str | None = None, date: st
     to avoid importing Layer 0 at the xr layer boundary.  Structure::
 
         //coef//G//A, //coef//G//C, //coef//H//A, //coef//H//C,
-        //coef//H//azimuth_shift_deg, //coef//Vabs0, //coef//pid, //coef//date
+        //coef//H//azimuth_shift_deg, //coef//Vabs0, //coef//Rz, //coef//P_t, …
+
+    String/Path values (e.g. ``path``) are intentionally excluded — they are
+    persisted as HDF5 attributes of the parent group, not datasets.
+    ``pid``/``date`` are also attributes in the new layout (datasets kept
+    transiently in the dict for legacy compatibility removed here).
     """
     if coef is None:
         coef = {}
@@ -88,10 +94,10 @@ def _coefs_to_h5_dict(coef: Mapping[str, Any], pcid: str | None = None, date: st
         **{
             f"//coef//{k}": p
             for k, p in coef.items()
-            if k not in _RENAMED_OR_SKIP and isinstance(p, np.ndarray)
+            if k not in _RENAMED_OR_SKIP
+            and isinstance(p, np.ndarray)
+            and not isinstance(p, (str, Path))
         },
-        "//coef//pid": pcid,
-        "//coef//date": str(date) if date else datetime.now().replace(microsecond=0).isoformat(),
     }
 
 
@@ -106,34 +112,53 @@ def save_coefs_to_nc(
 
     Builds the flat ``//coef//`` dict via :func:`_coefs_to_h5_dict`, then
     delegates the HDF5 write to :func:`h5inclinometer_coef.h5copy_coef`
-    (handles str/bool→dtype, shape mismatch→delete+recreate, NaN masking,
+    (handles shape mismatch→delete+recreate, NaN masking,
     ``timestamp`` attributes, and ``True``→ISO-date in *dates*).
+
+    String/Path coefs (e.g. ``path``) and ``date``/``pid`` are persisted as
+    HDF5 attributes of the ``/{tbl}/coef`` group, not datasets.  ``path``
+    is write-only for external inspection and never read back.
 
     :param nc_path: Path to ``.raw.nc`` file (created if missing).
     :param tbl: Table group name (e.g. ``"incl_01"``).
     :param coefs: Raw coefs dict (output of :func:`get_coefs`).
-    :param pcid: Probe Column ID (written as ``//coef//pid``).
+    :param pcid: Probe Column ID (written as ``//coef//pid`` attribute).
     :param dates: If truthy, numeric datasets get ``timestamp`` attr.
     """
     policy.io().require_nc("saving coefs to NC/HDF5")
     from tcm import h5inclinometer_coef as _h5coef
 
-    h5_dict = _coefs_to_h5_dict(coefs, pcid=pcid, date=coefs.get("date"))
+    h5_dict = _coefs_to_h5_dict(coefs, pcid=pcid, date=None)
     lf.debug("Saving coefs to {}: tbl={}, keys={}", nc_path, tbl, list(h5_dict))
 
     # Translate dates dict keys from short names ("Ag") to h5copy_coef's
     # rel_path ("//coef//G//A") so its suffix lookup matches.  Coefs without
     # an explicit date default to True (→ current ISO date via h5copy_coef).
+    # Exclude path (string attribute) from change tracking.
     if isinstance(dates, dict):
-        dates = {_COEF_SHORT_TO_H5.get(k, f"//coef//{k}"): v for k, v in dates.items()}
+        dates = {
+            _COEF_SHORT_TO_H5.get(k, f"//coef//{k}"): v for k, v in dates.items() if k != "path"
+        }
         dates |= {p: True for p in h5_dict if p not in dates}
 
     with _h5py.File(nc_path, "a") as h5f:
         _h5coef.h5copy_coef(None, h5f, tbl, dict_matrices=h5_dict, dates=dates)
-        # Mirror legacy: date attribute on the coef group itself
         coef_grp = h5f.require_group(f"{tbl}/coef")
-        if date_str := h5_dict.get("//coef//date"):
+        # Clean legacy string datasets (now attributes)
+        for legacy in ("date", "pid", "path"):
+            if legacy in coef_grp and isinstance(coef_grp[legacy], _h5py.Dataset):
+                del coef_grp[legacy]
+        # Persist string coefs as attributes of the coef group (generalized)
+        for k, v in (coefs or {}).items():
+            if isinstance(v, (str, Path)) and k != "dates":
+                coef_grp.attrs[k] = str(v)
+        if pcid:
+            coef_grp.attrs["pid"] = str(pcid)
+        # Date attribute: prefer coefs["date"], else now
+        if date_str := coefs.get("date"):
             coef_grp.attrs["date"] = str(date_str)
+        elif "date" not in coef_grp.attrs:
+            coef_grp.attrs["date"] = datetime.now().replace(microsecond=0).isoformat()
 
     lf.info("Coefs saved to {}//{}: {} datasets", nc_path, tbl, len(h5_dict))
 
@@ -186,6 +211,8 @@ def load_coefs_from_nc(nc_path: Path, tbl: str) -> dict[str, Any] | None:
          "azimuth_shift_deg": ..., "dates": {...}, "date": ...}
 
     Delegates group traversal to :func:`_read_coefs_from_coef_group`.
+    String attributes (e.g. ``path``) are intentionally **not** loaded
+    (write-only for external inspection).
 
     :param nc_path: Path to ``.raw.nc`` file.
     :param tbl: Table group name (e.g. ``"incl_01"``).
@@ -205,9 +232,13 @@ def load_coefs_from_nc(nc_path: Path, tbl: str) -> dict[str, Any] | None:
 
         coefs_dict = _read_coefs_from_coef_group(h5f[coef_path])
 
-        # Date from coef group attribute (set by save_coefs_to_nc)
+        # Date from coef group attribute (set by save_coefs_to_nc); fallback to legacy dataset
         if "date" in h5f[coef_path].attrs:
             coefs_dict["date"] = str(h5f[coef_path].attrs["date"])
+        elif "date" in h5f[coef_path] and isinstance(h5f[coef_path]["date"], _h5py.Dataset):
+            raw = h5f[coef_path]["date"][()]
+            coefs_dict["date"] = raw.decode() if isinstance(raw, bytes) else str(raw)
+        # path attribute is write-only, do not load
 
     lf.debug("Loaded coefs from {}: keys={}", nc_path, list(coefs_dict))
     return coefs_dict

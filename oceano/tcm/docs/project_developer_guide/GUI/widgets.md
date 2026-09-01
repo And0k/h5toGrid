@@ -19,8 +19,8 @@ the target row, regardless of which column the user clicked.
 | Site | Trigger | Target |
 |------|---------|--------|
 | `_path_field.py` §1 — data path | `SheetHoverBinder` motion policy | PathField's single cell `(0, 0)` via `set_cell_data` + `_notify` |
-| `coef_sheet.py` — in-sheet edit | `_on_begin_edit_cell` for rows with `meta["browse"] = True` (`input`, `coefs_path`) | tksheet cell `(row, 0)` via `set_cell_data` |
-| `coef_sheet.py` — hover-edit | intent-delayed `PathField` (text) + separate `BrowseOverlay` (button at right edge) over browse rows | `_hover_write` → `set_cell_data` + `_apply_edit_value` + `coefs_path` notify |
+| `coef_sheet.py` — in-sheet edit | `_on_begin_edit_cell` for rows with `meta["browse"] = True` (`input`, `coefs.path`) | tksheet cell `(row, 0)` via `set_cell_data` |
+| `coef_sheet.py` — hover-edit | intent-delayed `PathField` (text) + separate `BrowseOverlay` (button at right edge) over browse rows | `_hover_write` → `set_cell_data` + `_apply_edit_value` + `coefs.path` notify |
 
 ### Create / destroy lifecycle
 
@@ -91,7 +91,7 @@ to `frame − button` via `place(width=…)` (same pattern as
 ConfigSheet's `_field_place_kw`) and switches to `align="e"` with
 `xview_moveto(1.0)` — filename ends right before the browse button.
 `ENTRY_BG_FALLBACK` background, bold font, all chrome hidden.  Normal
-black `FG_DEFAULT` foreground (not `BLUE_FG`).  The `align` parameter
+black `FG_DEFAULT` foreground (not `NODE_DEFAULT_VALS_FG`).  The `align` parameter
 defaults to `"w"` (standalone); ConfigSheet passes `align="e"` for the
 floated field.
 
@@ -183,7 +183,7 @@ between rows cleanly.
 
 One reusable `PathField` instance (text surface) + a separate `BrowseOverlay`
 (button at the sheet's right edge) float over browse rows
-(`input`, `coefs_path`) on hover, replacing the former single `BrowseOverlay`.
+(`input`, `coefs.path`) on hover, replacing the former single `BrowseOverlay`.
 
 ### Intent-delayed show / hide
 
@@ -231,7 +231,7 @@ native click-to-edit via tksheet's normal edit binding.
 
 Because the surface IS a `PathField`, all its capabilities arrive for free:
 Enter commit → `_hover_write` (set_cell_data + `_apply_edit_value` +
-`coefs_path` notify).  Esc undo → `_commit_entry(cancel=True)`.  Browse
+`coefs.path` notify).  Esc undo → `_commit_entry(cancel=True)`.  Browse
 button → separate `BrowseOverlay` at the sheet's right edge (Shift toggles
 dir/file).  PathField's own internal browse overlay is suppressed — only
 the reparented button is active.  Editing uses `ttk.Entry` overlay (not

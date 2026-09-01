@@ -38,7 +38,7 @@ CFG_DEFAULTS: dict[str, dict[str, Any]] = {
 
 # ── Coefficient shape inference ──────────────────────────────────────────────
 
-_COEF_META_SKIP = frozenset(("dates", "date"))  # tree-level metadata, not row items
+_COEF_META_SKIP = frozenset(("dates", "date", "path"))  # tree-level metadata, not row items
 
 # Derive ConfigInCoefs_InclProc from Config.input.coefs — no direct import.
 COEFS_TYPE: type = type(

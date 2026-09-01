@@ -5,7 +5,7 @@ Mixin for :class:`tcm_gui.coef_sheet.ConfigSheet`.
 * **Status bar** (:meth:`SheetHoverMixin._publish_status`) — hovered row's doc
   short text from ``config_reference.md`` (:mod:`tcm_gui._help`), with a live
   ``time_ranges`` sync detail appended (recomputed per publish — never a stale
-  scan-time message) and Shift-toggled dir/file hints for ``coefs_path``.
+  scan-time message) and Shift-toggled dir/file hints for ``path`` under ``coefs``.
 * **Floated PathField** (:meth:`SheetHoverMixin._show_hover_field`) — after
   ``_INTENT_MS`` dwell on a browse row, a reusable :class:`tcm_gui._path_field.PathField`
   covers the row plus a :class:`tcm_gui._browse_button.BrowseOverlay` at the
@@ -36,6 +36,18 @@ from ._browse_button import (
 from ._i18n import STRINGS as _S
 
 _INTENT_MS: Final[int] = 120  # hover-intent delay for the floated PathField (ms)
+
+# Coef rows with ``has_date=True`` fall back to the generic ``input.coefs.dates``
+# doc short ("Per-component calibration dates").  Map coef key → i18n key so the
+# status shows a component-specific label instead (e.g. "Accelerometer
+# calibration date" for Ag, whose date cell is shared by Cg).
+_COEF_DATE_LABELS: dict[str, str] = {
+    "Ag": "input.coefs.date.accelerometer",
+    "Ah": "input.coefs.date.magnetometer",
+    "Rz": "input.coefs.date.alignment",
+    "P_t": "input.coefs.date.pressure",
+    "kVabs": "input.coefs.date.velocity",
+}
 
 _l = logging.getLogger(__name__)
 
@@ -119,7 +131,18 @@ class SheetHoverMixin:
             cands += [f"{path}.date", f"{path}.dates"]
             if (par := m.get("parent")) and (pp := self._meta.get(par, {}).get("path")):
                 cands += [f"{pp}.dates", f"{pp}.date"]
-        cands += [f"{path}.path", path] if path else []
+        if path:
+            # `input.path` lives in the `input` node's own cell (col 0), not as a
+            # separate child row — its field docs must show on data-cell hover
+            # (tree=False), but the tree column (tree=True) must show the section
+            # `## input` so children never affect the parent. Other containers
+            # (e.g. `coefs` with literal `path` child `input.coefs.path`) never
+            # get the `.path` suffix — leaf row `path="input.coefs.path"` shows
+            # its own `### input.coefs.path` docs via `cands=[path]`.
+            if not tree and path == "input":
+                cands += [f"{path}.path", path]
+            else:
+                cands.append(path)
         return cands
 
     def _on_tree_motion(self, event) -> None:
@@ -154,11 +177,11 @@ class SheetHoverMixin:
             self.on_hover_status(str(m.get("key") or m.get("label") or m.get("path") or ""), False)
 
     def _coefs_status_hint(self) -> str:
-        """Mode-aware status hint for ``coefs_path`` browse button.
+        """Mode-aware status hint for ``input.coefs`` (path) browse button.
 
-        General = ``### `input.coefs_path` `` short body (pre-``####``) from
+        General = ``### `input.coefs.path` `` short body (pre-``####``) from
         ``config_reference.md``; suffix = mode-specific GUI hint from ``STR``
-        (``input.coefs_path.status.dir/files``).  Shift held → ``file`` mode;
+        (``input.coefs.path.status.dir/files``).  Shift held → ``file`` mode;
         default → ``dir`` mode.  Same augmentation pattern as ``path_field``
         and ``time_ranges.hover.*``.
         """
@@ -166,21 +189,25 @@ class SheetHoverMixin:
         def _suffix_for(m: str) -> str:
             # Robust lookup: accept plural/singular and coefs/coef typo variants.
             for key in (
+                f"input.coefs.path.status.{m}s",
+                f"input.coefs.path.status.{m}",
                 f"input.coefs_path.status.{m}s",
                 f"input.coefs_path.status.{m}",
                 f"input.coef_path.status.{m}s",
                 f"input.coef_path.status.{m}",
             ):
-                if (v := _S.get(key)):
+                if v := _S.get(key):
                     return str(v)
             return ""
 
         mode = "file" if _is_shift_pressed() else "dir"
         # Doc general (fallback to _NO_MODE when mode-specific section absent)
         base = ""
-        if (h := _help.help_for_path("input.coefs_path", mode=mode)) and isinstance(h.body, str) and h.body:
+        if (h := _help.help_for_path("input.coefs.path", mode=mode)) and isinstance(h.body, str) and h.body:
             base = str(h.body)
-        elif (ge := _help.help_for_path("input.coefs_path")) and isinstance(getattr(ge, "body", None), Mapping):
+        elif (ge := _help.help_for_path("input.coefs.path")) and isinstance(
+            getattr(ge, "body", None), Mapping
+        ):
             raw = ge.body.get(_help._NO_MODE)  # type: ignore[attr-defined]
             if isinstance(raw, _help.ModeBody):
                 base = raw.short
@@ -196,7 +223,7 @@ class SheetHoverMixin:
         return _S["browse_btn.status_files" if mode == "file" else "browse_btn.status"]
 
     def _on_shift_toggle(self, _event) -> None:
-        """Re-publish status when Shift is pressed/released while hovering coefs_path.
+        """Re-publish status when Shift is pressed/released while hovering input.coefs (path).
 
         Gate: ``_status_iid`` is only set while the pointer is actively on a
         row (cleared by ``_clear_status`` on leave/blank-area) — unlike
@@ -207,7 +234,7 @@ class SheetHoverMixin:
         iid = self._status_iid
         if iid is None:
             return
-        if self._meta.get(iid, {}).get("key") != "coefs_path":
+        if self._meta.get(iid, {}).get("key") not in ("path", "coefs"):
             return
         # Pointer on the hover button → its poll (_update_icon) re-publishes
         # the button-specific hint on this transition; publishing the row
@@ -298,7 +325,7 @@ class SheetHoverMixin:
         Fallback chain: ``help_for_path(path).short`` (from
         ``config_reference.md``) → ``key`` → ``label`` → ``path``.  The
         ``time_ranges`` row appends the *live* sync detail from
-        :meth:`_time_ranges_detail`; ``coefs_path`` shows Shift-toggled
+        :meth:`_time_ranges_detail`; ``input.coefs`` (path) shows Shift-toggled
         dir/file content.  Tree-column hover is handled by ``_on_tree_motion``
         which always uses the section-level path.
 
@@ -331,10 +358,20 @@ class SheetHoverMixin:
             self.on_hover_status(sync, False)
             return
 
-        # Mode-aware: coefs_path shows dir/file content from config_reference.md
-        # instead of the table-row short text.  Shift toggles mode.
-        if ident == "coefs_path" and (txt := self._coefs_status_hint()):
-            self._hover_detail = self._resolve_detail("input.coefs_path")
+        # Mode-aware: input.coefs (path) shows dir/file content from config_reference.md
+        # instead of the table-row short text.  Shift toggles mode.  For the
+        # coefs node also append the GUI behaviour and recorded date suffixes.
+        if ident in ("path", "coefs") and (txt := self._coefs_status_hint()):
+            detail = self._resolve_detail("input.coefs.path")
+            if gui_detailed := _S.get("input.coefs.path.detailed.gui", ""):
+                detail = f"{detail} {gui_detailed}".strip() if detail else gui_detailed
+            self._hover_detail = detail
+            # status GUI behaviour
+            if gui_status := _S.get("input.coefs.path.status.gui", ""):
+                txt = f"{txt} {gui_status}".strip()
+            if ident == "coefs" and (coefs_date := m.get("_coefs_date")):
+                if suffix := _S.get("input.coefs.date.status", "").format(date=coefs_date):
+                    txt = f"{txt} {suffix}".strip()
             self.on_hover_status(txt, True)
             return
 
@@ -343,6 +380,22 @@ class SheetHoverMixin:
                 self._hover_detail = self._resolve_detail(cand) or self._resolve_detail(
                     str(m.get("path") or "")
                 )
+                # Coef row with a date cell → component-specific status
+                # instead of the generic "Per-component calibration dates".
+                if (
+                    m.get("has_date")
+                    and not m.get("is_metadata")
+                    and (lbl := _COEF_DATE_LABELS.get(str(m.get("key") or "")))
+                    and (txt := _S.get(lbl, ""))
+                ):
+                    self.on_hover_status(txt, True)
+                    return
+                # Append coefs date suffix when hovering the coefs node
+                if m.get("key") == "coefs" and (coefs_date := m.get("_coefs_date")):
+                    suffix = _S.get("input.coefs.date.status", "").format(date=coefs_date)
+                    if suffix:
+                        self.on_hover_status(f"{h.short} {suffix}".strip(), True)
+                        return
                 self.on_hover_status(h.short, True)
                 return
 
@@ -395,7 +448,7 @@ class SheetHoverMixin:
             self._metadata_path = text
             if Path(text).expanduser().is_file():
                 self.sh.after_idle(lambda p=text: self._reload_metadata_from(p))
-        elif m.get("key") == "coefs_path" and self._mgr is not None and text:
+        elif (m.get("key") == "path" or m.get("path") == "input.coefs") and self._mgr is not None and text:
             self.sh.after_idle(lambda: self._mgr.notify_path_changed(text))
         # Re-validate the written cell after browse — red fg if its check fails.
         if m.get("check"):
@@ -511,8 +564,8 @@ class SheetHoverMixin:
         self._field_row = hit_row  # stored for expand-on-edit
         self._field_y = fallback_y
         # Reconfigure browse button for the current row type.
-        # coefs_path → dir+file (coefs), metadata root → file-only *.yaml, others → data files.
-        is_coefs = self._meta.get(iid, {}).get("key") == "coefs_path"
+        # input.coefs (path) → dir+file (coefs), metadata root → file-only *.yaml, others → data files.
+        is_coefs = self._meta.get(iid, {}).get("key") in ("path", "coefs")
         is_meta_path = bool(self._meta.get(iid, {}).get("is_metadata_root"))
         if self._hover_btn is not None:
             if is_coefs:

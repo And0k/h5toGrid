@@ -72,7 +72,7 @@ class TestConfigDataclass:
         "cls,required_fields",
         [
             pytest.param(Config, ("input", "out", "filter", "program", "defaults"), id="Config"),
-            pytest.param(ConfigIn_InclProc, ("coefs", "coefs_path", "path"), id="ConfigIn"),
+            pytest.param(ConfigIn_InclProc, ("coefs", "path"), id="ConfigIn"),
         ],
     )
     def test_has_required_fields(self, cls, required_fields):

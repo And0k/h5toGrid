@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from omegaconf import DictConfig
 
-from tcm.schema import ConfigIn_InclProc, Return
+from tcm.schema import ConfigInCoefs_InclProc, ConfigIn_InclProc, Return
 from tcm.incl_calc import coefs as _coefs
 from tcm.incl_calc.coefs import get_coefs, get_coefs_from_cfg
 import tcm.processing as _processing
@@ -21,23 +21,23 @@ class TestGetCoefsFromCfg:
     """get_coefs_from_cfg: coefs_path fallback, override merge, list→ndarray."""
 
     def test_fallback_to_class_default_coefs_path(self, mocker):
-        """When cfg_in has no coefs_path, falls back to ConfigIn_InclProc.coefs_path."""
+        """When cfg_in has no coefs_path, falls back to ConfigInCoefs_InclProc.path."""
         mock_get = mocker.patch.object(_coefs, "get_coefs", return_value={"Ag": np.eye(3)})
         get_coefs_from_cfg({}, "i_01")
-        assert ConfigIn_InclProc.coefs_path in mock_get.call_args[0][0]
+        assert ConfigInCoefs_InclProc.path in mock_get.call_args[0][0]
 
     def test_explicit_coefs_path_used_first(self, mocker):
         """When cfg_in has coefs_path, it appears before the class default."""
         mock_get = mocker.patch.object(_coefs, "get_coefs", return_value={"Ag": np.eye(3)})
-        get_coefs_from_cfg({"coefs_path": "/custom/path.h5", "coefs": {}}, "i_01")
+        get_coefs_from_cfg({"coefs": {"path": "/custom/path.h5"}}, "i_01")
         paths = mock_get.call_args[0][0]
-        assert str(paths[0]) == "/custom/path.h5"
-        assert ConfigIn_InclProc.coefs_path in paths
+        assert Path(paths[0]) == Path("/custom/path.h5")
+        assert ConfigInCoefs_InclProc.path in paths
 
     def test_coefs_paths_is_list(self, mocker):
         """coefs_paths passed to get_coefs must always be a list, not a scalar."""
         mock_get = mocker.patch.object(_coefs, "get_coefs", return_value={})
-        get_coefs_from_cfg({"coefs_path": "/some/path.h5", "coefs": {}}, "i_01")
+        get_coefs_from_cfg({"coefs": {"path": "/some/path.h5"}}, "i_01")
         assert isinstance(mock_get.call_args[0][0], list)
 
     def test_override_passed_as_coefs_ovr(self, mocker):
@@ -69,15 +69,15 @@ class TestGetCoefsFromCfg:
         """
         mock_get = mocker.patch.object(_coefs, "get_coefs", return_value={})
         get_coefs_from_cfg({}, "i_01")
-        expected_yaml_dir = ConfigIn_InclProc.coefs_path.parent / "yaml_export"
+        expected_yaml_dir = ConfigInCoefs_InclProc.path.parent / "yaml_export"
         assert expected_yaml_dir in mock_get.call_args[0][0]
         assert mock_get.call_args[0][0][-1] == expected_yaml_dir
 
     def test_yaml_export_not_duplicated_with_explicit_path(self, mocker):
         """Explicit ``coefs_path`` already pointing at ``yaml_export`` dir → no duplicate append."""
         mock_get = mocker.patch.object(_coefs, "get_coefs", return_value={})
-        yaml_dir = ConfigIn_InclProc.coefs_path.parent / "yaml_export"
-        get_coefs_from_cfg({"coefs_path": str(yaml_dir), "coefs": {}}, "i_01")
+        yaml_dir = ConfigInCoefs_InclProc.path.parent / "yaml_export"
+        get_coefs_from_cfg({"coefs": {"path": str(yaml_dir)}}, "i_01")
         assert mock_get.call_args[0][0].count(yaml_dir) == 1
 
 

@@ -51,7 +51,7 @@ def real_env(tmp_path):
     cfg = DictConfig({
         "input": {
             "path": str(csv_file),
-            "coefs_path": None,
+            "coefs": {"path": None},
             "coefs": _COEFS,
             "tables": ["incl*"],
             "text_type": None,

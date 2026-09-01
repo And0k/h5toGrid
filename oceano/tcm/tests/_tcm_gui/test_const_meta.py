@@ -336,8 +336,8 @@ class TestWidgetMeta:
         """set_widget_meta stores metadata by string identifier."""
         from tcm_gui.const import get_widget_meta
 
-        set_widget_meta("input.coefs_path", status="Path to coefficients file")
-        assert get_widget_meta("input.coefs_path", "status") == "Path to coefficients file", (
+        set_widget_meta("input.coefs.path", status="Path to coefficients file")
+        assert get_widget_meta("input.coefs.path", "status") == "Path to coefficients file", (
             "widget_meta: status mismatch for string identifier"
         )
 

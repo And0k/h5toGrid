@@ -24,7 +24,7 @@ class TestSaveRunYaml:
         src_file.write_text("dummy\n")
 
         cfg = {
-            "input": {"path": src_file, "tables": ["incl*"], "coefs_path": None, "coefs": {},
+            "input": {"path": src_file, "tables": ["incl*"], "coefs": {"path": None}, "coefs": {},
                       "corr_time_mode": True},
             "filter": {},
             "out": {"dt_bins": [0], "table": ""},
@@ -59,7 +59,7 @@ class TestSaveRunYaml:
         src_file.write_text("dummy\n")
 
         cfg = {
-            "input": {"path": src_file, "tables": ["incl*"], "coefs_path": None, "coefs": {},
+            "input": {"path": src_file, "tables": ["incl*"], "coefs": {"path": None}, "coefs": {},
                       "corr_time_mode": True},
             "filter": {},
             "out": {"dt_bins": [0], "table": ""},
@@ -94,7 +94,7 @@ class TestSaveRunYaml:
         src_file.write_text("dummy\n")
 
         cfg = {
-            "input": {"path": src_file, "tables": ["incl*"], "coefs_path": None, "coefs": {},
+            "input": {"path": src_file, "tables": ["incl*"], "coefs": {"path": None}, "coefs": {},
                       "corr_time_mode": True},
             "filter": {},
             "out": {"dt_bins": [0], "table": ""},

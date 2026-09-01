@@ -139,4 +139,4 @@ class TestDatePlaceholderSurvivesCancel:
         assert not cs._ph.has(0, PH_COL)
         # cleanup: restore placeholder state for any later assertions
         cs.sh.set_cell_data(0, PH_COL, "")
-        cs._ph.show(cs.sh, 0, PH_COL, FMT, theme.DEFAULT_FG)
+        cs._ph.show(cs.sh, 0, PH_COL, FMT, theme.CELL_DEFAULT_VAL_FG)

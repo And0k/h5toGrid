@@ -68,8 +68,7 @@ def cfg_in_minimal() -> Dict[str, Any]:
     return {
         "path": None,
         "tables": ["incl*"],
-        "coefs_path": None,
-        "coefs": {},
+        "coefs": {"path": None},
         "dt_min_binning_proc": pd.Timedelta("2s"),
         "max_incl_of_fit_deg": 5.0,
         "calc_version": 1,

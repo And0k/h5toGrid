@@ -1,6 +1,6 @@
 """Tests for generalized red-fg cell validation (``_apply_validations``).
 
-Covers ``check: "exists"`` rows (``input.path``, ``input.coefs_path``): any
+Covers ``check: "exists"`` rows (``input.path``, ``input.coefs.path``): any
 cell whose committed path doesn't exist on disk gets red foreground, while
 the Run button stays gated on ``input.path`` only (``coefs_path`` is
 optional — coefficients may be entered manually).
@@ -27,8 +27,7 @@ def _make_sheet(path: str, coefs_path: str):
     cfg = {
         "input": {
             "path": path,
-            "coefs_path": coefs_path,
-            "coefs": {"Ag": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]},
+            "coefs": {"path": coefs_path, "Ag": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]},
         }
     }
     mock_sh = MagicMock()
@@ -84,11 +83,11 @@ def _iid(cs, **meta) -> Any:
 
 class TestCheckMarker:
     def test_checked_rows_only(self, tmp_path):
-        """``check: "exists"`` lands on exactly input.path and coefs_path rows."""
+        """``check: "exists"`` lands on exactly input.path and coefs rows."""
         cs, _ = _make_sheet(str(tmp_path), str(tmp_path))
         checked = [iid for iid, m in cs._meta.items() if m.get("check") == "exists"]
         assert len(checked) == 2
-        assert {cs._meta[i]["key"] for i in checked} == {"input", "coefs_path"}
+        assert {cs._meta[i]["key"] for i in checked} == {"input", "coefs"}
 
 
 class TestApplyValidations:
@@ -97,7 +96,7 @@ class TestApplyValidations:
         cs, mock_sh = _make_sheet(str(tmp_path), str(tmp_path / "nope"))
         cs._apply_validations()
         red = _red_calls(mock_sh)
-        cp_iid = _iid(cs, key="coefs_path")
+        cp_iid = _iid(cs, key="coefs")
         assert len(red) == 1
         assert red[0].kwargs["row"] == cs._row_map()[cp_iid]
         assert red[0].kwargs["column"] == 0

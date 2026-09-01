@@ -19,7 +19,7 @@ from typing import Final
 from tcm.journal import ProbeState, parse_prefix
 
 from ._i18n import STRINGS as _S
-from .const import DEFAULT_FG, FG_DEFAULT, TAG_COLORS, set_widget_meta
+from .const import CELL_DEFAULT_VAL_FG, FG_DEFAULT, TAG_COLORS, set_widget_meta
 
 _FIXED: Final = ((1, "load"), (2, "coefs"), (3, "proc"))
 
@@ -42,7 +42,7 @@ class StageTree(ttk.Treeview):
         self.heading("#0", text=_S.get("stage_tree.heading.stage", "Stage"))
         self.heading("status", text=_S.get("stage_tree.heading.status", "Status"))
         self.column("status", width=90, anchor="e")
-        self.tag_configure("pending", foreground=DEFAULT_FG)
+        self.tag_configure("pending", foreground=CELL_DEFAULT_VAL_FG)
         self.tag_configure("done", foreground=FG_DEFAULT)
         self.tag_configure("running", foreground=FG_DEFAULT)
         self.tag_configure("interrupted", foreground=TAG_COLORS["error"])

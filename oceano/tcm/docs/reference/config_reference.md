@@ -50,8 +50,7 @@ Every run YAML starts with `# @package _global_` so Hydra merges it into the top
 | `prefix` = `'I*[_0]'` | Filename prefix filter for CSV file discovery. |
 | `text_type` = `None` | Column layout variant (`i`, `p`, `b`, `d`, `w`). Auto-detected from file header; override here if detection fails. |
 | `text_line_regex` = `None` | Custom regex for raw text line parsing. Only needed when auto-detection fails on unusual file formats. |
-| `coefs` = see [§coefs](#inputcoefs--calibration-coefficients) | Calibration coefficients. Loaded from the calibration file on first run; edit here for a specific probe. |
-| `coefs_path` = `tcm/cfg/coef/calibration.h5` | Coefficient source — a directory of per-probe YAMLs or a single HDF5/NC/YAML file. [More](#inputcoefs_path) |
+| `coefs` = see [§coefs](#inputcoefs--calibration-coefficients) | Calibration coefficients and its metadata. Loaded from the calibration file on first run; edit here for a specific probe. |
 | `date_to_from` = `None` | Two timestamps of one moment — [true, instrument reading]: the difference becomes the clock offset `dt_from_utc`. Fill when the instrument clock is off. |
 | `dt_from_utc` = `0` | Offset from UTC in seconds. Set the timezone to convert instrument time to UTC. |
 | `time_ranges` = `None` | Processing time window `[start, end, …]` in ISO format. Auto-filled from the data on first run — narrow it to process the needed period, give several pairs to skip the gaps between them. [More](#inputtime_ranges) |
@@ -77,16 +76,7 @@ an optional model letter (`p`, `b`, `d`), and the probe number — e.g. `i_01.tx
 `i01`, `i_p05_data.txt` → pcid `i_p05`.  A wrong filename maps to the wrong table and
 wrong coefficients.
 
-### `input.coefs_path`
-Coefficient source — a directory of per-probe YAMLs or a single YAML file. Or NetCDF/HDF5: the group {g} matching the probe is selected.
 
-#### Detailed
-
-Path to the configuration file. Must contain `input.coefs` coefficients. Possible:
-
-- single coefficient source file: HDF5 (`.h5`), NetCDF4 (`.nc`) or coefficient YAML config (`.yaml`).
-- directory of per-probe YAMLs must contain files `{g}.yaml`, where {g} is the probe identifier (`incl_{model#}.yaml`)
-- missing/incorrect path — allowed if all required parameters are already set manually (they have priority over file data), another attempt will be made to find the needed coefficients from the bundled `yaml_export/`: [priority chain](io_formats.md#coefficient-source-priority).
 
 ### `input.time_ranges`
 Time window for processing — restricts to data within it; auto-populated from
@@ -211,9 +201,10 @@ Edit these to update a probe's calibration — changes are persisted automatical
 | `azimuth_shift_deg` = `180` | Azimuth° correction — converts tilt direction from sensor to geographic coordinates; compensates magnetometer sign inversion at load time. See [Azimuth calibration](config_tuning.md#azimuth-calibration). [More](#inputcoefsazimuth_shift_deg) |
 | `dates` = `{}` | Per‑component calibration dates |
 | `date` = `None` | Overall calibration date |
+| `coefs_path` = `tcm/cfg/coef/calibration.h5` | Coefficient source — a directory of per-probe YAMLs or a single HDF5/NC/YAML file. [More](#inputcoefs_path) |
 
 Field types and shapes: [`ConfigInCoefs_InclProc` dataclass](../../src/tcm/schema.py).
-Resolution priority (own config → `coefs_path` file → bundled `yaml_export/` →
+Resolution priority (own config > `input.coefs.path` file > bundled `yaml_export/` >
 dataclass defaults): see [§Coefficient source priority](io_formats.md#coefficient-source-priority).
 
 ### `input.coefs.azimuth_shift_deg`
@@ -239,6 +230,20 @@ temperature into physical pressure.
 `u^i·t^j` (six coefficients of total degree ≤ 2). Computed pressure is as
 calibrated — referenced to standard atmospheric pressure P0 = 10.1325 dbar.
 Formula and provenance: [§Pressure computation](../methodology/pressure.md).
+
+
+### `input.coefs.path`
+Coefficient source — a directory of per-probe YAMLs or a single YAML file. Or NetCDF/HDF5: the group {g} matching the probe is selected.
+
+#### Detailed
+
+Path to the configuration file. Must contain `input.coefs` coefficients. Possible:
+
+- single coefficient source file: HDF5 (`.h5`), NetCDF4 (`.nc`) or coefficient YAML config (`.yaml`).
+- directory of per-probe YAMLs must contain files `{g}.yaml`, where {g} is the probe identifier (`incl_{model#}.yaml`)
+- missing/incorrect path — allowed if all required parameters are already set manually (they have priority over file data), another attempt will be made to find the needed coefficients from the bundled `yaml_export/`: [priority chain](io_formats.md#coefficient-source-priority).
+
+
 
 ## `out` — Output configuration
 

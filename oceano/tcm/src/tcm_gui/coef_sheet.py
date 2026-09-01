@@ -47,9 +47,10 @@ from ._sheet_tint import _DATE_COL, _DATE_PH_COL, SheetTintMixin
 _l = logging.getLogger(__name__)
 
 # Derive field order from dataclass declaration — single source of truth.
-# Exclude `dates` / `date` which are handled as tree-level metadata, not row items.
-_COEF_FIELDS = [f.name for f in dataclasses.fields(COEFS_TYPE) if f.name not in ("dates", "date")]
+# Exclude `dates` / `date` / `path` which are not numeric coef rows (path is string attribute on coef group).
+_COEF_FIELDS = [f.name for f in dataclasses.fields(COEFS_TYPE) if f.name not in ("dates", "date", "path")]
 _1D_WITH_DATES = {"kVabs"}  # единственное 1D с датами → parent+child
+_COMMON_DATE_FOR: dict[str, str] = {"Cg": "Ag", "Ch": "Ah"}  # 1d_flat bias shares date with its 2d scale
 _DATE_COL = _DATE_COL  # meta col: 1=₁ 2=₂/date 3=₃… (tksheet col = meta_col − DATA_COL_BASE)
 _RESIZE_ZONE: Final[int] = 8  # px from cell boundary to activate resize cursor
 _RESIZE_CURSOR: Final[str] = "sb_h_double_arrow"
@@ -283,7 +284,7 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
         self._hover_btn: BrowseOverlay | None = None
         self._stretch_job: str | None = None
 
-        # Shift key on toplevel → re-publish status for coefs_path hover so
+        # Shift key on toplevel → re-publish status for input.coefs (path) hover so
         # the status bar swaps dir↔file content on Shift toggle without
         # requiring pointer motion.  Bound once with add="+".
         root = self.sh.winfo_toplevel()
@@ -445,8 +446,8 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
     def is_path_valid(self) -> bool:
         """True iff ``input.path`` is non-empty and resolves to an existing file.
 
-        Only the ``input.path`` row gates the Run button — ``input.coefs_path``
-        is optional (coefficients may be entered manually), even though
+        Only the ``input.path`` row gates the Run button — the ``input.coefs``
+        path cell is optional (coefficients may be entered manually), even though
         :meth:`_apply_validations` still red-flags it when the path is missing.
         """
         for iid, m in self._meta.items():
@@ -590,27 +591,6 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
 
         return nv
 
-    def _ins_coefs_path(self, inp_iid: Any, coefs_path: str) -> None:
-        """Insert the ``input.coefs_path`` child row (shared by both build modes).
-
-        ``check: "exists"`` marks the row for red-fg validation when the path
-        doesn't exist on disk (see :meth:`_apply_validations`).
-        """
-        self._ins(
-            inp_iid,
-            "coefs_path",
-            [coefs_path] + [""] * (self._nv - 1),
-            "",
-            meta={
-                "key": "coefs_path",
-                "check": "exists",
-                "is_string": True,
-                "max_col": 1,
-                "path": "input.coefs_path",
-                "browse": True,
-            },
-        )
-
     def _build_coefs(self, cfg: dict) -> None:
         inp = cfg.get("input", {})
 
@@ -633,37 +613,28 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
         )
 
         # Always create time_ranges row — empty cells get ghost placeholders via unified _apply_placeholders
-        tr = inp.get("time_ranges") or []
-        self._ins(
-            inp_iid,
-            "time_ranges",
-            [any2str(x) for x in tr] + [""] * (self._nv - len(tr)),
-            "",
-            meta={
-                "label": "time_ranges",
-                "is_string": True,
-                "max_col": self._nv,
-                "path": "input.time_ranges",
-            },
-        )
-
-        self._ins_coefs_path(inp_iid, any2str(inp.get("coefs_path", "")))
+        self._ins_time_ranges(inp_iid, "time_ranges", inp.get("time_ranges"))
 
         coefs = inp.get("coefs", {})
         dates = coefs.get("dates", {})
         cdate_src = coefs.get("date")
         cdate = cdate_src or (max(dates.values()) if dates else "")
 
+        coefs_path = any2str(coefs.get("path", ""))
         coefs_iid = self._ins(
             inp_iid,
             "coefs",
-            [""] * self._nv,
-            cdate,
+            [coefs_path] + [""] * (self._nv - 1),
+            "",
             meta={
                 "key": "coefs",
-                "has_date": True,
-                "max_col": 0,
-                "date_style": "blue" if not cdate_src else None,
+                "has_date": False,
+                "max_col": 1,
+                "is_string": True,
+                "browse": True,
+                "check": "exists",
+                "style": "node",
+                "_coefs_date": cdate,
             },
             open_=False,
         )
@@ -682,32 +653,7 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
             except Exception:
                 _CALIB_SHAPES_COEFS = {}
             calib_iid = self._ins(inp_iid, "calib", [""] * self._nv, "", meta={"path": "input.calib"})
-            for ck, cv in calib.items():
-                shape = _CALIB_SHAPES_COEFS.get(ck, ())
-                if len(shape) == 1 and shape[0] > 0:
-                    row = [any2str(x) for x in (cv or [])] if isinstance(cv, (list, tuple)) else []
-                    row += [""] * (shape[0] - len(row))
-                    self._ins(
-                        calib_iid,
-                        ck,
-                        row + [""] * (self._nv - len(row)),
-                        "",
-                        meta={"path": f"input.calib.{ck}", "max_col": shape[0]},
-                    )
-                elif (
-                    shape == () and isinstance(cv, (list, tuple, type(None))) and ck.startswith("time_ranges")
-                ):
-                    self._ins(
-                        calib_iid,
-                        ck,
-                        [any2str(x) for x in (cv or [])] + [""] * (self._nv - len(cv or [])),
-                        "",
-                        meta={"path": f"input.calib.{ck}", "is_string": True, "max_col": self._nv},
-                    )
-                elif shape == ():
-                    self._ins_generic(calib_iid, ck, cv)
-                else:
-                    self._ins_generic(calib_iid, ck, cv)
+            self._build_calib_rows(calib_iid, calib, _CALIB_SHAPES_COEFS)
 
     def _build_metadata(self) -> None:
         """Top-level ``metadata`` node (sibling of ``input``) with paired rows.
@@ -898,66 +844,46 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
             open_=True,
         )
 
-        self._ins_coefs_path(inp_iid, any2str(inp.get("coefs_path", "")))
-
-        # infer calib shapes same way as coefs (Annotated metadata)
-        try:
-            from tcm_gui.cli_cfg import infer_coef_shapes
-            from tcm.schema import ConfigInCalib_InclProc
-
-            _CALIB_SHAPES = infer_coef_shapes(ConfigInCalib_InclProc)
-        except Exception:
-            _CALIB_SHAPES = {}
-
         for k, v in inp.items():
-            if k in ("path", "coefs_path"):
+            if k == "path":
                 continue
 
             if k == "coefs":
                 dates = v.get("dates", {})
                 cdate = v.get("date") or (max(dates.values()) if dates else "")
+                coefs_path = any2str(v.get("path", ""))
                 cid = self._ins(
                     inp_iid,
                     "coefs",
-                    [""] * self._nv,
-                    cdate,
-                    meta={"key": "coefs", "has_date": True, "max_col": 0},
+                    [coefs_path] + [""] * (self._nv - 1),
+                    "",
+                    meta={
+                        "key": "coefs",
+                        "has_date": False,
+                        "max_col": 1,
+                        "is_string": True,
+                        "browse": True,
+                        "check": "exists",
+                        "style": "node",
+                        "_coefs_date": cdate,
+                    },
                 )
                 for name in _COEF_FIELDS:
                     if name in v:
                         self._ins_coef(cid, name, v.get(name), dates.get(name, ""))
             elif k == "calib" and isinstance(v, dict):
+                try:
+                    from tcm_gui.cli_cfg import infer_coef_shapes
+                    from tcm.schema import ConfigInCalib_InclProc
+
+                    _CALIB_SHAPES = infer_coef_shapes(ConfigInCalib_InclProc)
+                except Exception:
+                    _CALIB_SHAPES = {}
                 calib_iid = self._ins(inp_iid, "calib", [""] * self._nv, "", meta={"path": "input.calib"})
-                for ck, cv in v.items():
-                    shape = _CALIB_SHAPES.get(ck, ())
-                    if len(shape) == 1 and shape[0] > 0:
-                        # 1-D numeric array like g0xyz[3], coordinates[2] — same pattern as Cg
-                        row = [any2str(x) for x in (cv or [])] if isinstance(cv, (list, tuple)) else []
-                        row += [""] * (shape[0] - len(row))
-                        self._ins(
-                            calib_iid,
-                            ck,
-                            row + [""] * (self._nv - len(row)),
-                            "",
-                            meta={"path": f"input.calib.{ck}", "max_col": shape[0]},
-                        )
-                    elif (
-                        shape == ()
-                        and isinstance(cv, (list, tuple, type(None)))
-                        and ck.startswith("time_ranges")
-                    ):
-                        # date lists (time_ranges_*) — treat as is_string multi-col via shape-less fallback
-                        self._ins(
-                            calib_iid,
-                            ck,
-                            [any2str(x) for x in (cv or [])] + [""] * (self._nv - len(cv or [])),
-                            "",
-                            meta={"path": f"input.calib.{ck}", "is_string": True, "max_col": self._nv},
-                        )
-                    elif shape == ():
-                        self._ins_generic(calib_iid, ck, cv)
-                    else:
-                        self._ins_generic(calib_iid, ck, cv)
+                self._build_calib_rows(calib_iid, v, _CALIB_SHAPES)
+            elif k == "time_ranges":
+                # Always create time_ranges row with max_col=self._nv (same as simplified mode)
+                self._ins_time_ranges(inp_iid, k, v)
             else:
                 self._ins_generic(inp_iid, k, v)
 
@@ -1086,6 +1012,49 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
             "",
             meta={"is_string": True, "max_col": 1},
         )
+
+    def _ins_time_ranges(self, par: Any, key: str, value: Any) -> None:
+        """Create a multi-col editable string row for ``time_ranges*`` fields.
+
+        Used for both ``input.time_ranges`` and ``input.calib.time_ranges_*``.
+        Path is auto-derived from parent via :meth:`_ins`; ``max_col=self._nv``
+        makes every column editable regardless of current value length.
+        """
+        self._ins(
+            par,
+            key,
+            [any2str(x) for x in (value or [])] + [""] * (self._nv - len(value or [])),
+            "",
+            meta={"label": key, "is_string": True, "max_col": self._nv},
+        )
+
+    def _build_calib_rows(self, calib_iid: Any, calib: dict, shapes: dict) -> None:
+        """Build calib child rows from *calib* dict using pre-computed *shapes*.
+
+        Handles: 1-D numeric arrays (g0xyz, coordinates), date lists
+        (time_ranges_*), and scalar/generic fallbacks. Shared by
+        ``_build_coefs`` (simplified) and ``_build_input`` (full mode).
+        """
+        for ck, cv in calib.items():
+            shape = shapes.get(ck, ())
+            if len(shape) == 1 and shape[0] > 0:
+                row = [any2str(x) for x in (cv or [])] if isinstance(cv, (list, tuple)) else []
+                row += [""] * (shape[0] - len(row))
+                self._ins(
+                    calib_iid,
+                    ck,
+                    row + [""] * (self._nv - len(row)),
+                    "",
+                    meta={"path": f"input.calib.{ck}", "max_col": shape[0]},
+                )
+            elif (
+                len(shape) <= 1
+                and isinstance(cv, (list, tuple, type(None)))
+                and ck.startswith("time_ranges")
+            ):
+                self._ins_time_ranges(calib_iid, ck, cv)
+            else:
+                self._ins_generic(calib_iid, ck, cv)
 
     def _item_hook_sh(self, iid=None, *args, **kwargs):
         return self._item_call(self._sh_item_orig, iid, args, kwargs)
@@ -1282,11 +1251,13 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
         if self._mgr is not None and ri is not None:
             self._mgr.attach(ri, 0, iid=iid)
             # Row-specific browse button status hint:
-            # coefs_path → short files hint (manager overlay is files-only);
+            # input.coefs (path) → short files hint (manager overlay is files-only);
             # other rows (input.path) → static hint from ConfigSheet init.
             if (ov := self._mgr._ov) is not None:
                 ov._status_hint = (
-                    _S["browse_btn.status_files"] if m.get("key") == "coefs_path" else self._status_hint
+                    _S["browse_btn.status_files"]
+                    if m.get("key") == "path" or m.get("path") == "input.coefs"
+                    else self._status_hint
                 )
         if ri is not None:
             return self.sh.get_cell_data(ri, 0)  # overflow click edits the path itself
@@ -1297,7 +1268,8 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
 
     def _on_end_edit_cell(self, event) -> None:
         """Detach browse button (any row); reroute overflow edits to col 0;
-        reload coefs_path if changed."""
+        reload input.coefs.path if changed; auto-update parent coef date when
+        a coef value is edited."""
         if self._mgr is not None:
             self._mgr.detach()
         iid = self._iid_at_row(event.row)
@@ -1315,12 +1287,114 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
                 )
             )
             c = 0
-        if m.get("key") == "coefs_path" and val.strip() and self._mgr is not None:
+        # Trigger coef reload for coefs path edits (key="path" old child or key="coefs" new node)
+        if (
+            (m.get("key") == "path" or m.get("path") == "input.coefs")
+            and val.strip()
+            and self._mgr is not None
+        ):
             self.sh.after_idle(lambda p=val: self._mgr.notify_path_changed(p))
+        # Auto-update parent coef date when a coef value (not date) is edited
+        dc = _DATE_COL - self.DATA_COL_BASE
+        is_date_col = c == dc and m.get("has_date")
+        if not is_date_col and not m.get("is_metadata") and not m.get("browse"):
+            parent_iid = m.get("parent")
+            updated = False
+            while parent_iid is not None:
+                pm = self._meta.get(parent_iid, {})
+                if pm.get("has_date") and not pm.get("is_metadata"):
+                    self._update_coef_date(parent_iid)
+                    updated = True
+                    break
+                parent_iid = pm.get("parent")
+            # 1d_flat bias (Cg/Ch) shares date with its 2d scale (Ag/Ah)
+            if not updated and (common := _COMMON_DATE_FOR.get(str(m.get("key") or ""))):
+                # find sibling with common key under same coefs parent
+                par = m.get("parent")
+                target_iid = next(
+                    (
+                        ii
+                        for ii, mm in self._meta.items()
+                        if mm.get("key") == common and mm.get("parent") == par
+                    ),
+                    None,
+                )
+                if target_iid is not None and self._meta.get(target_iid, {}).get("has_date"):
+                    self._update_coef_date(target_iid)
+        elif is_date_col and not m.get("is_metadata"):
+            # direct date edit → keep max in coefs node in sync
+            self._recompute_coefs_date()
         self._apply_end_edit_style(event, col=c)
         # Re-validate the edited cell after commit — red fg if its check fails.
         if m.get("check"):
             self.sh.after_idle(lambda iid=iid: self._apply_validations(iid))
+
+    def _update_coef_date(self, iid: Any) -> None:
+        """Set the date cell of coef parent *iid* to current time rounded to hours.
+
+        Called when a coef value is edited — the parent's calibration date
+        auto-updates to "now" (truncated to the hour).  User can still edit
+        the date directly; this only fires on value edits, not date edits.
+        The sheet has ``allow_cell_overflow=True``, so a long ISO date
+        overflows into the next empty cell exactly like a manually typed
+        date — we keep the next cell empty and refresh to recalc overflow.
+        """
+        from datetime import datetime
+
+        if (r := self._internal_row(iid)) is None:
+            return
+        now = datetime.now().replace(minute=0, second=0, microsecond=0)
+        date_str = now.strftime("%Y-%m-%dT%H:%M:%S")
+        dc = _DATE_COL - self.DATA_COL_BASE
+        # keep next cell empty so overflow can show (like manual typing)
+        ph = getattr(self, "_ph", None)
+        if ph is not None and ph.has(r, dc + 1):
+            ph.clear(self.sh, r, dc + 1, redraw=False)
+        else:
+            with suppress(Exception):
+                if not str(self.sh.get_cell_data(r, dc + 1) or "").strip():
+                    self.sh.set_cell_data(r, dc + 1, "", redraw=False)
+        self.sh.set_cell_data(r, dc, date_str, redraw=True)
+        if ph is not None and ph.has(r, dc):
+            ph.untrack(self.sh, r, dc)
+        # left-align like ghost placeholder so overflow to next cell works
+        # (right-aligned would be clipped on the left when narrow)
+        with suppress(Exception):
+            self.sh.align_cells(r, dc, align="w", redraw=False)
+        with suppress(Exception):
+            self.sh.refresh()
+        self.sh.redraw()
+        self._recompute_coefs_date()
+
+    def _recompute_coefs_date(self) -> None:
+        """Recompute coefs.date as max of all coef dates and store on the coefs node.
+
+        The recorded date is the maximum of the originally loaded coefs.date
+        and all per-coef dates currently in the sheet.  Updates the status
+        suffix and the value written back to YAML.
+        """
+        coefs_iid = next(
+            (iid for iid, m in self._meta.items() if m.get("key") == "coefs"),
+            None,
+        )
+        if coefs_iid is None:
+            return
+        dates = self.get_edited_dates()
+        cur = self._meta[coefs_iid].get("_coefs_date", "")
+        candidates = list(dates.values())
+        if cur:
+            candidates.append(cur)
+        self._meta[coefs_iid]["_coefs_date"] = max(candidates) if candidates else ""
+
+    def get_coefs_date(self) -> str:
+        """Return the recorded coefs.date (max of loaded and edited dates)."""
+        coefs_iid = next(
+            (iid for iid, m in self._meta.items() if m.get("key") == "coefs"),
+            None,
+        )
+        if coefs_iid is None:
+            return ""
+        return self._meta[coefs_iid].get("_coefs_date", "")
 
     def _after_column_resize(self) -> None:
         """Called after a column resize drag ends — update last-column stretch and scrollbars."""

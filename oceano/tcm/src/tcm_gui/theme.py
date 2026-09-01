@@ -24,8 +24,8 @@ _l = logging.getLogger(__name__)
 # ── foreground colors ────────────────────────────────────────────────────────
 # Mutable — all updated by apply_theme_defaults() for dark/light mode.
 
-DEFAULT_FG: str = "#999999"  # cell value == config default
-BLUE_FG: str = "#0055CC"  # header text + node label when subtree at default
+CELL_DEFAULT_VAL_FG: str = "#0055CC"  # cell value == config default
+NODE_DEFAULT_VALS_FG: str = "#0055CC"  # header text + node label when subtree at default
 LINK_FG: str = "#0066CC"  # markdown links (MarkdownLabel) + doc-tree leaves
 LINK_SEL_FG: str = "#FFFFFF"  # link text during selection (light)
 CODE_FG: str = "#465E5A"  # inline code text (MarkdownLabel)
@@ -59,8 +59,8 @@ TAG_COLORS: dict[str, str] = {
 # Dark-mode color overrides — keyed by the same names as the module globals.
 _DARK: dict[str, str] = {
     "FUNC_COLOR": "#5CB8D6",
-    "DEFAULT_FG": "#808080",
-    "BLUE_FG": "#4DA6FF",
+    "CELL_DEFAULT_VAL_FG": "#4DA6FF",  # | old: #808080
+    "NODE_DEFAULT_VALS_FG": "#4DA6FF",
     "LINK_FG": "#66AAFF",
     "LINK_SEL_FG": "#FFFFFF",
     "CODE_FG": "#6FB3B2",
@@ -83,8 +83,8 @@ _DARK: dict[str, str] = {
 }
 _LIGHT: dict[str, str] = {
     "FUNC_COLOR": "#0070A0",
-    "DEFAULT_FG": "#999999",
-    "BLUE_FG": "#0055CC",
+    "CELL_DEFAULT_VAL_FG": "#0055CC",  # | old: #999999
+    "NODE_DEFAULT_VALS_FG": "#0055CC",
     "LINK_FG": "#0066CC",
     "LINK_SEL_FG": "#FFFFFF",
     "CODE_FG": "#465E5A",
@@ -109,8 +109,8 @@ _LIGHT: dict[str, str] = {
 # Keys from _DARK/_LIGHT that map to module-level globals (not TAG_COLORS).
 _GLOBAL_KEYS = (
     "FUNC_COLOR",
-    "DEFAULT_FG",
-    "BLUE_FG",
+    "CELL_DEFAULT_VAL_FG",
+    "NODE_DEFAULT_VALS_FG",
     "LINK_FG",
     "LINK_SEL_FG",
     "CODE_FG",
@@ -351,16 +351,16 @@ def mix_hex(a: str, b: str, t: float) -> str:
     return "#{:02x}{:02x}{:02x}".format(*(round(x + (y - x) * t) for x, y in zip(ca, cb)))
 
 
-# Ghost/placeholder tint — 1/3 DEFAULT_FG + 2/3 background: ≈3× fainter than
+# Ghost/placeholder tint — 1/3 CELL_DEFAULT_VAL_FG + 2/3 background: ≈3× fainter than
 # the gray default, so hints stay noticeably below real data (lighter in the
 # light theme, darker in dark).  Resolved live — never snapshot the result:
-# apply_theme_defaults() swaps DEFAULT_FG and the bg fallbacks.
+# apply_theme_defaults() swaps CELL_DEFAULT_VAL_FG and the bg fallbacks.
 _GHOST_TOWARD_BG: float = 2 / 3
 
 
 def ghost_fg(bg: str) -> str:
     """Placeholder fg above *bg* — call at render time, see :data:`_GHOST_TOWARD_BG`."""
-    return mix_hex(DEFAULT_FG, bg, _GHOST_TOWARD_BG)
+    return mix_hex(CELL_DEFAULT_VAL_FG, bg, _GHOST_TOWARD_BG)
 
 
 def scaled(px: int) -> int:
@@ -383,11 +383,11 @@ def strip_palette(widget) -> dict[str, str]:
         "base": bg,  # strip background
         "track": mix_hex(bg, "#000000", 0.07),  # resting cell face
         "hover": mix_hex(bg, "#FFFFFF", 0.60),  # hovered cell face
-        "run": mix_hex(BLUE_FG, "#FFFFFF", 0.55),  # running fill — steel
+        "run": mix_hex(NODE_DEFAULT_VALS_FG, "#FFFFFF", 0.55),  # running fill — steel
         "done": mix_hex("#2E7D32", "#FFFFFF", 0.60),  # done fill — soft green
         "error": mix_hex(TAG_COLORS["error"], "#FFFFFF", 0.60),
-        # "edge": mix_hex(BLUE_FG, "#FFFFFF", 0.85),  # glimmer at fill front
-        "sel": BLUE_FG,  # selection underline
+        # "edge": mix_hex(NODE_DEFAULT_VALS_FG, "#FFFFFF", 0.85),  # glimmer at fill front
+        "sel": NODE_DEFAULT_VALS_FG,  # selection underline
         "text": FG_DEFAULT,
-        "dim": DEFAULT_FG,  # pending / unselected
+        "dim": CELL_DEFAULT_VAL_FG,  # pending / unselected
     }

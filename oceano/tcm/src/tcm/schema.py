@@ -70,6 +70,7 @@ class UseH5(StrEnum):
 class ConfigInCoefs_InclProc:
     """Calibration coefficients for inclinometer processing."""
 
+    path: Path | None = Path(__file__).with_name("cfg") / "coef" / "calibration.h5"
     Ag: list[list[float]] | None = field(
         default_factory=lambda: [[0.00173, 0, 0], [0, 0.00173, 0], [0, 0, 0.00173]],
     )
@@ -157,7 +158,6 @@ class ConfigIn_InclProc:
 
     # ── process-stage coefs ──
     coefs: ConfigInCoefs_InclProc | None = field(default_factory=ConfigInCoefs_InclProc)
-    coefs_path: Path | None = Path(__file__).with_name("cfg") / "coef" / "calibration.h5"
     max_incl_of_fit_deg: float | None = None
     calc_version: str = "trigonometric(incl)"
 

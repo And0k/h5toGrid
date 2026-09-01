@@ -249,12 +249,28 @@ def prep_cfg_for_probe(
     :return: ``cfg1`` dict with keys ``input``, ``out``, ``filter``, and loaded coefs.
     """
 
-    cfg_in = {**cfg_in_common.copy(), **cfg_in_for_probes.get(pcid, {})}
+    # Merge with deep coefs handling: per-probe coefs.path overrides common
+    per_probe = cfg_in_for_probes.get(pcid, {})
+    cfg_in = {**cfg_in_common.copy(), **per_probe}
+    # Deep merge for coefs dict (path + overrides)
+    if "coefs" in cfg_in_common or "coefs" in per_probe:
+        merged_coefs = {**(cfg_in_common.get("coefs") or {}), **(per_probe.get("coefs") or {})}
+        # OmegaConf containers → plain dict for consistent merging
+        if OmegaConf.is_config(merged_coefs):
+            merged_coefs = OmegaConf.to_container(merged_coefs, resolve=True)
+        cfg_in["coefs"] = merged_coefs
 
-    # Build coefs_paths: explicit coefs_path → class default → yaml_export dir.
+    # Preserve source path before it is consumed by get_coefs_from_cfg
+    _coefs_path = (cfg_in.get("coefs") or {}).get("path") if isinstance(cfg_in.get("coefs"), dict) else None
+
+    # Build coefs dict: explicit coefs.path → class default → yaml_export dir.
     # The yaml_export fallback lets ``dist/tcm_proc`` packaging (without the
     # bundled ``calibration.h5`` file) load coefs silently from exported YAMLs.
-    cfg_in["coefs"] = get_coefs_from_cfg(cfg_in, pcid)
+    loaded_coefs = get_coefs_from_cfg(cfg_in, pcid)
+    # Restore source path (write-only attribute for external use, not part of loaded coefs)
+    if _coefs_path is not None:
+        loaded_coefs["path"] = _coefs_path
+    cfg_in["coefs"] = loaded_coefs
 
     # Override path with corrected CSV path if provided
     if path_csv is not None:

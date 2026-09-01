@@ -19,7 +19,7 @@ import pytest
 
 from tcm_gui.cli_cfg import NO_DEFAULT, default_for_path
 from tcm_gui.coef_sheet import ConfigSheet
-from tcm_gui.theme import DEFAULT_FG
+from tcm_gui.theme import CELL_DEFAULT_VAL_FG
 
 
 # -- _default_for_path -----------------------------------------------------------
@@ -343,7 +343,7 @@ class TestOnEndEditGrayToggle:
         event = self._make_event(row=azimuth_row, column=0, value=180)
         cs._apply_end_edit_style(event)
 
-        gray_calls = [c for c in mock_sh.highlight_cells.call_args_list if c.kwargs.get("fg") == DEFAULT_FG]
+        gray_calls = [c for c in mock_sh.highlight_cells.call_args_list if c.kwargs.get("fg") == CELL_DEFAULT_VAL_FG]
         assert len(gray_calls) > 0, (
             f"expected highlight_cells(fg=_DEFAULT_FG) to restore gray, "
             f"got calls: {mock_sh.highlight_cells.call_args_list}"

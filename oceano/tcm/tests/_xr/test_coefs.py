@@ -22,7 +22,7 @@ from tcm._xr.coefs import (
     load_coefs_from_nc,
     save_coefs_to_nc,
 )
-from tcm.schema import ConfigIn_InclProc
+from tcm.schema import ConfigInCoefs_InclProc, ConfigIn_InclProc
 from tcm.config_yaml import prep_cfg_for_probe, update_coefs_in_run_yaml
 from tcm.incl_calc.coefs import get_coefs, load_coefs
 
@@ -43,12 +43,12 @@ def _assert_tbl_arg(call) -> None:
 
 
 def _assert_class_default_in_paths(call) -> None:
-    assert ConfigIn_InclProc.coefs_path in call.args[0]
+    assert ConfigInCoefs_InclProc.path in call.args[0]
 
 
 def _assert_yaml_export_last(call) -> None:
     paths = call.args[0]
-    yaml_dir = ConfigIn_InclProc.coefs_path.parent / "yaml_export"
+    yaml_dir = ConfigInCoefs_InclProc.path.parent / "yaml_export"
     assert yaml_dir in paths
     assert paths[-1] == yaml_dir
 
@@ -71,8 +71,7 @@ class TestPrepCfgForProbe:
         return {
             "path": Path("/data/_raw/@i_01.txt"),
             "tables": ["incl*"],
-            "coefs_path": None,
-            "coefs": {},
+            "coefs": {"path": None},
         }
 
     @pytest.fixture()
@@ -82,8 +81,7 @@ class TestPrepCfgForProbe:
                 # fmt_in_base := {
                 "path": Path("/data/_raw/@i_01.txt"),
                 "tables": ["incl*"],
-                "coefs_path": None,
-                "coefs": {},
+                "coefs": {"path": None},
                 "corr_time_mode": True,  # moved from filter
             },
             "out": {"dt_bins": [0], "table": ""},
@@ -97,9 +95,9 @@ class TestPrepCfgForProbe:
 
     def test_merges_common_and_per_probe_overrides(self, cfg_in_common, cfg_top):
         """Per-probe overrides are merged on top of cfg_in_common."""
-        cfg_in_for_probes = {"i_01": {"coefs_path": Path("/custom.h5")}}
+        cfg_in_for_probes = {"i_01": {"coefs": {"path": Path("/custom.h5")}}}
         cfg1 = prep_cfg_for_probe("i_01", cfg_in_for_probes, cfg_in_common, cfg_top)
-        assert cfg1["input"]["coefs_path"] == Path("/custom.h5")
+        assert cfg1["input"]["coefs"]["path"] == Path("/custom.h5")
         assert cfg1["input"]["tables"] == ["incl_01"]  # glob expanded
 
     def test_expands_glob_tables(self, cfg_in_common, cfg_top):
@@ -255,11 +253,11 @@ class TestSaveCoefsToNc:
             assert "C" not in f["incl_01"]["coef"]["G"]
 
     def test_pid_written(self, sample_coefs, tmp_path):
-        """pcid written as string dataset at /{tbl}/coef/pid."""
+        """pcid written as attribute at /{tbl}/coef pid."""
         nc_path = tmp_path / "test.raw.nc"
         save_coefs_to_nc(nc_path, "incl_01", sample_coefs, pcid="i_01")
         with h5py.File(nc_path, "r") as f:
-            assert f["incl_01"]["coef"]["pid"][()].decode() == "i_01"
+            assert f["incl_01"]["coef"].attrs["pid"] == "i_01"
 
     def test_creates_file_if_missing(self, tmp_path):
         """save_coefs_to_nc creates NC file when it doesn't exist."""
@@ -288,16 +286,18 @@ class TestSaveCoefsToNc:
     ):
         """save_coefs_to_nc replaces datasets when dtype changes (e.g. float→str)."""
         nc_path = tmp_path / "test.raw.nc"
-        # Simulate legacy/previous write with incompatible dtype
+        # Simulate legacy/previous write with incompatible dtype (dataset)
         with h5py.File(nc_path, "w") as h5f:
             tbl_coef = h5f.require_group("incl_01/coef")
             tbl_coef.create_dataset("date", data=initial_data)
         coefs = {"Ag": np.eye(3), "date": overwrite_data}
         save_coefs_to_nc(nc_path, "incl_01", coefs)
         with h5py.File(nc_path, "r") as f:
-            raw = f["incl_01/coef/date"][()]
-            actual = raw.decode() if isinstance(raw, bytes) else str(raw)
-            assert actual == overwrite_data, (
+            # New layout stores date as attribute, old dataset removed
+            actual = f["incl_01/coef"].attrs["date"]
+            if isinstance(actual, bytes):
+                actual = actual.decode()
+            assert str(actual) == overwrite_data, (
                 f"{description}: expected {overwrite_data!r}, got {actual!r}"
             )
 
@@ -403,7 +403,7 @@ class TestGetCoefsPTsupersessionEndToEnd:
 
     def test_p01_loads_via_get_coefs_from_yaml_export(self, caplog):
         """get_coefs with yaml_export dir loads P_t probe without P/PBattery/PTemp warnings."""
-        yaml_dir = ConfigIn_InclProc.coefs_path.parent / "yaml_export"
+        yaml_dir = ConfigInCoefs_InclProc.path.parent / "yaml_export"
         if not yaml_dir.is_dir():
             pytest.skip("yaml_export dir not found")
         if not (yaml_dir / "incl_p01.yaml").exists():
@@ -428,7 +428,7 @@ class TestCoefsCompatibility:
 
     def test_load_coefs_from_real_h5(self):
         """load_coefs reads from the bundled calibration.h5."""
-        coef_path = ConfigIn_InclProc.coefs_path
+        coef_path = ConfigInCoefs_InclProc.path
         if not coef_path.exists():
             pytest.skip("Bundled coef file not found")
 
@@ -439,7 +439,7 @@ class TestCoefsCompatibility:
 
     def test_load_coefs_from_yaml_export_fallback(self):
         """load_coefs reads from yaml_export dir when h5 file is absent."""
-        yaml_dir = ConfigIn_InclProc.coefs_path.parent / "yaml_export"
+        yaml_dir = ConfigInCoefs_InclProc.path.parent / "yaml_export"
         if not yaml_dir.is_dir():
             pytest.skip("yaml_export dir not found")
 
@@ -456,7 +456,7 @@ class TestCoefsCompatibility:
 
     def test_yaml_export_p01_has_P_t_and_no_P(self):
         """incl_p01.yaml defines P_t (supersedes P/PBattery/PTemp)."""
-        yaml_dir = ConfigIn_InclProc.coefs_path.parent / "yaml_export"
+        yaml_dir = ConfigInCoefs_InclProc.path.parent / "yaml_export"
         if not yaml_dir.is_dir():
             pytest.skip("yaml_export dir not found")
         tbl = "incl_p01"
@@ -472,7 +472,7 @@ class TestCoefsCompatibility:
 
     def test_nc_roundtrip_with_real_coefs(self, tmp_path):
         """Write real coefs to NC, read back — values match."""
-        coef_path = ConfigIn_InclProc.coefs_path
+        coef_path = ConfigInCoefs_InclProc.path
         if not coef_path.exists():
             pytest.skip("Bundled coef file not found")
 

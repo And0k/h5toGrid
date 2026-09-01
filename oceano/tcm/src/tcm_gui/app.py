@@ -338,6 +338,17 @@ class App:
             colors=tcm_gui.theme.TAG_COLORS,
             on_link=open_md_link,
         )
+        # Sheet color legend — bind markup names to actual theme colors so
+        # {#sheet_*} spans in empty_area.* strings render with live values.
+        self._status_lbl._colors.update(
+            {
+                "sheet_default": tcm_gui.theme.CELL_DEFAULT_VAL_FG,
+                "sheet_placeholder": tcm_gui.theme.ghost_fg(tcm_gui.theme.ENTRY_BG_FALLBACK),
+                "sheet_changed": tcm_gui.theme.FG_DEFAULT,
+                "sheet_invalid": tcm_gui.theme.INVALID_FG,
+                "sheet_warning": tcm_gui.theme.TAG_COLORS["warning"],
+            }
+        )
         self._status_lbl.place(rely=1.0, relx=0.0, anchor="sw", x=4, y=0)
         # Hovering the status text itself: pause the dwell auto-close so the
         # user can keep reading / click a link; the countdown resumes on leave.
@@ -867,7 +878,7 @@ class App:
         # tab is selected once, after ALL pages exist (_on_scan_ok).
 
     def _set_coefs_and_reload(self, stem: str, coefs_path: str) -> None:
-        """Called from ConfigSheet when ``input.coefs_path`` cell changes."""
+        """Called from ConfigSheet when ``input.coefs`` path cell changes."""
         cs = self._pages.get(stem)
         if not cs or not coefs_path.strip():
             return
@@ -880,8 +891,8 @@ class App:
             lf.exception("Failed to load coefficients from %s", coefs_path)
             return
         # get_coefs returns numpy arrays; cfg models the run YAML (plain lists)
-        cs._cfg.setdefault("input", {})["coefs"] = to_omegaconf.to_omegaconf_compatible_types(coefs)
-        cs._cfg.setdefault("input", {})["coefs_path"] = coefs_path
+        cs._cfg.setdefault("input", {}).setdefault("coefs", {})["path"] = coefs_path
+        cs._cfg["input"]["coefs"].update(to_omegaconf.to_omegaconf_compatible_types(coefs))
         cs.load(cs._cfg, full=self._full_mode, config_root=schema.Config, return_enum=schema.Return)
 
     # ── §3 Run / Pause / Resume ─────────────────────────────────────
@@ -925,15 +936,18 @@ class App:
         if not (yp := self._yaml_paths.get(stem)):
             return
         coefs, dates, path = cs._current_state()
+        coefs_date = getattr(cs, "get_coefs_date", lambda: "")()
         patch: dict = {"input": {}}
         if path:
             patch["input"]["path"] = path
-        if coefs or dates:
+        if coefs or dates or coefs_date:
             patch["input"]["coefs"] = {}
             if coefs:
                 patch["input"]["coefs"].update(coefs)
             if dates:
                 patch["input"]["coefs"]["dates"] = dates
+            if coefs_date:
+                patch["input"]["coefs"]["date"] = coefs_date
         config_yaml.update_coefs_in_run_yaml(yp, patch)
         cs.mark_clean()
 
@@ -1221,7 +1235,7 @@ class App:
         """
         self._rail.set_disabled(disabled)
         self._overall_lbl.config(
-            foreground=tcm_gui.theme.DEFAULT_FG if disabled else tcm_gui.theme.FG_DEFAULT
+            foreground=tcm_gui.theme.CELL_DEFAULT_VAL_FG if disabled else tcm_gui.theme.FG_DEFAULT
         )
 
     def _poll_progress(self) -> None:

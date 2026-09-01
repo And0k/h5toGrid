@@ -13,7 +13,7 @@ in [`_constants.py`](../../src/tcm/_constants.py).
 
 | Extension | Backend | Coefs source | Notes |
 |-----------|---------|-------------|-------|
-| `.txt`, `.csv`, `.dat` | `open_csv_chunks()` | `None` (separate `coefs_path`) | Chunked `pd.read_csv`; progressive concat |
+| `.txt`, `.csv`, `.dat` | `open_csv_chunks()` | `None` (separate `coefs.path`) | Chunked `pd.read_csv`; progressive concat |
 | `.raw.nc`, `.nc`, `.nc4` | `open_nc()` | `/{tbl}/coef/` group | `xr.open_dataset(group=tbl)` — native xarray |
 | `.raw.h5`, `.h5`, `.hdf5` | `open_hdf5()` | `/{tbl}/coef/` group | `pd.HDFStore` → `DataFrame` → `xr.Dataset.from_dataframe()`; requires `TABLES_AVAILABLE` |
 
@@ -144,7 +144,7 @@ suffix stays significant where backup copies must remain distinguishable
 Highest to lowest:
 
 1. `input.coefs` in the per-probe YAML — probe-specific calibration
-2. `coefs_path` — shared HDF5 or YAML coefficient file
+2. `coefs.path` — shared HDF5 or YAML coefficient file
 3. `tcm/cfg/coef/yaml_export/` directory (bundled distribution fallback)
 4. Defaults from the configuration dataclass
 

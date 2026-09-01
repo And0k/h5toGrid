@@ -45,7 +45,7 @@ If the search fails (the path cannot be resolved), the top search field turns
 Each tab shows a treeview with the config's parameters:
 - **`metadata`** — device deployment file path (`info_devices.yaml` parent of `_raw`) — always editable with browse; children are `point, symbol | sea depth, h_above | lat, lon | time_range | burst_dt/t | comment` per probe deployment, with gray example hints (`P3`, `7.5`, `↟`, `60`, `600`, `2026-07-11T12:20:12`, `deployment note`) that vanish on edit; `metadata*` (asterisk) marks unsaved edits to the device file — see [Config Reference](../reference/config_reference.md#metadata--device-deployment-metadata-per-probe-infodevicesyaml)
 - **`input.path`** — data file path
-- **`input.coefs_path`** — calibration coefficients source file (HDF5 or YAML)
+- **`input.coefs.path`** — calibration coefficients source file (HDF5 or YAML) — row `path` under `input.coefs` (hidden when `coefs` collapsed)
 - **`input.time_ranges`** — time window for this deployment
 - **`input.coefs`** — calibration coefficients (Ag, Cg, Ah, Ch, Rz, kVabs, P, etc.)
 
@@ -53,7 +53,7 @@ Click a cell to edit. Date fields are validated (`YYYY-MM-DD` format).
 Numeric fields reject non-numeric input.
 
 **Path validation**: the `input.path` cell turns **red** when the path does
-not exist on disk (and the Run button is disabled).  `input.coefs_path` is
+not exist on disk (and the Run button is disabled).  `input.coefs.path` is
 **optional** — coefficients may be entered manually — but a missing file is
 still flagged with red text so you can see it at a glance; it does not block
 Run.  The **`metadata`** row's path cell behaves identically (red when the
@@ -100,9 +100,9 @@ Pause freezes both logging and dask task progress at the next checkpoint.
 
 ## Coefficient reload
 
-Edit the **`coefs_path`** row under `input` to load coefficients from a
-different file (HDF5 or YAML). Press Enter or click Browse to reload.
-You can also leave `coefs_path` empty or pointing to a missing file and type
+Edit the **`path`** row under `input.coefs` to load coefficients from a
+different file (HDF5 or YAML) — hidden when the `coefs` section is collapsed. Press Enter or click Browse to reload.
+You can also leave `path` empty or pointing to a missing file and type
 coefficients manually in the `input.coefs` section — the Run button stays
 available (only `input.path` gates it).
 

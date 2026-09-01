@@ -147,7 +147,9 @@ class SheetStylesMixin:
                 fg=(
                     tcm_gui.theme.FG_DEFAULT
                     if is_input
-                    else (tcm_gui.theme.BLUE_FG if self._node_at_default(iid) else self._fg_default)
+                    else (
+                        tcm_gui.theme.NODE_DEFAULT_VALS_FG if self._node_at_default(iid) else self._fg_default
+                    )
                 ),
                 redraw=False,
             )
@@ -167,16 +169,19 @@ class SheetStylesMixin:
                     sh.highlight_cells(row=r, column=col, bg=bg, redraw=False)
 
             # ── 3) date alignment + blue fg ─────────────────────────
+            # Left-align so allow_cell_overflow extends to next empty cell
+            # (right-aligned dates are clipped on the left when narrow, ghost
+            # placeholders are left-aligned and overflow — make real dates match).
             for dc in date_cols:
                 col = dc - self.DATA_COL_BASE
                 if col >= first_data_col:
-                    sh.align_cells(r, col, align="e", redraw=False)
+                    sh.align_cells(r, col, align="w", redraw=False)
                     if m.get("date_style") == "blue":
                         sh.highlight_cells(
                             row=r,
                             column=col,
-                            fg=tcm_gui.theme.BLUE_FG,
-                            highlight_fg=tcm_gui.theme.BLUE_FG,
+                            fg=tcm_gui.theme.NODE_DEFAULT_VALS_FG,
+                            highlight_fg=tcm_gui.theme.NODE_DEFAULT_VALS_FG,
                             redraw=False,
                         )
 
@@ -233,7 +238,7 @@ class SheetStylesMixin:
         """Red fg on any cell whose ``check`` validation fails (path existence).
 
         Called after every edit commit and at the end of ``load()``.
-        ``check: "exists"`` rows (``input.path``, ``input.coefs_path``) are
+        ``check: "exists"`` rows (``input.path``, ``input.coefs`` path cell) are
         marked red when the path doesn't exist on disk; glob patterns are red
         only when zero matches; ``~`` is expanded.  Values are read through
         :meth:`_cell_str` — a deleted path (ghost placeholder) reads empty
@@ -259,7 +264,7 @@ class SheetStylesMixin:
                 # Restore normal fg: gray if value matches config default, else default fg.
                 dv = self._default_for_cell(iid, m, 0)
                 restore_fg = (
-                    tcm_gui.theme.DEFAULT_FG
+                    tcm_gui.theme.CELL_DEFAULT_VAL_FG
                     if dv is not NO_DEFAULT and any2str(path_str) == any2str(dv)
                     else self._fg_default
                 )

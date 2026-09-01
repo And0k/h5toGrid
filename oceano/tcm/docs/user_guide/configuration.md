@@ -229,7 +229,7 @@ Defined in [Config Reference §`input.coefs`](../reference/config_reference.md#i
 (`#### Detailed` block). From highest to lowest:
 
 1. `input.coefs` in the per-probe YAML
-2. `coefs_path` — shared coefficient file
+2. `coefs.path` — shared coefficient file
 3. Bundled `yaml_export/` fallback
 4. Dataclass defaults
 

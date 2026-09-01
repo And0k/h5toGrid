@@ -50,6 +50,7 @@ def test_vendor_runtime_present():
         "mathjax/output/fonts/mathjax-newcm/chtml.js",
         "highlight/highlight.min.js",
         "highlight/default.min.css",
+        "highlight/github-dark.min.css",
     ):
         assert (_VEND_DIR / rel).is_file(), rel
 
@@ -64,6 +65,7 @@ def test_index_html_is_fully_offline():
         "/assets/mathjax/tex-chtml.js",
         "/assets/highlight/highlight.min.js",
         "/assets/highlight/default.min.css",
+        "/assets/highlight/github-dark.min.css",
         # MathJax newcm font package pinned locally (stub must be vendored too,
         # else the loader falls back to its jsdelivr default)
         'loader: { paths: { "mathjax-newcm": "/assets/mathjax/output/fonts/mathjax-newcm" } }',
@@ -72,6 +74,11 @@ def test_index_html_is_fully_offline():
         '<link rel="stylesheet" href="/viewer.css">',
     ):
         assert needle in h, needle
+
+    # highlight.js: light/dark themes switch via media query — code stays
+    # readable on both OS color schemes (dark theme was invisible on dark bg)
+    assert 'media="(prefers-color-scheme: light)"' in h
+    assert 'media="(prefers-color-scheme: dark)"' in h
 
     # MathJax config must precede its script; chrome stripped: browser's own
     # back/forward + tab title suffice

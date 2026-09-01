@@ -487,7 +487,7 @@ The inverse `pcid_to_raw_name()` maps `i01` → `incl01` (for HDF5/NC group name
 
 | Suffix | Handler (`tcm/`) | Coefs source |
 |--------|------------------|-------------|
-| `.csv`, `.txt`, `.dat` | `_xr.dataset.open_csv_chunks()` | separate `coefs_path` file |
+| `.csv`, `.txt`, `.dat` | `_xr.dataset.open_csv_chunks()` | separate `coefs.path` file |
 | `.h5`, `.hdf5` | `_xr.io.open_hdf5()` → `(ds, coefs)` | `/{tbl}/coef/` group in same file |
 | `.nc`, `.nc4` | `_xr.dataset.open_nc()` → `(ds, coefs)` | `/{tbl}/coef/` group in same file |
 
@@ -1394,7 +1394,7 @@ For the coefficient source priority and user-facing description, see
 
 `incl_calc.coefs.get_coefs_from_cfg()` builds a three-tier fallback chain:
 1. `input.coefs` in YAML (highest priority)
-2. `coefs_path` (HDF5 `calibration.h5` or YAML directory)
+2. `coefs.path` (HDF5 `calibration.h5` or YAML directory)
 3. Sibling `cfg/coef/yaml_export/` directory — **always** appended as final fallback
    (silently used in the noh5 distribution / `dist/tcm_proc` packaging where the `.h5` file was pruned)
 
