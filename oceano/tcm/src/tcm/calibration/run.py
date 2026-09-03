@@ -1,7 +1,5 @@
 """Calibration entry point — reuses shared loaders, dispatches to calibration pipeline.
 
-Replaces ``tcm._dask_legacy.incl_calibr_hy.main()``.
-
 The loading path is shared with :mod:`tcm.processing`:
 :func:`tcm._xr.io.load_raw` — one dispatch by suffix, no reimplementation.
 

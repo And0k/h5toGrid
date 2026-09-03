@@ -166,10 +166,10 @@ class SheetHoverMixin:
         m = self._meta.get(iid, {})
         multi = m.get("is_metadata") and m.get("max_col", 1) > 1
         for cand in self._help_candidates(iid, tree=True):
-            if cand and (h := _help.help_for_path(cand)) and h.short:
+            if cand and (h := _help.help_for_path(cand)) and (txt := _help.section_body_short(h)):
                 self._hover_detail = self._resolve_detail(cand)
                 if self.on_hover_status is not None:
-                    txt = f"{h.short}{_S['metadata.tree_suffix']}" if multi else h.short
+                    txt = f"{txt}{_S['metadata.tree_suffix']}" if multi else txt
                     self.on_hover_status(txt, True)
                 return
         if self.on_hover_status is not None:
@@ -187,17 +187,8 @@ class SheetHoverMixin:
         """
 
         def _suffix_for(m: str) -> str:
-            # Robust lookup: accept plural/singular and coefs/coef typo variants.
-            for key in (
-                f"input.coefs.path.status.{m}s",
-                f"input.coefs.path.status.{m}",
-                f"input.coefs_path.status.{m}s",
-                f"input.coefs_path.status.{m}",
-                f"input.coef_path.status.{m}s",
-                f"input.coef_path.status.{m}",
-            ):
-                if v := _S.get(key):
-                    return str(v)
+            if v := _S.get(f"input.coefs.path.status.{m}s"):
+                return str(v)
             return ""
 
         mode = "file" if _is_shift_pressed() else "dir"
@@ -322,12 +313,13 @@ class SheetHoverMixin:
     def _publish_status(self, iid: Any, col: int | None = None) -> None:
         """Status text for the hovered element (data cells on MT canvas).
 
-        Fallback chain: ``help_for_path(path).short`` (from
-        ``config_reference.md``) → ``key`` → ``label`` → ``path``.  The
-        ``time_ranges`` row appends the *live* sync detail from
-        :meth:`_time_ranges_detail`; ``input.coefs`` (path) shows Shift-toggled
-        dir/file content.  Tree-column hover is handled by ``_on_tree_motion``
-        which always uses the section-level path.
+        Fallback chain: :func:`tcm_gui._help.section_body_short` (prefers the
+        ``###`` section lead-in text below the table, falls back to the table
+        row last cell) → ``key`` → ``label`` → ``path``.  The ``time_ranges``
+        row appends the *live* sync detail from :meth:`_time_ranges_detail`;
+        ``input.coefs`` (path) shows Shift-toggled dir/file content.
+        Tree-column hover is handled by ``_on_tree_motion`` which always uses
+        the section-level path.
 
         *col* selects which field of a metadata paired row is shown — without
         it the first field always wins.
@@ -347,8 +339,8 @@ class SheetHoverMixin:
         if m.get("label") == "time_ranges" or str(m.get("path") or "") == "input.time_ranges":
             sync = self._time_ranges_detail()
             for cand in self._help_candidates(iid, tree=False, col=col):
-                if cand and (h := _help.help_for_path(cand)) and h.short:
-                    txt = f"{h.short} — {sync}" if sync else h.short
+                if cand and (h := _help.help_for_path(cand)) and (txt := _help.section_body_short(h)):
+                    txt = f"{txt} — {sync}" if sync else txt
                     self._hover_detail = self._resolve_detail(cand) or self._resolve_detail(
                         str(m.get("path") or "")
                     )
@@ -376,7 +368,7 @@ class SheetHoverMixin:
             return
 
         for cand in self._help_candidates(iid, tree=False, col=col):
-            if cand and (h := _help.help_for_path(cand)) and h.short:
+            if cand and (h := _help.help_for_path(cand)) and (txt := _help.section_body_short(h)):
                 self._hover_detail = self._resolve_detail(cand) or self._resolve_detail(
                     str(m.get("path") or "")
                 )
@@ -386,17 +378,17 @@ class SheetHoverMixin:
                     m.get("has_date")
                     and not m.get("is_metadata")
                     and (lbl := _COEF_DATE_LABELS.get(str(m.get("key") or "")))
-                    and (txt := _S.get(lbl, ""))
+                    and (date_txt := _S.get(lbl, ""))
                 ):
-                    self.on_hover_status(txt, True)
+                    self.on_hover_status(date_txt, True)
                     return
                 # Append coefs date suffix when hovering the coefs node
                 if m.get("key") == "coefs" and (coefs_date := m.get("_coefs_date")):
                     suffix = _S.get("input.coefs.date.status", "").format(date=coefs_date)
                     if suffix:
-                        self.on_hover_status(f"{h.short} {suffix}".strip(), True)
+                        self.on_hover_status(f"{txt} {suffix}".strip(), True)
                         return
-                self.on_hover_status(h.short, True)
+                self.on_hover_status(txt, True)
                 return
 
         self._hover_detail = ""

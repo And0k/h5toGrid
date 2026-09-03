@@ -1668,7 +1668,7 @@ def log_names_gen(
     :return: iterator, by default - of strings, suitable to name files by start-end date/time
 
     :Modifies cfg_in: adds/replaces field cfg_in['log_row'] = log_rows_gen(cfg_in) result before each yielding
-    Replacing for veuszPropagate.ge_names() to use tables instead files
+    Replacing for veusz_helpers.veuszPropagate.ge_names() to use tables instead files
     """
     for row in log_rows_gen(**cfg_in):
         cfg_in["log_row"] = row

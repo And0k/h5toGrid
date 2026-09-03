@@ -30,6 +30,9 @@ import tkinter.font as tkfont
 from ._i18n import STRINGS as _S
 from .const import set_widget_meta
 from .theme import scaled, strip_palette
+import tcm_gui.theme as theme
+
+import tcm_gui.theme as theme
 
 
 class TabRail(tk.Canvas):
@@ -48,7 +51,18 @@ class TabRail(tk.Canvas):
         self._on_hover = on_hover  # (name | None) → status bar update
         self._pal = strip_palette(self)
         self.configure(bg=self._pal["base"])
-        self._font = tkfont.nametofont("TkDefaultFont")
+        _base = tkfont.nametofont("TkDefaultFont")
+        _actual = _base.actual()
+        # Bold variant — independent Font so TkDefaultFont stays untouched elsewhere
+        self._font = tkfont.Font(
+            root=self,
+            family=_actual["family"],
+            size=_actual["size"],
+            weight="bold",
+        )
+        _sz = int(_actual["size"])
+        self._base_pt = _sz if _sz > 0 else 10  # fallback when actual reports 0 in headless
+        self._font_cache: dict[int, tkfont.Font] = {self._base_pt: self._font}
         self._ls = self._font.metrics("linespace")
         self._rail_w = scaled(self.PROG_W) + self._ls + 2 * scaled(self.PAD_X)
         self.configure(width=self._rail_w)
@@ -71,7 +85,7 @@ class TabRail(tk.Canvas):
     # ── membership ────────────────────────────────────────────────────
     @staticmethod
     def _new_st() -> dict:
-        return {"state": "pending", "frac": 0.0, "shown": 0.0, "dirty": False}
+        return {"state": "pending", "frac": 0.0, "shown": 0.0, "dirty_config": False, "dirty_meta": False}
 
     def add_tab(self, name: str) -> None:
         self._names.append(name)
@@ -110,12 +124,34 @@ class TabRail(tk.Canvas):
         self._selected = name
         self._layout()  # selection affects heights (compression protects it)
 
-    def set_dirty(self, name: str, dirty: bool) -> None:
+    def set_dirty(self, name: str, dirty_config: bool, dirty_meta: bool | None = None) -> None:
+        """Mark tab dirty — separate config vs metadata flags.
+
+        ``dirty_meta is None`` keeps backward compat for single-arg callers
+        (tests): they pass combined dirty as ``dirty_config`` and we treat it
+        as both flags when true, else clean.
+        """
         st = self._st.get(name)
-        if st is None or st["dirty"] == dirty:
+        if st is None:
             return
-        st["dirty"] = dirty
-        self._layout()  # '*' changes ideal height
+        # Backward compat: single bool means combined dirty
+        if dirty_meta is None:
+            # If caller passed a single bool, interpret True as both dirty
+            # (old behavior: is_dirty or is_metadata_dirty)
+            if dirty_config and not (st["dirty_config"] or st["dirty_meta"]):
+                st["dirty_config"] = st["dirty_meta"] = True
+                self._layout()
+            elif not dirty_config and (st["dirty_config"] or st["dirty_meta"]):
+                st["dirty_config"] = st["dirty_meta"] = False
+                self._layout()
+            return
+        if st["dirty_config"] == dirty_config and st["dirty_meta"] == dirty_meta:
+            return
+        st["dirty_config"] = dirty_config
+        st["dirty_meta"] = dirty_meta
+        # No layout needed — marker is separate, not part of label length
+        if name in self._cells:
+            self._refresh(name)
 
     def set_disabled(self, disabled: bool) -> None:
         """Inert look for the whole rail: dim text, no accent, click veto.
@@ -130,6 +166,14 @@ class TabRail(tk.Canvas):
             self._refresh(name)
 
     # ── vertical sizing policy ────────────────────────────────────────
+    def _min_selected_h(self) -> int:
+        """Minimum height for selected/active tab — ~4 chars at 8 pt + padding.
+
+        Guarantees the active tab stays readable (>~4 chars) even under
+        extreme compression; tiny tabs lose their margins first (see _refresh).
+        """
+        return self._font_at(8).measure("n" * 4) + 2 * scaled(self.PAD_Y)
+
     def _heights(self, H: int) -> dict[str, int]:
         """Content-based heights: capped grow on surplus, waterfill on shortage.
 
@@ -137,8 +181,13 @@ class TabRail(tk.Canvas):
         ``min(GROW_CAP, 35%)`` with the remainder left empty below; shortage
         protects the selected tab only when there's room for the rest at MIN_H;
         otherwise compresses ALL tabs together (selected gets a remainder pixel).
+        Selected is always forced to at least ~4 chars (see _min_selected_h).
         """
         ideal = {n: self._font.measure(self._full_label(n)) + 2 * scaled(self.PAD_Y) for n in self._names}
+        # Enforce selected >= ~4 chars before any budget math
+        _sel_min = self._min_selected_h()
+        if self._selected in ideal:
+            ideal[self._selected] = max(ideal[self._selected], _sel_min)
         total = sum(ideal.values())
         n = len(self._names)
         if total < H:  # grow, capped
@@ -155,8 +204,22 @@ class TabRail(tk.Canvas):
             heights = {sel: sel_h}
             heights.update(self._compress({k: v for k, v in ideal.items() if k != sel}, H - sel_h, sel))
             return heights
-        # Shortage: compress ALL tabs together — every tab stays visible.
-        return self._compress(ideal, H, sel)
+        # Shortage: compress ALL tabs together — every tab stays visible,
+        # but re-raise selected to its minimum if it got squeezed below.
+        heights = self._compress(ideal, H, sel)
+        if sel and heights.get(sel, 0) < _sel_min and H >= _sel_min + (n - 1):
+            # Steal from others to honor selected minimum (at least 1 px each)
+            need = _sel_min - heights[sel]
+            heights[sel] = _sel_min
+            others = [k for k in heights if k != sel]
+            # Reduce others proportionally, keeping >=1
+            for k in others:
+                if need <= 0:
+                    break
+                take = min(heights[k] - 1, (need + len(others) - 1) // len(others))
+                heights[k] -= take
+                need -= take
+        return heights
 
     @staticmethod
     def _compress(ideal: dict[str, int], budget: int, selected: str | None = None) -> dict[str, int]:
@@ -216,6 +279,8 @@ class TabRail(tk.Canvas):
         self._cells.clear()
         pal, PW = self._pal, scaled(self.PROG_W)
         tx0, tx1 = PW, self._rail_w
+        tx_center = (tx0 + tx1) // 2
+        tx_right = tx1 - scaled(self.PAD_X)  # right edge padded — for overflow case
         y = 0
         for i, name in enumerate(self._names):
             y0, y1 = y, y + heights[name]
@@ -224,7 +289,9 @@ class TabRail(tk.Canvas):
                 "y0": y0,
                 "y1": y1,
                 "h": y1 - y0,
-                "tx": (tx0 + tx1) // 2,
+                "tx": tx_center,
+                "tx_right": tx_right,
+                "ty": (y0 + y1) // 2,
                 # progress column
                 "track": self.create_rectangle(0, y0, PW, y1, fill=pal["track"], width=0),
                 "fill": self.create_rectangle(0, y0, PW, y0, fill=pal["run"], width=0),
@@ -238,7 +305,23 @@ class TabRail(tk.Canvas):
             if i:  # hairline separator — exact shared boundary of two configs
                 self.create_line(0, y0, self._rail_w, y0, fill=pal["base"])
             c["text"] = self.create_text(
-                c["tx"], (y0 + y1) // 2, text=name, angle=self.ANGLE, font=self._font, fill=pal["dim"]
+                c["tx"],
+                c["ty"],
+                text=name,
+                angle=self.ANGLE,
+                anchor="center",
+                font=self._font,
+                fill=pal["dim"],
+            )
+            # Dirty marker — top left corner of tab, separate from label
+            # Horizontal, small, color indicates which is dirty
+            c["dirty"] = self.create_text(
+                tx0 + scaled(3),
+                y0 + scaled(3),
+                text="",
+                anchor="nw",
+                font=self._font_at(8),
+                fill=pal["text"],
             )
             self._cells[name] = c
             self._refresh(name)
@@ -260,29 +343,164 @@ class TabRail(tk.Canvas):
         if fill_clr := {"running": pal["run"], "done": pal["done"], "error": pal["error"]}.get(st["state"]):
             self.itemconfigure(c["fill"], fill=fill_clr)
         sel = self._selected == name and not self._disabled
-        dim = self._disabled or (st["state"] == "pending" and not sel)
+        dim = not sel  # unselected (or whole rail disabled) → slightly dimmer, no blue
         self.itemconfigure(c["acc"], state="normal" if sel else "hidden")
-        self.itemconfigure(c["text"], fill=pal["dim"] if dim else pal["text"], text=self._label(name))
+        # Available vertical length — remove 8px margins when tab <~4 chars (more room for text)
+        _min_h = self._min_selected_h()
+        _max_vert = c["h"] if c["h"] < _min_h else c["h"] - scaled(8)
+        # Bold + shrink-to-fit (min 8 pt); right-align only on overflow, with left ellipsis;
+        # rotate to 0° when vertical room <~2 chars (tiny tab) — cheap branch, not hard
+        _font, _txt, _anchor, _angle = self._resolve_label_font(name, _max_vert)
+        # Anchor / x / angle: center when fits at base, right (s) when shrunk/truncated;
+        # for horizontal (angle 0) keep centered in tab column
+        if _angle == 0:
+            _x, _anchor = c["tx"], "center"
+        else:
+            _x = c["tx_right"] if _anchor == "s" else c["tx"]
+        self.coords(c["text"], _x, c["ty"])
+        self.itemconfigure(
+            c["text"],
+            fill=pal["dim"] if dim else pal["text"],
+            text=_txt,
+            font=_font,
+            anchor=_anchor,
+            angle=_angle,
+        )
+        # Dirty marker — top left corner, separate from label
+        # Handle old single-dirty key for backward compat
+        if "dirty" in st:
+            dc = dm = bool(st["dirty"])
+        else:
+            dc = bool(st.get("dirty_config", False))
+            dm = bool(st.get("dirty_meta", False))
+        if not (dc or dm):
+            self.itemconfigure(c["dirty"], text="")
+        elif dc and dm:
+            self.itemconfigure(c["dirty"], text="*", fill=pal["dim"] if dim else pal["text"])
+        elif dc:
+            self.itemconfigure(c["dirty"], text="*", fill=theme.CONFIG_TREE_BG)
+        else:  # only meta
+            self.itemconfigure(c["dirty"], text="*", fill=theme.META_TREE_BG)
         self._geom_fill(name)
 
     def _full_label(self, name: str) -> str:
         """Untruncated label — length measurement source for _heights."""
         st = self._st[name]
-        # return ("✔ " if st["state"] == "done" else "") + name + ("*" if st["dirty"] else "")
         pref = {"running": "▸ ", "done": "✔ "}.get(st["state"], "")
-        return pref + name + ("*" if st["dirty"] else "")
+        return pref + name
 
-    def _label(self, name: str) -> str:
-        """Fit rotated label into cell height (text length = vertical extent)."""
-        return self._fit(self._full_label(name), self._cells[name]["h"] - scaled(8))
+    def _font_at(self, pt: int) -> tkfont.Font:
+        """Bold font at *pt* — cached per size (shared across tabs)."""
+        if (f := self._font_cache.get(pt)) is not None:
+            return f
+        f = tkfont.Font(family=self._font.cget("family"), size=pt, weight="bold")
+        self._font_cache[pt] = f
+        return f
 
-    def _fit(self, s: str, max_len: int) -> str:
-        """Ellipsize to available length — font metrics, not character guesses."""
-        if self._font.measure(s) <= max_len:
+    def _resolve_label_font(self, name: str, max_len: int) -> tuple[tkfont.Font, str, str, int]:
+        """Return (font, text, anchor, angle) that fits *max_len* vertically.
+
+        - Fits at base pt → center anchor, 90°, base font, full text.
+        - Shrink bold down to 8 pt when slightly over → right anchor (s) keeps
+          the visible text flush to the right edge of the tab (90°).
+        - At 8 pt still over → prefix-ellipsize (…tail) and right anchor, so
+          the ellipsis appears at the left/overflow edge (90°).
+        - When vertical room <~2 chars, rotate to 0° (horizontal) — not hard:
+          fits within tab-column width; uses center anchor, shrinks the same,
+          and suppresses ellipsis if <~6 chars. Horizontal is more readable
+          when the tab is a thin strip.
+        anchor "center" = centered; "s" = right-aligned (east after 90° rotation,
+        see check_anchor90.py: s ↔ east edge at x, vertically centered).
+        """
+        full = self._full_label(name)
+        _base_f = self._font_at(self._base_pt)
+        # Tiny vertical room <~2 chars → rotate to horizontal (0°) — cheap, no extra layout
+        _tiny_vert = self._font_at(8).measure("n" * 2)
+        if max_len < _tiny_vert:
+            return self._resolve_horizontal(full, _base_f)
+        if _base_f.measure(full) <= max_len:
+            return _base_f, full, "center", self.ANGLE
+        # Shrink slightly when not fitting — not less than 8 pt
+        for pt in range(self._base_pt - 1, 7, -1):  # 8 pt inclusive, below base
+            f = self._font_at(pt)
+            if f.measure(full) <= max_len:
+                return f, full, "s", self.ANGLE
+        # Even at 8 pt does not fit → prefix-ellipsize at 8 pt, right-aligned (90°)
+        f8 = self._font_at(8)
+        return f8, self._fit_prefix_at(full, max_len, f8), "s", self.ANGLE
+
+    def _resolve_horizontal(self, full: str, base_f: tkfont.Font) -> tuple[tkfont.Font, str, str, int]:
+        """Fit *full* horizontally inside the tab column (angle 0).
+
+        Called when vertical room <~2 chars; uses the column width as budget.
+        Mirrors the vertical shrink/ellipsis logic but with horizontal width.
+        """
+        # Tab-column inner width (rail width minus progress column minus small pads)
+        _avail_w = self._rail_w - scaled(self.PROG_W) - scaled(4)
+        if base_f.measure(full) <= _avail_w:
+            return base_f, full, "center", 0
+        for pt in range(self._base_pt - 1, 7, -1):
+            f = self._font_at(pt)
+            if f.measure(full) <= _avail_w:
+                return f, full, "center", 0
+        f8 = self._font_at(8)
+        # Horizontal truncation — suffix ellipsis (head…) is natural left→right
+        return f8, self._fit_at(full, _avail_w, f8), "center", 0
+
+    def _fit_at(self, s: str, max_len: int, font: tkfont.Font) -> str:
+        """Suffix-ellipsize *s* to *max_len* using *font* metrics (head…).
+
+        When *max_len* cannot accommodate ~6 characters (ellipsis + 5),
+        the ellipsis is suppressed — tiny tabs show the fitting prefix raw
+        rather than a cramped "…x" that carries no information.
+        """
+        if font.measure(s) <= max_len:
             return s
-        while s and self._font.measure(s + "…") > max_len:
+        # Suppress ellipsis when not enough room for ~6 characters
+        if font.measure("…" + "n" * 5) > max_len:
+            t = s
+            while t and font.measure(t) > max_len:
+                t = t[:-1]
+            return t
+        while s and font.measure(s + "…") > max_len:
             s = s[:-1]
         return s + "…" if s else ""
+
+    def _fit_prefix_at(self, s: str, max_len: int, font: tkfont.Font) -> str:
+        """Prefix-ellipsize *s* to *max_len* using *font* metrics (…tail).
+
+        Keeps the suffix, ellipsis on the left/overflow edge — used for
+        right-aligned truncated tabs so the visible part stays near the right.
+        When *max_len* cannot accommodate ~6 characters, the ellipsis is
+        suppressed and the fitting suffix is returned raw.
+        """
+        if font.measure(s) <= max_len:
+            return s
+        # Suppress ellipsis when not enough room for ~6 characters
+        if font.measure("…" + "n" * 5) > max_len:
+            t = s
+            while t and font.measure(t) > max_len:
+                t = t[1:]
+            return t
+        ell = "…"
+        # Drop from the front until ellipsis+suffix fits
+        while s and font.measure(ell + s) > max_len:
+            s = s[1:]
+        return ell + s if s else ""
+
+    # Backward-compat shims — keep old names delegating to new helpers
+    def _label(self, name: str) -> str:  # pragma: no cover
+        """Fit rotated label into cell height (text length = vertical extent)."""
+        c = self._cells.get(name)
+        if c is None:
+            return name
+        _min_h = self._min_selected_h()
+        _max = c["h"] if c["h"] < _min_h else c["h"] - scaled(8)
+        return self._resolve_label_font(name, _max)[1]
+
+    def _fit(self, s: str, max_len: int) -> str:  # pragma: no cover
+        """Ellipsize to available length — font metrics, not character guesses."""
+        return self._fit_at(s, max_len, self._font)
 
     # ── animation (lerp fill + glimmer; idles itself to sleep) ───────
     def _tick(self) -> None:

@@ -26,6 +26,11 @@ from tcm._md_parse import (
 )
 
 
+def _s(text: str, *tags: str):
+    """Build one inline span: ``(text, frozenset(tags))`` — empty = plain."""
+    return (text, frozenset(tags))
+
+
 # ── split_table_row ──────────────────────────────────────────────────────────
 
 
@@ -64,56 +69,56 @@ class TestParseInline:
     """Inline Markdown span parsing."""
 
     def test_plain_text(self):
-        assert parse_inline("hello world") == (("hello world", "plain"),)
+        assert parse_inline("hello world") == (_s("hello world"),)
 
     def test_bold_asterisks(self):
         result = parse_inline("**bold**")
-        assert result == (("bold", "bold"),), f"bold asterisks: {result!r}"
+        assert result == (_s("bold", "bold"),), f"bold asterisks: {result!r}"
 
     def test_bold_underscores(self):
         result = parse_inline("__bold__")
-        assert result == (("bold", "bold"),), f"bold underscores: {result!r}"
+        assert result == (_s("bold", "bold"),), f"bold underscores: {result!r}"
 
     def test_italic_asterisks(self):
         result = parse_inline("*italic*")
-        assert result == (("italic", "italic"),), f"italic asterisks: {result!r}"
+        assert result == (_s("italic", "italic"),), f"italic asterisks: {result!r}"
 
     def test_italic_underscores(self):
         result = parse_inline("_italic_")
-        assert result == (("italic", "italic"),), f"italic underscores: {result!r}"
+        assert result == (_s("italic", "italic"),), f"italic underscores: {result!r}"
 
     def test_inline_code(self):
         result = parse_inline("`code`")
-        assert result == (("code", "code"),), f"inline code: {result!r}"
+        assert result == (_s("code", "code"),), f"inline code: {result!r}"
 
     def test_link_text_only(self):
         """Links keep their text; the span tag is the target URL."""
         result = parse_inline("[click here](https://example.com)")
-        assert result == (("click here", "https://example.com"),), f"link: {result!r}"
+        assert result == (_s("click here", "https://example.com"),), f"link: {result!r}"
 
     def test_link_with_anchor(self):
         """A relative doc link with a heading anchor keeps text + target."""
         result = parse_inline("([подробнее](io_formats.md#directory-layout))")
         assert result == (
-            ("(", "plain"),
-            ("подробнее", "io_formats.md#directory-layout"),
-            (")", "plain"),
+            _s("("),
+            _s("подробнее", "io_formats.md#directory-layout"),
+            _s(")"),
         ), f"anchored link: {result!r}"
 
     def test_link_adjacent(self):
         """Adjacent links with different targets stay separate spans."""
         result = parse_inline("[a](x)[b](y)")
-        assert result == (("a", "x"), ("b", "y")), f"adjacent links: {result!r}"
+        assert result == (_s("a", "x"), _s("b", "y")), f"adjacent links: {result!r}"
 
     def test_link_same_target_merged(self):
         """Adjacent links with the same target merge like any same-tag spans."""
         result = parse_inline("[a](x)[b](x)")
-        assert result == (("ab", "x"),), f"merged link: {result!r}"
+        assert result == (_s("ab", "x"),), f"merged link: {result!r}"
 
     def test_link_empty_url(self):
         """Brackets without a target keep the text as a (dead) link span."""
         result = parse_inline("[x]()")
-        assert result == (("x", ""),), f"empty url: {result!r}"
+        assert result == (_s("x", ""),), f"empty url: {result!r}"
 
     def test_link_empty_text(self):
         result = parse_inline("[](https://example.com)")
@@ -121,28 +126,28 @@ class TestParseInline:
 
     def test_escape_sequence(self):
         result = parse_inline(r"\*not italic\*")
-        assert result == (("*not italic*", "plain"),), f"escape: {result!r}"
+        assert result == (_s("*not italic*"),), f"escape: {result!r}"
 
     def test_mixed_bold_and_code(self):
         result = parse_inline("**bold** and `code`")
         assert result == (
-            ("bold", "bold"),
-            (" and ", "plain"),
-            ("code", "code"),
+            _s("bold", "bold"),
+            _s(" and "),
+            _s("code", "code"),
         ), f"mixed: {result!r}"
 
     def test_adjacent_same_tag_merged(self):
         """Adjacent spans with the same tag are coalesced."""
         result = parse_inline("**a****b**")
         assert len(result) == 1, f"expected 1 merged span, got {len(result)}"
-        assert result[0] == ("ab", "bold"), f"merged bold: {result!r}"
+        assert result[0] == _s("ab", "bold"), f"merged bold: {result!r}"
 
     def test_plain_leading_and_trailing(self):
         result = parse_inline("before **mid** after")
         assert result == (
-            ("before ", "plain"),
-            ("mid", "bold"),
-            (" after", "plain"),
+            _s("before "),
+            _s("mid", "bold"),
+            _s(" after"),
         ), f"leading/trailing: {result!r}"
 
     def test_empty_string(self):
@@ -150,30 +155,30 @@ class TestParseInline:
 
     def test_color_tag_simple(self):
         result = parse_inline("{#error}err{/}")
-        assert result == (("err", "error"),), f"color tag: {result!r}"
+        assert result == (_s("err", "error"),), f"color tag: {result!r}"
 
     def test_color_tag_in_sentence(self):
         result = parse_inline("before {#error}err{/} after")
         assert result == (
-            ("before ", "plain"),
-            ("err", "error"),
-            (" after", "plain"),
+            _s("before "),
+            _s("err", "error"),
+            _s(" after"),
         ), f"color in sentence: {result!r}"
 
     def test_color_tag_adjacent(self):
         result = parse_inline("{#debug}d{/}{#error}e{/}")
         assert result == (
-            ("d", "debug"),
-            ("e", "error"),
+            _s("d", "debug"),
+            _s("e", "error"),
         ), f"adjacent colors: {result!r}"
 
     def test_color_tag_with_bold(self):
         """Color tags and bold coexist as separate spans."""
         result = parse_inline("{#error}err{/} **bold**")
         assert result == (
-            ("err", "error"),
-            (" ", "plain"),
-            ("bold", "bold"),
+            _s("err", "error"),
+            _s(" "),
+            _s("bold", "bold"),
         ), f"color + bold: {result!r}"
 
     def test_cache_returns_same_object(self):
@@ -181,6 +186,53 @@ class TestParseInline:
         a = parse_inline("hello **world**")
         b = parse_inline("hello **world**")
         assert a is b, "parse_inline should be cached (lru_cache)"
+
+
+class TestNestedFormatting:
+    """Bold/italic wrapping inline code — generalizations of ``**`.yaml`**``."""
+
+    def test_bold_wrapping_code(self):
+        result = parse_inline("**`.yaml`**")
+        assert result == (_s(".yaml", "bold", "code"),), f"bold+code: {result!r}"
+
+    def test_bold_code_simple(self):
+        result = parse_inline("**`code`**")
+        assert result == (_s("code", "bold", "code"),), f"bold+code simple: {result!r}"
+
+    def test_italic_wrapping_code(self):
+        result = parse_inline("*`code`*")
+        assert result == (_s("code", "italic", "code"),), f"italic+code: {result!r}"
+
+    def test_bold_before_code_after(self):
+        result = parse_inline("**before `code` after**")
+        assert result == (
+            _s("before ", "bold"),
+            _s("code", "bold", "code"),
+            _s(" after", "bold"),
+        ), f"bold with code inside: {result!r}"
+
+    def test_bold_italic_nested(self):
+        result = parse_inline("**bold *italic* text**")
+        assert result == (
+            _s("bold ", "bold"),
+            _s("italic", "bold", "italic"),
+            _s(" text", "bold"),
+        ), f"bold+italic: {result!r}"
+
+    def test_code_literal_no_nesting(self):
+        """Code spans are literal — `` `**bold**` `` must not recurse."""
+        result = parse_inline("`**bold**`")
+        assert result == (_s("**bold**", "code"),), f"code literal: {result!r}"
+
+    def test_triple_nested(self):
+        """``**_`nested`_**`` → bold+italic+code triple."""
+        result = parse_inline("**_`nested`_**")
+        assert result == (_s("nested", "bold", "italic", "code"),), f"triple: {result!r}"
+
+    def test_conversely_bold_inside_code_not_parsed(self):
+        """Inside `` `...` `` bold markers stay literal (already covered)."""
+        result = parse_inline("`outer **bold**`")
+        assert result == (_s("outer **bold**", "code"),), f"code outer: {result!r}"
 
 
 # ── parse_markdown ───────────────────────────────────────────────────────────
@@ -194,7 +246,7 @@ class TestParseMarkdown:
         assert len(blocks) == 1, f"expected 1 block, got {len(blocks)}"
         assert isinstance(blocks[0], Heading), f"expected Heading, got {type(blocks[0]).__name__}"
         assert blocks[0].level == 1, f"heading level: {blocks[0].level}"
-        assert blocks[0].text == (("Title", "plain"),), f"heading text: {blocks[0].text!r}"
+        assert blocks[0].text == (_s("Title"),), f"heading text: {blocks[0].text!r}"
 
     def test_heading_levels(self):
         for level in range(1, 7):
@@ -206,7 +258,7 @@ class TestParseMarkdown:
         blocks = parse_markdown("some text")
         assert len(blocks) == 1
         assert isinstance(blocks[0], Paragraph)
-        assert blocks[0].text == (("some text", "plain"),)
+        assert blocks[0].text == (_s("some text"),)
 
     def test_paragraph_multiline(self):
         """Consecutive non-blank lines merge into one paragraph."""
@@ -256,7 +308,7 @@ class TestParseMarkdown:
         t = blocks[0]
         assert isinstance(t, Table)
         # First header cell should have bold span
-        assert t.header[0] == (("Name", "bold"),), f"header bold: {t.header[0]!r}"
+        assert t.header[0] == (_s("Name", "bold"),), f"header bold: {t.header[0]!r}"
 
     def test_empty_table_cell(self):
         src = "| A | |\n|---|---|\n| 1 | |"
@@ -496,7 +548,7 @@ class TestMarkdownLabelRendering:
     def test_default_parses_markdown(self):
         """Default path parses ``**bold**`` — regression for STR chrome status (app.py:248).
 
-        ``set_text`` no longer takes ``markdown=False`` (legacy): it parses by
+        ``set_text`` no longer takes ``markdown=False``: it parses by
         default, so chrome hover status from ``STR["{role}.status"]`` honors
         ``**bold**`` without callers passing any flag.
         """

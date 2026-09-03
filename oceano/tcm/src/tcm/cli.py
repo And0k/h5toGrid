@@ -1,6 +1,5 @@
 """CLI argument parsing for the tcm processing pipeline.
 
-Extracted from ``scripts/tcm_proc.py`` to keep the entry point as a thin caller.
 Hydra handles all config keys (``input.path``, ``input.ids``, ``out.*``, etc.)
 natively via ``compose`` — this module only handles pre-Hydra setup.
 """
@@ -124,7 +123,7 @@ class AnsiStrippedFormatter(SafeStringFormatter):
         return super().format(record)
 
 
-def _setup_file_handler(cfg: Mapping[str, Any]) -> None:
+def _setup_file_handler(cfg: Mapping[str, Any], enable: bool = True) -> None:
     """Create a FileHandler with the correct filename and ANSI-stripped formatting.
 
     Called from ``_store`` after Hydra initialization and override merge.
@@ -138,6 +137,10 @@ def _setup_file_handler(cfg: Mapping[str, Any]) -> None:
 
     Removes any existing ``FileHandler``s first (e.g. from a previous
     ``call_in_raw_dir`` in the same process — worker re-entry).
+
+    When *enable* is ``False`` (GUI scan, ``Return.CFG_FROM_ARGS`` with
+    ``enable_file_logging=False``) the file handler is suppressed — no
+    ``cfg_proc/log/*.log`` is created. Console + queue handlers remain.
     """
     from hydra.core.hydra_config import HydraConfig
 
@@ -156,6 +159,10 @@ def _setup_file_handler(cfg: Mapping[str, Any]) -> None:
         if isinstance(h, logging.FileHandler):
             h.close()
             root.removeHandler(h)
+
+    if not enable:
+        lf.debug("File logging disabled for {} (enable=False)", run_dir / filename)
+        return
 
     fh = logging.FileHandler(str(run_dir / filename), encoding="utf-8")
     fh.setFormatter(AnsiStrippedFormatter(fmt=_FILE_LOG_FMT, datefmt=_FILE_LOG_DATEFMT))
@@ -251,6 +258,7 @@ def hydra_main(
     overrides: Mapping[str, Any] | None = None,
     *,
     exit_on_error: bool = True,
+    enable_file_logging: bool = True,
 ) -> Any:
     """Dispatch *fun* via Hydra, return its result (``@hydra.main`` swallows returns).
 
@@ -300,7 +308,7 @@ def hydra_main(
             cfg = OmegaConf.merge(base, overrides)
 
         # Create file handler with correct filename (before any logging)
-        _setup_file_handler(cfg)
+        _setup_file_handler(cfg, enable=enable_file_logging)
 
         # Resolve use_h5: user preference × library availability
         policy.init_io(cfg)
@@ -342,7 +350,14 @@ def hydra_main(
 
 # Kwargs accepted by :func:`hydra_main` (excluding ``fun``) — everything else
 # is treated as an override dict to merge on top of composed defaults.
-_HYDRA_MAIN_PARAMS = {"config_name", "config_path", "version_base", "overrides", "exit_on_error"}
+_HYDRA_MAIN_PARAMS = {
+    "config_name",
+    "config_path",
+    "version_base",
+    "overrides",
+    "exit_on_error",
+    "enable_file_logging",
+}
 
 
 def _build_hydra_argv(data_dir: Path) -> list[str]:
@@ -439,8 +454,13 @@ def _require_nonempty_path(raw: str) -> Path:
     return Path(raw)
 
 
-def call_in_raw_dir(fun, yaml_path: Path | None = None, **kwargs) -> Any:
+def call_in_raw_dir(
+    fun, yaml_path: Path | None = None, enable_file_logging: bool = True, **kwargs
+) -> Any:
     """Bootstrap CLI → Hydra runtime for a processing entry point.
+
+    :param enable_file_logging: when ``False``, suppress creation of
+        ``cfg_proc/log/*.log`` (GUI scan ``CFG_FROM_ARGS``).
 
     1. **Flag bypass**: when any ``-`` prefixed argument is present in
        ``sys.argv``, the function delegates straight to :func:`hydra_main`
@@ -496,7 +516,7 @@ def call_in_raw_dir(fun, yaml_path: Path | None = None, **kwargs) -> Any:
         ``tcm.schema`` (imported above) does this at module level.
     """
     # Separate hydra_main params from override dicts.
-    hydra_main_kwargs: dict[str, Any] = {}
+    hydra_main_kwargs: dict[str, Any] = {"enable_file_logging": enable_file_logging}
     overrides: dict[str, Any] = {}
     for k, v in kwargs.items():
         if k in _HYDRA_MAIN_PARAMS:

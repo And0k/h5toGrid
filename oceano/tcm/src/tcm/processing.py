@@ -21,7 +21,7 @@ from tqdm.dask import TqdmCallback
 from utils import log_init
 
 import tcm._xr.nc_utils
-from tcm import _constants, cli, config_yaml, format, paths, policy, schema, stage_ctx
+from tcm import _constants, anchors, bursts, cli, config_yaml, format, paths, policy, schema, stage_ctx
 from tcm._xr import coefs as xr_coefs
 from tcm._xr import dataset, physical, storage
 from tcm._xr import io as xr_io
@@ -418,9 +418,16 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
     pcids_requested = format.normalize_probes(set(ids)) if ids else {format.PROBE_WILDCARD}
 
     dir_raw = paths.find_dir_raw_absolute(path_in)
-    dir_cfgs = dir_raw / "cfg_proc" / "run"
-    cli.safe_cfg_dir(dir_cfgs)
-    cfgs_existed = config_yaml.get_existed_cfgs(dir_cfgs)
+    # Single-anchor: one _raw per run(); trigger dir with N>1 _raw descendants raises, GUI picks one.
+    lf.info("Processing trigger={} dir_raw={}", path_in, dir_raw)
+    _anchors = anchors.collect_anchors(path_in, dir_raw)
+    if len(_anchors) > 1:
+        raise FileNotFoundError(
+            f"No data: {path_in} contains {len(_anchors)} _raw anchors"
+            f" — pass a single _raw path: {', '.join(map(str, _anchors))}"
+        )
+    lf.info("Processing anchor={} for trigger={}", _anchors[0], path_in)
+    cfgs_existed, dir_cfgs = anchors.merge_existed_cfgs(_anchors)
 
     # Scan progress — update progress_stage so the GUI overlay shows activity.
     _rt = progress_bridge.get_runtime()
@@ -438,7 +445,7 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
             try:  # lightweight: check for source files lacking config
                 from tcm import csv_load
 
-                discovered = csv_load.search_csv_files(path_in)
+                discovered = csv_load.search_csv_files(path_in, trigger=path_in)
                 disc_pcids = {format.pcid_from_parts(model=m, number=n) for m, n in discovered}
                 new_pcids = disc_pcids - set(cfgs_existed)
                 if new_pcids and (pcids_requested == {format.PROBE_WILDCARD} or pcids_requested & new_pcids):
@@ -458,11 +465,11 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
             )
             lf.info("Config generation: {}", reason)
             config_yaml.save_config_to_yaml(cfg, [path_in])
-            cfgs_existed = config_yaml.get_existed_cfgs(dir_cfgs)
-        # Sync time_ranges (idempotent: configs with existing ranges are skipped).
+            # Refresh after generation (single anchor — picks up newly written run dir).
+            cfgs_existed, dir_cfgs = anchors.merge_existed_cfgs(_anchors)
+        # Sync time_ranges for the single anchor.
         sync_result = config_yaml.sync_yamls_devmeta_and_hydra(dir_raw.parent, dir_cfgs, cfgs_existed)
         # Stash for GUI scan path (CFG_FROM_ARGS) — picked up after process_loading_yaml.
-        # _sync_result is read after process_loading_yaml for the scan return path
         _sync_result = sync_result
         # Warn about orphan configs pointing to non-existing files.
         still_stale = config_yaml.find_stale_cfgs(cfgs_existed, dir_cfgs) if stale else {}
@@ -561,14 +568,37 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
     )
     if _rt:
         _rt.progress_overall.set(1, 1, ScanStage.DONE)
-    if cfg["program"]["return_"] == schema.Return.CFG_FROM_ARGS:
-        # Attach sync_result as 5th element for GUI scan (None when no metadata)
+    if OmegaConf.select(cfg, "program.return_") == schema.Return.CFG_FROM_ARGS:
+        # Burst for display is lazy-filled on row-select (scan creates stubs without file reads).
+        burst_map: dict[str, tuple[Any, Any]] = {}
+        # Attach sync_result as 5th element and bursts as 6th for GUI scan
         sr = locals().get("_sync_result")
+        if burst_map:
+            if sr is not None:
+                return (processed_pcids, failed_pcids, last_cfg, collected, sr, burst_map)
+            return (processed_pcids, failed_pcids, last_cfg, collected, burst_map)
         return (
             (processed_pcids, failed_pcids, last_cfg, collected, sr)
             if sr is not None
             else (processed_pcids, failed_pcids, last_cfg, collected)
         )
+
+    # WRITE missing bursts to info_devices.yaml for actual run (single anchor).
+    try:
+        burst_collected = collected
+        if not burst_collected or all(c is None for _, _, c in burst_collected):
+            burst_collected = []
+            for _pcid, stems in cfgs_to_run.items():
+                for stem in stems:
+                    yp = dir_cfgs / f"{stem}.yaml"
+                    try:
+                        cfg_dc = OmegaConf.load(yp)
+                        burst_collected.append((stem, str(yp), cfg_dc))
+                    except Exception:
+                        continue
+        bursts.fill_missing_bursts(dir_raw, burst_collected)
+    except Exception:
+        lf.exception("Burst WRITE failed")
 
     # Combine distinct probes. Requires HDF5/netCDF4 backend.
     distinct_pcids = list(dict.fromkeys(processed_pcids))
@@ -627,7 +657,7 @@ def run_processing(cfg: DictConfig):
     Derives probe identity from ``input.path`` filename (text CSV) or, for
     binary inputs (NC/HDF5), from ``input.tables[0]`` (explicit table group
     pinned per call by :func:`run`).
-    Resolves coefs: ``coefs_path`` → ``input.coefs`` (highest priority).
+    Resolves coefs: ``input.coefs.path`` → ``input.coefs`` (highest priority).
     Resolves output paths via :class:`paths.PathLayout`.
     Streams chunks, applies physical conversion + binning, persists (NC + CSV).
 
@@ -646,7 +676,7 @@ def run_processing(cfg: DictConfig):
             pcid = format.to_pcid_from_name(tables[0])
             tbl = tables[0]
     else:
-        # Text: pcid ← path stem (1 CSV file = 1 probe, legacy convention)
+        # Text: pcid ← path stem (1 CSV file = 1 probe)
         pcid = format.to_pcid_from_name(format.stem_to_pcid(src_path.stem))
         tbl = format.pcid_to_raw_name(pcid)
 
@@ -721,17 +751,17 @@ def run_processing(cfg: DictConfig):
             )
     stage_ctx.tick()  # load done
 
-    # Coefs: coefs_path (file) → input.coefs (run YAML override wins)
+    # Coefs: input.coefs.path (file) → input.coefs (run YAML override wins)
     stage_ctx.set_stage(2, Stage.COEFS)
     coefs = get_coefs_from_cfg(cfg_in, pcid)
     if coefs_from_file:
         coefs = {**coefs, **{k: v for k, v in coefs_from_file.items() if v is not None}}
         lf.debug("Merged coefs from data file: {} extra keys", len(coefs_from_file))
 
-    # ── Phase 1b: extract coefs from .raw.h5 if .raw.nc absent (legacy HDF5 auto-migrate)
+    # ── Phase 1b: extract coefs from .raw.h5 if .raw.nc absent (HDF5 auto-migrate)
     if (raw_nc_path := cfg["out"].get("raw_db_path")) and policy.io():
         raw_nc_path = Path(raw_nc_path)
-        # Collapse existence checks: both must hold before importing the legacy coefs loader.
+        # Collapse existence checks: both must hold before importing the HDF5 coefs loader.
         if (
             not raw_nc_path.exists()
             and (h5_path := raw_nc_path.with_suffix("").with_suffix(".raw.h5")).exists()

@@ -6,7 +6,6 @@ Covers:
 * Dataset-level calibration (via numpy extraction, no wrapper needed)
 * :func:`bin_avg_3d` — 2-D spherical bin averaging (θ + φ)
 * :func:`despike_channels` — per-channel despiking
-* Legacy comparison — ``calibrate_channel`` vs ``incl_calibr_hy.calibrate``
 * :func:`calibrate_pipeline` — full iterative bin → fit → reject loop
 """
 from __future__ import annotations
@@ -262,7 +261,7 @@ class TestCalibratePipeline:
 
 
 # --------------------------------------------------------------------------- #
-# Legacy comparison — calibrate_channel vs incl_calibr_hy.calibrate
+# Comparison — calibrate_channel vs incl_calibr_hy.calibrate
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.calibration
@@ -276,7 +275,7 @@ class TestCalibrationComparison:
     """
 
     @staticmethod
-    def _legacy_fit_quadric_form(s: np.ndarray):
+    def _old_fit_quadric_form(s: np.ndarray):
         """Reproduce ``incl_calibr_hy.fit_quadric_form`` for comparison."""
         D = np.array([
             s[0] ** 2, s[1] ** 2, s[2] ** 2,
@@ -307,12 +306,12 @@ class TestCalibrationComparison:
         return M, n, d
 
     @staticmethod
-    def _legacy_calibrate(raw3d: np.ndarray):
+    def _old_calibrate(raw3d: np.ndarray):
         """Reproduce ``incl_calibr_hy.calibrate`` for comparison."""
         F = np.float64(1)
         mean_Hxyz = np.mean(raw3d, 1)[:, np.newaxis]
         s = np.array(raw3d - mean_Hxyz)
-        Q, n, d = TestCalibrationComparison._legacy_fit_quadric_form(s)
+        Q, n, d = TestCalibrationComparison._old_fit_quadric_form(s)
         Q_inv = linalg.inv(Q)
         b = -np.dot(Q_inv, n) + mean_Hxyz
         a2d = np.real(
@@ -329,10 +328,10 @@ class TestCalibrationComparison:
         sphere = make_sphere_pts(n, rng)
         pts = apply_calibration(sphere, gain_true, bias_true, noise_sigma=0.02, rng=rng)
 
-        # Legacy: norm_field(raw, a2d, b) = a2d @ (raw - b)
-        a2d, b = self._legacy_calibrate(pts)
-        cal_legacy = a2d @ (pts - b)
-        norms_legacy = np.linalg.norm(cal_legacy, axis=0)
+        # Old: norm_field(raw, a2d, b) = a2d @ (raw - b)
+        a2d, b = self._old_calibrate(pts)
+        cal_old = a2d @ (pts - b)
+        norms_old = np.linalg.norm(cal_old, axis=0)
 
         # New: gain @ (raw - bias)
         gain, bias = calibrate_channel(pts)
@@ -340,9 +339,9 @@ class TestCalibrationComparison:
         norms_new = np.linalg.norm(cal_new, axis=0)
 
         # Both should be close to unit sphere
-        np.testing.assert_allclose(norms_legacy.mean(), 1.0, atol=0.01)
+        np.testing.assert_allclose(norms_old.mean(), 1.0, atol=0.01)
         np.testing.assert_allclose(norms_new.mean(), 1.0, atol=0.01)
-        np.testing.assert_array_less(norms_legacy.std(), 0.05)
+        np.testing.assert_array_less(norms_old.std(), 0.05)
         np.testing.assert_array_less(norms_new.std(), 0.05)
 
     def test_gain_matrices_similar(self):
@@ -354,7 +353,7 @@ class TestCalibrationComparison:
         sphere = make_sphere_pts(n, rng)
         pts = apply_calibration(sphere, gain_true, bias_true, noise_sigma=0.01, rng=rng)
 
-        a2d, _ = self._legacy_calibrate(pts)
+        a2d, _ = self._old_calibrate(pts)
         gain, _ = calibrate_channel(pts)
 
         # Sort absolute diagonals for comparison
@@ -371,11 +370,11 @@ class TestCalibrationComparison:
         sphere = make_sphere_pts(n, rng)
         pts = apply_calibration(sphere, np.eye(3), np.zeros((3, 1)), noise_sigma=0.01, rng=rng)
 
-        a2d, b = self._legacy_calibrate(pts)
+        a2d, b = self._old_calibrate(pts)
         gain, bias = calibrate_channel(pts)
 
         np.testing.assert_allclose(np.abs(np.diag(a2d)), 1.0, atol=0.03)
         np.testing.assert_allclose(np.abs(np.diag(gain)), 1.0, atol=0.03)
-        # Both legacy b and new bias are raw-space centers — near zero
+        # Both old b and new bias are raw-space centers — near zero
         np.testing.assert_array_less(np.linalg.norm(b), 0.5)
         np.testing.assert_array_less(np.linalg.norm(bias), 0.05)

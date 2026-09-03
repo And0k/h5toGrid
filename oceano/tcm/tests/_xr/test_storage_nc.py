@@ -526,11 +526,11 @@ class TestStoreProcessedIncremental:
         with xr.open_dataset(path, group="i_p01", engine=_constants.nc_engine) as existing:
             assert existing.sizes["time"] == 50
 
-    def test_handles_int64_time_from_legacy_write(self, tmp_path):
+    def test_handles_int64_time_from_old_write(self, tmp_path):
         """Handles int64 time from files written by _write_dataset_to_nc_group."""
         ds = _make_ds(50)
         path = tmp_path / "test.proc.nc"
-        # Write using h5py directly (simulates legacy format with int64 ns time)
+        # Write using h5py directly (simulates old format with int64 ns time)
         _write_dataset_to_nc_group(ds, path, "i_p01")
         # Now store_processed_incremental should handle int64 time without crash
         ds_new = _make_ds(50, start="2024-01-02")

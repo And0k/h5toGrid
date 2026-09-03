@@ -16,7 +16,7 @@ import pandas as pd
 from utils import init
 import utils.log_init
 
-from . import format, utils_time_corr
+from . import _constants, format, policy, utils_time_corr
 
 lf = utils.log_init.LoggingStyleAdapter(__name__)
 
@@ -343,10 +343,22 @@ def csv_process(
     - df: input df after filtering and concatenation
     - t_prev: last part of filtered df.Time that can be used to prepend next call df.Time
     """
+    # Empty/file-too-short — edge mode should not abort scan (defer to row-select or Run)
+    if df is None or getattr(df, "empty", False) or len(df) == 0:
+        if first_last_row:
+            lf.debug("csv_process: empty df in first_last_row mode — return None edges")
+            return None, t_prev
+        return None, t_prev
     n_overlap = 2 * int(np.ceil(cfg_in["fs"])) if cfg_in.get("fs") else 50
     b_overlap = t_prev is not None
-    # Convert df columns (at least get date)
-    df_cnv = cfg_in["fun_proc_loaded"](df, cfg_in)
+    # Convert df columns (at least get date) — in edge mode swallow parse errors (empty file defer)
+    try:
+        df_cnv = cfg_in["fun_proc_loaded"](df, cfg_in)
+    except Exception:
+        if first_last_row:
+            lf.debug("csv_process: fun_proc_loaded failed in first_last_row mode — return None edges", exc_info=True)
+            return None, t_prev
+        raise
     try:
         date = df_cnv.Time  # fun_proc_loaded() returned modified DataFrame
         df = df_cnv
@@ -526,8 +538,18 @@ def csv_read_gen(
             if i not in read_csv_args["converters"]
         }
 
+    def _pause_point() -> None:
+        try:
+            from tcm_gui.progress_bridge import get_runtime
+
+            if (rt := get_runtime()) and (gate := getattr(rt, "pause_gate", None)):
+                gate.wait()
+        except Exception:
+            pass
+
     t_prev = None  #  not corrected part of previous time chunk for time_corr() filtering in csv_process()
     for i1_path, path in enumerate(files, start=1):
+        _pause_point()
         # Save params that are needed below to extract date in `csv_process()`
         cfg_in["file_cur"] = Path(path)
         cfg_in["file_stem"] = cfg_in["file_cur"].stem
@@ -550,6 +572,7 @@ def csv_read_gen(
                     for i1_chunk, df in enumerate(
                         pd.read_csv(path, **read_csv_args, index_col=False), start=1
                     ):
+                        _pause_point()
                         df_filt, t_prev = csv_process(df, cfg_in, t_prev)
                         cfg_in["n_rows"] += len(df)
                         if df_filt is None:
@@ -879,6 +902,8 @@ def config_text_params(text_type, file_path=None) -> dict[str, Any]:
 
 def search_csv_files(
     path_in: Path,
+    *,
+    trigger: Path | str | None = None,
 ) -> dict[tuple[str, int], list[Path]]:
     """Discover probe files by scanning directory matching *path_in* pattern.
 
@@ -888,31 +913,75 @@ def search_csv_files(
     with a ``.txt`` extension; corrected ``@``-prefixed files are always found
     independently (matched with or without ``@?`` prefix in pattern).
 
+    Shallow ``parent.iterdir()`` is tried first (preserves isolation).  When
+    it finds no probe, the search is delegated to
+    :func:`tcm.search.search_csv_files_recursive` (filtered via
+    ``meta_finder.find_device_dirs``) so a GUI path pointing at a cruise root
+    still populates all tabs.  Archive members are stored as composite
+    ``Path(archive.as_posix()+"/"+rel.as_posix())`` (``"/"`` not ``"!"``).
+
+    Text + archive-text are always discoverable; HDF5/NC files are included
+    only when :func:`tcm.policy.effective_data_exts` allows them
+    (``program.use_h5`` × library availability).  For H5/NC this is a
+    coarse file-level probe — true group identities are expanded later via
+    :func:`tcm.config_yaml._discover_tables`.
+
     If both ``@``-prefixed (corrected) and raw versions exist for the same
-    probe identity, **only** the corrected version is included in the result.
+    probe identity, **only** the corrected version is included.
 
     :param path_in: glob or regex pattern. ``path_in.name`` → pattern;
         ``path_in.parent`` → directory to scan.  If *path_in* is a
         directory, uses default regex ``i.*\\.txt`` (case-insensitive).
+    :param trigger: original user-supplied path for logging/traceability
+        (shown in shallow-miss and recursive error messages).
     :return: ``{(model, number): [paths]}`` — files grouped by probe identity.
         Only corrected files are returned when duplicates exist.
-    :raises FileNotFoundError: when no probe files match.
+    :raises FileNotFoundError: when no probe files match (shallow and deep).
     """
+    # Normalize for Windows comma-paths (cli.parse_data_path already rejoined) —
+    # resolve before is_dir/exists so Path("a,b") and B:\ drives are judged on
+    # their real target and not on a relative string.
+    _raw_in = Path(path_in)
+    _resolved_in = _raw_in.expanduser().resolve() if str(_raw_in).strip() else _raw_in
     # Directory input → default regex; otherwise interpret name as glob/regex
-    if path_in.is_dir():
-        parent = path_in
+    if _resolved_in.is_dir():
+        parent = _resolved_in
         ptn = re.compile(_DIR_DEFAULT_REGEX, re.IGNORECASE)
         lf.debug("input.path is directory => default regex: {}", _DIR_DEFAULT_REGEX)
     else:
-        parent = path_in.parent
-        regex_str = _pattern_to_regex(path_in.name)
+        parent = _raw_in.expanduser().resolve().parent if str(_raw_in).strip() else _raw_in.parent
+        # Use original name for pattern (comma preserved), not resolved stem
+        regex_str = _pattern_to_regex(_raw_in.name)
         ptn = re.compile(regex_str, re.IGNORECASE)
-        lf.debug("Pattern '{}' => regex /{}/i", path_in.name, regex_str)
+        lf.debug("Pattern '{}' => regex /{}/i", _raw_in.name, regex_str)
+        # For file-glob inputs parent may be relative — resolve for existence scan
+        parent = parent.resolve() if not parent.is_absolute() else parent
 
-    # Collect (identity, path, is_corrected) triples
+    _trigger = trigger if trigger is not None else path_in
+    lf.debug(
+        "search_csv_files trigger={} parent={} exists={} is_dir={} ptn=/{} /",
+        _trigger,
+        parent,
+        parent.exists(),
+        parent.is_dir(),
+        ptn.pattern,
+    )
+
+    if not parent.exists():
+        raise FileNotFoundError(f"No input files found matching {path_in} (trigger={_trigger})")
+
+    # ── Shallow scan first (preserves isolation for users relying on it) ──
     raw_files: list[tuple[tuple[str, int], Path, bool]] = []
-    for f in sorted(parent.iterdir()):
+    try:
+        shallow_entries = sorted(parent.iterdir())
+    except OSError as exc:
+        raise FileNotFoundError(f"No input files found matching {path_in}") from exc
+    allowed = policy.effective_data_exts()
+    for f in shallow_entries:
         if not f.is_file():
+            continue
+        # Gate by effective policy (covers program.use_h5=off and missing libs); archives handled only in recursive.
+        if f.suffix.lower() not in allowed:
             continue
         is_corrected = f.stem.startswith("@")
         match_name = f.name[1:] if is_corrected else f.name
@@ -921,42 +990,49 @@ def search_csv_files(
         identity = format.probe_from_name(f.stem.lower())
         if identity:
             raw_files.append((identity, f, is_corrected))
-
-    if not raw_files:
-        raise FileNotFoundError(f"No input files found matching {path_in}")
-
-    # Group by identity; per-file pairing via canonical stem (mod_name normalization)
-    by_identity: dict[tuple[str, int], list[Path]] = defaultdict(list)
-
-    # Build set of canonical stems for corrected files → used to suppress only matched raw files
-    corr_stems: set[str] = set()
-    for _, f, is_corr in raw_files:
-        if is_corr:
-            _, p = mod_name(f.name, add_prefix="")
-            corr_stems.add(p.stem.lower())
-
-    for identity, f, is_corr in raw_files:
-        if is_corr:
-            by_identity[identity].append(f)
         else:
-            # Suppress raw only if its corrected counterpart (same canonical stem) exists
-            _, p = mod_name(f.name, add_prefix="")
-            if p.stem.lower() not in corr_stems:
-                by_identity[identity].append(f)
+            lf.debug("skip non-probe {} (ptn /{}/) in shallow scan trigger={}", f.name, ptn.pattern, _trigger)
 
-    n_suppressed = sum(1 for _, f, is_corr in raw_files if not is_corr) - sum(
-        1 for ff in by_identity.values() for f in ff if not f.stem.startswith("@")
-    )
-    lf.info(
-        "Files for {:d} probe{:s} found ({:d} raw suppressed by corrected counterparts):\n{:s}",
-        len(by_identity),
-        "" if len(by_identity) == 1 else "s",
-        n_suppressed,
-        "\n".join(
-            "{}{}: {}".format(m, n, ", ".join(f.name for f in ff)) for (m, n), ff in by_identity.items()
-        ),
-    )
-    return dict(by_identity)
+    if raw_files:
+        # Group by identity; per-file pairing via canonical stem (mod_name normalization)
+        by_identity: dict[tuple[str, int], list[Path]] = defaultdict(list)
+        corr_stems: set[str] = set()
+        for _, f, is_corr in raw_files:
+            if is_corr:
+                _, p = mod_name(f.name, add_prefix="")
+                corr_stems.add(p.stem.lower())
+        for identity, f, is_corr in raw_files:
+            if is_corr:
+                by_identity[identity].append(f)
+            else:
+                _, p = mod_name(f.name, add_prefix="")
+                if p.stem.lower() not in corr_stems:
+                    by_identity[identity].append(f)
+        n_suppressed = sum(1 for _, f, is_corr in raw_files if not is_corr) - sum(
+            1 for ff in by_identity.values() for f in ff if not f.stem.startswith("@")
+        )
+        lf.info(
+            "Files for {:d} probe{:s} found ({:d} raw suppressed by corrected counterparts):\n{:s}",
+            len(by_identity),
+            "" if len(by_identity) == 1 else "s",
+            n_suppressed,
+            "\n".join(
+                "{}{}: {}".format(m, n, ", ".join(f.name for f in ff)) for (m, n), ff in by_identity.items()
+            ),
+        )
+        lf.info("search_csv_files trigger={} shallow hit: {} probes", _trigger, len(by_identity))
+        return dict(by_identity)
+
+    # ── No shallow hits → recursive via meta_finder (filtered device dirs, no file read beyond _raw) ──
+    # DEBUG (was INFO): probe + run both scan the same _raw — INFO twice per anchor is the reported repetition.
+    # Final "Files for N probes" in search_csv_files_recursive stays at INFO as the milestone.
+    lf.debug("No files shallow — scanning subdirectories recursively via meta_finder in {} (trigger={})", parent, _trigger)
+    lf.debug("Fallback pattern /{}/i, deep scan under {} (trigger={})", ptn.pattern, parent, _trigger)
+    try:
+        from .search import search_csv_files_recursive
+    except ImportError as exc:
+        raise FileNotFoundError(f"No input files found matching {path_in} (trigger={_trigger})") from exc
+    return search_csv_files_recursive(parent, ptn, trigger=_trigger)
 
 
 def correct_raw_files(

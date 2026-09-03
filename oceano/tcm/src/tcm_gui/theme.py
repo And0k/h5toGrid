@@ -21,6 +21,9 @@ from tcm_gui.const import COLOR_MODE, UI_SCALE
 
 _l = logging.getLogger(__name__)
 
+# ── single source for transparent (same as widget bg) ─────────────────────
+_TRANSPARENT: str = ""  # Tk ``background=""`` → inherit widget bg
+
 # ── foreground colors ────────────────────────────────────────────────────────
 # Mutable — all updated by apply_theme_defaults() for dark/light mode.
 
@@ -29,9 +32,9 @@ NODE_DEFAULT_VALS_FG: str = "#0055CC"  # header text + node label when subtree a
 LINK_FG: str = "#0066CC"  # markdown links (MarkdownLabel) + doc-tree leaves
 LINK_SEL_FG: str = "#FFFFFF"  # link text during selection (light)
 CODE_FG: str = "#465E5A"  # inline code text (MarkdownLabel)
-CODE_BG: str = "#F9F2F4"  # inline code background (MarkdownLabel, light theme)
-CODE_SEL_FG: str = "#FFFFFF"  # inline code text during selection (light)
-CODE_SEL_BG: str = "#3399FF"  # inline code background during selection (light)
+CODE_BG: str = _TRANSPARENT  # inline code background — transparent, same as widget
+CODE_SEL_FG: str = _TRANSPARENT  # inline code selection fg — same as widget
+CODE_SEL_BG: str = _TRANSPARENT  # inline code selection bg — same as widget
 FG_DEFAULT: str = "#000000"  # normal (non-default) text color
 FUNC_COLOR: str = "#0070A0"  # function name in log bridge
 INVALID_FG: str = "#CC0000"  # cell value failed validation (e.g. path not found)
@@ -56,7 +59,7 @@ TAG_COLORS: dict[str, str] = {
 }
 
 
-# Dark-mode color overrides — keyed by the same names as the module globals.
+# Dark/light palettes — single source, transparent code bg via ``_TRANSPARENT``.
 _DARK: dict[str, str] = {
     "FUNC_COLOR": "#5CB8D6",
     "CELL_DEFAULT_VAL_FG": "#4DA6FF",  # | old: #808080
@@ -64,9 +67,9 @@ _DARK: dict[str, str] = {
     "LINK_FG": "#66AAFF",
     "LINK_SEL_FG": "#FFFFFF",
     "CODE_FG": "#6FB3B2",
-    "CODE_BG": "#2A1A1E",
-    "CODE_SEL_FG": "#FFFFFF",
-    "CODE_SEL_BG": "#264F78",
+    "CODE_BG": _TRANSPARENT,
+    "CODE_SEL_FG": _TRANSPARENT,
+    "CODE_SEL_BG": _TRANSPARENT,
     "FG_DEFAULT": "#D4D4D4",
     "INVALID_FG": "#FF6B6B",
     "FRAME_BG_FALLBACK": "#2D2D2D",
@@ -88,9 +91,9 @@ _LIGHT: dict[str, str] = {
     "LINK_FG": "#0066CC",
     "LINK_SEL_FG": "#FFFFFF",
     "CODE_FG": "#465E5A",
-    "CODE_BG": "#F9F2F4",
-    "CODE_SEL_FG": "#FFFFFF",
-    "CODE_SEL_BG": "#3399FF",
+    "CODE_BG": _TRANSPARENT,
+    "CODE_SEL_FG": _TRANSPARENT,
+    "CODE_SEL_BG": _TRANSPARENT,
     "FG_DEFAULT": "#000000",
     "INVALID_FG": "#CC0000",
     "FRAME_BG_FALLBACK": "#F0F0F0",
@@ -106,26 +109,8 @@ _LIGHT: dict[str, str] = {
     "critical": "#CC0000",
 }
 
-# Keys from _DARK/_LIGHT that map to module-level globals (not TAG_COLORS).
-_GLOBAL_KEYS = (
-    "FUNC_COLOR",
-    "CELL_DEFAULT_VAL_FG",
-    "NODE_DEFAULT_VALS_FG",
-    "LINK_FG",
-    "LINK_SEL_FG",
-    "CODE_FG",
-    "CODE_BG",
-    "CODE_SEL_FG",
-    "CODE_SEL_BG",
-    "FG_DEFAULT",
-    "INVALID_FG",
-    "FRAME_BG_FALLBACK",
-    "ENTRY_BG_FALLBACK",
-    "CELL_NON_DATA_BG",
-    "META_TREE_BG",
-    "CONFIG_TREE_BG",
-    "THEME",
-)
+# Global keys = uppercase palette entries (TAG_COLORS are lowercase) — DRY.
+_GLOBAL_KEYS = tuple(k for k in _LIGHT if k.isupper())
 
 # ── theme detection ─────────────────────────────────────────────────────────
 
@@ -388,6 +373,6 @@ def strip_palette(widget) -> dict[str, str]:
         "error": mix_hex(TAG_COLORS["error"], "#FFFFFF", 0.60),
         # "edge": mix_hex(NODE_DEFAULT_VALS_FG, "#FFFFFF", 0.85),  # glimmer at fill front
         "sel": NODE_DEFAULT_VALS_FG,  # selection underline
-        "text": FG_DEFAULT,
-        "dim": CELL_DEFAULT_VAL_FG,  # pending / unselected
+        "text": FG_DEFAULT,  # selected tab — full contrast
+        "dim": mix_hex(FG_DEFAULT, bg, 0.38),  # unselected — slightly dimmer than selected, no blue
     }

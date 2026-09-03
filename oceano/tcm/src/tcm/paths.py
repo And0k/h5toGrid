@@ -1,20 +1,20 @@
 """Path resolution — two-layer architecture.
 
-Layer 1 — **Anchor discovery** (stateless functions):
+**Anchor discovery** (stateless functions):
   :func:`find_dir_raw`      — low-level: walk path ancestors for ``_raw/``.
   :func:`find_dir_raw_absolute` — CLI bootstrap: find ``_raw/`` or infer fallback.
   :func:`_infer_proc_dir`   — shared fallback: walk up to digit/inclinometer parent.
 
-Layer 2 — **Output path layout** (:class:`PathLayout`):
+**Output path layout** (:class:`PathLayout`):
   Declarative, lazily-evaluated resolver for SCHEMA entities (``raw_db``, ``db``,
-  ``not_joined_db``, ``text``).  Uses Layer 1 primitives internally — never
+  ``not_joined_db``, ``text``).  Uses the anchor discovery functions internally — never
   re-implements ancestor scanning.
 """
 
 from __future__ import annotations
 
 from functools import cached_property
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
@@ -26,9 +26,9 @@ lf = log_init.LoggingStyleAdapter(__name__)
 
 
 class PathLayout:
-    """Declarative, lazily-evaluated path resolver for output paths (Layer 2).
+    """Declarative, lazily-evaluated path resolver for output paths.
 
-    Uses Layer 1 primitives (:func:`find_dir_raw`, :func:`_infer_proc_dir`)
+    Uses anchor discovery functions (:func:`find_dir_raw`, :func:`_infer_proc_dir`)
     for anchor detection — never re-implements ancestor scanning.
 
     Instead of hard-coding logic for individual entities (e.g., ``get_db_path``),
@@ -275,3 +275,38 @@ def find_dir_raw_absolute(path_in: Path) -> Path:
         _constants.RAW_DIR_NAME,
     )
     return path_in if path_in.is_dir() else path_in.parent
+
+
+# ---------------------------------------------------------------------------
+# Anchor helpers for multi-_raw scan (Phase B) — anchor discovery lives in
+# ``tcm.anchors`` via meta_finder filter; no rglob here.
+# ---------------------------------------------------------------------------
+
+
+def anchor_for_fs_path(fs_path: Path) -> Path:
+    """Return anchor ``_raw`` for filesystem parent *fs_path* (resolved)."""
+    return find_dir_raw_absolute(Path(fs_path).expanduser().resolve())
+
+
+def fs_parent_for_entry(dir_archive: Path, rel) -> Path:
+    """Filesystem parent for ``(dir_archive, rel)`` pair from ``find_raw_files_recursive``.
+
+    ``dir_archive`` is a directory for loose files, archive file for members.
+    """
+    p = Path(dir_archive)
+    return p if p.is_dir() else p.parent
+
+
+def common_ancestor(paths: list[Path]) -> Path | None:
+    """Return common ancestor for *paths* via ``commonpath``, or ``None`` on mismatch."""
+    if not paths:
+        return None
+    try:
+        import os
+
+        # Resolve to handle drive letter case and relative components
+        resolved = [Path(p).expanduser().resolve().as_posix() for p in paths]
+        common = os.path.commonpath(resolved)
+        return Path(common) if common else None
+    except ValueError:
+        return None

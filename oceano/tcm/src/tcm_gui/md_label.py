@@ -19,7 +19,17 @@ from itertools import accumulate, zip_longest
 from pathlib import Path
 from typing import TypeAlias
 
-from tcm._md_parse import Block, CodeBlock, Heading, Inline, List, Paragraph, Table, parse_markdown
+from tcm._md_parse import (
+    STYLE_TAGS,
+    Block,
+    CodeBlock,
+    Heading,
+    Inline,
+    List,
+    Paragraph,
+    Table,
+    parse_markdown,
+)
 
 from . import theme
 
@@ -86,6 +96,7 @@ class MarkdownLabel(tk.Text):
         self._fitted_h: int | None = None  # cached height from _fit_height
         self._fitted_w: int = 0  # cached width from _fit_height
         self._colors: dict[str, str] = colors or {}  # {#name} → hex foreground
+        self._composed_fonts: dict[frozenset[str], tkfont.Font] = {}  # style-tag set → composed font
         self._on_link = on_link
         self._base: Path | None = None  # source-doc dir for relative links
         self._links: list[tuple[str, str, str]] = []  # (start, end, url) spans
@@ -129,7 +140,7 @@ class MarkdownLabel(tk.Text):
         if not text:
             blocks: tuple[Block, ...] = ()
         elif raw:
-            blocks = (Paragraph(((text, "plain"),)),)
+            blocks = (Paragraph(((text, frozenset()),)),)
         else:
             blocks = parse_markdown(text)
         if blocks == self._current:
@@ -261,31 +272,84 @@ class MarkdownLabel(tk.Text):
 
         self.insert("end", "\n", tag)
 
-    def _insert_inline(self, inline: Inline, base_tags: tuple[str, ...]) -> None:
-        """Insert inline spans with correct tag application.
+    # ── style / tag resolution (DRY, cached, theme-aware) ──────────────────
 
-        A span tag that is not ``plain``/a color name/one of this widget's
-        font variants is a link target URL (see :mod:`tcm._md_parse`): the
-        span renders under the ``link`` tag and its range is recorded in
-        ``_links`` for click resolution.
+    def _compose_font(self, style_tags: frozenset[str]) -> tkfont.Font:
+        """Compose a Tk font from a set of inline style tags (bold/italic/code).
+
+        Composes on the base (plain) font: ``code`` switches the family to
+        Consolas, ``bold`` sets weight, ``bold`` + ``code`` → Consolas bold.
+        Result is cached keyed by the tag set.
         """
-        for text, tag in inline:
-            if tag == "plain":
-                tags = base_tags
-            elif tag in self._colors:
-                self.tag_configure(tag, foreground=self._colors[tag])
-                tags = (*base_tags, tag)
-            elif tag in self._fonts:
-                tags = (*base_tags, tag)  # bold / italic / code style span
-            elif _COLOR_NAME.fullmatch(tag):
-                tags = (*base_tags, tag)  # unmapped {#name} color — tag passthrough
-            else:
-                tags = (*base_tags, "link")  # tag = link target URL
-                self.insert("end", text, tags)
-                end = self.index("insert")  # insert cursor: just after inserted text
-                self._links.append((f"{end}-{len(text)}c", end, tag))
+        if style_tags in self._composed_fonts:
+            return self._composed_fonts[style_tags]
+        base = self._fonts["plain"]
+        family = self._fonts["code"].cget("family") if "code" in style_tags else base.cget("family")
+        weight = "bold" if "bold" in style_tags else "normal"
+        slant = "italic" if "italic" in style_tags else "roman"
+        font = tkfont.Font(family=family, size=int(base.cget("size")), weight=weight, slant=slant)
+        self._composed_fonts[style_tags] = font
+        return font
+
+    def _style_tag(self, style: frozenset[str]) -> str:
+        """Resolve *style* set to a Tk tag name, creating a composed tag if needed.
+
+        Single-tag styles reuse the existing tag (``bold``/``italic``/``code``);
+        multi-tag styles (``bold+code``) get a cached composed tag
+        ``bold_code`` with themed foreground for code.  Idempotent — repeated
+        calls for the same *style* reuse the cached tag/font.
+        """
+        if len(style) == 1:
+            return next(iter(style))
+        tag = "_".join(sorted(style))
+        if style not in self._composed_fonts:
+            cfg: dict[str, object] = {"font": self._compose_font(style)}
+            if "code" in style:
+                cfg["foreground"] = theme.CODE_FG
+            self.tag_configure(tag, **cfg)
+            self.tag_raise(tag)
+        return tag
+
+    def _classify_tags(self, tags: frozenset[str]) -> tuple[frozenset[str], frozenset[str], str | None]:
+        """Partition *tags* into (style, colors, link_url).
+
+        * style — subset of :data:`STYLE_TAGS` (bold/italic/code)
+        * colors — color names (in ``self._colors`` or matching ``_COLOR_NAME``)
+        * link_url — remaining tag, if any, treated as link URL
+        """
+        style = tags & STYLE_TAGS
+        colors = frozenset(
+            t for t in tags if t not in style and (t in self._colors or _COLOR_NAME.fullmatch(t))
+        )
+        link_url = next((t for t in tags if t not in style and t not in colors), None)
+        return style, colors, link_url
+
+    def _insert_inline(self, inline: Inline, base_tags: tuple[str, ...]) -> None:
+        """Insert inline spans with correct tag application."""
+        for text, tags in inline:
+            if not tags:
+                self.insert("end", text, base_tags)
                 continue
-            self.insert("end", text, tags)
+
+            style, colors, link_url = self._classify_tags(tags)
+            applied: list[str] = list(base_tags)
+
+            # Color tags — configure foreground once, reuse tag
+            for c in colors:
+                if c in self._colors:
+                    self.tag_configure(c, foreground=self._colors[c])
+                applied.append(c)
+
+            if style:
+                applied.append(self._style_tag(style))
+
+            if link_url is not None:
+                applied.append("link")
+                self.insert("end", text, tuple(applied))
+                end = self.index("insert")
+                self._links.append((f"{end}-{len(text)}c", end, link_url))
+            else:
+                self.insert("end", text, tuple(applied))
 
     def link_url_at(self, index: str) -> str | None:
         """Target URL of the link span containing *index* (``None`` outside links).
@@ -315,9 +379,7 @@ class MarkdownLabel(tk.Text):
 
     def _table_widths(self, table: Table) -> tuple[int, ...]:
         def width(cell: Inline) -> int:
-            return self._CELL_PAD + sum(
-                self._fonts.get(tag, self._fonts["plain"]).measure(text) for text, tag in cell
-            )
+            return self._CELL_PAD + sum(self._span_font(tags, "plain").measure(text) for text, tags in cell)
 
         return tuple(
             max(map(width, column), default=0)
@@ -357,37 +419,30 @@ class MarkdownLabel(tk.Text):
         return tkfont.Font(font=spec)
 
     def _configure_tags(self) -> None:
-        self.tag_configure("normal", font=self._fonts["plain"])
-        self.tag_configure("bold", font=self._fonts["bold"])
-        self.tag_configure("italic", font=self._fonts["italic"])
+        # Data-driven tag setup — single source for font/foreground/background
+        for tag, font_key, extra in (
+            ("normal", "plain", {}),
+            ("bold", "bold", {}),
+            ("italic", "italic", {}),
+            (
+                "code",
+                "code",
+                {
+                    "foreground": theme.CODE_FG,
+                    "background": theme.CODE_BG,
+                    "selectforeground": theme.CODE_SEL_FG,
+                    "selectbackground": theme.CODE_SEL_BG,
+                },
+            ),
+            ("heading", "heading", {"spacing1": 4, "spacing3": 2}),
+            ("codeblock", "code", {"lmargin1": 8, "lmargin2": 8, "spacing1": 2, "spacing3": 2}),
+            ("table_header", "bold", {}),
+            ("table_cell", "plain", {}),
+        ):
+            self.tag_configure(tag, font=self._fonts[font_key], **extra)
         self.tag_configure(
-            "code",
-            font=self._fonts["code"],
-            foreground=theme.CODE_FG,
-            background=theme.CODE_BG,
-            selectforeground=theme.CODE_SEL_FG,
-            selectbackground=theme.CODE_SEL_BG,
+            "link", foreground=theme.LINK_FG, selectforeground=theme.LINK_SEL_FG, underline=True
         )
-
-        self.tag_configure(
-            "heading",
-            font=self._fonts["heading"],
-            spacing1=4,
-            spacing3=2,
-        )
-
-        self.tag_configure(
-            "codeblock",
-            font=self._fonts["code"],
-            lmargin1=8,
-            lmargin2=8,
-            spacing1=2,
-            spacing3=2,
-        )
-
-        self.tag_configure("table_header", font=self._fonts["bold"])
-        self.tag_configure("table_cell", font=self._fonts["plain"])
-        self.tag_configure("link", foreground=theme.LINK_FG, selectforeground=theme.LINK_SEL_FG, underline=True)
 
     def _raise_span_tags(self) -> None:
         for tag in ("code", "bold", "italic", "link"):
@@ -462,9 +517,20 @@ class MarkdownLabel(tk.Text):
                     mx = max(mx, sum(self._table_widths(table)) + px_pad)
         return mx
 
+    def _span_font(self, tags: frozenset[str], fallback: str) -> tkfont.Font:
+        """Resolve the Tk font for a span's style-tag set."""
+        style = tags & STYLE_TAGS
+        return (
+            self._fonts[fallback]
+            if not style
+            else self._fonts[next(iter(style))]
+            if len(style) == 1
+            else self._compose_font(style)
+        )
+
     def _inline_width(self, inline: Inline, fallback: str) -> int:
         """Pixel width of one inline span sequence using per-span fonts."""
-        return sum(self._fonts.get(tag, self._fonts[fallback]).measure(text) for text, tag in inline)
+        return sum(self._span_font(tags, fallback).measure(text) for text, tags in inline)
 
     def _fit_height(self) -> None:
         """Set height so all display lines (incl. tag spacing) are visible.

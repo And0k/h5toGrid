@@ -64,7 +64,7 @@ def _assert_coefs_ovr_passthrough(call) -> None:
 
 @pytest.mark.xr
 class TestPrepCfgForProbe:
-    """prep_cfg_for_probe builds correct cfg1 without _dask_legacy dependency."""
+    """prep_cfg_for_probe builds correct cfg1."""
 
     @pytest.fixture()
     def cfg_in_common(self) -> dict[str, Any]:
@@ -134,7 +134,7 @@ class TestPrepCfgForProbe:
         check(mock_get.call_args)
 
     def test_no_dask_dependency(self):
-        """tcm._xr.coefs must not import from _dask_legacy."""
+        """tcm._xr.coefs must not import from dask."""
         source = Path(_coefs_mod.__file__).read_text(encoding="utf-8")
         tree = ast.parse(source)
         imported = {
@@ -145,8 +145,8 @@ class TestPrepCfgForProbe:
                 node.names if isinstance(node, ast.Import) else [type("", (), {"name": node.module})()]
             )
         }
-        assert not any("_dask_legacy" in m for m in imported), (
-            f"Must not import from _dask_legacy, got: {imported}"
+        assert not any("dask_legacy" in m for m in imported), (
+            f"Must not import from dask_legacy, got: {imported}"
         )
 
     def test_output_structure_has_in_out_filter(self, cfg_in_common, cfg_top):
@@ -286,7 +286,7 @@ class TestSaveCoefsToNc:
     ):
         """save_coefs_to_nc replaces datasets when dtype changes (e.g. float→str)."""
         nc_path = tmp_path / "test.raw.nc"
-        # Simulate legacy/previous write with incompatible dtype (dataset)
+        # Simulate old/previous write with incompatible dtype (dataset)
         with h5py.File(nc_path, "w") as h5f:
             tbl_coef = h5f.require_group("incl_01/coef")
             tbl_coef.create_dataset("date", data=initial_data)
@@ -465,7 +465,7 @@ class TestCoefsCompatibility:
             pytest.skip(f"{tbl}.yaml not found in yaml_export")
         assert "P_t" in coefs
         assert len(coefs["P_t"]) == 3
-        # Legacy scalar P is absent — P_t supersedes it
+        # Old scalar P is absent — P_t supersedes it
         assert "P" not in coefs
         assert "PBattery" not in coefs
         assert "PTemp" not in coefs

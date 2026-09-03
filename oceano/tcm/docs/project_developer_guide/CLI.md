@@ -114,6 +114,21 @@ ancestor scanning.  `PathLayout._resolve_anchors` applies this order:
 Layer 1 and Layer 2 fallbacks may differ when `_raw/` is absent — by design,
 they serve different purposes (CLI CWD vs output path roots).
 
+**Single-anchor `processing.run` + anchor discovery** (`tcm/anchors.py`,
+`tcm/search.py`): `run(cfg)` handles exactly one `_raw`. A parent directory
+(e.g. cruise root) with N anchors raises `FileNotFoundError` with a hint to
+call `anchors.collect_anchors(path_in, dir_raw)` — filtered via
+`meta_finder.file_finder.find_device_dirs` + `is_valid_device_dir`, no
+unfiltered `rglob`, no file reads. The GUI worker probes
+`csv_load.search_csv_files` shallow-first, emits `scan_list` for N anchors
+(parent trigger logged at every layer via `trigger=`), auto-selects the
+first anchor for tab-fill, and exposes all anchors in the path field's
+inherent numbered dropdown. `config_yaml.gen_metadata` derives
+`time_ranges` TCM-first (edge rows, including archive members via temp
+extraction) and overlays `meta_finder` burst gaps; failures stay at
+`WARNING` — never hidden. YAML stems are canonical
+`{yymmdd_hhmm}@pcid[-comment].yaml` (`i3.txt` → `i03`, comment preserved).
+
 ## Entry point
 
 `scripts/tcm_proc.py` — thin CLI caller using `@hydra.main`.
@@ -394,7 +409,7 @@ and dispatches with no modification.
 ### Per-probe YAML loading via `cli.process_loading_yaml()`
 
 Per-probe configs (`cfg_proc/run/*.yaml` with `@package _global_`) are loaded
-by `cli.process_loading_yaml()` — a shared loop extracted from both
+by `cli.process_loading_yaml()` — a shared loop over
 `processing.run()` and the calibration pipeline. For each YAML:
 
 ```python

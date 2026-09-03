@@ -126,7 +126,7 @@ pixi run -e noh5-tcm python oceano/tcm/scripts/build/build_tcm_proc.py
     - METADATA пакетов `pandas` и `numpy`
 -   **Исключения pure-Python:**
     - Все модули HDF5: `h5py`, `tables`, `pytables`, `hdf5`, `tcm.h5*`,
-      `tcm.incl_h5*`, `tcm.incl_calibr_hy`, `tcm.veuszPropagate`
+      `tcm.incl_h5*`, `tcm.incl_calibr_hy`, `veusz_helpers.veuszPropagate`
     - Все MKL-модули (`mkl`, `mkl_rt`, `mkl_core`, `mkl_intel_thread`, и т.д.)
     - `pyarrow` целиком + его транзитивные зависимости (`botocore`, `certifi`,
       `charset_normalizer`, `google_crc32c`, `numcodecs`, `zstandard`)

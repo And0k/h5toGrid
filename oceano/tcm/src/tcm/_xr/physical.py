@@ -1,8 +1,7 @@
 """
 Physical-parameter calculations (:class:`xarray.Dataset` backend).
 
-Replaces ``tcm._dask_legacy.incl_calc.physical`` with pure
-``xarray.Dataset`` / ``dask.array`` implementations.
+Pure ``xarray.Dataset`` / ``dask.array`` implementations.
 """
 
 import time as _time

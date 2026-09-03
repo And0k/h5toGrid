@@ -22,7 +22,7 @@ if __debug__:
     from matplotlib import pyplot as plt
 from utils.filters import inearestsorted
 from hdf5_pandas.h5_dask_pandas import filter_local, filter_local_arr
-from utils.veuszPropagate import load_vsz_closure
+from veusz_helpers.veuszPropagate import load_vsz_closure
 from grid2d_vsz import ge_sections, write_grd_fun
 from gs_surfer import griddata_by_surfer  #sec_edges
 # idata_from_tpoints, runs_ilast_good, track_b_invert

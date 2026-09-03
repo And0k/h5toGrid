@@ -6,7 +6,6 @@ which samples it dropped.
 
 Channel filtering — per-channel despiking for calibration.
 
-Extracted from ``tcm._dask_legacy.incl_calibr_hy.filter_channes``
 (plotting parts moved to :mod:`tcm.calibration.visualization`).
 """
 from __future__ import annotations

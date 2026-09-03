@@ -1,9 +1,8 @@
 """
 xarray-native filtering for Dataset time-series — load-stage DROP + process-stage NaN-out.
 
-Replaces ``tcm._dask_legacy.utils_dask.filter_global_minmax`` and
-``filter_local`` with fixed ``ds.where()`` equivalents that read nested
-``cfg['min']`` / ``cfg['max']`` dicts (legacy parity).
+Replaces ``filter_global_minmax`` and ``filter_local`` with fixed
+``ds.where()`` equivalents that read nested ``cfg['min']`` / ``cfg['max']`` dicts.
 """
 from __future__ import annotations
 
@@ -32,7 +31,7 @@ def filter_global_minmax(
 ) -> xr.Dataset:
     """Drop rows where any raw-column value exceeds configured min/max bounds.
 
-    Reads ``cfg_in['min']`` / ``cfg_in['max']`` **nested dicts** (legacy parity).
+    Reads ``cfg_in['min']`` / ``cfg_in['max']`` **nested dicts**.
     Keys are column names — either bare (``Mx``) or shorthand ``M`` (expanded
     to ``Mx``/``My``/``Mz`` by :func:`expand_m_shorthand` before calling).
 
@@ -88,8 +87,7 @@ def filter_local(
 ) -> xr.Dataset:
     """Set values to NaN where computed-column values exceed configured thresholds.
 
-    Reads ``cfg_filter['min']`` / ``cfg_filter['max']`` **nested dicts**
-    (legacy parity — fixes broken top-level iteration).  Each entry maps
+    Reads ``cfg_filter['min']`` / ``cfg_filter['max']`` **nested dicts**.  Each entry maps
     ``column_name → threshold``.  Values whose absolute value exceeds the
     threshold are set to NaN; rows are NOT dropped.
 

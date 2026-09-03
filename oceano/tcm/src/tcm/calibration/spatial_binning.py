@@ -6,12 +6,9 @@ for more precisely, at lower cost for the common case of just wanting fewer, mor
 
 3-D spatial bin averaging on the unit sphere.
 
-Replaces ``tcm._dask_legacy.incl_calibr_hy.bin_avg_3d_partial`` —
-bins by **both** inclination (θ) and azimuth (φ) via
+Bins by **both** inclination (θ) and azimuth (φ) via
 ``scipy.stats.binned_statistic_2d``, unlike the azimuth-only
 ``spatial_bin_avg`` previously in :mod:`tcm.calibration.calibrate`.
-
-.. |legacy| replace:: ``incl_calibr_hy.bin_avg_3d_partial``
 """
 from __future__ import annotations
 

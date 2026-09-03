@@ -1032,10 +1032,8 @@ def extract_time_info_from_text_file(
         # Find end time from last_line (which is now validated to have a valid timestamp)
         # The _get_last_line_efficiently function already searched through multiple lines
         # to find one with a valid timestamp, so we can directly parse it
-        if last_line:
-            end_result = parse_datetime_from_row(last_line, is_raw=is_raw, sep=sep)
-            if end_result:
-                end_time = to_utc_naive(end_result)
+        if last_line and (end_result := parse_datetime_from_row(last_line, is_raw=is_raw, sep=sep)):
+            end_time = to_utc_naive(end_result)
 
         # If start_time is None but end_time is found, use end_time as start_time
         if start_time is None and end_time is not None:

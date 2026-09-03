@@ -378,7 +378,11 @@ def gen_from_archive(archive_path: Path) -> Generator[Dict[str, Any], None, None
                         yield {"rel_path": PurePosixPath(item), "is_folder": bool(item.endswith("/"))}
 
         except Exception as e:
-            logger.error(f"Error listing archive contents {archive_path}: {e}", exc_info=True)
+            # Missing py7zr for 7z is expected on noh5 env — downgrade to debug, zip still works
+            if "py7zr" in str(e):
+                logger.debug(f"Skipping 7z archive {archive_path} (py7zr not available): {e}")
+            else:
+                logger.error(f"Error listing archive contents {archive_path}: {e}", exc_info=True)
             return []
     else:
         raise ValueError(f"Unsupported archive format, only {config.extensions_archive} supported")
@@ -462,7 +466,8 @@ def list_archive_recursive(archive_path: Path) -> List[Dict[str, Any]]:
                     return zip_walk(zf)
             elif archive_suffix == ".7z":
                 if py7zr is None:
-                    raise ImportError(f"py7zr was not found to extract {archive_path}")
+                    logger.debug(f"Skipping 7z archive {archive_path} (py7zr not available)")
+                    return []
 
                 def py7zr_walk(archive: py7zr.SevenZipFile):
                     tree = {}
@@ -702,3 +707,51 @@ def remove_directory(path: Path) -> bool:
     except Exception as e:
         print(f"Error removing directory {path}: {e}")
         return False
+
+
+def extract_archive_entry(archive_path: Path, rel: PurePosixPath) -> Path:
+    """Extract single *rel* from *archive_path* next to archive (no cleanup).
+
+    Creates folder ``<archive_stem>/<rel>`` next to the archive and extracts
+    only *rel* there.  The folder is **not** deleted — callers that strictly
+    need a real file (legacy APIs) can keep it.  All extraction logic lives
+    here, not in ``tcm``.
+
+    :param archive_path: archive file (``.zip`` or ``.7z``).
+    :param rel: posix path inside archive.
+    :return: absolute :class:`Path` to the extracted file.
+    """
+    archive_path = Path(archive_path)
+    # Folder next to archive: <parent>/<archive_stem>/<rel>
+    out_base = archive_path.parent / archive_path.stem
+    out_path = out_base / rel
+    if out_path.is_file():
+        return out_path
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    suffix = archive_path.suffix.lower()
+    try:
+        if suffix == ".zip":
+            with zipfile.ZipFile(archive_path) as zf:
+                # zf.extract preserves inner path; force extraction to out_base
+                # Use open/write to avoid polluting cwd
+                with zf.open(str(rel)) as src, out_path.open("wb") as dst:
+                    shutil.copyfileobj(src, dst)
+        elif suffix == ".7z":
+            if py7zr is None:
+                raise ImportError(f"py7zr required to extract {archive_path}")
+            import tempfile as _tmp
+
+            with _tmp.TemporaryDirectory() as td:
+                td_path = Path(td)
+                with py7zr.SevenZipFile(archive_path, mode="r") as archive:
+                    archive.extract(path=td, targets=[str(rel)])
+                tmp_extracted = td_path / rel
+                if not tmp_extracted.is_file():
+                    raise FileNotFoundError(f"{rel} not found in {archive_path}")
+                shutil.copy2(tmp_extracted, out_path)
+        else:
+            raise ValueError(f"Unsupported archive format {suffix!r} for {archive_path}")
+    except Exception:
+        logger.exception("Failed to extract %s from %s", rel, archive_path)
+        raise
+    return out_path

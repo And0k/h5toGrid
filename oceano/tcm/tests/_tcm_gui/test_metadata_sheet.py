@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from omegaconf import OmegaConf
 
 from tcm import cli, format
@@ -360,6 +362,9 @@ def test_metadata_rebuild_keeps_tab_clean(_session_tk_root, tmp_path):
     ``_snap`` kept stale/deleted iids, so ``is_dirty`` compared unequal
     forever: rail showed ``*`` without any user edit and Run rewrote YAML.
     Fix under test: rebuild retakes both snapshots.
+
+    Uses a real ``info_devices.yaml`` so the metadata is loaded, not
+    autofilled (which now correctly stays dirty until Run).
     """
     import tkinter as tk
 
@@ -380,21 +385,37 @@ def test_metadata_rebuild_keeps_tab_clean(_session_tk_root, tmp_path):
     info = tmp_path / "info_devices.yaml"
     _write_info_devices(tmp_path)
 
+    # Read a real entry from the file so the sheet loads (not autofills)
+    # the metadata — autofilled metadata is now correctly dirty until Run.
+    from meta_finder import io_info_files as _io
+
+    _loaded_md = next(iter(_io.read_metadata_file(info).values()))
+    if isinstance(_loaded_md, dict):
+        _loaded_md = next(iter(_loaded_md.values()))
+    _loaded_md = list(_loaded_md)
+
     sheet = ConfigSheet(root)
     sheet.sh.pack(fill="both", expand=True)
     try:
-        sheet.load(default_cfg(), full=False, config_root=Config, return_enum=Return, metadata_path=str(info))
+        sheet.load(
+            default_cfg(),
+            full=False,
+            config_root=Config,
+            return_enum=Return,
+            metadata=_loaded_md,
+            metadata_path=str(info),
+        )
         root.update_idletasks()
         root.update()
         assert not sheet.is_dirty, "tab dirty right after clean load"
-        assert not sheet.is_metadata_dirty()
+        assert not sheet.is_metadata_dirty(), "loaded (non-autofilled) metadata must be clean"
 
         # Hover-commit on metadata_path → subtree rebuilt with fresh iids
         sheet._reload_metadata_from(str(info))
         root.update_idletasks()
         root.update()
         assert not sheet.is_dirty, "metadata node insertion flagged tab dirty"
-        assert not sheet.is_metadata_dirty()
+        assert not sheet.is_metadata_dirty(), "reload-from-disk must not leave metadata dirty"
 
         # Direct rebuild entry (browse select) — same invariant
         sheet._rebuild_metadata_rows()
@@ -406,12 +427,14 @@ def test_metadata_rebuild_keeps_tab_clean(_session_tk_root, tmp_path):
         sheet.sh.destroy()
 
 
-def test_poll_dirty_tabs_propagates_real_bool(_session_tk_root):
+def test_poll_dirty_tabs_propagates_real_bool(_session_tk_root, tmp_path):
     """Regression: ``_poll_dirty_tabs`` stored a bound method in ``TabRail``
     state because ``is_metadata_dirty`` was referenced without ``()`` — a bound
     method is always truthy, so ``_full_label`` appended ``*`` to EVERY tab
     forever (clean sheet included).  A clean sheet must propagate
     ``set_dirty(stem, False)`` (a real bool).
+
+    Uses a real ``info_devices.yaml`` so loaded metadata is clean baseline.
     """
     import tkinter as tk
 
@@ -432,21 +455,39 @@ def test_poll_dirty_tabs_propagates_real_bool(_session_tk_root):
         pytest.skip("Tk not available")
         return
 
+    info = tmp_path / "info_devices.yaml"
+    _write_info_devices(tmp_path)
+
+    from meta_finder import io_info_files as _io2
+
+    _loaded_md = next(iter(_io2.read_metadata_file(info).values()))
+    if isinstance(_loaded_md, dict):
+        _loaded_md = next(iter(_loaded_md.values()))
+    _loaded_md = list(_loaded_md)
+
     sheet = ConfigSheet(root)
     sheet.sh.pack(fill="both", expand=True)
     try:
-        sheet.load(default_cfg(), full=False, config_root=Config, return_enum=Return)
+        sheet.load(
+            default_cfg(),
+            full=False,
+            config_root=Config,
+            return_enum=Return,
+            metadata=_loaded_md,
+            metadata_path=str(info),
+        )
         root.update_idletasks()
         assert not sheet.is_dirty
-        assert not sheet.is_metadata_dirty()
+        assert not sheet.is_metadata_dirty(), "loaded metadata must be clean baseline"
 
         app = App.__new__(App)
         app._pages = {"default": sheet}
         app._rail = MagicMock()
         app._poll_dirty_tabs()
-        app._rail.set_dirty.assert_called_once_with("default", False)
-        # the stored value must be a real bool, never a truthy object
+        app._rail.set_dirty.assert_called_once_with("default", False, False)
+        # the stored values must be real bools, never a truthy object
         assert app._rail.set_dirty.call_args.args[1] is False
+        assert app._rail.set_dirty.call_args.args[2] is False
     finally:
         sheet.sh.destroy()
 
@@ -516,6 +557,11 @@ def test_autofilled_metadata_dirty_but_not_coefs(_session_tk_root, tmp_path, moc
     """New/autofilled metadata must be treated as dirty — but it must
     NOT mark the coefs dirty (separate flags), so ``_write_coefs`` won't rewrite
     an unchanged run YAML.  ``_write_metadata`` persists it as a new device file.
+
+    Covers both autofill shapes — the regression case is the *empty* branch
+    (no ``time_ranges`` to seed ``time_st``/``time_en``); the old check
+    ``autofilled and any(not is_placeholder(v) for v in md_list)`` was False
+    for it, hiding the bug.
     """
     import tkinter as tk
 
@@ -535,31 +581,29 @@ def test_autofilled_metadata_dirty_but_not_coefs(_session_tk_root, tmp_path, moc
         pytest.skip("Tk not available")
         return
 
-    # time_ranges present → autofill fills the metadata time_range row
-    cfg = {
+    counter = {"n": 0}
+
+    def _make_sheet(cfg: dict) -> tuple[ConfigSheet, Path]:
+        counter["n"] += 1
+        md_p = tmp_path / f"info_{counter['n']}.yaml"
+        sh = ConfigSheet(root)
+        sh.sh.pack(fill="both", expand=True)
+        sh.load(cfg, full=False, config_root=Config, return_enum=Return, metadata_path=str(md_p))
+        root.update_idletasks()
+        root.update()
+        return sh, md_p
+
+    # Case 1: time_ranges present → autofill seeds time_st/time_en (was passing)
+    sheet, md_path = _make_sheet({
         "input": {
             "path": "D:/x/_raw/dummy.txt",
             "time_ranges": ["2026-07-11T12:20:12", "2026-07-11T12:20:13"],
             "coefs": {},
-        }
-    }
-    md_path = tmp_path / "info_devices.yaml"
-
-    sheet = ConfigSheet(root)
-    sheet.sh.pack(fill="both", expand=True)
+        },
+    })
     try:
-        sheet.load(
-            cfg,
-            full=False,
-            config_root=Config,
-            return_enum=Return,
-            metadata_path=str(md_path),
-        )
-        root.update_idletasks()
-        root.update()
-
         # separate dirty flags: new metadata dirty, coefs still clean
-        assert sheet.is_metadata_dirty() is True, "autofilled metadata must be dirty"
+        assert sheet.is_metadata_dirty() is True, "autofilled metadata must be dirty (time_ranges branch)"
         assert not sheet.is_dirty, "autofilled metadata must not mark coefs dirty"
 
         # Run writes the absent info_devices.yaml from the autofilled values
@@ -577,5 +621,121 @@ def test_autofilled_metadata_dirty_but_not_coefs(_session_tk_root, tmp_path, moc
 
         # persisted → no longer dirty
         assert not sheet.is_metadata_dirty(), "after write metadata must be clean"
+    finally:
+        sheet.sh.destroy()
+
+    # Case 2: NO time_ranges — every autofilled value is a placeholder.
+    # Regression: old rule ``any(not is_placeholder(v) for v in md_list)``
+    # was False here, so the metadata was reported clean even though the file
+    # is absent and must be created on Run.  User must see ``*`` so any
+    # prompt-before-close / branch-on-dirty works.
+    sheet2, md_path2 = _make_sheet({
+        "input": {
+            "path": "D:/x/_raw/dummy.txt",
+            "coefs": {},
+        },
+    })
+    try:
+        assert sheet2.is_metadata_dirty() is True, (
+            "autofilled metadata must be dirty even with no time_ranges to seed"
+        )
+        assert not sheet2.is_dirty, "autofilled metadata must not mark coefs dirty (empty branch)"
+
+        # Run still persists the (all-placeholder) stub — ``_write_metadata``
+        # falls back to ``file_absent`` for not-dirty pages, but we now also
+        # satisfy the dirty-flag branch.
+        app2 = App.__new__(App)
+        app2._pages = {"240613_1200@i_01": sheet2}
+        mocker.patch.object(app2, "_load_device_meta", return_value=(None, tmp_path, md_path2))
+        app2._write_metadata()
+
+        assert md_path2.is_file(), "Run must create info_devices.yaml from empty stub too"
+        assert not sheet2.is_metadata_dirty(), "after write metadata must be clean (empty branch)"
+    finally:
+        sheet2.sh.destroy()
+
+
+def test_comma_cruise_autofilled_shows_star(_session_tk_root, tmp_path):
+    """Cruise dir with comma (``@i,t-chain``) must not break autofill dirty.
+
+    Regression for B:/Cruises/BalticSea/251201_ABP64@i,t-chain/... — the
+    ``_scan`` comma-split ``re.split(r\",(?=[A-Za-z]:[\\\\/])\")`` left a
+    single comma-path intact (``Path.exists()`` guard), but we also must
+    verify the sheet itself marks a new ``info_devices.yaml`` dirty when the
+    file is absent, even though the cruise name contains a comma.
+    The GUI showed no ``*`` (neither rail nor ``metadata*`` label) because
+    the old ``any(not is_placeholder…)`` left the empty stub clean and
+    ``_apply_metadata_dirty_label`` was never called on load.
+    """
+    import tkinter as tk
+
+    from tcm_gui.coef_sheet import ConfigSheet
+
+    if _session_tk_root is None:
+        pytest.skip("Tk not available")
+        return
+    root = _session_tk_root
+    try:
+        root.geometry("700x400+40+40")
+        root.deiconify()
+    except tk.TclError:
+        pytest.skip("Tk not available")
+        return
+
+    cruise = tmp_path / "251201_ABP64@i,t-chain" / "inclinometer" / "_raw" / "251205_0426_st_with_t-chain"
+    cruise.mkdir(parents=True)
+    # No info_devices.yaml — autofilled
+    raw_file = cruise / "@i_90.TXT"
+    raw_file.write_text(
+        "yyyy,mm,dd,HH,MM,SS,Ax,Ay,Az,Mx,My,Mz,Battery,Temp\n"
+        "2026,07,11,13,10,34,100,200,300,400,500,600,12.5,25.0\n",
+        encoding="utf-8",
+    )
+    cfg = {
+        "input": {
+            "path": str(raw_file),
+            "coefs": {},
+        }
+    }
+    # metadata_path not passed — derived from input.path via _build_metadata's
+    # ``find_dir_raw_absolute`` → ``inclinometer/info_devices.yaml`` (contains comma parent)
+    sheet = ConfigSheet(root)
+    sheet.sh.pack(fill="both", expand=True)
+    try:
+        sheet.load(cfg, full=False, config_root=Config, return_enum=Return)
+        root.update_idletasks()
+        root.update()
+        assert sheet.is_metadata_dirty() is True, "comma cruise with no info_devices must be dirty"
+        assert not sheet.is_dirty, "autofilled must not mark coefs dirty"
+        # Label must already be ``metadata*`` on load, not only after an edit
+        meta_iid = next(i for i, m in sheet._meta.items() if m.get("is_metadata_root"))
+        label = sheet.sh.item(meta_iid).get("text", "")
+        assert label == "metadata*", f"expected 'metadata*' label, got {label!r}"
+        # Rail side as well — App helper
+        from unittest.mock import MagicMock
+
+        from tcm_gui.app import App
+
+        app = App.__new__(App)
+        app._pages = {"251205_0426_st_with_t-chain": sheet}
+        app._rail = MagicMock()
+        app._poll_dirty_tabs()
+        app._rail.set_dirty.assert_called_once()
+        assert app._rail.set_dirty.call_args.args[1] is False, "config must not be dirty"
+        assert app._rail.set_dirty.call_args.args[2] is True, "metadata must be dirty"
+        # Comma-split helper must leave a single existing comma-path intact
+        from tcm_gui.app import App as _App
+
+        # Simulate _scan's comma guard — single comma-path that exists
+        p = str(raw_file)
+        assert "," in p and Path(p).exists()
+        # The regex split would produce 1 part, not 2, so it stays single
+        import re
+
+        parts = tuple(part.strip() for part in re.split(r",(?=[A-Za-z]:[\\/])", p) if part.strip())
+        # Single path → not treated as multi
+        assert not (len(parts) > 1 and all(Path(x).is_absolute() for x in parts)), (
+            f"single comma-path must not be split as multi, got {parts!r}"
+        )
     finally:
         sheet.sh.destroy()

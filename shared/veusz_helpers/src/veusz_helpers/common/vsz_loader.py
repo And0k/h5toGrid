@@ -289,7 +289,7 @@ if __name__ in ("__main__", "builtins"):
     if __name__ == "__main__":
         import os
 
-        from utils.veuszPropagate import load_vsz_closure
+        from veusz_helpers.veuszPropagate import load_vsz_closure
         try:
             parent, basename = (lambda p: (p.parent, p.name))(Path(sys.argv[1]))
         except IndexError as e:

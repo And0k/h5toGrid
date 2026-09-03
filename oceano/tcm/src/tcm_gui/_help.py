@@ -105,8 +105,9 @@ _RE_SECTION_HEAD = re.compile(
 # ``### `input.path` <mode>probe</mode>`` — the <mode> tag is optional (a
 # modeless ``### `field` `` section is the single-context default); ``</>``
 # shorthand is accepted.
+# Level-agnostic: ``##``/``###``/``####`` all accepted, L derived from hashes.
 _RE_FIELD_MODE_HEAD = re.compile(
-    r"^###\s+`(?P<path>[A-Za-z_]\w*(?:\.\w+)*)`(?:\s+<mode>(?P<mode>[a-z_]+)</(?:mode)?>)?"
+    r"^(?P<hashes>#{2,6})\s+`(?P<path>[A-Za-z_]\w*(?:\.\w+)*)`(?:\s+<mode>(?P<mode>[a-z_]+)</(?:mode)?>)?"
 )
 
 # ``#### <mode>dirs</mode>`` — mode tag under a ``### `field` `` heading.  Inherits
@@ -114,7 +115,8 @@ _RE_FIELD_MODE_HEAD = re.compile(
 # heading but nests the mode detail under the general field description.
 # Its child detail blocks use ``#####`` (one level deeper) to avoid ambiguity
 # with ``####`` siblings of the parent ``###`` section.
-_RE_MODE_IN_DETAIL = re.compile(r"^####\s+<mode>(?P<mode>[a-z_]+)</(?:mode)?>")
+# Level-agnostic: capture hashes to derive L.
+_RE_MODE_IN_DETAIL = re.compile(r"^(?P<hashes>#{2,6})\s+<mode>(?P<mode>[a-z_]+)</(?:mode)?>")
 
 # ``#### Detailed`` or any other named detail block (child of a ``###`` mode).
 _RE_DETAIL_HEAD = re.compile(r"^####\s+(?P<tag>.+?)\s*$")
@@ -123,6 +125,9 @@ _RE_DETAIL_HEAD5 = re.compile(r"^#####\s+(?P<tag>.+?)\s*$")
 # Any markdown heading.  Checked only after mode/detail headings so that
 # ``###`` mode headers and ``####`` detail headers do not close their parent.
 _RE_ANY_HEADING = re.compile(r"^#{1,6}\s")
+# Generic heading level — level-agnostic extraction: derive L from parent heading
+# and match detail levels as L+1 / L+2 rather than hard-coding 3/4/5.
+_RE_HEADING = re.compile(r"^(?P<hashes>#{1,6})\s+(?P<body>.*)$")
 
 # Code-fence toggle.  ``#`` inside a fence is not a heading.
 _RE_FENCE = re.compile(r"^\s*(```|~~~)")
@@ -148,6 +153,8 @@ _RE_ANCHOR_ID = re.compile(r"\{#([^{}]+)\}\s*$")
 # GitHub-style slug drops: everything but word chars (unicode letters/digits/_),
 # whitespace and hyphens — mirrors ``browser/web/viewer.js::slugify``.
 _RE_SLUG_DROP = re.compile(r"[^\w\s-]", re.UNICODE)
+# Table-row "↓" anchor link with no useful display text — stripped from GUI status.
+_RE_DOWN_LINK = re.compile(r"\[↓\]\([^)]+\)")
 
 
 def slugify(text: str) -> str:
@@ -181,10 +188,15 @@ class ModeBody:
             short mode body used for hover/status text.
         details: Named ``####`` sub-blocks: ``tag → content``.  The canonical
             tag is ``"Detailed"``.
+        sub_details: Nested ``#####`` sub-blocks under a ``####`` detail:
+            ``detail_tag → {sub_tag → content}``.  Used to capture
+            ``Important`` under ``Detailed`` without breaking the parent
+            detail at a new heading.
     """
 
     short: str
     details: Mapping[str, str] = field(default_factory=dict)
+    sub_details: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
 
 
 # One mode value in a full HelpEntry.body mapping.
@@ -221,6 +233,7 @@ class _State:
     """Mutable one-pass parser state."""
 
     section: str | None = None
+    section_level: int | None = None
     in_field_section: bool = False
     fence: bool = False
 
@@ -237,6 +250,11 @@ class _State:
     detail_tag: str | None = None
     detail_lines: list[str] = field(default_factory=list)
     details: dict[str, str] = field(default_factory=dict)
+
+    # Nested ``#####`` blocks under a ``####`` detail (e.g. Important under Detailed).
+    sub_detail_tag: str | None = None
+    sub_detail_lines: list[str] = field(default_factory=list)
+    sub_details: dict[str, dict[str, str]] = field(default_factory=dict)
 
     # Field-level detail blocks (#### outside any ### mode).
     # Keyed by the full dotted field path (e.g. "input.time_ranges").
@@ -255,6 +273,9 @@ class _State:
         self.short_lines.clear()
         self.detail_lines.clear()
         self.details.clear()
+        self.sub_detail_tag = None
+        self.sub_detail_lines.clear()
+        self.sub_details.clear()
 
 
 def parse_reference(text: str) -> dict[str, HelpEntry]:
@@ -278,10 +299,28 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
     bodies: defaultdict[str, dict[str, ModeValue]] = defaultdict(dict)
     st = _State()
 
+    def flush_sub_detail() -> None:
+        """Freeze the active ``#####`` sub-block into ``st.sub_details``."""
+        if st.sub_detail_tag is not None and st.detail_tag is not None:
+            (inner := st.sub_details.setdefault(st.detail_tag, {}))
+            txt = _clean_text("\n".join(st.sub_detail_lines)).strip()
+            # Concatenate duplicate tags with newline (supports multiple Important blocks).
+            if st.sub_detail_tag in inner and inner[st.sub_detail_tag] and txt:
+                inner[st.sub_detail_tag] = f"{inner[st.sub_detail_tag]}\n{txt}"
+            elif txt or st.sub_detail_tag not in inner:
+                inner[st.sub_detail_tag] = txt
+        st.sub_detail_tag = None
+        st.sub_detail_lines.clear()
+
     def flush_detail() -> None:
-        """Freeze the active ``####`` block into ``st.details``."""
+        """Freeze the active ``####`` block into ``st.details`` (flushing sub-detail first)."""
+        flush_sub_detail()
         if st.detail_tag is not None:
-            st.details[st.detail_tag] = "\n".join(st.detail_lines).strip()
+            txt = _clean_text("\n".join(st.detail_lines)).strip()
+            if st.detail_tag in st.details and st.details[st.detail_tag] and txt:
+                st.details[st.detail_tag] = f"{st.details[st.detail_tag]}\n{txt}"
+            elif txt or st.detail_tag not in st.details:
+                st.details[st.detail_tag] = txt
         st.detail_tag = None
         st.detail_lines.clear()
 
@@ -290,13 +329,21 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
         flush_detail()
 
         if (path := st.mode_path) and (tag := st.mode_tag) and path in entries:
-            short = "\n".join(st.short_lines).strip()
+            short = _clean_text("\n".join(st.short_lines)).strip()
+            # Materialize sub_details as plain dicts for ModeBody.
+            subs = {k: dict(v) for k, v in st.sub_details.items()}
+            has_subs = any(bool(v) for v in subs.values())
+            has_details = bool(st.details) or has_subs
             if tag == "Detailed":
                 # Bare ``### Detailed`` has no nested ``#### `` block — store its
                 # content as the mode body's short so _resolve_detail finds it.
-                bodies[path][tag] = ModeBody(short=short, details=dict(st.details))
+                bodies[path][tag] = ModeBody(short=short, details=dict(st.details), sub_details=subs)
             else:
-                bodies[path][tag] = short if not st.details else ModeBody(short=short, details=dict(st.details))
+                bodies[path][tag] = (
+                    ModeBody(short=short, details=dict(st.details), sub_details=subs)
+                    if has_details
+                    else short
+                )
             # Entries created from a ``### `` subsection without a table row (e.g.
             # ``metadata.path``) have no short of their own — populate it from the
             # subsection's lead-in text so the status bar shows it.
@@ -314,7 +361,7 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
         if not st.capture_post_heading or st.section not in entries:
             return
         if st.post_heading_para:
-            para = "\n".join(st.post_heading_para).strip()
+            para = _clean_text("\n".join(st.post_heading_para)).strip()
             if para:
                 entries[st.section] = replace(entries[st.section], short=para)
         st.capture_post_heading = False
@@ -323,8 +370,8 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
     def flush_section_detail() -> None:
         """Freeze the active field-level ``####`` block into ``st.field_details``."""
         if st.detail_tag is not None and st.last_field_path:
-            st.field_details.setdefault(st.last_field_path, {})[st.detail_tag] = "\n".join(
-                st.detail_lines
+            st.field_details.setdefault(st.last_field_path, {})[st.detail_tag] = _clean_text(
+                "\n".join(st.detail_lines)
             ).strip()
         st.detail_tag = None
         st.detail_lines.clear()
@@ -334,7 +381,12 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
             # Preserve fence markers inside mode bodies so downstream markdown
             # rendering can still recognize fenced code blocks.
             if st.in_mode:
-                target = st.detail_lines if st.detail_tag is not None else st.short_lines
+                if st.sub_detail_tag is not None:
+                    target = st.sub_detail_lines
+                elif st.detail_tag is not None:
+                    target = st.detail_lines
+                else:
+                    target = st.short_lines
                 target.append(line)
 
             st.fence = not st.fence
@@ -354,11 +406,12 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
 
             section = m["section"]
             st.section = section
+            st.section_level = 2
             st.in_field_section = section in _FIELD_SECTIONS
             st.last_field_path = None
 
             if st.in_field_section:
-                subtitle = _RE_ANCHOR_ID.sub("", (m["subtitle"] or "")).strip()
+                subtitle = _clean_text(_RE_ANCHOR_ID.sub("", (m["subtitle"] or "")).strip())
                 st.section_anchor = _slug(line)
                 entries[section] = HelpEntry(
                     path=section,
@@ -384,6 +437,11 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
             # iff its name is in :data:`_FIELD_SECTIONS`.
             if st.section != path and path in _FIELD_SECTIONS:
                 st.section, st.in_field_section = path, True
+                # Heading level of ``### `path_field` `` is 3; derive generically if needed.
+                if (hm2 := _RE_HEADING.match(line)):
+                    st.section_level = len(hm2.group("hashes"))
+                else:
+                    st.section_level = 3
                 st.last_field_path = None
                 # Anchor = heading minus the ``<mode>`` tail (the viewer's
                 # slugify would otherwise bake the tag into the anchor).
@@ -397,16 +455,23 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
                 if path not in entries:
                     anchor = _slug(re.sub(r"\s*<mode>.*$", "", line))
                     entries[path] = HelpEntry(path=path, short="", anchor=anchor)
-            st.mode_path, st.mode_tag, st.mode_level = path, m["mode"] or _NO_MODE, 3
+            # Level-agnostic: derive L from heading hashes, not hard-coded 3.
+            lvl = len(_RE_HEADING.match(line).group("hashes")) if _RE_HEADING.match(line) else 3
+            st.mode_path, st.mode_tag, st.mode_level = path, m["mode"] or _NO_MODE, lvl
             continue
 
         # Bare `### Detailed` heading: tooltip for the current parent section.
         # Does not close the section — subsequent ``### `` path blocks still work.
-        if not st.fence and st.in_field_section and line.strip() == "### Detailed":
-            flush_any_detail()
-            close_mode()
-            st.mode_path, st.mode_tag, st.mode_level = st.section, "Detailed", 3
-            continue
+        # Level-agnostic: any heading whose body is exactly ``Detailed`` at L = section_level+1,
+        # only when not already inside a mode (otherwise it's a detail of that mode).
+        if not st.fence and st.in_field_section and not st.in_mode and (hm_d := _RE_HEADING.match(line)):
+            body_d = _RE_ANCHOR_ID.sub("", hm_d.group("body")).strip()
+            lvl_d = len(hm_d.group("hashes"))
+            if body_d == "Detailed" and st.section_level is not None and lvl_d == st.section_level + 1:
+                flush_any_detail()
+                close_mode()
+                st.mode_path, st.mode_tag, st.mode_level = st.section, "Detailed", lvl_d
+                continue
 
         # ``#### <mode>dirs</mode>`` under ``### `field` `` — inherits parent field
         # path.  Equivalent to a separate ``### `field` <mode>dirs</mode>`` heading
@@ -416,46 +481,101 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
             flush_any_detail()
             # Save current mode content (general description under _NO_MODE).
             if st.mode_tag is not None:
-                short = "\n".join(st.short_lines).strip()
+                short = _clean_text("\n".join(st.short_lines)).strip()
+                subs = {k: dict(v) for k, v in st.sub_details.items()}
+                has_subs = any(bool(v) for v in subs.values())
+                has_details = bool(st.details) or has_subs
                 bodies[st.mode_path][st.mode_tag] = (
-                    short if not st.details else ModeBody(short=short, details=dict(st.details))
+                    ModeBody(short=short, details=dict(st.details), sub_details=subs)
+                    if has_details
+                    else short
                 )
             # Reset detail buffers but keep mode_path for the new mode.
             st.detail_tag = None
             st.detail_lines.clear()
             st.details.clear()
+            st.sub_detail_tag = None
+            st.sub_detail_lines.clear()
+            st.sub_details.clear()
             st.short_lines.clear()
-            st.mode_tag, st.mode_level = m["mode"], 4
+            lvl_nested = len(m.group("hashes")) if "hashes" in m.groupdict() else 4
+            st.mode_tag, st.mode_level = m["mode"], lvl_nested
             continue
 
-        # Meaningful only inside an open mode; otherwise it is a heading.
-        # ``####`` details belong to ``###`` modes (level 3), ``#####`` to ``#### <mode>`` modes (level 4).
-        if not st.fence and st.in_mode and st.mode_level == 3 and (m := _RE_DETAIL_HEAD.match(line)):
-            flush_detail()
-            st.detail_tag = m["tag"].strip()
-            st.detail_lines.clear()
-            continue
-        if not st.fence and st.in_mode and st.mode_level == 4 and (m := _RE_DETAIL_HEAD5.match(line)):
-            flush_detail()
-            st.detail_tag = m["tag"].strip()
-            st.detail_lines.clear()
-            continue
+        # ── level-agnostic detail / sub-detail (derive L from parent) ──────
+        # L = mode_level, L+1 = detail (####), L+2 = sub-detail (##### Important under Detailed).
+        # This replaces hard-coded 3/4/5 checks — any root heading level works (##, ###, ####).
+        if not st.fence and st.in_mode and st.mode_level is not None and (hm := _RE_HEADING.match(line)):
+            lvl = len(hm.group("hashes"))
+            body = hm.group("body").strip()
+            is_mode_heading = body.lstrip().startswith("<mode>") or body.lstrip().startswith("`")
+            if not is_mode_heading:
+                if lvl == st.mode_level + 1:
+                    flush_sub_detail()
+                    flush_detail()
+                    tag = _RE_ANCHOR_ID.sub("", body).strip()
+                    if tag:
+                        st.detail_tag = tag
+                        st.detail_lines.clear()
+                        st.sub_detail_tag = None
+                        st.sub_detail_lines.clear()
+                        continue
+                elif lvl == st.mode_level + 2 and st.detail_tag is not None:
+                    flush_sub_detail()
+                    tag = _RE_ANCHOR_ID.sub("", body).strip()
+                    if tag:
+                        st.sub_detail_tag = tag
+                        st.sub_detail_lines.clear()
+                        continue
 
         # Field-level #### detail block (no ### mode tag active).
-        if not st.fence and not st.in_mode and st.in_field_section and (m := _RE_DETAIL_HEAD.match(line)):
+        # Only after at least one field row — a leading #### before the table
+        # is section prose, not a field detail (prevents swallowing the table).
+        if (
+            not st.fence
+            and not st.in_mode
+            and st.in_field_section
+            and st.last_field_path is not None
+            and (m := _RE_DETAIL_HEAD.match(line))
+        ):
             flush_section_detail()
             st.detail_tag = m["tag"].strip()
             st.detail_lines.clear()
             continue
 
-        if not st.fence and st.section is not None and _RE_ANY_HEADING.match(line):
-            flush_any_detail()
-            close_mode()
-            _finalize_post_heading()
-            st.section, st.in_field_section = None, False
-            st.last_field_path = None
-            st.section_anchor = ""
-            continue
+        if not st.fence and st.section is not None and (hm3 := _RE_HEADING.match(line)):
+            lvl = len(hm3.group("hashes"))
+            # Level-agnostic close: only headings at or above the section's level close it.
+            # Deeper headings (L+1, L+2) are details/modes handled above; a leading
+            # ``#### Detailed`` before the table (level 4 > 2) must NOT close the
+            # ``##`` section — it would swallow the subsequent table.
+            if st.section_level is not None and lvl <= st.section_level:
+                flush_any_detail()
+                close_mode()
+                _finalize_post_heading()
+                st.section, st.in_field_section = None, False
+                st.section_level = None
+                st.last_field_path = None
+                st.section_anchor = ""
+                continue
+            if st.capture_post_heading and lvl > (st.section_level or 0):
+                # Leading detail heading before table (e.g. ``#### Detailed`` under
+                # ``## `input.coefs```) — keep section open and capture heading body
+                # as part of post_heading paragraph rather than closing.
+                body = hm3.group("body").strip()
+                # Strip anchor id if any.
+                body = _RE_ANCHOR_ID.sub("", body).strip()
+                if body:
+                    st.post_heading_para.append(body)
+                continue
+            # Deeper heading not handled as field/mode detail but still deeper than
+            # section — don't close; let it fall through to content handlers.
+            if lvl > (st.section_level or 0):
+                # If in_mode already, it would have been handled as detail/sub-detail;
+                # if not, treat as plain prose inside section (not closing).
+                # For field-level detail case already handled, this is a no-op.
+                # Preserve heading text as post_heading if still capturing?
+                continue
 
         # Capture the paragraph between a ## heading and its table. Finalize
         # when the table (or any heading) starts.
@@ -467,7 +587,12 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
                 continue
 
         if st.in_mode:
-            target = st.detail_lines if st.detail_tag is not None else st.short_lines
+            if st.sub_detail_tag is not None:
+                target = st.sub_detail_lines
+            elif st.detail_tag is not None:
+                target = st.detail_lines
+            else:
+                target = st.short_lines
             target.append(line)
             continue
 
@@ -486,7 +611,7 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
             cells = split_table_row(line)
             entries[path] = HelpEntry(
                 path=path,
-                short=cells[-1].strip() if cells else "",
+                short=_clean_text(cells[-1]).strip() if cells else "",
                 anchor=st.section_anchor,
             )
 
@@ -626,9 +751,78 @@ def help_for_path(
     if detail is None:
         body = raw.short if isinstance(raw, ModeBody) else raw
     else:
-        body = raw.details.get(detail, "") if isinstance(raw, ModeBody) else ""
+        if isinstance(raw, ModeBody):
+            # Case-insensitive lookup for base detail
+            base = raw.details.get(detail, "")
+            if base == "":
+                for k, v in raw.details.items():
+                    if k.lower() == detail.lower():
+                        base = v
+                        break
+            # Include nested ``Important`` under ``Detailed`` without breaking
+            # (previously ``##### Important`` closed the ``#### Detailed`` block)
+            subs = getattr(raw, "sub_details", {})
+            # Find Detailed key case-insensitively
+            sub_map = None
+            for k, v in subs.items():
+                if k.lower() == detail.lower():
+                    sub_map = v
+                    break
+            if sub_map:
+                important_parts = [
+                    sv.strip()
+                    for sk, sv in sub_map.items()
+                    if sk.lower() == "important" and sv.strip()
+                ]
+                if important_parts:
+                    body = (base.strip() + "\n" + "\n".join(important_parts)) if base.strip() else "\n".join(
+                        important_parts
+                    )
+                else:
+                    body = base
+            else:
+                body = base
+        else:
+            body = ""
 
     return replace(entry, body=body)
+
+
+def section_body_short(entry: HelpEntry) -> str:
+    """Return the best short status text for a help entry.
+
+    Prefers the ``###`` section lead-in text (stored under ``_NO_MODE``) —
+    the "section status below the table" — over the table row's last cell
+    (``entry.short``).  The section text is typically more descriptive, so
+    the status bar shows it when both exist; otherwise falls back to the
+    table row short.
+    """
+    if isinstance(entry.body, Mapping):
+        raw = entry.body.get(_NO_MODE)
+        if isinstance(raw, ModeBody):
+            if raw.short:
+                return raw.short
+        elif isinstance(raw, str) and raw:
+            return raw
+    return entry.short
+
+
+def _filter_h5_lines(text: str) -> str:
+    """Drop lines mentioning HDF5/NetCDF when H5 is unavailable."""
+    if _constants.H5_AVAILABLE:
+        return text
+    return "\n".join(
+        line for line in text.split("\n") if not re.search(r"HDF5|NetCDF", line, re.IGNORECASE)
+    )
+
+
+def _clean_text(text: str) -> str:
+    """Clean doc-extracted text for GUI status/tooltip display.
+
+    - Strip ``[↓](#anchor)`` links — arrow-only, no useful display text.
+    - When H5 is unavailable, drop lines mentioning HDF5/NetCDF.
+    """
+    return _filter_h5_lines(_RE_DOWN_LINK.sub("", text))
 
 
 def help_general_for_path(path: str) -> str:
@@ -636,10 +830,22 @@ def help_general_for_path(path: str) -> str:
 
     This is the ``### `field` `` body — the text before any
     ``#### <mode>`` or ``### `field` <mode>mode</mode>`` section.  For
-    ``path_field`` the ``#### Important`` sub-block (if present) is the
-    content shown on field-associated errors (e.g. ``FileNotFoundError`` on a
-    failed data/config search); otherwise the short pre-``####`` body is used.
-    Mode-specific bodies are irrelevant for this call.
+    ``path_field`` (and any field) the ``Important`` hint is the
+    concatenation (``\\n``-joined) of:
+
+    * all ``Important`` (case-insensitive) first-child sections of the parent
+      (``L+1`` where ``L`` is the parent heading level, e.g. ``#### Important``
+      under ``### `path_field```), and
+    * all ``Important`` subsections under every ``Detailed`` child
+      (``L+2``, e.g. ``##### Important`` under ``#### Detailed``).
+
+    Previously only a literal ``#### Important`` was returned and
+    ``##### Important`` under ``Detailed`` was lost because the parser broke
+    the tooltip at any new heading.  The parser is now level-agnostic
+    (``L+1``/``L+2`` derived from the parent) and preserves the nested
+    ``Important`` via :attr:`ModeBody.sub_details`; this function aggregates
+    both sources.  If no ``Important`` block exists, falls back to the short
+    pre-``####`` body.  Mode-specific bodies are irrelevant for this call.
 
     Array indices are stripped before lookup, mirroring :func:`help_for_path`.
     """
@@ -649,9 +855,21 @@ def help_general_for_path(path: str) -> str:
     if isinstance(entry.body, Mapping):
         raw = entry.body.get(_NO_MODE, "")
         if isinstance(raw, ModeBody):
-            # ``path_field`` uses ``#### Important`` as the error hint.
-            if isinstance(raw.details, Mapping) and "Important" in raw.details:
-                return raw.details["Important"]
+            # Collect Important at L+1 and Important under Detailed at L+2.
+            parts: list[str] = []
+            if isinstance(raw.details, Mapping):
+                for tag, content in raw.details.items():
+                    if tag.strip().lower() == "important" and content.strip():
+                        parts.append(content.strip())
+            subs = getattr(raw, "sub_details", {})
+            if isinstance(subs, Mapping):
+                for dtag, inner in subs.items():
+                    if dtag.strip().lower() == "detailed" and isinstance(inner, Mapping):
+                        for stag, scontent in inner.items():
+                            if stag.strip().lower() == "important" and scontent.strip():
+                                parts.append(scontent.strip())
+            if parts:
+                return "\n".join(parts)
             return raw.short
         return raw if isinstance(raw, str) else ""
     return ""

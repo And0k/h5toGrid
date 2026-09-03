@@ -14,9 +14,6 @@ Stage semantics
   ``ConfigFilterCalib(ConfigFilter_InclProc)``.
 - **proc** — optional per-entry-point processing parameters (calib: ``calib``,
   spectrum: ``spectrum``).  Processing entry has no ``proc`` group.
-
-Legacy types (``ConfigMultiIn_InclProc``, ``ConfigOutSimple``, etc.) live in
-``_dask_legacy/cfg_compat.py``.
 """
 
 from dataclasses import dataclass, field
@@ -26,7 +23,7 @@ from typing import Annotated, Any
 
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING, OmegaConf
-
+from tcm import _constants
 
 class Return(StrEnum):
     """``program.return_`` constants — controls how far ``run_processing`` runs and what returns.
@@ -70,7 +67,11 @@ class UseH5(StrEnum):
 class ConfigInCoefs_InclProc:
     """Calibration coefficients for inclinometer processing."""
 
-    path: Path | None = Path(__file__).with_name("cfg") / "coef" / "calibration.h5"
+    path: Path | None = (
+        Path(__file__).with_name("cfg")
+        / "coef"
+        / ("calibration.h5" if _constants.H5_AVAILABLE else "yaml_export")
+    )
     Ag: list[list[float]] | None = field(
         default_factory=lambda: [[0.00173, 0, 0], [0, 0.00173, 0], [0, 0, 0.00173]],
     )
@@ -205,8 +206,6 @@ class ConfigOut_InclProc:
     ``text_path``: output directory for TSV/CSV files.
     ``b_split_by_time_ranges``: split output by ``input.time_ranges`` instead of ``split_period``.
 
-    Previously inherited from ``ConfigOutSimple`` (``_dask_legacy/cfg_compat.py``)
-    which carried HDF5-only dead fields in xr context — those move to legacy.
     """
 
     # ── HDF5/NC output paths ──
@@ -280,7 +279,7 @@ class ConfigProgram:
 
 
 # ---------------------------------------------------------------------------
-# Calibration filter — typed per-channel despike (mirrors legacy)
+# Calibration filter — typed per-channel despike
 # ---------------------------------------------------------------------------
 
 
@@ -288,7 +287,6 @@ class ConfigProgram:
 class ConfigFilterComponent:
     """Apex despike parameters for a channel or axis.
 
-    Mirrors ``_dask_legacy.incl_calibr_hy.ConfigFilterComponent`` exactly.
     ``None`` defaults signal "use the parent's value" during resolution.
     """
 
@@ -301,7 +299,6 @@ class ConfigFilterComponent:
 class ConfigFilterChannel:
     """Per-axis overrides for a single channel (e.g. ``A`` or ``M``).
 
-    Mirrors ``_dask_legacy.incl_calibr_hy.ConfigFilterChannel`` exactly.
     Each axis (``x``, ``y``, ``z``) is an optional ``ConfigFilterComponent``
     whose ``None`` defaults inherit from this channel's parent apex.
     """
@@ -321,10 +318,13 @@ class ConfigFilterChannel:
 class ConfigFilterCalib(ConfigFilter_InclProc):
     """Calibration filter — inherits process-stage NaN-out + adds typed despike.
 
-    Mirrors ``_dask_legacy.incl_calibr_hy.ConfigFilter`` exactly.
     The apex ``blocks`` / ``offsets`` / ``std_smooth_sigma`` apply to all
     channels; ``A`` / ``M`` override per channel; ``no_works_noise`` reserves
-    the `is_works()` noise threshold (wire deferred — see ``dtdr-todo.md`` B).
+    the `is_works()` noise threshold (wire deferred).
+
+    .. todo::
+        ``no_works_noise`` field is reserved; the actual noise-threshold wiring
+        (``is_works()``) has **not been implemented**.
     """
 
     blocks: list[int] | None = field(default_factory=lambda: [21, 7])
@@ -369,9 +369,12 @@ except ImportError:
 class ConfigProcSpectrum:
     """Spectrum processing parameters (``proc`` group → ``spectrum`` option).
 
-    Reserved forward declaration — the spectrum module has NOT been ported
-    from ``_dask_legacy/incl_h5spectrum.py``.  Schema-only for ConfigStore
-    registration.  Follow-up tracked in ``dtdr-todo.md`` A.
+    Reserved forward declaration — the spectrum module has **not been reimplemented**
+    from the legacy codebase.  Schema-only for ConfigStore registration.
+
+    .. todo::
+        Spectrum processing (``incl_h5spectrum``) has **not been implemented**
+        in the xr-native pipeline.  This is a schema-only placeholder.
     """
 
     overlap: float = 0.5

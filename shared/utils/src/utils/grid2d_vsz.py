@@ -47,7 +47,7 @@ from utils.init import (
 )
 from utils.log_init import init_logging
 from utils.time import datetime_fun, timezone_view, multiindex_timeindex, check_time_diff
-from utils.veuszPropagate import load_vsz_closure, export_images  # , veusz_data
+from veusz_helpers.veuszPropagate import load_vsz_closure, export_images  # , veusz_data
 
 Axes2d = namedtuple('axes2d', ('x', 'y'))
 MinMax = namedtuple('MinMax', ('min', 'max'))

@@ -307,7 +307,7 @@ def date_from_filename(file_stem: str, century: str = '20'):
 
 
 # ---------------------------------------------------------------------------
-# Date parsing helpers (extracted from csv_specific_proc)
+# Date parsing helpers
 # ---------------------------------------------------------------------------
 
 def chars_array_to_datetimeindex(

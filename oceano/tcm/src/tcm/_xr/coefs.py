@@ -1,7 +1,7 @@
 """Coefficient preparation and NC coefs I/O.
 
 Provides:
-- :func:`prep_cfg_for_probe` — per-probe config builder (replaces legacy version).
+- :func:`prep_cfg_for_probe` — per-probe config builder.
 - :func:`save_coefs_to_nc` — write coefs dict into a NetCDF4 raw file's
   ``/{tbl}/coef/`` group, using h5py (NC4 files are HDF5).  Delegates the
   actual HDF5 write to :func:`h5inclinometer_coef.h5copy_coef`.
@@ -65,15 +65,14 @@ def _coefs_to_h5_dict(coef: Mapping[str, Any], pcid: str | None = None, date: st
     """Convert raw coefs dict to flat ``{h5_path: value}`` using ``//coef//`` separator.
 
     Mirrors :func:`tcm.incl_calc.coefs.coefs_format_for_h5` but lives here
-    to avoid importing Layer 0 at the xr layer boundary.  Structure::
+    to avoid a circular import at the xr layer boundary.  Structure::
 
         //coef//G//A, //coef//G//C, //coef//H//A, //coef//H//C,
         //coef//H//azimuth_shift_deg, //coef//Vabs0, //coef//Rz, //coef//P_t, …
 
     String/Path values (e.g. ``path``) are intentionally excluded — they are
     persisted as HDF5 attributes of the parent group, not datasets.
-    ``pid``/``date`` are also attributes in the new layout (datasets kept
-    transiently in the dict for legacy compatibility removed here).
+    ``pid``/``date`` are also attributes in the new layout.
     """
     if coef is None:
         coef = {}
@@ -144,7 +143,7 @@ def save_coefs_to_nc(
     with _h5py.File(nc_path, "a") as h5f:
         _h5coef.h5copy_coef(None, h5f, tbl, dict_matrices=h5_dict, dates=dates)
         coef_grp = h5f.require_group(f"{tbl}/coef")
-        # Clean legacy string datasets (now attributes)
+        # Clean old string datasets (now attributes)
         for legacy in ("date", "pid", "path"):
             if legacy in coef_grp and isinstance(coef_grp[legacy], _h5py.Dataset):
                 del coef_grp[legacy]
@@ -167,7 +166,7 @@ def _read_coefs_from_coef_group(coef_grp: _h5py.Group) -> dict[str, Any]:
     """Walk ``/{tbl}/coef/`` HDF5 group and return coefs dict (without ``date``).
 
     Shared traversal for :func:`load_coefs_from_nc` (NC4 files) and
-    :func:`tcm.incl_calc.coefs.load_coefs` (legacy ``.h5`` files).
+    :func:`tcm.incl_calc.coefs.load_coefs` (``.h5`` files).
     Both use identical h5py group structure written by
     :func:`tcm.h5inclinometer_coef.h5copy_coef`.
 
@@ -178,7 +177,7 @@ def _read_coefs_from_coef_group(coef_grp: _h5py.Group) -> dict[str, Any]:
 
     :param coef_grp: h5py Group at ``/{tbl}/coef/``.
     :return: coefs dict with ``dates`` sub-dict but **no** ``date`` key
-        (date resolution differs between NC and legacy HDF5 callers).
+        (date resolution differs between NC and HDF5 callers).
     """
     coefs_dict: dict[str, Any] = {"dates": {}}
     for name_l1, item_l1 in coef_grp.items():
@@ -232,7 +231,7 @@ def load_coefs_from_nc(nc_path: Path, tbl: str) -> dict[str, Any] | None:
 
         coefs_dict = _read_coefs_from_coef_group(h5f[coef_path])
 
-        # Date from coef group attribute (set by save_coefs_to_nc); fallback to legacy dataset
+        # Date from coef group attribute (set by save_coefs_to_nc); fallback to old dataset
         if "date" in h5f[coef_path].attrs:
             coefs_dict["date"] = str(h5f[coef_path].attrs["date"])
         elif "date" in h5f[coef_path] and isinstance(h5f[coef_path]["date"], _h5py.Dataset):
@@ -257,10 +256,7 @@ def coef_zeroing_rotation_from_data(
 ) -> np.ndarray | None:
     """Compute zeroing rotation matrix from raw data within *time_ranges*.
 
-    xr-native replacement for
-    :func:`tcm._dask_legacy.incl_calc.coefs.coef_zeroing_rotation_from_data`.
-    Uses ``ds.sel(time=slice(...))`` instead of dask.dataframe indexing and
-    ``norm_field`` from :mod:`tcm.incl_calc.calc` for calibration.
+    xr-native replacement.
 
     :return: 3×3 rotation matrix or ``None`` when time range has no data.
     """
@@ -350,7 +346,7 @@ def get_coef_zeroing_matrix(Rz=None, g0xyz=None, Ag=None, Cg=None, **kwargs):
             calibration=orientation.SensorCalibration(Cg, Ag),
         )
         Rz = orientation.rotate(zenith, np.array([0.0, 0.0, 1.0]))
-        # legacy: Rz = coef_zeroing_rotation(g0xyz[:, None], np.float64(Ag), Cg)
+        # old: Rz = coef_zeroing_rotation(g0xyz[:, None], np.float64(Ag), Cg)
         msg_rotated = "with new rotation to user defined zero point (g0xyz) "
     elif Rz is not None and (Rz != np.eye(3)).any():
         msg_rotated = ""
@@ -372,9 +368,7 @@ def prepare_coefs(
 ) -> tuple[dict, np.ndarray | None, dict, str]:
     """Prepare coefficients: apply zeroing rotation and azimuth correction.
 
-    xr-native replacement for
-    :func:`tcm._dask_legacy.incl_calc.coefs.coef_prepare`.
-    Does **not** require ``dask.dataframe``.
+    xr-native replacement.
 
     :param coefs: Raw coefficients dict from :func:`get_coefs`.
     :param ds_raw: Raw inclinometer Dataset (needs Ax, Ay, Az, Mx, My, Mz columns).

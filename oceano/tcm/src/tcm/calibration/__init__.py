@@ -4,9 +4,6 @@ xarray-native calibration pipeline: turns raw multi-position sensor recordings i
 For a first read, ``run.run_calibration`` is the entry point that ties every submodule below together;
 ``calibrate.calibrate`` is the core fit if only that piece is needed.
 
-Replaces ``tcm._dask_legacy.incl_calibr_hy`` with pure-numpy math
-and ``xr.Dataset`` I/O.
-
 Submodules
 ----------
 * :mod:`run` — entry point

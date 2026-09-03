@@ -1,4 +1,4 @@
-"""Tests for Layer-0 format_loaded.py (pure pandas/numpy; no dask)."""
+"""Tests for format_loaded.py (pure pandas/numpy; no dask)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -62,7 +62,7 @@ def test_chars_array_to_datetimeindex_keeps_good_strings():
 @pytest.mark.xr
 def test_chars_array_to_datetimeindex_fills_bad_strings():
     """Bad/unparseable entries must be forward-filled (Series input)."""
-    # Note: legacy implementation only fills via Series path. ndarray input
+    # Note: only fills via Series path. ndarray input
     # would raise `DatetimeIndex.ffill` AttributeError — accepted limitation.
     arr = pd.Series([b"2020-01-01T10:00:00", b"NOT_A_DATE", b"2020-01-03T10:00:00"])
     actual = chars_array_to_datetimeindex(arr, "datetime64[ns]")
@@ -112,7 +112,7 @@ def test_f_repl_by_dict_preserves_named_match():
 
 
 # --------------------------------------------------------------------------- #
-# mod_name — filename normalisation; leading zeros dropped (legacy behaviour)
+# mod_name — filename normalisation; leading zeros dropped (old behaviour)
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.xr

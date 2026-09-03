@@ -105,6 +105,7 @@ a = Analysis(
         "colorlog.formatter",
         "utils.log_init",
         "utils.logging_config",
+        "veusz_helpers.common.metadata",
         "omegaconf",
         "ruamel.yaml",
         "meta_finder",
@@ -170,7 +171,7 @@ a = Analysis(
         "tcm.incl_h5_utils",
         "tcm.incl_h5spectrum",
         "tcm.incl_calibr_hy",
-        "tcm.veuszPropagate",
+        "veusz_helpers.veuszPropagate",
         # PyArrow (not needed)
         "pyarrow",
         "pyarrow.libs",

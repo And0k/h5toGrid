@@ -28,8 +28,13 @@ from typing import TypeAlias
 # ── type aliases ─────────────────────────────────────────────────────────────
 
 Tag = str
-Span: TypeAlias = tuple[str, Tag]
+Tags = frozenset[Tag]
+Span: TypeAlias = tuple[str, Tags]
 Inline: TypeAlias = tuple[Span, ...]
+
+# Style tags that affect font composition — single source of truth for
+# :mod:`tcm._md_parse` and :mod:`tcm_gui.md_label` (imported there).
+STYLE_TAGS: frozenset[Tag] = frozenset({"bold", "italic", "code"})
 
 # ── AST ──────────────────────────────────────────────────────────────────────
 
@@ -82,15 +87,15 @@ _FENCE = re.compile(r"^\s*(```|~~~)")
 # markers don't match; their lines fold into the parent item as continuation).
 _LIST_ITEM = re.compile(r"^-\s+(.+?)\s*$")
 
-# Inline patterns: escape sequences, color tags, inline code, links, bold, italic.
-_INLINE = re.compile(
-    r"(?P<esc>\\[\\`*_{}\[\]()#+\-.!>~|])"
-    r"|(?P<color>\{#(?P<color_name>[a-z_]+)\}(?P<color_text>.*?)\{/\})"
-    r"|(?P<code>`[^`]+`)"
-    r"|(?P<link>\[(?P<link_text>[^\]]*)\]\((?P<link_url>[^)]*)\))"
-    r"|(?P<bold>\*\*(?P<bold_ast>.+?)\*\*|(?<!\w)__(?P<bold_und>.+?)__(?!\w))"
-    r"|(?P<italic>\*(?P<italic_ast>.+?)\*|(?<!\w)_(?P<italic_und>.+?)_(?!\w))"
-)
+# Inline — built from named pieces for maintainability (order matters:
+# escape → color → code → link → bold → italic; earlier wins at same pos).
+_ESC = r"(?P<esc>\\[\\`*_{}\[\]()#+\-.!>~|])"
+_COLOR = r"(?P<color>\{#(?P<color_name>[a-z_]+)\}(?P<color_text>.*?)\{/\})"
+_CODE = r"(?P<code>`[^`]+`)"
+_LINK = r"(?P<link>\[(?P<link_text>[^\]]*)\]\((?P<link_url>[^)]*)\))"
+_BOLD = r"(?P<bold>\*\*(?P<bold_ast>.+?)\*\*|(?<!\w)__(?P<bold_und>.+?)__(?!\w))"
+_ITALIC = r"(?P<italic>\*(?P<italic_ast>.+?)\*|(?<!\w)_(?P<italic_und>.+?)_(?!\w))"
+_INLINE = re.compile("|".join((_ESC, _COLOR, _CODE, _LINK, _BOLD, _ITALIC)))
 
 
 # ── table row splitting ──────────────────────────────────────────────────────
@@ -116,51 +121,66 @@ def _is_table_row(line: str) -> bool:
 
 
 def _merge_spans(spans: list[Span]) -> Inline:
-    """Coalesce adjacent spans with the same tag into one."""
+    """Coalesce adjacent spans with the same tag set into one."""
     merged: list[Span] = []
-    for text, tag in spans:
+    for text, tags in spans:
         if not text:
             continue
-        if merged and merged[-1][1] == tag:
-            merged[-1] = (merged[-1][0] + text, tag)
+        if merged and merged[-1][1] == tags:
+            merged[-1] = (merged[-1][0] + text, tags)
         else:
-            merged.append((text, tag))
+            merged.append((text, tags))
     return tuple(merged)
+
+
+def _nest(tag: Tag, inner: str) -> list[Span]:
+    """Recursively parse *inner* and add *tag* to each resulting span's tags.
+
+    DRY helper for bold/italic nesting: ``**`.yaml``` → ``.yaml`` tagged
+    ``{bold,code}``.  Empty *inner* yields no spans.
+    """
+    return [(txt, tags | frozenset({tag})) for txt, tags in parse_inline(inner)] if inner else []
 
 
 @lru_cache(maxsize=512)
 def parse_inline(text: str) -> Inline:
-    """Parse inline Markdown spans into ``(text, tag)`` tuples."""
+    """Parse inline Markdown spans into ``(text, tags)`` tuples.
+
+    Bold/italic content is recursively parsed, so nested markup like
+    ``**`.yaml``` yields a span tagged *both* ``bold`` and ``code``.  Each
+    span carries a frozenset of tags (style name / color name / link URL);
+    plain text has the empty set.  Adjacent spans with identical tag sets
+    are coalesced by :func:`_merge_spans`.
+    """
     out: list[Span] = []
     pos = 0
 
     for m in _INLINE.finditer(text):
         if m.start() > pos:
-            out.append((text[pos : m.start()], "plain"))
+            out.append((text[pos : m.start()], frozenset()))
 
         if esc := m.group("esc"):
-            out.append((esc[1], "plain"))
+            out.append((esc[1], frozenset()))
 
         elif m.group("color"):
-            out.append((m.group("color_text"), m.group("color_name")))
+            out.append((m.group("color_text"), frozenset({m.group("color_name")})))
 
         elif code := m.group("code"):
-            out.append((code[1:-1], "code"))
+            out.append((code[1:-1], frozenset({"code"})))
 
         elif m.group("link"):
-            # Span tag carries the target URL; the renderer styles/clicks it.
-            out.append((m.group("link_text") or "", m.group("link_url")))
+            out.append((m.group("link_text") or "", frozenset({m.group("link_url")})))
 
         elif m.group("bold"):
-            out.append((m.group("bold_ast") or m.group("bold_und") or "", "bold"))
+            out.extend(_nest("bold", m.group("bold_ast") or m.group("bold_und") or ""))
 
         elif m.group("italic"):
-            out.append((m.group("italic_ast") or m.group("italic_und") or "", "italic"))
+            out.extend(_nest("italic", m.group("italic_ast") or m.group("italic_und") or ""))
 
         pos = m.end()
 
     if pos < len(text):
-        out.append((text[pos:], "plain"))
+        out.append((text[pos:], frozenset()))
 
     return _merge_spans(out)
 

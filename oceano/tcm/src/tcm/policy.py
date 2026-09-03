@@ -57,6 +57,20 @@ class IOPolicy:
         return self.h5
 
     @property
+    def data_exts(self) -> frozenset[str]:
+        """Effective data extensions allowed by this policy."""
+        return (
+            _constants.EXT_CSV | _constants.EXT_HDF5 | _constants.EXT_NC
+            if self.h5
+            else _constants.EXT_CSV
+        )
+
+    @property
+    def data_exts_with_h5_gate(self) -> set[str]:
+        """Alias for :attr:`data_exts` as mutable set (compat)."""
+        return set(self.data_exts)
+
+    @property
     def missing_dependency(self) -> bool:
         """Return ``True`` iff HDF5 libraries are unavailable."""
         return not self.available
@@ -142,3 +156,8 @@ def init_io(cfg: DictConfig, /) -> None:
 
 def io() -> IOPolicy:
     return _io.get()
+
+
+def effective_data_exts() -> set[str]:
+    """Return effective data extensions for current policy (CSV + H5/NC when allowed)."""
+    return set(io().data_exts)

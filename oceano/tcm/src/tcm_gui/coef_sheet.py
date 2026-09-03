@@ -387,6 +387,12 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
         # Take metadata snapshot too — without it, edits to metadata loaded from
         # an existing file would never be detected as dirty (snap stays None).
         self._take_metadata_snapshot()
+        # Label must reflect autofilled dirty (``_metadata_unsaved``) right after
+        # load — otherwise the ``metadata*`` indicator stays ``metadata`` until
+        # the next edit, and the user has no signal that a new device file will
+        # be created on Run.
+        with __import__("contextlib").suppress(Exception):
+            self._apply_metadata_dirty_label()
         self._stretch_last_col()
 
     def get_edited_coefs(self) -> dict[str, Any]:
@@ -675,9 +681,6 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
                 md_list = [None] * 11
         if len(md_list) < 11:
             md_list = list(md_list) + [None] * (11 - len(md_list))
-        # Autofilled from an absent info_devices.yaml — persist on Run until saved.
-        self._metadata_unsaved = autofilled and any(not _meta_pairs.is_placeholder(v) for v in md_list)
-        paired = _meta_pairs.to_display(md_list)
         # Device-file path — always editable (default when file absent).
         _path = getattr(self, "_metadata_path", None)
         if _path is None:
@@ -704,6 +707,13 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
                 _path = str(_ddir / "info_devices.yaml") if _ddir else ""
             except Exception:
                 _path = ""
+        # Autofilled from an absent info_devices.yaml — treat as unsaved only
+        # when there's a real file to save to (non-empty derived path). The
+        # old guard ``any(not is_placeholder…)`` missed the empty stub with
+        # no ``time_ranges``, and the unconditional ``autofilled`` kept the
+        # default page (no input.path → _path=="") dirty forever.
+        self._metadata_unsaved = autofilled and bool(_path and str(_path).strip())
+        paired = _meta_pairs.to_display(md_list)
         meta_iid = self._ins(
             "",
             "metadata",
@@ -813,6 +823,8 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
         # dirty (and rewrite YAML on Run) without any user edit.
         self._take_metadata_snapshot()
         self._take_snapshot()
+        with __import__("contextlib").suppress(Exception):
+            self._apply_metadata_dirty_label()
 
     def _build_full(self, cfg: dict) -> None:
         for sec, val in cfg.items():

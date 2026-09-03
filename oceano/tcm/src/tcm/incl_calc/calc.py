@@ -224,7 +224,7 @@ def i_bursts_starts(
 ) -> tuple[np.ndarray, int | float, np.timedelta64]:
     """Detect burst boundaries in a datetime index.
 
-    Pure numpy — no dask dependency.  Both ``_dask_legacy`` and ``_xr``
+    Pure numpy — no dask dependency.  Both the dask-based and ``_xr``
     pipelines use this as the canonical burst-detection kernel.
 
     Parameters

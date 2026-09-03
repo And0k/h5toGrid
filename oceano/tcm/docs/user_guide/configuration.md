@@ -35,6 +35,14 @@ Each probe's config lives in `cfg_proc/run/{prefix}@{pcid}-{comment}.yaml`.
   The `-{comment}` suffix after the pcid stem is also stripped.
 - So `@i_01.yaml`, `260624_1730@i_01.yaml`, `@i_01-extra.yaml` all resolve to
   the same probe `i01`.
+- The YAML stem is built from the **canonical pcid**, not the raw filename:
+  archive member `i3.txt` becomes `i03`, `I_P01_001.txt` becomes `i_p01`.
+  The `-{comment}` suffix from the source file (e.g. `i_p05-press.TXT` →
+  `@i_p05-press.yaml`) is preserved.
+- `processing.run` handles exactly **one** `_raw` anchor. A parent directory
+  with several anchors is resolved first via anchor discovery
+  (`tcm.anchors.collect_anchors`); the GUI lists the anchors in the path
+  field dropdown and runs on the selected one.
 
 Configs are auto-generated from file discovery and **never overwritten** on
 subsequent runs — only missing configs are created, and stale ones (whose

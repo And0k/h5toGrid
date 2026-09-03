@@ -709,7 +709,7 @@ class TestGuiAtSignFilename:
         collected = result[3]
         assert len(collected) >= 1
         stem = collected[0][0]
-        assert "i_p1" in stem.lower() or "p1" in stem
+        assert "@i_p" in stem.lower()  # i_p1 zero-pads to i_p01; @ prefix preserved
 
     def test_run_at_sign_file(self, _raw_with_at_file, monkeypatch, mocker):
         """Run with ``@i_p1.TXT`` stem processes correctly."""

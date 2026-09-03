@@ -28,13 +28,34 @@ from typing import Any
 
 from tksheet import Sheet
 
-from tcm._constants import EXT_CSV, EXT_HDF5, EXT_NC
+from tcm import _constants, policy as _policy
 
 from ._i18n import STRINGS as _S
 
-_DATA_EXTS = EXT_CSV | EXT_HDF5 | EXT_NC  # all supported data extensions
+
+def _data_exts() -> set[str]:
+    """Current effective data extensions (respects ``program.use_h5`` via :func:`tcm.policy.effective_data_exts`)."""
+    return _policy.effective_data_exts()
+
+
+def _all_data_exts() -> set[str]:
+    return _data_exts() | {".yaml"}
+
+
+# Import-time snapshot for backward compat; dialogs built at import use this,
+# but callers that need live policy should call ``_data_exts()`` at dialog open.
+_DATA_EXTS: set[str] = _data_exts()
 _DATA_GLOB = " ".join(f"*{e}" for e in sorted(_DATA_EXTS))
 _ALL_DATA_GLOB = " ".join(f"*{e}" for e in sorted(_DATA_EXTS | {".yaml"}))
+
+
+def get_data_exts() -> set[str]:
+    """Live effective data extensions (policy-aware)."""
+    return _data_exts()
+
+
+def get_all_data_exts() -> set[str]:
+    return _all_data_exts()
 
 COEF_FILETYPES = [(_S["dialog.filter_coefs"], "*.h5 *.nc *.yaml"), (_S["dialog.filter_all"], "*.*")]
 # Top PathField: data files + YAML configs (configs loadable into tabs directly).

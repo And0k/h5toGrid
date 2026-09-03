@@ -3,8 +3,6 @@
 """
 Base dataclasses and OmegaConf helpers shared by the xr-native pipeline.
 
-Legacy Hydra machinery (ConfigInCsv, ConfigOut, main_call, etc.) has been
-moved to ``_dask_legacy/cfg_compat.py``.
 """
 import sys
 

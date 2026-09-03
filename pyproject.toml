@@ -122,15 +122,17 @@ google-auth-oauthlib = "*"
 [tool.pixi.feature.get_datasets.pypi-dependencies]
 absioras-get_datasets = { path = "oceano/get_datasets", editable = true }
 
-[tool.pixi.feature.manage.pypi-dependencies]
+[tool.pixi.feature.meta_finder.pypi-dependencies]
 absioras-meta_finder = { path = "oceano/meta_finder", editable = true }
 absioras-utils = { path = "shared/utils", editable = true }
 
-[tool.pixi.feature.arc.dependencies]
+[tool.pixi.feature.meta_finder.dependencies]
 libarchive = ">=3.8.6,<4"
 python-libarchive-c = ">=5.3,<6"
 # rarfile = "*"
 # py7zr = "*"
+pytables = ">=3.8"
+
 
 [tool.pixi.feature.tcm.dependencies]
 "dask-core" = ">=2024.4"
@@ -144,6 +146,7 @@ nodejs = ">=20,<25"
 absioras-tcm = { path = "oceano/tcm", editable = true }
 absioras-meta_finder = { path = "oceano/meta_finder", editable = true }
 absioras-utils = { path = "shared/utils", editable = true }
+absioras-veusz_helpers = { path = "shared/veusz_helpers", editable = true }
 pygeomag = ">=1.1.0,<2"
 
 [tool.pixi.feature.notebook.dependencies]
@@ -218,15 +221,15 @@ absioras-third_party-wafo = { path = "third_party/wafo", editable = true }
 
 # Environments
 [tool.pixi.environments]
-tcm = { features = ["tcm"], solve-group = "default" }
-default = { features = ["ocean", "tcm", "notebook", "arc", "get_datasets", "legacy", "test"], solve-group = "default" }
+default = { features = ["ocean", "tcm", "notebook", "meta_finder", "get_datasets", "legacy", "test"], solve-group = "default" }
 # legacy = { features = ["ocean", "notebook", "legacy"], solve-group = "default" }
 exp= { features = ["experimental"], solve-group = "default" }
-manage = { features = ["arc", "manage"], solve-group = "default" }
-noh5 = { features = ["noh5"], solve-group = "noh5" }
-noh5-tcm = { features = ["noh5", "tcm"], solve-group = "noh5" }
-noh5-tcm-gui = { features = ["noh5", "tcm", "tk-gui", "browser"], solve-group = "noh5" }
-bin-optim-tcm = { features = ["noh5", "bin-optim", "tcm", "test", "tk-gui", "browser"], solve-group = "noh5" }
+meta = { features = ["meta_finder"], solve-group = "tcm" }
+tcm = { features = ["tcm"], solve-group = "tcm" }
+noh5 = { features = ["noh5"], solve-group = "tcm" }
+noh5-tcm = { features = ["noh5", "tcm"], solve-group = "tcm" }
+noh5-tcm-gui = { features = ["noh5", "tcm", "tk-gui", "browser", "meta_finder"], solve-group = "tcm" }
+bin-optim-tcm = { features = ["noh5", "bin-optim", "tcm", "test", "tk-gui", "browser", "meta_finder"], solve-group = "tcm" }
 
 [tool.pixi.tasks]
 test = "pytest tests/"

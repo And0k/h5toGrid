@@ -2,7 +2,7 @@
 
 Provides raw/processed netCDF persistence with incremental-update support
 and NC log table I/O (replacing HDF5 log tables).
-Replaces HDF5-based storage from ``_dask_legacy`` with netCDF4.
+Replaces HDF5-based storage with netCDF4.
 """
 
 from __future__ import annotations

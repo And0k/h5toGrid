@@ -4,9 +4,6 @@ Calibration visualisation — 3-D ellipsoid plots and channel diagnostics.
 All matplotlib code is isolated here so that core math modules
 (:mod:`tcm.calibration.calibrate`, :mod:`tcm.calibration.spatial_binning`)
 stay dependency-free.
-
-Ported from ``tcm._dask_legacy.incl_calibr_hy`` (``plotEllipsoid``,
-``calibrate_plot``, ``axes_connect_on_move``, ``filter_channes`` plot parts).
 """
 from __future__ import annotations
 

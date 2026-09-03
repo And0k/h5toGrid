@@ -40,6 +40,18 @@ the selected tab.
 If the search fails (the path cannot be resolved), the top search field turns
 **red**; a new search or a successful scan restores the normal color.
 
+### Parent paths and the anchor dropdown
+
+A cruise root (e.g. `B:\Cruises\BalticSea`) contains many `_raw` anchors.
+The scan first tries the entered path shallowly; on a miss it enumerates
+device directories via `meta_finder` filter and fills the **inherent
+dropdown of the path field** with all anchors (`1. …\_raw`, `2. …\_raw`, …).
+The caption left of the field shows the selected anchor's **number** (e.g.
+`3`); any manually typed path that is not in the list restores the default
+caption. The first anchor is auto-selected for tab-fill (`cfg_proc/run`
+lives per `_raw`), and any other anchor is one dropdown pick away — picking
+rescans that single `_raw`.
+
 ### 2. Edit coefficients
 
 Each tab shows a treeview with the config's parameters:

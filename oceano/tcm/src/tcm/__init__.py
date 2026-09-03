@@ -12,6 +12,5 @@ from . import (
     schema,
     to_omegaconf,
     utils_time,
-    utils_time_corr,
-    veuszPropagate,
+    utils_time_corr
 )

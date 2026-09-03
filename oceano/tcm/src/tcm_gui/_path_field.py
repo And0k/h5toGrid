@@ -122,6 +122,7 @@ class PathField(ttk.Frame):
         self._pre_edit = ""
         self._editing = False
         self._entry: ttk.Entry | None = None
+        self._expand_once = False  # label/Up-Down expand bypasses the pointer-band check once
         self._hovering = False
         self._btn_w: int | None = None
         # Hover status: doc-driven from the config_reference ``path_field``
@@ -191,6 +192,14 @@ class PathField(ttk.Frame):
                 ("end_edit_cell", self._on_end_edit),
             ]
         )
+        # Combobox UX: Up/Down on the cell expands an attached dropdown.
+        # tksheet's own Up/Down navigation is bound first and returns "break",
+        # swallowing later handlers — drop it on this 1×1 cell (selection has
+        # nowhere to move) and own the keys. Fires only with canvas focus
+        # (Entry / open popup own their keys).
+        for _seq in ("<Up>", "<Down>"):
+            self.sh.MT.unbind(_seq)
+            self.sh.MT.bind(_seq, self._on_expand_key, add="+")
         # Shift key swaps placeholder: simple ↔ advanced pattern hint.
         # Bind on toplevel — tksheet canvas has no keyboard focus on hover.
         # Swap only fires when pointer is inside the PathField frame.
@@ -222,7 +231,15 @@ class PathField(ttk.Frame):
         self._ov.schedule_show = self._patched_schedule_show
         self._orig_hide = self._ov.hide
         self._ov.hide = self._patched_hide
-        self._binder = SheetHoverBinder(self.sh, self._ov, lambda _e: self._place_kw())
+        # Esc/close of the tksheet editor or dropdown must never leave a
+        # blank field: opening either scrolls the 4096 px column into view
+        # (viewport jumps left) while the shrunk layout keeps right-aligned
+        # text at the far right — after close the data is intact but the
+        # canvas shows empty space (only the next hover transition masked
+        # this by re-scrolling). Restore the viewport on every close.
+        self._orig_hide_editor_dropdown = self.sh.MT.hide_text_editor_and_dropdown
+        self.sh.MT.hide_text_editor_and_dropdown = self._patched_hide_editor_dropdown
+        self._binder = SheetHoverBinder(self.sh, self._ov, self._hover_place_kw)
         self.bind("<Configure>", self._on_configure, add="+")
         self.pack_propagate(False)
         self.sh.pack(fill="both", expand=True)
@@ -289,8 +306,37 @@ class PathField(ttk.Frame):
         self._orig_ss(*a, **kw)
 
     def _patched_hide(self) -> None:
-        self._restore_default_layout()
+        # Frozen while the dropdown list is open — restoring would scroll
+        # the canvas under it (the overflow list is positioned once, at open).
+        # Edit-start always lands here list-closed.
+        try:
+            dd_open = bool(self.sh.MT.dropdown.open)
+        except Exception:
+            dd_open = False
+        if not dd_open:
+            self._restore_default_layout()
         self._orig_hide()
+
+    def _patched_hide_editor_dropdown(self, redraw: bool = True) -> None:
+        """Close tksheet editor/dropdown, then re-show the value (never blank).
+
+        Covers every close path — Esc in the editor (``close_text_editor``),
+        Esc/FocusOut on the list (``close_dropdown_window``), click-away
+        commit: the original hides + refreshes, then the viewport is
+        re-scrolled to the value end (shrunk layout) or start (default).
+        Skipped while the custom Entry owns the canvas.
+        """
+        self._orig_hide_editor_dropdown(redraw=redraw)
+        try:
+            if self._editing or self._entry is not None:
+                return
+            if self._hovering:
+                self._scroll_to_right()
+            else:
+                self._scroll_to_left()
+            self.sh.redraw()
+        except Exception:
+            pass
 
     def _on_configure(self, _event) -> None:
         if self._editing:
@@ -443,13 +489,71 @@ class PathField(ttk.Frame):
         if self._entry is not None:
             self._commit_entry(cancel=True)
 
+    def expand_dropdown(self) -> None:
+        """Programmatically expand the cell dropdown (label click, Up/Down keys).
+
+        Bypasses the pointer-band check (`_is_dropdown_expand` would fail —
+        the pointer is on the label, not the arrow) — tksheet's own ``"rc"``
+        opener event drives ``open_dropdown_window`` through the normal gate.
+        No-op without an attached dropdown, while editing, or already open.
+        """
+        try:
+            mt = self.sh.MT
+            if self._editing or self._entry is not None or mt.dropdown.open:
+                return
+            if not mt.get_cell_kwargs(mt.datarn(0), mt.datacn(0), key="dropdown"):
+                return
+        except Exception:
+            return
+        self._expand_once = True
+        try:
+            mt.open_dropdown_window(0, 0, event="rc")
+        finally:
+            self._expand_once = False
+
+    def toggle_dropdown(self) -> None:
+        """Label-click toggle: close the open list, else expand it."""
+        try:
+            if self.sh.MT.dropdown.open:
+                self.sh.MT.close_dropdown_window()
+                return
+        except Exception:
+            pass
+        self.expand_dropdown()
+
+    def _on_expand_key(self, _event) -> str | None:
+        """Up/Down on the cell → expand an attached dropdown (combobox UX)."""
+        try:
+            mt = self.sh.MT
+            if self._editing or self._entry is not None or mt.dropdown.open:
+                return None
+            if not mt.get_cell_kwargs(mt.datarn(0), mt.datacn(0), key="dropdown"):
+                return None
+        except Exception:
+            return None
+        self.expand_dropdown()
+        return "break"
+
     # ── edit lifecycle (Entry overlay) ─────────────────────────────
     def _on_begin_edit(self, event) -> str | None:
         """Open a ``ttk.Entry`` over the cell instead of tksheet's editor.
 
+        An arrow click on a dropdown cell expands the list instead (see
+        :meth:`_is_dropdown_expand`): tksheet's ``open_dropdown_window``
+        gates the list on ``open_text_editor`` succeeding, so vetoing here
+        would open the Entry while the list never appears.
+
         Returns ``None`` to veto tksheet's built-in editor — we handle
         editing entirely through the Entry.
         """
+        if self._is_dropdown_expand(event):
+            # Double-click-like state: full-width layout, no button/overlay —
+            # tksheet's editor opens over the cell with the current value
+            # visible (a frozen shrunk layout hid it: viewport left while
+            # right-aligned text sat at the far right of the wide column).
+            self._restore_default_layout()
+            self._orig_hide()  # button off, layout frozen full-width — the list opens left-aligned
+            return self.get()  # let tksheet open its editor + list — no Entry, no side effects
         self._editing = True
         # Clear placeholder so the user starts with an empty field.
         if self._ph.active:
@@ -471,6 +575,37 @@ class PathField(ttk.Frame):
             if self._on_end_edit_cb is not None:
                 self._on_end_edit_cb()
         return None  # veto tksheet's tk.Text editor
+
+    def _is_dropdown_expand(self, event) -> bool:
+        """True for a programmatic expand or a click with the pointer on the cell's dropdown arrow.
+
+        tksheet expands a list only from an arrow-band click (``MT.b1_release``
+        → ``open_cell`` → ``open_dropdown_window``), while double-click /
+        Return / typing must keep the custom Entry. The synthesized
+        ``begin_edit_cell`` dict carries no pointer info, so re-derive the
+        same band tksheet checks (right ``table_txt_height + 4`` px of the
+        cell) from the live pointer — the handler runs synchronously inside
+        the click, so the pointer is still there. EAFP: any anomaly → manual
+        edit, never a spurious expand.
+        """
+        try:
+            if self._expand_once:  # programmatic expand (label click, Up/Down) — no pointer needed
+                return True
+            if (event.key or "") != "??":  # keyboard activation → manual Entry edit
+                return False
+            row, column = event.row, event.column
+            mt = self.sh.MT
+            if not mt.get_cell_kwargs(mt.datarn(row), mt.datacn(column), key="dropdown"):
+                return False
+            pointer = (mt.winfo_pointerx() - mt.winfo_rootx(), mt.winfo_pointery() - mt.winfo_rooty())
+            if mt.identify_row(y=pointer[1], allow_end=False) != row:
+                return False
+            if mt.identify_col(x=pointer[0], allow_end=False) != column:
+                return False
+            edge = mt.col_positions[column + 1]
+            return edge - mt.table_txt_height - 4 < mt.canvasx(pointer[0]) < edge - 1
+        except Exception:
+            return False
 
     def _open_entry(self) -> None:
         """Create and place a ``ttk.Entry`` filling the PathField frame."""
@@ -533,6 +668,24 @@ class PathField(ttk.Frame):
             self.after_idle(lambda v=value: self._on_commit(v))
 
     # ── hover policy ──────────────────────────────────────────────
+    def _hover_place_kw(self, _event) -> dict[str, Any] | None:
+        """Overlay anchor, or None (hide) while editing or the dropdown list is open.
+
+        Motion during Entry editing would re-shrink the sheet under the open
+        Entry; the button floats at the cell's top-right, above an open
+        list's first rows. Hiding keeps full-width layout + bare canvas until
+        commit/cancel/close; the next motion re-shows.
+        `SheetHoverBinder` hides on None.
+        """
+        if self._editing:
+            return None
+        try:
+            if self.sh.MT.dropdown.open:
+                return None
+        except Exception:
+            pass
+        return self._place_kw()
+
     def _place_kw(self) -> dict[str, Any]:
         return {"in_": self, "relx": 1.0, "rely": 0.0, "x": -2, "anchor": "ne"}
 

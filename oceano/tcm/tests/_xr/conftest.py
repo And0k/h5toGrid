@@ -53,7 +53,7 @@ def _make_sensor_data(n: int = 10, tilt_deg: float = 10.0, heading_deg: float = 
 
 @pytest.fixture
 def sensor_df() -> pd.DataFrame:
-    """pandas DataFrame with synthetic sensor data (legacy format)."""
+    """pandas DataFrame with synthetic sensor data."""
     Ax, Ay, Az, Mx, My, Mz = _make_sensor_data()
     idx = pd.date_range("2024-01-01", periods=len(Ax), freq="s", name="time")
     return pd.DataFrame({"Ax": Ax, "Ay": Ay, "Az": Az, "Mx": Mx, "My": My, "Mz": Mz}, index=idx)

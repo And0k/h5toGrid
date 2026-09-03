@@ -25,7 +25,7 @@ glob, or regex.
 
 | Input form | Behavior |
 |------------|----------|
-| Directory (e.g. `"_raw/"`) | Scans for `i*.txt` (case-insensitive default) |
+| Directory (e.g. `"_raw/"`) | Scans for `i*.txt` (case-insensitive default); a single `_raw` is processed, a parent with several `_raw` anchors is listed for selection (GUI) or rejected with a hint (CLI: pick one anchor) |
 | Glob (e.g. `"*i*.txt"`) | Glob matching — wildcards trigger glob mode |
 | Regex (e.g. `"i.*\.txt"`) | Regex matching — escaped dots, `\|`, `(...)` trigger regex mode |
 | `.yaml` path | Loads pre-built configs directly, skips discovery |

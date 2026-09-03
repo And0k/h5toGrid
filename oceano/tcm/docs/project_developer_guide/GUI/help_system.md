@@ -14,7 +14,7 @@ Two independent help sources — one per widget category:
 | Source | Widgets | Key derivation | i18n mechanism |
 |---|---|---|---|
 | `STR` (``const.py``) | Chrome widgets (`self._path_lbl`, `_path_field`, `_overall_lbl`, `_run_btn`) + dynamic tabs | Attribute name → role (aliased via `_CHROME_ALIAS`) → ``STR["{role}.tooltip"]`` / ``STR["{role}.status"]`` | Replace ``STR`` dict wholesale at build for target language |
-| ``_help.py`` (``config_reference.md``) | Config cells (``_meta[iid]["path"]`` keys) + PathField statuses | ``help_for_path(strip_index(path)).short`` | Replace ``config_reference_<lang>.md`` |
+| ``_help.py`` (``config_reference.md``) | Config cells (``_meta[iid]["path"]`` keys) + PathField statuses | ``section_body_short(help_for_path(strip_index(path)))`` | Replace ``config_reference_<lang>.md`` |
 
 Companion pages: [GUI Architecture](architecture.md) ·
 [GUI Widgets](widgets.md) ·
@@ -80,9 +80,16 @@ hover-time read reflects the live state and language.
 ## Config cells: doc-driven hover (no widget_meta needed)
 
 Config cells have ``_meta[iid]["path"]`` (dotted Hydra path) — that IS the
-help key.  ``_sheet_status._publish_status`` (via `ConfigSheet`) calls ``help_for_path(path)``,
-which returns a ``HelpEntry(short, body)`` parsed once from the tables in
-``config_reference.md``:
+help key.  ``_sheet_status._publish_status`` (via `ConfigSheet`) calls
+``section_body_short(help_for_path(path))``, which returns the ``###`` section
+lead-in text (the "section status below the table") when present, falling back
+to the table-row last cell.  The text is cleaned before display:
+``[↓](#anchor)`` links (arrow-only, no useful display text) are stripped, and
+when H5 is unavailable (``_constants.H5_AVAILABLE`` is ``False``), lines
+mentioning ``HDF5`` or ``NetCDF`` are dropped from status/tooltip text.  Both
+cleanups run once at parse time in ``_help._clean_text`` — every display path
+benefits automatically.  ``help_for_path`` returns a ``HelpEntry(short, body)``
+parsed once from the tables in ``config_reference.md``:
 
 1. Parser walks lines, tracking code-fence state and ``## `section` `` headings
    (``input``, ``input.coefs``, ``out``, ``filter``, ``program``).
@@ -109,9 +116,21 @@ which returns a ``HelpEntry(short, body)`` parsed once from the tables in
 6. Array indices stripped at lookup time: ``Ag[0]`` / ``Ag[1][2]`` → ``Ag``.
 
 Fallback chain in ``_publish_status`` (now in ``_sheet_status``):
-``help_for_path(candidate).short`` → ``key`` / ``label`` / ``path`` (no `hover_status` cache — `time_ranges` detail is live via `_time_ranges_detail`).
+``section_body_short(help_for_path(candidate))`` → ``key`` / ``label`` / ``path`` (no `hover_status` cache — `time_ranges` detail is live via `_time_ranges_detail`).
 No ``set_widget_meta`` calls on config cells — the entire chain is read-only
 from the parsed doc.
+
+**Text cleaning** — ``_help._clean_text`` runs once at parse time over every
+assembled text (table-row cells, section lead-in, detail blocks, post-heading
+paragraphs, section subtitles) so all display paths benefit:
+
+* ``[↓](#anchor)`` markdown links are stripped — the arrow is a doc-internal
+  "see detailed section below" marker with no useful display text in a status
+  bar or tooltip.
+* When ``_constants.H5_AVAILABLE`` is ``False`` (no h5py/pytables), lines
+  containing ``HDF5`` or ``NetCDF`` (case-insensitive) are dropped — keeps
+  status/tooltip text relevant to the no-h5 distribution without separate
+  doc variants.
 
 **Tree column vs data cells**: the tree column renders on tksheet's RI (Row
 Index) canvas, which is separate from the MT canvas.  ``_on_tree_motion``
@@ -220,7 +239,7 @@ To add a new mode: (1) add a ``### `field.path` <mode>new_mode</mode>``
 subsection in ``config_reference.md``; (2) call ``help_for_path(path,
 mode="new_mode")`` in the consumer.
 
-## Field-level `#### Detailed` blocks (legacy, no `###` section)
+## Field-level `#### Detailed` blocks (no `###` section)
 
 Fields may also carry a ``#### Detailed`` block directly under the ``##
 section`` heading — **after** all table rows.  All current docs use explicit

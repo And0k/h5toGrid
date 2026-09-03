@@ -193,7 +193,7 @@ def track_probe_closure(b_input_is_h5, b_from_processed_db=False):
 
 
 # ---------------------------------------------------------------------------
-# Probe identity from filename (extracted from csv_specific_proc)
+# Probe identity from filename
 # ---------------------------------------------------------------------------
 
 century = b"20"

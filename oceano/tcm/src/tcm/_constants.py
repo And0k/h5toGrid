@@ -5,6 +5,7 @@ Single source of truth for
 - optional-dependency availability flags
 - build metadata (version, URLs) via :func:`version_meta`
 """
+
 from __future__ import annotations
 
 import json
@@ -32,6 +33,7 @@ TABLES_AVAILABLE: bool = _tables is not None
 
 try:
     import netCDF4 as _netCDF4
+
     nc_engine = "h5netcdf"  # "netcdf4"
 except ImportError:
     _netCDF4 = None
@@ -39,10 +41,21 @@ except ImportError:
 NC4_AVAILABLE: bool = _netCDF4 is not None
 """Whether ``netCDF4`` is importable (xarray NC engine)."""
 
-# Supported extensions grouped by backend
+# Supported extensions grouped by backend — single source of truth, mirrors
+# ``meta_finder.config.extensions_text|extensions_hdf5|extensions_archive`` so
+# discovery, table enumeration and binary dispatch see the same sets.
 EXT_CSV = {".txt", ".csv", ".tsv"}
-EXT_HDF5 = {".h5"}  # , ".hdf5" not need
-EXT_NC = {".nc"}  # , ".nc4" not need
+EXT_HDF5 = {".h5", ".hdf5", ".mat"}
+EXT_NC = {".nc"}
+ARCHIVE_EXTS = {".zip", ".7z"}
+"""Archive extensions — zip + 7z, mirrors ``meta_finder.config.extensions_archive``."""
+
+# Available extensions given current installation — HDF5/NC require h5py
+# (NC depends on HDF5 stack, so both are hidden when H5 is unavailable).
+EXT_HDF5_AVAILABLE = EXT_HDF5 if H5_AVAILABLE else set()
+EXT_NC_AVAILABLE = EXT_NC if H5_AVAILABLE else set()
+EXT_DATA_AVAILABLE = EXT_CSV | EXT_HDF5_AVAILABLE | EXT_NC_AVAILABLE
+"""All data extensions that can actually be processed in this environment."""
 
 # ---------------------------------------------------------------------------
 # Project root paths

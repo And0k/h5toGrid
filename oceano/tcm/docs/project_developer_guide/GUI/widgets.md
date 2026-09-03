@@ -100,6 +100,8 @@ built-in `tk.Text` editor, then places a `ttk.Entry` filling the
 PathField frame (`relx=0, rely=0, relwidth=1, relheight=1`).
 The Entry has `justify="right"` so the cursor starts at the filename
 end.  Enter commits, Esc cancels — same contract as a tksheet cell.
+Exception: an arrow-band click on a dropdown cell (`_is_dropdown_expand`)
+returns the cell text instead — yielding to tksheet's list, no Entry.
 
 ### Why `ttk.Entry` instead of tksheet's `tk.Text` editor
 
@@ -125,6 +127,8 @@ tksheet mechanism for custom editor implementations.
 _double-click / keypress_
   → tksheet fires begin_edit_cell
   → _on_begin_edit:
+      _is_dropdown_expand?       # click + pointer in arrow band + dropdown kwargs
+        → return get()           # YIELD: tksheet opens its editor + list, no Entry
       _editing = True
       _pre_edit = get()           # snapshot for Esc-undo
       _ov.hide()                  # hide browse overlay (+ restore left-align)
@@ -178,6 +182,58 @@ canvas), placed via `place(in_=self, relx=1.0, x=-2, anchor="ne")`.
 Destroys the Entry if open (no-op otherwise).  Used by
 `ConfigSheet._hide_hover_field` and `_show_hover_field` to hand off
 between rows cleanly.
+
+## Numbered anchor dropdown (`_numbered_dropdown.py`)
+
+Inherent tksheet dropdown on the §1 path cell `(0, 0)` — no separate
+combobox. `NumberedPathDropdown(sheet, 0, 0, paths, number_label=_path_lbl,
+default_text=…, on_select=…)` shows `1. …\_raw`, `2. …\_raw`, … while the
+cell keeps the unnumbered path. The ordinal lives in the existing path
+caption: `selected/total` on exact dropdown match, default caption otherwise.
+`set_paths()` replaces the list on parent `scan_list`; `refresh()` re-reads
+the cell after programmatic `set()` (which bypasses `end_edit_cell`).
+Dropdown selection strips the `N. ` prefix, updates the number, and calls
+`on_select(path)` → path-field `set` + rescan of that single `_raw`.
+Manual typing via the `ttk.Entry` overlay refreshes the number in
+`App._on_path_changed`. No `Demo` — the module is library-only.
+
+Display/value split mechanics (tksheet writes display strings back, so each
+is neutralized): attach passes `edit_data=False` (attaching never rewrites
+the cell with the first numbered value); selection writes the stripped path
+into `event["value"]` (`close_dropdown_window` commits it after
+`selection_function` returns); `end_edit_cell` chains the previously bound
+handler (`extra_bindings` is a single slot — `PathField._on_end_edit` must
+survive); `set_paths([])` calls `del_dropdown` so the arrow offers no stale
+anchors. Click-to-expand needs the PathField yield above: tksheet's
+`open_dropdown_window(state="normal")` gates the list on `open_text_editor`
+succeeding, and the veto made every arrow click open the Entry instead.
+Openers beyond the arrow: caption click (toggles — `PathField.toggle_dropdown`;
+`hand2` once anchors arrive) and
+Up/Down (`PathField.expand_dropdown` drives tksheet's `"rc"` opener;
+tksheet's own Up/Down are unbound on the 1×1 cell since their `"break"`
+swallows later handlers — stock never routes editor arrows to its list, so
+the patch steps the highlight itself (`_step_open_list`) and skips filter
+research on navigation releases); the pick commits with `redraw=True` so the
+field updates synchronously.
+Overlay coexistence (the open Entry used to swallow all arrow clicks —
+self-perpetuating): edit start restores full-width layout via the patched
+hide (arrow scrolls off-screen, so the full-frame Entry never covers it);
+binder motion returns None while `_editing` (no re-shrink under the open
+Entry, no button); expand restores the same full layout (tksheet's editor
+opens over the cell with the value visible) and calls `_orig_hide`
+(button off); `_patched_hide`
+skips restore while `dropdown.open` (no canvas jump under the open list).
+Every tksheet editor/dropdown close (Esc, FocusOut, click-away) re-scrolls
+the viewport to the value end/start (`_patched_hide_editor_dropdown` —
+opening scrolls the wide column left while the shrunk layout keeps
+right-aligned text at the far right, which blanked the field until the
+next hover masked it).
+Floated ConfigSheet fields are unaffected (null overlay, never a dropdown).
+The list itself escapes via `_dropdown_overflow.enable_dropdown_overflow`
+(tksheet embeds it in the 1-row canvas — measured 1 px tall): width
+`max(visible field width, widest path + padding)` capped at the screen,
+always left-aligned, height for all items capped at the window bottom.
+Regression coverage: `test_numbered_dropdown_expand.py`.
 
 ## Floated PathField in ConfigSheet (`coef_sheet.py`)
 
@@ -403,7 +459,9 @@ share one vertical extent per config:
 [progress column (PROG_W)] [tab column (TAB_W)]
   thin vertical fill          rotated label (angle=90, reads bottom→up)
   grows top→down              selection accent on notebook-facing edge
-  color by state              dirty `*` suffix, ✔ on done
+  color by state              dirty `*` in top-left corner (separate text;
+                              config-only → config bg, meta-only → meta bg,
+                              both → FG), ✔ on done
 ```
 
 ### Sizing policy

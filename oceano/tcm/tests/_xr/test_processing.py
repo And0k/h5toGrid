@@ -18,16 +18,16 @@ from tcm import format as _format
 
 @pytest.mark.xr
 class TestGetCoefsFromCfg:
-    """get_coefs_from_cfg: coefs_path fallback, override merge, list→ndarray."""
+    """get_coefs_from_cfg: coefs.path fallback, override merge, list→ndarray."""
 
-    def test_fallback_to_class_default_coefs_path(self, mocker):
-        """When cfg_in has no coefs_path, falls back to ConfigInCoefs_InclProc.path."""
+    def test_fallback_to_class_default_path(self, mocker):
+        """When cfg_in has no coefs.path, falls back to ConfigInCoefs_InclProc.path."""
         mock_get = mocker.patch.object(_coefs, "get_coefs", return_value={"Ag": np.eye(3)})
         get_coefs_from_cfg({}, "i_01")
         assert ConfigInCoefs_InclProc.path in mock_get.call_args[0][0]
 
-    def test_explicit_coefs_path_used_first(self, mocker):
-        """When cfg_in has coefs_path, it appears before the class default."""
+    def test_explicit_path_used_first(self, mocker):
+        """When cfg_in.coefs has path, it appears before the class default."""
         mock_get = mocker.patch.object(_coefs, "get_coefs", return_value={"Ag": np.eye(3)})
         get_coefs_from_cfg({"coefs": {"path": "/custom/path.h5"}}, "i_01")
         paths = mock_get.call_args[0][0]
@@ -74,7 +74,7 @@ class TestGetCoefsFromCfg:
         assert mock_get.call_args[0][0][-1] == expected_yaml_dir
 
     def test_yaml_export_not_duplicated_with_explicit_path(self, mocker):
-        """Explicit ``coefs_path`` already pointing at ``yaml_export`` dir → no duplicate append."""
+        """Explicit ``coefs.path`` already pointing at ``yaml_export`` dir → no duplicate append."""
         mock_get = mocker.patch.object(_coefs, "get_coefs", return_value={})
         yaml_dir = ConfigInCoefs_InclProc.path.parent / "yaml_export"
         get_coefs_from_cfg({"coefs": {"path": str(yaml_dir)}}, "i_01")
@@ -115,9 +115,9 @@ class TestGetCoefsArrayConversion:
 
 @pytest.mark.xr
 class TestCoefsPTsupersession:
-    """``P_t`` (2-D pressure-T polynomial) silently supersedes legacy scalars
+    """``P_t`` (2-D pressure-T polynomial) silently supersedes old scalars
     ``P``, ``PBattery``, ``PTemp``. The pressure pipeline only uses ``P_t``,
-    so the legacy defaults must not error/warn when ``P_t`` is provided."""
+    so the old defaults must not error/warn when ``P_t`` is provided."""
 
     def test_P_t_in_override_suppresses_scalar_missing_warn(self, caplog):
         """P_t in coefs_ovr for pressure probe → no warn about P/PBattery/PTemp missing."""

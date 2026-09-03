@@ -178,7 +178,7 @@ if st(20, 'Coefficients to convert inclination to |V| and zero calibration (not 
     because of zero calibration is in vsz too).
     """
     from h5from_veusz_coef import main as h5from_veusz_coef
-    # from utils.veuszPropagate import __file__ as file_veuszPropagate
+    # from veusz_helpers.veuszPropagate import __file__ as file_veuszPropagate
     vsz_data = {'veusze': None}
     for i, tbl in enumerate(tables_raw):
         # incl_calibr not supports multiple time_ranges so calculate one by one p_num

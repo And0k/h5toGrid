@@ -19,7 +19,7 @@ tcm/
 - Pixi tasks `browser-runtime` (auto-materialize; dependency of `build-tcm-gui*`)
   and `browser-runtime-update` (manual bump to `@latest`); `lock`/`clean` run the
   script directly. Node comes from the pixi `browser` feature (`bin-optim-tcm`).
-- The viewer page was extracted from the old embedded f-string into
+- The viewer page lives in
   `src/tcm_gui/browser/web/` plain files; the `bs`-escape machinery is gone.
   Third-party files are served under `/assets/` from `_build/browser-runtime`.
 - Fixes landed with this change: .py/source files no longer render an empty page

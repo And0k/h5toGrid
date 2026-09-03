@@ -37,7 +37,7 @@ def _reference_velocity_pipeline(
     azimuth_shift_deg=0.0,
     calc_version="trigonometric(incl)",
 ):
-    """Pure-numpy reference — mirrors _dask_legacy without dask/despike/recovery."""
+    """Pure-numpy reference — mirrors old pipeline without dask/despike/recovery."""
     Axyz = np.vstack([Ax, Ay, Az]).astype(float)
     Mxyz = np.vstack([Mx, My, Mz]).astype(float)
     Gxyz = fG(Axyz, Ag, Cg)
@@ -45,7 +45,7 @@ def _reference_velocity_pipeline(
     incl = tilt_from_vertical(Gxyz)
     GsumMinus1 = np.linalg.norm(Gxyz, axis=0) - 1
     Vabs = v_abs_from_incl(incl, kVabs, calc_version=calc_version)
-    # Vdir formula from _dask_legacy (with GsumMinus1+1 correction)
+    # Vdir formula from old pipeline (with GsumMinus1+1 correction)
     Vdir = azimuth_shift_deg - np.degrees(
         np.arctan2(
             (Gxyz[0, :] * Hxyz[1, :] - Gxyz[1, :] * Hxyz[0, :]) * (GsumMinus1 + 1),

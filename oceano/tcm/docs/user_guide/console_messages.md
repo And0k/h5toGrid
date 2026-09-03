@@ -58,6 +58,9 @@ At INFO level:
 
 | Message pattern | Meaning |
 |----------------|---------|
+| `Worker scan trigger={path}` | Scan entry — the original path before any anchor resolution |
+| `Scan list for parent trigger={path} → N anchors` | Parent directory resolved to N `_raw` anchors (dropdown filled) |
+| `Processing trigger={path} dir_raw={path}` | Single-anchor run entry (run handles one `_raw` only) |
 | `Config generation: regenerating N stale configs` | Source files changed; configs regenerated |
 | `Discovered N file groups from {path}` | Source files found during discovery |
 | `{pcid}: info_devices [{start}, {end}]` | Time range from metadata for this probe |
@@ -70,6 +73,8 @@ At WARNING level only when anomalies exceed thresholds:
 
 | Message pattern | Meaning |
 |----------------|---------|
+| `Burst for {pcid}: burst_dt={} bursts_t={}` | Burst gaps detected (`>max(10, 2·avg)`); stored to `info_devices.yaml`, not `input` |
+| `Time extraction failed for {pcid} (both TCM and meta_finder)` | **Warning**: neither TCM edge rows nor meta_finder time info yielded a range |
 | `time correction: N/M monotone; X% removed; correction [min, max]s` | Clean correction — no action needed |
 | `time correction: N/M monotone (in-range=K); X% removed (spikes=S, backward=B); ...; A pts > alarm Thr` | **Warning**: significant time anomalies — check diagnostics |
 | `diagnostics {path} saved (N events): HOLE=..., ALARM=...` | Diagnostics NPZ saved for detailed analysis |

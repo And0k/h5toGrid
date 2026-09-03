@@ -10,7 +10,6 @@ from itertools import chain
 from collections import defaultdict
 
 from meta_finder import config
-from meta_finder.hdf5_processor import extract_devices_from_hdf5_groups, find_hdf5_files
 from meta_finder.parse_data_file_name import (
     parse_filename_for_metadata,
     normalize_device_id,
@@ -226,6 +225,82 @@ def find_raw_directory_files(
     else:
         logger.info(f"Found no devices from {device_dir.name}/_raw directory")
     return result
+
+
+def find_raw_files_recursive(
+    raw_dir: Path,
+    ptn: re.Pattern | None = None,
+) -> list[tuple[Path, PurePosixPath]]:
+    """Recursively enumerate candidate data files for the tcm pipeline.
+
+    Walks ``raw_dir.rglob("*")`` and returns a sorted flat list of
+    ``(dir_archive, rel_path)`` pairs. For loose files ``dir_archive`` is the
+    parent directory and ``rel_path`` the filename; for archive members
+    ``dir_archive`` is the archive file itself and ``rel_path`` the inner
+    posix path. Archives are enumerated (not extracted) via
+    :func:`meta_finder.utils_sys.gen_from_archive`.
+
+    Filtering accepts extensions in ``config.extensions_text |
+    config.extensions_hdf5 | config.extensions_archive``. *ptn*, when given,
+    is matched against ``f.name`` / ``rel.name`` with the same ``@``-prefix
+    handling as :func:`tcm.csv_load.search_csv_files` (try both ``name`` and
+    ``name[1:]`` when it starts with ``@``); for H5 members the stem is
+    retried as ``.txt`` so the default ``i.*\\.txt`` pattern still matches.
+
+    This function intentionally does **not** reuse
+    :func:`find_raw_directory_files`: that one groups by parsed device id
+    and returns ``Dict[dev_id, Dict[dir_or_archive, List[rel_path]]]``,
+    while callers here need a single flat, ordered stream of file pairs to
+    feed pattern-based search without device parsing.
+
+    :param raw_dir: directory to search recursively.
+    :param ptn: optional compiled regex; when ``None`` every supported file passes.
+    :return: sorted list of ``(dir_archive, rel_path)`` pairs.
+    """
+    raw_dir = Path(raw_dir)
+    out: list[tuple[Path, PurePosixPath]] = []
+
+    def _matches(name: str, ext: str = "") -> bool:
+        if ptn is None:
+            return True
+        stripped = name[1:] if name.startswith("@") else name
+        if ptn.match(stripped) or ptn.match(name):
+            return True
+        # H5 fallback: default pattern i.*\.txt should also match i_*.h5 etc.
+        if ext in config.extensions_hdf5:
+            alt = str(Path(name).with_suffix(".txt"))
+            alt_stripped = str(Path(stripped).with_suffix(".txt"))
+            if ptn.match(alt) or ptn.match(alt_stripped):
+                return True
+        return False
+
+    try:
+        for entry in sorted(raw_dir.rglob("*")):
+            if not entry.is_file():
+                continue
+            ext = entry.suffix.lower()
+            if ext in config.extensions_archive:
+                # Archive entry — enumerate members without extraction
+                try:
+                    for item in utils_sys.gen_from_archive(entry):
+                        if item["is_folder"]:
+                            continue
+                        rel: PurePosixPath = item["rel_path"]
+                        if rel.suffix.lower() not in config.extensions_text:
+                            continue
+                        if not _matches(rel.name, rel.suffix.lower()):
+                            continue
+                        out.append((Path(entry), rel))
+                except Exception:
+                    logger.exception("Error listing contents of archive %s", entry)
+            elif ext in (config.extensions_text | config.extensions_hdf5):
+                if not _matches(entry.name, ext):
+                    continue
+                # Loose file — dir_archive is parent dir, rel is filename
+                out.append((entry.parent, PurePosixPath(entry.name)))
+    except Exception:
+        logger.exception("Error reading raw directory %s", raw_dir)
+    return sorted(out)
 
 
 def extract_device_id_from_raw_file_name(file_name):
@@ -775,6 +850,11 @@ def discover_datafiles_for_all_dev_in_dev_dir(
     # If still no devices found and HDF5 fallback is enabled, try HDF5 files
     # Also try HDF5 if we have devices from _raw to get additional metadata
     if not dev_files or (dev_files and config.extract_hdf5_times):
+        try:
+            from meta_finder.hdf5_processor import extract_devices_from_hdf5_groups, find_hdf5_files
+        except ImportError as _e:
+            logger.debug("HDF5 processor unavailable (%s) — skipping HDF5 fallback", _e)
+            return dev_files
         if not dev_files:
             logger.info("No devices found in text_output or _raw, trying HDF5 files")
         else:

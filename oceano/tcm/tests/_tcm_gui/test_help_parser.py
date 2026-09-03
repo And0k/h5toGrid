@@ -780,13 +780,35 @@ class TestAnchors:
     """Section-heading anchors (GitHub-style slug, ``{#id}`` honored) for F1 help."""
 
     def test_real_doc_section_anchors(self, monkeypatch):
-        from tcm_gui._help import help_for_path, reload_cache
+        """Section-heading anchors match the slug of their ``## `` heading line.
+
+        Computes the expected anchor from the source doc via :func:`slugify`
+        so the test tracks content changes without hardcoding subtitles.
+        """
+        import re
+
+        from tcm_gui._help import _FIELD_SECTIONS, doc_path, reload_cache, slugify
 
         monkeypatch.setattr("tcm_gui._help.resolve_lang", lambda: "en")
         reload_cache("en")
-        assert help_for_path("input").anchor == "input--data-source--parameters"
-        assert help_for_path("input.coefs").anchor == "inputcoefs--calibration-coefficients"
-        assert help_for_path("program").anchor == "program--runtime-flags"
+
+        # Map registered section path → expected anchor (slug of its heading line).
+        expected: dict[str, str] = {}
+        for line in doc_path("en").read_text(encoding="utf-8").splitlines():
+            if not line.lstrip().startswith("## ") or not (m := re.search(r"`(\w[\w.]*)`", line)):
+                continue
+            section = m.group(1)
+            if section not in _FIELD_SECTIONS:
+                continue
+            expected[section] = slugify(line)
+
+        assert expected, "no registered ## section headings found in config_reference.md"
+        entries = reload_cache("en")
+        for section, want in expected.items():
+            assert section in entries, f"section '{section}' missing from parsed doc"
+            assert entries[section].anchor == want, (
+                f"'{section}' anchor {entries[section].anchor!r} != slug of heading line {want!r}"
+            )
 
     def test_field_rows_inherit_section_anchor(self, monkeypatch):
         from tcm_gui._help import help_for_path, reload_cache

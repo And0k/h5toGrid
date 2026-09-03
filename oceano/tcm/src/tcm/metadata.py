@@ -1,158 +1,17 @@
-"""Device metadata helpers extracted from veusz_helpers.common.metadata.
+"""Device metadata helpers.
 
-Provides :func:`get_path_in_parents`, :func:`load_file_meta`, and
-:func:`extract_devices_info` — the only three functions from the external
-``veusz_helpers`` package used by TCM.
-
-The original module depended on ``vsz_func.DictKeyIfNoVal`` (a Veusz-specific
-translation dict with a module-level Windows-registry read).  For the TCM
-distribution we replace it with :class:`_KeyAsDefault`, which returns the key
-itself when missing — identical to the English-locale behaviour of the original.
+Re-exports :func:`get_path_in_parents`, :func:`load_file_meta`, and
+:func:`extract_devices_info` from :mod:`veusz_helpers.common.metadata`.
 """
 
-from collections.abc import Sequence
-from pathlib import Path
+from veusz_helpers.common.metadata import (
+    extract_devices_info,
+    get_path_in_parents,
+    load_file_meta,
+)
 
-import numpy as np
-from utils import log_init
-
-lf = log_init.LoggingStyleAdapter(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-
-class _KeyAsDefault(dict):
-    """Return *key* itself when key is missing — replaces veusz_helpers.DictKeyIfNoVal.
-
-    Used as the *mapping* argument to :meth:`str.format_map` so that any
-    ``{name}`` placeholders in the probe string are replaced with ``name``
-    (braces stripped), matching the English-locale behaviour of the original.
-    """
-
-    def __missing__(self, key: str) -> str:
-        return key
-
-
-_I = _KeyAsDefault()
-
-
-def _meta_array_to_dict(
-    p, b, bd, s, lat=None, lon=None, time_st="", time_en="", burst_dt=None, bursts_t=None
-) -> dict:
-    """Convert a flat metadata array into a labelled dict.
-
-    Keys follow the Veusz ``vsz_drawer`` convention:
-    ``p`` (point/station), ``b`` (bottom depth), ``bd`` (height above bottom),
-    ``s`` (device type&model symbol), ``c`` (coordinates), ``r`` (time range),
-    ``t`` (burst_dt), ``T`` (bursts_t).
-    """
-    return dict(
-        zip(
-            "pbdscrtT",
-            [
-                p.format_map(_I) if p is not None else None,
-                b,
-                None if None in (b, bd) else round(b - bd, 1),
-                s,
-            ]
-            + ([(lat, lon)] if lat else [None])
-            + [(time_st, time_en)]
-            + ([burst_dt, bursts_t] if bursts_t else []),
-        )
-    )
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
-def get_path_in_parents(dir: Path, *file_names, target_is_dir=False) -> Path:
-    """Locate *file_names* by ascending through parent directories.
-
-    :param dir: starting child directory path.
-    :param file_names: candidate file (or directory) names — first match wins.
-    :param target_is_dir: when *True*, match directories instead of files.
-    :returns: resolved :class:`Path` of the first match.
-    :raises FileNotFoundError: when no match is found up to the filesystem root.
-    """
-    while True:
-        for file_name in file_names:
-            file = dir / file_name
-            if file.is_dir() if target_is_dir else file.is_file():
-                return file
-        dir_parent = dir.parent
-        if dir != dir_parent:
-            dir = dir_parent
-        else:
-            raise FileNotFoundError(str(file_names))
-
-
-def load_file_meta(path_in: Path) -> dict:
-    """Load device metadata from a YAML or JSON file.
-
-    YAML files may use nested dicts per station-id — these are collapsed
-    into a single flat list per device (first/last/min/max aggregation).
-
-    :returns: metadata dict, or empty dict on parse/read error (logged as warning).
-    """
-    with path_in.open(encoding="utf8") as f:
-        if path_in.suffix == ".yaml":
-            from yaml import YAMLError, safe_load
-
-            try:
-                content = safe_load(f.read())
-            except YAMLError:
-                lf.warning("Failed to parse {} — returning empty metadata", path_in, exc_info=True)
-                return {}
-            if not content:
-                return {}
-            return {
-                device_id: [
-                    seq[0]
-                    if all(s == seq[0] for s in seq)
-                    else min(seq)
-                    if col == "time_st"
-                    else max(seq)
-                    if col == "time_en"
-                    else np.mean(seq)
-                    if col in ["lat", "lon"]
-                    else ",".join(str(s) for s in seq)
-                    for col, seq in zip(
-                        ["p", "b", "bd", "s", "lat", "lon", "time_st", "time_en", "burst_dt", "bursts_t"],
-                        zip(*meta.values()),
-                    )
-                ]
-                if isinstance(meta, dict)
-                else meta
-                for device_id, meta in content.items()
-            }
-        else:
-            import json
-
-            return json.load(f)
-
-
-def extract_devices_info(meta: dict, devices: Sequence[str]) -> dict:
-    """Map probe IDs to their metadata entries.
-
-    :param meta: ``{device_id: [p, b, bd, s, …]}`` from :func:`load_file_meta`.
-    :param devices: probe IDs to look up (e.g. ``["i01", "i02"]``).
-    :returns: ``{pid: {p: …, b: …, …}}`` for each matching *devices* entry.
-    """
-    device_info: dict[str, dict] = {}
-    for pid_cur in devices:
-        try:
-            pid_array = meta[pid_cur]
-        except KeyError:
-            if not pid_cur or pid_cur[0] == "i":
-                continue
-            try:
-                pid_array = meta[f"i{pid_cur}"]
-            except KeyError:
-                continue
-        device_info[pid_cur] = _meta_array_to_dict(*pid_array)
-    return device_info
+__all__ = [
+    "extract_devices_info",
+    "get_path_in_parents",
+    "load_file_meta",
+]

@@ -10,22 +10,18 @@
 
 ### `path_field`
 
-Search path for raw data / their processing configs: processing configs will be created in `cfg_proc/run/` subfolder if absent.
+Search path for raw data / their processing configs.
 
 #### Detailed
-
-If the path contains a subfolder named `_raw` output files will be one level above.
+Processing configurations will be created, if they don't already exist, in the `cfg_proc/run/` subdirectory.
+Output files will be in the directory above (if the `_raw` subdirectory is in the path, then above it).
 
 ##### Important
 
-The search path must be an absolute path to:
-- a **directory** (e.g. `B:\\Cruises\\BalticSea\\inclinometer\\260624@ip05-Press\\_raw`)
-- raw file(s) via **glob** (`*i*.txt`) / **regex** (`i.*\\.txt`) — file-name filtering
-- config(s) (must end in **`.yaml`**) — load ready configs directly from the `cfg_proc/run/` subfolder
-
-> GUI: a parent directory with several `_raw` anchors fills the path field's
-> inherent numbered dropdown (`1. …`, `2. …`); the caption shows the selected
-> number, and picking an entry rescans that single anchor.
+Enter the absolute path to the:
+- **directory** to search for data with the glob `*i*.txt`, or
+- raw file(s) via **glob** (`*i*.txt`) / **regex** (`i.*\.txt`) of file-names, or
+- config(s) (must end in **`.yaml`**) — load ready configs directly from the `cfg_proc/run/` subfolderEnter the absolute search path - existing configuration/s (must end in **`.yaml`**) from the raw files subfolder `cfg_proc/run/`, which itself contains the path to the data
 
 Expected [input data layout](io_formats.md#directory-layout):
 ```text
@@ -36,10 +32,8 @@ Expected [input data layout](io_formats.md#directory-layout):
 
 ## YAML file and command-line configuration fields (typed configuration via Hydra/OmegaConf)
 
-YAML configs live at `cfg_proc/run/{yymmdd_hhmm}@pcid[-comment].yaml` inside the raw data directory
-(`yymmdd_hhmm` from `input.time_ranges[0]`, absent when no timestamp; pcid is
-canonical, e.g. archive member `i3.txt` → `i03`; source `-comment` preserved),
-next to the source data files.
+YAML configs live at `cfg_proc/run/{source_stem}.yaml` inside the raw data directory,
+next to the `source_stem.{txt or other extension}` files.
 
 All fields are defined in `tcm/schema.py` via the `Config` dataclass and registered groups
 (`input`, `out`, `filter`, `program`).

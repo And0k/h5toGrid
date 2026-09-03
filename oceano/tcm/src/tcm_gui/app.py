@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import re
 import sys
 import traceback
 import tkinter as tk
@@ -11,6 +12,7 @@ from collections.abc import Sequence
 from pathlib import Path, PurePath
 from queue import Empty
 from tkinter import ttk
+from typing import Any
 
 from omegaconf import OmegaConf
 
@@ -23,6 +25,7 @@ from ._about import AboutDialog, local_readme
 from ._browse_button import DATA_FILETYPES, SEARCH_FILETYPES, BrowseButtonManager, _is_shift_pressed
 from ._help import doc_path, help_for_path, help_general_for_path
 from ._i18n import STRINGS as _S, resolve_lang  # Chrome with auto-detection of OS locale if LANG=auto
+from ._numbered_dropdown import NumberedPathDropdown
 from ._path_field import PathField
 from ._rtf_clipboard import copy_rich
 from ._tab_rail import TabRail
@@ -98,6 +101,10 @@ class App:
         # re-attaches it after Hydra's ``dictConfig`` replaces root handlers,
         # so worker-thread logs also reach the queue.
         self.rt.queue_handler = install(self.rt.log_queue, self.rt.pause_gate)
+        # Root defaults to WARNING — pre-Hydra worker probe INFO (e.g. parent
+        # B:\Cruises\BalticSea trigger) would be filtered before reaching the
+        # queue. Allow INFO+ from startup so parent scan_list traces survive.
+        logging.getLogger().setLevel(logging.INFO)
         # Tkinter catches exceptions in callbacks itself and hands them to
         # ``report_callback_exception`` (default: stderr print only — sys.excepthook
         # never fires).  Route through logging so they reach ``_log``; the full
@@ -118,6 +125,7 @@ class App:
         self._pages: dict[str, ConfigSheet] = {}
         self._yaml_paths: dict[str, Path] = {}
         self._tab_of: dict[str, ttk.Frame] = {}  # stem → notebook tab frame
+        self._run_forced_during_scan: bool = False
         # Store original argv — Worker passes it to call_in_raw_dir which
         # extracts the data path via cli.parse_data_path(sys.argv) internally.
         self._original_argv = list(argv or sys.argv)
@@ -140,6 +148,10 @@ class App:
         self._initial_scan = path_in is not None
         if path_in is not None:
             self._path_field.set(str(path_in))
+            try:
+                self._anchor_dropdown.refresh(str(path_in))
+            except Exception:
+                pass
             self.root.after(100, self._scan)
         else:
             # No CLI path — show a placeholder page so the notebook isn't empty.
@@ -187,7 +199,8 @@ class App:
         f0 = ttk.Frame(r)
         f0.grid(row=0, column=0, sticky="ew", padx=4, pady=2)
         f0.columnconfigure(1, weight=1)
-        self._path_lbl = ttk.Label(f0, text=_S["path_lbl.text"])
+        self._path_lbl_default = _S["path_lbl.text"]
+        self._path_lbl = ttk.Label(f0, text=self._path_lbl_default)
         self._path_lbl.grid(row=0, column=0, padx=(0, 4))
         self._path_field = PathField(
             f0,
@@ -202,6 +215,20 @@ class App:
             on_shift=self._on_top_shift,
         )
         self._path_field.grid(row=0, column=1, sticky="ew")
+        # Numbered anchor popup on the path cell; the ordinal lives in
+        # _path_lbl as "selected/total" (default text on no popup match).
+        self._anchor_dropdown = NumberedPathDropdown(
+            self._path_field.sh,
+            0,
+            0,
+            [],
+            number_label=self._path_lbl,
+            default_text=self._path_lbl_default,
+            on_select=self._on_anchor_dropdown_select,
+        )
+        # Up/Down on the cell opens the list (PathField.expand_dropdown).
+        # The caption toggles the list — same path, no arrow aim.
+        self._path_lbl.bind("<Button-1>", lambda _e: self._path_field.toggle_dropdown(), add="+")
 
         # Vertical separator + button bar (extensible container for future buttons)
         ttk.Separator(f0, orient="vertical").grid(row=0, column=2, sticky="ns", padx=(4, 2))
@@ -260,7 +287,7 @@ class App:
         # §4 Run button — floats at main area bottom-right, parented on root for z-order
         self._run_btn = ttk.Button(r, text=_S["run_btn.text"], command=self._on_run, state="disabled")
         self._run_btn.place(in_=self._main, relx=1.0, rely=1.0, anchor="se", x=-24, y=-24)
-        r.bind("<Configure>", lambda _: self._run_btn.lift(), add="+")
+        r.bind("<Configure>", lambda _e: self._raise_overlays(), add="+")
 
         # §5 Log — tk.Text + ttk.Scrollbar in a ttk.Frame (ScrolledText uses a
         # classic tk.Scrollbar that can't be styled via ttk.Style; a manual
@@ -750,6 +777,11 @@ class App:
         frame.tkraise()
         self._current = stem
         self._rail.set_selected(stem)
+        # Deferred: fill time_ranges/burst for this row only (scan created stubs without reading files)
+        try:
+            self._lazy_fill_for_stem(stem)
+        except Exception:
+            pass
 
     def _on_rail_hover(self, name: str | None) -> None:
         """Rail hover callback — show yaml path in status bar; cancel dwell."""
@@ -760,6 +792,226 @@ class App:
                 self._set_status(get_widget_meta(frame, "status"), raw=True)
         else:
             self._nb_hovering = False
+
+    def _lazy_fill_for_stem(self, stem: str) -> None:
+        """Deferred per-row metadata fill (scan created stubs without file reads).
+
+        On first selection of a row whose ``input.time_ranges`` is missing and
+        whose ``info_devices`` metadata lacks time_range/burst, read the file
+        edges + burst in a daemon thread and patch the sheet/YAML.  Empty
+        files are tolerated (no time_ranges, just log).
+        """
+        cs = self._pages.get(stem)
+        if cs is None:
+            return
+        # Already has time_ranges or already scheduled?
+        cfg = getattr(cs, "_cfg", None) or getattr(cs, "_data", None) or {}
+        tr = (cfg.get("input", {}) or {}).get("time_ranges") if isinstance(cfg, dict) else None
+        if tr and len(tr) >= 2 and tr[0] and tr[1]:
+            # Has time_ranges — still check burst lazy fill via metadata sheet?
+            # Burst is handled via metadata rows; if already present skip
+            return
+        if getattr(cs, "_lazy_pending", False):
+            return
+        cs._lazy_pending = True  # type: ignore[attr-defined]
+
+        def _work() -> None:
+            try:
+                # Resolve data file path from sheet cfg
+                path_str = ""
+                try:
+                    path_str = (cfg.get("input", {}) or {}).get("path", "") if isinstance(cfg, dict) else ""
+                except Exception:
+                    path_str = ""
+                if not path_str:
+                    return
+                p = Path(str(path_str))
+                # Use same logic as bursts/gen_metadata but for single file
+                # Edge rows via csv_load (handles empty gracefully)
+                time_ranges: list[str] | None = None
+                bdt: Any = None
+                bst: Any = None
+                try:
+                    from tcm import csv_load as _cl
+
+                    # Build minimal cfg_in for edge read (use defaults + sheet cfg)
+                    cfg_in = {
+                        **_cl.cfg_default["in"],
+                        **(cfg.get("input", {}) if isinstance(cfg, dict) else {}),
+                    }
+                    cfg_in["corr_time_mode"] = cfg_in.get("corr_time_mode", True)
+                    # Single-file dict for load_from_csv_gen
+                    # Probe identity from stem
+                    try:
+                        pcid = format.to_pcid_from_name(format.stem_to_pcid(stem))
+                        model, num = format.probe_from_name(format.stem_to_pcid(stem).lower()) or (
+                            pcid[:1],
+                            int(pcid[2:]) if pcid[2:].isdigit() else 0,
+                        )
+                    except Exception:
+                        model, num = "i", 0
+                    # For archive composites, skip edge read (burst via meta_finder will handle)
+                    if p.as_posix().lower().find(".zip/") != -1 or p.as_posix().lower().find(".7z/") != -1:
+                        pass
+                    else:
+                        # Loose file — try edge read
+                        try:
+                            # search via single file path
+                            files_dict = _cl.search_csv_files(p) if p.is_file() else {}
+                            if files_dict:
+                                for _k, _flist in files_dict.items():
+                                    # Find the matching file
+                                    for _f in _flist:
+                                        if Path(_f).resolve() == p.resolve() or Path(_f).name == p.name:
+                                            # Use load_from_csv_gen for this file only
+                                            from collections import defaultdict as _dd
+
+                                            single_dict = {_k: [_f]}
+                                            for df_edges, (_ipid, _pcid2, _pp) in _cl.load_from_csv_gen(
+                                                csv_files_dict=single_dict,
+                                                cfg_in=cfg_in,
+                                                return_="first_last_row",
+                                            ):
+                                                if df_edges is not None and len(df_edges) >= 1:
+                                                    time_ranges = [dt.isoformat() for dt in df_edges.index]
+                                                break
+                                            break
+                        except Exception:
+                            lf.debug("Lazy edge read failed for {}", stem, exc_info=True)
+                    # Burst via meta_finder (same as bursts.collect but single)
+                    try:
+                        from pathlib import PurePosixPath as _PP
+
+                        from meta_finder.data_proc_funcs import extract_time_info_from_text_file as _eti
+                        from tcm.search import is_archive_composite, split_archive_path
+
+                        avg = cfg_in.get("averaging_interval") or 2
+                        if is_archive_composite(p):
+                            sp = split_archive_path(p)
+                            if sp:
+                                da, rel = sp
+                                info = _eti(da, rel, averaging_interval=avg)
+                                if info:
+                                    _, _, bdt, bst = info
+                        else:
+                            da, rel = p.parent, _PP(p.name)
+                            if da.is_dir():
+                                info = _eti(da, rel, averaging_interval=avg)
+                                if info:
+                                    _, _, bdt, bst = info
+                    except ImportError:
+                        pass
+                    except Exception:
+                        lf.debug("Lazy burst read failed for {}", stem, exc_info=True)
+                except Exception:
+                    lf.debug("Lazy fill pre-check failed for {}", stem, exc_info=True)
+
+                # Patch GUI on main thread
+                def _apply() -> None:
+                    try:
+                        cs2 = self._pages.get(stem)
+                        if cs2 is None:
+                            return
+                        patched = False
+                        if time_ranges and len(time_ranges) >= 2:
+                            # Update sheet cfg and YAML on disk if time_ranges was empty
+                            try:
+                                # Update in-memory cfg
+                                if hasattr(cs2, "_cfg") and isinstance(cs2._cfg, dict):
+                                    cur = cs2._cfg.get("input", {}).get("time_ranges")
+                                    if not cur or len(cur) < 2 or not cur[0] or not cur[1]:
+                                        cs2._cfg.setdefault("input", {})["time_ranges"] = time_ranges
+                                        patched = True
+                                # Update YAML file if exists
+                                yp = self._yaml_paths.get(stem)
+                                if yp and yp.is_file():
+                                    try:
+                                        from tcm.config_yaml import _ry as _ry2
+
+                                        ry = _ry2()
+                                        cur_y = ry.load(yp) or {}
+                                        cur_tr = (cur_y.get("input", {}) or {}).get("time_ranges")
+                                        if not cur_tr or len(cur_tr) < 2 or not cur_tr[0] or not cur_tr[1]:
+                                            cur_y.setdefault("input", {})["time_ranges"] = time_ranges
+                                            ry.dump(cur_y, stream=yp.open(encoding="utf-8", mode="w"))
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
+                            # Refresh sheet display
+                            try:
+                                cs2.load(
+                                    cs2._cfg,
+                                    full=self._full_mode,
+                                    config_root=schema.Config,
+                                    return_enum=schema.Return,
+                                    metadata=getattr(cs2, "_metadata", None),
+                                    sync_status=getattr(cs2, "_sync_status", None),
+                                    metadata_path=getattr(cs2, "_metadata_path", None),
+                                )
+                                cs2.sh.redraw()
+                            except Exception:
+                                pass
+                        # Burst autofill for metadata sheet (if missing) — also when md is None (deferred scan stub)
+                        if bdt is not None and bst is not None:
+                            try:
+                                md = getattr(cs2, "_metadata", None)
+                                if md is None:
+                                    try:
+                                        md = cs2.get_edited_metadata()  # type: ignore[attr-defined]
+                                    except Exception:
+                                        md = None
+                                if md is None:
+                                    # Create fresh 11-array stub (time_ranges may already be patched above)
+                                    md = [None] * 11
+                                    if time_ranges and len(time_ranges) >= 2:
+                                        md[6], md[7] = time_ranges[0], time_ranges[1]
+                                    md[8], md[9] = bdt, bst
+                                    # Inject as metadata and mark dirty
+                                    try:
+                                        cs2._metadata = md  # type: ignore[attr-defined]
+                                        cs2._metadata_unsaved = True  # type: ignore[attr-defined]
+                                        cs2._apply_metadata_dirty_label()  # type: ignore[attr-defined]
+                                        cs2._apply_validations()  # type: ignore[attr-defined]
+                                        cs2.sh.redraw()
+                                        self._rail.set_dirty(stem, False, True)
+                                    except Exception:
+                                        pass
+                                elif isinstance(md, list) and len(md) >= 10:
+                                    cur_bdt = md[8] if len(md) > 8 else None
+                                    cur_bst = md[9] if len(md) > 9 else None
+                                    if cur_bdt in ("?", "-", "", None) or cur_bst in ("?", "-", "", None):
+                                        # Patch metadata array
+                                        if len(md) < 11:
+                                            md = list(md) + [None] * (11 - len(md))
+                                        md[8], md[9] = bdt, bst
+                                        # Mark dirty so Run will write to info_devices.yaml
+                                        cs2._metadata_unsaved = True  # type: ignore[attr-defined]
+                                        try:
+                                            cs2._apply_metadata_dirty_label()  # type: ignore[attr-defined]
+                                            cs2._apply_validations()  # type: ignore[attr-defined]
+                                            cs2.sh.redraw()
+                                            self._rail.set_dirty(stem, False, True)
+                                        except Exception:
+                                            pass
+                            except Exception:
+                                pass
+                    finally:
+                        try:
+                            cs2._lazy_pending = False  # type: ignore[attr-defined]
+                        except Exception:
+                            pass
+
+                self.root.after(0, _apply)
+            except Exception:
+                try:
+                    cs._lazy_pending = False  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+
+        import threading
+
+        threading.Thread(target=_work, daemon=True).start()
 
     @staticmethod
     def _fmt_multi(paths: tuple[str, ...]) -> str:
@@ -777,6 +1029,10 @@ class App:
 
     def _on_path_changed(self, _path: str) -> None:
         """PathField committed a new path — trigger scan with immediate overlay."""
+        try:
+            self._anchor_dropdown.refresh(self._path_field.get().strip())
+        except Exception:
+            pass
         self._error_active = False
         self._path_field.set_error(False)  # fresh search attempt clears the failure mark
         self._hide_tip()
@@ -791,10 +1047,24 @@ class App:
     def _scan(self) -> None:
         path = self._path_field.get().strip()
         if path and "," in path:
-            # Shift+browse stores comma-separated paths; reformat as regex
-            # alternation so find_dir_raw_absolute can resolve the _raw/ anchor.
-            path = self._fmt_multi(tuple(path.split(",")))
-            self._path_field.set(path)
+            # Shift+browse joins ``askopenfilenames()`` with "," and we support
+            # multiple paths as a regex alternative ``parent/(a|b)`` via
+            # ``_fmt_multi``.  A single path may itself contain a comma
+            # (e.g. cruise ``251201_ABP64@i,t-chain``) — naive ``split(",")``
+            # would mangle it.  Multi-file strings are ``",".join`` of absolute
+            # paths (``B:\…``); an embedded comma is followed by
+            # ``t-chain\…``, not a drive.  Split only at "," before ``X:\``.
+            if Path(path).exists():
+                parts: tuple[str, ...] = ()
+            else:
+                parts = tuple(p.strip() for p in re.split(r",(?=[A-Za-z]:[\\/])", path) if p.strip())
+            if len(parts) > 1 and all(Path(p).is_absolute() for p in parts):
+                path = self._fmt_multi(parts)
+                self._path_field.set(path)
+                try:
+                    self._anchor_dropdown.refresh(path)
+                except Exception:
+                    pass
         self._clear_log()
         # Live path field — not the stale startup argv — drives the scan,
         # so a GUI browse selection of ``_raw`` rescans that directory.
@@ -805,6 +1075,12 @@ class App:
         # code project) — the failure surfaces like any other scan error
         # instead of freezing the "Loading…" stage.
         self.wk.scan(self._original_argv, path)
+        # Enable Run as Pause during scan (even with no pages yet) so user can pause long discovery
+        try:
+            self._run_btn.config(state="normal", text=_S["run_btn.pause"])
+            self._run_forced_during_scan = True
+        except Exception:
+            pass
 
     # ── §2 page management ──────────────────────────────────────────
 
@@ -902,6 +1178,24 @@ class App:
         ok = bool(self._pages) and all(cs.is_path_valid() for cs in self._pages.values())
         self._run_btn.config(state="normal" if ok else "disabled")
 
+    def _raise_overlays(self) -> None:
+        """Root `<Configure>` stacking: Run above pages, open anchor list above Run.
+
+        A blind Run lift covered a tall open dropdown after every resize —
+        the list opens downward from the top row and can reach the floating
+        Run button.
+        """
+        from contextlib import suppress
+
+        with suppress(Exception):
+            self._run_btn.lift()
+        try:
+            mt = self._path_field.sh.MT
+            if mt.dropdown.open and mt.dropdown.window is not None:
+                mt.dropdown.window.lift()
+        except Exception:
+            pass
+
     def _on_run(self) -> None:
         if self.wk.busy:
             gate = self.rt.pause_gate
@@ -956,14 +1250,59 @@ class App:
 
         Returns ``(device_meta, ddir, metadata_path)`` — all ``None`` when
         resolution fails.  Single source for scan + write paths (DRY).
+        Handles parent-dir selection via filtered ``find_device_dirs``: when
+        ``p`` is a cruise/parent dir containing ``_raw`` descendants, merges
+        metadata from all anchors and returns the first anchor's dir/path for
+        display/default-save.  ``path_field`` itself stays as user typed.
         """
         try:
             from meta_finder import io_info_files
             from meta_finder.config import DEVICES_FILE_NAME_YAML, DEVICES_FILE_NAME
+            from tcm.anchors import _anchors_via_meta_finder
 
             p = self._path_field.get().strip()
             if p:
-                ddir = paths.find_dir_raw_absolute(Path(p).absolute()).parent
+                p_path = Path(p).absolute()
+                try:
+                    _mf = _anchors_via_meta_finder(p_path)
+                    anchors = _mf if _mf is not None else [paths.find_dir_raw_absolute(p_path)]
+                except Exception:
+                    anchors = [paths.find_dir_raw_absolute(p_path)]
+                # anchors are _raw dirs; device_dir = parent
+                merged: dict = {}
+                first_ddir: Path | None = None
+                first_cand: Path | None = None
+                for anchor in anchors:
+                    ddir = anchor.parent
+                    if first_ddir is None:
+                        first_ddir = ddir
+                    for nm in (DEVICES_FILE_NAME_YAML, DEVICES_FILE_NAME):
+                        cand = ddir / nm
+                        if first_cand is None and ddir == first_ddir:
+                            first_cand = cand
+                        if cand.is_file():
+                            try:
+                                part = io_info_files.read_metadata_file(cand)
+                            except Exception:
+                                continue
+                            # Merge per device, per station
+                            for k, v in part.items():
+                                if k not in merged:
+                                    merged[k] = v
+                                elif isinstance(v, dict) and isinstance(merged[k], dict):
+                                    # Merge stations, preserve existing
+                                    for sk, sv in v.items():
+                                        if sk not in merged[k]:
+                                            merged[k][sk] = sv
+                            break
+                if merged:
+                    return merged, first_ddir, first_cand
+                if first_ddir is not None:
+                    if first_cand is None:
+                        first_cand = first_ddir / DEVICES_FILE_NAME_YAML
+                    return None, first_ddir, first_cand
+                # Fallback single-anchor (legacy)
+                ddir = paths.find_dir_raw_absolute(p_path).parent
                 for nm in (DEVICES_FILE_NAME_YAML, DEVICES_FILE_NAME):
                     cand = ddir / nm
                     if cand.is_file():
@@ -996,11 +1335,27 @@ class App:
             stems_by_pcid.setdefault(pcid, []).append(stem)
         for pcid, stems in stems_by_pcid.items():
             stems.sort()
-        # Resolve the target info_devices.yaml path early — needed for existence check
+        # Resolve the target info_devices.yaml path(s) — parent-dir may have multiple anchors
         browsed: Path | None = next(
             (Path(cs.get_metadata_path()) for cs in self._pages.values() if cs.get_metadata_path().strip()),
             None,
         )
+        # Per-anchor write when parent dir selected (multiple _raw)
+        _pf = getattr(self, "_path_field", None)
+        try:
+            p_str = _pf.get().strip() if _pf and hasattr(_pf, "get") else ""
+        except Exception:
+            p_str = ""
+        anchors: list[Path] = []
+        if p_str and not browsed:
+            try:
+                from tcm.anchors import _anchors_via_meta_finder
+
+                _mf = _anchors_via_meta_finder(Path(p_str).absolute())
+                anchors = _mf if _mf is not None else []
+            except Exception:
+                anchors = []
+        # Single-file browsed case — keep legacy single-file path
         if browsed is not None:
             device_dir, info_path = browsed.parent, browsed
             _, _, fallback = self._load_device_meta()
@@ -1013,79 +1368,178 @@ class App:
                         existing_fallback = _io2.read_metadata_file(fallback)
                 except Exception:
                     pass
-        else:
-            _, device_dir, info_path = self._load_device_meta()  # type: ignore[assignment]
-            existing_fallback = None
-        if device_dir is None or info_path is None:
-            lf.warning("Cannot resolve device dir for metadata write — skipping")
-            return
-        # File doesn't exist → also collect from pages with autofilled (not-dirty) metadata
-        file_absent = not info_path.is_file()
-        for stem, cs in self._pages.items():
-            is_dirty = getattr(cs, "is_metadata_dirty", False) and cs.is_metadata_dirty()
-            # Write if dirty OR if the device file doesn't exist yet (autofilled metadata)
-            if not is_dirty and not file_absent:
-                continue
-            try:
-                pcid = format.to_pcid_from_name(format.stem_to_pcid(stem))
-            except Exception:
-                continue
-            sid = (
-                str(stems_by_pcid.get(pcid, [stem]).index(stem))
-                if stem in stems_by_pcid.get(pcid, [])
-                else "0"
-            )
-            arr = cs.get_edited_metadata()
-            if not arr:
-                continue
-            new_content.setdefault(pcid, {})[sid] = arr
-        if not new_content:
-            return
-        try:
-            from meta_finder import io_info_files
-            from meta_finder.create_info_files import _merge_device_metadata
-
-            existing: dict = {}
-            if existing_fallback is not None:
-                existing = dict(existing_fallback)
-            if info_path.is_file():
+            # Collect per-anchor if multiple anchors but browsed is single — treat as single
+            if anchors and len(anchors) > 1:
+                lf.debug("Browsed info file overrides multi-anchor parent — single write to {}", info_path)
+            # Collect new_content for single file (as before)
+            file_absent = not info_path.is_file()
+            new_content_single: dict[str, dict[str, list]] = {}
+            for stem, cs in self._pages.items():
+                is_dirty = getattr(cs, "is_metadata_dirty", False) and cs.is_metadata_dirty()
+                if not is_dirty and not file_absent:
+                    continue
                 try:
-                    existing = io_info_files.read_metadata_file(info_path)
+                    pcid = format.to_pcid_from_name(format.stem_to_pcid(stem))
                 except Exception:
-                    lf.warning("Failed to read %s — will overwrite", info_path, exc_info=True)
-            # Merge: user-edited metadata overwrites non-placeholder; other devices preserved
-            if existing:
-                merged = _merge_device_metadata(existing, new_content)
-                # Force dirty SIDs to user values (merge keeps existing non-placeholder)
-                for pcid, sids in new_content.items():
-                    for sid, arr in sids.items():
-                        # Ensure the merged entry reflects user's edited array
-                        if pcid in merged and isinstance(merged[pcid], dict) and sid in merged[pcid]:
-                            # Overwrite this sid with user's array (dirty wins)
-                            merged[pcid][sid] = arr
-                        elif pcid in merged:
-                            # Fallback: set at top level
-                            if isinstance(merged[pcid], dict):
+                    continue
+                sid = (
+                    str(stems_by_pcid.get(pcid, [stem]).index(stem))
+                    if stem in stems_by_pcid.get(pcid, [])
+                    else "0"
+                )
+                arr = cs.get_edited_metadata()
+                if not arr:
+                    continue
+                new_content_single.setdefault(pcid, {})[sid] = arr
+            if not new_content_single:
+                return
+            try:
+                from meta_finder import io_info_files
+                from meta_finder.create_info_files import _merge_device_metadata
+
+                existing: dict = {}
+                if existing_fallback is not None:
+                    existing = dict(existing_fallback)
+                if info_path.is_file():
+                    try:
+                        existing = io_info_files.read_metadata_file(info_path)
+                    except Exception:
+                        lf.warning("Failed to read %s — will overwrite", info_path, exc_info=True)
+                # Merge: user-edited metadata overwrites non-placeholder; other devices preserved
+                if existing:
+                    merged = _merge_device_metadata(existing, new_content_single)
+                    # Force dirty SIDs to user values (merge keeps existing non-placeholder)
+                    for pcid, sids in new_content_single.items():
+                        for sid, arr in sids.items():
+                            # Ensure the merged entry reflects user's edited array
+                            if pcid in merged and isinstance(merged[pcid], dict) and sid in merged[pcid]:
+                                # Overwrite this sid with user's array (dirty wins)
                                 merged[pcid][sid] = arr
+                            elif pcid in merged:
+                                # Fallback: set at top level
+                                if isinstance(merged[pcid], dict):
+                                    merged[pcid][sid] = arr
+                                else:
+                                    merged[pcid] = {sid: arr}
                             else:
                                 merged[pcid] = {sid: arr}
-                        else:
-                            merged[pcid] = {sid: arr}
-            else:
-                merged = new_content
-            # Write via atomic helper (tmp → move)
-            io_info_files.write_metadata_file(device_dir, info_path, merged)
-            lf.info("Wrote metadata for %s to %s", ", ".join(new_content), info_path.name)
-            for cs in self._pages.values():
-                if getattr(cs, "is_metadata_dirty", False) and cs.is_metadata_dirty():
-                    cs.mark_metadata_clean()
-                # Refresh ``metadata*`` → ``metadata`` label and clear red path validation
-                with __import__("contextlib").suppress(Exception):
-                    cs._apply_metadata_dirty_label()
-                    cs._apply_validations()  # path now exists → remove red fg
-                    cs.sh.redraw()
-        except Exception:
-            lf.exception("Failed to write metadata to info_devices.yaml")
+                else:
+                    merged = new_content_single
+                # Write via atomic helper (tmp → move)
+                io_info_files.write_metadata_file(device_dir, info_path, merged)
+                lf.info("Wrote metadata for %s to %s", ", ".join(new_content_single), info_path.name)
+                for cs in self._pages.values():
+                    if getattr(cs, "is_metadata_dirty", False) and cs.is_metadata_dirty():
+                        cs.mark_metadata_clean()
+                    # Refresh ``metadata*`` → ``metadata`` label and clear red path validation
+                    with __import__("contextlib").suppress(Exception):
+                        cs._apply_metadata_dirty_label()
+                        cs._apply_validations()  # path now exists → remove red fg
+                        cs.sh.redraw()
+            except Exception:
+                lf.exception("Failed to write metadata to info_devices.yaml")
+        else:
+            # No browsed file — parent dir with single or multiple anchors
+            # Use per-anchor device_dir derived from each stem's data file
+            # Group new_content by anchor
+            anchor_groups: dict[Path, dict[str, dict[str, list]]] = {}
+            for stem, cs in self._pages.items():
+                is_dirty = getattr(cs, "is_metadata_dirty", False) and cs.is_metadata_dirty()
+                # Also write autofilled when file absent
+                # Determine anchor for this stem
+                try:
+                    pcid = format.to_pcid_from_name(format.stem_to_pcid(stem))
+                except Exception:
+                    continue
+                # Find anchor via data file path
+                try:
+                    data_path_str = cs._cfg.get("input", {}).get("path", "") if hasattr(cs, "_cfg") else ""
+                    anchor = paths.anchor_for_fs_path(Path(data_path_str).parent) if data_path_str else None
+                    if anchor is None or not anchor.name.lower() == "_raw":
+                        # Fallback to first anchor or find via lightweight
+                        anchor = (
+                            anchors[0]
+                            if anchors
+                            else paths.find_dir_raw_absolute(Path(p_str).absolute())
+                            if p_str
+                            else None
+                        )
+                    device_dir = anchor.parent if anchor and anchor.name.lower() == "_raw" else None
+                except Exception:
+                    device_dir = None
+                if device_dir is None:
+                    # Fallback single device_dir
+                    _, device_dir, _ = self._load_device_meta()
+                    if device_dir is None:
+                        continue
+                # Check dirty or file absent
+                try:
+                    from meta_finder.config import DEVICES_FILE_NAME_YAML as _Y
+
+                    info_cand = device_dir / _Y
+                    file_absent = not info_cand.is_file()
+                except Exception:
+                    file_absent = True
+                if not is_dirty and not file_absent:
+                    continue
+                sid = (
+                    str(stems_by_pcid.get(pcid, [stem]).index(stem))
+                    if stem in stems_by_pcid.get(pcid, [])
+                    else "0"
+                )
+                arr = cs.get_edited_metadata()
+                if not arr:
+                    continue
+                anchor_groups.setdefault(device_dir, {}).setdefault(pcid, {})[sid] = arr
+            if not anchor_groups:
+                return
+            for device_dir, group_content in anchor_groups.items():
+                try:
+                    from meta_finder import io_info_files
+                    from meta_finder.config import DEVICES_FILE_NAME_YAML as _Y
+                    from meta_finder.create_info_files import _merge_device_metadata
+
+                    info_path = device_dir / _Y
+                    existing: dict = {}
+                    if info_path.is_file():
+                        try:
+                            existing = io_info_files.read_metadata_file(info_path)
+                        except Exception:
+                            lf.warning("Failed to read %s — will overwrite", info_path, exc_info=True)
+                    if existing:
+                        merged = _merge_device_metadata(existing, group_content)
+                        for pcid, sids in group_content.items():
+                            for sid, arr in sids.items():
+                                if pcid in merged and isinstance(merged[pcid], dict) and sid in merged[pcid]:
+                                    merged[pcid][sid] = arr
+                                elif pcid in merged and isinstance(merged[pcid], dict):
+                                    merged[pcid][sid] = arr
+                                else:
+                                    merged[pcid] = {sid: arr}
+                    else:
+                        merged = group_content
+                    io_info_files.write_metadata_file(device_dir, info_path, merged)
+                    lf.info("Wrote metadata for %s to %s", ", ".join(group_content), info_path)
+                    for cs in self._pages.values():
+                        # Only mark clean for stems belonging to this device_dir
+                        try:
+                            dp = cs._cfg.get("input", {}).get("path", "") if hasattr(cs, "_cfg") else ""
+                            ad = paths.anchor_for_fs_path(Path(dp).parent) if dp else None
+                            dd = ad.parent if ad and ad.name.lower() == "_raw" else None
+                            if (
+                                dd == device_dir
+                                and getattr(cs, "is_metadata_dirty", False)
+                                and cs.is_metadata_dirty()
+                            ):
+                                cs.mark_metadata_clean()
+                                with __import__("contextlib").suppress(Exception):
+                                    cs._apply_metadata_dirty_label()
+                                    cs._apply_validations()
+                                    cs.sh.redraw()
+                        except Exception:
+                            pass
+                except Exception:
+                    lf.exception("Failed to write metadata to %s", device_dir)
 
     # ── polling (300 ms) ────────────────────────────────────────────
 
@@ -1099,10 +1553,11 @@ class App:
         self.root.after(self.POLL, self._poll)
 
     def _poll_dirty_tabs(self) -> None:
-        """Sync dirty indicator on rail cells (coefs dirty OR metadata* dirty)."""
+        """Sync dirty indicator on rail cells — separate config vs metadata."""
         for stem, cs in self._pages.items():
-            dirty = cs.is_dirty or (getattr(cs, "is_metadata_dirty", False) and cs.is_metadata_dirty())
-            self._rail.set_dirty(stem, dirty)
+            dc = cs.is_dirty
+            dm = getattr(cs, "is_metadata_dirty", False) and cs.is_metadata_dirty()
+            self._rail.set_dirty(stem, dc, dm)
 
     def _on_log_motion(self, _event: tk.Event) -> None:
         """Show log status text while mouse is actively moving; fade on pause."""
@@ -1308,9 +1763,89 @@ class App:
         {
             "scan_ok": self._on_scan_ok,
             "scan_error": self._on_scan_error,
+            "scan_list": self._on_scan_list,
             "run_ok": self._on_run_done,
             "run_error": self._on_run_error,
         }[kind](payload)
+
+    def _on_scan_list(self, payload) -> None:
+        """Parent with multiple _raw anchors — list-fill only, no meta_finder/processing.
+
+        Shows anchors count and auto-selects first anchor for tab-fill (no cfg_proc at parent).
+        Keeps parent trigger visible in log before field replacement.
+        """
+        try:
+            # Unpack (parent, anchors) or legacy [anchors]
+            if isinstance(payload, tuple) and len(payload) == 2 and isinstance(payload[1], list):
+                parent, anchors = payload  # type: ignore[assignment]
+            else:
+                parent, anchors = None, payload  # type: ignore[assignment]
+            # Reset any forced Run→Pause from the lightweight list scan
+            if getattr(self, "_run_forced_during_scan", False):
+                try:
+                    self._run_btn.config(state="disabled", text=_S["run_btn.text"])
+                except Exception:
+                    pass
+                self._run_forced_during_scan = False
+            if not anchors:
+                self._on_scan_error(RuntimeError("No _raw anchors found"))
+                return
+            # Log parent trigger explicitly before field replacement — addresses "no logged B:\\Cruises\\BalticSea"
+            if parent:
+                lf.info("Scan list for parent trigger=%s → %s anchors", parent, len(anchors))
+            lf.info(
+                "Found %s _raw anchors (list-fill, no processing): %s",
+                len(anchors),
+                ", ".join(str(a) for a in anchors[:5]) + (" …" if len(anchors) > 5 else ""),
+            )
+            self._overall_lbl.config(text=f"Found {len(anchors)} anchors — loading first…")
+            self._set_status(f"Found {len(anchors)} anchors, loading {anchors[0].parent.name}…", raw=True)
+            # Auto-select first anchor for tab-fill (no meta_finder device dirs discovery)
+            first_anchor = anchors[0]
+            if parent:
+                lf.info("Parent %s → auto-select first anchor %s for tab-fill", parent, first_anchor)
+            # Feed the inherent path-cell dropdown; the number appears in _path_lbl
+            try:
+                self._anchor_dropdown.set_paths([str(a) for a in anchors])
+                self._path_lbl.configure(cursor="hand2")  # anchors arrived — the caption opens the list
+            except Exception:
+                pass
+            # Update path_field to the anchor (so subsequent scans/tabs use anchor, not parent)
+            try:
+                self._path_field.set(str(first_anchor))
+                self._anchor_dropdown.refresh(str(first_anchor))
+            except Exception:
+                pass
+            # Trigger tab-fill scan for the single anchor (this will call processing.run with eager=False stubs)
+            self.wk.scan(self._original_argv, str(first_anchor))
+            # Re-enable Run→Pause for the upcoming tab-fill scan
+            try:
+                self._run_btn.config(state="normal", text=_S["run_btn.pause"])
+                self._run_forced_during_scan = True
+            except Exception:
+                pass
+        except Exception as exc:
+            self._on_scan_error(exc)
+
+    def _on_anchor_dropdown_select(self, path: str) -> None:
+        """Inherent path-cell dropdown commit — rescan the picked anchor for tab-fill."""
+        sel = (path or "").strip()
+        if not sel:
+            return
+        try:
+            self._path_field.set(sel)
+            self._anchor_dropdown.refresh(sel)
+        except Exception:
+            pass
+        lf.info("Anchor selected: %s", sel)
+        self._overall_lbl.config(text=f"Loading {Path(sel).parent.name}…")
+        self._set_status(f"Loading {Path(sel).parent.name}…", raw=True)
+        self.wk.scan(self._original_argv, sel)
+        try:
+            self._run_btn.config(state="normal", text=_S["run_btn.pause"])
+            self._run_forced_during_scan = True
+        except Exception:
+            pass
 
     def _on_scan_error(self, exc: BaseException) -> None:
         self._path_field.set_error(True)  # failed search — red fg on the search path
@@ -1324,6 +1859,18 @@ class App:
         # _yaml_paths) → back to the inert look until a valid path.
         if not self._full_mode and not self._yaml_paths:
             self._set_cfg_ui_disabled(True)
+        # Scan failed after we forced Run→Pause for pausing — disable again
+        if getattr(self, "_run_forced_during_scan", False):
+            try:
+                self._run_btn.config(state="disabled", text=_S["run_btn.text"])
+            except Exception:
+                pass
+            self._run_forced_during_scan = False
+        else:
+            try:
+                self._update_run_btn_state()
+            except Exception:
+                pass
 
     def _on_run_error(self, exc: BaseException) -> None:
         self._run_btn.config(text=_S["run_btn.text"])
@@ -1405,7 +1952,7 @@ class App:
                 lambda t=text, a=anchor, r=raw: self._apply_status(t, anchor=a, raw=r),
             )
             return
-        self._status_lbl.set_text(text, raw=raw, base=doc_path())
+        self._status_lbl.set_text(text, raw=raw, base=doc_path(resolve_lang()))
         self._status_lbl_f1_anchor = anchor
 
     # ── status-label hover — hold the dwell tip while reading / clicking ─────
@@ -1434,7 +1981,7 @@ class App:
         self._cancel_status_job()  # error tip shows immediately — drop pending switch
         self._tip_active = True
         # Relative links in the body resolve against config_reference_*.md.
-        self._status_lbl.set_text(text, base=doc_path())
+        self._status_lbl.set_text(text, base=doc_path(resolve_lang()))
         if anchor is not None:
             self._status_lbl_f1_anchor = anchor
 
@@ -1548,7 +2095,7 @@ class App:
         self._cancel_status_job()  # dwell takes the label — drop the pending switch
         self._cancel_dwell_hide_job()  # a deferred clear must not kill the re-shown tip
         # Relative links in the body resolve against config_reference_*.md.
-        self._status_lbl.set_text(text, base=doc_path())
+        self._status_lbl.set_text(text, base=doc_path(resolve_lang()))
         if anchor is not None:
             self._status_lbl_f1_anchor = anchor
 
@@ -1570,7 +2117,20 @@ class App:
     def _on_scan_ok(self, result) -> None:
         if not result or len(result) < 4:
             return
-        sync_result = result[4] if len(result) >= 5 and isinstance(result[4], dict) else None
+        # Burst GET is metadata, not input — scan returns it for display only (write on Run)
+        sync_result: dict | None = None
+        bursts: dict[str, tuple[Any, Any]] | None = None
+        if len(result) >= 6 and isinstance(result[4], dict) and isinstance(result[5], dict):
+            # 5th = sync_result (dict with status), 6th = bursts {stem: (bdt,bst)}
+            sync_result, bursts = result[4], result[5]
+        elif len(result) >= 5 and isinstance(result[4], dict):
+            sample = next(iter(result[4].values()), None) if result[4] else None
+            if isinstance(sample, tuple) and len(sample) == 2:
+                bursts = result[4]
+            else:
+                sync_result = result[4]
+                if len(result) >= 6 and isinstance(result[5], dict):
+                    bursts = result[5]
         # Preload device metadata for ``metadata`` node (frozen build includes meta_finder).
         # DRY: device-dir + file lookup via App helper (also used by _write_metadata).
         device_meta, ddir, metadata_path = self._load_device_meta()
@@ -1636,6 +2196,30 @@ class App:
                 prog["return_"] = str(schema.Return.END)
             self._yaml_paths[stem] = Path(yp)
             md = _meta_for_stem(stem)
+            # Burst GET autofill for display (scan) — missing metadata only, no file write yet
+            burst_filled = False
+            if bursts and stem in bursts:
+                bdt, bst = bursts[stem]
+
+                def _is_ph(v: Any) -> bool:
+                    return v in ("?", "-", "", None)
+
+                if md is None:
+                    md = [None] * 11
+                    tr = cfg.get("input", {}).get("time_ranges") or []
+                    if len(tr) >= 2:
+                        md[6], md[7] = tr[0], tr[1]
+                    md[8], md[9] = bdt, bst
+                    burst_filled = True
+                else:
+                    if len(md) < 11:
+                        md = list(md) + [None] * (11 - len(md))
+                    cur_bdt = md[8] if len(md) > 8 else None
+                    cur_bst = md[9] if len(md) > 9 else None
+                    if _is_ph(cur_bdt) or _is_ph(cur_bst):
+                        if str(cur_bdt) != str(bdt) or str(cur_bst) != str(bst):
+                            md[8], md[9] = bdt, bst
+                            burst_filled = True
             ss = sync_result.get(stem) if sync_result else None
             self._add_page(
                 stem,
@@ -1645,6 +2229,17 @@ class App:
                 sync_status=ss,
                 metadata_path=str(metadata_path) if metadata_path else None,
             )
+            # Mark burst-autofilled sheet dirty so Run persists it to info_devices.yaml
+            if burst_filled:
+                cs = self._pages.get(stem)
+                if cs is not None:
+                    cs._metadata_unsaved = True
+                    with __import__("contextlib").suppress(Exception):
+                        cs._apply_metadata_dirty_label()
+                        cs._apply_validations()
+                        cs.sh.redraw()
+                    # Ensure rail shows metadata dirty (config stays clean)
+                    self._rail.set_dirty(stem, False, True)
         if self._tab_of:  # top tab gets rail indicator + the raised (visible) page
             self._select_tab(next(iter(self._tab_of)))
         self._cfg_state = ScanStage.DONE
@@ -1655,7 +2250,12 @@ class App:
         # Scan done — show "Ready" now.
         self._set_status(_S["status.ready"], raw=True)
         self._overall_lbl.config(text=self._translate_scan_stage(self._cfg_state))
+        try:
+            self._run_btn.config(text=_S["run_btn.text"])
+        except Exception:
+            pass
         self._update_run_btn_state()
+        self._run_forced_during_scan = False
 
     def _on_run_done(self, result) -> None:
         self._error_active = False

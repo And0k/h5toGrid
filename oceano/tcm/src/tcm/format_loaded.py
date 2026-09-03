@@ -1,10 +1,7 @@
 """
 Format-specific CSV post-load processors — pure pandas/numpy, no dask.
-
-Extracted from ``_dask_legacy.csv_specific_proc`` to make raw CSV loading
-available on Layer 0 (the default environment).  All functions here are
-self-contained: they depend only on numpy/pandas/re and on
-``utils.init`` / ``tcm.utils_time_corr`` — never on ``dask.dataframe``.
+All functions here are self-contained: they depend only on
+numpy/pandas/re and on ``utils.init`` / ``tcm.utils_time_corr``.
 
 Public API (re-exported by :mod:`tcm.csv_load`):
 - :func:`loaded_tcm`  — TCM inclinometer date/time + magnetometer inversion
@@ -29,6 +26,7 @@ from typing import (
 
 import numpy as np
 import pandas as pd
+from utils import log_init
 
 from utils.init import (
     FakeContextIfOpen,
@@ -508,9 +506,6 @@ def correct_txt(
     file_out = out_dir / file_out.name
 
     if file_out.is_file() and file_out.stat().st_size > 100:
-        if is_opened:
-            from tcm._dask_legacy.csv_specific_proc import correct_old_zip_name_ru
-            msg_file_in = correct_old_zip_name_ru(msg_file_in)
         lf.warning(f"skipping of pre-correcting csv file {msg_file_in} to {file_out.name}: destination exist")
         return file_out
 
@@ -617,11 +612,11 @@ def mod_name(
                 if (comment := m.get("comment", "").lstrip("_-")):
                     name = f"{name}-{comment}"
             if not b_pattern and not m["number"]:
-                print(f"Bad probe name {file_in}: probe number not detected")
+                log_init.LoggingStyleAdapter(__name__).debug("Bad probe name {}: probe number not detected", file_in)
         else:
             model = None
             if not b_pattern:
-                print(f"Not known probe name: {file_in}")
+                log_init.LoggingStyleAdapter(__name__).debug("Not known probe name: {}", file_in)
 
         if add_prefix:
             def prefix_target(matchobj):

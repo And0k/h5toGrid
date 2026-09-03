@@ -6,7 +6,7 @@ Saves, loads, and validates per-file YAML configs in ``cfg_proc/run/``.
 from collections.abc import Iterator, Mapping, MutableMapping, Sequence
 from datetime import datetime
 from itertools import chain
-from pathlib import Path, PurePath
+from pathlib import Path, PurePath, PurePosixPath
 from typing import Any
 
 from omegaconf import OmegaConf
@@ -237,10 +237,6 @@ def prep_cfg_for_probe(
 ) -> MutableMapping[str, Any]:
     """Build probe-specific config with coefficients.
 
-    Differences from legacy ``cur_cfg = legacy.incl_calc.coefs.prep_cfg_for_probe``:
-    - No HDF5 raw-DB-as-coefs-source logic (handled separately).
-    - coefs_paths chain: explicit ``coefs_path`` → class default only.
-
     :param pcid: Probe output Column ID (e.g. ``"i_01"``).
     :param cfg_in_for_probes: per-probe overrides keyed by pcid.
     :param cfg_in_common: input config common to all probes.
@@ -288,7 +284,10 @@ def prep_cfg_for_probe(
 
 
 def gen_metadata(
-    cfg: MutableMapping[str, Any], input_paths: Sequence[Path], cfg_in_for_probes: dict = {}
+    cfg: MutableMapping[str, Any],
+    input_paths: Sequence[Path],
+    cfg_in_for_probes: dict = {},
+    eager: bool = True,
 ) -> Iterator[tuple[dict[str, dict[str, Any]], tuple[bool, str, None]]]:
     """
     Yield per-probe metadata (config + edge time rows) for YAML export in the xarray pipeline.
@@ -364,21 +363,353 @@ def gen_metadata(
     # CSV mode: locate corrected CSV files across input_paths
     cfg_in_common["corr_time_mode"] = cfg["input"].get("corr_time_mode", True)
 
-    # Discover + merge CSV file dicts from all input_paths
+    _prog_return = OmegaConf.select(cfg, "program.return_") if OmegaConf.is_config(cfg) else (cfg.get("program") or {}).get("return_")
+    _is_scan = _prog_return == schema.Return.CFG_FROM_ARGS
     merged: dict[tuple, list[Path]] = {}  # ``{(model, number): [paths]}`` dict of discovered file groups
     for p in input_paths:
-        for key, files in csv_load.search_csv_files(p).items():
+        try:
+            try:
+                discovered = csv_load.search_csv_files(p, trigger=p)
+            except TypeError as _te:
+                # Test mocks may not accept trigger kw
+                if "trigger" in str(_te):
+                    discovered = csv_load.search_csv_files(p)  # type: ignore[call-arg]
+                else:
+                    raise
+        except FileNotFoundError:
+            # Missing input path (e.g. YAML stem filter with no physical files yet, or
+            # non-existent path in cfg) — skip, do not abort discovery; gen_metadata
+            # will yield nothing for this path rather than raising mid-iteration.
+            lf.debug("search_csv_files skipped for non-existent input_path={}", p, exc_info=True)
+            continue
+        for key, files in discovered.items():
             merged.setdefault(key, []).extend(files)
     if not merged:
-        raise FileNotFoundError(f"No input files found from {input_paths}")
-    lf.info("Discovered {} probes (from {} data files)", len(merged), ",".join(str(s) for s in input_paths))
+        raise FileNotFoundError(f"No input files found from {input_paths} (trigger={input_paths[0] if input_paths else '?'})")
+    lf.info(
+        "Discovered {} probes (from {} data files, trigger={}, eager={})",
+        len(merged),
+        ",".join(str(s) for s in input_paths),
+        input_paths[0] if input_paths else "?",
+        eager,
+    )
+
+    # Partition by storage type: loose text, archive text (composite), loose h5
+    try:
+        from tcm.search import is_archive_composite, split_archive_path
+    except ImportError:
+
+        def is_archive_composite(p: Path) -> bool:  # type: ignore[no-redef]
+            return False
+
+        def split_archive_path(p: Path):  # type: ignore[no-redef]
+            return None
+
+    merged_loose: dict[tuple, list[Path]] = {}
+    merged_archive: dict[tuple, list[Path]] = {}
+    merged_h5: dict[tuple, list[Path]] = {}
+    for _key, _files in merged.items():
+        for _f in _files:
+            if is_archive_composite(_f):
+                merged_archive.setdefault(_key, []).append(_f)
+            elif _f.suffix.lower() in (_constants.EXT_HDF5 | _constants.EXT_NC):
+                if not policy.io().h5:
+                    lf.debug("Skipping HDF5/NC file {} — {}", _f, policy.io().reason)
+                    continue
+                merged_h5.setdefault(_key, []).append(_f)
+            else:
+                merged_loose.setdefault(_key, []).append(_f)
+
+    # ── H5 loose files discovered via recursive search (when dir input) ──
+    if merged_h5:
+        if not eager:
+            # Deferred: stub without opening H5 (row-select will discover tables)
+            for _key, _files in merged_h5.items():
+                for path_h5 in _files:
+                    try:
+                        pcid_h5 = format.pcid_from_parts(model=_key[0], number=_key[1])
+                        cfg1_h5 = prep_cfg_for_probe(
+                            pcid_h5, cfg_in_for_probes, cfg_in_common, cfg, path_csv=path_h5
+                        )
+                        cfg1_h5["out"]["dt_bins"] = cfg["out"].get("dt_bins", [0, 2, 600, 3600, 7200])
+                        for del_field in [
+                            "tables",
+                            "nfiles",
+                            "temp_db_path",
+                            "overwrite_db",
+                            "b_del_temp_db",
+                            "b_incremental_update",
+                        ]:
+                            cfg1_h5["out"].pop(del_field, None)
+                        cfg1_h5["input"].pop("dt_min_binning_proc", None)
+                        cfg1_h5["input"].pop("b_insert_separator", None)
+                        cfg1_h5["input"].pop("cfgFile", None)
+                        yield cfg1_h5, (False, pcid_h5, None)
+                    except Exception:
+                        lf.warning(
+                            "Skipping config generation for h5 {:s} (will use existing config if available)",
+                            str(path_h5),
+                            exc_info=True,
+                        )
+        else:
+            table_patterns = cfg["input"].get("tables", ["incl*"])
+            for _key, _files in merged_h5.items():
+                for path_h5 in _files:
+                    try:
+                        tables: list[str] = []
+                        for pat in table_patterns:
+                            tables.extend(_discover_tables(path_h5, pat))
+                        if not tables:
+                            lf.warning("No table groups matching {} in {}", table_patterns, path_h5)
+                            continue
+                        for tbl in tables:
+                            pcid_h5 = format.to_pcid_from_name(tbl)
+                            cfg1_h5 = prep_cfg_for_probe(
+                                pcid_h5, cfg_in_for_probes, cfg_in_common, cfg, path_csv=path_h5
+                            )
+                            cfg1_h5["input"]["tables"] = [tbl]
+                            cfg1_h5["out"]["dt_bins"] = cfg["out"].get("dt_bins", [0, 2, 600, 3600, 7200])
+                            for del_field in [
+                                "tables",
+                                "nfiles",
+                                "temp_db_path",
+                                "overwrite_db",
+                                "b_del_temp_db",
+                                "b_incremental_update",
+                            ]:
+                                cfg1_h5["out"].pop(del_field, None)
+                            cfg1_h5["input"].pop("dt_min_binning_proc", None)
+                            cfg1_h5["input"].pop("b_insert_separator", None)
+                            cfg1_h5["input"].pop("cfgFile", None)
+                            yield cfg1_h5, (False, pcid_h5, None)
+                    except Exception:
+                        lf.warning(
+                            "Skipping config generation for h5 {:s} (will use existing config if available)",
+                            str(path_h5),
+                            exc_info=True,
+                        )
+
+    # ── Archive text files — time/burst via meta_finder without extraction ──
+    if merged_archive:
+        if not eager:
+            # Deferred: stub configs without reading archive members (row-select will fill time_ranges/burst)
+            for _key, _files in merged_archive.items():
+                for path_csv in _files:
+                    try:
+                        pcid_arc = format.pcid_from_parts(model=_key[0], number=_key[1])
+                        cfg1_arc = prep_cfg_for_probe(
+                            pcid_arc, cfg_in_for_probes, cfg_in_common, cfg, path_csv=path_csv
+                        )
+                        if cfg["out"]["table"]:
+                            pcid_arc = format.to_pcid_from_name(cfg["out"]["table"])
+                        cfg1_arc["out"]["dt_bins"] = cfg["out"].get("dt_bins", [0, 2, 600, 3600, 7200])
+                        for del_field in [
+                            "tables",
+                            "nfiles",
+                            "temp_db_path",
+                            "overwrite_db",
+                            "b_del_temp_db",
+                            "b_incremental_update",
+                        ]:
+                            cfg1_arc["out"].pop(del_field, None)
+                        cfg1_arc["input"].pop("dt_min_binning_proc", None)
+                        cfg1_arc["input"].pop("b_insert_separator", None)
+                        cfg1_arc["input"].pop("cfgFile", None)
+                        yield cfg1_arc, (False, pcid_arc, None)
+                    except Exception:
+                        lf.warning(
+                            "Skipping config generation for probe {:s} (will use existing config if available)",
+                            format.pcid_from_parts(model=_key[0], number=_key[1]),
+                            exc_info=True,
+                        )
+        else:
+            # TCM-first time_ranges, then meta_finder burst overlay (D3: integrate, do not hide failures)
+            try:
+                from meta_finder.data_proc_funcs import extract_time_info_from_text_file as _eti_archive
+
+                _has_burst_archive = True
+            except ImportError:
+                _eti_archive = None  # type: ignore[assignment]
+                _has_burst_archive = False
+
+            def _tcm_ranges_from_archive(dir_archive: Path, rel: PurePosixPath, _key: tuple) -> list[str] | None:
+                """Extract TCM time_ranges from archive member via temp extraction + csv_load edge path."""
+                import tempfile
+                import zipfile
+
+                try:
+                    suffix = dir_archive.suffix.lower()
+                    with tempfile.TemporaryDirectory() as td:
+                        td_path = Path(td)
+                        extracted: Path | None = None
+                        if suffix == ".zip":
+                            with zipfile.ZipFile(dir_archive) as zf:
+                                data = zf.read(str(rel))
+                                extracted = td_path / Path(rel).name
+                                extracted.write_bytes(data)
+                        elif suffix == ".7z":
+                            try:
+                                import py7zr  # type: ignore[import]
+
+                                with py7zr.SevenZipFile(dir_archive, mode="r") as zf:
+                                    zf.extract(path=td, targets=[str(rel)])
+                                    extracted = td_path / rel
+                                    if not extracted.is_file():
+                                        cand = list(td_path.rglob(Path(rel).name))
+                                        extracted = cand[0] if cand else None
+                            except Exception:
+                                lf.debug("7z extract failed for %s / %s", dir_archive, rel, exc_info=True)
+                                return None
+                        else:
+                            return None
+                        if extracted is None or not extracted.is_file():
+                            return None
+                        tmp_dict: dict[tuple, list[Path]] = {(_key[0], _key[1]): [extracted]}
+                        cfg_merged_tmp = {**csv_load.cfg_default["in"], **cfg_in_common}
+                        for df_edges, (_ipid, _pcid, _ppath) in csv_load.load_from_csv_gen(
+                            csv_files_dict=tmp_dict, cfg_in=cfg_merged_tmp, return_="first_last_row"
+                        ):
+                            if df_edges is not None and len(df_edges.index) >= 2:
+                                return [dt.isoformat() for dt in df_edges.index[:1]] + [
+                                    dt.isoformat() for dt in df_edges.index[-1:]
+                                ]
+                            if df_edges is not None and len(df_edges.index) == 1:
+                                iso = df_edges.index[0].isoformat()
+                                return [iso, iso]
+                            return None
+                        return None
+                except Exception:
+                    lf.debug("TCM archive ranges failed for %s / %s", dir_archive, rel, exc_info=True)
+                    return None
+
+            for _key, _files in merged_archive.items():
+                for path_csv in _files:
+                    try:
+                        split = split_archive_path(path_csv)
+                        if split is None:
+                            continue
+                        dir_archive, rel = split
+                        averaging_interval = cfg_in_common.get("averaging_interval")
+                        if averaging_interval is None:
+                            averaging_interval = 2
+                        # TCM-first time_ranges
+                        tcm_ranges = _tcm_ranges_from_archive(dir_archive, rel, _key)
+                        info = None
+                        burst_dt = bursts_t = "-"
+                        t_st = t_en = None
+                        if _has_burst_archive:
+                            try:
+                                info = _eti_archive(
+                                    dir_archive, rel, averaging_interval=averaging_interval
+                                )
+                                if info is not None:
+                                    t_st, t_en, burst_dt, bursts_t = info
+                            except Exception:
+                                lf.debug("extract_time_info failed for %s / %s", dir_archive, rel, exc_info=True)
+                                info = None
+                        pcid_arc = format.pcid_from_parts(model=_key[0], number=_key[1])
+                        cfg1_arc = prep_cfg_for_probe(
+                            pcid_arc, cfg_in_for_probes, cfg_in_common, cfg, path_csv=path_csv
+                        )
+                        # Prefer TCM ranges; fallback to meta_finder ranges when TCM absent
+                        if tcm_ranges is not None:
+                            cfg1_arc["input"]["time_ranges"] = tcm_ranges
+                            if info is None:
+                                lf.debug("TCM ranges for {}: {} (burst unavailable)", pcid_arc, tcm_ranges)
+                            elif burst_dt != "-" or bursts_t != "-":
+                                lf.info(
+                                    "Burst for {}: burst_dt={} bursts_t={} (from {})",
+                                    pcid_arc,
+                                    burst_dt,
+                                    bursts_t,
+                                    path_csv.name if hasattr(path_csv, "name") else str(path_csv).rsplit("/", 1)[-1],
+                                )
+                            else:
+                                lf.debug("Burst for {}: continuous (-/-) in {}", pcid_arc, path_csv)
+                        elif info is not None:
+                            if t_st and t_en:
+                                cfg1_arc["input"]["time_ranges"] = [
+                                    t.replace(" ", "T") if " " in t else t for t in (t_st, t_en)
+                                ]
+                            if burst_dt != "-" or bursts_t != "-":
+                                lf.info(
+                                    "Burst for {}: burst_dt={} bursts_t={} (from {})",
+                                    pcid_arc,
+                                    burst_dt,
+                                    bursts_t,
+                                    path_csv.name if hasattr(path_csv, "name") else str(path_csv).rsplit("/", 1)[-1],
+                                )
+                            else:
+                                lf.debug("Burst for {}: continuous (-/-) in {}", pcid_arc, path_csv)
+                        else:
+                            lf.warning("Time extraction failed for {} from {} (both TCM and meta_finder)", pcid_arc, path_csv)
+                        if cfg["out"]["table"]:
+                            pcid_arc = format.to_pcid_from_name(cfg["out"]["table"])
+                        cfg1_arc["out"]["dt_bins"] = cfg["out"].get("dt_bins", [0, 2, 600, 3600, 7200])
+                        for del_field in [
+                            "tables",
+                            "nfiles",
+                            "temp_db_path",
+                            "overwrite_db",
+                            "b_del_temp_db",
+                            "b_incremental_update",
+                        ]:
+                            cfg1_arc["out"].pop(del_field, None)
+                        cfg1_arc["input"].pop("dt_min_binning_proc", None)
+                        cfg1_arc["input"].pop("b_insert_separator", None)
+                        cfg1_arc["input"].pop("cfgFile", None)
+                        yield cfg1_arc, (False, pcid_arc, None)
+                    except Exception:
+                        lf.warning(
+                            "Skipping config generation for probe {:s} (will use existing config if available)",
+                            format.pcid_from_parts(model=_key[0], number=_key[1]),
+                            exc_info=True,
+                        )
+
+    # ── Loose text files — original path via csv_read_gen (handles header detection) ──
+    if not merged_loose:
+        if not merged_archive and not merged_h5:
+            # Nothing left to yield (should have been caught earlier)
+            return
+        # Only archive/h5 existed — already yielded above
+        if not merged_loose:
+            return
+
+    if not eager:
+        # Deferred: stub configs without reading file edges/burst (filled on row-select)
+        for _key, _files in merged_loose.items():
+            for path_csv in _files:
+                try:
+                    pcid = format.pcid_from_parts(model=_key[0], number=_key[1])
+                    cfg1 = prep_cfg_for_probe(pcid, cfg_in_for_probes, cfg_in_common, cfg, path_csv=path_csv)
+                    cfg1["out"]["dt_bins"] = cfg["out"].get("dt_bins", [0, 2, 600, 3600, 7200])
+                    for del_field in [
+                        "tables",
+                        "nfiles",
+                        "temp_db_path",
+                        "overwrite_db",
+                        "b_del_temp_db",
+                        "b_incremental_update",
+                    ]:
+                        cfg1["out"].pop(del_field, None)
+                    cfg1["input"].pop("dt_min_binning_proc", None)
+                    cfg1["input"].pop("b_insert_separator", None)
+                    cfg1["input"].pop("cfgFile", None)
+                    yield cfg1, (False, pcid, None)
+                except Exception:
+                    lf.warning(
+                        "Skipping config generation for probe {:s} (will use existing config if available)",
+                        format.pcid_from_parts(model=_key[0], number=_key[1]),
+                        exc_info=True,
+                    )
+        return
 
     # Load edge rows
     # Internally handles: stem grouping, corrected/raw pairing
     # — all the pairing logic that the old discover_probes() performed explicitly.
     cfg_merged = {**csv_load.cfg_default["in"], **cfg_in_common}
     for df_raw_edges, (ipid, pcid, path_csv) in csv_load.load_from_csv_gen(
-        csv_files_dict=merged,
+        csv_files_dict=merged_loose,
         cfg_in=cfg_merged,
         return_="first_last_row",
     ):
@@ -387,6 +718,27 @@ def gen_metadata(
             cfg1 = prep_cfg_for_probe(pcid, cfg_in_for_probes, cfg_in_common, cfg, path_csv=path_csv)
             if df_raw_edges is not None:
                 cfg1["input"]["time_ranges"] = [dt.isoformat() for dt in df_raw_edges.index]
+
+            # Burst detection for loose files (same as archive — fills missing metadata, not input)
+            try:
+                from pathlib import PurePosixPath as _PP
+
+                from meta_finder.data_proc_funcs import extract_time_info_from_text_file as _eti
+
+                _avg = cfg_in_common.get("averaging_interval") or 2
+                _info = _eti(path_csv.parent, _PP(path_csv.name), averaging_interval=_avg)
+                if _info is not None:
+                    _, _, _bdt, _bst = _info
+                    if _bdt != "-" or _bst != "-":
+                        lf.info("Burst for {}: burst_dt={} bursts_t={} (from {})", pcid, _bdt, _bst, path_csv.name)
+                    else:
+                        lf.debug("Burst for {}: continuous (-/-) in {}", pcid, path_csv.name)
+                else:
+                    lf.debug("Burst for {}: no time_info from {}", pcid, path_csv.name)
+            except ImportError:
+                pass
+            except Exception:
+                lf.debug("Burst extraction failed for {}", path_csv, exc_info=True)
 
             # output pcid
             if cfg["out"]["table"]:
@@ -417,7 +769,9 @@ def gen_metadata(
             )
 
 
-def save_config_to_yaml(cfg: Mapping[str, Any], input_paths: Sequence[Path]) -> dict[str, dict[str, Any]]:
+def save_config_to_yaml(
+    cfg: Mapping[str, Any], input_paths: Sequence[Path], eager: bool = True
+) -> dict[str, dict[str, Any]]:
     """Save per-file YAML configs from gen_metadata() to ``cfg_proc/run/``.
 
     Each source file gets one YAML named ``{yymmdd_hhmm}@{pcid_stem}.yaml``
@@ -438,12 +792,10 @@ def save_config_to_yaml(cfg: Mapping[str, Any], input_paths: Sequence[Path]) -> 
     :return: mapping of ``{input_path_str: cfg1_dict}``.
     """
     out_dicts: dict[str, dict[str, Any]] = {}
-    # Find config dir: try h5 paths first, fall back to text_path
+    # Single-anchor: dir_cfg_proc derived from trigger (processing.run enforces one _raw)
     in_path = Path(cfg["input"]["path"])
+    lf.info("save_config_to_yaml trigger={} input_paths={}", in_path, input_paths)
     dir_cfg_proc = paths.find_dir_raw_absolute(in_path) / "cfg_proc" / "run"
-    from tcm.cli import safe_cfg_dir
-
-    safe_cfg_dir(dir_cfg_proc)
 
     ry = _ry()
 
@@ -453,57 +805,90 @@ def save_config_to_yaml(cfg: Mapping[str, Any], input_paths: Sequence[Path]) -> 
 
     ry.representer.add_multi_representer(PurePath, path_representer)
 
-    # Build set of pcids that already have a valid config (input.path exists).
-    # Uses the same normalization as get_existed_cfgs: stem_to_pcid → probe_from_name → pcid_from_parts.
-    existing_valid: set[str] = set()
-    for yaml_file in dir_cfg_proc.glob("*.yaml"):
+    # Build set of input.path strings that already have a valid config.
+    # Per-file dedup (not per-pcid) so multiple files of same probe with
+    # different dates each get a YAML tab.  Archive composites are valid when
+    # the archive file itself exists.
+    def _is_valid_input_path(p_str: str) -> bool:
+        p = Path(p_str)
         try:
-            with yaml_file.open(encoding="utf-8") as fp:
-                cfg_yaml = ry.load(fp)
-            cfg_path = (cfg_yaml or {}).get("input", {}).get("path")
-            if cfg_path and Path(cfg_path).expanduser().is_file():
-                stem = yaml_file.stem
-                identity = format.probe_from_name(format.stem_to_pcid(stem).lower())
-                if identity:
-                    existing_valid.add(format.pcid_from_parts(model=identity[0], number=identity[1]))
-                else:
-                    existing_valid.add(format.stem_to_pcid(stem))
-        except Exception:
-            continue
+            from tcm.search import is_archive_composite, split_archive_path
 
-    # Iterate per-file metadata (each run YAML is independent)
-    for cfg1, (probe_continues, pcid, _) in gen_metadata(cfg, input_paths):
-        # Skip if an equivalent config already exists for this normalized pcid
-        if pcid in existing_valid:
+            if is_archive_composite(p):
+                sp = split_archive_path(p)
+                if sp is None:
+                    return False
+                archive_path, _rel = sp
+                return archive_path.is_file()
+            return p.expanduser().is_file()
+        except Exception:
+            try:
+                return p.expanduser().is_file()
+            except Exception:
+                return False
+
+    existing_valid_paths: set[str] = set()
+    if dir_cfg_proc.is_dir():
+        for yaml_file in dir_cfg_proc.glob("*.yaml"):
+            try:
+                with yaml_file.open(encoding="utf-8") as fp:
+                    cfg_yaml = ry.load(fp)
+                cfg_path = (cfg_yaml or {}).get("input", {}).get("path")
+                if cfg_path and _is_valid_input_path(str(cfg_path)):
+                    existing_valid_paths.add(str(Path(str(cfg_path)).as_posix()))
+            except Exception:
+                continue
+
+    # Iterate per-file metadata (each run YAML is independent) — eager=False defers file reads to row-select
+    for cfg1, (probe_continues, pcid, _) in gen_metadata(cfg, input_paths, eager=eager):
+        cfg_path_str = str(Path(str(cfg1["input"]["path"])).as_posix())
+        # Per-file dedup: skip only when exact file path already has a valid YAML
+        if cfg_path_str in existing_valid_paths:
             lf.debug(
-                "{}: skipping config generation — valid config already exists for this probe",
+                "{}: skipping config generation — valid config already exists for file {}",
                 pcid,
+                cfg_path_str,
             )
             out_dicts[str(cfg1["input"]["path"])] = cfg1
             continue
 
-        # Date stamp from time_ranges[0] → {yymmdd_hhmm}@ prefix; anything before @ is
-        # metadata, not significant for probe identity (see format.stem_to_pcid).
-        file_name = "".join(
-            (
-                [datetime.fromisoformat(t0).strftime("%y%m%d_%H%M")]
-                if (time_ranges := cfg1["input"].get("time_ranges")) and (t0 := time_ranges[0])
-                else []
-            )
-            + (
-                ["@", source_stem]
-                if (source_stem := Path(cfg1["input"]["path"]).stem)[0] != "@"
-                else [source_stem]
-            )
-            + [".yaml"]
-        )
+        # Date stamp + pcid + preserved -comment (D5: pcid canonical, comment from source stem)
+        # Source stem extraction handles archive composites (inner name) and @ prefix
+        _src_path = Path(str(cfg1["input"]["path"]))
+        try:
+            from tcm.search import is_archive_composite as _is_comp
+            from tcm.search import split_archive_path as _split
 
+            if _is_comp(_src_path):
+                _sp = _split(_src_path)
+                _src_stem = _sp[1].stem if _sp is not None else _src_path.stem
+            else:
+                _src_stem = _src_path.stem
+        except Exception:
+            _src_stem = Path(str(cfg1["input"]["path"])).stem
+        _stem_no_at = _src_stem.lstrip("@")
+        _comment = _stem_no_at.split("-", 1)[1] if "-" in _stem_no_at else ""
+        _date_prefix = (
+            datetime.fromisoformat(t0).strftime("%y%m%d_%H%M")
+            if (time_ranges := cfg1["input"].get("time_ranges")) and (t0 := time_ranges[0])
+            else ""
+        )
+        file_name = f"{_date_prefix + '@' if _date_prefix else '@'}{pcid}{'-' + _comment if _comment else ''}.yaml"
+
+        # OmegaConf schema expects str for path — convert Path (posix for archive composites)
+        if isinstance(cfg1["input"].get("path"), Path):
+            cfg1["input"]["path"] = cfg1["input"]["path"].as_posix()
         conf_, ignored_keys = to_omegaconf.to_omegaconf_merge_compatible(cfg1, schema.Config)
-        lf.debug("Saving {} config: {} to {}", pcid, file_name, dir_cfg_proc)
+        _per_file_dir = dir_cfg_proc
+        lf.debug("Saving {} config: {} to {}", pcid, file_name, _per_file_dir)
         if ignored_keys:
             lf.debug('Removed fields "{}" not in Config', ignored_keys)
 
-        with (dir_cfg_proc / file_name).open(encoding="utf8", mode="w") as fp:
+        # Lazy dir creation — only when a YAML is actually written.
+        from tcm.cli import safe_cfg_dir
+
+        safe_cfg_dir(_per_file_dir)
+        with (_per_file_dir / file_name).open(encoding="utf8", mode="w") as fp:
             fp.write("# @package _global_\n")
             ry.dump(conf_, stream=fp)
 
@@ -526,6 +911,25 @@ def find_stale_cfgs(
     :returns: ``{pcid: [stale_stem, …]}`` — only pcids with at least one stale config.
     """
     ry = _ry(write=False)
+
+    def _path_exists(p_str: str) -> bool:
+        p = Path(p_str)
+        try:
+            from tcm.search import is_archive_composite, split_archive_path
+
+            if is_archive_composite(p):
+                sp = split_archive_path(p)
+                if sp is None:
+                    return False
+                archive_path, _rel = sp
+                return archive_path.is_file()
+            return p.expanduser().is_file()
+        except Exception:
+            try:
+                return p.expanduser().is_file()
+            except Exception:
+                return False
+
     stale: dict[str, list[str]] = {}
     for pcid, stems in cfgs_existed.items():
         for stem in stems:
@@ -537,8 +941,8 @@ def find_stale_cfgs(
                 with yaml_path.open(encoding="utf-8") as fp:
                     cfg_yaml = ry.load(fp)
                 cfg_path = (cfg_yaml or {}).get("input", {}).get("path")
-                if cfg_path and not Path(cfg_path).expanduser().is_file():
-                    if _raw_nc_has_source(Path(cfg_path), pcid):
+                if cfg_path and not _path_exists(str(cfg_path)):
+                    if _raw_nc_has_source(Path(str(cfg_path).split(".zip/")[0].split(".7z/")[0]), pcid):
                         lf.debug("Config {} for {}: text absent but raw NC has log entry", stem, pcid)
                         continue
                     lf.debug("Config {} for {} references non-existent {}", stem, pcid, cfg_path)

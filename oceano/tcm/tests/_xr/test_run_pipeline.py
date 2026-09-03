@@ -171,7 +171,7 @@ class TestRunPipeline:
     def test_sync_devmeta_called_after_generation(self, project_dir, make_cfg, mocker):
         """Regression: run() must invoke sync_yamls_devmeta_and_hydra after generation.
 
-        Was lost in xr-native replacement (legacy 24xx_clc_hy.py called it;
+        Was lost in xr-native replacement (old 24xx_clc_hy.py called it;
         processing.run did not), so time_ranges from info_devices.yaml were
         never recorded in run YAMLs.
         """
