@@ -1045,6 +1045,155 @@ class TestHoverDetailPublishOrder:
         assert snapshots[-1] == "", "sheet leave must publish with an empty detail (no stale dwell arm)"
 
 
+class TestCoefsSectionDwellRu:
+    """Parent ``coefs`` row hover must arm a non-empty dwell without table soup (RU doc).
+
+    End-to-end sheet path (mirrors ``App._on_cell_status``): ``_publish_status``
+    on the ``coefs`` node must leave ``cs._hover_detail`` non-empty and free of
+    table rows — first it carried the whole coefficient table, then nothing.
+    """
+
+    def test_coefs_parent_row_arms_section_dwell(self, monkeypatch):
+        from tcm_gui import _help
+
+        monkeypatch.setattr("tcm_gui._help.resolve_lang", lambda: "ru")
+        _help.reload_cache("ru")
+        cfg = {
+            "input": {
+                "path": "/data",
+                "coefs": {
+                    "Ag": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                    "P_t": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                    "kVabs": [1, 2, 3, 4, 5, 6],
+                },
+            }
+        }
+        cs, _ = TestCoefsPathChildRow._make_loaded_sheet(cfg)
+
+        snapshots: list[tuple[str, str]] = []
+        cs.on_hover_status = lambda msg, md=False: snapshots.append((msg, cs._hover_detail))
+
+        iid = next(i for i, m in cs._meta.items() if m.get("key") == "coefs")
+        cs._publish_status(iid)
+        msg, detail = snapshots[-1]
+        assert detail, f"coefs parent dwell empty; status was {msg!r}"
+        assert "Матрица масштаба" not in detail, f"table row leaked into dwell: {detail!r}"
+
+    def test_coefs_parent_row_tree_dwell_differs_from_status(self, monkeypatch):
+        """Tree hover on the ``coefs`` parent row: concise status, prose dwell (RU doc).
+
+        The section row's dwell must be visibly different from its status —
+        otherwise the dwell firing after the delay is imperceptible ("shows as
+        status, not dwell").  Expected: status falls back to the ``##``
+        subtitle, dwell carries the bare ``### Detailed`` prose.
+        """
+        from tcm_gui import _help
+
+        monkeypatch.setattr("tcm_gui._help.resolve_lang", lambda: "ru")
+        _help.reload_cache("ru")
+        cfg = {
+            "input": {
+                "path": "/data",
+                "coefs": {
+                    "Ag": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                    "P_t": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                    "kVabs": [1, 2, 3, 4, 5, 6],
+                },
+            }
+        }
+        cs, _ = TestCoefsPathChildRow._make_loaded_sheet(cfg)
+        iid = next(i for i, m in cs._meta.items() if m.get("key") == "coefs")
+        assert cs._help_candidates(iid, tree=True) == ["input.coefs"]
+        h = _help.help_for_path("input.coefs")
+        assert h is not None
+        status = _help.section_body_short(h)
+        dwell = cs._resolve_detail("input.coefs")
+        assert status == "Калибровочные коэффициенты", f"status should be the subtitle; got {status!r}"
+        assert "При генерации конфигураций" in dwell, f"dwell should be the Detailed prose; got {dwell!r}"
+        assert status not in dwell and dwell not in status, "dwell must differ from status"
+        assert "Матрица масштаба" not in dwell, f"table row leaked into dwell: {dwell!r}"
+
+    def test_coefs_parent_row_end_to_end_status_then_dwell(self, monkeypatch):
+        """Full App dwell chain on the coefs parent row (RU doc, real Tk timers).
+
+        Binds the real ``App`` status/dwell methods to a namespace with a
+        recording label, with realistic ordering (settle < dwell delay):
+        status hint first, path Detailed dwell second — distinct texts, no
+        table rows anywhere.
+        """
+        import time
+        import tkinter as tk
+
+        from tcm_gui import _help
+        from tcm_gui.app import App
+
+        monkeypatch.setattr("tcm_gui._help.resolve_lang", lambda: "ru")
+        _help.reload_cache("ru")
+        try:
+            root = tk.Tk()
+            root.withdraw()
+        except tk.TclError:
+            pytest.skip("Tk not available")
+        try:
+            cfg = {
+                "input": {
+                    "path": "/data",
+                    "coefs": {
+                        "Ag": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                        "P_t": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                        "kVabs": [1, 2, 3, 4, 5, 6],
+                    },
+                }
+            }
+            cs, _ = TestCoefsPathChildRow._make_loaded_sheet(cfg)
+            ns = type("NS", (), {})()
+            ns.root = root
+            ns._tip_active = False
+            ns._status_hovering = False
+            ns._dwell_active = False
+            ns._dwell_widget = None
+            ns._status_job = None
+            ns._dwell_job = None
+            ns._dwell_hide_job = None
+            ns._STATUS_SETTLE_MS = 10
+            ns._DWELL_MS = 60
+            ns._DWELL_HIDE_MS = 0
+            ns._labels = []
+            ns._status_lbl = type(
+                "L", (), {"set_text": lambda self, t, raw=False, base=None: ns._labels.append(t)}
+            )()
+            ns._status_lbl_f1_anchor = None
+            for fn in (
+                "_cancel_status_job",
+                "_apply_status",
+                "_set_status",
+                "_cancel_dwell_job",
+                "_arm_dwell",
+                "_show_dwell_tip",
+                "_cancel_dwell_hide_job",
+                "_clear_dwell_now",
+                "_on_cell_status",
+            ):
+                setattr(ns, fn, getattr(App, fn).__get__(ns))
+            cs.on_hover_status = lambda msg, md=False: ns._on_cell_status(cs, msg, md)
+            iid = next(i for i, m in cs._meta.items() if m.get("key") == "coefs")
+            cs._publish_status(iid)
+            time.sleep(0.15)
+            root.update()
+            assert len(ns._labels) == 2, f"expected status + dwell writes; got {ns._labels!r}"
+            status, dwell = ns._labels
+            assert "Источник коэффициентов" in status, f"status should be the path hint; got {status!r}"
+            assert "Должен содержать коэффициенты" in dwell, (
+                f"dwell should be the path Detailed; got {dwell!r}"
+            )
+            assert status != dwell, "dwell must differ from status"
+            assert not any("Матрица масштаба" in t for t in ns._labels), (
+                f"table row reached the label: {ns._labels!r}"
+            )
+        finally:
+            root.destroy()
+
+
 # ── _hide_hover_field cancels in-flight Entry edits (regression) ────────────
 
 

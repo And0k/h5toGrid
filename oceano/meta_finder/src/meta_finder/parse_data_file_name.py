@@ -186,7 +186,7 @@ def parse_filename_for_metadata(filename: str) -> Dict[str, Any]:
 
     For complete device name pattern definitions, see:
     - config.ptn_device_id: Matches device type followed by digits (e.g., i01, w01, ib27)
-    - README.md "Device Names" and "Text Data Filenames" sections
+    - [Input / Output Format Specification](../reference/io_formats.md) — file name parsing and device ID normalization
 
     Handles two possible orders of device and bin interval
 

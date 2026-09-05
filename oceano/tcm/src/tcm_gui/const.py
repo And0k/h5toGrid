@@ -38,23 +38,6 @@ TTK_THEME: Final[str] = "native"  # "native" (platform default) or "clam"
 COLOR_MODE: Final[str] = "auto"  # "auto" (OS detection), "light", or "dark"
 LANG: Final[str] = "auto"  # "auto" (OS locale), or explicit: "en", "ru", etc.
 
-# Virtual key code for the physical ``C`` key (platform-specific).
-# Used to detect Ctrl+C regardless of the active keyboard layout: on non-Latin
-# layouts (Cyrillic, Greek, …) the physical ``C`` key produces a different
-# character, so Tk's ``<<Copy>>`` virtual event never fires from its
-# ``<Control-Key-c>`` mapping.  We detect the physical key by ``keycode`` and
-# generate ``<<Copy>>`` ourselves.  See :meth:`App._on_ctrl_keypress``.
-#
-# Tk's ``keycode`` is the platform keycode (Windows VK, X11 keycode, macOS
-# key ID) — NOT a Tk abstraction, so values differ per windowing system:
-#   - win32:  VK_C = 0x43
-#   - x11:    standard PC ``C`` key = 54
-#   - aqua:   kVK_ANSI_C = 0x08
-# Mapping uses ``sys.platform`` (Tk's ``windowingsystem`` maps to the same
-# ``win32``/``linux``/``darwin`` keys for the platforms we target).
-_VK_C_BY_PLATFORM: Final[dict[str, int]] = {"win32": 0x43, "darwin": 0x08, "linux": 54}
-VK_C: Final[int] = _VK_C_BY_PLATFORM.get(sys.platform, 0x43)
-
 # Saved once on first UIScale() call — prevents compounding when multiple
 # UIScale instances are created (e.g. tests creating fresh roots).
 _platform_scaling: float | None = None
@@ -231,6 +214,7 @@ def nudge_window(win: tk.Misc, dx: int, dy: int) -> None:
 
 
 # ── font helpers ────────────────────────────────────────────────────────────
+
 
 def tk_font_family(widget: tk.Text) -> str:
     """Extract the real family name from the widget font (e.g. 'Consolas').

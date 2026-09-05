@@ -431,6 +431,9 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
         if not st.fence and (m := _RE_FIELD_MODE_HEAD.match(line)):
             flush_any_detail()
             close_mode()
+            # A mode starts here: earlier paragraph (if any) stays the section
+            # short, later lines belong to the mode — never both.
+            _finalize_post_heading()
             path = m["path"]
             # Bare ``### `path_field` `` opens its own section when the doc
             # carries no ``## `path_field` `` heading — the section registers
@@ -470,6 +473,10 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
             if body_d == "Detailed" and st.section_level is not None and lvl_d == st.section_level + 1:
                 flush_any_detail()
                 close_mode()
+                # The mode owns what follows: close the section-short capture so
+                # its prose arms the dwell body, not the status short (the `##`
+                # subtitle stays the status fallback — status and dwell differ).
+                _finalize_post_heading()
                 st.mode_path, st.mode_tag, st.mode_level = st.section, "Detailed", lvl_d
                 continue
 
@@ -527,6 +534,14 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
                         st.sub_detail_tag = tag
                         st.sub_detail_lines.clear()
                         continue
+                elif lvl <= st.mode_level:
+                    # Sibling or parent heading closes the active mode body
+                    # so deeper content (e.g. a table) is not swallowed.
+                    # Fall through for parent-level headings so the section
+                    # close below still resets section state.
+                    close_mode()
+                    if st.section_level is not None and lvl > st.section_level:
+                        continue
 
         # Field-level #### detail block (no ### mode tag active).
         # Only after at least one field row — a leading #### before the table
@@ -559,14 +574,9 @@ def parse_reference(text: str) -> dict[str, HelpEntry]:
                 st.section_anchor = ""
                 continue
             if st.capture_post_heading and lvl > (st.section_level or 0):
-                # Leading detail heading before table (e.g. ``#### Detailed`` under
-                # ``## `input.coefs```) — keep section open and capture heading body
-                # as part of post_heading paragraph rather than closing.
-                body = hm3.group("body").strip()
-                # Strip anchor id if any.
-                body = _RE_ANCHOR_ID.sub("", body).strip()
-                if body:
-                    st.post_heading_para.append(body)
+                # Leading heading before table (e.g. ``#### Detailed`` under
+                # ``## `input.coefs```) — keep section open, skip the label:
+                # heading text is never prose (no "Detailed"/table titles in short).
                 continue
             # Deeper heading not handled as field/mode detail but still deeper than
             # section — don't close; let it fall through to content handlers.

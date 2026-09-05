@@ -15,6 +15,12 @@ from .parse_data_file_name import normalize_device_id
 
 logger = logging.getLogger(__name__)
 
+# Unified time-edge windows: timestamp-validated contiguous runs replace blank-line
+# tolerance everywhere time data is needed (no per-caller time postproc variants exist,
+# so windows are constants and skip_nan_rows stays the only knob).
+EDGE_TOP_WINDOW = 50
+EDGE_BOTTOM_WINDOW = 10
+
 
 def serial_to_datetime(serial: float) -> str:
     """
@@ -53,9 +59,10 @@ def serial_to_datetime(serial: float) -> str:
 _find_dated_files_cache: Dict[Tuple[str, str, str], List[Any]] = {}
 
 # Cache for read_file_lines_universal results to avoid re-reading same file groups
-# Key: (parent_dir_path, device_id, extension, max_lines, skip_nan_rows) -> Result: (lines, last_line, error)
+# Key: (parent_dir_path, device_id, extension, max_lines, skip_nan_rows, encoding, sep, skip_header)
 _read_file_lines_cache: Dict[
-    Tuple[str, str, str, Optional[int], bool], Tuple[List[str], Optional[str], Optional[str]]
+    Tuple[str, str, str, Optional[int], bool, Optional[str], Optional[str], Optional[int]],
+    Tuple[List[str], Optional[str], Optional[str]],
 ] = {}
 
 
@@ -206,7 +213,9 @@ def _find_matching_files_in_archive(dir_archive: Path, rel_path: PurePosixPath) 
     return _find_dated_files_with_same_pattern_generic(base_name, rel_paths)
 
 
-def _get_last_lines_efficiently(file_handle, num_lines: int = 1, skip_nan_rows: bool = True) -> List[str]:
+def _get_last_lines_efficiently(
+    file_handle, num_lines: int = 1, skip_nan_rows: bool = True, sep: Optional[str] = None
+) -> List[str]:
     """
     Read the last N lines of a file efficiently without loading the entire file into memory.
     Optionally skips trailing rows that contain only NaN data.
@@ -215,6 +224,7 @@ def _get_last_lines_efficiently(file_handle, num_lines: int = 1, skip_nan_rows: 
         file_handle: Open file handle positioned at the end of the file
         num_lines: Number of lines to read from the end of the file
         skip_nan_rows: If True, skip trailing rows with only NaN data (default: True)
+        sep: Optional explicit field separator hint (default autodetect)
 
     Returns:
         List of the last N lines from the file (empty list if file is empty)
@@ -250,12 +260,7 @@ def _get_last_lines_efficiently(file_handle, num_lines: int = 1, skip_nan_rows: 
 
         # If requested, skip trailing rows with only NaN data
         if skip_nan_rows and lines:
-            # Determine separator from the last non-empty line
-            sep = "\t"
-            for line in reversed(lines):
-                if line.strip():
-                    sep = "\t" if "\t" in line else "," if "," in line else " "
-                    break
+            sep = _detect_sep(lines, sep)
 
             # Filter out trailing NaN rows
             filtered_lines = []
@@ -289,8 +294,7 @@ def _get_last_lines_efficiently(file_handle, num_lines: int = 1, skip_nan_rows: 
             all_lines = file_handle.readlines()
             if all_lines:
                 if skip_nan_rows:
-                    # Determine separator from first data line
-                    sep = "\t" if "\t" in all_lines[0] else "," if "," in all_lines[0] else " "
+                    sep = _detect_sep(all_lines, sep)
                     # Find last num_lines lines with valid data
                     filtered_lines = []
                     for line in reversed(all_lines):
@@ -309,46 +313,39 @@ def _get_last_lines_efficiently(file_handle, num_lines: int = 1, skip_nan_rows: 
 
 
 def _get_last_line_efficiently(
-    file_handle, skip_nan_rows: bool = True, is_raw: bool = False
+    file_handle, skip_nan_rows: bool = True, is_raw: bool = False, sep: Optional[str] = None
 ) -> Optional[str]:
     """
-    Read the last line of a file efficiently without loading the entire file into memory.
-    Optionally skips trailing rows that contain only NaN data.
-    Searches backward through multiple lines to find one with a valid timestamp.
+    Read the last data line of a file efficiently without loading the entire file into memory.
+    Drops blanks/NaN-only rows, then backward-searches the bottom window for the last valid
+    timestamp (timestamp-validated tolerance instead of blank-line tolerance).
 
     Args:
         file_handle: Open file handle positioned at the end of the file
         skip_nan_rows: If True, skip trailing rows with only NaN data (default: True)
         is_raw: Whether the file is in raw inclinometer format (default: False)
+        sep: Optional explicit field separator hint (default autodetect)
 
     Returns:
         The last line of the file with a valid timestamp, or None if file is empty
     """
     # Read multiple lines from the end of the file to find one with a valid timestamp
-    # We read 10 lines to have enough context to find a valid line
-    lines = _get_last_lines_efficiently(file_handle, num_lines=10, skip_nan_rows=skip_nan_rows)
+    # We read EDGE_BOTTOM_WINDOW lines to have enough context to find a valid line
+    lines = _get_last_lines_efficiently(
+        file_handle, num_lines=EDGE_BOTTOM_WINDOW, skip_nan_rows=skip_nan_rows, sep=sep
+    )
     if not lines:
         return None
 
-    # Determine separator from the last non-empty line
-    sep = "\t"
-    for line in reversed(lines):
-        if line.strip():
-            sep = "\t" if "\t" in line else "," if "," in line else " "
-            break
-
-    # Search backward through the lines to find one with a valid timestamp
-    start_idx = len(lines) - 1
-    max_attempts = 10
-    time_result = _find_valid_time_line(
-        lines, start_idx, direction="backward", max_attempts=max_attempts, is_raw=is_raw, sep=sep
-    )
-    if time_result:
-        # Return the line with valid timestamp
-        return lines[time_result[0]]
-    else:
-        # Fallback: return the last line even if it doesn't have a valid timestamp
-        return lines[-1]
+    sep = _detect_sep(lines, sep)
+    # Backward search for the last valid timestamp (skips interior bad lines; small-file
+    # windows may start with a header, so forward-until-failure must not be used here)
+    if found := _find_valid_time_line(
+        lines, len(lines) - 1, direction="backward", max_attempts=len(lines), is_raw=is_raw, sep=sep
+    ):
+        return lines[found[0]]
+    # Fallback: return the last line even if it doesn't have a valid timestamp
+    return lines[-1]
 
 
 def _is_raw_format(dir_archive: Path, rel_path: PurePosixPath) -> bool:
@@ -365,8 +362,68 @@ def _is_raw_format(dir_archive: Path, rel_path: PurePosixPath) -> bool:
     return "_raw" in str(dir_archive).lower() or "_raw" in str(rel_path).lower()
 
 
+def _open_text(path: Path, encoding: Optional[str] = None):
+    """Open text for time-column reads (BOM-safe UTF-8 default, hint override, never raises on decode)."""
+    return open(path, "r", encoding=encoding or "utf-8-sig", errors="ignore")
+
+
+def _detect_sep(lines: List[str], hint: Optional[str] = None) -> str:
+    """Return *hint* or autodetect the field separator from the last non-empty line."""
+    if hint:
+        return hint
+    for line in reversed(lines):
+        if line.strip():
+            return "\t" if "\t" in line else "," if "," in line else " "
+    return "\t"
+
+
+def _run_edge(window: List[str], is_raw: bool, sep: str) -> Optional[str]:
+    """Topmost line of the edge-anchored contiguous timestamp-valid run (None when absent).
+
+    Scans *window* from last toward first with :func:`parse_datetime_from_row` and stops
+    at the first parse failure, keeping the last valid line seen. Callers strip trailing
+    parse failures first, so all-good windows yield the first line.
+    """
+    edge = None
+    for ln in window[::-1]:
+        if parse_datetime_from_row(ln, is_raw=is_raw, sep=sep) is None:
+            break
+        edge = ln
+    return edge
+
+
+def _validated_tail_line(
+    tail_lines: List[str],
+    dir_archive: Path,
+    rel: PurePosixPath,
+    skip_nan_rows: bool,
+    sep: Optional[str] = None,
+) -> Optional[str]:
+    """Last data line of *tail_lines*: drop blanks/NaN-only rows, then backward valid-timestamp search."""
+    if not tail_lines:
+        return None
+    is_raw = _is_raw_format(dir_archive, rel)
+    sep = _detect_sep(tail_lines, sep)
+    data = [
+        ln
+        for ln in tail_lines
+        if ln.strip() and not (skip_nan_rows and _row_has_only_nan_data(ln.rstrip("\n"), sep))
+    ]
+    if not data:
+        return None
+    if found := _find_valid_time_line(
+        data, len(data) - 1, direction="backward", max_attempts=len(data), is_raw=is_raw, sep=sep
+    ):
+        return data[found[0]]
+    return None
+
+
 def _read_first_last_lines(
-    matching_files: List[Path], max_lines: Optional[int] = None, skip_nan_rows: bool = True
+    matching_files: List[Path],
+    max_lines: Optional[int] = None,
+    skip_nan_rows: bool = True,
+    encoding: Optional[str] = None,
+    sep: Optional[str] = None,
 ) -> Tuple[List[str], Optional[str]]:
     """
     Read lines from split files in a directory, optionally skipping trailing NaN rows.
@@ -375,6 +432,8 @@ def _read_first_last_lines(
         matching_files: List of file paths
         max_lines: Optional maximum number of lines to read from first file
         skip_nan_rows: If True, skip trailing rows with only NaN data when reading last line (default: True)
+        encoding: Optional explicit encoding hint (default BOM-safe UTF-8)
+        sep: Optional explicit field separator hint (default autodetect)
 
     Returns:
         Tuple of (list of lines from first file, last line from last file)
@@ -388,7 +447,7 @@ def _read_first_last_lines(
         # Determine if this is a raw format file
         is_raw = _is_raw_format(first_file_path.parent, first_file_path.name)
         # Read first lines from the first file
-        with open(first_file_path, "r", errors="ignore") as f:
+        with _open_text(first_file_path, encoding) as f:
             if max_lines is not None:
                 # Read first max_lines lines
                 for i in range(max_lines):
@@ -398,25 +457,35 @@ def _read_first_last_lines(
                     lines.append(line)
                 if len(matching_files) == 1:
                     # Read the last line as this is the last file too
-                    last_line = _get_last_line_efficiently(f, skip_nan_rows=skip_nan_rows, is_raw=is_raw)
+                    last_line = _get_last_line_efficiently(
+                        f, skip_nan_rows=skip_nan_rows, is_raw=is_raw, sep=sep
+                    )
                     return lines, last_line
             else:
                 f.seek(0)  # Reset file pointer to beginning
                 lines = f.readlines()
 
                 if len(matching_files) == 1:
-                    # Read the last line as this is the last file too
+                    # Validate the tail (trailing blanks/NaN rows must not become the end edge)
                     if lines:
-                        last_line = lines[-1]
+                        last_line = _validated_tail_line(
+                            lines[-EDGE_BOTTOM_WINDOW:],
+                            first_file_path.parent,
+                            PurePosixPath(first_file_path.name),
+                            skip_nan_rows,
+                            sep,
+                        )
                     return lines, last_line
 
         # Read the last line from the last file
         last_file_path = matching_files[-1]
         # Determine if this is a raw format file
         is_raw = _is_raw_format(last_file_path.parent, last_file_path.name)
-        with open(last_file_path, "r", errors="ignore") as f:
+        with _open_text(last_file_path, encoding) as f:
             # Read last line efficiently without loading entire file
-            last_line = _get_last_line_efficiently(f, skip_nan_rows=skip_nan_rows, is_raw=is_raw)
+            last_line = _get_last_line_efficiently(
+                f, skip_nan_rows=skip_nan_rows, is_raw=is_raw, sep=sep
+            )
             if not last_line and lines:
                 last_line = lines[-1]
 
@@ -428,94 +497,78 @@ def _read_first_last_lines_from_archived_files(
     matching_files: List[PurePosixPath],
     max_lines: Optional[int] = None,
     skip_nan_rows: bool = True,
+    encoding: Optional[str] = None,
+    sep: Optional[str] = None,
 ) -> Tuple[List[str], Optional[str]]:
     """
-    Read lines from split files in an archive, optionally skipping trailing NaN rows.
+    Read head/tail lines of split files in an archive without full extraction.
 
-    Tries to read directly from archive using libarchive, falling back to
-    extracting files to temporary directory for consistent NaN filtering behavior.
+    Path priority: streaming libarchive first, single-pass ZIP streaming second, and only
+    for 7z-without-libarchive the unavoidable single-target-file temp extraction (py7zr has
+    no streaming tail). NaN-skip and timestamp validation apply uniformly on every path.
 
     Args:
         dir_archive: The archive file to read from
         matching_files: List of file paths sorted by timestamp
         max_lines: Optional maximum number of lines to read from first file
         skip_nan_rows: If True, skip trailing rows with only NaN data when reading last line (default: True)
+        encoding: Optional explicit encoding hint for extracted 7z content (default BOM-safe UTF-8)
+        sep: Optional explicit field separator hint (default autodetect)
 
     Returns:
         Tuple of (list of lines from first file, last line from last file)
     """
-    lines = []
+    lines: List[str] = []
     last_line = None
 
     if matching_files:
-        # Try to read directly from archive using libarchive
+        first, last = matching_files[0], matching_files[-1]
+        # Streaming libarchive: single pass yields head + validated tail window, no extraction
         if utils_sys.HAS_LIBARCHIVE:
             try:
                 import libarchive as la
 
-                # Determine which files to read (first and last, if different)
-                files_to_read = [matching_files[0]]
-                if len(matching_files) > 1:
-                    files_to_read.append(matching_files[-1])
-
-                # Read first file
-                first_file_path = str(files_to_read[0])
-                head_lines, _ = utils_sys._read_from_libarchive(
-                    dir_archive, first_file_path, n_head=max_lines, skip_header=0
+                (head, tail, _) = utils_sys._read_from_libarchive(
+                    dir_archive, str(first), n_head=max_lines, skip_header=0
                 )
-                lines = head_lines
-
-                # Read last file if different from first
-                if len(files_to_read) > 1:
-                    last_file_path = str(files_to_read[1])
-                    _, last_line = utils_sys._read_from_libarchive(
-                        dir_archive, last_file_path, n_head=None, skip_header=0
+                lines = head
+                if len(matching_files) > 1:
+                    (_, tail, _) = utils_sys._read_from_libarchive(
+                        dir_archive, str(last), n_head=0, skip_header=0
                     )
-                else:
-                    # Same file, get last line from what we already read
-                    last_line = lines[-1] if lines else None
-
+                last_line = _validated_tail_line(tail, dir_archive, last, skip_nan_rows, sep)
                 return lines, last_line
             except Exception as e:
                 logger.debug(
-                    f"libarchive reading failed for {dir_archive}: {e}, falling back to extraction method"
+                    f"libarchive reading failed for {dir_archive}: {e}, falling back to streaming method"
                 )
 
-        # Fallback: extract files to temporary directory
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_dir_path = Path(temp_dir)
-
-            # Extract only the files we need (first and last, if different)
-            files_to_extract = set()
-            files_to_extract.add(matching_files[0])
+        suffix = dir_archive.suffix.lower()
+        if suffix == ".zip":
+            # Single-pass ZIP streaming per member, no extraction
+            (head, tail) = utils_sys.read_zip_member_head_tail(dir_archive, first, n_head=max_lines)
+            lines = head
             if len(matching_files) > 1:
-                files_to_extract.add(matching_files[-1])
+                (_, tail) = utils_sys.read_zip_member_head_tail(dir_archive, last, n_head=0)
+            last_line = _validated_tail_line(tail, dir_archive, last, skip_nan_rows, sep)
+        elif suffix == ".7z":
+            # 7z without libarchive: extract only the single target file(s), never the archive
+            import tempfile
 
-            # Extract the needed files from archive to temporary directory
-            if dir_archive.suffix.lower() in config.extensions_archive:
-                if dir_archive.suffix.lower() == ".zip":
-                    import zipfile
-
-                    with zipfile.ZipFile(dir_archive) as zf:
-                        for file_path in files_to_extract:
-                            zf.extract(str(file_path), path=temp_dir_path)
-                elif dir_archive.suffix.lower() == ".7z":
-                    import py7zr
-
-                    with py7zr.SevenZipFile(dir_archive, mode="r") as archive:
-                        archive.extract(path=temp_dir_path, targets=[str(fp) for fp in files_to_extract])
-            else:
-                logger.error(f"Unsupported archive format: {dir_archive.suffix}")
-                return lines, last_line
-
-            # Convert only the extracted files to regular Path objects
-            # We only extracted matching_files[0] and matching_files[-1] (if different)
-            extracted_files = [temp_dir_path / file_path for file_path in files_to_extract]
-
-            # Use _read_first_last_lines on the extracted files
-            lines, last_line = _read_first_last_lines(extracted_files, max_lines, skip_nan_rows=skip_nan_rows)
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_dir_path = Path(temp_dir)
+                files_to_extract = {first} | ({last} if len(matching_files) > 1 else set())
+                if (py7zr := utils_sys.py7zr) is None:
+                    raise ImportError(f"py7zr was not found to extract {dir_archive}")
+                with py7zr.SevenZipFile(dir_archive, mode="r") as archive:
+                    archive.extract(path=temp_dir_path, targets=[str(fp) for fp in files_to_extract])
+                extracted_files = [temp_dir_path / file_path for file_path in files_to_extract]
+                (lines, last_line) = _read_first_last_lines(
+                    extracted_files, max_lines, skip_nan_rows=skip_nan_rows, encoding=encoding, sep=sep
+                )
+        else:
+            logger.error(f"Unsupported archive format: {dir_archive.suffix}")
+            return lines, last_line
 
     return lines, last_line
 
@@ -527,6 +580,9 @@ def read_file_lines_universal(
     skip_nan_rows: bool = True,
     max_burst_time_detection: Optional[int] = None,
     seconds_per_line: Optional[int | float] = None,
+    encoding: Optional[str] = None,
+    sep: Optional[str] = None,
+    skip_header: Optional[int] = None,
 ) -> Tuple[List[str], Optional[str], Optional[str]]:
     """
     Read lines from a file, handling both regular files and archives.
@@ -542,6 +598,9 @@ def read_file_lines_universal(
         max_burst_time_detection: Optional maximum time in seconds for burst detection. When provided,
             reads lines 1 and 20 to calculate time interval, then computes how many lines are needed
             to cover this time span. Overrides max_lines if both are provided.
+        encoding: Optional explicit encoding hint for loose files (default BOM-safe UTF-8)
+        sep: Optional explicit field separator hint (default autodetect)
+        skip_header: Optional explicit header-line count for burst budgeting (default 4 if raw else 0)
 
     Returns:
         Tuple of (list of lines, last line, error message) from the file.
@@ -554,7 +613,8 @@ def read_file_lines_universal(
     # Calculate max_lines from max_burst_time_detection if provided
     if max_burst_time_detection is not None:
         is_raw = _is_raw_format(dir_archive, rel_path)
-        skip_header = 4 if is_raw else 0
+        if skip_header is None:
+            skip_header = 4 if is_raw else 0
         calculated_max_lines = utils_sys.calculate_lines_for_burst_time(
             dir_archive,
             rel_path,
@@ -586,14 +646,23 @@ def read_file_lines_universal(
                     and base_meta["devices"][0] != "*"
                     else "*"
                 )
-                cache_key = (str(parent_dir), device_id, rel_path.suffix, max_lines, skip_nan_rows)
+                cache_key = (
+                    str(parent_dir),
+                    device_id,
+                    rel_path.suffix,
+                    max_lines,
+                    skip_nan_rows,
+                    encoding,
+                    sep,
+                    skip_header,
+                )
 
                 if cache_key in _read_file_lines_cache:
                     logger.debug(f"Using cached read result for {base_name}-like files in {parent_dir}")
                     return _read_file_lines_cache[cache_key]
 
                 lines, last_line = _read_first_last_lines(
-                    matching_files, max_lines, skip_nan_rows=skip_nan_rows
+                    matching_files, max_lines, skip_nan_rows=skip_nan_rows, encoding=encoding, sep=sep
                 )
                 _read_file_lines_cache[cache_key] = (lines, last_line, last_error)
             else:
@@ -615,14 +684,24 @@ def read_file_lines_universal(
                     and base_meta["devices"][0] != "*"
                     else "*"
                 )
-                cache_key = (str(dir_archive), device_id, rel_path.suffix, max_lines, skip_nan_rows)
+                cache_key = (
+                    str(dir_archive),
+                    device_id,
+                    rel_path.suffix,
+                    max_lines,
+                    skip_nan_rows,
+                    encoding,
+                    sep,
+                    skip_header,
+                )
 
                 if cache_key in _read_file_lines_cache:
                     logger.debug(f"Using cached read result for {base_name}-like files in {dir_archive}")
                     return _read_file_lines_cache[cache_key]
 
                 lines, last_line = _read_first_last_lines_from_archived_files(
-                    dir_archive, matching_files, max_lines, skip_nan_rows=skip_nan_rows
+                    dir_archive, matching_files, max_lines, skip_nan_rows=skip_nan_rows,
+                    encoding=encoding, sep=sep,
                 )
                 _read_file_lines_cache[cache_key] = (lines, last_line, last_error)
             else:
@@ -978,16 +1057,30 @@ def parse_datetime_from_row(line: str, is_raw: bool = False, sep="\t") -> Option
 
 
 def extract_time_info_from_text_file(
-    dir_archive: Path, rel_path: PurePosixPath, averaging_interval: Optional[int] = None
+    dir_archive: Path,
+    rel_path: PurePosixPath,
+    averaging_interval: Optional[int] = None,
+    *,
+    encoding: Optional[str] = None,
+    sep: Optional[str] = None,
+    skip_header: Optional[int] = None,
 ) -> Optional[Tuple[str, str, int | str, int | str]]:
     """
     Extracts the time range from a text file, excluding trailing NaN data rows.
+
+    Unified time-column reader (loose + archive, no probe awareness): edges are the
+    outermost lines of edge-anchored contiguous timestamp-valid runs (top window 50
+    scanned in reverse, bottom window 10 scanned forward), so leading garbage and
+    trailing NaN/blank rows are skipped by parse-gating, not blank checks.
 
     Args:
         dir_archive: The path to the text file or archive file with format
         rel_path: relative path to the data file in archive/directory `dir_archive`
         averaging_interval: Optional averaging interval (delta time between adjacent rows in seconds)
             for burst detection (used for gap threshold calculation).
+        encoding: Optional explicit encoding hint for loose files (default BOM-safe UTF-8)
+        sep: Optional explicit field separator hint (default autodetect per file)
+        skip_header: Optional explicit header-line count for burst budgeting (default 4 if raw else 0)
 
     Returns:
         A tuple containing the start and end time strings, and burst info (bursts_t, burst_dt),
@@ -1007,6 +1100,9 @@ def extract_time_info_from_text_file(
             max_burst_time_detection=config.max_burst_time_detection,
             skip_nan_rows=True,
             seconds_per_line=averaging_interval,
+            encoding=encoding,
+            sep=sep,
+            skip_header=skip_header,
         )
         if not lines:
             logger.warning(
@@ -1019,15 +1115,17 @@ def extract_time_info_from_text_file(
         is_raw = _is_raw_format(dir_archive, rel_path)
 
         # Extract time range from lines first
-        sep = "\t" if "\t" in lines[0] else "," if "," in lines[0] else " "
+        sep = _detect_sep(lines, sep)
 
-        # Find start time by using helper function to search for valid time entry
-        start_idx, max_attempts = _get_time_search_params(is_raw)
-        start_result = _find_valid_time_line(
-            lines, start_idx, direction="forward", max_attempts=max_attempts, is_raw=is_raw, sep=sep
-        )
-        if start_result:
-            start_time = to_utc_naive(start_result[1])
+        # Start = topmost line of the edge-anchored adjacent-good run in the top window.
+        # Strip trailing parse failures first: small files end the window with blanks/footers
+        # that must not abort the reverse scan (NaN rows parse fine and stay — run decides).
+        window = lines[:EDGE_TOP_WINDOW]
+        while window and parse_datetime_from_row(window[-1], is_raw=is_raw, sep=sep) is None:
+            window.pop()
+        if edge_line := _run_edge(window, is_raw, sep):
+            if edge_dt := parse_datetime_from_row(edge_line, is_raw=is_raw, sep=sep):
+                start_time = to_utc_naive(edge_dt)
 
         # Find end time from last_line (which is now validated to have a valid timestamp)
         # The _get_last_line_efficiently function already searched through multiple lines

@@ -21,7 +21,7 @@ Output files will be in the directory above (if the `_raw` subdirectory is in th
 Enter the absolute path to the:
 - **directory** to search for data with the glob `*i*.txt`, or
 - raw file(s) via **glob** (`*i*.txt`) / **regex** (`i.*\.txt`) of file-names, or
-- config(s) (must end in **`.yaml`**) — load ready configs directly from the `cfg_proc/run/` subfolderEnter the absolute search path - existing configuration/s (must end in **`.yaml`**) from the raw files subfolder `cfg_proc/run/`, which itself contains the path to the data
+- config(s) (must end in **`.yaml`**) — load ready configs directly from the `cfg_proc/run/` subfolderEnter the absolute search path - existing configuration/s (if end in **`.yaml`**) from the raw files subfolder `cfg_proc/run/`
 
 Expected [input data layout](io_formats.md#directory-layout):
 ```text
@@ -32,8 +32,10 @@ Expected [input data layout](io_formats.md#directory-layout):
 
 ## YAML file and command-line configuration fields (typed configuration via Hydra/OmegaConf)
 
-YAML configs live at `cfg_proc/run/{source_stem}.yaml` inside the raw data directory,
-next to the `source_stem.{txt or other extension}` files.
+YAML configs live at `cfg_proc/run/{yymmdd_hhmm}@pcid[-comment].yaml` inside the raw data directory, where
+- `yymmdd_hhmm` — timestamp from `input.time_ranges[0]` or row files 1st row (absent when not found);
+- pcid — canonical identificator, e.g. `i3.txt` → `i03`;
+- `-comment` — the suffix with its separator "-" (if any) is left unchanged.
 
 All fields are defined in `tcm/schema.py` via the `Config` dataclass and registered groups
 (`input`, `out`, `filter`, `program`).
@@ -50,7 +52,7 @@ Every run YAML starts with `# @package _global_` so Hydra merges it into the top
 | `prefix` = `'I*[_0]'` | Filename prefix filter for CSV file discovery. |
 | `text_type` = `None` | Column layout variant (`i`, `p`, `b`, `d`, `w`). Auto-detected from file header; override here if detection fails. |
 | `text_line_regex` = `None` | Custom regex for raw text line parsing. Only needed when auto-detection fails on unusual file formats. |
-| `coefs` = see [§coefs](#inputcoefs--calibration-coefficients) | Calibration coefficients and its metadata. Loaded from the calibration file on first run; edit here for a specific probe. |
+| `coefs` = see [§coefs](#inputcoefs--calibration-coefficients) | Calibration coefficients and its metadata. Loaded from the calibration file on first run for a specific probe. |
 | `date_to_from` = `None` | Two timestamps of one moment — [true, instrument reading]: the difference becomes the clock offset `dt_from_utc`. Fill when the instrument clock is off. |
 | `dt_from_utc` = `0` | Offset from UTC in seconds. Set the timezone to convert instrument time to UTC. |
 | `time_ranges` = `None` | Processing time window `[start, end, …]` in ISO format. Auto-filled from the data on first run — narrow it to process the needed period, give several pairs to skip the gaps between them[↓](#inputtime_ranges) |
@@ -104,8 +106,74 @@ input:
 
 ### `input.max`
 Upper mirror of `min` — same load-stage **DROP** and `M` expansion.
+## `input.coefs` — Calibration coefficients
+### Detailed
+Loaded from the coefficient file and copied into each per-probe YAML on first run.
+Edit these to update a probe's calibration — changes are persisted automatically.
+[Azimuth calibration and re-run behavior](config_tuning.md).
+
+### Table. Parameters and metadata of coefficients
+
+| Field = Default | Physical meaning |
+|-----------------|------------------|
+| `Ag` = `[[1.73e-3,0,0],[0,1.73e-3,0],[0,0,1.73e-3]]` | Accelerometer scale matrix: `G = Ag @ (Axyz − Cg)` |
+| `Cg` = `[10, 10, 10]` | Accelerometer bias vector |
+| `Ah` = Identity | Magnetometer scale matrix: `H = Ah @ (Mxyz − Ch)` |
+| `Ch` = `[10, 10, 10]` | Magnetometer bias vector |
+| `Rz` = Identity | Sensor-to-instrument alignment rotation applied after calibration |
+| `kVabs` = `[10, −10, −10, −3, 3, 70]` | Velocity polynomial `Vabs(inclination)`, formula (3) — see [§Velocity computation](../methodology/velocity.md) |
+| `P_t` = `None` | Pressure–temperature 2‑D polynomial for `p`‑type probes; when set it supersedes `P`/`PBattery`/`PTemp`[↓](#inputcoefsp_t) |
+| `P` = `[0, 1]` | Auxiliary sensor #1 linear correction: `y = P[0] + P[1]·x` |
+| `PBattery` = `[0, 1]` | Battery voltage linear correction |
+| `PTemp` = `[0, 1]` | Temperature linear correction |
+| `azimuth_shift_deg` = `180` | Azimuth° correction — converts tilt direction from sensor to geographic coordinates; compensates magnetometer sign inversion at load time. See [Azimuth calibration](config_tuning.md#azimuth-calibration)[↓](#inputcoefsazimuth_shift_deg) |
+| `dates` = `{}` | Per‑component calibration dates |
+| `date` = `None` | Overall calibration date |
+| `path` = `tcm/cfg/coef/calibration.h5` | Coefficient source — a directory of per-probe YAMLs or a single HDF5/NC/YAML file[↓](#inputcoefs_path) |
+
+Field types and shapes: [`ConfigInCoefs_InclProc` dataclass](../../src/tcm/schema.py).
+Resolution priority (own config > `input.coefs.path` file > bundled `yaml_export/` >
+dataclass defaults): see [§Coefficient source priority](io_formats.md#coefficient-source-priority).
+
+### `input.coefs.azimuth_shift_deg`
+Azimuth° correction — converts tilt direction from sensor to geographic coordinates.
+
+#### Detailed
+**Azimuth calibration**: `input.calib.time_ranges_azimuth` specifies an interval where the
+instrument was tilted in a **known direction** (e.g. known Northward tilt).
+The pipeline computes the azimuth shift from calibrated mag+accel unit vectors
+and writes `azimuth_shift_deg` to the per-probe YAML.
+
+**Layering**: `input.calib.azimuth_add` (manual offset, degrees) and
+`input.calib.coordinates` (magnetic declination, current date) are applied
+**on top of** the data-computed azimuth.
+
+### `input.coefs.P_t`
+Temperature-compensated pressure polynomial — converts raw pressure counts and
+temperature into physical pressure.
+
+#### Detailed
+2-D polynomial `polyval2d(u, t, P_t)` in raw pressure counts `u`
+(`P`/`P_counts`) and temperature `t` (`Temp`); `P_t[i][j]` multiplies
+`u^i·t^j` (six coefficients of total degree ≤ 2). Computed pressure is as
+calibrated — referenced to standard atmospheric pressure P0 = 10.1325 dbar.
+Formula and provenance: [§Pressure computation](../methodology/pressure.md).
+
+
+### `input.coefs.path` {#inputcoefs_path}
+Coefficient source — a directory of per-probe YAMLs or a single YAML file. Or NetCDF/HDF5: the group {g} matching the probe is selected.
+
+#### Detailed
+
+Path to the configuration file. Must contain `input.coefs` coefficients. Possible:
+
+- single coefficient source file: HDF5 (`.h5`), NetCDF4 (`.nc`) or coefficient YAML config (`.yaml`).
+- directory of per-probe YAMLs must contain files `{g}.yaml`, where {g} is the probe identifier (`incl_{model#}.yaml`)
+- missing/incorrect path — allowed if all required parameters are already set manually (they have priority over file data), another attempt will be made to find the needed coefficients from the bundled `yaml_export/`: [priority chain](io_formats.md#coefficient-source-priority).
+
 
 ## `input.calib` — Process-stage calibration correction
+
 Applied at process stage, after loading
 
 
@@ -175,68 +243,6 @@ input:
     azimuth_add: 2.5              # manual fine-tune
 ```
 
-## `input.coefs` — Calibration coefficients
-
-Loaded from the coefficient file and copied into each per-probe YAML on first run.
-Edit these to update a probe's calibration — changes are persisted automatically.
-[Azimuth calibration and re-run behavior](config_tuning.md).
-
-| Field = Default | Physical meaning |
-|-----------------|------------------|
-| `Ag` = `[[1.73e-3,0,0],[0,1.73e-3,0],[0,0,1.73e-3]]` | Accelerometer scale matrix: `G = Ag @ (Axyz − Cg)` |
-| `Cg` = `[10, 10, 10]` | Accelerometer bias vector |
-| `Ah` = Identity | Magnetometer scale matrix: `H = Ah @ (Mxyz − Ch)` |
-| `Ch` = `[10, 10, 10]` | Magnetometer bias vector |
-| `Rz` = Identity | Sensor-to-instrument alignment rotation applied after calibration |
-| `kVabs` = `[10, −10, −10, −3, 3, 70]` | Velocity polynomial `Vabs(inclination)`, formula (3) — see [§Velocity computation](../methodology/velocity.md) |
-| `P_t` = `None` | Pressure–temperature 2‑D polynomial for `p`‑type probes; when set it supersedes `P`/`PBattery`/`PTemp`[↓](#inputcoefsp_t) |
-| `P` = `[0, 1]` | Auxiliary sensor #1 linear correction: `y = P[0] + P[1]·x` |
-| `PBattery` = `[0, 1]` | Battery voltage linear correction |
-| `PTemp` = `[0, 1]` | Temperature linear correction |
-| `azimuth_shift_deg` = `180` | Azimuth° correction — converts tilt direction from sensor to geographic coordinates; compensates magnetometer sign inversion at load time. See [Azimuth calibration](config_tuning.md#azimuth-calibration)[↓](#inputcoefsazimuth_shift_deg) |
-| `dates` = `{}` | Per‑component calibration dates |
-| `date` = `None` | Overall calibration date |
-| `path` = `tcm/cfg/coef/calibration.h5` | Coefficient source — a directory of per-probe YAMLs or a single HDF5/NC/YAML file[↓](#inputcoefs_path) |
-
-Field types and shapes: [`ConfigInCoefs_InclProc` dataclass](../../src/tcm/schema.py).
-Resolution priority (own config > `input.coefs.path` file > bundled `yaml_export/` >
-dataclass defaults): see [§Coefficient source priority](io_formats.md#coefficient-source-priority).
-
-### `input.coefs.azimuth_shift_deg`
-Azimuth° correction — converts tilt direction from sensor to geographic coordinates.
-
-#### Detailed
-**Azimuth calibration**: `input.calib.time_ranges_azimuth` specifies an interval where the
-instrument was tilted in a **known direction** (e.g. known Northward tilt).
-The pipeline computes the azimuth shift from calibrated mag+accel unit vectors
-and writes `azimuth_shift_deg` to the per-probe YAML.
-
-**Layering**: `input.calib.azimuth_add` (manual offset, degrees) and
-`input.calib.coordinates` (magnetic declination, current date) are applied
-**on top of** the data-computed azimuth.
-
-### `input.coefs.P_t`
-Temperature-compensated pressure polynomial — converts raw pressure counts and
-temperature into physical pressure.
-
-#### Detailed
-2-D polynomial `polyval2d(u, t, P_t)` in raw pressure counts `u`
-(`P`/`P_counts`) and temperature `t` (`Temp`); `P_t[i][j]` multiplies
-`u^i·t^j` (six coefficients of total degree ≤ 2). Computed pressure is as
-calibrated — referenced to standard atmospheric pressure P0 = 10.1325 dbar.
-Formula and provenance: [§Pressure computation](../methodology/pressure.md).
-
-
-### `input.coefs.path` {#inputcoefs_path}
-Coefficient source — a directory of per-probe YAMLs or a single YAML file. Or NetCDF/HDF5: the group {g} matching the probe is selected.
-
-#### Detailed
-
-Path to the configuration file. Must contain `input.coefs` coefficients. Possible:
-
-- single coefficient source file: HDF5 (`.h5`), NetCDF4 (`.nc`) or coefficient YAML config (`.yaml`).
-- directory of per-probe YAMLs must contain files `{g}.yaml`, where {g} is the probe identifier (`incl_{model#}.yaml`)
-- missing/incorrect path — allowed if all required parameters are already set manually (they have priority over file data), another attempt will be made to find the needed coefficients from the bundled `yaml_export/`: [priority chain](io_formats.md#coefficient-source-priority).
 
 
 
@@ -367,7 +373,7 @@ raw data directory — the journal accompanying the data.
 
 ### Detailed
 
-[Device deployment metadata](../user_guide/configuration.md#deployment-journal--info_devicesyaml-and-the-processing-window), stored in `info_devices.yaml` as an 11-element array or less: a trailing NaN after the 8th element is not written. `?, -, "", ~` are equivalent to NaN, written in YAML as `~`.
+[Device deployment metadata](../user_guide/meta_finder.md#device-metadata-file), stored in `info_devices.yaml` as an 11-element array or less: a trailing NaN after the 8th element is not written. `?, -, "", ~` are equivalent to NaN, written in YAML as `~`.
 
 `?, -, "", ~` are equivalents of missing data (NaN — written to YAML as `~`; an all-NaN tail after the 8th element is not written at all).
 
@@ -390,7 +396,7 @@ Does not affect the current processing interval — a record for the deployment 
 `info_devices.yaml` only.
 On scan only (not a processing run): when the `input.time_ranges` in the config file is
 unset or incomplete, its missing ends are updated from this record. Details —
-[deployment metadata](../user_guide/configuration.md#deployment-journal--info_devicesyaml-and-the-processing-window).
+[deployment metadata](../user_guide/meta_finder.md#tcm-gui-editor-for-metadata-records).
 
 ### `program.return_`
 

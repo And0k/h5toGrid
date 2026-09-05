@@ -190,6 +190,14 @@ anchors (`proc_dir`, `raw_dir`). The data directory serves as the working root.
 
 ### Directory layout
 
+Above every `_raw/` sits the cruise/device hierarchy discovered via
+`meta_finder` (`find_device_dirs` + `is_valid_device_dir`): cruise root →
+dated cruise dirs → device dirs (keyword or `@id` suffix) → `_raw/`.
+Excluded: `DOC`/`GRIDDING`/`CTD_…` (no keyword/id match), `bad`, `test…`,
+`*-`. Full user-facing rules:
+[user_guide/meta_finder.md](../user_guide/meta_finder.md); function map:
+[meta_finder Integration](meta_finder_integration.md).
+
 ```text
 data_dir/
 ├── _raw/               ← raw data and its processing config anchor dir (conventional name; any name works)

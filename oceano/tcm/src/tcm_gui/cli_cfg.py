@@ -1,3 +1,4 @@
+import copy
 import dataclasses
 from typing import Annotated, Any, Union, get_args, get_origin, get_type_hints
 
@@ -8,8 +9,7 @@ from tcm import schema, to_omegaconf
 
 def default_cfg() -> dict:
     """Return a plain dict with all ``Config.input`` defaults wrapped as ``input`` section."""
-    input_type = _SECTION_TYPES["input"]
-    return {"input": OmegaConf.to_container(OmegaConf.structured(input_type()), resolve=True)}
+    return {"input": _structured_section("input")}
 
 
 def build_defaults(cls: type) -> dict[str, Any]:
@@ -36,13 +36,52 @@ CFG_DEFAULTS: dict[str, dict[str, Any]] = {
     section: build_defaults(cls) for section, cls in _SECTION_TYPES.items()
 }
 
+
+def _structured_section(section: str) -> dict[str, Any]:
+    """Plain-dict defaults for one ``Config`` section via its structured type."""
+    return OmegaConf.to_container(OmegaConf.structured(_SECTION_TYPES[section]()), resolve=True)
+
+
+def full_default_cfg() -> dict:
+    """Plain dict with defaults for every ``Config`` section (full-mode placeholder)."""
+    return {section: _structured_section(section) for section in _SECTION_TYPES}
+
+
+def ensure_full_cfg(cfg: dict) -> dict:
+    """Backfill missing ``Config`` sections/leaves in *cfg* with structured defaults.
+
+    Full-mode tree (`ConfigSheet._build_full`) renders whatever keys *cfg*
+    carries — a placeholder or thin run YAML holding only ``input`` would show
+    just that section. Missing sections are added whole; present sections are
+    deep-filled leaf-wise so every option is visible (defaults render dim gray
+    via ``CFG_DEFAULTS``). Mutates and returns *cfg*.
+    """
+    for section in _SECTION_TYPES:
+        if not isinstance(cfg.get(section), dict):
+            cfg[section] = _structured_section(section)
+        else:
+            _deep_fill(cfg[section], _structured_section(section))
+    return cfg
+
+
+def _deep_fill(target: dict, defaults: dict) -> None:
+    """Insert missing leaves from *defaults* into *target* recursively (in place)."""
+    for k, v in defaults.items():
+        if k not in target:
+            target[k] = copy.deepcopy(v)
+        elif isinstance(target[k], dict) and isinstance(v, dict):
+            _deep_fill(target[k], v)
+
+
 # ── Coefficient shape inference ──────────────────────────────────────────────
 
 _COEF_META_SKIP = frozenset(("dates", "date", "path"))  # tree-level metadata, not row items
 
 # Derive ConfigInCoefs_InclProc from Config.input.coefs — no direct import.
 COEFS_TYPE: type = type(
-    to_omegaconf.get_field_default(next(f for f in dataclasses.fields(_SECTION_TYPES["input"]) if f.name == "coefs"))
+    to_omegaconf.get_field_default(
+        next(f for f in dataclasses.fields(_SECTION_TYPES["input"]) if f.name == "coefs")
+    )
 )
 
 
@@ -86,8 +125,7 @@ def infer_coef_shapes(coefs_type: type = COEFS_TYPE) -> dict[str, tuple[int, ...
             continue
         default = to_omegaconf.get_field_default(fld)
         shapes[fld.name] = (
-            _shape_of(default) if default is not None
-            else _shape_from_annotation(hints[fld.name])
+            _shape_of(default) if default is not None else _shape_from_annotation(hints[fld.name])
         )
     return shapes
 

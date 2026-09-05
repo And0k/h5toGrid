@@ -22,6 +22,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import operator
+import re
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
@@ -34,8 +35,8 @@ from tksheet import Sheet
 import tcm_gui.theme
 from tcm import _meta_pairs, _constants
 from tcm_gui import _path_field
-from tcm_gui._cell_spec import any2str, as_date, parse_float
-from tcm_gui.cli_cfg import COEF_SHAPES, COEFS_TYPE
+from tcm_gui._cell_spec import any2str, as_bool, as_date, parse_float, spec_for_path
+from tcm_gui.cli_cfg import COEF_SHAPES, COEFS_TYPE, NO_DEFAULT, default_for_path
 
 from ._browse_button import BrowseButtonManager
 from ._i18n import STRINGS as _S
@@ -49,6 +50,8 @@ _l = logging.getLogger(__name__)
 # Derive field order from dataclass declaration — single source of truth.
 # Exclude `dates` / `date` / `path` which are not numeric coef rows (path is string attribute on coef group).
 _COEF_FIELDS = [f.name for f in dataclasses.fields(COEFS_TYPE) if f.name not in ("dates", "date", "path")]
+_FULL_SECTION_ORDER = ("input", "out", "filter", "proc", "program")  # schema order, not dict luck
+_FULL_SKIP_KEYS = frozenset({"defaults", "hydra"})  # Hydra/compose internals — never tree rows
 _1D_WITH_DATES = {"kVabs"}  # единственное 1D с датами → parent+child
 _COMMON_DATE_FOR: dict[str, str] = {"Cg": "Ag", "Ch": "Ah"}  # 1d_flat bias shares date with its 2d scale
 _DATE_COL = _DATE_COL  # meta col: 1=₁ 2=₂/date 3=₃… (tksheet col = meta_col − DATA_COL_BASE)
@@ -60,6 +63,56 @@ def _safe_select(sheet: Any, row: int, col: int) -> None:
     """select_cell that swallows IndexError — row may be stale after tree changes."""
     with suppress(AttributeError, TclError, TypeError, ValueError, IndexError):
         sheet.select_cell(row, col)
+
+
+def _scalar_equal(kind: str, a: Any, b: Any) -> bool:
+    """True when sheet-read *a* matches default *b* (numeric/bool-aware, not string-only)."""
+    if b is None:
+        return False  # non-empty cell vs None default → changed
+    if kind == "number":
+        with suppress(TypeError, ValueError):
+            return float(a) == float(b)
+    if kind == "bool":
+        return bool(a) == bool(b)
+    return str(a) == str(b)
+
+
+def _values_equal(kind: str, conv: list, dflt: Any) -> bool:
+    """True when sheet-read *conv* list matches default *dflt* (shape + value)."""
+    if not isinstance(dflt, (list, tuple)):
+        return len(conv) == 1 and _scalar_equal(kind, conv[0], dflt)
+    return len(conv) == len(dflt) and all(_scalar_equal(kind, a, b) for a, b in zip(conv, dflt))
+
+
+def _assign_dotted(root: dict, path: str, value: Any) -> None:
+    """Assign *value* into nested *root* along dotted *path* with ``[i]`` indices."""
+    node: Any = root
+    parts = path.split(".")
+    for part in parts[:-1]:
+        if "[" in part:
+            name, idx = part[:-1].split("[", 1)
+            lst = node.setdefault(name, [])
+            i = int(idx.rstrip("]"))
+            while len(lst) <= i:
+                lst.append({})
+            node = lst[i]
+        else:
+            nxt = node.get(part)
+            if not isinstance(nxt, dict):
+                nxt = node[part] = {}
+            node = nxt
+    last = parts[-1]
+    if "[" in last:
+        name, idx = last[:-1].split("[", 1)
+        lst = node.setdefault(name, [])
+        if not isinstance(lst, list):
+            lst = node[name] = []
+        i = int(idx.rstrip("]"))
+        while len(lst) <= i:
+            lst.append(None)
+        lst[i] = value
+    else:
+        node[last] = value
 
 
 class CellBoundaryColumnResize:
@@ -449,6 +502,50 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
                 return self._cell_str(iid, 0)
         return ""
 
+    def get_edited_full(self, sections: tuple[str, ...] = ("out", "filter", "proc", "program")) -> dict:
+        """Read generic full-mode rows → nested patch of leaves changed vs defaults.
+
+        Only *sections* are covered (never ``input`` — path/coefs keep their
+        dedicated write path, and other ``input`` leaves keep current behavior).
+        Empty cells read as at-default and are omitted, so the patch stays a
+        minimal override set like the run YAMLs on disk. Container rows (dict
+        nodes, 2-D parents) carry no values themselves — their indexed children
+        (``path`` ending in ``[i]``) rebuild the list via :func:`_assign_dotted`.
+        """
+        patch: dict[str, Any] = {}
+        for iid, m in self._meta.items():
+            if (path := m.get("path") or "").split(".", 1)[0] not in sections:
+                continue
+            if m.get("is_metadata") or m.get("is_metadata_root") or m.get("has_date"):
+                continue
+            leaf = path.rsplit(".", 1)[-1]
+            if not m.get("is_string") and "[" not in leaf:
+                continue  # container node — values live on its children
+            base = re.sub(r"\[\d+\]", "", path)
+            vals = [self._cell_str(iid, j) for j in range(int(m.get("max_col") or self._nv))]
+            while vals and not vals[-1]:
+                vals.pop()
+            if not vals:
+                continue
+            kind = spec_for_path(
+                getattr(self, "_config_root", None), base, getattr(self, "_return_enum", None)
+            ).kind
+            conv = []
+            for v in vals:
+                if kind == "number":
+                    conv.append(parse_float(v))
+                elif kind == "bool":
+                    conv.append(as_bool(v))
+                else:
+                    conv.append(v)
+            if any(v is None for v in conv):
+                continue
+            dflt = default_for_path(base)
+            if dflt is not NO_DEFAULT and _values_equal(kind, conv, dflt):
+                continue  # at default — run YAMLs carry overrides only
+            _assign_dotted(patch, path, conv if isinstance(dflt, (list, tuple)) or len(conv) > 1 else conv[0])
+        return patch
+
     def is_path_valid(self) -> bool:
         """True iff ``input.path`` is non-empty and resolves to an existing file.
 
@@ -827,9 +924,13 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
             self._apply_metadata_dirty_label()
 
     def _build_full(self, cfg: dict) -> None:
-        for sec, val in cfg.items():
+        ordered = [s for s in _FULL_SECTION_ORDER if s in cfg]
+        ordered += [k for k in cfg if k not in ordered and not k.startswith("_") and k not in _FULL_SKIP_KEYS]
+        for sec in ordered:
+            if (val := cfg[sec]) is None:
+                continue
             if sec == "input":
-                self._build_input(val)
+                self._build_input(val if isinstance(val, dict) else {})
             elif isinstance(val, dict):
                 sid = self._ins("", sec, [""] * self._nv, "")
                 for k, v in val.items():
@@ -1060,9 +1161,7 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
                     meta={"path": f"input.calib.{ck}", "max_col": shape[0]},
                 )
             elif (
-                len(shape) <= 1
-                and isinstance(cv, (list, tuple, type(None)))
-                and ck.startswith("time_ranges")
+                len(shape) <= 1 and isinstance(cv, (list, tuple, type(None))) and ck.startswith("time_ranges")
             ):
                 self._ins_time_ranges(calib_iid, ck, cv)
             else:

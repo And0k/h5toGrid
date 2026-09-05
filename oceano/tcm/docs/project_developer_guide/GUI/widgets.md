@@ -406,17 +406,19 @@ keypresses.  `_log` is `state='disabled'` → never gets keyboard focus →
 widget-scoped binding would never fire.  Root `<<Copy>>` fires for any
 focused widget.
 
-**Layout-independent Ctrl+C.** Tk's `<<Copy>>` only fires for the Latin
-`c` keysym.  On Cyrillic/Greek layouts the physical `C` key produces a
-different character, so `<<Copy>>` never fires and copy is broken for
-`tksheet`, `_log` RTF, and the About dialog.  `App._on_ctrl_keypress`
-(bound via `bind_all("<Control-KeyPress>", ...)` on root) detects the
-physical `C` key by its platform `keycode` (:data:`const.VK_C`): when the
-keycode matches but `keysym.lower() != "c"`, it calls
-`event.widget.event_generate("<<Copy>>")` and returns `"break"`.  The
-focused widget then performs its own copy (Entry/Text/tksheet all handle
-`<<Copy>>` natively).  Latin layouts pass through (`keysym` is `c`) so Tk
-handles them unchanged — no double-fire.
+**Layout-independent shortcuts (`keyboard.py`).** Tk's `<<Copy>>` /
+`<<SelectAll>>` / … only fire for Latin keysyms.  On Cyrillic/Greek layouts
+the physical key produces a different character, so the shortcut is broken
+for `tksheet`, `_log` RTF, and the About dialog.  `LayoutIndependentShortcuts`
+(bound once via `bind_all("<KeyPress>", ...)` in `App.__init__`, so every
+widget is covered) detects the physical key by its platform `keycode`
+(win32 VK / X11 codes in `keyboard._KEYCODES`) and re-emits the semantic
+virtual event on the focused widget: Ctrl+A → `<<SelectAll>>`, Ctrl+C →
+`<<Copy>>`, Ctrl+X → `<<Cut>>`, Ctrl+V → `<<Paste>>`, Ctrl+Z → `<<Undo>>`,
+Ctrl+Y → `<<Redo>>`, Ctrl+F → `<<Find>>` (app-level hook, no default Tk
+target).  Latin layouts pass through (`keysym` already Latin) so Tk handles
+them unchanged — no double-fire; non-Latin returns `"break"` so the
+translated keysym leaks nowhere.
 
 `tksheet` binds `<Control-c>` (not `<<Copy>>`) on its canvas, so its
 `ctrl_c` handler runs for `<Control-c>` dispatches but **not** for real

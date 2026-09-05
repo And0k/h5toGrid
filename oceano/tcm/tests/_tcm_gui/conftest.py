@@ -3,10 +3,40 @@
 from __future__ import annotations
 
 import tkinter as tk
+from types import SimpleNamespace
 
 import pytest
 
 from tcm import _constants, policy, schema
+
+_REF_DOC = {"en": "config_reference.md", "ru": "config_reference_Ru.md"}
+"""Reference doc filename per language — single source of truth for doc-driven tests."""
+
+
+def ref_doc_text(lang: str) -> str:
+    """Raw ``config_reference[_Ru].md`` source for *lang*.
+
+    Derive test expectations from this text, never hardcode doc phrases —
+    the markdown stays the single source of truth.
+    """
+    return (_constants.DOC_DIR / "reference" / _REF_DOC[lang]).read_text(encoding="utf-8")
+
+
+@pytest.fixture(params=["en", "ru"], ids=["en", "ru"])
+def real_reference(request):
+    """Parsed real reference doc — ``SimpleNamespace(lang, text, entries)``.
+
+    ``text`` is the raw markdown (source of truth); ``entries`` is
+    ``parse_reference(text)``.  Skips when the doc file is absent.
+    """
+    from tcm_gui._help import parse_reference
+
+    lang = request.param
+    path = _constants.DOC_DIR / "reference" / _REF_DOC[lang]
+    if not path.is_file():
+        pytest.skip(f"{path} not found")
+    text = path.read_text(encoding="utf-8")
+    return SimpleNamespace(lang=lang, text=text, entries=parse_reference(text))
 
 
 # Auto-configure use_h5 for all tests (mirrors policy._io.set(policy.IOPolicy.resolve(cfg)))

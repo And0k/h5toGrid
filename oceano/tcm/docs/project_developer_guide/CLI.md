@@ -541,6 +541,10 @@ Scans `path_in.parent` (or `path_in` itself if directory) for files matching
 the pattern. Groups by `(model, number)` identity extracted via
 `format.probe_from_name()`. When both `@`-prefixed (corrected) and raw versions
 exist for the same identity, only the corrected version is returned.
+On shallow miss in a directory, `tcm/search.py::search_csv_files_recursive`
+enumerates per-anchor via `meta_finder.find_device_dirs` +
+`find_raw_files_recursive` (archives included, `DOC`/`GRIDDING` excluded) —
+full map: [meta_finder Integration](../reference/meta_finder_integration.md).
 
 ### File pairing (corrected/raw)
 
@@ -1017,7 +1021,20 @@ for the output format and group structure.
 
 ### Re-run behavior
 
-See [Console Messages §Re-run behavior](../user_guide/console_messages.md#re-run-behavior)
+On re-processing the same input data, each output type handles idempotency
+differently:
+
+| Output | Re-run behavior |
+|--------|----------------|
+| `*.raw.nc` | **SKIP** — same fileName + mtime detected via log table |
+| `*.proc_Avg.nc` | **SKIP** — new time range ⊂ existing range |
+| `*.proc_noAvg.nc` | **SKIP** — new time range ⊂ existing range |
+| Combined groups | **Overwrite** — always rewrites from per-probe groups |
+
+If processing parameters changed (coefs, filter thresholds), the pipeline
+raises `ValueError` with a unified diff showing what changed. Pass
+`out.overwrite_db=splice` to force reprocessing.
+
 for the re-run decision matrix and [Config Tuning §overwrite_db behavior](../reference/config_tuning.md#overwrite_db-behavior)
 for the full decision tables.
 

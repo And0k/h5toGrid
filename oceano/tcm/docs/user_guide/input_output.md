@@ -58,6 +58,20 @@ The pipeline derives pcid from the filename:
 **Verification**: run with `program.return_="<cfg_from_args>"` to see which
 pcid/table the pipeline assigns without processing.
 
+## Directory layout (cruises → device dirs → `_raw`)
+
+```text
+<cruise root>/                 ← e.g. B:\Cruises\BalticSea
+└── YYMMDD_name/               ← cruise dir (dated prefix)
+    └── <device dir>/          ← keyword (inclinometer/incl/tcm/…) or id suffix (@i…)
+        └── _raw/              ← raw files, _raw.zip/.7z, cfg_proc/run
+```
+
+A device dir is valid only with `_raw/` (or `text_output/`) or an archive;
+`DOC`, `GRIDDING`, `CTD_…`, `bad`, `test…`, `*-` names are excluded. A parent
+with several anchors is listed in the path dropdown (first auto-selected).
+Full rules: [Organizing TCM data and metadata per setup](meta_finder.md).
+
 ## Output files
 
 | File | Contents |

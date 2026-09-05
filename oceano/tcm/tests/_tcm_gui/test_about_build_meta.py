@@ -247,7 +247,7 @@ class TestDocDiscovery:
             sys.path.pop(0)
 
     def test_docs_tree_groups_by_folder(self, tmp_path: Path) -> None:
-        """_docs_tree groups flat docs by folder, sorted by folder name."""
+        """_docs_tree nests flat docs by directory, sorted by folder name."""
         (tmp_path / "reference").mkdir()
         (tmp_path / "python_developer_guide").mkdir()
         (tmp_path / "reference" / "a.md").write_text("# GUI", encoding="utf-8")
@@ -260,9 +260,11 @@ class TestDocDiscovery:
             from tcm_gui._about import _docs_tree, discover_docs
 
             tree = _docs_tree(discover_docs(tmp_path, lang="en"), tmp_path)
-            assert list(tree) == ["python_developer_guide", "reference"]
-            assert [title for title, _ in tree["python_developer_guide"]] == ["CLI"]
-            assert [title for title, _ in tree["reference"]] == ["GUI"]
+            assert list(tree["sub"]) == ["python_developer_guide", "reference"], "top-level dirs mismatch"
+            assert [t for t, _ in tree["sub"]["python_developer_guide"]["files"]] == ["CLI"], (
+                "python_developer_guide files mismatch"
+            )
+            assert [t for t, _ in tree["sub"]["reference"]["files"]] == ["GUI"], "reference files mismatch"
         finally:
             sys.path.pop(0)
 
@@ -288,7 +290,137 @@ class TestDocDiscovery:
 
             tree = _docs_tree(discover_docs(tmp_path / "docs", lang="en"), tmp_path / "docs")
             # image src must not count as a folder; link order wins
-            assert list(tree) == ["user_guide", "reference"]
+            assert list(tree["sub"]) == ["user_guide", "reference"], "readme order mismatch"
+        finally:
+            sys.path.pop(0)
+
+    @pytest.mark.parametrize(
+        "case,files,readme,expected_sub,expected_gui_files",
+        [
+            (
+                "nested-gui-index-linked",
+                [
+                    ("project_developer_guide/CLI.md", "# CLI Internals"),
+                    ("project_developer_guide/GUI/_index.md", "# GUI Internals"),
+                    ("project_developer_guide/GUI/architecture.md", "# GUI Architecture"),
+                    ("project_developer_guide/doc_authoring.md", "# Contract"),
+                ],
+                "- [CLI](docs/project_developer_guide/CLI.md)\n"
+                "#### [GUI Internals](docs/project_developer_guide/GUI/_index.md)\n"
+                "- [Arch](docs/project_developer_guide/GUI/architecture.md)\n"
+                "- [Contract](docs/project_developer_guide/doc_authoring.md)\n",
+                ["project_developer_guide"],
+                ["GUI Architecture"],
+            ),
+        ],
+        ids=["nested-gui-index-linked"],
+    )
+    def test_docs_tree_nested_index(
+        self,
+        tmp_path: Path,
+        case: str,
+        files: list,
+        readme: str,
+        expected_sub: list,
+        expected_gui_files: list,
+    ) -> None:
+        """Parent dir links to _index.md; no separate _index leaf; readme orders siblings."""
+        docs = tmp_path / "docs"
+        for rel, body in files:
+            p = docs / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(f"{body}\n", encoding="utf-8")
+        (tmp_path / "readme.md").write_text(readme, encoding="utf-8")
+
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        try:
+            from tcm_gui._about import _docs_tree, _readme_doc_order, discover_docs
+
+            order = _readme_doc_order(docs)
+            assert order.get("project_developer_guide/GUI/_index.md") is not None, (
+                f"{case}: _index.md link missing from readme order"
+            )
+            tree = _docs_tree(discover_docs(docs, lang="en"), docs)
+            assert list(tree["sub"]) == expected_sub, f"{case}: top-level mismatch"
+            pdg = tree["sub"]["project_developer_guide"]
+            assert pdg["index"] is None, f"{case}: project_developer_guide must have no index"
+            assert "GUI" in pdg["sub"], f"{case}: GUI subdir missing"
+            gui = pdg["sub"]["GUI"]
+            assert gui["index"] is not None, f"{case}: GUI index missing"
+            assert gui["index"][0] == "GUI Internals", f"{case}: GUI index title mismatch"
+            assert [t for t, _ in gui["files"]] == expected_gui_files, (
+                f"{case}: GUI files mismatch — _index.md must not appear as leaf"
+            )
+            # sibling order: CLI, GUI, Contract (readme appearance)
+            names = [t for t, _ in pdg["files"]] + ["GUI"]
+            assert names[0] == "CLI Internals", f"{case}: CLI must precede GUI"
+        finally:
+            sys.path.pop(0)
+
+
+class TestTreeClickTarget:
+    """``_click_target`` separates the disclosure indicator from row text."""
+
+    @pytest.mark.parametrize(
+        "case,element,item,expected",
+        [
+            ("indicator-keeps-toggle", "Treeitem.indicator", "parent", None),
+            ("text-opens-linked-parent", "Treeitem.text", "parent", "/docs/gui/_index.md"),
+            ("leaf-text-opens", "Treeitem.text", "leaf", "/docs/a.md"),
+            ("no-row-opens-nothing", "Treeitem.text", "", None),
+        ],
+        ids=["indicator-keeps-toggle", "text-opens-linked-parent", "leaf-text-opens", "no-row-opens-nothing"],
+    )
+    def test_click_target(self, case: str, element: str, item: str, expected: str | None) -> None:
+        """Indicator clicks never open; text clicks resolve via ``_iid_path``."""
+
+        class _FakeTree:
+            def identify_row(self, _y: int) -> str:
+                return item
+
+            def identify_element(self, _x: int, _y: int) -> str:
+                return element
+
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        try:
+            from tcm_gui._about import _click_target
+
+            got = _click_target(_FakeTree(), 10, 20, {"parent": "/docs/gui/_index.md", "leaf": "/docs/a.md"})
+            assert got == expected, f"{case}: expected {expected!r}, got {got!r}"
+        finally:
+            sys.path.pop(0)
+
+    @pytest.mark.parametrize(
+        "case,element,item,expected",
+        [
+            ("indicator-normal-cursor", "Treeitem.indicator", "parent", ""),
+            ("text-hand-cursor", "Treeitem.text", "parent", "/docs/gui/_index.md"),
+            ("empty-area-normal", "Treeitem.text", "", ""),
+        ],
+        ids=["indicator-normal-cursor", "text-hand-cursor", "empty-area-normal"],
+    )
+    def test_hover_path(self, case: str, element: str, item: str, expected: str) -> None:
+        """Indicator and empty areas resolve to ``""`` (normal cursor); text resolves link."""
+
+        class _FakeHoverTree:
+            def identify_row(self, _y: int) -> str:
+                return item
+
+            def identify_element(self, _x: int, _y: int) -> str:
+                return element
+
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        try:
+            from tcm_gui._about import _hover_path
+
+            got = _hover_path(_FakeHoverTree(), 10, 20, {"parent": "/docs/gui/_index.md"})
+            assert got == expected, f"{case}: expected {expected!r}, got {got!r}"
         finally:
             sys.path.pop(0)
 

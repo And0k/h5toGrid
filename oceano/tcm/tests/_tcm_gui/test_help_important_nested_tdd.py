@@ -11,8 +11,6 @@ Spec:
 """
 import textwrap
 
-import pytest
-
 from tcm_gui._help import ModeBody, _NO_MODE, help_general_for_path, parse_reference
 
 # Exact snippet from oceano/tcm/docs/reference/config_reference.md:11-21
@@ -212,32 +210,42 @@ def test_level_agnostic_derives_l_from_heading():
         assert "Detailed" in raw.details or "Detailed" in raw.sub_details
 
 
-@pytest.mark.parametrize("lang", ["en", "ru"], ids=["en", "ru"])
-def test_real_doc_important_in_final_tooltip(lang):
+def _detailed_lead(text: str) -> str:
+    """First prose line of ``#### Detailed`` under ``### `path_field` `` — read from the doc source.
+
+    The parser must preserve it verbatim in ``details["Detailed"]``; deriving it
+    here keeps the markdown the single source of truth (no hardcoded phrases).
+    """
+    lines = text.splitlines()
+    head = next((i for i, l in enumerate(lines) if l.strip() == "### `path_field`"), None)
+    assert head is not None, "`### `path_field` ` heading missing in doc"
+    det = next((i for i in range(head, len(lines)) if lines[i].strip() == "#### Detailed"), None)
+    assert det is not None, "`#### Detailed` block missing under `### `path_field` `"
+    lead = next((l.strip() for l in lines[det + 1 :] if l.strip()), "")
+    assert lead, "`#### Detailed` block is empty in doc"
+    return lead
+
+
+def test_real_doc_important_in_final_tooltip(real_reference):
     """Real ``config_reference_{lang}.md`` → final tooltip contains the doc's
     ``Important`` block, not the short body.
 
     Source of truth = the doc file itself.  All expected text is extracted from
-    the parsed doc structure (``sub_details['Detailed']['Important']``), never
-    hardcoded.  The error tooltip for ``path_field`` (app.py:1354
-    ``help_general_for_path("path_field")``) must be the ``Important``
-    block, not the short pre-``####`` body, and must include the nested
-    ``##### Important`` under ``#### Detailed`` without breaking the parent.
+    the parsed doc structure (``sub_details['Detailed']['Important']``) and the
+    raw markdown (``_detailed_lead``), never hardcoded.  The error tooltip for
+    ``path_field`` (app.py:1354 ``help_general_for_path("path_field")``) must be
+    the ``Important`` block, not the short pre-``####`` body, and must include
+    the nested ``##### Important`` under ``#### Detailed`` without breaking the
+    parent.
     """
-    from tcm import _constants
-
-    path = _constants.DOC_DIR / "reference" / (
-        "config_reference.md" if lang == "en" else "config_reference_Ru.md"
-    )
-    if not path.is_file():
-        pytest.skip(f"{path} not found")
-    ents = parse_reference(path.read_text(encoding="utf-8"))
+    lang, doc, ents = real_reference.lang, real_reference.text, real_reference.entries
     assert "path_field" in ents, "path_field missing in real doc"
     raw = ents["path_field"].body.get(_NO_MODE)
     assert isinstance(raw, ModeBody), f"expected ModeBody, got {type(raw).__name__}"
     # Detailed must stay intact, Important must be in sub_details
     assert "Detailed" in raw.details, f"Detailed missing {list(raw.details)}"
-    assert "If the path contains" in raw.details["Detailed"] or "Если в пути" in raw.details["Detailed"]
+    # Source of truth = the doc itself: the parsed block must contain its lead line.
+    assert _detailed_lead(doc) in raw.details["Detailed"]
     assert "Detailed" in raw.sub_details and "Important" in raw.sub_details["Detailed"], (
         f"nested Important missing {raw.sub_details}"
     )

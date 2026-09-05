@@ -4,6 +4,7 @@ System utility functions for working with directories and files including archiv
 
 import logging
 import zipfile
+from collections import deque
 from io import TextIOWrapper
 import subprocess
 import tempfile
@@ -14,6 +15,22 @@ from pathlib import Path, PurePosixPath
 from . import config
 
 logger = logging.getLogger(__name__)
+
+# Preferred decode order for time-column reads: BOM-stripping UTF-8 first (tcm header
+# probing uses utf-8-sig), CP1251 fallback (tcm default encoding), plain UTF-8 last.
+# ASCII timestamps decode identically under every candidate, so time parsing is
+# encoding-agnostic; the order only matters for BOM stripping and non-ASCII headers.
+TEXT_ENCODINGS = ("utf-8-sig", "cp1251", "utf-8")
+
+
+def decode_bytes(data: bytes) -> str:
+    """Decode *data* trying TEXT_ENCODINGS strictly, falling back to lossy UTF-8."""
+    for enc in TEXT_ENCODINGS:
+        try:
+            return data.decode(enc)
+        except (UnicodeDecodeError, ValueError):
+            continue
+    return data.decode("utf-8", errors="ignore")
 
 # Try to import libarchive for better archive handling
 try:
@@ -32,21 +49,27 @@ except ImportError:
 
 
 def _read_from_libarchive(
-    archive_path: Path, target: str, n_head: Optional[int] = None, skip_header: int = 0
-) -> Tuple[List[str], Optional[str]]:
+    archive_path: Path,
+    target: str,
+    n_head: Optional[int] = None,
+    skip_header: int = 0,
+    n_tail: int = 10,
+) -> Tuple[List[str], List[str], Optional[str]]:
     """
-    Read lines from a file inside an archive using libarchive.
+    Stream lines of one archive member in a single pass (no extraction).
 
     Args:
         archive_path: Path to archive file
         target: Internal file path within the archive
-        n_head: Number of lines to read from the start (None for all)
+        n_head: Number of lines to keep from the start (None for all)
         skip_header: Number of header lines to skip
+        n_tail: Number of trailing lines to keep (bounded tail window)
 
     Returns:
-        Tuple of (list of lines, last line)
+        Tuple of (head lines, tail lines, last line)
     """
-    head_lines = []
+    head_lines: List[str] = []
+    tail: deque = deque(maxlen=n_tail)
     last_line = None
     buf = b""
     lines_read = 0
@@ -61,7 +84,7 @@ def _read_from_libarchive(
                 *lines, buf = buf.split(b"\n")
 
                 for line in lines:
-                    line_s = line.rstrip(b"\r").decode("utf-8", errors="ignore")
+                    line_s = decode_bytes(line.rstrip(b"\r"))
 
                     if skip_header > 0:
                         skip_header -= 1
@@ -70,20 +93,37 @@ def _read_from_libarchive(
                     if n_head is None or len(head_lines) < n_head:
                         head_lines.append(line_s)
 
+                    tail.append(line_s)
                     last_line = line_s
                     lines_read += 1
 
             if buf:
-                line_s = buf.rstrip(b"\r").decode("utf-8", errors="ignore")
+                line_s = decode_bytes(buf.rstrip(b"\r"))
                 if skip_header <= 0:
                     if n_head is None or len(head_lines) < n_head:
                         head_lines.append(line_s)
+                    tail.append(line_s)
                     last_line = line_s
                     lines_read += 1
 
             break
 
-    return head_lines, last_line
+    return head_lines, list(tail), last_line
+
+
+def read_zip_member_head_tail(
+    archive_path: Path, inner_file: str | PurePosixPath, n_head: Optional[int] = None, n_tail: int = 10
+) -> Tuple[List[str], List[str]]:
+    """Stream one ZIP member in a single pass, returning (head lines, tail lines) without extraction."""
+    head: List[str] = []
+    tail: deque = deque(maxlen=n_tail)
+    with zipfile.ZipFile(archive_path) as zf, zf.open(str(inner_file)) as f:
+        for i, raw in enumerate(f):
+            line_s = decode_bytes(raw.rstrip(b"\r\n"))
+            if n_head is None or i < n_head:
+                head.append(line_s)
+            tail.append(line_s)
+    return head, list(tail)
 
 
 def _list_libarchive_contents(archive_path: Path) -> Generator[Dict[str, Any], None, None]:
@@ -121,7 +161,7 @@ def _read_sample_lines_from_file(
     if Path(dir_archive).is_dir():
         # Regular directory - read file directly
         file_path = dir_archive / rel_path
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+        with open(file_path, "r", encoding="utf-8-sig", errors="ignore") as f:
             # Skip header lines
             for _ in range(skip_header):
                 f.readline()
@@ -279,7 +319,9 @@ def read_first_last_lines(archive_path: Path, inner_file: str | PurePosixPath, s
 
     if HAS_LIBARCHIVE:
         try:
-            lines, last_line = _read_from_libarchive(archive_path, target, n_head=1, skip_header=skip_header)
+            lines, _, last_line = _read_from_libarchive(
+                archive_path, target, n_head=1, skip_header=skip_header
+            )
             first = lines[0] if lines else None
             return first, last_line
         except Exception as e:
@@ -294,15 +336,15 @@ def read_first_last_lines(archive_path: Path, inner_file: str | PurePosixPath, s
         if archive_path.suffix.lower() == ".zip":
             with zipfile.ZipFile(archive_path) as zf:
                 with zf.open(target) as f:
-                    reader = TextIOWrapper(f, encoding="utf-8", errors="ignore")
+                    reader = TextIOWrapper(f, encoding="utf-8-sig", errors="ignore")
                     first = None
                     for _ in range(skip_header + 1):
                         first = reader.readline().rstrip("\n")
-                    f.seek(0, 2)  # \u043a\u043e\u043d\u0435\u0446 \u0444\u0430\u0439\u043b\u0430
-                    # \u0447\u0438\u0442\u0430\u0435\u043c \u043f\u043e\u0441\u043b\u0435\u0434\u043d\u0438\u0435 10 MB (\u0438\u043b\u0438 \u043c\u0435\u043d\u044c\u0448\u0435)
+                    f.seek(0, 2)  # конец файла
+                    # читаем последние 10 MB (или меньше)
                     size = f.tell()
                     f.seek(max(0, size - chunk_size), 0)
-                    chunk = f.read().decode("utf-8", errors="ignore")
+                    chunk = decode_bytes(f.read())
                     last = chunk.strip().splitlines()[-1] if chunk else first
             return first, last
 
@@ -519,7 +561,8 @@ def read_archive_file_lines(
 
     if HAS_LIBARCHIVE:
         try:
-            return _read_from_libarchive(archive_path, target, n_head=max_lines, skip_header=0)
+            head, _, last_line = _read_from_libarchive(archive_path, target, n_head=max_lines, skip_header=0)
+            return head, last_line
         except Exception as e:
             logger.debug(
                 f"libarchive reading failed for {archive_path}: {e}, falling back to standard method"
@@ -535,12 +578,12 @@ def read_archive_file_lines(
                         line = f.readline()
                         if not line:
                             break
-                        lines.append(line.decode("utf-8", errors="ignore").rstrip("\n"))
+                        lines.append(decode_bytes(line).rstrip("\n"))
 
                     # Read the rest to get the last line
                     remaining_lines = []
                     for line in f:
-                        remaining_lines.append(line.decode("utf-8", errors="ignore").rstrip("\n"))
+                        remaining_lines.append(decode_bytes(line).rstrip("\n"))
                     if remaining_lines:
                         last_line = remaining_lines[-1]
                     elif lines:
@@ -548,7 +591,7 @@ def read_archive_file_lines(
                 else:
                     # Read all lines
                     for line in f:
-                        lines.append(line.decode("utf-8", errors="ignore").rstrip("\n"))
+                        lines.append(decode_bytes(line).rstrip("\n"))
                     if lines:
                         last_line = lines[-1]
 
@@ -571,7 +614,7 @@ def read_archive_file_lines(
                 if not extracted_file_path.exists():
                     raise FileNotFoundError(f"File {inner_file} not found in archive")
 
-                with open(extracted_file_path, "r", encoding="utf-8", errors="ignore") as f:
+                with open(extracted_file_path, "r", encoding="utf-8-sig", errors="ignore") as f:
                     if max_lines is not None:
                         # Read first max_lines lines
                         for i in range(max_lines):

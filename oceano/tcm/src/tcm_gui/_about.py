@@ -12,10 +12,11 @@ meta values (description, company) are i18n via :data:`STRINGS`
 (:func:`_lang_filter`).
 
 Doc titles are extracted from the first ``# `` heading of each file and
-listed in a ``ttk.Treeview`` (folder parent nodes, expanded by default);
-clicking a title opens the document in the OS browser via
-:func:`~tcm_gui.browser.open_md_link` — a localhost server serves the
-document, rendered client-side by marked.js / MathJax / highlight.js.
+listed in a directory-nested ``ttk.Treeview`` (only the first level expanded;
+a folder holding ``_index.md`` links its parent row to that file with no
+separate ``_index.md`` leaf); clicking a title opens the document in the OS
+browser via :func:`~tcm_gui.browser.open_md_link` — a localhost server serves
+the document, rendered client-side by marked.js / MathJax / highlight.js.
 
 Markdown note: ``parse_markdown`` joins consecutive lines into ONE
 paragraph, so every distinct metadata field must be its own block
@@ -138,31 +139,89 @@ def _lang_filter(docs: list[tuple[str, str, Path]], lang: str) -> list[tuple[str
     return sorted(out, key=lambda d: d[2])
 
 
-def _docs_tree(
-    docs: list[tuple[str, str, Path]], docs_root: Path = DOC_DIR
-) -> dict[str, list[tuple[str, Path]]]:
-    """Group flat ``(folder, title, path)`` docs by folder for hierarchical display.
+def _docs_tree(docs: list[tuple[str, str, Path]], docs_root: Path = DOC_DIR) -> dict[str, object]:
+    """Build directory-nested docs hierarchy for treeview display.
 
-    Folder order follows the canonical sequence in ``readme.md`` (the order its
-    links appear); folders not linked there follow alphabetically.  The readme
-    link text and each heading part are the same ``docs/<folder>/`` hrefs, so
-    this collapses to first-appearance order of ``docs/<folder>/`` segments.
+    Content comes solely from the actual ``folder/*.md`` structure (titles are
+    each file's first ``# `` heading); ``readme.md`` supplies only sibling order.
+    Folders containing ``_index.md`` store it as ``node["index"]`` so the parent
+    row links directly to it instead of showing a separate ``_index.md`` leaf.
+
+    Returns the root node ``{"index": None, "files": [...], "sub": {...}}`` where
+    each sub node has the same shape.  Top-level and nested siblings sort by
+    first-appearance order of their ``docs/...`` hrefs in ``readme.md``; paths
+    absent there sort alphabetically after.
     """
-    tree: dict[str, list[tuple[str, Path]]] = defaultdict(list)
-    for folder, title, path in docs:
-        tree[folder].append((title, path))
-    order = _readme_folder_order(docs_root)
-    return dict(sorted(tree.items(), key=lambda kv: (order.get(kv[0], len(order)), kv[0])))
+    root: dict[str, object] = {"index": None, "files": [], "sub": {}}
+    for _folder, title, path in docs:
+        try:
+            rel = path.relative_to(docs_root)
+        except ValueError:
+            continue
+        node = root  # type: ignore[assignment]
+        for part in rel.parts[:-1]:
+            sub = node["sub"]  # type: ignore[index]
+            if part not in sub:
+                sub[part] = {"index": None, "files": [], "sub": {}}
+            node = sub[part]
+        if rel.name == "_index.md":
+            node["index"] = (title, path)  # type: ignore[index]
+        else:
+            node["files"].append((title, path))  # type: ignore[index]
+    order = _readme_doc_order(docs_root)
+    inf = len(order)
+
+    def _rel(p: Path) -> str:
+        try:
+            return p.relative_to(docs_root).as_posix()
+        except ValueError:
+            return p.name
+
+    def _sub_min(node: dict[str, object]) -> int:
+        best = inf
+        if node.get("index") is not None:
+            _, ip = node["index"]  # type: ignore[misc]
+            best = min(best, order.get(_rel(ip), inf))
+        for _, fp in node.get("files", []):  # type: ignore[union-attr]
+            best = min(best, order.get(_rel(fp), inf))
+        for child in node.get("sub", {}).values():  # type: ignore[union-attr]
+            best = min(best, _sub_min(child))  # type: ignore[arg-type]
+        return best
+
+    def _sort_node(node: dict[str, object], prefix: tuple[str, ...]) -> None:
+        files = node.get("files", [])  # type: ignore[assignment]
+        files.sort(key=lambda t: (order.get(_rel(t[1]), inf), t[0].lower(), t[1].name.lower()))  # type: ignore[union-attr]
+
+        def _sub_key(name: str) -> tuple[int, str]:
+            child = node["sub"][name]  # type: ignore[index]
+            own = order.get("/".join((*prefix, name)), inf)
+            return (min(own, _sub_min(child)), name.lower())
+
+        node["sub"] = dict(sorted(node["sub"].items(), key=lambda kv: _sub_key(kv[0])))  # type: ignore[index]
+        for name, child in node["sub"].items():  # type: ignore[union-attr]
+            _sort_node(child, (*prefix, name))  # type: ignore[arg-type]
+
+    _sort_node(root, ())
+    return root
 
 
-def _readme_folder_order(docs_root: Path) -> dict[str, int]:
-    """``{folder: index}`` of ``docs/<folder>/`` link hrefs in ``readme.md``
-    first-appearance order (markdown links only — images excluded)."""
+def _readme_doc_order(docs_root: Path) -> dict[str, int]:
+    """``{rel_path: index}`` of ``docs/...`` hrefs in ``readme.md`` appearance order.
+
+    Covers file hrefs (``docs/a/b.md``) and folder hrefs (``docs/a/`` → ``a``);
+    ``{#anchor}`` fragments stripped, images (``![...]``) excluded.  Readme is
+    order-only — treeview content still comes from the filesystem walk.
+    """
     try:
         text = (docs_root.parent / "readme.md").read_text(encoding="utf-8")
     except OSError:
         return {}
-    return {f: i for i, f in enumerate(dict.fromkeys(re.findall(r"\]\(docs/([^/)]+)/", text)))}
+    order: dict[str, int] = {}
+    for m in re.finditer(r"(?<!\!)\[[^\]]*\]\(docs/([^)]+)\)", text):
+        rel = m.group(1).split("#", 1)[0].strip().rstrip("/")
+        if rel and rel not in order:
+            order[rel] = len(order)
+    return order
 
 
 def _folder_label(folder: str) -> str:
@@ -194,6 +253,42 @@ def _extract_title(path: Path) -> str | None:
     return None
 
 
+def _click_target(tree: ttk.Treeview, x: int, y: int, iid_path: dict[str, str]) -> str | None:
+    """Resolve a ``<Button-1>`` click to a doc path, or ``None`` when no doc opens.
+
+    The disclosure control (``Treeitem.indicator``) keeps its native
+    expand/collapse behavior — clicks there never open a document.  Clicks
+    elsewhere on a row whose iid maps to a path (leaf or ``_index.md``-linked
+    parent, wrap segments included) resolve to that path.  No ``"break"`` is
+    returned: native row selection still applies.
+    """
+    item = tree.identify_row(y)
+    if not item:
+        return None
+    try:
+        element = tree.identify_element(x, y)
+    except tk.TclError:
+        element = ""
+    if element == "Treeitem.indicator":
+        return None
+    return iid_path.get(item)
+
+
+def _hover_path(tree: ttk.Treeview, x: int, y: int, iid_path: dict[str, str]) -> str:
+    """Resolve a ``<Motion>`` position to the hovered doc path (``""`` when none).
+
+    Mirrors :func:`_click_target`: the disclosure control (``Treeitem.indicator``)
+    shows the normal cursor and no link — only row text/cell areas arm ``hand2``.
+    """
+    try:
+        element = tree.identify_element(x, y)
+    except tk.TclError:
+        element = ""
+    if element == "Treeitem.indicator":
+        return ""
+    return iid_path.get(tree.identify_row(y), "")
+
+
 # ── About dialog ────────────────────────────────────────────────────────────
 
 
@@ -217,12 +312,12 @@ class AboutDialog(tk.Toplevel):
         self._ui = ui
         self._meta = version_meta()
         self._docs = discover_docs()
-        self._docs_by_folder = _docs_tree(self._docs)
+        self._docs_hierarchy = _docs_tree(self._docs)
         self._fit_width = 0  # last width the labels were fitted to
         self._on_status = on_status or (lambda _msg: None)  # main status bar
         self._hover_msg = ""  # dedup across motion storms
         self._tree_hover_link = False  # hand2 while the pointer is over a doc leaf
-        self._iid_path: dict[str, str] = {}  # leaf iid (incl. wrap segments) → path str
+        self._iid_path: dict[str, str] = {}  # row iid (leaf + linked parent segs) → path str
 
         # System title carries the two dynamic runtime statuses
         mode = _S["about.mode_full"] if full_mode else _S["about.mode_simple"]
@@ -303,8 +398,8 @@ class AboutDialog(tk.Toplevel):
         )
         self._meta_lbl.pack(fill="x", padx=16, pady=(0, 2))
 
-        # Docs list: hierarchical treeview — folder parents (expanded by
-        # default), titles as leaves.  Row font = ⅔ of the theme Treeview
+        # Docs list: hierarchical treeview — directory-nested parents (only the
+        # first level expanded), titles as leaves.  Row font = ⅔ of the theme Treeview
         # font, link-blue leaves; rowheight synced to the font's linespace
         # so descenders ("g", "p") never clip against the next row.
         style = ttk.Style(self)
@@ -386,10 +481,10 @@ class AboutDialog(tk.Toplevel):
         self._meta_lbl.bind("<Motion>", self._on_header_motion, add="+")
         self._meta_lbl.bind("<Leave>", lambda _e: self._hover_status(""), add="+")
 
-        # Hierarchical doc tree: folder parent nodes (humanized labels,
-        # expanded by default), doc titles as leaves; iid = str(path) so a
-        # click resolves straight to the file.  Unwrapped until _refit
-        # knows the mapped width.
+        # Hierarchical doc tree: directory-nested parents (a folder holding
+        # _index.md links to it, no separate leaf), doc titles as leaves;
+        # iid = str(path) so a click resolves straight to the file.  Unwrapped
+        # until _refit knows the mapped width.
         self._populate()
         self._bind_doc_clicks(self._docs_view)
         # No fit here: pre-show width is ~1px (wrap=word would count hundreds
@@ -579,8 +674,8 @@ class AboutDialog(tk.Toplevel):
         self._hover_status(event.widget.link_at(event.x, event.y) or "")
 
     def _on_tree_motion(self, event: tk.Event) -> None:
-        """Leaf hover → hand2 cursor + its file path in the status bar (folders: neither)."""
-        path = self._iid_path.get(self._docs_view.identify_row(event.y), "")
+        """Row-text hover → hand2 + file path in status bar; indicator/plain rows: neither."""
+        path = _hover_path(self._docs_view, event.x, event.y, self._iid_path)
         self._hover_status(path)
         if (link := bool(path)) != self._tree_hover_link:  # dedup cursor churn
             self._tree_hover_link = link
@@ -613,35 +708,97 @@ class AboutDialog(tk.Toplevel):
     def _populate(self, width: int = 0) -> None:
         """(Re)build the doc tree, word-wrapping titles to *width* (0 → as-is).
 
-        Tk 8.6 items have no per-row ``-height`` → each extra wrapped line
-        becomes its own continuation item; ``_iid_path`` maps every leaf
-        segment to its file path.  Heading-less docs fall back to the
-        underscore stem → humanized (real heading titles keep their casing).
+        Directory-nested: each folder is a parent row; a folder holding
+        ``_index.md`` links that row to the index (no separate ``_index.md``
+        leaf).  Tk 8.6 items have no per-row ``-height`` → each extra wrapped
+        line becomes its own continuation item; ``_iid_path`` maps every row
+        segment (leaf + linked parent) to its file path.  Heading-less docs
+        fall back to the underscore stem → humanized (real heading titles keep
+        their casing).  Only the first level is expanded; deeper folders start
+        collapsed.
         """
         tree, measure = self._docs_view, self._docs_font.measure
         tree.delete(*tree.get_children(""))
         self._iid_path.clear()
-        for folder, entries in self._docs_by_folder.items():
-            parent = tree.insert("", "end", text=_folder_label(folder)) if folder else ""
-            for title, path in entries:
-                text = title if folder or title != path.stem else _folder_label(title)
-                avail = width - (_INDENT_PX if parent else _ICON_PX) if width else 0
-                segs = _wrap_px(text, measure, avail) if avail else [text]
-                iid = str(path)
-                tree.insert(parent, "end", iid=iid, text=segs[0], tags=("doc",))
-                self._iid_path[iid] = iid
-                for n, seg in enumerate(segs[1:], 2):
-                    cont = f"{iid}#{n}"
-                    tree.insert(parent, "end", iid=cont, text=seg, tags=("doc",))
-                    self._iid_path[cont] = iid
+
+        def _insert_leaf(parent: str, title: str, path: Path, depth: int) -> None:
+            text = title if parent or title != path.stem else _folder_label(title)
+            avail = width - (_ICON_PX + depth * _INDENT_PX) if width else 0
+            segs = _wrap_px(text, measure, avail) if avail and avail > 0 else [text]
+            iid = str(path)
+            tree.insert(parent, "end", iid=iid, text=segs[0], tags=("doc",))
+            self._iid_path[iid] = iid
+            for n, seg in enumerate(segs[1:], 2):
+                cont = f"{iid}#{n}"
+                tree.insert(parent, "end", iid=cont, text=seg, tags=("doc",))
+                self._iid_path[cont] = iid
+
+        def _insert_node(node: dict[str, object], parent: str, depth: int) -> None:
+            link_order = _readme_doc_order(DOC_DIR)
+            inf = len(link_order)
+
+            def _rel(p: Path) -> str:
+                try:
+                    return p.relative_to(DOC_DIR).as_posix()
+                except ValueError:
+                    return p.name
+
+            def _child_min(child: dict[str, object]) -> int:
+                best = inf
+                if child.get("index") is not None:
+                    _, ip = child["index"]  # type: ignore[misc]
+                    best = min(best, link_order.get(_rel(ip), inf))
+                for _, fp in child.get("files", []):  # type: ignore[union-attr]
+                    best = min(best, link_order.get(_rel(fp), inf))
+                for grand in child.get("sub", {}).values():  # type: ignore[union-attr]
+                    best = min(best, _child_min(grand))  # type: ignore[arg-type]
+                return best
+
+            items: list[tuple[tuple[int, str], str, object]] = []
+            for title, path in node.get("files", []):  # type: ignore[union-attr]
+                items.append(((link_order.get(_rel(path), inf), title.lower()), "file", (title, path)))  # type: ignore[arg-type]
+            for dirname, child in node.get("sub", {}).items():  # type: ignore[union-attr]
+                items.append(
+                    (
+                        (min(_child_min(child), link_order.get(dirname, inf)), dirname.lower()),
+                        "dir",
+                        (dirname, child),
+                    )
+                )  # type: ignore[arg-type]
+            items.sort(key=lambda t: t[0])
+            for _, kind, data in items:
+                if kind == "file":
+                    title, path = data  # type: ignore[misc]
+                    _insert_leaf(parent, title, path, depth)
+                else:
+                    dirname, child = data  # type: ignore[misc]
+                    index = child.get("index")  # type: ignore[union-attr]
+                    if index is not None:
+                        ititle, ipath = index  # type: ignore[misc]
+                        avail = width - (_ICON_PX + depth * _INDENT_PX) if width else 0
+                        segs = _wrap_px(ititle, measure, avail) if avail and avail > 0 else [ititle]
+                        iid = str(ipath)
+                        tree.insert(parent, "end", iid=iid, text=segs[0], tags=("doc",), open=False)
+                        self._iid_path[iid] = iid
+                        for n, seg in enumerate(segs[1:], 2):
+                            cont = f"{iid}#{n}"
+                            tree.insert(parent, "end", iid=cont, text=seg, tags=("doc",))
+                            self._iid_path[cont] = iid
+                        _insert_node(child, iid, depth + 1)  # type: ignore[arg-type]
+                    else:
+                        iid = tree.insert(parent, "end", text=_folder_label(dirname), open=False)
+                        _insert_node(child, iid, depth + 1)  # type: ignore[arg-type]
+
+        root = self._docs_hierarchy
+        _insert_node(root, "", 0)  # type: ignore[arg-type]
         for top in tree.get_children(""):
             tree.item(top, open=True)
 
     def _bind_doc_clicks(self, tree: ttk.Treeview) -> None:
-        """Click on a leaf → open its doc (folder rows only toggle expand)."""
+        """Text click on a leaf or linked parent → open its doc; indicator toggles expand."""
 
         def _open(event: tk.Event) -> None:
-            if path := self._iid_path.get(tree.identify_row(event.y)):
+            if path := _click_target(tree, event.x, event.y, self._iid_path):
                 open_md_link(path)  # wrap segments resolve too
 
         tree.bind("<Button-1>", _open, add="+")

@@ -147,6 +147,13 @@ General rules:
 - **Post-heading paragraph**: the paragraph between a `## ` heading and its
   table becomes the section's status-bar short (the `## ` subtitle is the
   fallback when the paragraph is absent).  Keep it to one concise sentence.
+  Headings are labels, not prose: an intermediate heading (e.g. `#### Detailed`,
+  a table title) keeps the section open but its text never enters the short.
+  A sibling non-mode heading at/below an open mode's level (e.g. a table title
+  after bare `### Detailed`) closes that mode, so the table below parses as
+  field rows instead of tooltip text.  Opening a mode finalizes the short
+  capture: earlier paragraph stays the status short, later prose arms the
+  dwell body — the two never share text, so the dwell firing stays visible.
 - **Citation blockquote** (`>`): a line starting with `>` finalizes the current
   section (post-heading paragraph or mode body) and discards the citation line
   itself.  Subsequent headings still start new sections.  Use it to exclude

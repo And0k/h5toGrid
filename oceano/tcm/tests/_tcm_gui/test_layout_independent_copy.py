@@ -1,110 +1,124 @@
-"""Layout-independent Ctrl+C: the physical ``C`` key must trigger ``<<Copy>>``
-regardless of the active keyboard layout (Cyrillic, Greek, …).
+"""Layout-independent shortcuts: physical Ctrl+letter keys must trigger their
+Tk virtual events regardless of the active keyboard layout (Cyrillic, …).
 
-On non-Latin layouts Tk's ``<<Copy>>`` virtual event never fires because the
-physical ``C`` key produces a different ``keysym``.  ``App._on_ctrl_keypress``
-detects the physical key by its platform ``keycode`` (:data:`const.VK_C`) and
-re-emits ``<<Copy>>`` on the event widget.
+On non-Latin layouts Tk's ``<<Copy>>`` / ``<<SelectAll>>`` / … never fire
+because the physical key produces a different ``keysym``.
+:class:`keyboard.LayoutIndependentShortcuts` detects the physical key by its
+platform ``keycode`` (see :mod:`tcm_gui.keyboard`) and re-emits the virtual
+event on the event widget.
 
-These tests simulate a non-Latin keypress by constructing a synthetic
-``<Control-KeyPress>`` event whose ``keycode`` is VK_C but whose ``keysym`` is
-NOT Latin ``c``/``C`` — exactly what Windows delivers for Ctrl+C on a Cyrillic
-layout.
+These tests simulate non-Latin keypresses with synthetic ``<KeyPress>``
+events whose ``keycode`` is the physical key but whose ``keysym`` is NOT the
+Latin letter — exactly what Windows/X11 deliver on a Cyrillic layout.
 """
 
 from __future__ import annotations
 
-import sys
 import tkinter as tk
 from tkinter import ttk
 
 import pytest
 
-from tcm_gui.const import VK_C
+from tcm_gui.keyboard import LayoutIndependentShortcuts
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+def _keycode(ws: str, latin: str) -> int:
+    """Physical *latin* letter's keycode on windowing system *ws*."""
+    return next(kc for kc, (_, exp) in LayoutIndependentShortcuts._KEYCODES[ws].items() if exp == latin)
 
 
-def _ctrl_c_event(widget: tk.Misc, keysym: str = "Cyrillic_es") -> tk.Event:
-    """Build a synthetic ``<Control-KeyPress>`` that mimics Ctrl+C on a
-    non-Latin layout: physical ``C`` key (VK_C) but a non-Latin keysym."""
+def _ctrl_event(widget: tk.Misc, keycode: int, keysym: str) -> tk.Event:
     ev = tk.Event()
-    ev.keycode = VK_C
+    ev.keycode = keycode
     ev.keysym = keysym
     ev.state = 0x0004  # Control mask
     ev.widget = widget
     return ev
 
 
+def _handler(ws: str = "win32") -> LayoutIndependentShortcuts:
+    """Bare handler with a fixed keycode table (no Tk root needed)."""
+    h = LayoutIndependentShortcuts.__new__(LayoutIndependentShortcuts)
+    h._keycodes = LayoutIndependentShortcuts._KEYCODES[ws]
+    return h
+
+
 # ── unit tests for the handler logic ─────────────────────────────────────────
 
 
-class TestOnCtrlKeypress:
-    """``App._on_ctrl_keypress`` routing decisions (no Tk root needed)."""
-
-    @pytest.fixture()
-    def app(self):
-        """Minimal App stub with just the method under test."""
-        from tcm_gui.app import App
-
-        return App.__new__(App)
-
-    def test_non_latin_c_triggers_copy(self, app):
-        """VK_C + non-Latin keysym → generate ``<<Copy>>``, return ``'break'``."""
-        target = tk.Text.__new__(tk.Text)  # lightweight; we only track generate
+class TestOnKeyPress:
+    @pytest.mark.parametrize(
+        ("latin", "virtual"),
+        [
+            ("a", "<<SelectAll>>"),
+            ("c", "<<Copy>>"),
+            ("x", "<<Cut>>"),
+            ("v", "<<Paste>>"),
+            ("z", "<<Undo>>"),
+            ("y", "<<Redo>>"),
+            ("f", "<<Find>>"),
+        ],
+    )
+    def test_non_latin_triggers_virtual(self, latin, virtual):
+        """Physical key + non-Latin keysym → virtual event + ``'break'``."""
+        h = _handler()
+        target = tk.Text.__new__(tk.Text)
         generated: list[str] = []
         target.event_generate = lambda seq, **kw: generated.append(seq)  # type: ignore[method-assign]
 
-        ev = _ctrl_c_event(target, keysym="Cyrillic_es")
-        ret = app._on_ctrl_keypress(ev)
+        ret = h._on_key_press(_ctrl_event(target, _keycode("win32", latin), "Cyrillic_ef"))
 
         assert ret == "break"
+        assert generated == [virtual]
+
+    def test_latin_passes_through(self):
+        """Latin keysym → None so Tk handles it natively (no double-fire)."""
+        h = _handler()
+        target = tk.Text.__new__(tk.Text)
+        generated: list[str] = []
+        target.event_generate = lambda seq, **kw: generated.append(seq)  # type: ignore[method-assign]
+
+        assert h._on_key_press(_ctrl_event(target, _keycode("win32", "c"), "c")) is None
+        assert h._on_key_press(_ctrl_event(target, _keycode("win32", "c"), "C")) is None
+        assert generated == []
+
+    def test_other_key_ignored(self):
+        target = tk.Text.__new__(tk.Text)
+        generated: list[str] = []
+        target.event_generate = lambda seq, **kw: generated.append(seq)  # type: ignore[method-assign]
+
+        ev = _ctrl_event(target, _keycode("win32", "c") + 1000, "Cyrillic_a")
+        assert _handler()._on_key_press(ev) is None
+        assert generated == []
+
+    def test_no_control_ignored(self):
+        h = _handler()
+        target = tk.Text.__new__(tk.Text)
+        generated: list[str] = []
+        target.event_generate = lambda seq, **kw: generated.append(seq)  # type: ignore[method-assign]
+
+        ev = _ctrl_event(target, _keycode("win32", "a"), "Cyrillic_ef")
+        ev.state = 0  # no Control
+        assert h._on_key_press(ev) is None
+        assert generated == []
+
+    def test_x11_table(self):
+        """X11 keycodes route the same way (e.g. physical C = 54)."""
+        h = _handler("x11")
+        target = tk.Text.__new__(tk.Text)
+        generated: list[str] = []
+        target.event_generate = lambda seq, **kw: generated.append(seq)  # type: ignore[method-assign]
+
+        assert _keycode("x11", "c") == 54
+        assert h._on_key_press(_ctrl_event(target, 54, "Cyrillic_es")) == "break"
         assert generated == ["<<Copy>>"]
-
-    def test_latin_c_passes_through(self, app):
-        """VK_C + Latin ``c`` → return None so Tk handles it natively."""
-        target = tk.Text.__new__(tk.Text)
-        generated: list[str] = []
-        target.event_generate = lambda seq, **kw: generated.append(seq)  # type: ignore[method-assign]
-
-        ev = _ctrl_c_event(target, keysym="c")
-        ret = app._on_ctrl_keypress(ev)
-
-        assert ret is None
-        assert generated == []
-
-    def test_latin_C_passes_through(self, app):
-        """VK_C + uppercase Latin ``C`` (Caps Lock) → also pass through."""
-        target = tk.Text.__new__(tk.Text)
-        generated: list[str] = []
-        target.event_generate = lambda seq, **kw: generated.append(seq)  # type: ignore[method-assign]
-
-        ev = _ctrl_c_event(target, keysym="C")
-        ret = app._on_ctrl_keypress(ev)
-
-        assert ret is None
-        assert generated == []
-
-    def test_other_key_ignored(self, app):
-        """Different keycode (not VK_C) → return None, no generate."""
-        target = tk.Text.__new__(tk.Text)
-        generated: list[str] = []
-        target.event_generate = lambda seq, **kw: generated.append(seq)  # type: ignore[method-assign]
-
-        ev = _ctrl_c_event(target, keysym="Cyrillic_a")
-        ev.keycode = VK_C + 1  # not the C key
-        ret = app._on_ctrl_keypress(ev)
-
-        assert ret is None
-        assert generated == []
 
 
 # ── integration: real Tk, real binding ───────────────────────────────────────
 
 
 @pytest.mark.gui
-class TestLayoutIndependentCopyIntegration:
+class TestLayoutIndependentShortcutsIntegration:
     """End-to-end: synthetic non-Latin Ctrl+C reaches the copy handler."""
 
     @pytest.fixture(scope="class")
@@ -118,21 +132,15 @@ class TestLayoutIndependentCopyIntegration:
         except tk.TclError:
             yield None
 
-    def test_bind_all_handler_installed(self, _tk_root):
-        """``App`` installs a ``bind_all("<Control-KeyPress>", ...)`` handler."""
+    def test_keypress_binding_installed(self, _tk_root):
+        """``LayoutIndependentShortcuts`` installs a ``bind_all("<KeyPress>")`` handler."""
         if _tk_root is None:
             pytest.skip("Tk unavailable")
-        # The handler is installed in App._build via bind_all; verify the
-        # binding exists by installing it the same way App does.
-        from tcm_gui.app import App
-
-        app = App.__new__(App)
-        _tk_root.bind_all("<Control-KeyPress>", app._on_ctrl_keypress, add="+")
-        bindings = _tk_root.bind_all()
-        # Tk normalizes <Control-KeyPress> to <Control-Key> in the binding list.
-        assert any(
-            "<Control-Key>" in b for b in bindings
-        ), f"no application-wide <Control-KeyPress> binding; got {bindings!r}"
+        kbd = LayoutIndependentShortcuts(_tk_root)
+        try:
+            assert any("<KeyPress>" in b or "<Key>" in b for b in _tk_root.bind_all())
+        finally:
+            kbd.destroy()
 
     def test_non_latin_ctrl_c_reaches_copy_handler(self, _tk_root):
         """Synthetic non-Latin Ctrl+C on a focused Entry fires ``<<Copy>>``.
@@ -150,34 +158,35 @@ class TestLayoutIndependentCopyIntegration:
         log = tk.Text(_tk_root, state="disabled")
         log.pack()
         copied: list[str] = []
+        try:
+            kbd = LayoutIndependentShortcuts(_tk_root)
 
-        def _on_copy(ev):
-            copied.append("copy")
-            return None
+            def _on_copy(ev):
+                copied.append("copy")
+                return None
 
-        # Install handlers the way App does: bind_all for application-wide events.
-        app = App.__new__(App)
-        app._log = log
-        app._status_lbl = tk.Text(_tk_root)
-        _tk_root.bind_all("<<Copy>>", app._on_copy_rich, add="+")
-        _tk_root.bind_all("<Control-KeyPress>", app._on_ctrl_keypress, add="+")
-        _tk_root.bind_all("<<Copy>>", _on_copy, add="+")
+            # Install handlers the way App does.
+            app = App.__new__(App)
+            app._log = log
+            app._status_lbl = tk.Text(_tk_root)
+            _tk_root.bind("<<Copy>>", app._on_copy_rich, add="+")
+            _tk_root.bind("<<Copy>>", _on_copy, add="+")
 
-        ent = ttk.Entry(_tk_root, width=20)
-        ent.insert(0, "test-data")
-        ent.pack()
-        ent.focus_set()
-        _tk_root.update()
+            ent = ttk.Entry(_tk_root, width=20)
+            ent.insert(0, "test-data")
+            ent.pack()
+            ent.focus_set()
+            _tk_root.update()
 
-        # Simulate Ctrl+C on a Cyrillic layout: VK_C + Cyrillic keysym.
-        # We call the bound handler directly because event_generate can't
-        # synthesize events with non-Latin keysyms on Windows.
-        ev = _ctrl_c_event(ent, keysym="Cyrillic_es")
-        app._on_ctrl_keypress(ev)
-        _tk_root.update_idletasks()
-        _tk_root.update()
+            # Simulate Ctrl+C on a Cyrillic layout: physical C + Cyrillic keysym.
+            ws = _tk_root.tk.call("tk", "windowingsystem")
+            ev = _ctrl_event(ent, _keycode(ws, "c"), "Cyrillic_es")
+            kbd._on_key_press(ev)
+            _tk_root.update_idletasks()
+            _tk_root.update()
 
-        assert "copy" in copied, "<<Copy>> never fired for non-Latin Ctrl+C"
-
-        ent.destroy()
-        log.destroy()
+            assert "copy" in copied, "<<Copy>> never fired for non-Latin Ctrl+C"
+        finally:
+            kbd.destroy()
+            ent.destroy()
+            log.destroy()

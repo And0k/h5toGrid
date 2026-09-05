@@ -234,12 +234,6 @@ def concat_to_iso8601(a: pd.DataFrame) -> pd.Series:
     t = t.str.cat([a[c].str.decode("utf-8").str.zfill(2) for c in ["MM", "SS"]], sep=":")
     return d.str.cat(t, sep="T")
 
-
-# =========================================================================== #
-# Public API — loaded_tcm
-# =========================================================================== #
-
-
 # =========================================================================== #
 # Public API — loaded_tcm
 # =========================================================================== #
@@ -340,10 +334,6 @@ def loaded_tcm(
             lf.debug("'{}' skipped — no magnetometer columns", key)
 
     return a.assign(Time=tim_index)
-
-
-# same but no magnetometer columns → no inversion
-loaded_wavegauge = loaded_tcm
 
 
 # =========================================================================== #

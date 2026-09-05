@@ -36,7 +36,7 @@ def _anchors_via_meta_finder(root: Path) -> list[Path] | None:
         raw = Path(dd) / _constants.RAW_DIR_NAME
         if raw.is_dir():
             anchors.append(raw.resolve())
-        elif Path(dd).name.lower() == _constants.RAW_DIR_NAME.lower() and Path(dd).is_dir():
+        elif dd.name.lower() == _constants.RAW_DIR_NAME.lower() and dd.is_dir():
             anchors.append(Path(dd).resolve())
     return sorted(set(anchors)) if anchors else None
 
@@ -48,12 +48,12 @@ def collect_anchors(path_in: Path, dir_raw: Path) -> list[Path]:
     lf.info("collect_anchors trigger={} dir_raw={}", path_in, dir_raw)
     # Single _raw anchor — no meta_finder, just return it (tab-fill must not trigger device discovery)
     try:
-        if path_in.is_dir() and path_in.resolve().name.lower() == _constants.RAW_DIR_NAME.lower():
-            lf.debug("collect_anchors: single _raw trigger={} → [dir_raw]", path_in)
-            return [dir_raw]
         resolved_in = path_in.expanduser().resolve()
     except Exception:
         resolved_in = path_in
+    if path_in.is_dir() and resolved_in.name.lower() == _constants.RAW_DIR_NAME.lower():
+        lf.debug("collect_anchors: single _raw trigger={} → [dir_raw]", path_in)
+        return [dir_raw]
     if resolved_in != dir_raw.resolve() or not path_in.is_dir():
         lf.debug("collect_anchors: single-source trigger={} → [dir_raw]", path_in)
         return [dir_raw]
@@ -80,19 +80,11 @@ def merge_existed_cfgs(anchors: list[Path]) -> tuple[dict[str, list[str]], Path]
     """Merge ``{pcid: [stems]}`` from all *anchors*' ``cfg_proc/run`` + primary ``dir_cfgs``."""
     if not anchors:
         raise ValueError("anchors must not be empty")
-    if len(anchors) == 1:
-        dir_cfgs = anchors[0] / "cfg_proc" / "run"
-        cfgs = config_yaml.get_existed_cfgs(dir_cfgs) if dir_cfgs.is_dir() else {}
-        return cfgs, dir_cfgs
-    # Multi-anchor: merge from all
     merged: dict[str, list[str]] = {}
     for a in anchors:
-        d = a / "cfg_proc" / "run"
-        if d.is_dir():
+        if (d := a / "cfg_proc" / "run").is_dir():
             for k, v in config_yaml.get_existed_cfgs(d).items():
                 merged.setdefault(k, []).extend(v)
-    for k in list(merged.keys()):
+    for k in merged:
         merged[k] = sorted(set(merged[k]))
-    # Primary is first anchor's run dir (per-file save in config_yaml handles others)
-    primary = anchors[0] / "cfg_proc" / "run"
-    return merged, primary
+    return merged, anchors[0] / "cfg_proc" / "run"

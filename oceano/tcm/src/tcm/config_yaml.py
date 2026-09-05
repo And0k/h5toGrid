@@ -363,8 +363,12 @@ def gen_metadata(
     # CSV mode: locate corrected CSV files across input_paths
     cfg_in_common["corr_time_mode"] = cfg["input"].get("corr_time_mode", True)
 
-    _prog_return = OmegaConf.select(cfg, "program.return_") if OmegaConf.is_config(cfg) else (cfg.get("program") or {}).get("return_")
-    _is_scan = _prog_return == schema.Return.CFG_FROM_ARGS
+    _prog_return = (
+        OmegaConf.select(cfg, "program.return_")
+        if OmegaConf.is_config(cfg)
+        else (cfg.get("program") or {}).get("return_")
+    )
+    _prog_return == schema.Return.CFG_FROM_ARGS  # scan stage
     merged: dict[tuple, list[Path]] = {}  # ``{(model, number): [paths]}`` dict of discovered file groups
     for p in input_paths:
         try:
@@ -385,7 +389,9 @@ def gen_metadata(
         for key, files in discovered.items():
             merged.setdefault(key, []).extend(files)
     if not merged:
-        raise FileNotFoundError(f"No input files found from {input_paths} (trigger={input_paths[0] if input_paths else '?'})")
+        raise FileNotFoundError(
+            f"No input files found from {input_paths} (trigger={input_paths[0] if input_paths else '?'})"
+        )
     lf.info(
         "Discovered {} probes (from {} data files, trigger={}, eager={})",
         len(merged),
@@ -523,64 +529,11 @@ def gen_metadata(
                             exc_info=True,
                         )
         else:
-            # TCM-first time_ranges, then meta_finder burst overlay (D3: integrate, do not hide failures)
+            # Single unified time/burst extraction per archive member (streaming, no temp extraction)
             try:
                 from meta_finder.data_proc_funcs import extract_time_info_from_text_file as _eti_archive
-
-                _has_burst_archive = True
             except ImportError:
                 _eti_archive = None  # type: ignore[assignment]
-                _has_burst_archive = False
-
-            def _tcm_ranges_from_archive(dir_archive: Path, rel: PurePosixPath, _key: tuple) -> list[str] | None:
-                """Extract TCM time_ranges from archive member via temp extraction + csv_load edge path."""
-                import tempfile
-                import zipfile
-
-                try:
-                    suffix = dir_archive.suffix.lower()
-                    with tempfile.TemporaryDirectory() as td:
-                        td_path = Path(td)
-                        extracted: Path | None = None
-                        if suffix == ".zip":
-                            with zipfile.ZipFile(dir_archive) as zf:
-                                data = zf.read(str(rel))
-                                extracted = td_path / Path(rel).name
-                                extracted.write_bytes(data)
-                        elif suffix == ".7z":
-                            try:
-                                import py7zr  # type: ignore[import]
-
-                                with py7zr.SevenZipFile(dir_archive, mode="r") as zf:
-                                    zf.extract(path=td, targets=[str(rel)])
-                                    extracted = td_path / rel
-                                    if not extracted.is_file():
-                                        cand = list(td_path.rglob(Path(rel).name))
-                                        extracted = cand[0] if cand else None
-                            except Exception:
-                                lf.debug("7z extract failed for %s / %s", dir_archive, rel, exc_info=True)
-                                return None
-                        else:
-                            return None
-                        if extracted is None or not extracted.is_file():
-                            return None
-                        tmp_dict: dict[tuple, list[Path]] = {(_key[0], _key[1]): [extracted]}
-                        cfg_merged_tmp = {**csv_load.cfg_default["in"], **cfg_in_common}
-                        for df_edges, (_ipid, _pcid, _ppath) in csv_load.load_from_csv_gen(
-                            csv_files_dict=tmp_dict, cfg_in=cfg_merged_tmp, return_="first_last_row"
-                        ):
-                            if df_edges is not None and len(df_edges.index) >= 2:
-                                return [dt.isoformat() for dt in df_edges.index[:1]] + [
-                                    dt.isoformat() for dt in df_edges.index[-1:]
-                                ]
-                            if df_edges is not None and len(df_edges.index) == 1:
-                                iso = df_edges.index[0].isoformat()
-                                return [iso, iso]
-                            return None
-                        return None
-                except Exception:
-                    lf.debug("TCM archive ranges failed for %s / %s", dir_archive, rel, exc_info=True)
-                    return None
 
             for _key, _files in merged_archive.items():
                 for path_csv in _files:
@@ -589,45 +542,24 @@ def gen_metadata(
                         if split is None:
                             continue
                         dir_archive, rel = split
-                        averaging_interval = cfg_in_common.get("averaging_interval")
-                        if averaging_interval is None:
-                            averaging_interval = 2
-                        # TCM-first time_ranges
-                        tcm_ranges = _tcm_ranges_from_archive(dir_archive, rel, _key)
+                        averaging_interval = cfg_in_common.get("averaging_interval") or 2
                         info = None
-                        burst_dt = bursts_t = "-"
-                        t_st = t_en = None
-                        if _has_burst_archive:
+                        if _eti_archive is not None:
                             try:
-                                info = _eti_archive(
-                                    dir_archive, rel, averaging_interval=averaging_interval
-                                )
-                                if info is not None:
-                                    t_st, t_en, burst_dt, bursts_t = info
+                                info = _eti_archive(dir_archive, rel, averaging_interval=averaging_interval)
                             except Exception:
-                                lf.debug("extract_time_info failed for %s / %s", dir_archive, rel, exc_info=True)
+                                lf.debug(
+                                    "extract_time_info failed for %s / %s", dir_archive, rel, exc_info=True
+                                )
                                 info = None
                         pcid_arc = format.pcid_from_parts(model=_key[0], number=_key[1])
                         cfg1_arc = prep_cfg_for_probe(
                             pcid_arc, cfg_in_for_probes, cfg_in_common, cfg, path_csv=path_csv
                         )
-                        # Prefer TCM ranges; fallback to meta_finder ranges when TCM absent
-                        if tcm_ranges is not None:
-                            cfg1_arc["input"]["time_ranges"] = tcm_ranges
-                            if info is None:
-                                lf.debug("TCM ranges for {}: {} (burst unavailable)", pcid_arc, tcm_ranges)
-                            elif burst_dt != "-" or bursts_t != "-":
-                                lf.info(
-                                    "Burst for {}: burst_dt={} bursts_t={} (from {})",
-                                    pcid_arc,
-                                    burst_dt,
-                                    bursts_t,
-                                    path_csv.name if hasattr(path_csv, "name") else str(path_csv).rsplit("/", 1)[-1],
-                                )
-                            else:
-                                lf.debug("Burst for {}: continuous (-/-) in {}", pcid_arc, path_csv)
-                        elif info is not None:
+                        if info is not None:
+                            t_st, t_en, burst_dt, bursts_t = info
                             if t_st and t_en:
+                                # " "→"T" keeps YAML byte-identical to the old edge path (cosmetic only)
                                 cfg1_arc["input"]["time_ranges"] = [
                                     t.replace(" ", "T") if " " in t else t for t in (t_st, t_en)
                                 ]
@@ -637,12 +569,16 @@ def gen_metadata(
                                     pcid_arc,
                                     burst_dt,
                                     bursts_t,
-                                    path_csv.name if hasattr(path_csv, "name") else str(path_csv).rsplit("/", 1)[-1],
+                                    path_csv.name
+                                    if hasattr(path_csv, "name")
+                                    else str(path_csv).rsplit("/", 1)[-1],
                                 )
                             else:
                                 lf.debug("Burst for {}: continuous (-/-) in {}", pcid_arc, path_csv)
                         else:
-                            lf.warning("Time extraction failed for {} from {} (both TCM and meta_finder)", pcid_arc, path_csv)
+                            lf.warning(
+                                "Time extraction failed for {} from {} (unified reader)", pcid_arc, path_csv
+                            )
                         if cfg["out"]["table"]:
                             pcid_arc = format.to_pcid_from_name(cfg["out"]["table"])
                         cfg1_arc["out"]["dt_bins"] = cfg["out"].get("dt_bins", [0, 2, 600, 3600, 7200])
@@ -666,7 +602,7 @@ def gen_metadata(
                             exc_info=True,
                         )
 
-    # ── Loose text files — original path via csv_read_gen (handles header detection) ──
+    # ── Loose text files — time/burst edges via the unified reader (no csv edge loading) ──
     if not merged_loose:
         if not merged_archive and not merged_h5:
             # Nothing left to yield (should have been caught earlier)
@@ -704,69 +640,69 @@ def gen_metadata(
                     )
         return
 
-    # Load edge rows
-    # Internally handles: stem grouping, corrected/raw pairing
-    # — all the pairing logic that the old discover_probes() performed explicitly.
-    cfg_merged = {**csv_load.cfg_default["in"], **cfg_in_common}
-    for df_raw_edges, (ipid, pcid, path_csv) in csv_load.load_from_csv_gen(
-        csv_files_dict=merged_loose,
-        cfg_in=cfg_merged,
-        return_="first_last_row",
-    ):
-        try:
-            # Configuration with coefficients for current input pcid
-            cfg1 = prep_cfg_for_probe(pcid, cfg_in_for_probes, cfg_in_common, cfg, path_csv=path_csv)
-            if df_raw_edges is not None:
-                cfg1["input"]["time_ranges"] = [dt.isoformat() for dt in df_raw_edges.index]
-
-            # Burst detection for loose files (same as archive — fills missing metadata, not input)
+    # Time/burst edges per loose file via the unified reader (no csv edge loading here;
+    # actual data loading still goes through csv_load at run time)
+    try:
+        from meta_finder.data_proc_funcs import extract_time_info_from_text_file as _eti
+    except ImportError:
+        _eti = None  # type: ignore[assignment]
+    _avg = cfg_in_common.get("averaging_interval") or 2
+    for _key, _files in merged_loose.items():
+        for path_csv in _files:
+            pcid = format.pcid_from_parts(model=_key[0], number=_key[1])
             try:
-                from pathlib import PurePosixPath as _PP
-
-                from meta_finder.data_proc_funcs import extract_time_info_from_text_file as _eti
-
-                _avg = cfg_in_common.get("averaging_interval") or 2
-                _info = _eti(path_csv.parent, _PP(path_csv.name), averaging_interval=_avg)
+                # Configuration with coefficients for current input pcid
+                cfg1 = prep_cfg_for_probe(pcid, cfg_in_for_probes, cfg_in_common, cfg, path_csv=path_csv)
+                _info = None
+                if _eti is not None:
+                    try:
+                        _info = _eti(path_csv.parent, PurePosixPath(path_csv.name), averaging_interval=_avg)
+                    except Exception:
+                        lf.debug("extract_time_info failed for {}", path_csv, exc_info=True)
+                        _info = None
                 if _info is not None:
-                    _, _, _bdt, _bst = _info
+                    _t_st, _t_en, _bdt, _bst = _info
+                    if _t_st and _t_en:
+                        # " "→"T" keeps YAML byte-identical to the old edge path (cosmetic only)
+                        cfg1["input"]["time_ranges"] = [
+                            t.replace(" ", "T") if " " in t else t for t in (_t_st, _t_en)
+                        ]
                     if _bdt != "-" or _bst != "-":
-                        lf.info("Burst for {}: burst_dt={} bursts_t={} (from {})", pcid, _bdt, _bst, path_csv.name)
+                        lf.info(
+                            "Burst for {}: burst_dt={} bursts_t={} (from {})", pcid, _bdt, _bst, path_csv.name
+                        )
                     else:
                         lf.debug("Burst for {}: continuous (-/-) in {}", pcid, path_csv.name)
                 else:
-                    lf.debug("Burst for {}: no time_info from {}", pcid, path_csv.name)
-            except ImportError:
-                pass
+                    lf.warning("Time extraction failed for {} from {} (unified reader)", pcid, path_csv)
+
+                # output pcid
+                if cfg["out"]["table"]:
+                    pcid = format.to_pcid_from_name(cfg["out"]["table"])
+
+                cfg1["out"]["dt_bins"] = cfg["out"].get("dt_bins", [0, 2, 600, 3600, 7200])
+
+                # Delete fields not in structured config or which we enforce to be specified explicitly
+                for del_field in [
+                    "tables",
+                    "nfiles",
+                    "temp_db_path",
+                    "overwrite_db",
+                    "b_del_temp_db",
+                    "b_incremental_update",
+                ]:
+                    cfg1["out"].pop(del_field, None)
+                cfg1["input"].pop("dt_min_binning_proc", None)
+                cfg1["input"].pop("b_insert_separator", None)
+                cfg1["input"].pop("cfgFile", None)
+
+                yield cfg1, (False, pcid, None)
             except Exception:
-                lf.debug("Burst extraction failed for {}", path_csv, exc_info=True)
-
-            # output pcid
-            if cfg["out"]["table"]:
-                pcid = format.to_pcid_from_name(cfg["out"]["table"])
-
-            cfg1["out"]["dt_bins"] = cfg["out"].get("dt_bins", [0, 2, 600, 3600, 7200])
-
-            # Delete fields not in structured config or which we enforce to be specified explicitly
-            for del_field in [
-                "tables",
-                "nfiles",
-                "temp_db_path",
-                "overwrite_db",
-                "b_del_temp_db",
-                "b_incremental_update",
-            ]:
-                cfg1["out"].pop(del_field, None)
-            cfg1["input"].pop("dt_min_binning_proc", None)
-            cfg1["input"].pop("b_insert_separator", None)
-            cfg1["input"].pop("cfgFile", None)
-
-            yield cfg1, (False, pcid, None)
-        except Exception:
-            lf.warning(
-                "Skipping config generation for probe {:s} (will use existing config if available)",
-                pcid,
-                exc_info=True,
-            )
+                lf.warning(
+                    "Skipping config generation for probe {:s} (will use existing config if available)",
+                    pcid,
+                    exc_info=True,
+                )
 
 
 def save_config_to_yaml(
@@ -873,7 +809,9 @@ def save_config_to_yaml(
             if (time_ranges := cfg1["input"].get("time_ranges")) and (t0 := time_ranges[0])
             else ""
         )
-        file_name = f"{_date_prefix + '@' if _date_prefix else '@'}{pcid}{'-' + _comment if _comment else ''}.yaml"
+        file_name = (
+            f"{_date_prefix + '@' if _date_prefix else '@'}{pcid}{'-' + _comment if _comment else ''}.yaml"
+        )
 
         # OmegaConf schema expects str for path — convert Path (posix for archive composites)
         if isinstance(cfg1["input"].get("path"), Path):
@@ -976,21 +914,26 @@ def _raw_nc_has_source(source_path: Path, pcid: str) -> bool:
     return bool((log["fileName"].values == expected).any())
 
 
-def update_coefs_in_run_yaml(yaml_path: Path, coefs_changed: dict[str, object]) -> None:
-    """Merge changed coefficients into existing run YAML under ``input.coefs``.
+def _deep_merge(target: MutableMapping, patch: Mapping) -> None:
+    """Merge *patch* into *target* recursively (lists/scalars overwrite)."""
+    for k, v in patch.items():
+        if isinstance(v, Mapping) and isinstance(target.get(k), MutableMapping):
+            _deep_merge(target[k], v)
+        else:
+            target[k] = v
 
-    Reads the YAML, updates only the given keys, writes back.
-    Non-coefs sections (time_ranges, out, filter) are preserved.
-    Creates a timestamped backup (``-backupYYMMDD_HHMMSS``) before first
-    modification if the YAML already exists and doesn't already have a
-    backup marker. Used as noh5 fallback when ``h5py`` is unavailable,
-    or to keep the run YAML in sync with computed values (e.g. zeroing Rz).
+
+def update_run_yaml(yaml_path: Path, patch: dict[str, object]) -> None:
+    """Deep-merge *patch* into the run YAML at *yaml_path* (round-trip safe).
+
+    Single write path for all GUI/pipeline edits: reads the YAML, merges only
+    the given keys (other sections preserved), writes back with the
+    ``# @package _global_`` header. Creates a timestamped backup
+    (``-backupYYMMDD_HHMMSS``) before modifying an existing file.
 
     :param yaml_path: Path to existing run YAML (created if missing).
-    :param coefs_changed: Mapping of coef_name → numpy array/scalar values.
+    :param patch: Nested mapping, e.g. ``{"input": {"coefs": {...}}, "out": {...}}``.
     """
-    from datetime import datetime
-
     from tcm.to_omegaconf import to_omegaconf_compatible_types
 
     ry = _ry()
@@ -1011,13 +954,27 @@ def update_coefs_in_run_yaml(yaml_path: Path, coefs_changed: dict[str, object]) 
         except Exception:
             lf.warning("Could not read {} — creating fresh", yaml_path.name)
 
-    coefs_node = existing.setdefault("input", {}).setdefault("coefs", {})
-    for k, v in coefs_changed.items():
-        coefs_node[k] = to_omegaconf_compatible_types(v)
+    _deep_merge(existing, to_omegaconf_compatible_types(patch))
 
     yaml_path.parent.mkdir(parents=True, exist_ok=True)
     with yaml_path.open("w", encoding="utf-8") as f:
         f.write("# @package _global_\n")
         ry.dump(existing, f)
 
-    lf.info("Updated coefs {} in {}", sorted(coefs_changed), yaml_path.name)
+    lf.info("Updated {} in {}", sorted(patch), yaml_path.name)
+
+
+def update_coefs_in_run_yaml(yaml_path: Path, coefs_changed: dict[str, object]) -> None:
+    """Merge changed coefficients into existing run YAML under ``input.coefs``.
+
+    Thin wrapper over :func:`update_run_yaml` preserving the flat
+    ``{coef_name: values}`` contract used by the pipeline (``processing.py``)
+    and ``tests/_xr/test_coefs.py``. Non-coefs sections
+    (time_ranges, out, filter) are preserved.
+    Used as noh5 fallback when ``h5py`` is unavailable,
+    or to keep the run YAML in sync with computed values (e.g. zeroing Rz).
+
+    :param yaml_path: Path to existing run YAML (created if missing).
+    :param coefs_changed: Mapping of coef_name → numpy array/scalar values.
+    """
+    update_run_yaml(yaml_path, {"input": {"coefs": dict(coefs_changed)}})

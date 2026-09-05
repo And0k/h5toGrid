@@ -79,38 +79,6 @@ At WARNING level only when anomalies exceed thresholds:
 | `time correction: N/M monotone (in-range=K); X% removed (spikes=S, backward=B); ...; A pts > alarm Thr` | **Warning**: significant time anomalies — check diagnostics |
 | `diagnostics {path} saved (N events): HOLE=..., ALARM=...` | Diagnostics NPZ saved for detailed analysis |
 
-## Re-run behavior
-
-On re-processing the same input data, each output type handles idempotency
-differently:
-
-| Output | Re-run behavior |
-|--------|----------------|
-| `*.raw.nc` | **SKIP** — same fileName + mtime detected via log table |
-| `*.proc_Avg.nc` | **SKIP** — new time range ⊂ existing range |
-| `*.proc_noAvg.nc` | **SKIP** — new time range ⊂ existing range |
-| Combined groups | **Overwrite** — always rewrites from per-probe groups |
-
-If processing parameters changed (coefs, filter thresholds), the pipeline
-raises `ValueError` with a unified diff showing what changed. Pass
-`out.overwrite_db=splice` to force reprocessing.
-
-### `overwrite_db` decision matrix
-
-| `overwrite_db` | Params changed? | `time_ranges` vs existing | Behavior |
-|:---:|:---:|:---:|---|
-| `None` | No | subset | **Skip NC** — export TSV only |
-| `None` | No | extends | **Append** — append new tail only |
-| `None` | Yes | extends | **Append + warn** — keep existing, append new |
-| `None` | Yes | contained | **Error** — suggest `out.overwrite_db=splice` |
-| `"splice"` | — | subset | **Splice** — keep outside, replace inside |
-| `"splice"` | — | extends | **Splice** — keep outside, replace/append inside |
-| `"splice"` | — | None | **Splice** — reprocess all from source |
-| `"trim"` | — | subset | **Trim** — delete outside `time_ranges` |
-| `"trim"` | — | extends | **Trim + append** — trim existing, process new |
-| `"export"` | — | any | **Export only** — block NC writes, export TSV |
-
-See [Config Tuning](../reference/config_tuning.md) for the full contracts.
 
 ## Common issues
 
@@ -121,6 +89,17 @@ See [Config Tuning](../reference/config_tuning.md) for the full contracts.
 | `Ex_nothing_done` exit | No matching configs or all stale | Check `input.path` pattern, verify source files exist |
 | Config has wider range than metadata | YAML `time_ranges` wider than file metadata | Narrow `time_ranges` to actual deployment period |
 | `FileNotFoundError` during processing | Source file deleted, stale config remains | Remove stale YAML from `cfg_proc/run/` |
+
+
+## meta_finder log origins (tcm-visible)
+
+| Message | Origin | Level |
+|---|---|---|
+| `Have read lines (max: …) from …` | `data_proc_funcs.read_file_lines_universal` | INFO (burst path) |
+| `Skipped N/M bad lines, …` | `data_proc_funcs._extract_burst_info_from_lines` | INFO |
+| `Time extraction is not successful from …` | `data_proc_funcs.extract_time_info_from_text_file` | WARNING — single reader, no fallback chain; tcm logs `Time extraction failed for … (unified reader)` per file |
+| `Found N _raw anchors …` / `Anchor … has no files …` | `tcm/anchors.py`, `tcm/search.py` | INFO |
+
 
 ## See also
 

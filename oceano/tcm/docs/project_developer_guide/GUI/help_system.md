@@ -187,6 +187,15 @@ Its child detail uses ``#####`` (one level deeper):
   check, so it does not close the section.
 - **Post-heading paragraph**: the paragraph between a `## ` heading and its
   table is captured as the section's `short` (falls back to the subtitle).
+  A deeper heading before the table keeps the section open but its label is
+  skipped — only paragraph lines accumulate.  Opening a mode finalizes the
+  short capture: earlier paragraph stays the section `short`, later prose
+  arms only the mode body, so status and dwell never share text (regression:
+  identical texts made the dwell firing imperceptible).  A non-mode heading
+  at or above
+  the open mode's level closes the mode (regression: the `input.coefs` table
+  was swallowed into the `Detailed` dwell body, and the `Detailed` label
+  prefixed the section short).
 - **Citation blockquote** (`>`): a line starting with `>` finalizes the current
   accumulation (post-heading paragraph or mode body) and is itself discarded.
   Subsequent headings still start new sections.

@@ -19,7 +19,7 @@ from omegaconf import OmegaConf
 import tcm_gui.theme
 from tcm import cli, config_yaml, format, incl_calc, paths, schema, to_omegaconf
 from tcm.states import ScanStage
-from tcm_gui.cli_cfg import default_cfg
+from tcm_gui.cli_cfg import default_cfg, ensure_full_cfg, full_default_cfg
 
 from ._about import AboutDialog, local_readme
 from ._browse_button import DATA_FILETYPES, SEARCH_FILETYPES, BrowseButtonManager, _is_shift_pressed
@@ -33,7 +33,6 @@ from .browser import get_documentation_browser, open_md_link
 from .coef_sheet import ConfigSheet
 from .const import (
     UIScale,
-    VK_C,
     configure_ui,
     fit_to_workarea,
     get_widget_meta,
@@ -41,6 +40,7 @@ from .const import (
     set_widget_meta,
     widget_meta,
 )
+from .keyboard import LayoutIndependentShortcuts
 from .log_bridge import drain, install
 from .md_label import MarkdownLabel
 from .runtime import Runtime
@@ -65,7 +65,7 @@ class App:
     APP_ID = "Vendor.Product"  # todo: Fix, not hardcode here
     GEOMETRY = (1100, 800)  # desired initial size — clamped to work area at start
     POLL = 300  # ms
-    _DWELL_MS = 4000  # dwell tooltip delay — show detailed help after hover
+    _DWELL_MS = 6000  # dwell tooltip delay — show detailed help after hover
     _DWELL_HIDE_MS = 1500  # dwell tooltip auto-close delay after show
     _STATUS_SETTLE_MS = 300  # status message switch/close debounce
 
@@ -78,6 +78,10 @@ class App:
         # once the geometry is final (no top-left default-size blink at start)
         self.ui = UIScale(self.root)
         configure_ui(self.root)
+        # Layout-independent Ctrl+A/C/X/V/Z/Y/F — physical-key detection so
+        # shortcuts work on non-Latin layouts (see keyboard.py). Installed once
+        # here so every widget (Entry, Text, tksheet, dialogs) is covered.
+        self._kbd = LayoutIndependentShortcuts(self.root)
         self._theme = apply_theme_defaults(self.root)  # dark/light log colors
         # Custom label style matching the config tree column tint.
         ttk.Style().configure("Overall.TLabel", background=tcm_gui.theme.CONFIG_TREE_BG)
@@ -155,7 +159,11 @@ class App:
             self.root.after(100, self._scan)
         else:
             # No CLI path — show a placeholder page so the notebook isn't empty.
-            self._add_page(_S.get("default_page.stem", "(default)"), default_cfg())
+            # Full mode gets every Config section (not just input) — same tree as post-scan.
+            self._add_page(
+                _S.get("default_page.stem", "(default)"),
+                full_default_cfg() if self._full_mode else default_cfg(),
+            )
             # Non-full mode: disable editing until scan finds configs.
             if not self._full_mode:
                 for cs in self._pages.values():
@@ -342,15 +350,10 @@ class App:
         # :func:`copy_rich` and returns ``'break'`` to suppress further
         # propagation.  Otherwise it falls through so the focused widget
         # (e.g. ``_path_field`` ttk.Entry) keeps normal copy behaviour.
+        # Non-Latin layouts are covered by ``LayoutIndependentShortcuts``
+        # (installed in ``__init__``): it re-emits ``<<Copy>>`` from the
+        # physical C key, which lands here the same way.
         self.root.bind("<<Copy>>", self._on_copy_rich, add="+")
-        # Layout-independent Ctrl+C: on non-Latin keyboards (Cyrillic, Greek…)
-        # the physical ``C`` key produces a different character, so Tk's
-        # ``<<Copy>>`` never fires.  We detect the physical key by its platform
-        # ``keycode`` (see :data:`const.VK_C`) and re-emit ``<<Copy>>`` on the
-        # event widget — which lets the focused widget (Entry, Text, tksheet)
-        # perform its own copy.  Latin layouts are skipped: ``keysym`` is already
-        # ``c``, so Tk handles it natively and we must not double-fire.
-        self._copy_binding_id = self.root.bind_all("<Control-KeyPress>", self._on_ctrl_keypress, add="+")
         # F1 — context help: top path_field / focused-or-current sheet row
         # (selection first) / readme fallback.  One root binding — pages
         # bind nothing (per-sheet F1 bindings fired once per opened tab).
@@ -1121,6 +1124,10 @@ class App:
             dir_title="",
             on_click=self._hide_progress_widgets,
         )
+        if self._full_mode:
+            # Thin run YAMLs carry only overrides — backfill structured defaults so
+            # _build_full renders every section (out/filter/program), not just input.
+            ensure_full_cfg(cfg)
         cfg["_page_stem"] = stem
         cs.load(
             cfg,
@@ -1224,25 +1231,37 @@ class App:
         self.wk.run(self._path_field.get(), stems)
 
     def _write_coefs(self, stem: str, cs: ConfigSheet) -> None:
-        """Write edited coefs back to YAML — only if user actually changed something."""
+        """Write sheet edits back to the run YAML — only if user changed something.
+
+        Simple mode persists ``input.path`` + ``input.coefs`` (flat coefs contract
+        of :func:`config_yaml.update_coefs_in_run_yaml`). Full mode additionally
+        persists edited ``out``/``filter``/``proc``/``program`` leaves via
+        :meth:`ConfigSheet.get_edited_full`, merged by :func:`config_yaml.update_run_yaml`.
+        """
         if not cs.is_dirty:
             return
         if not (yp := self._yaml_paths.get(stem)):
             return
         coefs, dates, path = cs._current_state()
         coefs_date = getattr(cs, "get_coefs_date", lambda: "")()
-        patch: dict = {"input": {}}
+        coefs_node: dict = dict(coefs)
+        if dates:
+            coefs_node["dates"] = dates
+        if coefs_date:
+            coefs_node["date"] = coefs_date
+        patch: dict = {}
         if path:
-            patch["input"]["path"] = path
-        if coefs or dates or coefs_date:
-            patch["input"]["coefs"] = {}
-            if coefs:
-                patch["input"]["coefs"].update(coefs)
-            if dates:
-                patch["input"]["coefs"]["dates"] = dates
-            if coefs_date:
-                patch["input"]["coefs"]["date"] = coefs_date
-        config_yaml.update_coefs_in_run_yaml(yp, patch)
+            patch.setdefault("input", {})["path"] = path
+        if coefs_node:
+            patch.setdefault("input", {})["coefs"] = coefs_node
+        if getattr(self, "_full_mode", False) and callable(get_full := getattr(cs, "get_edited_full", None)):
+            for sec, sub in (get_full() or {}).items():
+                if sub:
+                    patch.setdefault(sec, {}).update(sub)
+        if not patch:
+            cs.mark_clean()
+            return
+        config_yaml.update_run_yaml(yp, patch)
         cs.mark_clean()
 
     def _load_device_meta(self) -> tuple[dict | None, Path | None, Path | None]:
@@ -1631,23 +1650,6 @@ class App:
         )
         if target is not None:
             copy_rich(target)
-            return "break"
-        return None
-
-    def _on_ctrl_keypress(self, event: tk.Event) -> str | None:
-        """Re-emit ``<<Copy>>`` when Ctrl+C is pressed on a non-Latin layout.
-
-        Tk's ``<<Copy>>`` virtual event only fires for ``<Control-Key-c>`` — the
-        Latin ``c``.  On Cyrillic/Greek layouts the same physical key yields a
-        different ``keysym``, so ``<<Copy>>`` never fires and copy is broken.
-        We detect the physical ``C`` key by its platform ``keycode`` (see
-        :data:`const.VK_C`): if it matches AND the ``keysym`` is not already
-        Latin ``c``/``C``, we generate ``<<Copy>>`` on the event widget and
-        return ``'break'`` to stop the untranslated key from propagating.
-        Latin layouts pass through (``keysym`` is ``c``) so Tk handles them.
-        """
-        if event.keycode == VK_C and event.keysym.lower() != "c":
-            event.widget.event_generate("<<Copy>>")
             return "break"
         return None
 

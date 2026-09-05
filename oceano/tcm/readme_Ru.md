@@ -35,6 +35,7 @@
 - [Input / Output Guide](docs/user_guide/input_output.md)
 - [Configuration Guide](docs/user_guide/configuration.md)
 - [Processing Guide](docs/user_guide/processing.md)
+- [Organizing TCM data and metadata per setup](docs/user_guide/meta_finder.md)
 - [Console Messages](docs/user_guide/console_messages.md)
 - [Описание журнала работы tcm_proc](docs/user_guide/log_description_ru.md)
 
@@ -46,6 +47,7 @@
 - [Config Tuning — Decision Tables & Behavior](docs/reference/config_tuning.md)
 - [CLI Reference](docs/reference/cli.md)
 - [Input / Output Format Specification](docs/reference/io_formats.md)
+- [meta_finder Integration](docs/reference/meta_finder_integration.md)
 
 ### [Методология](docs/methodology/)
 
@@ -66,6 +68,11 @@
 Внутренняя архитектура и инструкции по сборке.
 
 - [CLI Internals](docs/project_developer_guide/CLI.md)
-- [GUI Internals](docs/project_developer_guide/GUI/_index.md)
+#### [GUI Internals](docs/project_developer_guide/GUI/_index.md)
+- [GUI Architecture](docs/project_developer_guide/GUI/architecture.md)
+- [GUI Widgets](docs/project_developer_guide/GUI/widgets.md)
+- [GUI Help System](docs/project_developer_guide/GUI/help_system.md)
+- [GUI Key Decisions with Rationale and Regression Notes](docs/project_developer_guide/GUI/decisions.md)
+
 - [Правила создания документации](docs/project_developer_guide/doc_authoring_Ru.md)
 - [Сборка минимального дистрибутива `tcm_proc`](docs/project_developer_guide/build_tcm_clc_txt_Ru.md)

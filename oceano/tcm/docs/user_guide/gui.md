@@ -50,7 +50,8 @@ The caption left of the field shows the selected anchor's **number** (e.g.
 `3`); any manually typed path that is not in the list restores the default
 caption. The first anchor is auto-selected for tab-fill (`cfg_proc/run`
 lives per `_raw`), and any other anchor is one dropdown pick away — picking
-rescans that single `_raw`.
+rescans that single `_raw`. Folder rules, exclusions, and burst/time sourcing:
+[Organizing TCM data and metadata per setup](meta_finder.md).
 
 ### 2. Edit coefficients
 
@@ -81,7 +82,9 @@ current `input.time_ranges[[0, -1]]` — copy-paste there grays instantly, live)
 **Time window hover**: hovering `input.time_ranges` shows the live relation to `info_devices` — _matches_ (equal), _broader than_ (warning tint), _differs_ (narrowed/shifted) — recomputed on every hover/edit, not a stale scan-time message.
 
 **Shift-click** at startup (or hold Shift while clicking Browse) to load the
-full config tree (all sections: `out`, `filter`, `program`).
+full config tree (all sections: `input`, `out`, `filter`, `program` — missing
+values are filled with defaults). Edits to any section are saved to the run
+YAMLs on Run, same as coefficients.
 
 ### 3. Run — process data
 
@@ -146,5 +149,6 @@ overrides are not re-applied.
 
 ## See also
 
+- [Organizing TCM data and metadata per setup](meta_finder.md) — folder structure, device dirs, bursts
 - [Configuration Schema and Device Metadata Reference](../reference/config_reference.md) — all YAML fields with hover tooltips
 - [GUI Internals](../project_developer_guide/GUI/_index.md) — programmer-facing architecture

@@ -223,12 +223,12 @@ class TestGuiCoefWriteBack:
         assert updated["input"]["coefs"]["Ag"] == [[0.002, 0, 0], [0, 0.002, 0], [0, 0, 0.002]]
         assert updated["input"]["coefs"]["dates"]["Ag"] == "2024-06-15"
 
-    def test_write_coefs_delegates_to_update_coefs(self, gui_project, monkeypatch, mocker):
-        """``App._write_coefs`` calls ``config_yaml.update_coefs_in_run_yaml``."""
+    def test_write_coefs_delegates_to_update_run_yaml(self, gui_project, monkeypatch, mocker):
+        """``App._write_coefs`` merges edits via ``config_yaml.update_run_yaml``."""
         tmp_path, raw_dir, csv_file, run_dir = gui_project
         yaml_path = run_dir / "@i_01.yaml"
 
-        mock_update = mocker.patch.object(config_yaml, "update_coefs_in_run_yaml")
+        mock_update = mocker.patch.object(config_yaml, "update_run_yaml")
 
         # Simulate what App._write_coefs does
         from tcm_gui.app import App
@@ -245,11 +245,11 @@ class TestGuiCoefWriteBack:
         )
 
     def test_write_coefs_with_dates(self, gui_project, monkeypatch, mocker):
-        """``_write_coefs`` passes dates dict to ``update_coefs_in_run_yaml``."""
+        """``_write_coefs`` passes dates dict to ``update_run_yaml``."""
         tmp_path, raw_dir, csv_file, run_dir = gui_project
         yaml_path = run_dir / "@i_01.yaml"
 
-        mock_update = mocker.patch.object(config_yaml, "update_coefs_in_run_yaml")
+        mock_update = mocker.patch.object(config_yaml, "update_run_yaml")
 
         from tcm_gui.app import App
 
@@ -267,8 +267,8 @@ class TestGuiCoefWriteBack:
         )
 
     def test_write_coefs_no_edits_skips(self, gui_project, mocker):
-        """No edits → no call to ``update_coefs_in_run_yaml``."""
-        mock_update = mocker.patch.object(config_yaml, "update_coefs_in_run_yaml")
+        """No edits → no call to ``update_run_yaml``."""
+        mock_update = mocker.patch.object(config_yaml, "update_run_yaml")
 
         from tcm_gui.app import App
 
@@ -1054,8 +1054,8 @@ class TestFakeSheetDirtyTracking:
         ],
     )
     def test_write_coefs_respects_dirty_flag(self, coefs, dates, path, dirty, expect_write, mocker):
-        """_write_coefs calls update_coefs_in_run_yaml only when is_dirty is True."""
-        mock_update = mocker.patch.object(config_yaml, "update_coefs_in_run_yaml")
+        """_write_coefs calls update_run_yaml only when is_dirty is True."""
+        mock_update = mocker.patch.object(config_yaml, "update_run_yaml")
         from tcm_gui.app import App
 
         app = App.__new__(App)

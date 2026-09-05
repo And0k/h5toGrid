@@ -235,6 +235,9 @@ bin-optim-tcm = { features = ["noh5", "bin-optim", "tcm", "test", "tk-gui", "bro
 test = "pytest tests/"
 test-all = "hatch run test:*"
 start = "python oceano/tcm/scripts/tcm_proc.py"
+collect = "python -m meta_finder.collect"
+check-paths = "python -m meta_finder.post_processing.path_checker_main"
+check-device-dirs = "python -m meta_finder.post_processing.check_device_dirs"
 
 [tool.pixi.tasks.build-tcm-clc-txt]
 cmd = "python oceano/tcm/scripts/build/build_tcm_proc.py"

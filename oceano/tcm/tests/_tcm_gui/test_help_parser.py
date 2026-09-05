@@ -104,7 +104,9 @@ class TestRealReference:
         reload_cache("en")
         for section, expected_substring in (
             ("input", "Data source"),
-            ("input.coefs", "Loaded from the coefficient file"),
+            # Bare ``### Detailed`` prose arms the dwell body, not the short:
+            # the section short falls back to the ``##`` subtitle.
+            ("input.coefs", "Calibration coefficients"),
             ("out", "Output configuration"),
             # Real doc: the post-heading paragraph is now the short (values exceeding
             # thresholds become NaN...); the old subtitle "quality thresholds" is gone.
@@ -118,6 +120,13 @@ class TestRealReference:
             assert expected_substring in e.short, (
                 f"'{section}' short should contain '{expected_substring}', got {e.short!r}"
             )
+        dwell = help_for_path("input.coefs", mode="Detailed")
+        assert dwell is not None and isinstance(dwell.body, str), (
+            "input.coefs section dwell should resolve via the bare Detailed mode"
+        )
+        assert "Loaded from the coefficient file" in dwell.body, (
+            f"dwell should carry the Detailed prose, got {dwell.body!r}"
+        )
 
     def test_section_level_body_filled(self):
         """Section-level entries exist with correct short text.
@@ -888,3 +897,37 @@ class TestHelpForPath:
         e = HelpEntry(path="x", short="s", body="b")
         with pytest.raises(AttributeError):
             e.path = "y"  # type: ignore[misc]
+
+
+def test_bare_detailed_before_table_arms_short_and_dwell():
+    """Bare ``### Detailed`` prose between ``##`` and its table arms the dwell, not the short.
+
+    Regression chain: the section dwell first showed the table (sibling
+    table-title heading left the mode open, swallowing table rows), then showed
+    nothing (prose captured only as section short, so status and dwell carried
+    identical text and the dwell firing was invisible).  Expected: section
+    ``short`` falls back to the ``##`` subtitle (status), ``body["Detailed"]``
+    carries the prose (dwell), table rows become field entries.
+    """
+    from tcm_gui._help import ModeBody
+
+    sample = textwrap.dedent(
+        """\
+        ## `input.coefs` — Calibration coefficients
+
+        ### Detailed
+        Lead prose for dwell only.
+
+        ### Table. Coefficient parameters
+
+        | Field = Default | Purpose |
+        |-----------------|---------|
+        | `Ag` = `1` | Accel scale. |
+        """
+    )
+    entries = parse_reference(sample)
+    assert entries["input.coefs"].short == "Calibration coefficients"
+    dwell = entries["input.coefs"].body.get("Detailed")
+    assert isinstance(dwell, ModeBody), f"dwell body should be ModeBody, got {type(dwell).__name__}"
+    assert dwell.short == "Lead prose for dwell only."
+    assert entries["input.coefs.Ag"].short == "Accel scale."
