@@ -77,4 +77,4 @@ Internal architecture and build instructions.
 - [GUI Key Decisions with Rationale and Regression Notes](docs/project_developer_guide/GUI/decisions.md)
 
 - [Documentation Authoring Contract](docs/project_developer_guide/doc_authoring.md)
-- [Сборка минимального дистрибутива `tcm_proc`](docs/project_developer_guide/build_tcm_clc_txt_Ru.md)
+- [Сборка дистрибутивов `tcm_proc` и `tcm_gui`](docs/project_developer_guide/build_tcm_clc_txt_Ru.md)

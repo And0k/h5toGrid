@@ -4,7 +4,8 @@ Renders a small Markdown subset directly into tagged Tk Text ranges.
 The parser lives in :mod:`tcm._md_parse`; this module provides only
 the Tk renderer (:class:`MarkdownLabel`).
 
-Tables are aligned by measured tab stops.
+Tables are aligned by measured tab stops.  Bare absolute filesystem
+paths auto-link to file-name links (:func:`_path_spans`).
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import re
 import tkinter as tk
 import tkinter.font as tkfont
 from collections.abc import Callable
-from itertools import accumulate, zip_longest
+from itertools import accumulate, chain, zip_longest
 from pathlib import Path
 from typing import TypeAlias
 
@@ -27,11 +28,13 @@ from tcm._md_parse import (
     Inline,
     List,
     Paragraph,
+    Span,
     Table,
+    Tags,
     parse_markdown,
 )
 
-from . import theme
+from . import _allowed_paths, theme
 
 FontSpec: TypeAlias = tkfont.Font | str | tuple[str | int, ...] | None
 
@@ -40,6 +43,80 @@ _l = logging.getLogger(__name__)
 # The parser's ``{#name}`` color grammar (see ``_md_parse.py``) — a tag shaped
 # like a color name is a color even when unmapped; anything else is a link URL.
 _COLOR_NAME = re.compile(r"[a-z_]+\Z")
+
+
+def _path_spans(text: str, tags: Tags, root: str) -> Inline:
+    """Split *text* so each linkable path becomes a link span.
+
+    Linkable = absolute path beneath *root* (``''`` → files anywhere), per
+    :mod:`tcm_gui._allowed_paths`: files (2–4 alnum extension) display shrunk
+    to the file name, directories in full.  The full path travels in the URI
+    tag — ``file:`` scheme routed to the OS-associated application by
+    :func:`tcm_gui.browser.browser.open_md_link`.  Spans already carrying a
+    URL tag (explicit ``[text](url)``) pass through untouched.
+    """
+    if any(t not in STYLE_TAGS and not _COLOR_NAME.fullmatch(t) for t in tags):
+        return ((text, tags),)
+    out: list[Span] = []
+    pos = 0
+    for m in _allowed_paths.allowed_path_re(root).finditer(text):
+        if not (kind := _allowed_paths.path_kind(p := m[0])):
+            continue  # odd extension / nonexistent dir → stays plain
+        display = Path(p).name if kind == "file" else p
+        out += ((text[pos : m.start()], tags), (display, tags | {_allowed_paths.to_uri(p)}))
+        pos = m.end()
+    out.append((text[pos:], tags))
+    return tuple(span for span in out if span[0])
+
+
+def make_link_hover_handler(
+    widget, show: Callable[[str], None], *, clear_on_off_link: bool = True
+) -> Callable[[tk.Event], None]:
+    """Deduped ``<Motion>`` handler publishing the link URL under the pointer.
+
+    ``show(url)`` fires only on change (the About-window pattern, extracted);
+    off-link motion publishes ``show("")`` when ``clear_on_off_link`` — the
+    row-style behavior (status label) keeps the last target while the pointer
+    stays inside the widget, clearing only on Leave.  *widget* duck-types
+    ``link_at(x, y)`` (``MarkdownLabel``, ``LogText``).
+    """
+    last = ""
+
+    def motion(event: tk.Event) -> None:
+        nonlocal last
+        url = widget.link_at(event.x, event.y) or ""
+        # Sync with the row actually displayed: an external set_text (e.g. the
+        # About window publishing to the same status label) clears _hover_line
+        # but not our private last — without this, re-hovering the same link
+        # would be deduped away and the row would never reappear.
+        displayed = getattr(widget, "_hover_line", last)
+        if displayed != last:
+            last = displayed
+        if url:
+            if url != last:
+                last = url
+                show(url)
+        elif clear_on_off_link and last:
+            last = ""
+            show("")
+
+    return motion
+
+
+def bind_link_hover(widget, show: Callable[[str], None], *, clear_on_off_link: bool = True) -> None:
+    """Bind ``<Motion>``/``<Leave>`` so hovering a link publishes its URL via *show*.
+
+    ``clear_on_off_link=False`` (status-label hover row): once a link is
+    hovered, the row persists for any in-widget motion (the row itself is not
+    a link) and clears only when the pointer leaves the widget.  ``<Leave>``
+    clears directly (``show("")``) instead of routing through
+    ``link_at(-1, -1)`` — the latter clamps to text index ``1.0`` and would
+    read the first link on the way out.
+    """
+    publish = make_link_hover_handler(widget, show, clear_on_off_link=clear_on_off_link)
+    widget.bind("<Motion>", publish, add="+")
+    widget.bind("<Leave>", lambda _e: show(""), add="+")
+
 
 # ── Tk widget ────────────────────────────────────────────────────────────────
 
@@ -52,6 +129,12 @@ class MarkdownLabel(tk.Text):
     color + underline), switches the cursor to ``hand2`` on hover, and
     forwards clicks to the ``on_link`` callback with the URL and the ``base``
     set via :meth:`set_text` (for relative-link resolution).
+
+    Beyond explicit links, spans that merely *contain* bare absolute
+    filesystem paths (2–4 letter extension, beneath the directory returned by
+    ``allowed_dir`` — ``''``/``None`` → any root) auto-link: the display
+    shrinks to the file name while the full path rides in a ``file:`` URI
+    tag; clicks reach ``on_link`` like any link.
     """
 
     _CELL_PAD = 8
@@ -66,6 +149,7 @@ class MarkdownLabel(tk.Text):
         autoheight: bool = True,
         colors: dict[str, str] | None = None,
         on_link: Callable[[str, str | None], None] | None = None,
+        allowed_dir: Callable[[], str | None] | None = None,
         **kwargs,
     ):
         super().__init__(
@@ -98,8 +182,11 @@ class MarkdownLabel(tk.Text):
         self._colors: dict[str, str] = colors or {}  # {#name} → hex foreground
         self._composed_fonts: dict[frozenset[str], tkfont.Font] = {}  # style-tag set → composed font
         self._on_link = on_link
+        self._allowed_dir = allowed_dir  # current allowed-dir provider; ''/None → unrestricted
         self._base: Path | None = None  # source-doc dir for relative links
         self._links: list[tuple[str, str, str]] = []  # (start, end, url) spans
+        self._hover_line = ""  # link-hover row appended below the rendered text
+        self._autolink = True  # bare paths linkify (False for raw/plain display)
 
         self._fonts = self._build_fonts(font)
         self._configure_tags()
@@ -137,6 +224,9 @@ class MarkdownLabel(tk.Text):
         ``raw=True`` text contains no links, so *base* is ignored.
         """
         self._base = Path(base) if base else None
+        # raw = literal display: no Markdown parse AND no auto-linking — a path
+        # shown because of a hover must not re-link into a hyperlink.
+        self._autolink = not raw
         if not text:
             blocks: tuple[Block, ...] = ()
         elif raw:
@@ -146,16 +236,35 @@ class MarkdownLabel(tk.Text):
         if blocks == self._current:
             return False
         self._current = blocks
+        self._hover_line = ""  # new status text — drop any stale link-hover row
         self._render(blocks)
         return True
 
     def rerender(self) -> bool:
-        """Re-run _render on cached blocks (after font scale). No reparse."""
+        """Re-run _render on cached blocks (after font scale). No reparse.
+
+        ``_current`` stays set — :meth:`_render` schedules ``_fit_width`` on
+        idle which measures ``self._current``; clearing it would collapse the
+        widget to 1 px (a hover-row rerender made the whole status vanish).
+        """
         if self._current is None:
             return False
-        blocks, self._current = self._current, None  # break guard for force-rerun
-        self._render(blocks)
+        self._render(self._current)
         return True
+
+    def set_hover_line(self, text: str) -> None:
+        """Set/remove (``''``) the link-hover row appended below the rendered text.
+
+        Render-level state: the row survives same-content re-renders (font
+        rescale) and is cleared whenever :meth:`set_text` renders new content.
+        Forces a re-render — the row must appear even when the status text is
+        empty or equal to ``self._current`` (no-op guard would skip it).
+        """
+        if text == self._hover_line:
+            return
+        self._hover_line = text
+        self._render(self._current or ())  # keep _current for _fit_width; empty → render past
+        self._current = self._current  # keep set; _render already ran
 
     def clear(self) -> None:
         self.set_text("")
@@ -225,6 +334,12 @@ class MarkdownLabel(tk.Text):
 
         if self.compare("end-1c", ">", "1.0") and self.get("end-2c", "end-1c") == "\n":
             self.delete("end-2c", "end-1c")
+
+        if self._hover_line:  # link-hover row — raw span: paths skip Markdown parsing
+            if self.compare("end-1c", ">", "1.0"):
+                self.insert("end", "\n")
+            # plain text — the revealed path must not re-link into a hyperlink
+            self.insert("end", self._hover_line, "normal")
 
         self.configure(state="disabled", wrap=self._wrap)
         self.configure(cursor="")  # content swapped → stale hand2 from a link hover
@@ -325,8 +440,14 @@ class MarkdownLabel(tk.Text):
         return style, colors, link_url
 
     def _insert_inline(self, inline: Inline, base_tags: tuple[str, ...]) -> None:
-        """Insert inline spans with correct tag application."""
-        for text, tags in inline:
+        """Insert inline spans with correct tag application.
+
+        Link-free spans are first expanded by :func:`_path_spans` — bare
+        filesystem paths become clickable file-name links.
+        """
+        root = self._allowed_dir() if self._autolink and self._allowed_dir else ""
+        spans_from = (_path_spans(t, tg, root) if self._autolink else ((t, tg),) for t, tg in inline)
+        for text, tags in chain.from_iterable(spans_from):
             if not tags:
                 self.insert("end", text, base_tags)
                 continue

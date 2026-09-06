@@ -288,6 +288,15 @@ def anchor_for_fs_path(fs_path: Path) -> Path:
     return find_dir_raw_absolute(Path(fs_path).expanduser().resolve())
 
 
+def link_root(path_in: Path | str) -> Path:
+    """GUI auto-link root: parent of the anchor ``_raw`` when *path_in* points into one, else *path_in*.
+
+    Matching from the anchor parent covers ``_raw`` contents *and* the sibling
+    ``cfg_proc`` outputs (configs, logs, diagnostics).
+    """
+    return raw.parent if (raw := find_dir_raw(Path(path_in))) else Path(path_in)
+
+
 def fs_parent_for_entry(dir_archive: Path, rel) -> Path:
     """Filesystem parent for ``(dir_archive, rel)`` pair from ``find_raw_files_recursive``.
 

@@ -1,6 +1,8 @@
 # Configuration Guide
 
-The program uses a dataclass-based configuration system with command-line arguments. The configuration is defined in the `Config` dataclass in [`config.py`](../../src/meta_finder/config.py).
+The program uses a dataclass-based configuration system with command-line arguments.
+For the exact configuration field spec, see [Configuration Reference](../reference/config_reference.md).
+For implementation details, see [CLI Internals](../project_developer_guide/CLI.md).
 
 ## Key configuration parameters
 
@@ -42,34 +44,6 @@ This means you typically need to run the program **twice**:
    - Extracts time data from data files for devices listed in YAML
    - Updates devices with actual time ranges (time_st, time_en, burst_dt, bursts_t)
    - Preserves all other metadata from the first run
-
-## Environments
-
-Project package currently is set up using pixi in development editable mode (see [`pyproject.toml`](../../pyproject.toml)), so modules should be imported directly without needing to modify sys.path.
-
-## Running Tests
-
-To run the test suite, use the pixi "test" environment:
-
-```bash
-# Run all tests
-pixi run -e test python -m pytest tests/
-
-# Run specific test file
-pixi run -e test python -m pytest tests/test_combined_file_processing.py
-
-# Run tests with verbose output
-pixi run -e test python -m pytest tests/ -v
-
-# Skip debug test files
-pixi run -e test python -m pytest tests/ -k "not debug"
-```
-
-To see log messages when running tests:
-
-```bash
-pixi run -e test python -m pytest tests/your_test_file.py -v -s
-```
 
 ## See also
 

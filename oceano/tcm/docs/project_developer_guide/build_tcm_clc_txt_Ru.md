@@ -1,4 +1,4 @@
-# Сборка минимального дистрибутива `tcm_proc`
+# Сборка дистрибутивов `tcm_proc` и `tcm_gui`
 
 **tcm_proc** — самодостаточный exe-файл для обработки данных инклинометров
 (AB SIO RAS TCM) **без** зависимостей от HDF5 (h5py, pytables) и Intel MKL.
@@ -67,9 +67,10 @@ liblapack = { version = "*", build = "*openblas*" }
 pixi run -e noh5-tcm build-tcm-clc-txt
 ```
 
-Задача определена в `pyproject.toml` и устанавливает `BUILD_MODE=manual`:
+Задача объявлена в feature `noh5` (нужен pyinstaller), поэтому доступна в
+окружениях, включающих его (`noh5-tcm`, `bin-optim-tcm`, …), и устанавливает `BUILD_MODE=manual`:
 ```toml
-[tool.pixi.tasks.build-tcm-clc-txt]
+[tool.pixi.feature.noh5.tasks.build-tcm-clc-txt]
 cmd = "python oceano/tcm/scripts/build/build_tcm_proc.py"
 env = { BUILD_MODE = "manual" }
 ```
@@ -81,6 +82,15 @@ env = { BUILD_MODE = "manual" }
 Или напрямую через скрипт-обёртку:
 ```bash
 pixi run -e noh5-tcm python oceano/tcm/scripts/build/build_tcm_proc.py
+```
+
+Каталоги вывода: по умолчанию `build/` и `dist/` создаются внутри `oceano/tcm/`.
+Аргумент `--build-root` (передаётся задаче как её аргумент) выносит тяжёлый
+вывод на другой диск — папка получает суффикс окружения, поэтому сборки разных
+env не пересекаются:
+```bash
+pixi run -e noh5-tcm build-tcm-clc-txt --build-root B:\Temp
+# → B:\Temp\tcm_proc-env=noh5-tcm\dist\tcm_proc\tcm_proc.exe
 ```
 
 Скрипт-обёртка (`scripts/build/build_tcm_proc.py`):
@@ -114,9 +124,18 @@ pixi run -e noh5-tcm python oceano/tcm/scripts/build/build_tcm_proc.py
     А также `.pyd`-расширения pyarrow (`_parquet`, `_orc`, `_dataset`,
     `_fs`, `_gcsfs`, `_s3fs`, `_flight`, `_gandiva`, `_acero`, и др. —
     полный список в `_exclude_pyarrow_pyd`).
--   **Данные:**
-    - Исходный код `src/tcm/` → `tcm/`
-    - Документация из `docs/` (кроме `todo.md`,
+-   **Данные** (дерево зеркалит dev-репозиторий — `_MEIPASS` ≙ корень репо, поэтому
+    кросс-ссылки документации `../../…` → проект и `../../../…` → `oceano/` работают
+    в заморозке так же, как в dev):
+    - Исходный код `src/tcm/` → `oceano/tcm/src/tcm/`
+    - Исходники editable-пакетов — repo-относительные пути из
+      `spec_common.FIRST_PARTY_PKGS` переносятся как есть (дерево зеркалит dev-репозиторий):
+      `shared/utils/src/utils/`, `shared/veusz_helpers/src/veusz_helpers/`,
+      `oceano/meta_finder/src/meta_finder/`
+      (без `veuszPropagate`, тестов, `copy/`, `descript.ion`, `AGENTS.md`, `*-.py`,
+      `__pycache__`)
+    - Документация: `docs/` → `oceano/tcm/docs/`, docs проектов-сиблингов
+      (meta_finder) → `oceano/meta_finder/docs/` (кроме `todo.md`,
       `potential_functionality_and_improvement.md`)
     - Конфиги Hydra: `collect_data_files("hydra", subdir="conf")` +
       `collect_data_files("hydra_plugins.hydra_colorlog")`
@@ -126,7 +145,7 @@ pixi run -e noh5-tcm python oceano/tcm/scripts/build/build_tcm_proc.py
     - METADATA пакетов `pandas` и `numpy`
 -   **Исключения pure-Python:**
     - Все модули HDF5: `h5py`, `tables`, `pytables`, `hdf5`, `tcm.h5*`,
-      `tcm.incl_h5*`, `tcm.incl_calibr_hy`, `veusz_helpers.veuszPropagate`
+      `tcm.incl_h5*`, `tcm.incl_calibr_hy`
     - Все MKL-модули (`mkl`, `mkl_rt`, `mkl_core`, `mkl_intel_thread`, и т.д.)
     - `pyarrow` целиком + его транзитивные зависимости (`botocore`, `certifi`,
       `charset_normalizer`, `google_crc32c`, `numcodecs`, `zstandard`)
@@ -134,9 +153,28 @@ pixi run -e noh5-tcm python oceano/tcm/scripts/build/build_tcm_proc.py
       `IPython`, `jupyter*`, `PIL`, `lxml`, `openpyxl`, `cryptography`,
       `tkinter`, `sphinx`, `pytest`, `setuptools`, `pip`, и др.
     - `distributed` (планировщик dask)
-    - Модули `tcm.*` исключаются из `pure` и собираются только из `datas`
-      (чтобы избежать дублирования при заморозке)
+    - Модули `tcm.*`, `tcm_gui.*`, `utils.*`, `veusz_helpers.*`, `meta_finder.*`
+      исключаются из `pure` и собираются только из `datas` (исходники): статически
+      видимая цепочка импортов обрывается на datas-коде `tcm` — Analysis не видит ни
+      `from utils import …` / `import meta_finder` внутри него, ни ленивых импортов
+      datas-модулей, поэтому только `datas` гарантируют все сабмодули (дублирование
+      при заморозке исключено). Документация пакетов идёт туда же
+      (`oceano/<proj>/docs/`, см. выше).
+
+    Роль `hiddenimports` сужается до модулей, достижимых **только** через
+    datas-код: `http.server`, `webbrowser`, `tksheet` в `tcm_gui.spec` — их
+    импортируют `browser/server.py` и лист коэффициентов из исключённого из
+    `pure` `tcm_gui.*`, поэтому Analysis их не видит: транзитивные сторонние
+    зависимости datas-пакетов:
+    `tcm_proc.py` → `tcm.cli`, `tcm_gui.py` → `tcm_gui.app`)
+    импортируется явно, поэтому Analysis их видит.
+    Все first-party пакеты собираются как datas, благодаря чему ссылки браузера
+    документации на `…/src/tcm/*.py`, `…/src/meta_finder/*.py` работают.
+
 -   **Runtime hooks:**
+    - `rthook_repo_layout.py` — первым добавляет `shared/` и `oceano/*/src`
+      в `sys.path`, чтобы импорты datas-пакетов (`tcm`, `utils`, …) находили
+      зеркальное дерево
     - `rthook_hydra_pkg.py` — patch argparse для Python 3.14 + регистрация
       плагинов Hydra (см. § 2.4)
     - `rthook_noh5_bins.py` — переопределение `out/base` в ConfigStore
@@ -246,9 +284,12 @@ cs.store(
 pixi run -e bin-optim-tcm build-tcm-gui
 ```
 
-Задача определена в `pyproject.toml` и устанавливает `BUILD_MODE=manual`:
+Задача объявлена в feature `tk-gui` — доступна только в окружениях с tksheet
+(`bin-optim-tcm`, `noh5-tcm-gui`); в остальных (напр. `noh5-tcm`) pixi сразу не
+найдёт задачу, а `tcm_gui.spec` дополнительно проверяет импорт `tksheet`
+(сборка без него даёт exe с `ModuleNotFoundError: tksheet` на старте):
 ```toml
-[tool.pixi.tasks.build-tcm-gui]
+[tool.pixi.feature.tk-gui.tasks.build-tcm-gui]
 cmd = "python oceano/tcm/scripts/build/build_tcm_gui.py"
 env = { BUILD_MODE = "manual" }
 depends-on = ["browser-runtime"]
@@ -263,6 +304,13 @@ depends-on = ["browser-runtime"]
 Или напрямую:
 ```bash
 pixi run -e bin-optim-tcm python oceano/tcm/scripts/build/build_tcm_gui.py
+```
+
+Каталоги вывода — как в §2.2: по умолчанию внутри `oceano/tcm/`, `--build-root`
+переносит их (суффикс окружения добавляется автоматически):
+```bash
+pixi run -e bin-optim-tcm build-tcm-gui --build-root B:\Temp
+# → B:\Temp\tcm_gui-env=bin-optim-tcm\dist\tcm_gui\tcm_gui.exe
 ```
 
 Скрипт-обёртка (`scripts/build/build_tcm_gui.py`):
@@ -292,7 +340,7 @@ pixi run -e bin-optim-tcm python oceano/tcm/scripts/build/build_tcm_gui.py
 | `rthook_noh5_bins`  | Включён                       | **Не используется**                |
 | Данные `src/tcm_gui`| —                             | **Включён**                        |
 | Бинарные фильтры    | `.h5`, `.hdf5` исключены      | `.h5`, `.hdf5` **не** исключены   |
-| Pure-модули         | `tcm.*` исключены             | `tcm.*` + `tcm_gui.*` исключены   |
+| Pure-модули         | `tcm.*`, `utils.*`, `veusz_helpers.*`, `meta_finder.*` исключены | `tcm.*`, `utils.*`, `veusz_helpers.*`, `meta_finder.*` исключены |
 
 Общая логика (фильтрация бинарников, сборка данных) вынесена в
 `scripts/build/spec_common.py` и используется обоими spec-файлами.
@@ -303,6 +351,13 @@ pixi run -e bin-optim-tcm python oceano/tcm/scripts/build/build_tcm_gui.py
 сгенерированный runtime добавляется отдельным datas-элементом
 `(_build/browser-runtime → "_build/browser-runtime")`. Подкаталоги `todo/`
 документации исключаются из сборки (`spec_common.should_keep_data`).
+
+Зеркальное дерево (§2.3) делает браузер документации консистентным без
+конвертаций путей: `DOC_DIR` вычисляется одной формулой для dev и заморозки
+(`PROJECT_ROOT.parents[1]/docs` → `oceano/tcm/docs`), `readme*.md` лежат рядом
+с docs (`DOC_DIR.parent` → `oceano/tcm/`), поэтому относительные ссылки
+документации `../../…` (проект: `src/…`, `scripts/…`) и `../../../…` (`oceano/…`,
+в т.ч. docs meta_finder) разрешаются одинаково в обоих режимах.
 
 ### 3.4. Runtime hook (`rthook_hydra_pkg.py`)
 

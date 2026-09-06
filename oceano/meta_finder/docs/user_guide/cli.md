@@ -2,6 +2,7 @@
 
 Task-oriented guide for the `meta_finder` command-line interface.
 For the configuration reference, see [Configuration Reference](../reference/config_reference.md).
+For implementation details (module architecture, function flow), see [CLI Internals](../project_developer_guide/CLI.md).
 
 ## Basic invocation
 

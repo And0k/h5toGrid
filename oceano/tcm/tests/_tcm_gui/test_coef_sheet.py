@@ -371,7 +371,10 @@ class TestCoefsPathChildRow:
             cfg = {
                 "input": {
                     "path": "/data",
-                    "coefs": {"path": "/coefs/calibration.h5", "Ag": [[0.001, 0, 0], [0, 0.001, 0], [0, 0, 0.001]]},
+                    "coefs": {
+                        "path": "/coefs/calibration.h5",
+                        "Ag": [[0.001, 0, 0], [0, 0.001, 0], [0, 0, 0.001]],
+                    },
                 }
             }
 
@@ -437,8 +440,7 @@ class TestCoefsPathChildRow:
         )
         # No child row with key="path" should exist
         path_children = [
-            iid for iid, m in cs._meta.items()
-            if m.get("key") == "path" and m.get("parent") == coefs_iid
+            iid for iid, m in cs._meta.items() if m.get("key") == "path" and m.get("parent") == coefs_iid
         ]
         assert len(path_children) == 0, (
             f"coefs node should not have a child path row, found {len(path_children)}"
@@ -1032,8 +1034,7 @@ class TestHoverDetailPublishOrder:
         # coefs node now hosts the path cell (like input) → its Detailed is
         # the path's Detailed (browse-source description), so dwell is armed
         assert "Path to the configuration file" in snapshots[-1], (
-            "coefs node now shows path Detailed (same row as path); "
-            f"got {snapshots[-1]!r}"
+            f"coefs node now shows path Detailed (same row as path); got {snapshots[-1]!r}"
         )
         cs._publish_status(_iid("P_t"))
         assert "polyval2d" in snapshots[-1], (
@@ -1079,7 +1080,7 @@ class TestCoefsSectionDwellRu:
         assert detail, f"coefs parent dwell empty; status was {msg!r}"
         assert "Матрица масштаба" not in detail, f"table row leaked into dwell: {detail!r}"
 
-    def test_coefs_parent_row_tree_dwell_differs_from_status(self, monkeypatch):
+    def test_coefs_parent_row_tree_dwell_differs_from_status(self, monkeypatch, detailed_prose):
         """Tree hover on the ``coefs`` parent row: concise status, prose dwell (RU doc).
 
         The section row's dwell must be visibly different from its status —
@@ -1109,7 +1110,9 @@ class TestCoefsSectionDwellRu:
         status = _help.section_body_short(h)
         dwell = cs._resolve_detail("input.coefs")
         assert status == "Калибровочные коэффициенты", f"status should be the subtitle; got {status!r}"
-        assert "При генерации конфигураций" in dwell, f"dwell should be the Detailed prose; got {dwell!r}"
+        # Prose derived from the reference doc — single source of truth, no hardcoded phrases
+        prose = detailed_prose(_help.doc_path("ru").read_text(encoding="utf-8"), "`input.coefs`")
+        assert prose in dwell, f"dwell should be the Detailed prose {prose!r}; got {dwell!r}"
         assert status not in dwell and dwell not in status, "dwell must differ from status"
         assert "Матрица масштаба" not in dwell, f"table row leaked into dwell: {dwell!r}"
 

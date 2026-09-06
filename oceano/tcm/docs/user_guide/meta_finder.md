@@ -67,6 +67,24 @@ Full spec: [meta_finder I/O formats](../../../meta_finder/docs/reference/io_form
 
 `metadata` group (under groups of `configuration`, with different background tint) edits `array` record; it is saved back on **Run** and goes into the output files.
 
+Several deployment intervals of one device (a nested `info_devices.yaml`
+entry — see the [meta_finder I/O formats](../../../meta_finder/docs/reference/io_formats.md#multiple-intervals))
+are shown as autonumbered **`setup`** sublevels under `metadata`, each
+labelled by its station key. A single interval stays flat (no `setup` level).
+To split an interval into two adjacent ones, `right-click` the `metadata`
+node or a `setup` node and use **Insert rows above/below** (the sheet's
+built-in command is intercepted here):
+
+| Action | Copy placement | Copy `time_range` |
+|--------|----------------|-------------------|
+| Insert rows **above** | above the selected interval | `[1] := [0]` (copy shares the start) |
+| Insert rows **below** | below the selected interval | `[0] := [1]` (copy shares the end) |
+
+The new `setup` is numbered with the next free integer (`1` when splitting a
+flat single interval — the existing flat rows first move into node `0`).
+Saving on **Run** writes the whole nested structure back, preserving every
+interval's station key.
+
 **`time_range` vs `input.time_ranges`** — two different things:
 
 | Field | Meaning | Effect |

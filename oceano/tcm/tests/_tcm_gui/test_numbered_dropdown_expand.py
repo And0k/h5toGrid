@@ -13,11 +13,14 @@ the only openers:
 Pinned contracts:
 - Attaching/replacing paths never touches the cell (bare path only).
 - Picking ``N. path`` commits the bare path, updates the number, closes the
-  list, and fires ``on_select`` (rescan).
-- Esc / FocusOut / click-away close never blanks the field: opening the
-  editor scrolls the 4096 px column left while the shrunk layout keeps
-  right-aligned text at the far right, so the close path re-scrolls to the
-  value (``_patched_hide_editor_dropdown``).
+  list, fires ``on_select`` (rescan) exactly once, and stays silent on
+  ``on_commit`` (one-shot pick mute).
+- Typing a custom path into the open list's edit field commits it with a
+  read-back check and fires ``on_commit`` exactly like the custom Entry —
+  the visible text can never diverge from what was notified/loaded.
+- Esc / FocusOut / click-away close never blanks the field and never
+  notifies: the viewport follows the cell alignment
+  (``_patched_hide_editor_dropdown``).
 - Manual edit (double-click / Return / F2 / typing) still opens the custom
   Entry and vetoes tksheet's editor.
 - Structural invariant arrow-visible ⟺ no Entry open: edit start restores
@@ -273,7 +276,7 @@ def test_overflow_wide_content_stays_in_window(mapped):
     ns = _mapped_field(mapped)
     try:
         mt = ns.mt
-        ns.dd.set_paths([f"C:/data/{'x' * 200}.nc"])
+        ns.dd.set_paths(["C:/data/short.nc", f"C:/data/{'x' * 200}.nc"])
         ns.field.expand_dropdown()
         assert mt.dropdown.open is True, "list did not open"
         win = mt.dropdown.window
@@ -293,7 +296,7 @@ def test_overflow_wide_content_stays_in_window(mapped):
 
 
 def test_expand_restores_full_layout(mapped):
-    """Expand from hover shows the double-click state: full width, value visible, no button."""
+    """Expand from hover shows the double-click state: full width, edit text right, list left."""
     ns = _mapped_field(mapped)
     try:
         mt = ns.mt
@@ -303,8 +306,9 @@ def test_expand_restores_full_layout(mapped):
         mapped.update_idletasks()
         mapped.update()
         assert ns.field._hovering is False, "expand kept the shrunk layout"
-        assert mt.align == "nw", "expand kept right-aligned text"
-        assert mt.xview()[0] <= 0.01, f"expand left the viewport scrolled - xview={mt.xview()!r}"
+        assert mt.align == "ne", "expand switched the edit text to left-aligned"
+        assert mt.text_editor.tktext.tag_cget("align", "justify") == "right", "edit text not right-aligned"
+        assert mt.xview()[1] >= 0.99, f"expand hid the right-aligned value - xview={mt.xview()!r}"
         assert not ns.field._ov.visible, "expand left the browse button up"
         assert mt.text_editor.open is True, "no editor over the cell"
         assert mt.text_editor.get() == CELL, "editor lost the current value"
@@ -495,6 +499,63 @@ def test_overflow_pick_commits_bare(mapped):
             ns.lbl.destroy()
 
 
+def test_dropdown_editor_typing_commits_and_notifies(rig):
+    """Typing a custom path into the open list's edit field commits exactly like the Entry.
+
+    Regression: the tksheet editor path never called ``on_commit``, so the
+    field showed text no scan ever loaded. The read-back check pins the
+    notified value to the stored cell.
+    """
+    custom = "C:/data/custom-typed"
+    commits: list[str] = []
+    rig.field._on_commit = commits.append
+    rig.field.expand_dropdown()
+    assert rig.mt.dropdown.open is True, "list did not open"
+    rig.mt.text_editor.window.set_text(custom)
+    rig.mt.focus_get = lambda *a, **k: rig.mt.text_editor.tktext
+    rig.mt.close_text_editor(SimpleNamespace(keysym="Return", widget=rig.mt.text_editor.tktext))
+    rig.root.update_idletasks()
+    rig.root.update()
+    assert rig.field.sh.get_cell_data(0, 0) == custom, "typed text was not stored"
+    assert rig.field.get() == custom, "notified value diverges from the visible text"
+    assert rig.lbl.cget("text") == LABEL_DEFAULT, "custom text wrongly counted as a list item"
+    assert commits == [custom], f"typed commit did not notify - {commits!r}"
+    assert rig.picks == [], "typing wrongly fired the pick callback"
+
+
+def test_dropdown_pick_mutes_duplicate_commit(rig):
+    """Picking another anchor rescans once — ``on_select`` fires, ``on_commit`` stays silent."""
+    commits: list[str] = []
+    rig.field._on_commit = commits.append
+    third = PATHS[2]
+    rig.field.expand_dropdown()
+    assert rig.mt.dropdown.open is True, "list did not open"
+    rig.mt.close_dropdown_window(0, 0, f"3. {third}")
+    rig.root.update_idletasks()
+    rig.root.update()
+    assert rig.field.sh.get_cell_data(0, 0) == third, "pick left the numbered display value"
+    assert rig.field.get() == third, "stored pick diverges from the visible text"
+    assert rig.lbl.cget("text") == "3/3", "number label wrong after pick"
+    assert rig.picks == [third], "on_select not fired with the bare path"
+    assert commits == [], f"pick double-notified via on_commit - {commits!r}"
+
+
+def test_dropdown_editor_escape_keeps_silent(rig):
+    """Esc in the open list's edit field discards the typed text without notifying."""
+    commits: list[str] = []
+    rig.field._on_commit = commits.append
+    rig.field.expand_dropdown()
+    assert rig.mt.dropdown.open is True, "list did not open"
+    rig.mt.text_editor.window.set_text("C:/data/junk")
+    rig.mt.focus_get = lambda *a, **k: rig.mt.text_editor.tktext
+    rig.mt.close_text_editor(SimpleNamespace(keysym="Escape", widget=rig.mt.text_editor.tktext))
+    rig.root.update_idletasks()
+    rig.root.update()
+    assert rig.field.sh.get_cell_data(0, 0) == CELL, "Esc rewrote the cell"
+    assert commits == [], f"cancelled edit notified - {commits!r}"
+    assert rig.picks == [], "cancelled edit fired the pick callback"
+
+
 def test_expand_noop_without_paths(field):
     """Programmatic expand with no attached dropdown is a silent no-op."""
     field.expand_dropdown()
@@ -520,6 +581,35 @@ def test_empty_paths_disables_expand(rig):
     rig.field.expand_dropdown()
     assert rig.mt.dropdown.open is False, "expand opened a list with no paths"
     assert rig.lbl.cget("text") == LABEL_DEFAULT, "label not restored after clearing paths"
+
+
+def test_single_path_suppresses_list(rig):
+    """A single anchor means no list and no count — plain cell, default caption, expand no-op."""
+    rig.dd.set_paths([CELL])
+    assert rig.dd.has_list is False, "single anchor reports a live list"
+    assert rig.mt.get_cell_kwargs(0, 0, key="dropdown") == {}, "one-item list was attached"
+    rig.field.expand_dropdown()
+    assert rig.mt.dropdown.open is False, "expand opened a one-item list"
+    assert rig.lbl.cget("text") == LABEL_DEFAULT, "single anchor showed a count instead of default"
+
+
+def test_single_path_ctor_suppresses_list(field):
+    """Constructor with one path attaches no dropdown and keeps the default caption."""
+    lbl = ttk.Label(field.master, text=LABEL_DEFAULT)
+    dd = NumberedPathDropdown(field.sh, 0, 0, [CELL], number_label=lbl, default_text=LABEL_DEFAULT)
+    assert dd.has_list is False, "ctor reports a live list for one path"
+    assert field.sh.MT.get_cell_kwargs(0, 0, key="dropdown") == {}, "ctor attached a one-item list"
+    assert lbl.cget("text") == LABEL_DEFAULT, "ctor showed a count for a single path"
+
+
+def test_multi_to_single_drops_stale_list(rig):
+    """Shrinking 3 anchors to 1 removes the stale list and resets the caption."""
+    rig.dd.set_paths([CELL])
+    assert rig.mt.get_cell_kwargs(0, 0, key="dropdown") == {}, "stale list survived shrinking to one"
+    assert rig.lbl.cget("text") == LABEL_DEFAULT, "stale count survived shrinking to one"
+    rig.dd.set_paths(PATHS)
+    rig.dd.refresh()
+    assert rig.lbl.cget("text") == "2/3", "list count did not return after re-expanding"
 
 
 @pytest.mark.parametrize(
@@ -567,7 +657,7 @@ def _close_like_escape(mt, where):
 
 @pytest.mark.parametrize(("where", "desc"), [("editor", "Esc in editor"), ("list", "Esc on list")])
 def test_esc_close_keeps_value_visible(mapped, where, desc):
-    """Esc from a hover-shrunk expand leaves the double-click state: full width, value at left."""
+    """Esc from a hover-shrunk expand leaves the double-click state: full width, value at right."""
     ns = _mapped_field(mapped)
     try:
         mt = ns.mt
@@ -592,7 +682,8 @@ def test_esc_close_keeps_value_visible(mapped, where, desc):
         assert mt.text_editor.open is False, f"{desc}: editor stayed open"
         assert ns.field._entry is None, f"{desc}: Esc opened the custom Entry"
         assert ns.field._hovering is False, f"{desc}: Esc left the shrunk layout"
-        assert mt.xview()[0] <= 0.01, f"{desc}: value scrolled out of view - xview={mt.xview()!r}"
+        assert mt.align == "ne", f"{desc}: Esc flipped the edit text to left-aligned"
+        assert mt.xview()[1] >= 0.99, f"{desc}: value scrolled out of view - xview={mt.xview()!r}"
     finally:
         with suppress(Exception):
             mt.close_dropdown_window()
@@ -611,7 +702,8 @@ def test_hover_cycle_after_esc_keeps_value(mapped):
         mapped.update_idletasks()
         mapped.update()
         _close_like_escape(mt, "editor")
-        assert mt.xview()[0] <= 0.01, f"Esc lost the value - xview={mt.xview()!r}"
+        assert mt.align == "ne", f"Esc flipped the edit text - align={mt.align!r}"
+        assert mt.xview()[1] >= 0.99, f"Esc lost the value - xview={mt.xview()!r}"
         ns.field._switch_to_hover_shrink()  # hover back in from outer space
         mapped.update_idletasks()
         mapped.update()

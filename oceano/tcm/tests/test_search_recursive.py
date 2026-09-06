@@ -135,6 +135,42 @@ def test_pattern_matching_respects_ptn(tmp_path):
     assert all(k[0] == "i" for k in res)
 
 
+def test_prefixed_deep_files_found_via_recursive(tmp_path):
+    """Files with date/stamp prefixes in deep subfolders must be found.
+
+    Regression: ``_matches`` used ``re.match`` (anchored at start), so a file
+    like ``130510_i_01.txt`` under ``_raw/deep/subdir/`` was rejected by the
+    default ``i.*\\.txt`` pattern even though ``rglob`` reached it.  The fix
+    uses ``re.search`` so the probe id is matched after any prefix.
+    """
+    raw = tmp_path / "_raw"
+    raw.mkdir()
+    # No shallow files → triggers recursive fallback
+    _write_txt(raw / "deep" / "subdir" / "130510_i_01.txt")  # date-prefixed
+    _write_txt(raw / "deep" / "subdir" / "data_2_i_02.txt")  # text-prefixed (no i/w)
+    _write_txt(raw / "deep" / "subdir" / "130510_w_03.txt")  # wave, date-prefixed
+    # Default dir pattern is i.*\\.txt → only inclinometers, even deep+prefixed
+    res = csv_load.search_csv_files(raw)
+    assert ("i", 1) in res, f"date-prefixed inclinometer missing: {sorted(res)}"
+    assert ("i", 2) in res, f"text-prefixed inclinometer missing: {sorted(res)}"
+    assert all(k[0] == "i" for k in res), f"wave leaked into default i* results: {sorted(res)}"
+    # Wildcard pattern must find the wave gauge too
+    res_all = csv_load.search_csv_files(raw / "*")
+    assert ("w", 3) in res_all, f"wave gauge missing with '*' glob: {sorted(res_all)}"
+
+
+def test_pattern_prefixed_respects_type(tmp_path):
+    """Pattern ``i*.txt`` must still exclude wave gauges, even with prefixes."""
+    raw = tmp_path / "_raw"
+    raw.mkdir()
+    _write_txt(raw / "deep" / "130510_i_01.txt")
+    _write_txt(raw / "deep" / "130510_w_02.txt")
+    ptn_path = raw / "i*.txt"
+    res = csv_load.search_csv_files(ptn_path)
+    assert all(k[0] == "i" for k in res), f"wave gauge leaked into i* results: {sorted(res)}"
+    assert ("i", 1) in res
+
+
 def test_is_archive_composite_helpers():
     p = Path("C:/a/b.zip/c/d.txt")
     assert is_archive_composite(p)

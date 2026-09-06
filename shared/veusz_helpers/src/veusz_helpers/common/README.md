@@ -86,7 +86,9 @@ The .vsz filename structure `{yymmdd_HHMM}@{device_ids}.vsz` enables automated d
 - veusz_load_csv_gmx500 - loads GMX 500 data from CSV files
 - veusz_load_csv_ecmwf - loads ECMWF data from CSV files
 - prepare_draw_tcm - prepares processed TCM data for visualization
-- load_info_json - loads device information from JSON configuration files
+- metadata.load_file_meta - loads device arrays from `info_devices.yaml`/`.json` (flat lists or nested station dicts collapsed to one list per device)
+- metadata.extract_devices_info - maps requested probe ids to labelled dicts via `_meta_array_to_dict`
+- metadata._meta_array_to_dict - converts a flat device array (up to 11 elements: `p, b, bd, s, lat, lon, time_st, time_en, burst_dt, bursts_t, comment`) to `p,b,d,s,c,r,t,T`; trailing comment and further extras are ignored, `?, -, "", ~` map to None
 - get_path_in_parents - searches for specified file in parent directories
 - get_fun_load_end_ext - determines the appropriate loading function based on device type and file extension
 - add_months - adds months to a numpy datetime64 object

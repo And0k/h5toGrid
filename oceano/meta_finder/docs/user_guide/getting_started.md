@@ -75,4 +75,5 @@ meta/                                    ← output directory
 | Console messages | [Console Messages](console_messages.md) |
 | Output format spec | [Input / Output Format Specification](../reference/io_formats.md) |
 | Config fields | [Configuration Reference](../reference/config_reference.md) |
+| Downstream processing (tcm) | [tcm meta_finder Integration](../../../tcm/docs/reference/meta_finder_integration.md) |
 | Internals | [CLI Internals](../project_developer_guide/CLI.md) |

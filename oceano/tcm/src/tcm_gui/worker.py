@@ -7,6 +7,9 @@ import sys
 import threading
 from functools import wraps
 
+from tcm.paths import anchor_for_fs_path
+from tcm.search import is_archive_composite, split_archive_path
+
 from ._i18n import STRINGS as _S
 from .progress_bridge import GuiTqdm, set_cfg, set_runtime, set_tqdm_class
 from .runtime import Runtime
@@ -90,8 +93,9 @@ class Worker:
     def _scan(self, original_argv: list[str], data_path: str) -> None:
         from pathlib import Path
 
-        from tcm import cli, processing
         from utils import log_init
+
+        from tcm import cli, processing
 
         lf = log_init.LoggingStyleAdapter(__name__)
 
@@ -102,31 +106,31 @@ class Worker:
                 logging.getLogger().setLevel(logging.INFO)
         except Exception:
             pass
-        # Trace trigger path for every scan
+        # Trace input path for every scan
         try:
             p = Path(str(data_path)).expanduser()
-            rp = p.absolute() if p.is_absolute() else (Path.cwd() / p).absolute()
-            lf.info("Worker scan trigger={} rp={}", data_path, rp)
+            p_resolved = p.absolute() if p.is_absolute() else (Path.cwd() / p).absolute()
+            lf.info("Worker scan input={} abspath={}", data_path, p_resolved)
         except Exception:
-            rp = Path(str(data_path))
-            lf.info("Worker scan trigger={} (rp resolve failed)", data_path)
+            p_resolved = Path(str(data_path))
+            lf.info("Worker scan input={} (abspath resolve failed)", data_path)
 
         # Data-driven parent detection: shallow hit → single-anchor,
         # shallow miss → filtered recursive via meta_finder → scan_list if >1 valid anchor.
         # No unfiltered rglob; anchor discovery lives in csv_load/search via find_device_dirs.
         try:
             p_probe = Path(str(data_path)).expanduser()
-            rp_probe = p_probe.absolute() if p_probe.is_absolute() else (Path.cwd() / p_probe).absolute()
+            p_resolved_probe = p_probe.absolute() if p_probe.is_absolute() else (Path.cwd() / p_probe).absolute()
             # Probe shallow without full processing: csv_load.search_csv_files will do
             # shallow first, then filtered recursive only on miss.
             from tcm import csv_load as _cl
 
-            # Use trigger for logging traceability
+            # Use input path for logging traceability
             try:
-                discovered = _cl.search_csv_files(rp_probe, trigger=data_path)
+                discovered = _cl.search_csv_files(p_resolved_probe, trigger=data_path)
             except FileNotFoundError as exc:
-                # No files at all → surface as scan_error with trigger in message
-                lf.info("Worker scan: no files for trigger={} → {}", data_path, exc)
+                # No files at all → surface as scan_error with input path in message
+                lf.info("Worker scan: no files for input={} → {}", data_path, exc)
                 self.rt.result_queue.put(("scan_error", exc))
                 return
             # discovered is {(model,num):[paths,...]} grouped over all valid anchors
@@ -135,9 +139,6 @@ class Worker:
             for flist in discovered.values():
                 for f in flist:
                     try:
-                        from tcm.search import is_archive_composite, split_archive_path
-                        from tcm.paths import anchor_for_fs_path
-
                         if is_archive_composite(f):
                             sp = split_archive_path(f)
                             if sp is not None:
@@ -152,19 +153,19 @@ class Worker:
                     except Exception:
                         continue
             anchors = sorted(anchors_set)
-            # Parent list when trigger is a directory (not _raw) and discovered anchors differ from trigger.
-            # DRY: use anchors vs trigger comparison, not duplicated shallow iterdir heuristic.
-            # Shallow hit on single _raw → anchors == [trigger] → not a list.
-            # Cruise root shallow miss → anchors are child _raw(s) != trigger → list (even single).
+            # Parent list when input is a directory (not _raw) and discovered anchors differ from it.
+            # DRY: use anchors vs input comparison, not duplicated shallow iterdir heuristic.
+            # Shallow hit on single _raw → anchors == [input] → not a list.
+            # Cruise root shallow miss → anchors are child _raw(s) != input → list (even single).
             is_parent_list = False
             try:
-                if rp_probe.is_dir() and rp_probe.name.lower() != "_raw" and len(anchors) >= 1:
-                    if len(anchors) > 1 or anchors[0].resolve() != rp_probe.resolve():
+                if p_resolved_probe.is_dir() and p_resolved_probe.name.lower() != "_raw" and len(anchors) >= 1:
+                    if len(anchors) > 1 or anchors[0].resolve() != p_resolved_probe.resolve():
                         is_parent_list = True
             except Exception:
                 pass
             if is_parent_list:
-                lf.info("Worker scan trigger={} → scan_list with {} anchors: {}", data_path, len(anchors), ", ".join(str(a) for a in anchors))
+                lf.info("Worker scan input={} → scan_list with {} anchors: {}", data_path, len(anchors), ", ".join(str(a) for a in anchors))
                 # Pass parent explicitly so App can log it before field replacement
                 self.rt.result_queue.put(("scan_list", (data_path, anchors)))
                 return
@@ -175,7 +176,7 @@ class Worker:
         except Exception as exc:
             # Discovery probe failed for unexpected reason — log and fall through to full processing
             # (processing.run will surface the real error with proper handling)
-            lf.debug("Worker scan probe failed for trigger={}: {}", data_path, exc, exc_info=True)
+            lf.debug("Worker scan probe failed for input={}: {}", data_path, exc, exc_info=True)
 
         # Single-anchor or file scan — full tab-fill via processing
         self.rt.progress_overall.set(0, 0, "")

@@ -26,11 +26,24 @@ from spec_common import (
     EXCLUDE_BINARIES,
     RUNTIME_DLLs,
     collect_docs,
+    collect_first_party_pkgs,
     load_meta,
     should_keep_binary,
     should_keep_data,
-    PROJECT_ROOT
+    DATA_PKG_PREFIXES,
+    PROJECT_ROOT,
 )
+
+# Build-env requirement: tksheet ships with the `tk-gui` feature; without it the
+# exe would build "successfully" but die with ModuleNotFoundError at first import
+try:
+    import tksheet  # noqa: F401
+except ImportError as e:
+    raise SystemExit(
+        "tcm_gui build env lacks 'tksheet' — use an env with the 'tk-gui' feature "
+        "(bin-optim-tcm, noh5-tcm-gui), not e.g. noh5-tcm"
+    ) from e
+
 print(f"{SPEC_DIR=}")
 META = load_meta(SPEC_DIR)
 VERSION = META["version"]
@@ -38,9 +51,10 @@ VERSION = META["version"]
 block_cipher = None
 
 TCM_SRC = "src/tcm"
-TCM_REL = "tcm"
+TCM_PROJ = "oceano/tcm"  # project dir in the repo-mirrored frozen tree
+TCM_REL = f"{TCM_PROJ}/src/tcm"
 GUI_SRC = "src/tcm_gui"
-GUI_REL = "tcm_gui"
+GUI_REL = "oceano/tcm_gui/src/tcm_gui"
 
 _ENV_PREFIX = os.path.dirname(sys.executable)
 _ENV_LIB_BIN = os.path.join(_ENV_PREFIX, "Library", "bin")
@@ -66,13 +80,14 @@ _DOC_EXCLUDE = {"todo.md", "potential_functionality_and_improvement.md"}
 added_files = [
     (str(PROJECT_ROOT / TCM_SRC), TCM_REL),
     (str(PROJECT_ROOT / GUI_SRC), GUI_REL),
+    *collect_first_party_pkgs(),
     (str(SPEC_DIR / "version_meta.json"), "."),
     (str(PROJECT_ROOT / "_build" / "browser-runtime"), "_build/browser-runtime"),
     *collect_docs(_DOC_EXCLUDE),
-    # Entry-point readmes → resource_root()/readme*.md ("local" docs link in the
-    # About header opens readme.md; served like any other markdown document).
-    (str(PROJECT_ROOT / "readme.md"), "."),
-    (str(PROJECT_ROOT / "readme_Ru.md"), "."),
+    # Entry-point readmes → oceano/tcm/readme*.md next to docs/ (the About
+    # header "local" docs link opens readme.md; served like any other markdown).
+    (str(PROJECT_ROOT / "readme.md"), TCM_PROJ),
+    (str(PROJECT_ROOT / "readme_Ru.md"), TCM_PROJ),
     *(collect_data_files("hydra", subdir="conf") + collect_data_files("hydra_plugins.hydra_colorlog")),
     *collect_data_files("pygeomag"),
     *[
@@ -101,17 +116,16 @@ a = Analysis(
     ],
     datas=added_files,
     hiddenimports=[
+        # All first-party packages (tcm, tcm_gui, utils, veusz_helpers,
+        # meta_finder) ship as source datas — no hiddenimports for them: the
+        # entry script's visible imports (tcm_gui.py → tcm_gui.app → tcm) still
+        # lead Analysis through the dev graph, pulling every transitive dep.
+        # The rows below are reachable only via datas-shipped tcm_gui code
+        # (browser server.py, coefficient sheet) → invisible to Analysis
         "colorlog",
         "colorlog.formatter",
-        "utils.log_init",
-        "utils.logging_config",
-        "veusz_helpers.common.metadata",
         "omegaconf",
         "ruamel.yaml",
-        "meta_finder",
-        "meta_finder.io_info_files",
-        "meta_finder.create_info_files",
-        "meta_finder.config",
         "dask",
         "dask.base",
         "dask.diagnostics",
@@ -121,8 +135,7 @@ a = Analysis(
         "pandas",
         "pandas._libs",
         "xarray",
-        "tcm._constants",
-        # tcm_gui.* ships as datas (excluded from pure) → its imports are invisible
+        "h5netcdf",  # NC engine — imported dynamically by xarray (engine=nc_engine)
         # to Analysis; the documentation browser needs these stdlib modules
         "http.server",  # tcm_gui/browser/server.py
         "webbrowser",  # tcm_gui/browser/browser.py (also NOT in excludes)
@@ -133,6 +146,7 @@ a = Analysis(
     hookspath=[str(PROJECT_ROOT / "scripts" / "build" / "hooks")],
     hooksconfig={},
     runtime_hooks=[
+        str(PROJECT_ROOT / "scripts" / "build" / "rthook_repo_layout.py"),
         str(PROJECT_ROOT / "scripts" / "build" / "rthook_hydra_pkg.py"),
         # rthook_noh5_bins.py NOT used — GUI shows full config defaults
     ],
@@ -171,7 +185,9 @@ a = Analysis(
         "tcm.incl_h5_utils",
         "tcm.incl_h5spectrum",
         "tcm.incl_calibr_hy",
-        "veusz_helpers.veuszPropagate",
+        # netCDF4 package unused — engine is h5netcdf (h5py); excluding it drops
+        # the whole netCDF-C binary chain (netcdf.dll → libxml2/libcurl → ICU)
+        "netCDF4",
         # PyArrow (not needed)
         "pyarrow",
         "pyarrow.libs",
@@ -288,7 +304,7 @@ a.binaries = [b for b in a.binaries if should_keep_binary(b)]
 a.datas = [d for d in a.datas if should_keep_data(d)]
 
 # Exclude both tcm.* and tcm_gui.* from pure — collected as data instead
-a.pure = [m for m in a.pure if not (m[0].startswith(TCM_REL) or m[0].startswith(GUI_REL))]
+a.pure = [m for m in a.pure if not m[0].startswith(DATA_PKG_PREFIXES)]
 # Exclude distributed scheduler (not available in bin-optim-tcm)
 _dist_prefix = "distributed."
 a.pure = [m for m in a.pure if not (m[0] == "distributed" or m[0].startswith(_dist_prefix))]

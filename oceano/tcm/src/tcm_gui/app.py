@@ -30,6 +30,7 @@ from ._path_field import PathField
 from ._rtf_clipboard import copy_rich
 from ._tab_rail import TabRail
 from .browser import get_documentation_browser, open_md_link
+from .browser.browser import link_display
 from .coef_sheet import ConfigSheet
 from .const import (
     UIScale,
@@ -41,8 +42,8 @@ from .const import (
     widget_meta,
 )
 from .keyboard import LayoutIndependentShortcuts
-from .log_bridge import drain, install
-from .md_label import MarkdownLabel
+from .log_bridge import LogText, drain, install
+from .md_label import MarkdownLabel, bind_link_hover
 from .runtime import Runtime
 from .theme import apply_theme_defaults
 from .worker import Worker
@@ -210,6 +211,8 @@ class App:
         self._path_lbl_default = _S["path_lbl.text"]
         self._path_lbl = ttk.Label(f0, text=self._path_lbl_default)
         self._path_lbl.grid(row=0, column=0, padx=(0, 4))
+        self._allowed_dir_key: str | None = None  # link-root cache key (field value)
+        self._allowed_dir_val = ""
         self._path_field = PathField(
             f0,
             on_commit=self._on_path_changed,
@@ -304,7 +307,7 @@ class App:
         _log_frame.grid(row=3, column=0, sticky="nsew", padx=4, pady=2)
         _log_frame.grid_rowconfigure(0, weight=1)
         _log_frame.grid_columnconfigure(0, weight=1)
-        self._log = tk.Text(
+        self._log = LogText(
             _log_frame,
             height=10,
             state="disabled",
@@ -334,6 +337,7 @@ class App:
         # A short timer clears the text when motion stops or pointer leaves.
         self._log_status_job: str | None = None
         self._log_status_fade_ms = 600
+        self._log_link_hover: str = ""  # link URL under the log pointer ("" = none)
         self._log.bind("<Motion>", self._on_log_motion, add="+")
         self._log.bind("<Leave>", self._on_log_leave, add="+")
         for lvl, clr in tcm_gui.theme.TAG_COLORS.items():
@@ -367,6 +371,8 @@ class App:
             foreground=tcm_gui.theme.FG_DEFAULT,
             colors=tcm_gui.theme.TAG_COLORS,
             on_link=open_md_link,
+            # Bare data paths auto-link under the device dir / anchor parent
+            allowed_dir=self._allowed_dir,
         )
         # Sheet color legend — bind markup names to actual theme colors so
         # {#sheet_*} spans in empty_area.* strings render with live values.
@@ -383,6 +389,10 @@ class App:
         # Hovering the status text itself: pause the dwell auto-close so the
         # user can keep reading / click a link; the countdown resumes on leave.
         self._status_lbl.bind("<Enter>", self._on_status_enter, add="+")
+        # Link hover → the full target in a row below the status text.  The row
+        # persists for any in-widget motion (it is not itself a link) — only a
+        # real Leave clears it, same persistence as the status text.
+        bind_link_hover(self._status_lbl, self._show_link_hover, clear_on_off_link=False)
         self._status_lbl.bind("<Leave>", self._on_status_leave, add="+")
 
         # Esc dismisses the error detail tooltip shown in _status_lbl.
@@ -948,7 +958,7 @@ class App:
                                     full=self._full_mode,
                                     config_root=schema.Config,
                                     return_enum=schema.Return,
-                                    metadata=getattr(cs2, "_metadata", None),
+                                    metadata=getattr(cs2, "_setups", None),
                                     sync_status=getattr(cs2, "_sync_status", None),
                                     metadata_path=getattr(cs2, "_metadata_path", None),
                                 )
@@ -958,45 +968,15 @@ class App:
                         # Burst autofill for metadata sheet (if missing) — also when md is None (deferred scan stub)
                         if bdt is not None and bst is not None:
                             try:
-                                md = getattr(cs2, "_metadata", None)
-                                if md is None:
-                                    try:
-                                        md = cs2.get_edited_metadata()  # type: ignore[attr-defined]
-                                    except Exception:
-                                        md = None
-                                if md is None:
-                                    # Create fresh 11-array stub (time_ranges may already be patched above)
-                                    md = [None] * 11
-                                    if time_ranges and len(time_ranges) >= 2:
-                                        md[6], md[7] = time_ranges[0], time_ranges[1]
-                                    md[8], md[9] = bdt, bst
-                                    # Inject as metadata and mark dirty
-                                    try:
-                                        cs2._metadata = md  # type: ignore[attr-defined]
-                                        cs2._metadata_unsaved = True  # type: ignore[attr-defined]
-                                        cs2._apply_metadata_dirty_label()  # type: ignore[attr-defined]
-                                        cs2._apply_validations()  # type: ignore[attr-defined]
-                                        cs2.sh.redraw()
-                                        self._rail.set_dirty(stem, False, True)
-                                    except Exception:
-                                        pass
-                                elif isinstance(md, list) and len(md) >= 10:
-                                    cur_bdt = md[8] if len(md) > 8 else None
-                                    cur_bst = md[9] if len(md) > 9 else None
-                                    if cur_bdt in ("?", "-", "", None) or cur_bst in ("?", "-", "", None):
-                                        # Patch metadata array
-                                        if len(md) < 11:
-                                            md = list(md) + [None] * (11 - len(md))
-                                        md[8], md[9] = bdt, bst
-                                        # Mark dirty so Run will write to info_devices.yaml
-                                        cs2._metadata_unsaved = True  # type: ignore[attr-defined]
-                                        try:
-                                            cs2._apply_metadata_dirty_label()  # type: ignore[attr-defined]
-                                            cs2._apply_validations()  # type: ignore[attr-defined]
-                                            cs2.sh.redraw()
-                                            self._rail.set_dirty(stem, False, True)
-                                        except Exception:
-                                            pass
+                                # Seed/backfill burst pair on the first setup; dirty
+                                # when anything changed so Run writes info_devices.yaml
+                                if hasattr(cs2, "autofill_burst") and cs2.autofill_burst(
+                                    bdt, bst, time_ranges=time_ranges
+                                ):
+                                    cs2._apply_metadata_dirty_label()  # type: ignore[attr-defined]
+                                    cs2._apply_validations()  # type: ignore[attr-defined]
+                                    cs2.sh.redraw()
+                                    self._rail.set_dirty(stem, False, True)
                             except Exception:
                                 pass
                     finally:
@@ -1099,16 +1079,8 @@ class App:
         frame = ttk.Frame(self._stack)
         frame.grid(row=0, column=0, sticky="nsew")  # all pages share cell (0,0)
         self._tab_of[stem] = frame
-        # Status for rail hover — relative yaml path when available.
-        if yaml_path is not None and (field := self._path_field.get().strip()):
-            anchor = paths.find_dir_raw_absolute(Path(field).absolute())
-            try:
-                rel = Path(yaml_path).relative_to(anchor)
-                status_text = _S["tab.status"].format(path=rel)
-            except ValueError:
-                status_text = _S["tab.status"].format(path=yaml_path.name)
-        else:
-            status_text = _S["tab.status"].format(path=stem)
+        # Status for rail hover — full yaml path, stem when no file backs the page.
+        status_text = _S["tab.status"].format(path=yaml_path if yaml_path else stem)
         set_widget_meta(frame, status=status_text)
         self._rail.add_tab(stem)
 
@@ -1264,6 +1236,57 @@ class App:
         config_yaml.update_run_yaml(yp, patch)
         cs.mark_clean()
 
+    def _device_anchors(self) -> list[Path]:
+        """All anchor ``_raw`` dirs for the current path-field value.
+
+        meta_finder discovery (multi-``_raw`` scan) with the single-anchor
+        fallback; ``[]`` when the field is empty or discovery fails.
+        """
+        p = self._path_field.get().strip()
+        if not p:
+            return []
+        p_path = Path(p).absolute()
+        try:
+            from tcm.anchors import _anchors_via_meta_finder
+
+            if (mf := _anchors_via_meta_finder(p_path)) is not None:
+                return mf
+        except Exception:
+            pass
+        return [paths.find_dir_raw_absolute(p_path)]
+
+    def _resolve_allowed_dir(self, p: str) -> str:
+        """Root for bare-path auto-linking from the field value *p*.
+
+        Device dir of the scanned anchors — their common parent for
+        multi-device scans (narrowing to the first would drop the others);
+        fallback ``paths.link_root`` — the anchor ``_raw``'s parent when the
+        value points into one.
+        """
+        device_dirs = [a.parent for a in self._device_anchors()]
+        root = (
+            device_dirs[0]
+            if len(device_dirs) == 1
+            else paths.common_ancestor(device_dirs)
+            if device_dirs
+            else None
+        )
+        if root is None:
+            root = paths.link_root(Path(p)) if p else Path()
+        return str(root)
+
+    def _allowed_dir(self) -> str:
+        """Allowed dir at call time — cached per field value.
+
+        Device_dir changes with re-browse / ``input.path`` edits, so the cache
+        key is the field value itself; per-poll callers stay cheap.
+        """
+        p = self._path_field.get()
+        if p != self._allowed_dir_key:
+            self._allowed_dir_key = p
+            self._allowed_dir_val = self._resolve_allowed_dir(p)
+        return self._allowed_dir_val
+
     def _load_device_meta(self) -> tuple[dict | None, Path | None, Path | None]:
         """Resolve device dir + ``info_devices.yaml`` path + parsed content.
 
@@ -1277,16 +1300,9 @@ class App:
         try:
             from meta_finder import io_info_files
             from meta_finder.config import DEVICES_FILE_NAME_YAML, DEVICES_FILE_NAME
-            from tcm.anchors import _anchors_via_meta_finder
 
-            p = self._path_field.get().strip()
-            if p:
-                p_path = Path(p).absolute()
-                try:
-                    _mf = _anchors_via_meta_finder(p_path)
-                    anchors = _mf if _mf is not None else [paths.find_dir_raw_absolute(p_path)]
-                except Exception:
-                    anchors = [paths.find_dir_raw_absolute(p_path)]
+            if anchors := self._device_anchors():
+                p_path = Path(self._path_field.get().strip()).absolute()
                 # anchors are _raw dirs; device_dir = parent
                 merged: dict = {}
                 first_ddir: Path | None = None
@@ -1342,18 +1358,6 @@ class App:
         Frozen build includes ``meta_finder``
         (see ``pyproject.toml: tcm`` feature + ``tcm_gui.spec``).
         """
-        # Gather per-pcid new content: {pcid: {sid: [11-array]}}
-        new_content: dict[str, dict[str, list]] = {}
-        # Map stem → pcid for Setup_ID indexing
-        stems_by_pcid: dict[str, list[str]] = {}
-        for stem in self._pages:
-            try:
-                pcid = format.to_pcid_from_name(format.stem_to_pcid(stem))
-            except Exception:
-                continue
-            stems_by_pcid.setdefault(pcid, []).append(stem)
-        for pcid, stems in stems_by_pcid.items():
-            stems.sort()
         # Resolve the target info_devices.yaml path(s) — parent-dir may have multiple anchors
         browsed: Path | None = next(
             (Path(cs.get_metadata_path()) for cs in self._pages.values() if cs.get_metadata_path().strip()),
@@ -1401,15 +1405,10 @@ class App:
                     pcid = format.to_pcid_from_name(format.stem_to_pcid(stem))
                 except Exception:
                     continue
-                sid = (
-                    str(stems_by_pcid.get(pcid, [stem]).index(stem))
-                    if stem in stems_by_pcid.get(pcid, [])
-                    else "0"
-                )
-                arr = cs.get_edited_metadata()
-                if not arr:
+                meta_map = cs.get_edited_metadata_map() if hasattr(cs, "get_edited_metadata_map") else {}
+                if not meta_map:
                     continue
-                new_content_single.setdefault(pcid, {})[sid] = arr
+                new_content_single.setdefault(pcid, {}).update(meta_map)
             if not new_content_single:
                 return
             try:
@@ -1501,15 +1500,10 @@ class App:
                     file_absent = True
                 if not is_dirty and not file_absent:
                     continue
-                sid = (
-                    str(stems_by_pcid.get(pcid, [stem]).index(stem))
-                    if stem in stems_by_pcid.get(pcid, [])
-                    else "0"
-                )
-                arr = cs.get_edited_metadata()
-                if not arr:
+                meta_map = cs.get_edited_metadata_map() if hasattr(cs, "get_edited_metadata_map") else {}
+                if not meta_map:
                     continue
-                anchor_groups.setdefault(device_dir, {}).setdefault(pcid, {})[sid] = arr
+                anchor_groups.setdefault(device_dir, {}).setdefault(pcid, {}).update(meta_map)
             if not anchor_groups:
                 return
             for device_dir, group_content in anchor_groups.items():
@@ -1578,20 +1572,28 @@ class App:
             dm = getattr(cs, "is_metadata_dirty", False) and cs.is_metadata_dirty()
             self._rail.set_dirty(stem, dc, dm)
 
-    def _on_log_motion(self, _event: tk.Event) -> None:
+    def _on_log_motion(self, event: tk.Event) -> None:
         """Show log status text while mouse is actively moving; fade on pause."""
-        # Log's F1 anchor (if any) — stored for both status and dwell.
         f1 = get_widget_meta(self._log, "f1_anchor")
-        if (status := get_widget_meta(self._log, "status")) is not None:
+        # Link hover wins over the row status — the status shows the full target
+        # (files render shrunk in the log); kept while the pointer rests on the link.
+        if url := self._log.link_at(event.x, event.y):
+            self._log_link_hover = url
             self._cancel_dwell()
-            self._set_status(status, f1)
+            self._set_status(link_display(url), raw=True)
+        else:
+            self._log_link_hover = ""
+            # Log's F1 anchor (if any) — stored for both status and dwell.
+            if (status := get_widget_meta(self._log, "status")) is not None:
+                self._cancel_dwell()
+                self._set_status(status, f1)
+            # Store the log's F1 anchor (status label shows its help).
+            if f1:
+                self._status_lbl_f1_anchor = f1
         # Arm dwell with log tooltip (if defined) on first motion.
         if self._dwell_widget is not self._log:
             self._dwell_widget = self._log
             self._arm_dwell(_S.get("log.tooltip", ""), f1)
-        # Store the log's F1 anchor (status label shows its help).
-        if f1:
-            self._status_lbl_f1_anchor = f1
         # Reset the fade timer on every motion tick.
         if self._log_status_job is not None:
             self.root.after_cancel(self._log_status_job)
@@ -1603,13 +1605,15 @@ class App:
             self.root.after_cancel(self._log_status_job)
             self._log_status_job = None
         self._dwell_widget = None
+        self._log_link_hover = ""
         self._cancel_dwell()
         self._set_status("", raw=True)
 
     def _on_log_status_fade(self) -> None:
-        """Fade timer expired — clear the log status text."""
+        """Fade timer expired — clear the log status text unless a link is hovered."""
         self._log_status_job = None
-        self._set_status("", raw=True)
+        if not self._log_link_hover:
+            self._set_status("", raw=True)
 
     def _on_log_scroll(self, _event: tk.Event) -> None:
         """Disable auto-scroll when user scrolls up; re-enable at bottom."""
@@ -1624,7 +1628,7 @@ class App:
 
     def _poll_logs(self) -> None:
         self._log.config(state="normal")
-        if drain(self.rt.log_queue, self._log) and self._log_autoscroll:
+        if drain(self.rt.log_queue, self._log, self._allowed_dir()) and self._log_autoscroll:
             self._log.see("end")
         self._log.config(state="disabled")
 
@@ -1809,7 +1813,8 @@ class App:
             # Feed the inherent path-cell dropdown; the number appears in _path_lbl
             try:
                 self._anchor_dropdown.set_paths([str(a) for a in anchors])
-                self._path_lbl.configure(cursor="hand2")  # anchors arrived — the caption opens the list
+                # Clickable caption only when a pick list exists (2+ anchors).
+                self._path_lbl.configure(cursor="hand2" if self._anchor_dropdown.has_list else "")
             except Exception:
                 pass
             # Update path_field to the anchor (so subsequent scans/tabs use anchor, not parent)
@@ -1963,6 +1968,14 @@ class App:
         """Pointer entered the status text — pause the dwell auto-close."""
         self._status_hovering = True
         self._cancel_dwell_hide_job()
+
+    def _show_link_hover(self, url: str) -> None:
+        """Link hover row — the full target below the status text ('' removes it).
+
+        Files render shrunk to the file name in both widgets, so the hover row
+        is what reveals the full path.
+        """
+        self._status_lbl.set_hover_line(link_display(url) if url else "")
 
     def _on_status_leave(self, _event: tk.Event | None = None) -> None:
         """Pointer left the status text — restart the linger countdown."""
@@ -2148,19 +2161,14 @@ class App:
         self._rail.clear()
         self._set_cfg_ui_disabled(False)  # scanned configs exist — active from first paint
         self._current = None
-        # Build pcid→stems index for Setup_ID mapping
-        all_stems = [s for s, _, _ in result[3]]
-        stems_by_pcid: dict[str, list[str]] = {}
-        for s in all_stems:
-            try:
-                pc = format.to_pcid_from_name(format.stem_to_pcid(s))
-            except Exception:
-                pc = s
-            stems_by_pcid.setdefault(pc, []).append(s)
-        for v in stems_by_pcid.values():
-            v.sort()
 
         def _meta_for_stem(stem: str) -> list | None:
+            """Device entry for *stem* — ``[[station_key, 11-array], …]`` groups.
+
+            Every interval of the nested ``info_devices.yaml`` entry is kept so
+            the tab shows the whole device file (``setup`` sublevels appear only
+            when several intervals exist); a flat list entry becomes one group.
+            """
             if device_meta is None:
                 return None
             try:
@@ -2171,24 +2179,11 @@ class App:
             for cand in (pcid, pcid.replace("_", "")):
                 if cand in device_meta:
                     ent = device_meta[cand]
-                    # ent is {sid: [list]} or list
                     if isinstance(ent, dict):
-                        sid = (
-                            str(stems_by_pcid.get(pcid, [stem]).index(stem))
-                            if stem in stems_by_pcid.get(pcid, [])
-                            else "0"
-                        )
-                        # Prefer exact sid, fallback to "0" or first
-                        if sid in ent:
-                            return list(ent[sid])
-                        if "0" in ent:
-                            return list(ent["0"])
-                        # Take first station
-                        for _k, _v in ent.items():
-                            if isinstance(_v, (list, tuple)):
-                                return list(_v)
-                    elif isinstance(ent, (list, tuple)):
-                        return list(ent)
+                        groups = [[k, list(v)] for k, v in ent.items() if isinstance(v, (list, tuple))]
+                        return groups or None
+                    if isinstance(ent, (list, tuple)):
+                        return [[0, list(ent)]]
             return None
 
         for stem, yp, cfg_dc in result[3]:
@@ -2207,20 +2202,22 @@ class App:
                     return v in ("?", "-", "", None)
 
                 if md is None:
-                    md = [None] * 11
+                    md = [[0, [None] * 11]]
                     tr = cfg.get("input", {}).get("time_ranges") or []
                     if len(tr) >= 2:
-                        md[6], md[7] = tr[0], tr[1]
-                    md[8], md[9] = bdt, bst
+                        md[0][1][6], md[0][1][7] = tr[0], tr[1]
+                    md[0][1][8], md[0][1][9] = bdt, bst
                     burst_filled = True
                 else:
-                    if len(md) < 11:
-                        md = list(md) + [None] * (11 - len(md))
-                    cur_bdt = md[8] if len(md) > 8 else None
-                    cur_bst = md[9] if len(md) > 9 else None
+                    arr = md[0][1]
+                    if len(arr) < 11:
+                        arr = list(arr) + [None] * (11 - len(arr))
+                        md[0][1] = arr
+                    cur_bdt = arr[8] if len(arr) > 8 else None
+                    cur_bst = arr[9] if len(arr) > 9 else None
                     if _is_ph(cur_bdt) or _is_ph(cur_bst):
                         if str(cur_bdt) != str(bdt) or str(cur_bst) != str(bst):
-                            md[8], md[9] = bdt, bst
+                            arr[8], arr[9] = bdt, bst
                             burst_filled = True
             ss = sync_result.get(stem) if sync_result else None
             self._add_page(
@@ -2308,7 +2305,7 @@ class App:
         """Append ``msg`` as an ``error``-tagged line; optionally add a visual
         separator (``info`` tag) tying the error to the markdown detail block."""
         self._log.config(state="normal")
-        self._log.insert("end", f"{msg}\n", "error")
+        self._log.insert_linked(f"{msg}\n", "error", self._allowed_dir())
         self._log.see("end")
         self._log.config(state="disabled")
 

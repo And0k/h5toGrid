@@ -32,8 +32,6 @@ from .const import set_widget_meta
 from .theme import scaled, strip_palette
 import tcm_gui.theme as theme
 
-import tcm_gui.theme as theme
-
 
 class TabRail(tk.Canvas):
     PROG_W = 12  # logical px — progress column width
@@ -174,6 +172,23 @@ class TabRail(tk.Canvas):
         """
         return self._font_at(8).measure("n" * 4) + 2 * scaled(self.PAD_Y)
 
+    def _needed_selected_h(self) -> int:
+        """Height for selected tab to show its FULL label at 8 pt, no truncation.
+
+        ``_refresh`` budgets ``h - scaled(8)`` for text when ``h >= _min_selected_h``,
+        so the cell needs ``full_8 + scaled(8)``; never below ``_min_selected_h``.
+        Activating a tab re-layouts (``set_selected → _layout``), so the newly
+        active tab steals room from inactive ones and its stripped prefix
+        becomes visible.
+        """
+        if self._selected is None or self._selected not in self._st:
+            return self._min_selected_h()
+        _full = self._full_label(self._selected)
+        return max(
+            self._min_selected_h(),
+            self._font_at(8).measure(_full) + scaled(8),
+        )
+
     def _heights(self, H: int) -> dict[str, int]:
         """Content-based heights: capped grow on surplus, waterfill on shortage.
 
@@ -184,10 +199,10 @@ class TabRail(tk.Canvas):
         Selected is always forced to at least ~4 chars (see _min_selected_h).
         """
         ideal = {n: self._font.measure(self._full_label(n)) + 2 * scaled(self.PAD_Y) for n in self._names}
-        # Enforce selected >= ~4 chars before any budget math
-        _sel_min = self._min_selected_h()
+        # Enforce selected >= full label (no truncation) before any budget math
+        _sel_need = self._needed_selected_h()
         if self._selected in ideal:
-            ideal[self._selected] = max(ideal[self._selected], _sel_min)
+            ideal[self._selected] = max(ideal[self._selected], _sel_need)
         total = sum(ideal.values())
         n = len(self._names)
         if total < H:  # grow, capped
@@ -203,22 +218,43 @@ class TabRail(tk.Canvas):
             sel_h = min(ideal[sel], H)
             heights = {sel: sel_h}
             heights.update(self._compress({k: v for k, v in ideal.items() if k != sel}, H - sel_h, sel))
-            return heights
+            return self._ensure_selected_full(heights, sel, _sel_need, H)
         # Shortage: compress ALL tabs together — every tab stays visible,
-        # but re-raise selected to its minimum if it got squeezed below.
+        # but re-raise selected to its full-label need if squeezed below.
         heights = self._compress(ideal, H, sel)
-        if sel and heights.get(sel, 0) < _sel_min and H >= _sel_min + (n - 1):
-            # Steal from others to honor selected minimum (at least 1 px each)
-            need = _sel_min - heights[sel]
-            heights[sel] = _sel_min
-            others = [k for k in heights if k != sel]
-            # Reduce others proportionally, keeping >=1
-            for k in others:
-                if need <= 0:
-                    break
-                take = min(heights[k] - 1, (need + len(others) - 1) // len(others))
-                heights[k] -= take
-                need -= take
+        return self._ensure_selected_full(heights, sel, _sel_need, H)
+
+    def _ensure_selected_full(
+        self, heights: dict[str, int], sel: str | None, need: int, H: int
+    ) -> dict[str, int]:
+        """Steal room from inactive tabs so selected reaches *need* (full label).
+
+        Others keep >=1 px; tallest shrink first (fair). When even that cannot
+        fit (``H < need + n - 1``), selected takes all but 1 px per inactive tab
+        and still truncates (middle-ellipsis fallback in ``_resolve_label_font``).
+        """
+        if not sel or heights.get(sel, 0) >= need:
+            return heights
+        n = len(heights)
+        if H >= need + (n - 1):
+            _deficit = need - heights[sel]
+            heights[sel] = need
+            # Steal evenly (round-robin 1 px) so inactive tabs shrink together —
+            # tallest-first would squeeze one tab to 1 px while siblings keep 44.
+            _others = [k for k in heights if k != sel]
+            while _deficit > 0 and any(heights[k] > 1 for k in _others):
+                for k in _others:
+                    if _deficit <= 0:
+                        break
+                    if heights[k] > 1:
+                        heights[k] -= 1
+                        _deficit -= 1
+            return heights
+        # Window too short for full selected — best effort: others at 1 px
+        for k in heights:
+            if k != sel:
+                heights[k] = 1
+        heights[sel] = max(H - (n - 1), 1)
         return heights
 
     @staticmethod
@@ -400,24 +436,23 @@ class TabRail(tk.Canvas):
     def _resolve_label_font(self, name: str, max_len: int) -> tuple[tkfont.Font, str, str, int]:
         """Return (font, text, anchor, angle) that fits *max_len* vertically.
 
-        - Fits at base pt → center anchor, 90°, base font, full text.
-        - Shrink bold down to 8 pt when slightly over → right anchor (s) keeps
-          the visible text flush to the right edge of the tab (90°).
-        - At 8 pt still over → prefix-ellipsize (…tail) and right anchor, so
-          the ellipsis appears at the left/overflow edge (90°).
-        - When vertical room <~2 chars, rotate to 0° (horizontal) — not hard:
-          fits within tab-column width; uses center anchor, shrinks the same,
-          and suppresses ellipsis if <~6 chars. Horizontal is more readable
-          when the tab is a thin strip.
-        anchor "center" = centered; "s" = right-aligned (east after 90° rotation,
-        see check_anchor90.py: s ↔ east edge at x, vertically centered).
+        - Selected tab → FULL label, never truncated: shrink base→8 pt; if even
+          8 pt overflows (window too short for ``_needed_selected_h``), fall back
+          to middle-ellipsis so date prefix + device tail stay partly visible.
+        - Inactive: fits at base pt → center anchor, 90°, full text; shrink
+          base→8 pt when slightly over → right anchor (s); at 8 pt still over →
+          middle-ellipsis (head…tail) keeping the date prefix + device suffix.
+        - When vertical room <~2 chars, rotate to 0° (horizontal) — cheap:
+          same selected-full / inactive-middle logic against column width.
+        anchor "center" = centered; "s" = right-aligned (east after 90° rotation).
         """
         full = self._full_label(name)
         _base_f = self._font_at(self._base_pt)
+        _is_sel = self._selected == name and not self._disabled
         # Tiny vertical room <~2 chars → rotate to horizontal (0°) — cheap, no extra layout
         _tiny_vert = self._font_at(8).measure("n" * 2)
         if max_len < _tiny_vert:
-            return self._resolve_horizontal(full, _base_f)
+            return self._resolve_horizontal(full, _base_f, _is_sel)
         if _base_f.measure(full) <= max_len:
             return _base_f, full, "center", self.ANGLE
         # Shrink slightly when not fitting — not less than 8 pt
@@ -425,15 +460,22 @@ class TabRail(tk.Canvas):
             f = self._font_at(pt)
             if f.measure(full) <= max_len:
                 return f, full, "s", self.ANGLE
-        # Even at 8 pt does not fit → prefix-ellipsize at 8 pt, right-aligned (90°)
+        # Even at 8 pt does not fit
         f8 = self._font_at(8)
-        return f8, self._fit_prefix_at(full, max_len, f8), "s", self.ANGLE
+        if _is_sel:
+            # Layout should have reserved full room; window too short → middle fallback
+            if f8.measure(full) <= max_len:
+                return f8, full, "s", self.ANGLE
+            return f8, self._fit_middle_at(full, max_len, f8), "s", self.ANGLE
+        return f8, self._fit_middle_at(full, max_len, f8), "s", self.ANGLE
 
-    def _resolve_horizontal(self, full: str, base_f: tkfont.Font) -> tuple[tkfont.Font, str, str, int]:
+    def _resolve_horizontal(
+        self, full: str, base_f: tkfont.Font, is_sel: bool = False
+    ) -> tuple[tkfont.Font, str, str, int]:
         """Fit *full* horizontally inside the tab column (angle 0).
 
         Called when vertical room <~2 chars; uses the column width as budget.
-        Mirrors the vertical shrink/ellipsis logic but with horizontal width.
+        Selected → full label; inactive → middle-ellipsis (head…tail).
         """
         # Tab-column inner width (rail width minus progress column minus small pads)
         _avail_w = self._rail_w - scaled(self.PROG_W) - scaled(4)
@@ -444,8 +486,10 @@ class TabRail(tk.Canvas):
             if f.measure(full) <= _avail_w:
                 return f, full, "center", 0
         f8 = self._font_at(8)
-        # Horizontal truncation — suffix ellipsis (head…) is natural left→right
-        return f8, self._fit_at(full, _avail_w, f8), "center", 0
+        if is_sel and f8.measure(full) <= _avail_w:
+            return f8, full, "center", 0
+        # Horizontal truncation — middle ellipsis keeps date head + device tail
+        return f8, self._fit_middle_at(full, _avail_w, f8), "center", 0
 
     def _fit_at(self, s: str, max_len: int, font: tkfont.Font) -> str:
         """Suffix-ellipsize *s* to *max_len* using *font* metrics (head…).
@@ -487,6 +531,44 @@ class TabRail(tk.Canvas):
         while s and font.measure(ell + s) > max_len:
             s = s[1:]
         return ell + s if s else ""
+
+    def _fit_middle_at(self, s: str, max_len: int, font: tkfont.Font) -> str:
+        """Middle-ellipsize *s* to *max_len* using *font* metrics (head…tail).
+
+        Keeps the date prefix (head) + device suffix (tail): config stems share
+        long prefixes (``230615_…``), so head-only truncation hides the device
+        and tail-only hides the date — middle keeps both partly visible.
+        Head gets the extra char on odd splits (date prefix priority).
+        When *max_len* cannot accommodate ~6 characters, the ellipsis is
+        suppressed and the fitting suffix is returned raw (device id wins —
+        all heads look identical there; the full date shows on selection).
+        """
+        if font.measure(s) <= max_len:
+            return s
+        # Suppress ellipsis when not enough room for ~6 characters
+        if font.measure("…" + "n" * 5) > max_len:
+            t = s
+            while t and font.measure(t) > max_len:
+                t = t[1:]
+            return t
+        ell = "…"
+        # Binary search: max kept chars k with head + ell + tail fitting.
+        # head = s[: (k+1)//2] (date side, gets odd extra), tail = s[-(k//2):].
+        lo, best = 0, 0
+        hi = len(s)
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            _hl, _tl = (mid + 1) // 2, mid // 2
+            _cand = s[:_hl] + ell + (s[len(s) - _tl :] if _tl else "")
+            if font.measure(_cand) <= max_len:
+                best = mid
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        if best <= 0:
+            return ""
+        _hl, _tl = (best + 1) // 2, best // 2
+        return s[:_hl] + ell + (s[len(s) - _tl :] if _tl else "")
 
     # Backward-compat shims — keep old names delegating to new helpers
     def _label(self, name: str) -> str:  # pragma: no cover

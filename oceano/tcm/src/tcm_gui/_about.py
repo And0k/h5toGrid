@@ -40,9 +40,9 @@ from . import theme
 from ._i18n import STRINGS as _S
 from ._i18n import resolve_lang
 from ._rtf_clipboard import copy_rich
-from .browser import open_md_link
+from .browser import link_display, open_md_link
 from .const import UIScale, work_area
-from .md_label import MarkdownLabel
+from .md_label import MarkdownLabel, bind_link_hover
 from .theme import _opt_into_dark_titlebar, mix_hex
 
 _l = logging.getLogger(__name__)
@@ -477,9 +477,8 @@ class AboutDialog(tk.Toplevel):
                 f"[{_S['about.docs_local']}]({local_readme().as_posix()}))"
             )
         self._meta_lbl.set_text("\n".join(f"- {it}" for it in items))
-        # Hover → main status bar shows the URL under the pointer
-        self._meta_lbl.bind("<Motion>", self._on_header_motion, add="+")
-        self._meta_lbl.bind("<Leave>", lambda _e: self._hover_status(""), add="+")
+        # Hover → main status bar shows the decoded link target under the pointer
+        bind_link_hover(self._meta_lbl, lambda url: self._hover_status(link_display(url)))
 
         # Hierarchical doc tree: directory-nested parents (a folder holding
         # _index.md links to it, no separate leaf), doc titles as leaves;
@@ -668,10 +667,6 @@ class AboutDialog(tk.Toplevel):
         if msg != self._hover_msg:
             self._hover_msg = msg
             self._on_status(msg)
-
-    def _on_header_motion(self, event: tk.Event) -> None:
-        """Header hover → status bar shows the URL under the pointer."""
-        self._hover_status(event.widget.link_at(event.x, event.y) or "")
 
     def _on_tree_motion(self, event: tk.Event) -> None:
         """Row-text hover → hand2 + file path in status bar; indicator/plain rows: neither."""

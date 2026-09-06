@@ -14,7 +14,8 @@ markdown     GFM via vendored marked.js; TeX via vendored MathJax 4
              ``protectMath`` placeholders in ``web/viewer.js``)
 source/text  verbatim text + vendored highlight.js, ``#L42`` line anchors
 images       raw bytes from ``/api/asset`` with native MIME type
-external     ``http(s)/mailto/ftp`` links are left to the browser
+external     ``http(s)/mailto/ftp/file`` links are handed to the OS handler
+             (``file:`` unquoted to its filesystem path first)
 ===========  =============================================================
 
 Subsequent ``open`` calls and all in-page navigation (relative links,
@@ -23,7 +24,9 @@ by JavaScript; back/forward is the browser's own history.
 
 The HTTP server binds to 127.0.0.1 only.  Documents must resolve beneath
 ``allowed_roots`` (default: :func:`~tcm._constants.resource_root` — the
-whole ``tcm`` package, since docs cross-link files above ``docs/``).
+whole ``tcm`` package, since docs cross-link files above ``docs/`` — plus
+:data:`~tcm._constants.REPO_ROOT` so sibling-project docs like
+``meta_finder/`` are reachable).
 First-party viewer files ship inside this package (``web/``); the
 third-party runtime is generated into ``_build/browser-runtime`` by
 ``browser/vendor.mjs`` (pixi task ``browser-runtime``).  Fully offline:
@@ -35,14 +38,16 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 import threading
 import urllib.parse
+import urllib.request
 import webbrowser
 from pathlib import Path
 
-from tcm._constants import resource_root
-from tcm_gui.browser.server import _Server, _VEND_DIR, _kind_of, _rel_error
+from tcm._constants import REPO_ROOT, resource_root
+from tcm_gui.browser.server import _VEND_DIR, _kind_of, _rel_error, _Server
 
 _l = os.path.basename(__name__)  # module logger name
 _lf = __import__("logging").getLogger(_l)
@@ -64,11 +69,15 @@ class DocumentationBrowser:
     ----------
     allowed_roots
         Filesystem roots from which documents may be served — the security
-        boundary.  Default: :func:`~tcm._constants.resource_root`.
+        boundary.  Default: :func:`~tcm._constants.resource_root` plus
+        :data:`~tcm._constants.REPO_ROOT` (sibling-project docs like
+        ``meta_finder/`` are linked from tcm docs).
     """
 
     def __init__(self, *, allowed_roots: list[str | os.PathLike[str]] | None = None) -> None:
-        self._roots: tuple[Path, ...] = tuple(Path(r).resolve() for r in (allowed_roots or [resource_root()]))
+        self._roots: tuple[Path, ...] = tuple(
+            Path(r).resolve() for r in (allowed_roots or [resource_root(), REPO_ROOT])
+        )
         self._server: _Server | None = None
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
@@ -148,16 +157,47 @@ class DocumentationBrowser:
 # Markdown link dispatcher
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Schemes handed to the OS browser unchanged (everything else is a local path;
+# Schemes handed to the OS handler unchanged (everything else is a local path;
 # a Windows drive letter like ``C:`` can never match this whitelist).
 _EXTERNAL_SCHEME = re.compile(r"^(?:https?|mailto|ftp|ftps|file):", re.IGNORECASE)
 
 
-def open_md_link(url: str, base: str | os.PathLike[str] | None = None) -> None:
-    """Open a markdown link target in the OS browser.
+def _file_uri_path(uri: str) -> str:
+    """``file:`` URI → filesystem path (UNC ``//netloc`` restored)."""
+    parts = urllib.parse.urlparse(uri)
+    path = urllib.request.url2pathname(parts.path)
+    return rf"\\{parts.netloc}{path}" if parts.netloc else path
 
-    Handles any ``[text](target)`` link rendered by the GUI: external schemes
-    (``http(s)/mailto/ftp/file``) via the system default browser; local
+
+def link_display(url: str) -> str:
+    """Human-readable link target for hover/status display: ``file:`` URI → path."""
+    return _file_uri_path(url) if url.lower().startswith("file:") else url
+
+
+def open_os_target(target: str) -> None:
+    """Open *target* with its OS-associated application.
+
+    Shared dispatcher for external link schemes and auto-linked filesystem
+    paths; failures are logged, never raised — links live in tooltips.
+    """
+    try:
+        if sys.platform == "win32":
+            os.startfile(target)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", target])
+        else:
+            subprocess.Popen(["xdg-open", target])
+    except OSError:
+        _lf.exception("Failed to open with OS application: %s", target)
+
+
+def open_md_link(url: str, base: str | os.PathLike[str] | None = None) -> None:
+    """Open a markdown link target.
+
+    Handles any ``[text](target)`` link rendered by the GUI: ``file:`` URIs
+    (explicit or auto-linked bare paths, see
+    :func:`tcm_gui.md_label._path_spans`) and other external schemes
+    (``http(s)/mailto/ftp``) via the OS-associated application; local
     document paths (relative ones resolved against *base* — the source
     ``.md`` file's path) via :class:`DocumentationBrowser`'s localhost server,
     also shown in the OS browser; a ``#anchor`` fragment scrolls to the
@@ -168,15 +208,7 @@ def open_md_link(url: str, base: str | os.PathLike[str] | None = None) -> None:
         return
     file_part, _, anchor = target.partition("#")
     if _EXTERNAL_SCHEME.match(file_part):
-        try:
-            if sys.platform == "win32":
-                os.startfile(target)
-            else:
-                import subprocess
-
-                subprocess.Popen(["xdg-open", target])
-        except OSError:
-            _lf.exception("Failed to open external link: %s", target)
+        open_os_target(_file_uri_path(file_part) if file_part.lower().startswith("file:") else target)
         return
     path = Path(file_part)
     if not path.is_absolute() and base:

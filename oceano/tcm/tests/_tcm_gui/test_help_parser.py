@@ -96,7 +96,7 @@ class TestRealReference:
         assert isinstance(e.body, str), f"mode-resolved body should be str, got {type(e.body).__name__}"
         assert e.body, f"path_field search body should be non-empty, got {e.body!r}"
 
-    def test_section_level_entries_emitted(self, monkeypatch):
+    def test_section_level_entries_emitted(self, monkeypatch, detailed_prose):
         """Section-level entries resolve for bare paths like ``input``, ``out``, ``filter``."""
         from tcm_gui._help import help_for_path, reload_cache
 
@@ -124,9 +124,9 @@ class TestRealReference:
         assert dwell is not None and isinstance(dwell.body, str), (
             "input.coefs section dwell should resolve via the bare Detailed mode"
         )
-        assert "Loaded from the coefficient file" in dwell.body, (
-            f"dwell should carry the Detailed prose, got {dwell.body!r}"
-        )
+        # Prose derived from the reference doc — single source of truth, no hardcoded phrases
+        prose = detailed_prose(doc_path("en").read_text(encoding="utf-8"), "`input.coefs`")
+        assert prose in dwell.body, f"dwell should carry the Detailed prose {prose!r}, got {dwell.body!r}"
 
     def test_section_level_body_filled(self):
         """Section-level entries exist with correct short text.
@@ -220,9 +220,7 @@ class TestRealReferenceDetailed:
         e = help_for_path("path_field", mode="files")
         if e is None:
             pytest.skip("path_field not in bundled doc — version drift")
-        assert isinstance(e.body, str), (
-            f"files body (no ####) should stay str, got {type(e.body).__name__}"
-        )
+        assert isinstance(e.body, str), f"files body (no ####) should stay str, got {type(e.body).__name__}"
         assert e.body, "files short body should be non-empty"
 
     def test_field_level_detailed_block_reachable(self, monkeypatch):

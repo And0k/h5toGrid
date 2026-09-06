@@ -45,11 +45,6 @@ Modified `_ungroup_devices_with_underscore_suffixes` to:
 - Extract non-time fields (sea_depth, lat, lon, etc.) from the base device
 - Handle both list/tuple and dict formats for device metadata
 
-**Key Changes:**
-- Added tuple/list to dict conversion for compatibility with existing YAML format
-- Separated time fields from non-time fields in the intervals structure
-- Maintained backward compatibility with single-interval devices
-
 ### Processing Layer (`collect.py`)
 
 Modified `update_device_metadata_with_time_info` to:
@@ -57,10 +52,6 @@ Modified `update_device_metadata_with_time_info` to:
 - Update time fields in the first interval for multi-interval devices
 - Update time fields directly in the device entry for single-interval devices
 - Only update fields when extracted values are not placeholders
-
-**Key Changes:**
-- Conditional logic to handle both single and multi-interval devices
-- Preserves the interval structure while updating time information
 
 ### Output Layer (`file_writer.py`)
 
@@ -70,11 +61,6 @@ Modified `write_metadata_table` to:
 - Copy non-time fields from device metadata to each interval row
 - Copy `data_paths` from device to each interval row
 - Add `interval_index` field to track interval number
-
-**Key Changes:**
-- Helper function `_process_device_entry` to avoid code duplication (DRY principle)
-- Proper ordering of operations: populate `all_devices` first, then process data paths
-- Maintains backward compatibility with single-interval devices
 
 ## Data Structure
 

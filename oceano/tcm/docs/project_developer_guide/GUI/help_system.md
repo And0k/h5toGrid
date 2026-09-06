@@ -50,13 +50,18 @@ Widgets with no matching STR keys get no help — the loop skips them.
 
 Dynamic tabs (created per config in ``_add_page``) don't have `self._*` names,
 so the auto-role loop can't find them.  ``_add_page`` calls
-``set_widget_meta(frame, status=STR["tab.status"].format(path=rel))`` directly
-using the STR template (``{path}`` = yaml path relative to the data directory).
+``set_widget_meta(frame, status=STR["tab.status"].format(path=yaml_path))`` directly
+using the STR template (``{path}`` = full yaml path, page ``stem`` when no file backs it).
 Tab hover is wired via ``TabRail._on_hover`` → ``App._on_rail_hover`` which reads
 ``get_widget_meta(frame, "status")`` and writes to ``_status_lbl``.  Because
 ``{path}`` is a filesystem path that may contain special characters,
 ``_on_rail_hover`` calls ``set_text(status, raw=True)`` to bypass Markdown
-parsing — the template itself stays literal (no ``**bold**`` there).
+parsing — the template itself stays literal (no ``**bold**`` there).  The bare
+path still passes through ``_path_spans`` (raw spans get expanded too): the
+template must NOT wrap ``{path}`` in backticks, or the trailing backtick joins
+the last path node and ``path_kind`` rejects it (``yaml` `` is not an alnum
+suffix).  With backticks stripped, ``_add_page`` status shows the config as a
+file-name link (see :func:`tcm_gui.md_label._path_spans`).
 
 Static ``STR["{role}.status"]`` strings **do** go through the Markdown parser
 by default at ``_on_chrome_hover`` / ``_on_path_hover_in``, so ``**bold**``

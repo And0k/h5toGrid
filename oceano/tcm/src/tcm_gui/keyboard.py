@@ -105,7 +105,13 @@ class LayoutIndependentShortcuts:
         return "break"
 
     def destroy(self) -> None:
-        """Remove only this instance's application-wide binding."""
+        """Remove only this instance's application-wide binding.
+
+        ``unbind_all`` dropped its ``funcid`` parameter in Tk 8.6 (Python 3.8+),
+        so we call ``_unbind`` directly — the same private helper that
+        ``unbind``/``unbind_all`` delegate to, which still accepts ``funcid``
+        and cleans up the registered Tcl command.
+        """
         if self._funcid is not None:
-            self.root.unbind_all("<KeyPress>", self._funcid)
+            self.root._unbind(("bind", "all", "<KeyPress>"), self._funcid)
             self._funcid = None

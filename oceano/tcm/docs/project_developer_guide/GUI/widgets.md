@@ -203,8 +203,11 @@ the cell with the first numbered value); selection writes the stripped path
 into `event["value"]` (`close_dropdown_window` commits it after
 `selection_function` returns); `end_edit_cell` chains the previously bound
 handler (`extra_bindings` is a single slot — `PathField._on_end_edit` must
-survive); `set_paths([])` calls `del_dropdown` so the arrow offers no stale
-anchors. Click-to-expand needs the PathField yield above: tksheet's
+survive); `set_paths()` syncs via `has_list` (0/1 drops the dropdown, keeps
+the default caption); a typed commit in the open list's edit field notifies
+`on_commit` from `PathField._on_end_edit` (read-back verified, placeholder
+coherent), while a list pick is muted there one-shot (`_anchor_pick_pending`)
+since `on_select` already rescanned. Click-to-expand needs the PathField yield above: tksheet's
 `open_dropdown_window(state="normal")` gates the list on `open_text_editor`
 succeeding, and the veto made every arrow click open the Entry instead.
 Openers beyond the arrow: caption click (toggles — `PathField.toggle_dropdown`;
@@ -219,15 +222,13 @@ Overlay coexistence (the open Entry used to swallow all arrow clicks —
 self-perpetuating): edit start restores full-width layout via the patched
 hide (arrow scrolls off-screen, so the full-frame Entry never covers it);
 binder motion returns None while `_editing` (no re-shrink under the open
-Entry, no button); expand restores the same full layout (tksheet's editor
-opens over the cell with the value visible) and calls `_orig_hide`
-(button off); `_patched_hide`
+Entry, no button); expand restores the same full layout but keeps the edit
+text right-aligned like the custom Entry (only the list itself stays
+left-aligned) and calls `_orig_hide` (button off); `_patched_hide`
 skips restore while `dropdown.open` (no canvas jump under the open list).
 Every tksheet editor/dropdown close (Esc, FocusOut, click-away) re-scrolls
-the viewport to the value end/start (`_patched_hide_editor_dropdown` —
-opening scrolls the wide column left while the shrunk layout keeps
-right-aligned text at the far right, which blanked the field until the
-next hover masked it).
+the viewport to follow the cell alignment (`_patched_hide_editor_dropdown` —
+right-aligned text scrolls to the value end, left-aligned to the start).
 Floated ConfigSheet fields are unaffected (null overlay, never a dropdown).
 The list itself escapes via `_dropdown_overflow.enable_dropdown_overflow`
 (tksheet embeds it in the 1-row canvas — measured 1 px tall): width
@@ -381,8 +382,8 @@ triggers `_schedule_field_hide` (pointer-check vetoes over field).
 `Ctrl+C` on the log `tk.Text` widget calls `copy_rich` from
 [`_rtf_clipboard.py`](`_rtf_clipboard.py`).  `_segments` walks all tag
 boundaries, maps each tag's `foreground` to an 8-bit RGB via `winfo_rgb`, and
-resolves link URLs duck-typed through `MarkdownLabel.link_url_at` (widgets
-without the hook — e.g. the log — simply carry no URL).  `build_rtf` emits a
+resolves link URLs duck-typed through `MarkdownLabel.link_url_at` and
+`LogText.link_url_at` (widgets without the hook simply carry no URL).  `build_rtf` emits a
 single `{\cfN …}` run per span into an RTF `\colortbl`; link spans wrap in
 `{\field{\*\fldinst{HYPERLINK "url"}}{\fldrslt …}}` (+`\ul`) so Word keeps
 them clickable, `build_html` wraps them in `<a href>`.  Three formats are

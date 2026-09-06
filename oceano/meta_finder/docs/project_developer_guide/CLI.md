@@ -78,6 +78,8 @@ process_cruise_directories(
 
 ## Key Functions
 
+Implementation details for the processing pipeline described in [Processing Guide](../user_guide/processing.md).
+
 ### File discovery
 
 - `file_finder.find_cruise_directories(search_dirs)` — Finds all cruise directories in the specified search directories.

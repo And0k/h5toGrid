@@ -54,9 +54,13 @@ highlight.js are vendored (generated into `_build/browser-runtime` by
   | other section | `../user_guide/processing.md` |
   | package source | `../../src/tcm/format.py` |
   | build scripts | `../../scripts/tcm_proc.py` |
+  | sibling project | `../../../meta_finder/docs/reference/io_formats.md` |
 
   Source lives under `src/tcm/` — `../../tcm/x.py` does not exist (a historical
-  batch of such links 400'd in the viewer).
+  batch of such links 400'd in the viewer).  Sibling-project links (e.g.
+  `meta_finder/`) traverse up to `REPO_ROOT` — allowed because
+  `DocumentationBrowser` includes both `resource_root()` and `REPO_ROOT` in
+  its default `allowed_roots`.
 - **Heading anchors**: GitHub slugs — lowercase, punctuation dropped, each space
   → `-`; or explicit `{#my-id}` suffix on the heading. Cross-file:
   `io_formats.md#file-name-parsing`.
@@ -73,6 +77,11 @@ highlight.js are vendored (generated into `_build/browser-runtime` by
   - Elsewhere: text clarifies what the reader finds in the target in the
     context of the link — free wording, no requirement to match any existing
     text exactly.
+- **Bare filesystem paths auto-link in the Tk GUI** (not in the doc viewer):
+  absolute paths with a 2–4 letter extension under the directory last entered
+  in the path field render as file-name links that open with the
+  OS-associated application. No authored markup needed — explicit
+  `[text](url)` links behave as before.
 
 
 ## Images

@@ -25,6 +25,9 @@ path-caption click (toggles the list) and Up/Down on the cell (``PathField``).
 The user can either select a predefined path, edit the current path manually,
 or type a completely new path. A manually entered value not present in
 ``paths`` restores the label default text.
+
+Fewer than two paths means no list at all: the cell stays plain editable
+and the label keeps its default text (no ``1/1`` — nothing to pick from).
 """
 
 from __future__ import annotations
@@ -42,7 +45,8 @@ class NumberedPathDropdown:
     :param sheet: tksheet.Sheet containing the cell.
     :param row: data row of the target cell.
     :param column: data column of the target cell.
-    :param paths: dropdown paths; position determines the displayed number.
+    :param paths: dropdown paths (2+); position determines the displayed number.
+        Zero or one path keeps the plain cell and the label default text.
     :param number_label: existing label widget showing ``selected/total`` (has
         ``configure(text=...)`` — e.g. ``ttk.Label`` from ``App._build``).
     :param default_text: label text when the cell value is not in ``paths``.
@@ -76,8 +80,7 @@ class NumberedPathDropdown:
         # `end_edit_cell` handler (e.g. `PathField._on_end_edit`) instead of
         # silently dropping it.
         self._prior_end_edit = getattr(sheet.MT, "extra_end_edit_cell_func", None)
-        if self.paths:
-            self._attach_dropdown()
+        self._sync_dropdown()
         # `end_edit_cell` fires before the edited value is committed, so
         # `event.value` is the about-to-be-stored value. Covers ordinary text
         # editing; programmatic `set()` callers must call `refresh()`.
@@ -88,12 +91,21 @@ class NumberedPathDropdown:
         """Replace the dropdown list (e.g. on parent ``scan_list``) and refresh."""
         self.paths = list(paths)
         self.number_by_path = {path: index for index, path in enumerate(self.paths, start=1)}
-        if self.paths:
-            self._attach_dropdown()
-        else:
-            with suppress(Exception):  # no anchors — the arrow must offer nothing stale
-                self.sheet.del_dropdown(self.row, self.column)
+        self._sync_dropdown()
         self._update_number()
+
+    @property
+    def has_list(self) -> bool:
+        """True only when a pick list exists (2+ paths) — single source of truth."""
+        return len(self.paths) > 1
+
+    def _sync_dropdown(self) -> None:
+        """Attach the tksheet list iff pickable, else drop any stale dropdown."""
+        if self.has_list:
+            self._attach_dropdown()
+        else:  # zero or single anchor — nothing to pick, the cell stays plain
+            with suppress(Exception):
+                self.sheet.del_dropdown(self.row, self.column)
 
     def refresh(self, value: str | None = None) -> None:
         """Re-evaluate the number from the current cell (call after programmatic `set`)."""
@@ -119,7 +131,13 @@ class NumberedPathDropdown:
         return [f"{index}. {path}" for index, path in enumerate(self.paths, start=1)]
 
     def _dropdown_selected(self, event: Any) -> None:
-        """Strip the ordinal prefix, store the real path, update number, notify."""
+        """Strip the ordinal prefix, store the real path, update number, notify.
+
+        Arms the one-shot ``_anchor_pick_pending`` mute consumed by
+        ``PathField._on_end_edit`` — tksheet fires ``end_edit_cell`` after
+        the pick, and without the mute the pick would rescan twice
+        (``on_select`` here plus ``on_commit`` there).
+        """
         displayed = str(event.value)
         _, separator, path = displayed.partition(". ")
         if not separator:
@@ -127,6 +145,8 @@ class NumberedPathDropdown:
         # tksheet commits `event.value` into the cell after this returns —
         # hand it the bare path, or the cell ends up numbered again.
         event["value"] = path
+        with suppress(Exception):
+            self.sheet.MT._anchor_pick_pending = path
         # Redraw now: the pick must be visible immediately, not after the
         # next hover-triggered repaint.
         self.sheet.set_cell_data(self.row, self.column, path, redraw=True)
@@ -147,7 +167,13 @@ class NumberedPathDropdown:
             self._prior_end_edit(event)
 
     def _update_number(self, value: str | None = None) -> None:
-        """Show ``selected/total`` for predefined paths, else the label default text."""
+        """Show ``selected/total`` for a live list, else the label default text."""
+        if not self.has_list:  # no list — no count either, even on exact match
+            try:
+                self.number_label.configure(text=self.default_text)
+            except Exception:
+                pass
+            return
         if value is None:
             try:
                 value = self.sheet.get_cell_data(self.row, self.column)

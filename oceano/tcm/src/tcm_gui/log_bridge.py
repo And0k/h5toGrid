@@ -22,18 +22,25 @@ logging bug must never crash the GUI callback that produced it (the About
 dialog used to die this way).  ``drain`` additionally renders ``exc_info``
 records' exception line (``format_exception_only``) so worker-side
 ``lf.exception(...)`` tracebacks surface their message in the GUI log.
+
+Message and traceback chunks render through :meth:`LogText.insert_linked`
+when the widget provides it — bare filesystem paths under the allowed dir
+(:mod:`tcm_gui._allowed_paths`) become clickable links there.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+import tkinter as tk
 import traceback
+from pathlib import Path
 from queue import Empty, Queue
 
 from tcm.stage_ctx import StageContextFilter
 
-from . import const
+from . import _allowed_paths, const, theme
+from .browser.browser import open_md_link
 
 # Re-export for ``install()`` callers.
 __all__ = ["QueueHandler", "install", "drain"]
@@ -94,12 +101,23 @@ def install(q: Queue, gate, level: int = logging.DEBUG) -> QueueHandler:
     return h
 
 
-def drain(q: Queue, w) -> int:
+def drain(q: Queue, w, root: str = "") -> int:
     """Drain queue → Text.  Returns count of appended records.
 
     Boundary marks (``stage_fresh > 0``) are already baked into
     ``rec.getMessage()`` by the QueueHandler's own ``StageContextFilter``.
+    Message and traceback chunks go through ``w.insert_linked(text, tags,
+    root)`` when the widget provides it (path auto-linking under the *root*
+    allowed dir); plain widgets fall back to a plain insert.
     """
+    linked = getattr(w, "insert_linked", None)
+
+    def insert(text: str, tags) -> None:
+        if linked:
+            linked(text, tags, root)
+        else:
+            w.insert("end", text, tags)
+
     n = 0
     while True:
         try:
@@ -111,7 +129,56 @@ def drain(q: Queue, w) -> int:
         tag = rec.levelname.lower()
         w.insert("end", f"{ts}│", tag)
         w.insert("end", f"{rec.funcName}│", "func")
-        w.insert("end", f"{rec.getMessage()}\n", tag)
+        insert(f"{rec.getMessage()}\n", tag)
         if rec.exc_info:  # exception records: show the exception line too
-            w.insert("end", "".join(traceback.format_exception_only(*rec.exc_info[:2])), tag)
+            insert("".join(traceback.format_exception_only(*rec.exc_info[:2])), tag)
     return n
+
+
+class LogText(tk.Text):
+    """Log ``tk.Text`` with clickable filesystem-path links.
+
+    Linkable paths (:mod:`tcm_gui._allowed_paths`, restricted to the *root*
+    allowed dir) are inserted by :meth:`insert_linked`: files display shrunk
+    to the file name, directories in full.  Link chunks carry the shared
+    ``loglink`` visual tag plus a per-target data tag ``link:<file: URI>``
+    (URI-escaped → space-free → valid Tk tag name) — the same "tag IS the
+    URL" convention as ``tcm._md_parse`` spans.  Tk adjusts tag ranges on any
+    edit, so there is no index bookkeeping; :meth:`link_url_at` is the hook
+    duck-typed by ``tcm_gui._rtf_clipboard`` (Ctrl+C exports hyperlinks).
+    Clicks route through ``open_md_link`` → the OS-associated application.
+    """
+
+    def __init__(self, master=None, **kwargs) -> None:
+        super().__init__(master, **kwargs)
+        self.tag_configure("loglink", foreground=theme.LINK_FG, underline=True)
+        self.tag_bind("loglink", "<Button-1>", self._open_link)
+        self.tag_bind("loglink", "<Enter>", lambda _e: self.configure(cursor="hand2"))
+        self.tag_bind("loglink", "<Leave>", lambda _e: self.configure(cursor=""))
+
+    def insert_linked(self, text: str, base_tags, root: str = "") -> None:
+        """Insert *text*; linkable paths under the *root* allowed dir become links."""
+        pos = 0
+        for m in _allowed_paths.allowed_path_re(root).finditer(text):
+            if not (kind := _allowed_paths.path_kind(p := m[0])):
+                continue  # odd extension / nonexistent dir → stays plain
+            self.insert("end", text[pos : m.start()], base_tags)
+            display = Path(p).name if kind == "file" else p
+            self.insert("end", display, (*base_tags, "loglink", f"link:{_allowed_paths.to_uri(p)}"))
+            pos = m.end()
+        self.insert("end", text[pos:], base_tags)
+
+    def link_url_at(self, index: str) -> str | None:
+        """``file:`` URI of the link span at *index* (``None`` outside links)."""
+        return next(
+            (t.removeprefix("link:") for t in self.tag_names(index) if t.startswith("link:")),
+            None,
+        )
+
+    def link_at(self, x: int, y: int) -> str | None:
+        """Target URL of the link span at widget coordinates ``(x, y)``."""
+        return self.link_url_at(f"@{x},{y}")
+
+    def _open_link(self, event: tk.Event) -> None:
+        if url := self.link_url_at(f"@{event.x},{event.y}"):
+            open_md_link(url)

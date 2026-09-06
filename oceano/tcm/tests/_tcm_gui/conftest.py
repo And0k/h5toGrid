@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 import tkinter as tk
+from itertools import takewhile
 from types import SimpleNamespace
 
 import pytest
@@ -37,6 +39,22 @@ def real_reference(request):
         pytest.skip(f"{path} not found")
     text = path.read_text(encoding="utf-8")
     return SimpleNamespace(lang=lang, text=text, entries=parse_reference(text))
+
+
+@pytest.fixture
+def detailed_prose():
+    """Callable ``(text, section)`` → leading fragment of the section's ``### Detailed`` prose.
+
+    Derives expectations from the reference markdown — the single source of
+    truth (same contract as :func:`ref_doc_text`); never hardcode doc phrases.
+    """
+
+    def get(text: str, section: str) -> str:
+        after = text.partition(f"## {section}")[2].partition("### Detailed")[2]
+        para = " ".join(takewhile(str.strip, after.strip().splitlines()))
+        return " ".join(re.split(r"[(`]", para, maxsplit=1)[0].split())
+
+    return get
 
 
 # Auto-configure use_h5 for all tests (mirrors policy._io.set(policy.IOPolicy.resolve(cfg)))
@@ -77,8 +95,7 @@ def _session_tk_root():
         # interpreter — the one that stays alive for the entire session.
         from tksheet import Sheet
 
-        _init_sh = Sheet(root, show_header=False, show_horizontal_grid=False,
-                         show_vertical_grid=False)
+        _init_sh = Sheet(root, show_header=False, show_horizontal_grid=False, show_vertical_grid=False)
         _init_sh.destroy()
         yield root
         root.destroy()

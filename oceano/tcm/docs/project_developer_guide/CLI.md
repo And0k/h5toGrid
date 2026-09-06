@@ -1,5 +1,10 @@
 # CLI Internals
 
+For the discovery pipeline (cruise/device directory enumeration, metadata I/O)
+that `tcm` reuses from `meta_finder`, see
+[meta_finder Integration](../reference/meta_finder_integration.md) and
+[meta_finder CLI Internals](../../../meta_finder/docs/project_developer_guide/CLI.md).
+
 ## Module Architecture
 
 ```
@@ -545,6 +550,12 @@ On shallow miss in a directory, `tcm/search.py::search_csv_files_recursive`
 enumerates per-anchor via `meta_finder.find_device_dirs` +
 `find_raw_files_recursive` (archives included, `DOC`/`GRIDDING` excluded) —
 full map: [meta_finder Integration](../reference/meta_finder_integration.md).
+
+The pattern is matched with `re.search` (not `re.match`), so the probe
+identifier is located **after any prefix** — date stamps like
+`130510_i_01.txt` in deep subfolders match the default `i.*\\.txt` even though
+they don't start with `i`. This mirrors how `format.probe_from_name` skips
+prefixes via `[^iw]*`.
 
 ### File pairing (corrected/raw)
 

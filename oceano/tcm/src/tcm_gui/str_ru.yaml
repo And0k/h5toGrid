@@ -43,7 +43,7 @@ prog_status.status: "Текущий этап и прогресс обработ�
 # keep chrome status strings single-paragraph as _fit_status_font() caps the label to one row
 log.status: "Журнал обработки с цветовой маркировкой уровня ({#debug}отладка{/}/{#info}инфо{/}/{#warning}предупреждение{/}/{#error}ошибка{/})"
 prog_stage.status: "Прогресс текущего этапа в активной конфигурации"
-tab.status: "Конфигурация: `{path}`"  # template — _add_page formats {path}
+tab.status: "Конфигурация {path}"  # template — _add_page formats {path}; bare (backtick-free) full path auto-links to the file name
 browse_btn.status: "Выбор **каталога**; удерживайте **Shift** для выбора **файлов**"
 browse_btn.status_files: "Выбор файлов"
 empty_area.synced: >-
@@ -51,7 +51,7 @@ empty_area.synced: >-
   {#sheet_default}■ по умолчанию{/} · {#sheet_placeholder}■ подсказка{/} · {#sheet_changed}■ изменено{/} · {#sheet_invalid}■ ошибка{/} · {#sheet_warning}■ предупреждение{/}
 empty_area.unsaved: "Только чтение — сначала укажите путь выше (включен упрощенный режим, требующий последовательного заполнения)"
 empty_area.unsaved_full: >-
-  Редактируемо — укажите путь выше для сканирования.
+  Редактируйте или введите путь поиска выше для перезагрузки.
   {#sheet_default}■ по умолчанию{/} · {#sheet_placeholder}■ подсказка{/} · {#sheet_changed}■ изменено{/} · {#sheet_invalid}■ ошибка{/} · {#sheet_warning}■ предупреждение{/}
 rail.status: "Панель конфигураций — щёлкните по вкладке; вертикальная заливка = прогресс обработки (сверху→вниз)"
 help_btn.tooltip: "Справка / О программе"
@@ -104,12 +104,12 @@ run_btn.disabled_no_pages: "Нет конфигураций — сначала �
 run_btn.disabled_invalid_path: "Запуск обработки (не активен: конфигурации не должны содержать {#error}ошибок{/})"
 
 # ── Status / progress text ────────────────────────────────────────────────
-status.ready: "Готово"
+status.ready: "Загружены"
 status.loading: "Загрузка\u2026"
 status.starting: "Запуск\u2026"
 
 # ── Completion template (format: pct, ok, n) ──────────────────────────────
-overall_lbl.done_detail: " — Готово {pct}% ({ok}/{n} OK)"
+overall_lbl.done_detail: " — Обработано {pct}% ({ok}/{n} OK)"
 
 # ── Error prefixes (log queue) ────────────────────────────────────────────
 error.scan: "Сканирование: {p}"
@@ -136,7 +136,7 @@ stage.loading: "Загрузка"
 scan_stage.default: "Конфигурация обработки: сгенерируйте/найдите введя выше директорию\\файл/glob/regex данных/конфигурации"
 scan_stage.default_full: "Конфигурация оработки: обновите введя путь выше или редактируйте вручную (полный режим редактирования включен)"
 scan_stage.scan: "Поиск/генрация конфигураций…"
-scan_stage.done: "Представлены конфигурации для обработки найденных данных"
+scan_stage.done: "Конфигурации обработки данных"
 
 # ── Stage tree ────────────────────────────────────────────────────────────
 stage_tree.heading.stage: "Этап"

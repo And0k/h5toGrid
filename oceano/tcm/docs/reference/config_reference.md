@@ -376,6 +376,8 @@ raw data directory — the journal accompanying the data.
 `?, -, "", ~` are equivalents of missing data (NaN — written to YAML as `~`; an all-NaN tail after the 8th element is not written at all).
 
 > In the GUI the rows are paired: `point, symbol | sea depth, h_above | lat, lon | time_range | burst_dt/t | comment`. You can specify your own save path, not the one from which metadata is loaded when searching for data. `time_range` ↔ `input.time_ranges[[0,-1]]` are bidirectionally synced where unset, on scan.
+>
+> **Several deployment intervals** (nested `info_devices.yaml` entry — *Multiple intervals* in the [meta_finder I/O formats](../../../meta_finder/docs/reference/io_formats.md)) render the paired rows under autonumbered **`setup`** sublevels (`0`, `1`, …), each labelled by its station key; a single interval stays flat (no `setup` level is shown). The sheet's *Insert rows above/below* (`right-click`) splits an interval into a copy pinned to the shared boundary — **above** sets the copy's `time_range[1] = time_range[0]`, **below** sets `time_range[0] = time_range[1]` — and numbers the new `setup` with the next free integer (`1` when splitting a flat single interval; existing flat rows first move into node `0`).
 
 
 

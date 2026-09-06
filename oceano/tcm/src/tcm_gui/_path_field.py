@@ -75,7 +75,9 @@ class PathField(ttk.Frame):
     switches to right-aligned — filename ends right before the browse
     button, same geometry as ConfigSheet's ``_field_place_kw``.
     Editing uses a plain ``ttk.Entry`` overlay, always right-justified
-    with the cursor at the path end.
+    with the cursor at the path end; the tksheet editor behind an open
+    dropdown list keeps the same right-justified edit text (only the
+    list itself is left-aligned).
 
     When the cell is empty, a dim-gray *placeholder* text is shown
     (e.g. ``"D:/data/_raw/"``) — it vanishes on first keystroke or
@@ -330,7 +332,7 @@ class PathField(ttk.Frame):
         try:
             if self._editing or self._entry is not None:
                 return
-            if self._hovering:
+            if self._hovering or self.sh.MT.align == "ne":
                 self._scroll_to_right()
             else:
                 self._scroll_to_left()
@@ -510,6 +512,14 @@ class PathField(ttk.Frame):
             mt.open_dropdown_window(0, 0, event="rc")
         finally:
             self._expand_once = False
+        # The 4096 px column embeds tksheet's editor as a canvas window —
+        # ``open_text_editor`` re-shows the cell's left edge, clipping a
+        # right-aligned tail. Re-scroll after open so the edit text (like
+        # the custom Entry) shows its filename end.
+        with suppress(TclError):
+            self.update_idletasks()
+            self._scroll_to_right()
+            self.sh.redraw()
 
     def toggle_dropdown(self) -> None:
         """Label-click toggle: close the open list, else expand it."""
@@ -551,10 +561,33 @@ class PathField(ttk.Frame):
             # tksheet's editor opens over the cell with the current value
             # visible (a frozen shrunk layout hid it: viewport left while
             # right-aligned text sat at the far right of the wide column).
-            self._restore_default_layout()
-            self._orig_hide()  # button off, layout frozen full-width — the list opens left-aligned
+            # Keep edit text right-aligned like the custom Entry — only the
+            # dropdown list itself stays left-aligned (overflow patch forces
+            # ``align="w"`` there, independent of the cell).
+            if self._hovering:
+                self._hovering = False
+                self.sh.place_forget()
+                self.sh.pack(fill="both", expand=True)
+                self.sh.table_align("e", redraw=False)
+                self.update_idletasks()
+                self.sh.redraw()
+                self._scroll_to_right()
+            elif self.sh.MT.align != "ne":
+                self.sh.table_align("e", redraw=False)
+                self.sh.redraw()
+                self._scroll_to_right()
+            # ``open_text_editor`` (gated next by tksheet) re-shows the cell's
+            # left edge — re-scroll once it is open so the right-aligned tail
+            # stays visible (same post-open step as ``expand_dropdown``).
+            self.after_idle(self._scroll_to_right)
+            self._orig_hide()  # button off, layout frozen full-width
+            self._pre_edit = self.get()  # baseline for the end-edit commit check
+            with suppress(Exception):
+                self.sh.MT._anchor_pick_pending = None  # stale pick must not mute this edit
             return self.get()  # let tksheet open its editor + list — no Entry, no side effects
         self._editing = True
+        with suppress(Exception):
+            self.sh.MT._anchor_pick_pending = None
         # Clear placeholder so the user starts with an empty field.
         if self._ph.active:
             self._clear_placeholder()
@@ -658,10 +691,54 @@ class PathField(ttk.Frame):
             self._notify(val)
 
     def _on_end_edit(self, event) -> None:
-        """tksheet end-edit — no-op when Entry handles editing."""
+        """tksheet editor commit — mirror the Entry contract (commit + verify + notify).
+
+        Fires for the dropdown-gated editor only (the custom Entry returns
+        early): typing a custom path into the open list's edit field and
+        committing it (Return/Tab/FocusOut/click-away) must trigger
+        ``on_commit`` exactly like the Entry does — otherwise the field
+        shows text no scan ever loaded. A list pick is the exception: it
+        already rescanned via ``on_select``, so a one-shot
+        ``_anchor_pick_pending`` flag (set by the selection handler before
+        this chain runs) mutes the duplicate commit.
+        """
         if self._entry is not None:
             return  # Entry is in charge
         self._editing = False
+        try:
+            if getattr(event, "row", 0) != 0 or getattr(event, "column", 0) != 0:
+                return
+            raw = str(getattr(event, "value", ""))
+        except Exception:
+            return
+        # Placeholder coherence first — a committed value must never hide
+        # behind ghost tracking (tksheet wrote the cell already, so untrack
+        # instead of blanking, unlike ``_commit_entry`` which sets after).
+        if raw:
+            if self._ph.has(0, 0):
+                self._ph.untrack(self.sh, 0, 0)
+            self._set_font_weight(True)
+        elif self._placeholder_simple:
+            self._show_placeholder()
+        # Read-back check: the stored cell is the truth post-commit. Repair
+        # once if tksheet stored something else, so the notified value and
+        # the visible text can never diverge.
+        actual = self.get()
+        if raw and actual != raw:
+            with suppress(TclError):
+                self.sh.set_cell_data(0, 0, raw)
+                actual = self.get()
+        # One-shot pick mute — a list pick already rescanned via ``on_select``.
+        pending = getattr(self.sh.MT, "_anchor_pick_pending", None)
+        if pending is not None:
+            with suppress(Exception):
+                self.sh.MT._anchor_pick_pending = None
+            if actual == pending:
+                self._pre_edit = actual
+                return
+        if actual != self._pre_edit:
+            self._pre_edit = actual
+            self._notify(actual)
 
     def _notify(self, value: str) -> None:
         if self._on_commit is not None:

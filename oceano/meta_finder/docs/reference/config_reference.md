@@ -150,24 +150,7 @@ Temporary directory settings.
 
 ## Metadata file fields
 
-The following fields are defined in [`io_info_files.py`](../../src/meta_finder/io_info_files.py) (`info_devices_field_names_extended`):
-
-| Field | Index | Description |
-|-------|-------|-------------|
-| `point` | 0 | Station name/number |
-| `sea_depth` | 1 | Sea depth (m) |
-| `height_above_bottom` | 2 | Device height above bottom (m) |
-| `modification_symbol` | 3 | Device modification symbol |
-| `lat` | 4 | Latitude (degrees) |
-| `lon` | 5 | Longitude (degrees) |
-| `time_st` | 6 | Start time of good data |
-| `time_en` | 7 | End time of good data |
-| `burst_dt` | 8 | Device active interval (s) |
-| `bursts_t` | 9 | Device operation period (s) |
-| `comment` | 10 | User comment |
-| `coef_date` | 11 | Calibration date (from HDF5) |
-| `time_raw_st` | 12 | Raw data start |
-| `time_raw_en` | 13 | Raw data end |
+The metadata file fields and their array indices are defined in [`io_info_files.py`](../../src/meta_finder/io_info_files.py) (`info_devices_field_names_extended`). See [Array element order](io_formats.md#array-element-order) in the Input / Output Format Specification for the full field table.
 
 ## See also
 

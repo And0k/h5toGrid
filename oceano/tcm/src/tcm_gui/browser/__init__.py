@@ -15,7 +15,14 @@ from tcm_gui.browser.browser import (
     DocumentationBrowser,
     documentation_browser,
     get_documentation_browser,
+    link_display,
     open_md_link,
 )
 
-__all__ = ["DocumentationBrowser", "documentation_browser", "get_documentation_browser", "open_md_link"]
+__all__ = [
+    "DocumentationBrowser",
+    "documentation_browser",
+    "get_documentation_browser",
+    "link_display",
+    "open_md_link",
+]

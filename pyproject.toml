@@ -239,19 +239,21 @@ collect = "python -m meta_finder.collect"
 check-paths = "python -m meta_finder.post_processing.path_checker_main"
 check-device-dirs = "python -m meta_finder.post_processing.check_device_dirs"
 
-[tool.pixi.tasks.build-tcm-clc-txt]
+# Build tasks are feature-scoped → visible only in envs able to run them:
+# CLI build needs `noh5` (pyinstaller), GUI build needs `tk-gui` (tksheet in build env)
+[tool.pixi.feature.noh5.tasks.build-tcm-clc-txt]
 cmd = "python oceano/tcm/scripts/build/build_tcm_proc.py"
 env = { BUILD_MODE = "manual" }
 
-[tool.pixi.tasks.build-tcm-clc-txt-auto]
+[tool.pixi.feature.noh5.tasks.build-tcm-clc-txt-auto]
 cmd = "python oceano/tcm/scripts/build/build_tcm_proc.py"
 
-[tool.pixi.tasks.build-tcm-gui]
+[tool.pixi.feature.tk-gui.tasks.build-tcm-gui]
 cmd = "python oceano/tcm/scripts/build/build_tcm_gui.py"
 env = { BUILD_MODE = "manual" }
 depends-on = ["browser-runtime"]
 
-[tool.pixi.tasks.build-tcm-gui-auto]
+[tool.pixi.feature.tk-gui.tasks.build-tcm-gui-auto]
 cmd = "python oceano/tcm/scripts/build/build_tcm_gui.py"
 depends-on = ["browser-runtime"]
 

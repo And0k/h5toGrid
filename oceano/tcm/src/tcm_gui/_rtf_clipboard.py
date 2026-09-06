@@ -59,8 +59,9 @@ def _segments(widget: tk.Text) -> Iterator[Segment]:
 
     Slices at every ``_palette`` tag boundary so each span carries one tag set;
     ``url`` resolves through the widget's optional duck-typed ``link_url_at``
-    hook (:meth:`tcm_gui.md_label.MarkdownLabel.link_url_at`) — widgets
-    without it (e.g. the log) simply yield ``url=None``.
+    hook (:meth:`tcm_gui.md_label.MarkdownLabel.link_url_at`,
+    :meth:`tcm_gui.log_bridge.LogText.link_url_at`) — widgets without it
+    simply yield ``url=None``.
     """
     end = widget.index("end-1c")
     # Determine slice: use selection if present; coerce Tcl_Obj → str (hackable set element)

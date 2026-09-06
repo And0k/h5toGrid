@@ -264,13 +264,16 @@ def find_raw_files_recursive(
         if ptn is None:
             return True
         stripped = name[1:] if name.startswith("@") else name
-        if ptn.match(stripped) or ptn.match(name):
+        # Use search (not match) so the pattern can match the probe identifier
+        # anywhere in the filename — prefixed names like ``130510_i_01.txt`` (date
+        # stamp before the probe id) are common in deep subfolders.
+        if ptn.search(stripped) or ptn.search(name):
             return True
         # H5 fallback: default pattern i.*\.txt should also match i_*.h5 etc.
         if ext in config.extensions_hdf5:
             alt = str(Path(name).with_suffix(".txt"))
             alt_stripped = str(Path(stripped).with_suffix(".txt"))
-            if ptn.match(alt) or ptn.match(alt_stripped):
+            if ptn.search(alt) or ptn.search(alt_stripped):
                 return True
         return False
 

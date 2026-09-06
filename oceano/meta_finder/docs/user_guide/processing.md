@@ -1,14 +1,16 @@
 # Processing Guide
 
 Describes how meta_finder discovers devices, extracts metadata, and generates output.
+For implementation details (function names, module architecture), see
+[CLI Internals](../project_developer_guide/CLI.md).
 
 ## Processing pipeline
 
-The main processing pipeline (`collect.process_all_metadata()`) follows these stages:
+The main processing pipeline follows these stages:
 
 1. **Cruise Directory Discovery**: Scan configured search directories for cruise directories using the pattern `YYMMDD_{cruise_name}`.
 
-2. **Device Directory Discovery**: For each cruise directory, identify device subdirectories using `find_device_dirs()`, which matches:
+2. **Device Directory Discovery**: For each cruise directory, identify device subdirectories by matching:
    - Device keywords: `inclinometer`, `incl`, `tcm`, `wavegauge`, `wave_gauge`, `pres`, `@i[0-9]`
    - Device types (`i`, `w`, `incl`, `wg`) when followed by comma, semicolon, or end of string
    - The cruise directory itself if its name contains device identifiers and no device subdirectories exist
@@ -19,7 +21,7 @@ The main processing pipeline (`collect.process_all_metadata()`) follows these st
    - Falls back to `info_devices.yaml` (replaces JSON if present)
    - Finally falls back to `info_devices.json` (deprecated)
 
-4. **Data File Discovery**: For each device directory, discover all available data files using `discover_datafiles_for_all_dev_in_dev_dir()` which:
+4. **Data File Discovery**: For each device directory, discover all available data files:
    - Searches `text_output` directories and archives for data files (`.tsv`, `.txt`, `.csv`)
    - Uses fallback mechanism to extract device IDs from subdirectory names when filenames don't contain device information
    - Looks for files in `_raw` directories that match device naming patterns
@@ -28,9 +30,9 @@ The main processing pipeline (`collect.process_all_metadata()`) follows these st
 
 5. **Navigation File Discovery**: Search for `.gpx` navigation files in `*navigation*` or `*map*` subdirectories within device directories and cruise directories.
 
-6. **Metadata Association and Extraction**: Use `get_absent_meta()` to associate devices with data files and extract temporal information:
+6. **Metadata Association and Extraction**: Associate devices with data files and extract temporal information:
    - Creates device data structure containing metadata and data_paths for all devices found
-   - Gets prioritized data sources for time extraction for each device using the `sort_data_paths()` function
+   - Gets prioritized data sources for time extraction for each device
    - Tries to extract time metadata from prioritized data sources until successful, supporting both text files and HDF5 files
    - Updates device metadata with time information while preserving all data paths for each device
 
@@ -70,15 +72,7 @@ The system skips HDF5 extraction when time metadata is already available in meta
 
 ## Multiple intervals
 
-If a device has multiple deployment intervals (e.g., retrieved and redeployed), the metadata file uses a nested structure:
-
-```yaml
-i03:
-  0: ["P1", 15, 0.5, ?, 54.7, 19.8, "2023-05-08 12:00:00", "2023-05-15 08:00:00", -, -, ""]
-  1: ["P2", 20, 1.0, ?, 54.9, 20.1, "2023-06-01 10:00:00", "2023-06-10 14:00:00", 120, 600, ""]
-```
-
-In this case, the TSV file creates a **separate row for each interval**. The interval key (in the example `0`, `1`) corresponds to the deployment name: by default, the ordinal number starting from 0.
+For devices with multiple deployment intervals, the metadata file uses a nested YAML structure. The TSV output creates a **separate row for each interval**. See [Multiple intervals](../reference/io_formats.md#multiple-intervals) in the format specification for the exact YAML structure and behavior.
 
 ## See also
 

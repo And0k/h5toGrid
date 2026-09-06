@@ -46,7 +46,7 @@ prog_status.status: "Current processing stage and progress"
 # keep chrome status strings single-paragraph as _fit_status_font() caps the label to one row
 log.status: "Processing log — color-coded by severity ({#debug}debug{/}/{#info}info{/}/{#warning}warning{/}/{#error}error{/})"
 prog_stage.status: "Current stage progress within the active configuration"
-tab.status: "Configuration: `{path}`"  # template — _add_page formats {path}
+tab.status: "Configuration {path}"  # template — _add_page formats {path}; bare (backtick-free) full path auto-links to the file name
 browse_btn.status: "Hold **Shift** to select files instead of directory"
 browse_btn.status_files: "Browse files"
 empty_area.synced: >-
@@ -54,7 +54,7 @@ empty_area.synced: >-
   {#sheet_default}■ default{/} · {#sheet_placeholder}■ placeholder{/} · {#sheet_changed}■ changed{/} · {#sheet_invalid}■ invalid{/} · {#sheet_warning}■ warning{/}
 empty_area.unsaved: "Read-only — please specify the path above first (simplified mode is enabled, requiring sequential filling)"
 empty_area.unsaved_full: >-
-  Editable — provide a data path above to scan.
+  Edit or provide a data search path above to reload.
   {#sheet_default}■ default{/} · {#sheet_placeholder}■ placeholder{/} · {#sheet_changed}■ changed{/} · {#sheet_invalid}■ invalid{/} · {#sheet_warning}■ warning{/}
 rail.status: "Configuration rail — click a tab to switch; vertical fill = processing progress (top→down)"
 help_btn.tooltip: "Help / About"
@@ -107,7 +107,7 @@ run_btn.disabled_no_pages: "No configurations - please specify the data path fir
 run_btn.disabled_invalid_path: "Run processing (inactive: configurations must not contain {#error}errors{/})"
 
 # ── Status / progress text ────────────────────────────────────────────────
-status.ready: "Ready"
+status.ready: "Loaded"
 status.loading: "Loading\u2026"
 status.starting: "Starting\u2026"
 
@@ -139,7 +139,7 @@ stage.loading: "Loading"
 scan_stage.default: "Processing configuration: generate/find by entering above directory\\file/glob/regex for data/configuration"
 scan_stage.default_full: "Processing configuration: update by entering the path above or edit manually (full editing mode enabled)"
 scan_stage.scan: "Search/generation of configurations…"
-scan_stage.done: "Configurations for processing the found data are presented"
+scan_stage.done: "Data processing configurations"
 
 # ── Stage tree ────────────────────────────────────────────────────────────
 stage_tree.heading.stage: "Stage"

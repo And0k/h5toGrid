@@ -196,7 +196,11 @@ dated cruise dirs → device dirs (keyword or `@id` suffix) → `_raw/`.
 Excluded: `DOC`/`GRIDDING`/`CTD_…` (no keyword/id match), `bad`, `test…`,
 `*-`. Full user-facing rules:
 [user_guide/meta_finder.md](../user_guide/meta_finder.md); function map:
-[meta_finder Integration](meta_finder_integration.md).
+[meta_finder Integration](meta_finder_integration.md). For the exact I/O
+structures (text/HDF5 column layouts, metadata YAML, time formats) see
+[meta_finder I/O formats](../../../meta_finder/docs/reference/io_formats.md);
+to customize search patterns see
+[meta_finder config reference](../../../meta_finder/docs/reference/config_reference.md#device_dir_pattern).
 
 ```text
 data_dir/

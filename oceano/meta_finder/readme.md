@@ -40,3 +40,10 @@ Internal architecture and build instructions.
 - [HDF5 Functionality](docs/project_developer_guide/hdf5_functionality.md)
 - [Multiple Intervals Handling](docs/project_developer_guide/multiple_intervals.md)
 - [Workflow Tree](docs/project_developer_guide/workflow_tree.md)
+
+## Integration
+
+`meta_finder` is the discovery and metadata layer for
+[tcm](../tcm/) — the TCM data processing pipeline. `tcm` reuses
+`meta_finder`'s device discovery, metadata I/O, and file enumeration. For
+details, see [tcm's meta_finder Integration](../tcm/docs/reference/meta_finder_integration.md).

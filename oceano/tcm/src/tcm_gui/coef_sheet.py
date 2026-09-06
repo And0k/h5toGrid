@@ -33,7 +33,7 @@ import numpy as np
 from tksheet import Sheet
 
 import tcm_gui.theme
-from tcm import _meta_pairs, _constants
+from tcm import _meta_pairs
 from tcm_gui import _path_field
 from tcm_gui._cell_spec import any2str, as_bool, as_date, parse_float, spec_for_path
 from tcm_gui.cli_cfg import COEF_SHAPES, COEFS_TYPE, NO_DEFAULT, default_for_path
@@ -41,6 +41,7 @@ from tcm_gui.cli_cfg import COEF_SHAPES, COEFS_TYPE, NO_DEFAULT, default_for_pat
 from ._browse_button import BrowseButtonManager
 from ._i18n import STRINGS as _S
 from ._placeholder import CellPlaceholder
+from ._sheet_metadata_node import MetadataNodeMixin
 from ._sheet_status import SheetHoverMixin
 from ._sheet_styles import SheetStylesMixin, _path_exists
 from ._sheet_tint import _DATE_COL, _DATE_PH_COL, SheetTintMixin
@@ -226,12 +227,17 @@ class CellBoundaryColumnResize:
             self._cursor_on = False
 
 
-class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
+class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNodeMixin):
     """Wraps tksheet.Sheet(treeview=True) for config display / editing.
 
     Row spaces:
       * internal rows — all rows, hidden included; cell APIs consume these.
       * display rows — visible rows only; edit events report these.
+
+    Metadata node (device deployment info) is owned by
+    :mod:`tcm_gui._sheet_metadata_node` (:class:`MetadataNodeMixin`) —
+    see its module docstring for the nested-``setup`` model and the
+    *Insert rows above/below* split contract.
 
     Hover resolution detects the row space exposed by ``MT.identify_row``
     and enforces a visible-row invariant before status or overlay publication.
@@ -283,14 +289,15 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
         self._cfg: dict = {}
         self._readonly = False  # blocks editing until scan finds configs (non-full mode)
 
+        # Metadata node state + built-in "Insert rows above/below" interception
+        self._init_metadata_node()
+
         # Hydra structured-config root type for cell classification
         self._config_root: type | None = None
         # StrEnum for program.return_ dropdown
         self._return_enum: type | None = None
         # Snapshot of all editable cells for dirty tracking — populated at end of load()
         self._snap: tuple = ()
-        # New/autofilled metadata (from an absent info_devices.yaml) — unsaved until Run
-        self._metadata_unsaved: bool = False
         # Normal (non-default) text color — "clear" side of gray/blue toggles
         self._fg_default: str = tcm_gui.theme.FG_DEFAULT
 
@@ -561,59 +568,6 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
             return _path_exists(s)
         return False
 
-    def get_metadata_path(self) -> str:
-        for iid, m in self._meta.items():
-            if m.get("is_metadata_root"):
-                if not (s := self._cell_str(iid, 0)):
-                    return str(getattr(self, "_metadata_path", "") or "")
-                return s
-        return str(getattr(self, "_metadata_path", "") or "")
-
-    def get_edited_metadata(self) -> list[Any]:
-        """Read metadata rows → 11-array for info_devices.yaml write-back.
-
-        Ghost placeholders (``_ph``) read as ``""`` → ``None`` → ``~`` (required)
-        or trimmed tail — identical to the coefs date extraction.  Guards
-        ``_ph`` for test harnesses that construct ``ConfigSheet`` via
-        ``__new__`` without ``__init__`` (no ``_ph`` attribute yet).
-        """
-        paired: dict[str, list[str]] = {}
-        row_of = self._row_map()
-        ph = getattr(self, "_ph", None)
-        for iid, m in self._meta.items():
-            if not m.get("is_metadata"):
-                continue
-            r = row_of.get(iid)
-            n = int(m.get("max_col", 1))
-            vals: list[str] = []
-            for j in range(n):
-                if r is not None and ph is not None and hasattr(ph, "has") and ph.has(r, j):
-                    vals.append("")
-                else:
-                    raw = self.sh.item(iid).get("values") or ()
-                    vals.append(str(raw[j]) if j < len(raw) else "")
-            paired[m["label"]] = vals
-        if not paired:
-            return []
-        base = list(self._metadata) if getattr(self, "_metadata", None) else None
-        return _meta_pairs.to_storage(paired, base=base)
-
-    def is_metadata_dirty(self) -> bool:
-        """True when metadata rows differ from load snapshot, or were autofilled
-        from an absent info_devices.yaml (new — saved by ``_write_metadata``)."""
-        if getattr(self, "_metadata_unsaved", False):
-            return True
-        snap = getattr(self, "_snap_meta", None)
-        if snap is None:
-            return False
-        cur = self.get_edited_metadata()
-        cur_t = tuple("?" if v is None else str(v) for v in cur) if cur else ()
-        return cur_t != snap
-
-    def _take_metadata_snapshot(self) -> None:
-        md = self.get_edited_metadata()
-        self._snap_meta: tuple = tuple("?" if v is None else str(v) for v in md) if md else ()
-
     def _current_state(self) -> tuple[dict, dict, str]:
         """Return coefs/dates/path state for YAML write-back."""
         return self.get_edited_coefs(), self.get_edited_dates(), self.get_edited_input_path()
@@ -660,10 +614,6 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
     def mark_clean(self) -> None:
         """Reset dirty flag after a successful write-back."""
         self._take_snapshot()
-
-    def mark_metadata_clean(self) -> None:
-        self._metadata_unsaved = False
-        self._take_metadata_snapshot()
 
     def set_readonly(self, readonly: bool) -> None:
         """Block/unblock cell editing.
@@ -757,171 +707,6 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
                 _CALIB_SHAPES_COEFS = {}
             calib_iid = self._ins(inp_iid, "calib", [""] * self._nv, "", meta={"path": "input.calib"})
             self._build_calib_rows(calib_iid, calib, _CALIB_SHAPES_COEFS)
-
-    def _build_metadata(self) -> None:
-        """Top-level ``metadata`` node (sibling of ``input``) with paired rows.
-
-        ``metadata`` itself is the device-file path (always editable, browseable
-        — same floated field as ``input``).  Children are 6 paired rows from
-        ``_meta_pairs.PAIRS``; empty cells show gray example ghosts that vanish
-        on edit (``CellPlaceholder``), never persisted as ``"?"``.
-        """
-        md_list: list[Any] | None = getattr(self, "_metadata", None)
-        autofilled = md_list is None or (len(md_list) < 8 and not any(md_list or []))
-        if autofilled:
-            tr = (self._cfg.get("input", {}) or {}).get("time_ranges") or []
-            if tr and len(tr) >= 2:
-                base = [None] * 11
-                base[6], base[7] = tr[0], tr[-1]
-                md_list = base
-            elif not md_list:
-                md_list = [None] * 11
-        if len(md_list) < 11:
-            md_list = list(md_list) + [None] * (11 - len(md_list))
-        # Device-file path — always editable (default when file absent).
-        _path = getattr(self, "_metadata_path", None)
-        if _path is None:
-            # Default: device_dir/info_devices.yaml (parent of _raw)
-            try:
-                from pathlib import Path as _P
-
-                from tcm import paths as _paths
-
-                # Judge the RAW string before resolving — ``Path("").absolute()``
-                # is the cwd, so a no-path GUI launch would otherwise probe the
-                # launch directory and ``find_dir_raw_absolute`` would log the
-                # misleading "Not standard input path" warning on the project
-                # root.  Repo-internal paths are skipped too: their default
-                # device file would land in the code tree — the scan owns that
-                # error verdict, not this default derivation.
-                _probe_str = str((self._cfg.get("input", {}) or {}).get("path") or "").strip()
-                _probe = _P(_probe_str).absolute() if _probe_str and _probe_str != "." else None
-                if _probe is not None and (
-                    _probe == _constants.REPO_ROOT or _constants.REPO_ROOT in _probe.parents
-                ):
-                    _probe = None
-                _ddir = _paths.find_dir_raw_absolute(_probe).parent if _probe is not None else None
-                _path = str(_ddir / "info_devices.yaml") if _ddir else ""
-            except Exception:
-                _path = ""
-        # Autofilled from an absent info_devices.yaml — treat as unsaved only
-        # when there's a real file to save to (non-empty derived path). The
-        # old guard ``any(not is_placeholder…)`` missed the empty stub with
-        # no ``time_ranges``, and the unconditional ``autofilled`` kept the
-        # default page (no input.path → _path=="") dirty forever.
-        self._metadata_unsaved = autofilled and bool(_path and str(_path).strip())
-        paired = _meta_pairs.to_display(md_list)
-        meta_iid = self._ins(
-            "",
-            "metadata",
-            [_path] + [""] * (self._nv - 1),
-            "",
-            meta={
-                "key": "metadata",
-                "path": "metadata",
-                "style": "node",
-                "max_col": 1,
-                "is_metadata_root": True,
-                "is_string": True,
-                "browse": True,
-                "check": "exists",
-                "metadata_path": _path,
-            },
-            open_=True,
-        )
-        for label, idxs in _meta_pairs.PAIRS:
-            vals = paired.get(label, ["?"] * len(idxs))
-            # Empty "?" → ghost via CellPlaceholder, not literal "?".
-            # Distinguish vacuous vs valued "?" by checking md_list indices.
-            display_vals: list[str] = []
-            ghost_cols: list[int] = []
-            for j, v in enumerate(vals):
-                idx = idxs[j]
-                raw = md_list[idx] if idx < len(md_list) else None
-                is_empty = v == "?" and _meta_pairs.is_placeholder(raw)
-                if is_empty:
-                    display_vals.append("")
-                    ghost_cols.append(j)
-                else:
-                    display_vals.append(v)
-            row_vals = display_vals + [""] * (self._nv - len(display_vals))
-            is_time = label == "time_range"
-            iid = self._ins(
-                meta_iid,
-                label,
-                row_vals,
-                "",
-                meta={
-                    "label": label,
-                    "path": f"metadata.{label.replace(', ', '_').replace('/', '_')}",
-                    "is_string": True,
-                    "is_metadata": True,
-                    "max_col": len(idxs),
-                    "has_date": is_time,
-                    "_ghost_cols": ghost_cols,
-                },
-            )
-            # Remember ghosts for placeholder pass — _ph.show needs row index later
-            if ghost_cols:
-                self._meta[iid]["_ghost_example"] = [
-                    _meta_pairs.EXAMPLES.get(label, ["?", "?"])[j] for j in range(len(idxs))
-                ]
-        self._take_metadata_snapshot()
-
-    def _reload_metadata_from(self, path_str: str) -> None:
-        """Load metadata from existing file on browse select."""
-        try:
-            from meta_finder.io_info_files import read_metadata_file
-            from tcm import format as _fmt
-
-            data = read_metadata_file(Path(path_str).expanduser())
-            stem = getattr(self, "_page_stem", "") or ""
-            pcid = _fmt.to_pcid_from_name(_fmt.stem_to_pcid(stem)) if stem else None
-            ent = None
-            if pcid is not None:
-                for cand in (pcid, pcid.replace("_", "")):
-                    if cand in data:
-                        ent = data[cand]
-                        break
-            if ent is None and data:
-                ent = next(iter(data.values()))
-            if isinstance(ent, dict):
-                arr = next((list(v) for v in ent.values() if isinstance(v, (list, tuple))), None)
-            else:
-                arr = list(ent) if isinstance(ent, (list, tuple)) else None
-            if arr is not None:
-                self._metadata = arr
-                self._metadata_path = path_str
-                self._rebuild_metadata_rows()
-        except Exception:
-            pass
-
-    def _rebuild_metadata_rows(self) -> None:
-        """Rebuild only the metadata subtree — keep node expanded and ghosts visible."""
-        # Discard stale placeholders before structural change — row indices will shift
-        self._ph.clear_all(self.sh)
-        to_del = [
-            iid for iid, m in list(self._meta.items()) if m.get("is_metadata") or m.get("is_metadata_root")
-        ]
-        for iid in to_del:
-            with suppress(Exception):
-                self.sh.delete_row(self._row_map().get(iid, -1))
-            self._meta.pop(iid, None)
-        self._build_metadata()
-        self._apply_open()
-        self._rebuild_row_caches()
-        self._apply_styles()
-        self._apply_placeholders()
-        self._apply_default_fg()
-        self._apply_validations()
-        with suppress(Exception):
-            self.sh.redraw()
-        # Rebuilt subtree got fresh iids — stale `_snap` would flag the tab
-        # dirty (and rewrite YAML on Run) without any user edit.
-        self._take_metadata_snapshot()
-        self._take_snapshot()
-        with __import__("contextlib").suppress(Exception):
-            self._apply_metadata_dirty_label()
 
     def _build_full(self, cfg: dict) -> None:
         ordered = [s for s in _FULL_SECTION_ORDER if s in cfg]
@@ -1541,6 +1326,9 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin):
         iid = self._iid_at_row(r)
         if iid is None:
             return
+        # rc-menu target oracle — the metadata/setup "Insert rows above/below"
+        # interception (_rc_add_rows) keys off the last selected iid.
+        self._rc_sel_iid = iid
         m = self._meta.get(iid, {})
         raw = m.get("max_col", m.get("len"))
         max_col = int(raw) if raw is not None else (1 if m.get("type") == "scalar" else self._nv)

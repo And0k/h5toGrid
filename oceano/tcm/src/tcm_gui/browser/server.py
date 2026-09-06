@@ -107,20 +107,6 @@ def _rel_error(path: Path, root: Path) -> ValueError | None:
         return e
 
 
-def _frozen_variant(path: Path) -> Path | None:
-    """Dev-layout → frozen-layout source path, or None when not applicable.
-
-    Docs link sources as ``../../src/tcm/…`` — true in the dev repo, but the
-    frozen app bundles ``src/tcm`` as datas under ``tcm/``, so there the same
-    link must lose the ``src/`` segment.  Only used when the original path
-    does not exist (dev keeps its own layout).
-    """
-    parts = path.parts
-    if (i := parts.index("src") + 1 if "src" in parts else 0) and i < len(parts) and parts[i] == "tcm":
-        return Path(*parts[: i - 1], "tcm", *parts[i + 1 :])
-    return None
-
-
 def _dir_listing(directory: Path, *, show_source: bool = False) -> dict:
     """Immediate children of *directory* as relative hrefs for the viewer.
 
@@ -177,12 +163,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         try:
             path = Path(values[0]).resolve(strict=True)
         except (OSError, RuntimeError) as e:
-            # Frozen app bundles src/tcm under tcm/ → retry the dev-layout link
-            if (variant := _frozen_variant(Path(values[0]).resolve())) is not None and variant.is_file():
-                path = variant
-            else:
-                self._send(f"Invalid file path: {e}", status=400)
-                return None
+            self._send(f"Invalid file path: {e}", status=400)
+            return None
         if not path.is_file():
             self._send("Requested path is not a regular file.", status=404)
             return None

@@ -6,12 +6,67 @@ duplicating binary filters, data collectors, and version loading.
 """
 
 import os
+import sys
 from pathlib import Path
 
 from tcm import _constants
 
 PROJECT_ROOT = _constants.resource_root()
 SPEC_DIR = Path(os.path.abspath(__file__)).parent
+
+# Pixi env name (e.g. noh5-tcm) — suffixes build dirs so envs never collide
+ENV_NAME = Path(sys.executable).resolve().parent.name
+
+
+def build_layout(app: str, root: Path | None) -> tuple[Path, Path]:
+    """Resolve ``(--workpath, --distpath)`` for a PyInstaller build of *app*.
+
+    *root* (e.g. ``B:\\Temp`` via ``--build-root``) gets an env-suffixed
+    ``<app>-env=<ENV_NAME>`` subfolder — builds from different pixi envs never
+    collide and the project drive stays light; ``None`` keeps in-repo default.
+    """
+    base = root / f"{app}-env={ENV_NAME}" if root else PROJECT_ROOT
+    return base / "build", base / "dist"
+
+
+PROJECTS_ROOT = PROJECT_ROOT.parent  # oceano/ — sibling projects (collect_docs)
+REPO_ROOT = PROJECTS_ROOT.parent  # repository root — shared/* packages live here
+
+# First-party editable packages imported top-level by tcm/tcm_gui — shipped as
+# source datas.  Keys are repo-relative src paths, used verbatim as frozen dests
+# (`_MEIPASS` mirrors the dev repo root exactly; see rthook_repo_layout): the
+# statically visible import chain breaks at the datas-shipped tcm code, so
+# Analysis can't see `from utils import …` / `import meta_finder` inside it —
+# only datas guarantee every submodule
+FIRST_PARTY_PKGS: dict[str, Path] = {
+    rel: REPO_ROOT / rel
+    for rel in (
+        "shared/utils/src/utils",
+        "shared/veusz_helpers/src/veusz_helpers",
+        "oceano/meta_finder/src/meta_finder",
+    )
+}
+
+# Pure-module prefixes shipped as datas instead (avoids duplication at freeze);
+# "tcm" covers tcm_gui too
+DATA_PKG_PREFIXES = ("tcm", "utils", "veusz_helpers", "meta_finder")
+
+
+def collect_first_party_pkgs() -> list[tuple[str, str]]:
+    """``(src_file, dest_dir)`` datas for :data:`FIRST_PARTY_PKGS` (subdirs
+    preserved), skipping dev junk (`copy/` backups, tests, veusz-bound
+    ``veuszPropagate``, bytecode caches)."""
+    return [
+        (str(p), str(Path(pkg) / p.relative_to(d).parent))
+        for pkg, d in FIRST_PARTY_PKGS.items()
+        for p in d.rglob("*")
+        if p.is_file()
+        and "copy" not in p.parts
+        and "__pycache__" not in p.parts
+        and not p.name.startswith(("test_", "veuszPropagate"))
+        and not p.name.endswith((".pyc", ".pyo"))
+    ]
+
 
 # pyarrow internal .pyd extensions that depend on excluded native DLLs.
 _EXCLUDE_PYARROW_PYD: set[str] = {
@@ -42,6 +97,12 @@ _EXCLUDE_PYARROW_PYD: set[str] = {
 # NOTE: "zstd"/"lz4" bare names excluded — only Python extensions ("_zstd", "_lz4")
 # and pyarrow's "libzstd.dll".  The native zstd.dll / lz4.dll are kept because
 # llvmlite (numba) depends on zstd.dll.
+# "icu*" — ICU (International Components for Unicode) DLLs: icudt78 33 MB +
+# icuuc/icuin/icuio/icutu/icutest — Qt internationalization data pulled in
+# transitively (PySide6 is excluded as a module, but PyInstaller's binary
+# dependency walk still collects these from the conda env).  The Tkinter GUI
+# never loads them.  Component prefixes, not bare "icu", so data-file names
+# like "circulation…" (contains "icu") are not accidentally dropped.
 EXCLUDE_BINARIES: list[str] = [
     "mkl_",
     "pyarrow",
@@ -54,6 +115,18 @@ EXCLUDE_BINARIES: list[str] = [
     "charset_normalizer",
     "google_crc32c",
     "numcodecs",
+    # netCDF-C binary stack — dead weight once netCDF4 package is excluded
+    # (engine is h5netcdf/h5py); icu* alone is ~36 MB
+    "netcdf",
+    "libxml2",
+    "libcurl",
+    "psl-",
+    "icudt",
+    "icuuc",
+    "icuin",
+    "icuio",
+    "icutu",
+    "icutest",
 ]
 
 # Runtime DLLs for OpenBLAS + Python stdlib — shared by all tcm builds.
@@ -93,9 +166,12 @@ def should_keep_binary(entry: tuple, extra_exclude: list[str] | None = None) -> 
 
 
 def should_keep_data(entry: tuple) -> bool:
-    """Exclude todo/ & done/ internal dirs and pattern-matched files from bundled data."""
+    """Exclude todo/ & done/ dirs, dev junk (`AGENTS.md`, `descript.ion`,
+    ``*-`` backup scripts) and pattern-matched files from bundled data."""
     dest_name = entry[0]
     name = os.path.basename(dest_name).lower()
+    if name in ("descript.ion", "agents.md") or name.endswith(("-.py", "~.py", "-.md", "~.md")):
+        return False
     if any(pat in name for pat in EXCLUDE_BINARIES):
         return False
     parts = dest_name.replace("\\", os.sep).replace("/", os.sep).split(os.sep)
@@ -111,10 +187,28 @@ def load_meta(spec_dir: Path | None = None) -> dict:
 
 
 def collect_docs(exclude: set[str] | None = None) -> list[tuple[str, str]]:
-    """Collect ``docs/`` files as ``(src, dest_dir)`` tuples, excluding named files."""
+    """Collect ``docs/`` files as ``(src, dest_dir)`` tuples, excluding named files.
+
+    The frozen tree mirrors the dev repo — ``_MEIPASS`` ≙ repo root, project docs
+    land at ``oceano/<proj>/docs`` — so the docs' repo-relative crosslinks
+    (``../../…`` → project dir, ``../../../…`` → ``oceano/``) resolve identically
+    in dev and frozen.  Includes ``PROJECT_ROOT/docs`` (the ``tcm`` package) and
+    sibling-project docs (e.g. ``meta_finder/docs``).
+    """
     exclude = exclude or set()
-    return [
-        (str(p), str(p.parent.relative_to(PROJECT_ROOT)))
+    proj_rel = f"{PROJECTS_ROOT.name}/{PROJECT_ROOT.name}"
+    docs = [
+        (str(p), f"{proj_rel}/{p.parent.relative_to(PROJECT_ROOT).as_posix()}")
         for p in (PROJECT_ROOT / "docs").rglob("*")
         if p.is_file() and p.name not in exclude
     ]
+    # Sibling-project docs (e.g. meta_finder) — under oceano/ like their sources
+    for sibling in sorted(PROJECTS_ROOT.iterdir()):
+        if not sibling.is_dir() or sibling.name.startswith((".", "_")) or sibling.name == PROJECT_ROOT.name:
+            continue
+        for p in (sibling / "docs").rglob("*"):
+            if p.is_file() and p.name not in exclude:
+                docs.append(
+                    (str(p), f"{PROJECTS_ROOT.name}/{p.parent.relative_to(PROJECTS_ROOT).as_posix()}")
+                )
+    return docs

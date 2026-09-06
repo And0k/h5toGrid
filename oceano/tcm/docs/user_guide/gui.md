@@ -97,9 +97,16 @@ Click **Run**. The tool:
 
 - **Upper bar**: config-level progress — load → coefs → process → NC write → TSV write
 - **Lower bar**: stage-level dask task progress
-- **Log panel**: all pipeline log messages with color-coded severity
+- **Log panel**: all pipeline log messages with color-coded severity. File
+  paths in log lines render as links — files show their file name, directories
+  the full path; hovering a link shows the full path in the status bar, and
+  clicking one opens it with its OS-associated application (Ctrl+C copies a
+  selection with clickable hyperlinks). Hovering a link in the status bar
+  itself shows the full path in a row below the status text
 - **Status bar**: current stage description; preserves "Ready" at idle and
-  "Done — X%" after completion (cleared only at probe boundaries)
+  "Done — X%" after completion (cleared only at probe boundaries). Bare file
+  paths in statuses render as links — clicking one opens the file with its
+  OS-associated application
 
 ### 5. Pause / Resume
 

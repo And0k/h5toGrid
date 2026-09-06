@@ -275,8 +275,27 @@ def select_cfgs(dir_cfgs: Path, incl_type_nums: Set[str]) -> Tuple[Dict[str, str
     return cfgs_existed, cfgs
 
 
+_NAN_LIKE = frozenset({"?", "-", ""})
+
+
+def _nan_to_none(v):
+    """Map documented NaN-equivalents (``?, -, "", ~``) to None."""
+    return None if (v is None or (isinstance(v, str) and v in _NAN_LIKE)) else v
+
+
 def _meta_array_to_dict(
-    p, b, bd, s, lat=None, lon=None, time_st="", time_en="", burst_dt=None, bursts_t=None
+    p,
+    b,
+    bd,
+    s,
+    lat=None,
+    lon=None,
+    time_st="",
+    time_en="",
+    burst_dt=None,
+    bursts_t=None,
+    comment=None,
+    *rest,
 ):
     """Convert a flat metadata array into a labelled dict.
 
@@ -284,7 +303,12 @@ def _meta_array_to_dict(
     ``p`` (point/station), ``b`` (bottom depth), ``bd`` (height above bottom),
     ``s`` (device type&model symbol), ``c`` (coordinates), ``r`` (time range),
     ``t`` (burst_dt), ``T`` (bursts_t).
+
+    Trailing ``comment`` (11th ``info_devices`` element) and any further extras are accepted
+    and ignored — deployment notes must not break time-range (``r``) extraction.
+    Documented NaN-equivalents (``?, -, "", ~``) in numeric fields map to None.
     """
+    (b, bd, lat, lon) = (_nan_to_none(v) for v in (b, bd, lat, lon))
     return dict(
         zip(
             "pbdscrtT",

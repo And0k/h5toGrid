@@ -25,6 +25,17 @@ Single sources: `tcm/anchors.py::collect_anchors` (discovery),
 `tcm/bursts.py` (GET on scan / WRITE on run). No unfiltered `rglob`
 anywhere on the discovery path.
 
+## Configuring search patterns
+
+Device discovery patterns (`device_dir_pattern`, `ptn_device_dir_keywords`,
+`ptn_device_dir_sep`) and extension sets (`extensions_archive`, `extensions_text`,
+`extensions_hdf5`) are defined in
+[meta_finder config.py](../../../meta_finder/src/meta_finder/config.py) and
+imported by `tcm`. To customize which directories are recognized as device
+directories or which file extensions are processed, see
+[meta_finder config reference](../../../meta_finder/docs/reference/config_reference.md#device_dir_pattern)
+and override via `meta_finder`'s CLI (`--device-dir-pattern`) or Hydra config.
+
 ## Data flow
 
 ```text

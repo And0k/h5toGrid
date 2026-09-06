@@ -32,14 +32,15 @@ TABLES_AVAILABLE: bool = _tables is not None
 """Whether ``pytables`` is importable (needed for ``pd.HDFStore`` and HDF5 dimension scales)."""
 
 try:
-    import netCDF4 as _netCDF4
-
-    nc_engine = "h5netcdf"  # "netcdf4"
+    import h5netcdf as _h5netcdf  # h5py-backed NC engine — the only one used
 except ImportError:
-    _netCDF4 = None
-    nc_engine = "h5netcdf"
-NC4_AVAILABLE: bool = _netCDF4 is not None
-"""Whether ``netCDF4`` is importable (xarray NC engine)."""
+    _h5netcdf = None
+nc_engine = "h5netcdf"
+NC4_AVAILABLE: bool = _h5netcdf is not None
+"""Whether the NC4 xarray engine (``h5netcdf``) is importable — gates probe
+combine (:data:`nc_engine` is the single engine for all NC I/O; the ``netCDF4``
+package is never used — it would drag the netCDF-C stack: netcdf.dll →
+libxml2/libcurl → ICU ≈ 39 MB into frozen builds)."""
 
 # Supported extensions grouped by backend — single source of truth, mirrors
 # ``meta_finder.config.extensions_text|extensions_hdf5|extensions_archive`` so
@@ -105,7 +106,12 @@ def resource_root() -> Path:
     return PROJECT_ROOT.parent.parent
 
 
-DOC_DIR = resource_root() / "docs"
+# Documentation sits next to the project dir in both layouts: dev repo has
+# ``oceano/tcm/docs``; the frozen tree mirrors the repo (``_MEIPASS`` ≙ repo
+# root, package at ``oceano/tcm/src/tcm`` — see spec_common.collect_docs), so
+# the same two-parents-up formula lands on ``oceano/tcm/docs`` in both.  Readme
+# links via ``DOC_DIR.parent`` (readme*.md) resolve the same way.
+DOC_DIR = PROJECT_ROOT.parents[1] / "docs"
 
 
 @cache

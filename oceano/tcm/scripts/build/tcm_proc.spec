@@ -31,9 +31,11 @@ from spec_common import (
     EXCLUDE_BINARIES,
     RUNTIME_DLLs,
     collect_docs,
+    collect_first_party_pkgs,
     load_meta,
     should_keep_binary,
     should_keep_data,
+    DATA_PKG_PREFIXES,
 )
 
 META = load_meta()
@@ -43,7 +45,7 @@ block_cipher = None
 
 PROJECT_ROOT = SPEC_DIR.parent.parent
 TCM_SRC = "src/tcm"  # source layout under PROJECT_ROOT
-TCM_REL = "tcm"  # destination name in the bundled app
+TCM_REL = "oceano/tcm/src/tcm"  # repo-mirrored dest — _MEIPASS ≙ repo root
 
 _ENV_PREFIX = os.path.dirname(sys.executable)
 _ENV_LIB_BIN = os.path.join(_ENV_PREFIX, "Library", "bin")
@@ -66,6 +68,7 @@ print(
 _DOC_EXCLUDE = {"todo.md", "potential_functionality_and_improvement.md"}
 added_files = [
     (str(PROJECT_ROOT / TCM_SRC), TCM_REL),
+    *collect_first_party_pkgs(),
     (str(SPEC_DIR / "version_meta.json"), "."),
     *collect_docs(_DOC_EXCLUDE),
     *(collect_data_files("hydra", subdir="conf") + collect_data_files("hydra_plugins.hydra_colorlog")),
@@ -98,9 +101,6 @@ a = Analysis(
     hiddenimports=[
         "colorlog",
         "colorlog.formatter",
-        "utils.log_init",
-        "utils.logging_config",
-        "veusz_helpers.common.metadata",
         "omegaconf",
         "ruamel.yaml",
         "dask",
@@ -112,13 +112,13 @@ a = Analysis(
         "pandas",
         "pandas._libs",
         "xarray",
-        "tcm._constants",
     ]
     + collect_submodules("hydra")
     + collect_submodules("hydra_plugins"),
     hookspath=[str(PROJECT_ROOT / "scripts" / "build" / "hooks")],
     hooksconfig={},
     runtime_hooks=[
+        str(PROJECT_ROOT / "scripts" / "build" / "rthook_repo_layout.py"),
         str(PROJECT_ROOT / "scripts" / "build" / "rthook_hydra_pkg.py"),
         str(PROJECT_ROOT / "scripts" / "build" / "rthook_noh5_bins.py"),
     ],
@@ -127,13 +127,15 @@ a = Analysis(
         "tables",
         "pytables",
         "hdf5",
+        # netCDF4 package unused — engine is h5netcdf; excluding it drops the
+        # whole netCDF-C binary chain (netcdf.dll → libxml2/libcurl → ICU)
+        "netCDF4",
         "tcm.h5inclinometer_coef",
         "tcm.h5",
         "tcm.h5_dask_pandas",
         "tcm.incl_h5_utils",
         "tcm.incl_h5spectrum",
         "tcm.incl_calibr_hy",
-        "veusz_helpers.veuszPropagate",
         "mkl",
         "mkl_rt",
         "mkl_core",
@@ -291,7 +293,7 @@ _cli_extra = [".h5", ".hdf5"]
 a.binaries = [b for b in a.binaries if should_keep_binary(b, _cli_extra)]
 a.datas = [d for d in a.datas if should_keep_data(d)]
 
-a.pure = [m for m in a.pure if not m[0].startswith(TCM_REL)]
+a.pure = [m for m in a.pure if not m[0].startswith(DATA_PKG_PREFIXES)]
 # Exclude distributed scheduler modules (not available in noh5 environment)
 _dist_prefix = "distributed."
 a.pure = [m for m in a.pure if not (m[0] == "distributed" or m[0].startswith(_dist_prefix))]

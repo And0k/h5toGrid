@@ -81,3 +81,4 @@ sorted_paths = sort_data_paths(data_paths, ["i03"])
 - [CLI Guide](../user_guide/cli.md)
 - [Configuration Guide](../user_guide/configuration.md)
 - [Processing Guide](../user_guide/processing.md)
+- [CLI Internals](../project_developer_guide/CLI.md) — module architecture and function reference
