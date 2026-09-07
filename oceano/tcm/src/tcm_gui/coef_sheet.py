@@ -42,6 +42,7 @@ from ._browse_button import BrowseButtonManager
 from ._i18n import STRINGS as _S
 from ._placeholder import CellPlaceholder
 from ._sheet_metadata_node import MetadataNodeMixin
+from ._sheet_popup import disable_sort_menus, install_menu_patch
 from ._sheet_status import SheetHoverMixin
 from ._sheet_styles import SheetStylesMixin, _path_exists
 from ._sheet_tint import _DATE_COL, _DATE_PH_COL, SheetTintMixin
@@ -278,9 +279,6 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
                 ("cell_select", self._on_cell_select),
             ]
         )
-        # Override rc-menu "Insert column/row" to append at end (idx=None → end).
-        self.sh.popup_menu_add_command(_S["sheet.insert_col"], self._insert_col_at_end)
-        self.sh.popup_menu_add_command(_S["sheet.insert_row"], lambda e=None: self.sh.insert_row())
 
         self._meta: dict[Any, dict] = {}
         self._ph = CellPlaceholder()  # dim ISO-format hint for empty date cells
@@ -289,8 +287,11 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
         self._cfg: dict = {}
         self._readonly = False  # blocks editing until scan finds configs (non-full mode)
 
-        # Metadata node state + built-in "Insert rows above/below" interception
+        # Metadata node state + built-in "Insert rows above/below" interception,
+        # existing-menu patch (sort off, append-at-end extras, per-popup split
+        # labels, group undo) — see tcm_gui._sheet_popup.install_menu_patch.
         self._init_metadata_node()
+        install_menu_patch(self)
 
         # Hydra structured-config root type for cell classification
         self._config_root: type | None = None
@@ -422,6 +423,7 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
 
             self.sh.del_rows(rows=list(range(self.sh.total_rows())))
             self.sh.enable_bindings(["all"])
+            disable_sort_menus(self.sh)  # enable-all restores sort entries — keep them off
 
             self._nv = self._calc_nv(cfg, full)
             self.sh.headers([""] * self._nv)

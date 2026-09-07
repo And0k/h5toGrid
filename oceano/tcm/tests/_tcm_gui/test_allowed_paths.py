@@ -232,8 +232,9 @@ class TestRestrictedDirs:
         text = f"in {sub} from {root}\\f.nc"
         assert extract_allowed_paths(text, str(root)) == (str(sub), str(root / "f.nc"))
 
-    def test_root_itself_not_matched(self, tmp_path):
-        assert extract_allowed_paths(str(tmp_path), str(tmp_path)) == ()
+    def test_root_itself_matches(self, tmp_path):
+        """The allowed root itself is now linkable (device dir must link)."""
+        assert extract_allowed_paths(str(tmp_path), str(tmp_path)) == (str(tmp_path),)
 
     def test_spans_dir_full_file_shrunk(self, tmp_path):
         (tmp_path / "sub").mkdir()
@@ -323,7 +324,38 @@ class TestDrain:
         assert seen and seen[0] == ("hello\n", "info", "C:/root")
 
 
-# ── link_root: anchor-parent of _raw ─────────────────────────────────────────
+# ── restricted detection: root itself matches (device dir links) ────────────
+
+
+class TestRestrictedRootSelfMatch:
+    def test_root_itself_matches_when_directory(self, tmp_path):
+        """The allowed root (device dir) must link, not only paths under it."""
+        device = tmp_path / "260711_Pionerskiy@i"
+        raw = device / "_raw"
+        raw.mkdir(parents=True)
+        pat = _allowed_paths.allowed_path_re(str(device))
+        # device dir itself now matches (was the bug: only _raw and below matched)
+        assert [m.group(0) for m in pat.finditer(str(device))] == [str(device)]
+        assert _allowed_paths.path_kind(str(device)) == "dir"
+
+    def test_longest_match_wins_under_root(self, tmp_path):
+        """Greedy: device/_raw matches the whole string, not just device."""
+        device = tmp_path / "260711_Pionerskiy@i"
+        raw = device / "_raw"
+        raw.mkdir(parents=True)
+        pat = _allowed_paths.allowed_path_re(str(device))
+        text = str(raw)
+        assert [m.group(0) for m in pat.finditer(text)] == [text]
+
+    def test_root_with_commas_and_at(self, tmp_path):
+        """Real device names contain @ and commas — root still matches itself."""
+        device = tmp_path / "140228_Sambian@ADCP,ADV,i" / "inclinometer-Yantarniy"
+        raw = device / "_raw"
+        raw.mkdir(parents=True)
+        pat = _allowed_paths.allowed_path_re(str(device))
+        assert [m.group(0) for m in pat.finditer(str(device))] == [str(device)]
+        # and the _raw child still matches as the longer string
+        assert [m.group(0) for m in pat.finditer(str(raw))] == [str(raw)]
 
 
 class TestLinkRoot:
@@ -409,6 +441,25 @@ class TestHoverLine:
         label.set_text("s", raw=True)
         label.set_hover_line(r"C:\x\_y\_raw\f.nc")
         assert r"C:\x\_y\_raw\f.nc" in label.get("1.0", "end-1c")
+
+    def test_hover_row_is_plain_not_a_link(self, label):
+        """The revealed path in the status bar must not re-link into a hyperlink."""
+        label.set_text("Ready", raw=True)
+        label.set_hover_line(r"C:\x\_raw\f.nc")
+        text = label.get("1.0", "end-1c")
+        assert text.endswith(r"C:\x\_raw\f.nc")
+        # no link range anywhere — the revealed path is plain text, not a hyperlink
+        assert label.tag_ranges("link") == ()
+        # the row index carries only the plain normal tag, no link/data tags
+        row_start = f"1.0 + {len('Ready') + 1}c"
+        assert label.tag_names(row_start) == ("normal",)
+
+    def test_raw_status_path_not_autolinked(self, label):
+        """A path shown as raw status (e.g. a log-hover reveal) must not be re-linked."""
+        label.set_text(r"C:\data\f.nc", raw=True)
+        assert label.tag_ranges("link") == ()
+        # displayed verbatim (full path, not shrunk to a file name)
+        assert label.get("1.0", "end-1c") == r"C:\data\f.nc"
 
     def test_rerender_keeps_current(self, label):
         """rerender must keep _current — _fit_width reads it (else width collapses to 1)."""

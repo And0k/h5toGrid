@@ -72,16 +72,20 @@ entry — see the [meta_finder I/O formats](../../../meta_finder/docs/reference/
 are shown as autonumbered **`setup`** sublevels under `metadata`, each
 labelled by its station key. A single interval stays flat (no `setup` level).
 To split an interval into two adjacent ones, `right-click` the `metadata`
-node or a `setup` node and use **Insert rows above/below** (the sheet's
-built-in command is intercepted here):
+node or a `setup` node and use the split entries (the sheet's built-in
+*Insert rows* command is intercepted here — elsewhere it inserts plain rows).
+On a `metadata`/`setup` target the entries read **Insert setup N above/below**,
+where `N` is the number the copy will take:
 
 | Action | Copy placement | Copy `time_range` |
 |--------|----------------|-------------------|
-| Insert rows **above** | above the selected interval | `[1] := [0]` (copy shares the start) |
-| Insert rows **below** | below the selected interval | `[0] := [1]` (copy shares the end) |
+| Insert setup **N above** | above the selected interval | `[1] := [0]` (copy shares the start) |
+| Insert setup **N below** | below the selected interval | `[0] := [1]` (copy shares the end) |
 
 The new `setup` is numbered with the next free integer (`1` when splitting a
 flat single interval — the existing flat rows first move into node `0`).
+Each split is one step of the sheet's native *Undo* (`Ctrl+Z`); sorting
+entries are removed from the sheet context menus.
 Saving on **Run** writes the whole nested structure back, preserving every
 interval's station key.
 

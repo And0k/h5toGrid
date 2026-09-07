@@ -97,6 +97,11 @@ browse.file_label: "…\U0001f4c4"  # …+page emoji (Shift held)
 # ── Sheet context menu ────────────────────────────────────────────────────
 sheet.insert_col: "Insert column"
 sheet.insert_row: "Insert row"
+# Split labels for the metadata/setup rc entries (``{target}`` = new setup number).
+# Shown instead of tksheet's "Insert rows above/below" when the popup target is
+# the ``metadata`` root or a ``setup`` node (see _sheet_popup.target_label).
+sheet.insert_setup_above: "Insert setup {target} above"
+sheet.insert_setup_below: "Insert setup {target} below"
 sheet.input.path: "Per-probe data file — must be a concrete file path (not directory, glob, regex, or YAML). Change to redirect processing to a different source file for the same probe, keeping current config parameters"
 
 # ── Button labels ─────────────────────────────────────────────────────────

@@ -94,6 +94,11 @@ browse.file_label: "…\U0001f4c4"
 # ── Sheet context menu ────────────────────────────────────────────────────
 sheet.insert_col: "Вставить столбец"
 sheet.insert_row: "Вставить строку"
+# Подписи разбиения для пунктов metadata/setup (`{target}` = номер нового setup).
+# Показываются вместо tksheet'овых "Insert rows above/below", когда цель popup —
+# корень ``metadata`` или узел ``setup`` (см. _sheet_popup.target_label).
+sheet.insert_setup_above: "Вставить setup {target} выше"
+sheet.insert_setup_below: "Вставить setup {target} ниже"
 sheet.input.path: "Файл данных зонда — должен быть конкретным файлом (не каталог, glob, regex или YAML). Замените для обработки другого исходного файла того же зонда с параметрами текущей конфигурации"
 
 # ── Button labels ─────────────────────────────────────────────────────────

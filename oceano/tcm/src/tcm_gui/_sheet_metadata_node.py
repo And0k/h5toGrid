@@ -24,12 +24,18 @@ The model is ``self._setups = [[num, 11-array], …]`` — *num* doubles as the
 ``setup`` node label and the ``info_devices.yaml`` station key.
 ``_metadata`` stays available as a property alias for the first array, so
 App/scan call sites keep working unchanged.
+
+Menu presentation lives elsewhere: :mod:`tcm_gui._sheet_popup` removes the
+sorting entries once and relabels *Insert rows above/below* per popup, while
+:mod:`tcm_gui._sheet_undo` coalesces each split into one native-chronology
+undo step (``_snapshot_group``/``_restore_group`` below are its protocol).
 """
 
 from __future__ import annotations
 
+import copy
 import logging
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +60,9 @@ class MetadataNodeMixin:
         self._metadata_unsaved = False
         self._snap_meta: tuple = ()
         self._rc_sel_iid: Any = None  # last selected iid — rc-menu target oracle
+        # Group-undo bridge (tcm_gui._sheet_popup.install_menu_patch sets the real
+        # one; None keeps splits ungrouped).  Menu labels/sort-off live there too.
+        self._undo_bridge: Any = None
         # Intercept built-in "Insert rows above/below": an instance attribute
         # shadows the bound method for the menu lambdas (`MT.rc_add_rows(...)`).
         mt = self.sh.MT
@@ -127,20 +136,51 @@ class MetadataNodeMixin:
         ``above`` pins ``time_range[1] := time_range[0]`` into the copy,
         ``below`` pins ``time_range[0] := time_range[1]`` — the copy shares
         the boundary with the original, keeping the intervals adjacent.
-        Returns True when the tree was rebuilt.
+        The rebuild coalesces into one native-chronology step through the
+        group-undo bridge (``_undo_bridge``, installed by
+        ``tcm_gui._sheet_popup.install_menu_patch``).  Returns True when the
+        tree was rebuilt.
         """
-        if not (setups := getattr(self, "_setups", None)):
+        if not getattr(self, "_setups", None):
             return False
-        k = max(0, min(self._ref_setup_idx(ref), len(setups) - 1))
-        cp = list(setups[k][1])
-        src, dst = (6, 7) if above else (7, 6)
-        if len(cp) > dst:
-            cp[dst] = cp[src]
-        setups.insert(k + (0 if above else 1), [self._next_setup_num, cp])
-        self._next_setup_num += 1
-        self._metadata_unsaved = True
-        self._rebuild_metadata_rows()
-        return True
+        br = getattr(self, "_undo_bridge", None)
+        ctx = br.group() if br is not None else nullcontext()
+        with ctx:
+            setups = self._setups
+            k = max(0, min(self._ref_setup_idx(ref), len(setups) - 1))
+            cp = list(setups[k][1])
+            src, dst = (6, 7) if above else (7, 6)
+            if len(cp) > dst:
+                cp[dst] = cp[src]
+            setups.insert(k + (0 if above else 1), [self._next_setup_num, cp])
+            self._next_setup_num += 1
+            self._metadata_unsaved = True
+            self._rebuild_metadata_rows()
+            return True
+
+    def _snapshot_group(self) -> tuple:
+        """Opaque group-undo snapshot — consumed only by ``GroupUndoBridge``."""
+        return (
+            copy.deepcopy(getattr(self, "_setups", None)),
+            getattr(self, "_next_setup_num", 0),
+            getattr(self, "_cur_setup", 0),
+            bool(getattr(self, "_metadata_unsaved", False)),
+        )
+
+    def _restore_group(self, snap: tuple) -> None:
+        """Restore a group-undo snapshot — rebuilds the subtree, native pushes suspended."""
+        setups, nxt, cur, unsaved = snap
+        self._setups = copy.deepcopy(setups)
+        self._next_setup_num = nxt
+        self._cur_setup = cur
+        self._metadata_unsaved = unsaved
+        try:  # failure propagates — the bridge keeps the marker on its stack
+            from tcm_gui._sheet_undo import suspend_native_pushes
+
+            with suspend_native_pushes(self.sh.MT):
+                self._rebuild_metadata_rows()
+        except ImportError:
+            self._rebuild_metadata_rows()
 
     def _ref_setup_idx(self, ref: dict | None) -> int:
         """Setup index implied by *ref* — the node's own or the last selected."""
