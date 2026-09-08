@@ -129,9 +129,47 @@ named after the raw table — `{raw_table}.yaml` (inclinometers only; wave
 gauges have no coefs).
 
 Config and coefs search compares **canonical pcids only**: any corrected-file
-stem normalizes first (`i_90` ≡ `i90`, `i_1` ≡ `i01`), while the `-comment`
-suffix stays significant where backup copies must remain distinguishable
-([`cli._pcid_key()`](../../src/tcm/cli.py)).
+stem normalizes first (`i_90` ≡ `i90`, `i_1` ≡ `i01`), while the comment
+suffix stays significant where copies must remain distinguishable
+([`format.pcid_key()`](../../src/tcm/format.py) — comment separators/case
+normalized, so `INKL_P05_маг.TXT` matches `@i_p05-маг.yaml`).
+
+### Config-file matching to the normalized raw data file name
+
+A run YAML is processed only when **both** hold:
+
+1. Normalized YAML name matches the normalized input file name:
+   `format.pcid_key(yaml_stem) == format.pcid_key(input.path_stem)` —
+   `pcid_key` strips any `{prefix}@` part, lowercases, and applies the
+   `format.parse_name` regex (case-insensitive) to yield the canonical
+   `(pcid, comment)`: pcid must match always; the comment must match when
+   present on **either** side (so `-backup…` / renamed / comment-less stems
+   of one probe do not cross-match files of another comment).
+2. the `input.path` file exists. Else the YAML considered *stale* and ignored with a WARNING.
+
+Stale configs are **never deleted** — regeneration
+overwrites only same-name files; copies (whitespace in the YAML name) and
+identity-mismatched YAMLs stay on disk, warned and ignored.
+(pcid + comment via [`format.pcid_key`](../../../src/tcm/format.py)).
+
+
+Everything else is **ignored with a WARNING and never deleted**:
+
+| Case | Example | Detection | Handling |
+|---|---|---|---|
+| whitespace in YAML stem | `@i_p05 - Copy.yaml` | any whitespace in the stem | skipped before loading (WARNING) |
+| stem identity ≠ `input.path` | `@i_01_backup.yaml` → `INKL_P01.TXT` | `pcid_key` mismatch | skipped (WARNING "manual copy?") |
+| stale / orphan | `260625_1708@i_p5-0_v_trube.yaml` → missing file | `find_stale_cfgs()` (path missing) | not deleted; excluded from processing, orphan WARNING |
+
+Stale configs are **never deleted**: a regenerated config overwrites only a
+file of exactly the same name (`open(mode="w")`); stale / copy / mismatched
+YAMLs of other names stay on disk — removal is the user's decision.
+Regeneration dedup is canonical-identity keyed
+([`save_config_to_yaml()`](../../src/tcm/config_yaml.py)): an existing valid
+config of the **same** `(pcid, comment)` identity suppresses rewriting, an
+existing config of a different identity pointing at the same file does not —
+the correctly-named config is written alongside and the mismatched one falls
+under the rules above.
 
 | Canonical pcid | Raw table | `yaml_export/` coef file |
 |--------|-----------|--------------------------|
@@ -162,20 +200,27 @@ silently skipped.
 
 Coefs are stored in `/{tbl}/coef/` groups within `*.raw.nc` files:
 
-```
+```text
 ├─ G
 │  ├─ A  (3×3 float64)        — accelerometer gain
 │  └─ C  (3 float64)          — accelerometer offset
 ├─ H
 │  ├─ A  (3×3 float64)        — magnetometer gain
 │  ├─ C  (3 float64)          — magnetometer offset
-│  └─ azimuth_shift_deg (scalar) — azimuth correction
+│  └─ azimuth_shift_deg (1 float64) — azimuth correction
 │
-├─ Vabs0 (6 float64)           — velocity polynomial
+├─ Vabs0 (5 float64)           — trigonometric-series velocity coefs
+├─ max_incl_of_fit_deg (1 float64) — extreme tilt angle° (Θ_last, linear-tangent start)
+├─ calc_version (string attr)  — velocity method, e.g. `trigonometric(incl)`
 ├─ P_t   (3×3 float64)         — pressure-temperature polynomial (optional)
-├─ i     (scalar int)          — probe serial number
+├─ i     (1 int)               — probe serial number
 └─ date  (string attr)         — calibration date
 ```
+
+Numeric scalars persist as 1-elem datasets (never 0-d); strings persist as
+group attributes (fixed-width string datasets would truncate them).
+Legacy 6-element `Vabs0` files split on load — the last element becomes
+`max_incl_of_fit_deg` when unset — see [§Velocity computation](../methodology/velocity.md).
 
 Write: `save_coefs_to_nc()` in [`_xr/coefs.py`](../../src/tcm/_xr/coefs.py) —
 converts raw coefs dict to flat `{h5_path: value}` via `_coefs_to_h5_dict()`,

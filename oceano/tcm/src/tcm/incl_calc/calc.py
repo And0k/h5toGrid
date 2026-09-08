@@ -3,6 +3,7 @@ Low-level math kernels for physical calculations.
 Pure numpy implementations — no dask dependencies.
 _xr/calc.py wraps these with xr.apply_ufunc for dask.array support.
 """
+
 from collections.abc import Sequence
 from datetime import timedelta
 from typing import (
@@ -34,11 +35,11 @@ def fIncl_deg2force(incl_deg):
 
 
 # @allow_dask
-def fG(Axyz: Union[np.ndarray, 'da.Array'],
-       Ag: Union[np.ndarray, 'da.Array'],
-       Cg: Union[np.ndarray, 'da.Array']) -> Union[np.ndarray, 'da.Array']:
+def fG(
+    Axyz: Union[np.ndarray, "da.Array"], Ag: Union[np.ndarray, "da.Array"], Cg: Union[np.ndarray, "da.Array"]
+) -> Union[np.ndarray, "da.Array"]:
     """Apply linear coef to data matrix. Allows use of transposed Cg"""
-    assert Ag.any(), 'Ag coefficients all zeros!!!'
+    assert Ag.any(), "Ag coefficients all zeros!!!"
     if Cg.ndim < 2:
         Cg = Cg.reshape(-1, 1)
     return Ag @ (Axyz - Cg)
@@ -90,7 +91,7 @@ def trigonometric_series_sum(r, coefs):
         a = coefs[n * 2 - 1]
         b = coefs[n * 2]
         nr = n * r
-        out += (a * np.cos(nr) + b * np.sin(nr))
+        out += a * np.cos(nr) + b * np.sin(nr)
     return out
 
 
@@ -100,7 +101,9 @@ def rep_if_bad(checkit, replacement):
 
 def f_linear_k(x0, g, g_coefs):
     replacement = np.float64(10)
-    return min(rep_if_bad(np.diff(g(x0 - np.float64([0.01, 0]), g_coefs)).item() / 0.01, replacement), replacement)
+    return min(
+        rep_if_bad(np.diff(g(x0 - np.float64([0.01, 0]), g_coefs)).item() / 0.01, replacement), replacement
+    )
 
 
 def f_linear_end(g, x, x0, g_coefs):
@@ -116,32 +119,38 @@ def v_trig(r, coefs):
 def v_abs_from_incl(
     incl_rad: np.ndarray, coefs: Sequence, calc_version="trigonometric(incl)", max_incl_of_fit_deg=None
 ) -> np.ndarray:
-    if len(coefs) <= 4 or calc_version == 'polynom(force)':
+    if len(coefs) <= 4 or calc_version == "polynom(force)":
         if not len(incl_rad):
             return incl_rad
         return fVabs_from_force(fIncl_rad2force(incl_rad), coefs)
-    elif calc_version == 'trigonometric(incl)':
-        if max_incl_of_fit_deg:
-            max_incl_of_fit = np.radians(max_incl_of_fit_deg)
+    elif calc_version == "trigonometric(incl)":
+        if max_incl_of_fit_deg is None:
+            if len(coefs) < 6:
+                raise ValueError(
+                    f"trigonometric(incl) needs Θ_last: pass max_incl_of_fit_deg or 6-elem kVabs, got len={len(coefs)}"
+                )
+            series, threshold = coefs[:-1], coefs[-1]  # legacy: threshold appended as kVabs[-1]
         else:
-            max_incl_of_fit = np.radians(coefs[-1])
-            coefs = coefs[:-1]
-        with np.errstate(invalid='ignore'):
+            series = coefs[:5] if len(coefs) > 5 else coefs  # legacy kVabs[5] never a series coef
+            threshold = max_incl_of_fit_deg
+        with np.errstate(invalid="ignore"):
             return f_linear_end(
-                g=v_trig, x=incl_rad, x0=np.atleast_1d(max_incl_of_fit),
-                g_coefs=np.float64(coefs)
+                g=v_trig, x=incl_rad, x0=np.atleast_1d(np.radians(threshold)), g_coefs=np.float64(series)
             )
     else:
-        raise NotImplementedError(f'Bad calc method {calc_version}')
+        raise NotImplementedError(f"Bad calc method {calc_version}")
 
 
 def dekart2polar_df_uv(df, **kwargs):
-    if 'u' in df.columns:
+    if "u" in df.columns:
         kdegrees = 180 / np.pi
-        return df.eval(f"""
+        return df.eval(
+            f"""
 Vabs = hypot(u, v)
 Vdir = arctan2(u, v)*{kdegrees:.20}
-""", **kwargs)
+""",
+            **kwargs,
+        )
     else:
         return df
 
@@ -154,7 +163,7 @@ def norm_field(raw3d, coef_a2d, coef_c, raw3d_helps_recover=None):
     if coef_c.ndim < 2:
         coef_c = coef_c.reshape(-1, 1)
     # Apply coefs
-    if hasattr(raw3d, 'map_blocks'):  # dask.array
+    if hasattr(raw3d, "map_blocks"):  # dask.array
         s = raw3d.map_blocks(
             lambda a3d: coef_a2d @ (a3d - coef_c),
             dtype=np.float64,
@@ -164,13 +173,14 @@ def norm_field(raw3d, coef_a2d, coef_c, raw3d_helps_recover=None):
         s = coef_a2d @ (raw3d - coef_c)
 
     # If gain for some channel is zero
-    if (n_bad := (i_ch_bad := np.flatnonzero(coef_a2d.diagonal() == 0)).size):
+    if n_bad := (i_ch_bad := np.flatnonzero(coef_a2d.diagonal() == 0)).size:
         lf.warning(
             "Zero gain ({} values) for channel(s) {} -> recovering from other channels",
-            n_bad, " ".join("xyz"[i] for i in i_ch_bad),
+            n_bad,
+            " ".join("xyz"[i] for i in i_ch_bad),
         )
         i_ch_ok = [i for i in range(3) if i != i_ch_bad]
-        if hasattr(s, 'compute'):
+        if hasattr(s, "compute"):
             s = s.compute()
 
         s[i_ch_bad] = np.square(1 - (s[i_ch_ok] ** 2).sum(axis=0))
@@ -179,7 +189,7 @@ def norm_field(raw3d, coef_a2d, coef_c, raw3d_helps_recover=None):
 
         if raw3d_helps_recover is not None:
             _ = np.sign(raw3d_helps_recover[i_ch_bad])
-            if hasattr(raw3d_helps_recover, 'compute'):
+            if hasattr(raw3d_helps_recover, "compute"):
                 _ = _.compute()
             s[i_ch_bad] *= _
             return s
@@ -200,12 +210,13 @@ def norm_field(raw3d, coef_a2d, coef_c, raw3d_helps_recover=None):
     return s
 
 
-out_velocity_cols = ('Vabs', 'Vdir', 'v', 'u', 'inclination')
+out_velocity_cols = ("Vabs", "Vdir", "v", "u", "inclination")
 
 
 # --------------------------------------------------------------------------- #
 # Burst detection
 # --------------------------------------------------------------------------- #
+
 
 def _to_timedelta64(val) -> np.timedelta64:
     """Coerce *val* to ``np.timedelta64`` — accepts ``timedelta``, ``pd.Timedelta``, or ``np.timedelta64``."""
@@ -214,7 +225,7 @@ def _to_timedelta64(val) -> np.timedelta64:
     if isinstance(val, pd.Timedelta):
         return val.to_timedelta64()
     if isinstance(val, timedelta):
-        return np.timedelta64(int(val.total_seconds()), 's')
+        return np.timedelta64(int(val.total_seconds()), "s")
     raise TypeError(f"Cannot coerce {type(val).__name__} to np.timedelta64")
 
 
@@ -252,11 +263,11 @@ def i_bursts_starts(
         Largest inter-sample gap among detected boundaries.
         Zero when no gaps are found.
     """
-    dt_zero = np.timedelta64(0, 'ns')
+    dt_zero = np.timedelta64(0, "ns")
     max_hole = dt_zero
 
     # Unwrap DatetimeIndex to numpy array
-    if hasattr(tim, 'values'):
+    if hasattr(tim, "values"):
         tim = tim.values
     if not len(tim):
         return np.int32([]), 0, max_hole
@@ -267,12 +278,14 @@ def i_bursts_starts(
     if (non_mono := np.flatnonzero(dtime <= dt_zero)).size:
         lf.warning(
             "Non-monotonic time: {:d} decreasing + {:d} equal, first at index {:d}",
-            np.sum(dtime < dt_zero), np.sum(dtime == dt_zero), non_mono[0],
+            np.sum(dtime < dt_zero),
+            np.sum(dtime == dt_zero),
+            non_mono[0],
         )
 
     # Normalize dt_between_blocks
     if dt_between_blocks is None:
-        dt_between_blocks = dtime[:2].min() + np.timedelta64(1, 's')
+        dt_between_blocks = dtime[:2].min() + np.timedelta64(1, "s")
     elif isinstance(dt_between_blocks, (int, float)):
         # np.inf path — entire series is one burst
         return np.int32([0]), len(tim), max_hole
@@ -280,8 +293,8 @@ def i_bursts_starts(
         dt_between_blocks = _to_timedelta64(dt_between_blocks)
 
     # Guard against overflow when dt_between_blocks exceeds max timedelta64
-    max_delta_ns = np.timedelta64((1 << 63) - 1, 'ns')
-    if dt_between_blocks > max_delta_ns.astype('m8[s]'):
+    max_delta_ns = np.timedelta64((1 << 63) - 1, "ns")
+    if dt_between_blocks > max_delta_ns.astype("m8[s]"):
         return np.int32([0]), len(tim), max_hole
 
     i_burst = np.flatnonzero(dtime > dt_between_blocks)

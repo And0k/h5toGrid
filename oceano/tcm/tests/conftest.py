@@ -1,4 +1,5 @@
 """Shared fixtures for tcm tests — coefficients, configs, and DataFrames."""
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -13,12 +14,15 @@ import pytest
 # Coefficient fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def coefs_basic() -> Dict[str, Any]:
     """Minimal coefficient dict returned by incl_calc.coef_prepare."""
     return {
         "date": pd.Timestamp("2024-06-01"),
-        "kx": 1.0, "ky": 1.0, "kz": 1.0,
+        "kx": 1.0,
+        "ky": 1.0,
+        "kz": 1.0,
     }
 
 
@@ -31,6 +35,7 @@ def coef_zeroing_matrix_basic():
 # ---------------------------------------------------------------------------
 # Calibration coefficients (used by _xr and _calibration)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def identity_coefs() -> Dict[str, Any]:
@@ -62,16 +67,19 @@ def simple_coefs() -> Dict[str, Any]:
 # Config fragments
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def cfg_in_minimal() -> Dict[str, Any]:
     """Minimal ``cfg["in"]`` fragment required by :func:`cur_cfg`."""
     return {
         "path": None,
         "tables": ["incl*"],
-        "coefs": {"path": None},
+        "coefs": {
+            "path": None,
+            "calc_version": "trigonometric(incl)",
+            "max_incl_of_fit_deg": 5.0,
+        },
         "dt_min_binning_proc": pd.Timedelta("2s"),
-        "max_incl_of_fit_deg": 5.0,
-        "calc_version": 1,
     }
 
 
@@ -106,6 +114,7 @@ def cfg_full(cfg_in_minimal, cfg_out_minimal, cfg_filter_minimal) -> Dict[str, A
 # ---------------------------------------------------------------------------
 # DataFrame fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def df_simple() -> pd.DataFrame:

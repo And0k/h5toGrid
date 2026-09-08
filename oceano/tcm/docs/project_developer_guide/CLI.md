@@ -33,7 +33,7 @@ tcm/
                               pattern interpretation (_pattern_to_regex, _glob_to_regex),
                               chunked loading (load_from_csv_gen, open_csv_chunks)
     format.py               ← probe identity mapping (pcid, pcid_from_parts, parse_name, stem_to_pcid,
-                              to_pcid_from_name, probe_from_name, normalize_probes)
+                              to_pcid_from_name, probe_from_name, normalize_probes, pcid_key)
     paths.py                ← PathLayout — declarative, lazy path resolver; find_dir_raw, _infer_proc_dir,
                               find_dir_raw_absolute
     _constants.py           ← RAW_DIR_NAME, version info, optional-dependency flags
@@ -132,7 +132,14 @@ inherent numbered dropdown. `config_yaml.gen_metadata` derives
 `time_ranges` TCM-first (edge rows, including archive members via temp
 extraction) and overlays `meta_finder` burst gaps; failures stay at
 `WARNING` — never hidden. YAML stems are canonical
-`{yymmdd_hhmm}@pcid[-comment].yaml` (`i3.txt` → `i03`, comment preserved).
+`{yymmdd_hhmm}@pcid[-comment].yaml` (`i3.txt` → `i03`; comment = source-name
+part after the pcid, separators `-`/`_` normalized — `INKL_P05_маг` → `-маг`).
+Stale configs are never deleted — regeneration writes the canonical
+`{yymmdd_hhmm}@pcid[-comment].yaml` alongside (same-name overwrite only);
+dedup and the `process_loading_yaml` pre-filter match canonical identities
+via `format.pcid_key` (pcid + comment, `i_p05-маг` ≡ `INKL_P05_маг`), so raw
+device file names are first-class — see
+[Config ↔ file matching contract](/docs/reference/io_formats.md#config-file-matching).
 
 ## Entry point
 
@@ -435,12 +442,10 @@ duplication occurs because NC incremental append skips overlapping time
 ranges (see [Re-run behavior](#re-run-behavior)). Coefs are written twice
 (last YAML wins). Combined output deduplicates via `dict.fromkeys()`.
 
-**Stem validation**: before calling `process_fun`, the YAML stem and the
-`input.path` file stem (both after stripping the last `@`) are normalized to
-canonical pcids and compared (`cli._pcid_key()` — permissive across pcid
-formatting variants `i_90` ≡ `i90`, strict on the `-comment` suffix). If they
-differ, the YAML is skipped — this catches manually-copied configs (e.g.
-`@i_01_backup.yaml`) whose stem no longer matches the data file they reference.
+**Stem validation**: before calling `process_fun`, YAML stems are validated
+against `input.path` — whitespace-named configs are ignored, then canonical
+identities (`format.pcid_key()`) must agree. See
+[Config-file matching](/docs/reference/io_formats.md#config-file-matching).
 
 ### `call_in_raw_dir()` — entry point for non-processing pipelines
 
@@ -654,13 +659,11 @@ Each run YAML is linked to a corrected raw input file through **two mechanisms**
 - `stem_to_pcid(stem)` isolates the probe identity stripping `{prefix}@` and then `-{comment}` suffix.
 - `probe_from_name(pcid_stem)` → `parse_name()` regex extracts `(model, number)`.
 
-**Stem validation** (`processing.run()`): before processing, the YAML stem
-(after stripping `{datestamp}@`) and the `input.path` file stem (after
-stripping `@`) are normalized to canonical pcids and compared via
-`cli._pcid_key()` — permissive across pcid formatting variants (`i_90` ≡
-`i90`), strict on the `-comment` suffix. Mismatches are skipped with a
-warning, preventing manually-copied or renamed configs (e.g.
-`@i_p1 — копия.yaml`) from being silently used as valid configs.
+**Stem validation** (`processing.run()` → `cli.process_loading_yaml`):
+whitespace-named configs are ignored first, then YAML
+stem and `input.path` canonical identities must agree via
+`format.pcid_key()` — skipped with one WARNING, never deleted. Full rules:
+[Config-file matching](/docs/reference/io_formats.md#config-file-matching).
 
 ### Device-metadata `time_ranges` sync
 
@@ -790,7 +793,8 @@ part of the per-text-file config sweep.
    Changed coefs are **always** mirrored to the run YAML when `yaml_path` exists
    (not just when h5py is unavailable) — keeps the config readable.  Before first modification,
    `update_coefs_in_run_yaml` creates a timestamped backup
-   (`-backupYYMMDD_HHMMSS.yaml`); subsequent updates reuse the same backup.
+   (` - backupYYMMDD_HHMMSS.yaml` — whitespace-named, so auto-ignored by the
+   matching contract); subsequent updates reuse the same backup.
 6. **Phase 4 — Save data**: append raw data to `*.raw.nc` via `nc_incremental_update`
    (skip for NC sources **or** when raw NC fast-path was taken — see below).
    Runs after Phase 3 because coefs may be in the same NC file.
@@ -920,12 +924,12 @@ both support `M` as a shorthand for `Mx`, `My`, `Mz`. Expansion runs at compose 
 `_xr/physical.py::process()` applies the following stages in order:
 
 1. **filter_local** — NaN-out on raw columns where `cfg_filter.min`/`max` thresholds exceeded
-2. **calc_velocity** — calibration (`fG`/`fInclination`), `g_minus_1` NaN-out on computed `GsumMinus1`, `v_abs_from_incl(kVabs, calc_version)`, `h_minus_1` NaN-out on computed `HsumMinus1`, `polar2dekart`
+2. **calc_velocity** — calibration (`fG`/`fInclination`), `g_minus_1` NaN-out on computed `GsumMinus1`, `v_abs_from_incl(kVabs, calc_version, max_incl_of_fit_deg)`, `h_minus_1` NaN-out on computed `HsumMinus1`, `polar2dekart`
 3. **calc_pressure** — `polyval2d` + `bad_p_at_bursts_starts_period` (first-2-per-burst NaN-out)
 4. **binning** — `resample(time=dt_bin).mean()` with NaN threshold on valid-sample count.  When data is large (≥ 100 K rows), a persistent `TqdmCallback` is registered in `process()` and passed to each `binning()` call; the dataset is chunked along `time` (1 M rows) and `.compute()` materialises the dask graph so task-level progress is shown in a single bar shared across all bins (`_RESAMPLE_CHUNK_N`, `tqdm_cb` parameter).
 
 Coefficient application order (inside `calc_velocity`):
-`prepare_coefs` (zeroing rotation) → `fG(Ag,Cg)` → `fInclination` → `v_abs_from_incl(kVabs, calc_version)` → `azimuth_shift_deg` → `polar2dekart`
+`prepare_coefs` (zeroing rotation) → `fG(Ag,Cg)` → `fInclination` → `v_abs_from_incl(kVabs, calc_version, max_incl_of_fit_deg)` → `azimuth_shift_deg` → `polar2dekart`
 
 ### Memory management
 

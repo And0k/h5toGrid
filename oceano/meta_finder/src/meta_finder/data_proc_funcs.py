@@ -59,9 +59,11 @@ def serial_to_datetime(serial: float) -> str:
 _find_dated_files_cache: Dict[Tuple[str, str, str], List[Any]] = {}
 
 # Cache for read_file_lines_universal results to avoid re-reading same file groups
-# Key: (parent_dir_path, device_id, extension, max_lines, skip_nan_rows, encoding, sep, skip_header)
+# Key: (parent_dir_path, matched file group, max_lines, skip_nan_rows, encoding, sep, skip_header)
+# The matched group (first/last of a split-by-time series) — not the device id — is the
+# cache unit: files of one device differing in comment suffix are separate recordings
 _read_file_lines_cache: Dict[
-    Tuple[str, str, str, Optional[int], bool, Optional[str], Optional[str], Optional[int]],
+    Tuple[str, Tuple[str, ...], Optional[int], bool, Optional[str], Optional[str], Optional[int]],
     Tuple[List[str], Optional[str], Optional[str]],
 ] = {}
 
@@ -483,9 +485,7 @@ def _read_first_last_lines(
         is_raw = _is_raw_format(last_file_path.parent, last_file_path.name)
         with _open_text(last_file_path, encoding) as f:
             # Read last line efficiently without loading entire file
-            last_line = _get_last_line_efficiently(
-                f, skip_nan_rows=skip_nan_rows, is_raw=is_raw, sep=sep
-            )
+            last_line = _get_last_line_efficiently(f, skip_nan_rows=skip_nan_rows, is_raw=is_raw, sep=sep)
             if not last_line and lines:
                 last_line = lines[-1]
 
@@ -634,22 +634,12 @@ def read_file_lines_universal(
             # Regular files
             parent_dir = dir_archive / rel_path.parent
             if matching_files := _find_matching_files_in_directory(parent_dir, base_name):
-                # Check cache for reading results using the same key as file discovery
-                # For split files, all files in the same group will have same device and extension
-                # Extract device_id and extension from base_name for cache key
-                base_meta = parse_filename_for_metadata(base_name)
-                device_id = (
-                    base_meta["devices"][0]
-                    if base_meta
-                    and "devices" in base_meta
-                    and base_meta["devices"]
-                    and base_meta["devices"][0] != "*"
-                    else "*"
-                )
+                # Cache key = matched file group (first/last of a split-by-time series),
+                # not the device id — files of one device differing in comment suffix
+                # are separate recordings and must not share cached reads
                 cache_key = (
                     str(parent_dir),
-                    device_id,
-                    rel_path.suffix,
+                    tuple(map(str, matching_files)),
                     max_lines,
                     skip_nan_rows,
                     encoding,
@@ -673,21 +663,10 @@ def read_file_lines_universal(
         else:
             # Archive files
             if matching_files := _find_matching_files_in_archive(dir_archive, rel_path):
-                # Check cache for reading results using the same key as file discovery
-                # Extract device_id and extension from base_name for cache key
-                base_meta = parse_filename_for_metadata(base_name)
-                device_id = (
-                    base_meta["devices"][0]
-                    if base_meta
-                    and "devices" in base_meta
-                    and base_meta["devices"]
-                    and base_meta["devices"][0] != "*"
-                    else "*"
-                )
+                # Cache key = matched file group (see loose-file branch above)
                 cache_key = (
                     str(dir_archive),
-                    device_id,
-                    rel_path.suffix,
+                    tuple(map(str, matching_files)),
                     max_lines,
                     skip_nan_rows,
                     encoding,
@@ -700,8 +679,12 @@ def read_file_lines_universal(
                     return _read_file_lines_cache[cache_key]
 
                 lines, last_line = _read_first_last_lines_from_archived_files(
-                    dir_archive, matching_files, max_lines, skip_nan_rows=skip_nan_rows,
-                    encoding=encoding, sep=sep,
+                    dir_archive,
+                    matching_files,
+                    max_lines,
+                    skip_nan_rows=skip_nan_rows,
+                    encoding=encoding,
+                    sep=sep,
                 )
                 _read_file_lines_cache[cache_key] = (lines, last_line, last_error)
             else:

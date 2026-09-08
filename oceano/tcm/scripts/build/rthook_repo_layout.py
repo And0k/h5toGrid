@@ -15,7 +15,6 @@ _base = sys._MEIPASS
 sys.path[:0] = [
     os.path.join(_base, "shared", "utils", "src"),
     os.path.join(_base, "shared", "veusz_helpers", "src"),
-    os.path.join(_base, "oceano", "tcm", "src"),
-    os.path.join(_base, "oceano", "tcm_gui", "src"),
+    os.path.join(_base, "oceano", "tcm", "src"),  # tcm + tcm_gui — as in dev, both under oceano/tcm/src
     os.path.join(_base, "oceano", "meta_finder", "src"),
 ]

@@ -14,7 +14,7 @@ default_page.stem: "Значения по умолчанию"
 path_lbl.text: "Путь поиска"
 # path_field=path_lbl status = doc-driven general (`config_reference.md` `path_field`) + STR suffix.
 path_field.tooltip: "Редактируйте по Enter или двойному клику или выберите кнопкой обзора"
-path_field.placeholder: "D:/data/_raw"
+path_field.placeholder: "D:/data/_raw/*i*.txt"
 path_field.placeholder_files: "D:/data/_raw/(i*raw_file1[.]txt|i*raw_file2[.]txt)"
 path_field.placeholder_probe: "i_01_измерение.txt"
 path_field.status.dirs: "**(Пере)загружает конфигурации во вкладки**. Кнопка `Обзор` открывает диалог выбора *каталога* (для поиска в ней данных с маской по умолчанию `*i*.txt`): для выбора *файлов* нажмите с `Shift`."
@@ -44,7 +44,7 @@ prog_status.status: "Текущий этап и прогресс обработ�
 log.status: "Журнал обработки с цветовой маркировкой уровня ({#debug}отладка{/}/{#info}инфо{/}/{#warning}предупреждение{/}/{#error}ошибка{/})"
 prog_stage.status: "Прогресс текущего этапа в активной конфигурации"
 tab.status: "Конфигурация {path}"  # template — _add_page formats {path}; bare (backtick-free) full path auto-links to the file name
-browse_btn.status: "Выбор **каталога**; удерживайте **Shift** для выбора **файлов**"
+browse_btn.status: "Выбор **каталога**; удерживайте `Shift` для выбора **файлов**"
 browse_btn.status_files: "Выбор файлов"
 empty_area.synced: >-
   Редактируйте таблицу (изменения сохранятся перед запуском).
@@ -92,8 +92,10 @@ browse.dir_label: "…\U0001f4c1"
 browse.file_label: "…\U0001f4c4"
 
 # ── Sheet context menu ────────────────────────────────────────────────────
-sheet.insert_col: "Вставить столбец"
-sheet.insert_row: "Вставить строку"
+# Добавить (не Вставить): оба пункта только дописывают — столбец в конец,
+# строку дочерней к выбранному узлу; в середину дерева ничего не вставляется.
+sheet.insert_col: "Добавить столбец"
+sheet.insert_row: "Добавить строку"
 # Подписи разбиения для пунктов metadata/setup (`{target}` = номер нового setup).
 # Показываются вместо tksheet'овых "Insert rows above/below", когда цель popup —
 # корень ``metadata`` или узел ``setup`` (см. _sheet_popup.target_label).
@@ -109,6 +111,7 @@ run_btn.disabled_no_pages: "Нет конфигураций — сначала �
 run_btn.disabled_invalid_path: "Запуск обработки (не активен: конфигурации не должны содержать {#error}ошибок{/})"
 
 # ── Status / progress text ────────────────────────────────────────────────
+status.default: "Что прикажете?"
 status.ready: "Загружены"
 status.loading: "Загрузка\u2026"
 status.starting: "Запуск\u2026"

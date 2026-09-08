@@ -1,4 +1,5 @@
 """Tests for tcm/processing.py — coefficient resolution and run_processing dispatch."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -88,10 +89,18 @@ class TestGetCoefsArrayConversion:
     @pytest.mark.parametrize(
         ("key", "value", "expected_dtype", "expected_shape"),
         [
-            pytest.param("Ag", [[0.00173, 0, 0], [0, 0.00173, 0], [0, 0, 0.00173]], np.float64, (3, 3), id="Ag-2d"),
+            pytest.param(
+                "Ag", [[0.00173, 0, 0], [0, 0.00173, 0], [0, 0, 0.00173]], np.float64, (3, 3), id="Ag-2d"
+            ),
             pytest.param("Cg", [478.49, -160.82, 363.21], np.float64, (3,), id="Cg-1d"),
-            pytest.param("kVabs", [-11.21, 19.88, 17.39, 6.35, -6.80, 71.45], np.float64, (6,), id="kVabs"),
-            pytest.param("P_t", [[-9.99, -0.00079, -9.42e-05], [5.25e-06, 1.0e-08, 0.0], [0.0, 0.0, 0.0]], np.float64, (3, 3), id="P_t-3d"),
+            pytest.param("kVabs", [-11.21, 19.88, 17.39, 6.35, -6.80], np.float64, (5,), id="kVabs"),
+            pytest.param(
+                "P_t",
+                [[-9.99, -0.00079, -9.42e-05], [5.25e-06, 1.0e-08, 0.0], [0.0, 0.0, 0.0]],
+                np.float64,
+                (3, 3),
+                id="P_t-3d",
+            ),
         ],
     )
     def test_list_becomes_ndarray(self, key, value, expected_dtype, expected_shape):
@@ -111,6 +120,12 @@ class TestGetCoefsArrayConversion:
         """'date' key must remain a str/datetime, not be converted to ndarray."""
         result = get_coefs([], "i01", coefs_ovr={"Ag": [[1]], "date": "2023-08-13T07:29:28"})
         assert not isinstance(result["date"], np.ndarray)
+
+    def test_legacy_six_elem_kvabs_override_splits(self):
+        """6-elem kVabs override → 5 trig coefs + max_incl fallback from [5]."""
+        result = get_coefs([], "i01", coefs_ovr={"kVabs": [-11.21, 19.88, 17.39, 6.35, -6.80, 71.45]})
+        assert result["kVabs"].shape == (5,)
+        assert float(np.asarray(result["max_incl_of_fit_deg"]).flat[0]) == pytest.approx(71.45)
 
 
 @pytest.mark.xr
@@ -164,15 +179,19 @@ class TestRunProcessingDispatch:
         from datetime import timedelta
 
         out_dir = str(tmp_path / "out")
-        cfg = DictConfig({
-            "input": {"path": "/dummy.txt"},
-            "out": {"dt_bins": [0], "dir": out_dir},
-            "filter": {},
-            "program": {"return_": Return.END, "verbose": "INFO"},
-            "files": [{"path": "/f1.txt", "coefs": {}}, {"path": "/f2.txt", "coefs": {}}],
-        })
+        cfg = DictConfig(
+            {
+                "input": {"path": "/dummy.txt"},
+                "out": {"dt_bins": [0], "dir": out_dir},
+                "filter": {},
+                "program": {"return_": Return.END, "verbose": "INFO"},
+                "files": [{"path": "/f1.txt", "coefs": {}}, {"path": "/f2.txt", "coefs": {}}],
+            }
+        )
         # main_init converts DictConfig → plain dict; return a minimal mock
-        mocker.patch.object(_cli, "main_init",
+        mocker.patch.object(
+            _cli,
+            "main_init",
             return_value={
                 "input": {"path": Path("/dummy.txt"), "tables": ["incl*"]},
                 "out": {"dt_bins": [timedelta(0)], "dir": out_dir},
@@ -186,7 +205,6 @@ class TestRunProcessingDispatch:
         mock_batch = mocker.patch.object(_processing, "_load_batch", return_value=(None, None))
         run_processing(cfg)
         mock_batch.assert_called_once()
-
 
 
 # ---------------------------------------------------------------------------

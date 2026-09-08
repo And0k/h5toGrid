@@ -86,7 +86,7 @@ def _load_coefs_from_yaml(yaml_path: Path) -> dict[str, Any] | None:
     coefs_dict.setdefault("dates", {})
 
     lf.debug("Loaded coefficients from {}", yaml_path)
-    return coefs_dict
+    return _xr_coefs.split_kvabs_threshold(coefs_dict)
 
 
 def _resolve_coef_date(coefs_dict: dict[str, Any], coef_grp) -> None:
@@ -180,7 +180,7 @@ def load_coefs(store, tbl: str):
         # group attr, scalar bytes dataset, numeric array (legacy μs-since-epoch)
         _resolve_coef_date(coefs_dict, coef_grp)
 
-    return coefs_dict
+    return _xr_coefs.split_kvabs_threshold(coefs_dict)
 
 
 def get_coefs(coefs_paths: Sequence, tbl: str, coefs_ovr: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -333,7 +333,8 @@ def get_coefs(coefs_paths: Sequence, tbl: str, coefs_ovr: Mapping[str, Any] | No
         "n_default": max(0, len(defaults) - len(from_file) - len(from_ovr)),
         "paths": list(coefs_paths),
     }
-    return coefs_load
+    # Canonical velocity form: legacy kVabs[5] → max_incl_of_fit_deg (fallback only when unset).
+    return _xr_coefs.split_kvabs_threshold(coefs_load)
 
 
 def coefs_format_for_h5(coef: Mapping[str, Any], pcid: str = None, date: str | None = None):

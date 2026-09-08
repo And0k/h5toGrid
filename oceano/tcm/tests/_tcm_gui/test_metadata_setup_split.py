@@ -218,3 +218,43 @@ def test_autofill_burst_noop_when_filled():
     cs._metadata = _single_interval_arr()
     cs._build_metadata()
     assert not cs.autofill_burst(99, 999), "filled burst pair must not rewrite"
+
+
+@pytest.mark.parametrize(
+    ("anchor", "calls_insert"),
+    [
+        ("hydra", True),
+        ("leaf", False),
+        ("setup", False),
+        ("root", False),
+        (None, False),
+    ],
+    ids=["hydra-child", "paired-leaf", "setup-node", "meta-root", "no-selection"],
+)
+def test_add_row_child_only_parents_hydra(anchor, calls_insert, test_description="child-add routing"):
+    """Extras ``Add row`` parents a tracked child under hydra nodes — never metadata, never top-level."""
+    cs, mock_sh = _harness()
+    cs._metadata = _single_interval_arr()
+    cs._build_metadata()
+    anchors = {
+        "hydra": {"parent": "input", "key": "path"},
+        "leaf": {"is_metadata": True, "setup_idx": 0, "parent": "root", "label": "time_range"},
+        "setup": {"is_setup": True, "setup_idx": 0, "parent": "root"},
+        "root": {"is_metadata_root": True, "parent": ""},
+    }
+    if anchor is None:
+        cs._rc_sel_iid = None
+    else:
+        cs._meta["anchor"] = anchors[anchor]
+        cs._rc_sel_iid = "anchor"
+    mock_sh.insert.reset_mock()
+    new_iid = cs._add_row_child()
+    if not calls_insert:
+        assert new_iid is None, f"{test_description}: {anchor} must deny"
+        mock_sh.insert.assert_not_called()
+        return
+    assert new_iid is not None, f"{test_description}: hydra parent must insert"
+    assert mock_sh.insert.call_args.kwargs.get("parent") == "anchor", (
+        f"{test_description}: child must parent under selection — {mock_sh.insert.call_args}"
+    )
+    assert new_iid in cs._user_row_set(), f"{test_description}: child must be tracked deletable"

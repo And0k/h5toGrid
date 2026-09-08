@@ -32,15 +32,8 @@ Expected [input data layout](io_formats.md#directory-layout):
 
 ## YAML file and command-line configuration fields (typed configuration via Hydra/OmegaConf)
 
-YAML configs live at `cfg_proc/run/{yymmdd_hhmm}@pcid[-comment].yaml` inside the raw data directory, where
-- `yymmdd_hhmm` — timestamp from `input.time_ranges[0]` or row files 1st row (absent when not found);
-- pcid — canonical identificator, e.g. `i3.txt` → `i03`;
-- `-comment` — the suffix with its separator "-" (if any) is left unchanged.
-
 All fields are defined in `tcm/schema.py` via the `Config` dataclass and registered groups
 (`input`, `out`, `filter`, `program`).
-
-Every run configuration YAML starts with `# @package _global_` so Hydra merges it into the top-level Config.
 
 ## `input` — Data source & its initial processing parameters
 
@@ -61,8 +54,6 @@ Every run configuration YAML starts with `# @package _global_` so Hydra merges i
 | `corr_time_mode` = `True` | Integer-second timestamp handling: `True` = snap to sub-second grid, `None` = mask-only, `"delete_inversions"` = clean but keep timestamps. |
 | `corr_time_outlier_threshold_s` = `0.6` | Spike detection sensitivity (seconds). Lower = stricter. Samples deviating more than this from neighbors are flagged. |
 | `dt_interp_between` = `1.5` | Minimum gap (seconds) to distinguish a real data hole from jitter within a burst. |
-| `max_incl_of_fit_deg` = `None` | Extreme tilt angle° where the velocity curve switches to the linear tangent at Θ_last. Overrides the last element of `kVabs` — see [§Velocity computation](../methodology/velocity.md). |
-| `calc_version` = `'trigonometric(incl)'` | Velocity calculation method. `trigonometric(incl)` (formulas (1)–(3)) is standard; other variants are experimental — see [§Velocity computation](../methodology/velocity.md). |
 | `dt_hole_warning` = `600` | Alert threshold for data gaps (seconds). Gaps larger than this trigger a warning. `None` disables. |
 | `fs_rounding` = `100` | Round estimated sampling frequency to the nearest multiple of this value. 0 = exact estimation. |
 | `tables_log` = `['{}/logFiles']` | NC log group name template (`{}` → table name). |
@@ -70,6 +61,19 @@ Every run configuration YAML starts with `# @package _global_` so Hydra merges i
 Only `coefs` is non-optional — all other fields fall back to their defaults.
 Field types: [`ConfigIn_InclProc` dataclass](../../src/tcm/schema.py)
 (load-stage + calib: `ConfigInCalib_InclProc`).
+
+
+This fields can be passed through CLI directly or through YAML configs, that live at `cfg_proc/run/{yymmdd_hhmm}@pcid[-comment].yaml` inside the raw data directory. Here:
+- `yymmdd_hhmm` — timestamp from `input.time_ranges[0]` or row files 1st row (absent when not found);
+- pcid — canonical identificator, e.g. `i3.txt` → `i03`;
+- `-comment` — the source-name part after the pcid (case and `-`/`_` separators normalized:
+  `INKL_P05_маг.TXT` → `-маг`) — multiple files of one probe get distinct, collision-free names.
+To be applied YAML name should match raw data file name (stem). Full rules:
+[Config-file matching](io_formats.md#config-file-matching).
+
+
+Every run configuration YAML starts with `# @package _global_` so Hydra merges it into the top-level Config.
+
 
 ### `input.path`
 Absolute path to the data file.  The filename **determines probe identity** (pcid):
@@ -120,7 +124,7 @@ When generating the configuration, they are copied to it from the coefficients f
 | `Ah` = Identity | Magnetometer scale matrix: `H = Ah @ (Mxyz − Ch)` |
 | `Ch` = `[10, 10, 10]` | Magnetometer bias vector |
 | `Rz` = Identity | Sensor-to-instrument alignment rotation applied after calibration |
-| `kVabs` = `[10, −10, −10, −3, 3, 70]` | Velocity polynomial `Vabs(inclination)`, formula (3) — see [§Velocity computation](../methodology/velocity.md) |
+| `kVabs` = `[10, −10, −10, −3, 3]` | Trigonometric-series coefs of `Vabs(inclination)`, formula (3) — see [§Velocity computation](../methodology/velocity.md) |
 | `P_t` = `None` | Pressure–temperature 2‑D polynomial for `p`‑type probes; when set it supersedes `P`/`PBattery`/`PTemp`[↓](#inputcoefsp_t) |
 | `P` = `[0, 1]` | Auxiliary sensor #1 linear correction: `y = P[0] + P[1]·x` |
 | `PBattery` = `[0, 1]` | Battery voltage linear correction |
@@ -129,6 +133,8 @@ When generating the configuration, they are copied to it from the coefficients f
 | `dates` = `{}` | Per‑component calibration dates |
 | `date` = `None` | Overall calibration date |
 | `path` = `tcm/cfg/coef/calibration.h5` | Coefficient source — a directory of per-probe YAMLs or a single HDF5/NC/YAML file[↓](#inputcoefs_path) |
+| `max_incl_of_fit_deg` = `70` | Extreme tilt angle° (Θ_last) where the velocity curve switches to the linear tangent [§Velocity computation](../methodology/velocity.md). |
+| `calc_version` = `'trigonometric(incl)'` | Velocity calculation method. `trigonometric(incl)` (formulas (1)–(3)) is standard; other variants are experimental — see [§Velocity computation](../methodology/velocity.md). |
 
 Field types and shapes: [`ConfigInCoefs_InclProc` dataclass](../../src/tcm/schema.py).
 Resolution priority (own config > `input.coefs.path` file > bundled `yaml_export/` >
@@ -143,7 +149,7 @@ instrument was tilted in a **known direction** (e.g. known Northward tilt).
 The pipeline computes the azimuth shift from calibrated mag+accel unit vectors
 and writes `azimuth_shift_deg` to the per-probe YAML.
 
-`input.calib.azimuth_add` (manual offset, degrees) and `input.calib.coordinates` (magnetic declination, current date) 
+`input.calib.azimuth_add` (manual offset, degrees) and `input.calib.coordinates` (magnetic declination, current date)
 are applied **on top of** the data-computed azimuth.
 
 ### `input.coefs.P_t`
@@ -330,11 +336,10 @@ typed despike overrides:
 
 ## `proc` — Per-entry-point processing parameters (optional)
 
-`proc` is an **optional** group per entry point. Processing entry has none.
+`proc` is an **optional** group per entry point. Not used in usual processing.
 
 | Entry point | `proc` option | Dataclass | Purpose |
 |-------------|--------------|-----------|---------|
-| Processing | *(none)* | — | All processing params live in `out.dt_bins` + `input.calc_version` |
 | Calibration | `calib` | `ConfigProcCalib` | Maps to `PipelineConfig` fields |
 | Spectrum | `spectrum` | `ConfigProcSpectrum` | **Reserved** — spectrum module not ported yet |
 
@@ -377,7 +382,7 @@ raw data directory — the journal accompanying the data.
 
 > In the GUI the rows are paired: `point, symbol | sea depth, h_above | lat, lon | time_range | burst_dt/t | comment`. You can specify your own save path, not the one from which metadata is loaded when searching for data. `time_range` ↔ `input.time_ranges[[0,-1]]` are bidirectionally synced where unset, on scan.
 >
-> **Several deployment intervals** (nested `info_devices.yaml` entry — *Multiple intervals* in the [meta_finder I/O formats](../../../meta_finder/docs/reference/io_formats.md)) render the paired rows under autonumbered **`setup`** sublevels (`0`, `1`, …), each labelled by its station key; a single interval stays flat (no `setup` level is shown). The sheet's *Insert rows above/below* (`right-click`) splits an interval into a copy pinned to the shared boundary — **above** sets the copy's `time_range[1] = time_range[0]`, **below** sets `time_range[0] = time_range[1]` — and numbers the new `setup` with the next free integer (`1` when splitting a flat single interval; existing flat rows first move into node `0`). On a `metadata`/`setup` target the entries read *Insert setup N above/below* (`N` = the number the copy will take; localized via `sheet.insert_setup_above/below` in `str.yaml / str_ru.yaml`); sorting entries are removed from the sheet menus. Each split is a single native *Undo* step (no second undo system — other edits undo through tksheet as before).
+> **Several deployment intervals** (nested `info_devices.yaml` entry — *Multiple intervals* in the [meta_finder I/O formats](../../../meta_finder/docs/reference/io_formats.md)) render the paired rows under autonumbered **`setup`** sublevels (`0`, `1`, …), each labelled by its station key; a single interval stays flat (no `setup` level is shown). The sheet's *Insert rows above/below* (`right-click`) splits an interval into a copy pinned to the shared boundary — **above** sets the copy's `time_range[1] = time_range[0]`, **below** sets `time_range[0] = time_range[1]` — and numbers the new `setup` with the next free integer (`1` when splitting a flat single interval; existing flat rows first move into node `0`). On a `metadata`/`setup` target the entries read *Insert setup N above/below* (`N` = the number the copy will take; localized via `sheet.insert_setup_above/below` in `str.yaml / str_ru.yaml`); sorting entries are removed from the sheet menus. Each split is a single native *Undo* step (no second undo system — other edits undo through tksheet as before). Paired rows are fixed (insert denied there and on top-level nodes — no insertion ever creates a top-level node); *Delete* applies only to self-added rows/columns (`Add row` parents a child under the selection, `Add column` appends at the end); a read-only sheet disables the whole context menu.
 
 
 
@@ -395,7 +400,7 @@ The path for saving the metadata on *`Run`*
 
 
 #### Detailed
-By default, changes will be saved on *`Run`* the processing to the same location they were downloaded from. Don't change the path if you want to save metadata changes in the file that is automatically loaded during scan: `info_devices.yaml` in same directory as the raw data directory (`_raw`). 
+By default, changes will be saved on *`Run`* the processing to the same location they were downloaded from. Don't change the path if you want to save metadata changes in the file that is automatically loaded during scan: `info_devices.yaml` in same directory as the raw data directory (`_raw`).
 ### `program.return_`
 
 #### Detailed

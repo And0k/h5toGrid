@@ -3,6 +3,7 @@ Deterministic tests for low-level math kernels (tcm.incl_calc.calc).
 
 Known inputs → known outputs, no mocking.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -23,6 +24,7 @@ from tcm.incl_calc.calc import (
 # fG — calibration matrix application
 # --------------------------------------------------------------------------- #
 
+
 class Test_fG:
     """fG(Axyz, Ag, Cg) = Ag @ (Axyz - Cg)."""
 
@@ -30,20 +32,32 @@ class Test_fG:
         ("A", "Ag_diag", "Cg", "expected"),
         [
             pytest.param(
-                [[1, 2], [3, 4], [5, 6]], [1, 1, 1], [0, 0, 0],
-                [[1, 2], [3, 4], [5, 6]], id="identity",
+                [[1, 2], [3, 4], [5, 6]],
+                [1, 1, 1],
+                [0, 0, 0],
+                [[1, 2], [3, 4], [5, 6]],
+                id="identity",
             ),
             pytest.param(
-                [[10], [20], [30]], [1, 1, 1], [1, 2, 3],
-                [[9], [18], [27]], id="offset-only",
+                [[10], [20], [30]],
+                [1, 1, 1],
+                [1, 2, 3],
+                [[9], [18], [27]],
+                id="offset-only",
             ),
             pytest.param(
-                [[1], [1], [1]], [2, 3, 4], [0, 0, 0],
-                [[2], [3], [4]], id="gain-only",
+                [[1], [1], [1]],
+                [2, 3, 4],
+                [0, 0, 0],
+                [[2], [3], [4]],
+                id="gain-only",
             ),
             pytest.param(
-                [[5], [5], [5]], [2, 2, 2], [1, 1, 1],
-                [[8], [8], [8]], id="combined",
+                [[5], [5], [5]],
+                [2, 2, 2],
+                [1, 1, 1],
+                [[8], [8], [8]],
+                id="combined",
             ),
         ],
     )
@@ -61,6 +75,7 @@ class Test_fG:
 # --------------------------------------------------------------------------- #
 # fInclination — arctan2(||Gxy||, Gz)
 # --------------------------------------------------------------------------- #
+
 
 class Test_fInclination:
     @pytest.mark.parametrize(
@@ -117,13 +132,35 @@ class Test_v_abs_from_incl:
 
     def test_monotonic(self):
         """Velocity should increase with inclination."""
-        result = v_abs_from_incl(np.radians([5.0, 10.0, 20.0]), _TRIG_COEFS, calc_version="trigonometric(incl)")
+        result = v_abs_from_incl(
+            np.radians([5.0, 10.0, 20.0]), _TRIG_COEFS, calc_version="trigonometric(incl)"
+        )
         assert result[0] < result[1] < result[2]
+
+    def test_override_ignores_legacy_kvabs_last(self):
+        """Explicit max_incl strips legacy kVabs[5] — never a series coef."""
+        incl = np.radians([5.0, 10.0, 20.0, 65.0])
+        with_override = v_abs_from_incl(incl, _TRIG_COEFS, max_incl_of_fit_deg=60.0)
+        canonical = v_abs_from_incl(incl, _TRIG_COEFS[:5], max_incl_of_fit_deg=60.0)
+        np.testing.assert_allclose(with_override, canonical, atol=1e-12)
+
+    def test_override_moves_linear_tangent_point(self):
+        """Smaller max_incl switches to the linear tangent earlier (beyond-fit values differ)."""
+        incl = np.radians([50.0, 70.0])
+        early = v_abs_from_incl(incl, _TRIG_COEFS[:5], max_incl_of_fit_deg=30.0)
+        late = v_abs_from_incl(incl, _TRIG_COEFS[:5], max_incl_of_fit_deg=60.0)
+        assert not np.allclose(early, late)
+
+    def test_canonical_five_elem_without_threshold_raises(self):
+        """5-elem kVabs carries no Θ_last — silent garbage is worse than an error."""
+        with pytest.raises(ValueError, match="max_incl_of_fit_deg"):
+            v_abs_from_incl(np.radians([10.0]), _TRIG_COEFS[:5])
 
 
 # --------------------------------------------------------------------------- #
 # norm_field
 # --------------------------------------------------------------------------- #
+
 
 class Test_norm_field:
     def test_identity_calibration(self):
@@ -141,6 +178,7 @@ class Test_norm_field:
 # i_bursts_starts — burst boundary detection
 # --------------------------------------------------------------------------- #
 
+
 class Test_i_bursts_starts:
     """i_bursts_starts(tim, dt_between_blocks) → (i_bursts, mean_size, max_hole)."""
 
@@ -150,7 +188,7 @@ class Test_i_bursts_starts:
         i_b, ms, mh = i_bursts_starts(tim)
         np.testing.assert_array_equal(i_b, [0])
         assert ms == 20
-        assert mh == np.timedelta64(0, 'ns')
+        assert mh == np.timedelta64(0, "ns")
 
     @pytest.mark.parametrize(
         ("dt_blocks", "expected_i_bursts", "expected_mean_size", "expected_max_hole_s"),
@@ -178,4 +216,4 @@ class Test_i_bursts_starts:
         i_b, ms, mh = i_bursts_starts(pd.DatetimeIndex([]))
         np.testing.assert_array_equal(i_b, np.int32([]))
         assert ms == 0
-        assert mh == np.timedelta64(0, 'ns')
+        assert mh == np.timedelta64(0, "ns")

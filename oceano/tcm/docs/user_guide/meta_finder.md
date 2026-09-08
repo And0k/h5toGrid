@@ -86,8 +86,15 @@ The new `setup` is numbered with the next free integer (`1` when splitting a
 flat single interval — the existing flat rows first move into node `0`).
 Each split is one step of the sheet's native *Undo* (`Ctrl+Z`); sorting
 entries are removed from the sheet context menus.
-Saving on **Run** writes the whole nested structure back, preserving every
-interval's station key.
+
+Row protection: the six paired rows under each interval are fixed — *Insert*
+above/below is disabled there (denied attempts ring the system bell), and no
+new top-level node can ever be created by insertion. *Delete rows*/*Delete
+columns* stay enabled only for rows/columns you added yourself: **Add row**
+parents a child under the selected node (never top-level; the metadata subtree
+is off-limits — split is the only way to add there) and **Add column** appends
+at the end. In simplified mode before data loads the sheet is read-only and
+every context-menu entry is disabled.
 
 **`time_range` vs `input.time_ranges`** — two different things:
 

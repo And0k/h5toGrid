@@ -35,7 +35,8 @@ from __future__ import annotations
 
 import copy
 import logging
-from contextlib import nullcontext, suppress
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext, suppress
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,18 @@ class MetadataNodeMixin:
         # Group-undo bridge (tcm_gui._sheet_popup.install_menu_patch sets the real
         # one; None keeps splits ungrouped).  Menu labels/sort-off live there too.
         self._undo_bridge: Any = None
+        # Cross-tab metadata sync — App wires ``on_metadata_changed`` per sheet;
+        # ``_metadata_pub`` is the last-published ``_meta_snap`` (None → next mutation
+        # publishes); ``_sync_guard`` suppresses echo while a peer applies a mirror.
+        self.on_metadata_changed: Any = None
+        self._metadata_pub: tuple | None = None
+        self._sync_guard: bool = False
+        # Row-mutation authorization (install_menu_patch links policy + guard).
+        self._row_policy: Any = None  # RowPolicy — single source of truth
+        self._row_guard: Any = None  # SheetGuard — wraps tksheet mutation methods
+        self._guard_suspended = 0  # counter — internal rebuilds bypass the guard
+        self._user_rows: set = set()  # extras-added row iids — the only deletable rows
+        self._user_col_base: int | None = None  # first appended column — trailing cols deletable
         # Intercept built-in "Insert rows above/below": an instance attribute
         # shadows the bound method for the menu lambdas (`MT.rc_add_rows(...)`).
         mt = self.sh.MT
@@ -109,9 +122,30 @@ class MetadataNodeMixin:
         self._cur_setup = 0
 
     # ------------------------------------------------------------- hooks
+    def _user_row_set(self) -> set:
+        """Extras-added row iids (created on demand — ``__new__`` harnesses skip ``__init__``)."""
+        if (us := getattr(self, "_user_rows", None)) is None:
+            us = self._user_rows = set()
+        return us
+
     def _rc_add_rows(self, where: str) -> None:
-        """Intercepted ``MT.rc_add_rows`` — split intervals on metadata/setup nodes."""
-        if (m := self._rc_meta_ref()) is None:
+        """Intercepted ``MT.rc_add_rows`` — policy-routed: split / native / deny+bell.
+
+        The :class:`SheetGuard` deliberately skips this method (the shadow owns
+        it); the same :class:`RowPolicy` verdict drives the menu refresh, so UI
+        state and execution can never disagree.
+        """
+        if (pol := getattr(self, "_row_policy", None)) is not None:
+            with suppress(Exception):
+                perm = pol.insert_permission(pol.oracle_ref())
+                if perm == "split":
+                    return self.split_setup(above=where != "below", ref=self._rc_meta_ref())
+                if perm == "deny":
+                    with suppress(Exception):
+                        self.sh.bell()
+                    return None
+                return self._rc_add_rows_orig(where)  # native — guard re-vets below
+        if (m := self._rc_meta_ref()) is None:  # legacy path (no policy installed)
             return self._rc_add_rows_orig(where)
         self.split_setup(above=where != "below", ref=m)
 
@@ -156,7 +190,8 @@ class MetadataNodeMixin:
             self._next_setup_num += 1
             self._metadata_unsaved = True
             self._rebuild_metadata_rows()
-            return True
+        self._notify_metadata_changed()
+        return True
 
     def _snapshot_group(self) -> tuple:
         """Opaque group-undo snapshot — consumed only by ``GroupUndoBridge``."""
@@ -177,16 +212,77 @@ class MetadataNodeMixin:
         try:  # failure propagates — the bridge keeps the marker on its stack
             from tcm_gui._sheet_undo import suspend_native_pushes
 
-            with suspend_native_pushes(self.sh.MT):
+            with suspend_native_pushes(self.sh.MT), self._suspend_guard():
                 self._rebuild_metadata_rows()
         except ImportError:
             self._rebuild_metadata_rows()
+        self._notify_metadata_changed()
+
+    @contextmanager
+    def _suspend_guard(self) -> Iterator[None]:
+        """Internal rebuilds bypass SheetGuard (counter-style, nestable)."""
+        self._guard_suspended = getattr(self, "_guard_suspended", 0) + 1
+        try:
+            yield
+        finally:
+            self._guard_suspended = max(0, getattr(self, "_guard_suspended", 0) - 1)
 
     def _ref_setup_idx(self, ref: dict | None) -> int:
         """Setup index implied by *ref* — the node's own or the last selected."""
         if ref and ref.get("is_setup"):
             self._cur_setup = int(ref["setup_idx"])
         return self._cur_setup
+
+    # ---------------------------------------------------- cross-tab sync
+    def _notify_metadata_changed(self) -> None:
+        """Publish metadata state to same-identity peers (App fan-out).
+
+        No-op when nothing actually changed vs the last publication — the hash
+        guard leaves coef-only edits, peer echoes (``_sync_guard``) and
+        programmatic refills silent.  ``_take_metadata_snapshot`` resets
+        ``_metadata_pub`` to ``None``, so every rebuilt baseline forces the
+        next real mutation to publish.
+        """
+        stem = getattr(self, "_page_stem", "?")
+        # lf.debug("_notify_metadata_changed called on %s", stem)
+        if getattr(self, "_sync_guard", False):
+            # lf.debug("  -> suppressed by sync_guard")
+            return
+        snap = self._meta_snap()
+        # lf.debug("  -> snap=%s", snap)
+        if snap == getattr(self, "_metadata_pub", None):
+            # lf.debug("  -> snap unchanged, skipping")
+            return
+        self._metadata_pub = snap
+        cb = getattr(self, "on_metadata_changed", None)
+        # lf.debug("  -> publishing (cb=%s)", "set" if cb else "None")
+        if cb is not None:
+            with suppress(Exception):
+                cb()
+
+    def apply_metadata_setups(self, setups: list[list[Any]], *, dirty: bool = True) -> None:
+        """Peer mirror: replace the model with *setups* and rebuild the subtree.
+
+        *dirty* propagates the source tab's metadata-dirty flag — a sync that
+        carries a user edit must mark the peer dirty too, so its Run writes
+        the new metadata.  Structural-only syncs (splits on a clean tab) pass
+        ``dirty=False`` — the peer keeps its prior dirty state.
+        """
+        # lf.debug("apply_metadata_setups on %s setups=%s dirty=%s", getattr(self, "_page_stem", "?"), len(setups), dirty)
+        self._sync_guard = True
+        prior_unsaved = getattr(self, "_metadata_unsaved", False)
+        try:
+            self._setups = copy.deepcopy(setups)
+            self._next_setup_num = 1 + max(num for num, _ in self._setups) if self._setups else 0
+            self._cur_setup = 0
+            self._rebuild_metadata_rows()
+            self._metadata_pub = self._meta_snap()
+            # lf.debug("  -> applied, new snap=%s", self._metadata_pub)
+        finally:
+            self._sync_guard = False
+            # Dirty if source was dirty OR peer was already dirty
+            self._metadata_unsaved = prior_unsaved or dirty
+        self._apply_metadata_dirty_label()
 
     # ------------------------------------------------------------- build
     def _build_metadata(self) -> None:
@@ -412,6 +508,8 @@ class MetadataNodeMixin:
 
     def _take_metadata_snapshot(self) -> None:
         self._snap_meta = self._meta_snap()
+        # Rebuilt baseline — next real mutation publishes to peers (None = arm).
+        self._metadata_pub = None
 
     def mark_metadata_clean(self) -> None:
         self._metadata_unsaved = False
@@ -459,23 +557,28 @@ class MetadataNodeMixin:
                 self._next_setup_num = len(groups)
             self._metadata_path = path_str
             self._rebuild_metadata_rows()
+            self._notify_metadata_changed()
         except Exception:
             lf.exception("Failed to reload metadata from %s", path_str)
 
     def _rebuild_metadata_rows(self) -> None:
         """Rebuild only the metadata subtree — keep node expanded and ghosts visible."""
+        # lf.debug("_rebuild_metadata_rows on %s: _setups=%s", getattr(self, "_page_stem", "?"), [(n, arr[:3] if arr else None) for n, arr in (self._setups or [])])
         # Discard stale placeholders before structural change — row indices will shift
         self._ph.clear_all(self.sh)
-        to_del = [
-            iid
-            for iid, m in list(self._meta.items())
-            if m.get("is_metadata") or m.get("is_metadata_root") or m.get("is_setup")
-        ]
-        for iid in to_del:
-            with suppress(Exception):
-                self.sh.delete_row(self._row_map().get(iid, -1))
-            self._meta.pop(iid, None)
-        self._build_metadata()
+        guard = getattr(self, "_row_guard", None)
+        ctx = guard.suspended() if guard is not None else nullcontext()
+        with ctx:  # internal deletes/inserts bypass SheetGuard (user paths stay vetted)
+            to_del = [
+                iid
+                for iid, m in list(self._meta.items())
+                if m.get("is_metadata") or m.get("is_metadata_root") or m.get("is_setup")
+            ]
+            for iid in to_del:
+                with suppress(Exception):
+                    self.sh.delete_row(self._row_map().get(iid, -1))
+                self._meta.pop(iid, None)
+            self._build_metadata()
         self._apply_open()
         self._rebuild_row_caches()
         self._apply_styles()

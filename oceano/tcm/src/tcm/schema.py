@@ -25,6 +25,7 @@ from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING, OmegaConf
 from tcm import _constants
 
+
 class Return(StrEnum):
     """``program.return_`` constants — controls how far ``run_processing`` runs and what returns.
 
@@ -83,7 +84,7 @@ class ConfigInCoefs_InclProc:
     Rz: list[list[float]] | None = field(
         default_factory=lambda: [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
     )
-    kVabs: list[float] | None = field(default_factory=lambda: [10, -10, -10, -3, 3, 70])
+    kVabs: list[float] | None = field(default_factory=lambda: [10, -10, -10, -3, 3])
     P_t: Annotated[list[list[float]], (3, 3)] | None = None
     P: list[float] | None = field(default_factory=lambda: [0, 1])
     PBattery: list[float] | None = field(default_factory=lambda: [0, 1])
@@ -93,6 +94,10 @@ class ConfigInCoefs_InclProc:
         default_factory=lambda: OmegaConf.create({}, flags={"struct": False})
     )
     date: str | None = None
+    calc_version: str = "trigonometric(incl)"
+    max_incl_of_fit_deg: float | None = (
+        70.0  # Θ_last°: linear-tangent start; legacy kVabs[5] migrates here on load
+    )
 
 
 @dataclass
@@ -159,8 +164,6 @@ class ConfigIn_InclProc:
 
     # ── process-stage coefs ──
     coefs: ConfigInCoefs_InclProc | None = field(default_factory=ConfigInCoefs_InclProc)
-    max_incl_of_fit_deg: float | None = None
-    calc_version: str = "trigonometric(incl)"
 
     # ── process-stage calibration correction ──
     calib: ConfigInCalib_InclProc | None = field(default_factory=ConfigInCalib_InclProc)

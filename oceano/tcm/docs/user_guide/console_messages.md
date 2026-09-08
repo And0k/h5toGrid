@@ -66,6 +66,9 @@ At INFO level:
 | `{pcid}: info_devices [{start}, {end}]` | Time range from metadata for this probe |
 | `  written to {stem}.yaml` | Time range written from metadata to config |
 | `  already configured but broader than metadata: {stem}.yaml [...]` | **Warning**: config has wider range than metadata |
+| `Ignoring N config(s) (whitespace in name): ...` | **Warning**: YAML name contains whitespace; kept on disk, not processed |
+| `Skipping N config(s) — YAML stem ≠ input.path (manual copy?): ...` | **Warning**: config stem identity ≠ its `input.path` (renamed/manual copy); kept on disk, not processed |
+| `Orphan configs (input.path points to not existing file): ... — ignored!` | **Warning**: stale config — source file missing; kept on disk, not processed (configs are never auto-deleted) |
 
 ## Time correction messages
 

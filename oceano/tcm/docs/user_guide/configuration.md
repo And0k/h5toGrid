@@ -39,8 +39,9 @@ Each probe's config lives in `cfg_proc/run/{prefix}@{pcid}-{comment}.yaml`.
   the same probe `i01`.
 - The YAML stem is built from the **canonical pcid**, not the raw filename:
   archive member `i3.txt` becomes `i03`, `I_P01_001.txt` becomes `i_p01`.
-  The `-{comment}` suffix from the source file (e.g. `i_p05-press.TXT` →
-  `@i_p05-press.yaml`) is preserved.
+  The `-{comment}` suffix is the source-name part after the pcid with
+  separators normalized (`i_p05-press.TXT` and `INKL_P05_Press.TXT` both →
+  `@i_p05-press.yaml`) — files of one probe get distinct config names.
 - `processing.run` handles exactly **one** `_raw` anchor. A parent directory
   with several anchors is resolved first via anchor discovery
   (`tcm.anchors.collect_anchors`); the GUI lists the anchors in the path
@@ -55,9 +56,15 @@ subsequent runs — only missing configs are created, and stale ones (whose
 The YAML filename is metadata only — the pipeline reads `input.path` to locate
 the data, not the YAML name.
 
-**Deduplication**: when regenerating configs, the pipeline checks if any
-existing YAML for the same normalized pcid already has a valid `input.path`.
-If so, no new YAML is created.
+**Deduplication**: when regenerating configs, the pipeline checks if an
+existing YAML of the same canonical identity — pcid + comment — already has a
+valid `input.path`. If so, no new YAML is created. A valid config of a
+different identity pointing at the same file (renamed/comment-less stem) does
+not block the correctly-named YAML. **Configs are never auto-deleted**: a
+regenerated config overwrites only a file of the same name; stale configs
+(`input.path` references a deleted file) and copies are kept on disk and
+reported as ignored — see the
+[matching contract](../reference/io_formats.md#config-file-matching).
 
 ## Minimal viable config
 

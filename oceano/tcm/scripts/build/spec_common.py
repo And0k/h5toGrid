@@ -147,6 +147,78 @@ RUNTIME_DLLs: list[str] = [
     "liblapack.dll",
 ]
 
+# ── libarchive native closure ────────────────────────────────────────────────
+# libarchive-c loads archive.dll dynamically (ctypes, bare name) — invisible to
+# PyInstaller's dependency walk — and meta_finder.utils_sys imports it at module
+# level (archive time/burst extraction), so a frozen scan dies with
+# PyInstallerImportError: Failed to load dynlib 'archive.dll'.  Compute the PE
+# import closure of archive.dll against the build env's Library/bin at build
+# time: hand-maintained lists rot with every conda solve (libxml2 → iconv → …).
+
+LIB_BIN = Path(sys.executable).resolve().parent / "Library" / "bin"
+
+
+def _pe_imports(dll: Path) -> set[str]:
+    """Bare names of DLLs in the PE import table of *dll* (PE32+/PE32)."""
+    import struct
+
+    b = dll.read_bytes()
+    e_lfanew = struct.unpack_from("<I", b, 0x3C)[0]
+    coff = e_lfanew + 4
+    nsec = struct.unpack_from("<H", b, coff + 2)[0]
+    opt_size = struct.unpack_from("<H", b, coff + 16)[0]
+    opt = coff + 20
+    magic = struct.unpack_from("<H", b, opt)[0]
+    ddir = opt + (112 if magic == 0x20B else 96)
+    rva = struct.unpack_from("<I", b, ddir + 8)[0]
+    if not rva:
+        return set()
+
+    def off(r: int) -> int:  # RVA → file offset via section table
+        for vsize, va, rsize, praw in (
+            struct.unpack_from("<IIII", b, opt + opt_size + 40 * i + 8) for i in range(nsec)
+        ):
+            if va <= r < va + max(vsize, rsize):
+                return r - va + praw
+        raise ValueError(f"RVA {r:#x} unmapped in {dll.name}")
+
+    names = set()
+    for i in range(64):  # import descriptors, 0-terminated entry ends the walk
+        name_rva = struct.unpack_from("<I", b, off(rva) + 20 * i + 12)[0]
+        if not name_rva:
+            break
+        pos = off(name_rva)
+        names.add(b[pos : b.index(b"\0", pos)].decode())
+    return names
+
+
+def _dll_closure(entry: str = "archive.dll", root: Path = LIB_BIN) -> list[str]:
+    """*entry* + transitive deps found in *root* (BFS order, deps of deps last)."""
+    if not (root / entry).is_file():
+        return []
+    seen: dict[str, None] = {}
+    todo = [entry]
+    while todo:
+        name = todo.pop(0)
+        if name.lower() in seen or not (root / name).is_file():
+            continue  # system DLL (kernel32, api-ms-*, …) or absent → loader handles
+        seen[name.lower()] = None
+        todo += sorted(_pe_imports(root / name))
+    return list(seen)
+
+
+# ICU data DLL is LoadLibrary'd by icuuc at runtime (not in any import table) —
+# pull it in explicitly whenever the icuuc closure member is present.
+LIBARCHIVE_DLLs: list[str] = [n for n in _dll_closure() if not n.lower().startswith(("api-ms-", "vcruntime"))]
+if any(n.startswith("icuuc") for n in LIBARCHIVE_DLLs) and not any(
+    n.startswith("icudt") for n in LIBARCHIVE_DLLs
+):
+    LIBARCHIVE_DLLs += sorted(  # noqa: runtime-only load — not visible to the import walk
+        p.name for p in LIB_BIN.glob("icudt*.dll") if p.name.lower() not in map(str.lower, LIBARCHIVE_DLLs)
+    )
+# Exclusion filter must never drop closure members (e.g. "libxml2" in EXCLUDE_BINARIES).
+KEEP_BINARIES: set[str] = {n.lower() for n in LIBARCHIVE_DLLs}
+
 
 def should_keep_binary(entry: tuple, extra_exclude: list[str] | None = None) -> bool:
     """Filter ``Analysis.binaries`` by name pattern and pyarrow .pyd names.
@@ -156,6 +228,8 @@ def should_keep_binary(entry: tuple, extra_exclude: list[str] | None = None) -> 
     patterns = EXCLUDE_BINARIES + (extra_exclude or [])
     dest_name, _src, _type = entry
     name = os.path.basename(dest_name).lower()
+    if name in KEEP_BINARIES:
+        return True  # libarchive closure — explicitly bundled, exempt from excludes
     if any(pat in name for pat in patterns):
         return False
     pyd_mod = os.path.splitext(name)[0].split(".")[0]

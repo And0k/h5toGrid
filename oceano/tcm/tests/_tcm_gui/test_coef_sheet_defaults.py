@@ -343,7 +343,9 @@ class TestOnEndEditGrayToggle:
         event = self._make_event(row=azimuth_row, column=0, value=180)
         cs._apply_end_edit_style(event)
 
-        gray_calls = [c for c in mock_sh.highlight_cells.call_args_list if c.kwargs.get("fg") == CELL_DEFAULT_VAL_FG]
+        gray_calls = [
+            c for c in mock_sh.highlight_cells.call_args_list if c.kwargs.get("fg") == CELL_DEFAULT_VAL_FG
+        ]
         assert len(gray_calls) > 0, (
             f"expected highlight_cells(fg=_DEFAULT_FG) to restore gray, "
             f"got calls: {mock_sh.highlight_cells.call_args_list}"
@@ -375,11 +377,11 @@ class TestOnEndEditGrayToggle:
             f"but got: {mock_sh.highlight_cells.call_args_list}"
         )
 
-    def test_no_default_field_ignored(self):
-        """Container nodes (input.coefs) resolve to a dict default -> handler
-        returns early (no highlight_cells calls).  The ``input`` row itself is
-        *not* in this category: ``_default_for_cell`` appends ``.path`` to
-        resolve it as a leaf cell (see docs/project_developer_guide/GUI/decisions.md, two-row system).
+    def test_coefs_path_non_default_clears_gray(self):
+        """Coefs path cell now resolves to ``input.coefs.path`` dataclass default
+        (cfg/coef/calibration.h5 or yaml_export).  Editing it to a non-default
+        value must clear gray (fg → _fg_default); node-label walk still recolors
+        ancestors (canvas="index") but those are not cell-gray toggles.
         """
         cs, mock_sh = self._make_loaded_sheet()
         coefs_iid = self._find_iid(cs, "input.coefs")
@@ -391,14 +393,67 @@ class TestOnEndEditGrayToggle:
         event = self._make_event(row=coefs_row, column=0, value="anything")
         cs._apply_end_edit_style(event)
 
-        # Container cell has NO_DEFAULT → no cell-gray toggle, but node-label
-        # walk still recolors ancestors (blue/black via _node_at_default) —
-        # those use canvas="index" and are not cell-gray toggles.
+        # Non-default value → fg cleared to _fg_default (not gray).  Filter out
+        # node-label recolors (canvas="index") — those are ancestor walks, not cell toggles.
         cell_calls = [c for c in mock_sh.highlight_cells.call_args_list if c.kwargs.get("canvas") != "index"]
-        assert len(cell_calls) == 0, (
-            f"container row (dict default) should not toggle cell gray, "
-            f"got: {cell_calls}"
+        assert len(cell_calls) == 1, (
+            f"coefs path cell edit to non-default should clear gray once, got: {cell_calls}"
         )
+        assert cell_calls[0].kwargs["fg"] == cs._fg_default, (
+            f"non-default coefs path should use _fg_default, got: {cell_calls[0].kwargs['fg']}"
+        )
+
+    def test_empty_enter_fills_default(self):
+        """Entering empty on a cell with a non-empty default assigns the default.
+
+        Editing azimuth_shift_deg (default 180) to empty should restore 180
+        via set_cell_data and paint the cell gray.
+        """
+        cs, mock_sh = self._make_loaded_sheet()
+        azimuth_iid = self._find_iid(cs, "input.coefs.azimuth_shift_deg")
+        assert azimuth_iid is not None
+        azimuth_row = cs.sh.get_row_from_iid(azimuth_iid)
+
+        mock_sh.reset_mock()
+        event = self._make_event(row=azimuth_row, column=0, value="")
+        cs._apply_end_edit_style(event)
+
+        # Default (180) should be written back to the cell
+        set_calls = [
+            c for c in mock_sh.set_cell_data.call_args_list if c.args[0] == azimuth_row and c.args[1] == 0
+        ]
+        assert len(set_calls) == 1, f"expected set_cell_data to restore default, got: {set_calls}"
+        assert set_calls[0].args[2] == 180, f"expected default 180, got: {set_calls[0].args[2]}"
+
+        # Cell should be gray (at default)
+        gray_calls = [
+            c
+            for c in mock_sh.highlight_cells.call_args_list
+            if c.kwargs.get("fg") == CELL_DEFAULT_VAL_FG and c.kwargs.get("row") == azimuth_row
+        ]
+        assert len(gray_calls) == 1, (
+            f"empty→default should be gray, got: {mock_sh.highlight_cells.call_args_list}"
+        )
+
+    def test_empty_enter_no_default_assigns_nothing(self):
+        """Entering empty on a cell with empty default (e.g. P_t[0]) stays empty.
+
+        No set_cell_data call — empty IS the default for None-default fields.
+        """
+        cs, mock_sh = self._make_loaded_sheet()
+        pt_iid = self._find_iid(cs, "input.coefs.P_t[0]")
+        if pt_iid is None:
+            pytest.skip("P_t[0] not found in _meta")
+        pt_row = cs.sh.get_row_from_iid(pt_iid)
+
+        mock_sh.reset_mock()
+        event = self._make_event(row=pt_row, column=0, value="")
+        cs._apply_end_edit_style(event)
+
+        set_calls = [
+            c for c in mock_sh.set_cell_data.call_args_list if c.args[0] == pt_row and c.args[1] == 0
+        ]
+        assert len(set_calls) == 0, f"empty-default cell should NOT assign, got: {set_calls}"
 
     def test_2d_child_gray_toggle(self):
         """2D array child (Ag[0]) gray toggle with correct path resolution."""
@@ -565,10 +620,10 @@ class TestNodeAtDefault:
         )
 
     def test_1d_with_dates_parent_at_default_via_child(self):
-        """1D-with-dates parent (kVabs, max_col=0 + len=6) defers to its child row.
+        """1D-with-dates parent (kVabs, max_col=0 + len=5) defers to its child row.
 
         The parent holds date metadata, not array values; the child row holds the
-        6 array cells.  If the child cells all match the dataclass default,
+        5 array cells.  If the child cells all match the dataclass default,
         the parent label must read at-default regardless of ``len``.
 
         Note: ``_ins_1d`` gives the child the SAME path as the parent
@@ -581,7 +636,7 @@ class TestNodeAtDefault:
         assert cs._meta[kv_parent].get("max_col") == 0, (
             "kVabs parent must carry max_col=0 (its child row holds the values)"
         )
-        assert cs._meta[kv_parent].get("len") == 6, "kVabs parent carries len=6 as array-shape metadata"
+        assert cs._meta[kv_parent].get("len") == 5, "kVabs parent carries len=5 as array-shape metadata"
         assert cs._node_at_default(kv_parent) is True, (
             "kVabs 1D-with-dates parent must be at-default when its child row "
             "holds the dataclass default array"

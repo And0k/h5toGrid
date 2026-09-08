@@ -1,6 +1,7 @@
 """Tests for tcm/_xr/coefs.py — xr-native coefficient preparation.
 Also tests config_yaml.update_coefs_in_run_yaml (coef persistence to YAML).
 """
+
 from __future__ import annotations
 
 import ast
@@ -124,9 +125,7 @@ class TestPrepCfgForProbe:
             ),
         ],
     )
-    def test_calls_get_coefs_correctly(
-        self, mocker, cfg_in_common, cfg_top, coefs: dict, check: Callable
-    ):
+    def test_calls_get_coefs_correctly(self, mocker, cfg_in_common, cfg_top, coefs: dict, check: Callable):
         """get_coefs called with correct table, paths chain, and coefs_ovr."""
         cfg_in_common["coefs"] = coefs
         mock_get = mocker.patch(_GET_COEFS_TARGET, return_value={"date": "2024-01-01"})
@@ -189,7 +188,9 @@ class TestSaveCoefsToNc:
             np.testing.assert_array_equal(coef["G"]["C"], [0.1, 0.2, 0.3])
             np.testing.assert_array_equal(coef["H"]["A"], np.eye(3) * 0.5)
             np.testing.assert_array_equal(coef["H"]["C"], [0.4, 0.5, 0.6])
-            np.testing.assert_array_equal(coef["Vabs0"], [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+            np.testing.assert_array_equal(coef["Vabs0"], [1.0, 2.0, 3.0, 4.0, 5.0])
+            # Legacy 6th element migrates to a 1-elem max_incl dataset on write
+            np.testing.assert_array_equal(coef["max_incl_of_fit_deg"], [6.0])
             assert float(coef["H"]["azimuth_shift_deg"][0]) == pytest.approx(195.0)
 
     def test_writes_date_attr(self, sample_coefs, tmp_path):
@@ -271,18 +272,27 @@ class TestSaveCoefsToNc:
         [
             pytest.param(
                 "string date overwrites existing float dataset",
-                np.float64, np.float64(0.0), "2023-08-13T07:29:28",
+                np.float64,
+                np.float64(0.0),
+                "2023-08-13T07:29:28",
                 id="str-over-float",
             ),
             pytest.param(
                 "string date overwrites existing shorter string",
-                h5py.string_dtype(), "old_date", "2023-08-13T07:29:28",
+                h5py.string_dtype(),
+                "old_date",
+                "2023-08-13T07:29:28",
                 id="str-over-str-shorter",
             ),
         ],
     )
     def test_overwrite_incompatible_dtype(
-        self, description, initial_dtype, initial_data, overwrite_data, tmp_path,
+        self,
+        description,
+        initial_dtype,
+        initial_data,
+        overwrite_data,
+        tmp_path,
     ):
         """save_coefs_to_nc replaces datasets when dtype changes (e.g. float→str)."""
         nc_path = tmp_path / "test.raw.nc"
@@ -343,13 +353,18 @@ class TestLoadCoefsFromNc:
             pytest.param("Cg", [0.1, 0.2, 0.3], id="Cg"),
             pytest.param("Ah", np.eye(3) * 0.5, id="Ah"),
             pytest.param("Ch", [0.4, 0.5, 0.6], id="Ch"),
-            pytest.param("kVabs", [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], id="kVabs"),
+            pytest.param("kVabs", [1.0, 2.0, 3.0, 4.0, 5.0], id="kVabs"),
         ],
     )
     def test_reads_coef_key(self, nc_with_coefs, key, expected):
         """Individual coef key reads back correctly from NC file."""
         result = load_coefs_from_nc(nc_with_coefs, "incl_01")
         np.testing.assert_array_equal(result[key], expected)
+
+    def test_legacy_kvabs_last_migrates_to_max_incl(self, nc_with_coefs):
+        """Legacy 6-elem kVabs fixture loads as 5 + max_incl fallback."""
+        result = load_coefs_from_nc(nc_with_coefs, "incl_01")
+        np.testing.assert_allclose(np.asarray(result["max_incl_of_fit_deg"]).ravel(), [6.0])
 
     def test_reads_azimuth_shift_deg(self, nc_with_coefs):
         """azimuth_shift_deg read back from H group."""
@@ -379,6 +394,65 @@ class TestLoadCoefsFromNc:
         if desc == "missing tbl":
             save_coefs_to_nc(nc_path_factory(tmp_path), "incl_01", {"Ag": np.eye(3), "date": "2024-01-01"})
         assert load_coefs_from_nc(nc_path_factory(tmp_path), tbl) is None
+
+
+@pytest.mark.xr
+class TestVelocityCoefPersistence:
+    """max_incl_of_fit_deg / calc_version roundtrip + legacy kVabs[5] split."""
+
+    @pytest.fixture()
+    def velocity_coefs(self):
+        return {
+            "Ag": np.eye(3),
+            "Cg": np.zeros(3),
+            "Ah": np.eye(3),
+            "Ch": np.zeros(3),
+            "kVabs": np.array([1.0, 0.5, 0.3, 0.1, 0.05]),
+            "azimuth_shift_deg": 180.0,
+            "calc_version": "trigonometric(incl)",
+            "max_incl_of_fit_deg": 45.0,
+            "date": "2024-01-01T00:00:00",
+        }
+
+    def test_roundtrip_scalar_velocity_coefs(self, velocity_coefs, tmp_path):
+        """Scalar velocity coefs survive an NC roundtrip."""
+        nc_path = tmp_path / "test.raw.nc"
+        save_coefs_to_nc(nc_path, "incl_01", velocity_coefs)
+        loaded = load_coefs_from_nc(nc_path, "incl_01")
+        assert loaded["calc_version"] == "trigonometric(incl)"
+        assert float(np.asarray(loaded["max_incl_of_fit_deg"]).flat[0]) == pytest.approx(45.0)
+        np.testing.assert_allclose(loaded["kVabs"], [1.0, 0.5, 0.3, 0.1, 0.05])
+
+    def test_max_incl_stored_with_dimension(self, velocity_coefs, tmp_path):
+        """Scalars never persist 0-d — max_incl is a 1-elem dataset, strings are attrs."""
+        nc_path = tmp_path / "test.raw.nc"
+        save_coefs_to_nc(nc_path, "incl_01", velocity_coefs)
+        with h5py.File(nc_path, "r") as f:
+            assert f["incl_01"]["coef"]["max_incl_of_fit_deg"].shape == (1,)
+            assert "calc_version" not in f["incl_01"]["coef"]
+            assert f["incl_01"]["coef"].attrs["calc_version"] == "trigonometric(incl)"
+
+    def test_legacy_six_elem_kvabs_splits_on_load(self, tmp_path):
+        """Legacy files: Vabs0[5] becomes the max_incl fallback; kVabs shrinks to 5."""
+        nc_path = tmp_path / "legacy.raw.nc"
+        with h5py.File(nc_path, "w") as f:
+            f.require_group("incl_01/coef").create_dataset(
+                "Vabs0", data=np.array([1.0, 0.5, 0.3, 0.1, 0.05, 60.0])
+            )
+        loaded = load_coefs_from_nc(nc_path, "incl_01")
+        np.testing.assert_allclose(loaded["kVabs"], [1.0, 0.5, 0.3, 0.1, 0.05])
+        assert float(np.asarray(loaded["max_incl_of_fit_deg"]).flat[0]) == pytest.approx(60.0)
+
+    def test_explicit_max_wins_over_legacy_kvabs_last(self, tmp_path):
+        """Stored max_incl wins; legacy Vabs0[5] is still stripped."""
+        nc_path = tmp_path / "legacy.raw.nc"
+        with h5py.File(nc_path, "w") as f:
+            grp = f.require_group("incl_01/coef")
+            grp.create_dataset("Vabs0", data=np.array([1.0, 0.5, 0.3, 0.1, 0.05, 60.0]))
+            grp.create_dataset("max_incl_of_fit_deg", data=np.atleast_1d(45.0))
+        loaded = load_coefs_from_nc(nc_path, "incl_01")
+        assert len(np.asarray(loaded["kVabs"]).ravel()) == 5
+        assert float(np.asarray(loaded["max_incl_of_fit_deg"]).flat[0]) == pytest.approx(45.0)
 
 
 @pytest.mark.xr
@@ -514,9 +588,7 @@ class TestUpdateCoefsInRunYaml:
 
         assert yaml_path.exists()
         content = yaml_path.read_text(encoding="utf-8")
-        assert content.startswith("# @package _global_\n"), (
-            f"Missing @package header: {content[:40]}"
-        )
+        assert content.startswith("# @package _global_\n"), f"Missing @package header: {content[:40]}"
         data = _read_yaml(yaml_path)
         coefs = data["input"]["coefs"]
         np.testing.assert_array_almost_equal(coefs["Rz"], Rz.tolist())
@@ -562,9 +634,7 @@ class TestUpdateCoefsInRunYaml:
         old_Rz = np.eye(3)
         Ag = np.eye(3) * 0.00173
         yaml_path.write_text(
-            "# @package _global_\ninput:\n  coefs:\n"
-            f"    Rz: {old_Rz.tolist()}\n"
-            f"    Ag: {Ag.tolist()}\n",
+            f"# @package _global_\ninput:\n  coefs:\n    Rz: {old_Rz.tolist()}\n    Ag: {Ag.tolist()}\n",
             encoding="utf-8",
         )
 
@@ -587,14 +657,14 @@ class TestUpdateCoefsInRunYaml:
         assert abs(val - 195.3) < 1e-10
 
     def test_backup_created_before_first_modification(self, tmp_path):
-        """Timestamped backup (-backupYYMMDD_HHMMSS) created before first coef write."""
+        """Timestamped backup ( - backupYYMMDD_HHMMSS) created before first coef write."""
         yaml_path = tmp_path / "@i_01.yaml"
         original = "# @package _global_\ninput:\n  coefs:\n    Ag: [[1,0,0],[0,1,0],[0,0,1]]\n"
         yaml_path.write_text(original, encoding="utf-8")
 
         update_coefs_in_run_yaml(yaml_path, {"Rz": np.eye(3)})
 
-        backups = list(tmp_path.glob("@i_01-backup*.yaml"))
+        backups = list(tmp_path.glob("@i_01 - backup*.yaml"))
         assert len(backups) == 1, f"Expected 1 backup, found {len(backups)}: {backups}"
         assert backups[0].read_text(encoding="utf-8") == original, "Backup content != original"
 
@@ -609,10 +679,8 @@ class TestUpdateCoefsInRunYaml:
         update_coefs_in_run_yaml(yaml_path, {"Rz": np.eye(3)})
         update_coefs_in_run_yaml(yaml_path, {"azimuth_shift_deg": 180.0})
 
-        backups = list(tmp_path.glob("@i_01-backup*.yaml"))
-        assert len(backups) == 1, (
-            f"Expected exactly 1 backup after 2 updates, found {len(backups)}"
-        )
+        backups = list(tmp_path.glob("@i_01 - backup*.yaml"))
+        assert len(backups) == 1, f"Expected exactly 1 backup after 2 updates, found {len(backups)}"
 
 
 # --------------------------------------------------------------------------- #
@@ -717,7 +785,10 @@ class TestGetCoefAzimuthShift:
         """coordinates → mag_dec added to azimuth_shift_deg."""
         dec = mag_dec(60.0, 30.0, datetime(2025, 6, 15))
         result = get_coef_azimuth_shift(
-            None, (60.0, 30.0), azimuth_shift_deg=0.0, data_date=datetime(2025, 6, 15),
+            None,
+            (60.0, 30.0),
+            azimuth_shift_deg=0.0,
+            data_date=datetime(2025, 6, 15),
         )
         assert float(result) == pytest.approx(dec, rel=1e-3)
 
@@ -725,6 +796,9 @@ class TestGetCoefAzimuthShift:
         """Both coordinates and azimuth_add → both contributions summed."""
         dec = mag_dec(60.0, 30.0, datetime(2025, 6, 15))
         result = get_coef_azimuth_shift(
-            5.0, (60.0, 30.0), azimuth_shift_deg=10.0, data_date=datetime(2025, 6, 15),
+            5.0,
+            (60.0, 30.0),
+            azimuth_shift_deg=10.0,
+            data_date=datetime(2025, 6, 15),
         )
         assert float(result) == pytest.approx(10.0 + 5.0 + dec, rel=1e-3)

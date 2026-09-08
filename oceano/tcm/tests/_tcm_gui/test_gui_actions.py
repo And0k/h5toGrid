@@ -198,7 +198,7 @@ class TestGuiCoefWriteBack:
         )
 
         # Backup was created
-        backups = list(run_dir.glob("@i_01-backup*.yaml"))
+        backups = list(run_dir.glob("@i_01 - backup*.yaml"))
         assert len(backups) == 1
         assert backups[0].read_text(encoding="utf-8") == original_content
 
@@ -884,7 +884,7 @@ class TestGuiWriteCoefsIdempotent:
         config_yaml.update_coefs_in_run_yaml(yaml_path, coefs2)
 
         # At least one backup created (second call may share timestamp)
-        backups = list(run_dir.glob("@i_01-backup*.yaml"))
+        backups = list(run_dir.glob("@i_01 - backup*.yaml"))
         assert len(backups) >= 1
         # YAML has the LATEST coefs
         ry = config_yaml._ry(write=False)
@@ -1281,14 +1281,18 @@ class TestQueueHandlerFormatFailures:
         assert q.get().getMessage() == raw
 
     def test_drain_renders_exception_line(self):
-        """Records with exc_info show their exception line in drain (GUI log)."""
+        """Records with exc_info show the FULL traceback in drain — exact error location."""
         from tcm_gui.log_bridge import QueueHandler, drain
         from tcm_gui.runtime import PauseGate
 
         q: Queue = Queue()
         h = QueueHandler(q, PauseGate())
-        exc = FileNotFoundError("No input files found matching B:\\cruises\\x.txt")
-        rec = self._make_record("_scan", "scan failed", exc_info=(FileNotFoundError, exc, None))
+        try:
+            raise FileNotFoundError("No input files found matching B:\\cruises\\x.txt")
+        except FileNotFoundError as exc:
+            rec = self._make_record(
+                "_scan", "scan failed", exc_info=(FileNotFoundError, exc, exc.__traceback__)
+            )
         h.emit(rec)
 
         class _FakeText:
@@ -1300,7 +1304,10 @@ class TestQueueHandlerFormatFailures:
 
         w = _FakeText()
         assert drain(q, w) == 1
-        assert "FileNotFoundError: No input files found matching B:\\cruises\\x.txt" in "".join(w.parts)
+        text = "".join(w.parts)
+        assert "FileNotFoundError: No input files found matching B:\\cruises\\x.txt" in text
+        assert "Traceback (most recent call last)" in text
+        assert 'test_gui_actions.py", line' in text  # exact error location
 
 
 @pytest.mark.gui

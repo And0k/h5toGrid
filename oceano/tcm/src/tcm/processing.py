@@ -520,8 +520,13 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
 
     if yaml_path:
         _yp_re = re.compile(_ptr(yaml_path), re.IGNORECASE)
+        # Parenthesized alternation composites (tcm_gui.worker builds
+        # "(s1|s2).yaml" from literal stems) match alternatives verbatim —
+        # file-name specials ("(tube)") are not regex groups; any other
+        # pattern keeps its regex/glob semantics.
+        _alt = yaml_path[1:-1].split("|") if yaml_path.startswith("(") and yaml_path.endswith(")") else []
         cfgs_to_run = {
-            pcid: [s for s in stems if _yp_re.fullmatch(s) or _yp_re.fullmatch(f"{s}.yaml")]
+            pcid: [s for s in stems if s in _alt or _yp_re.fullmatch(s) or _yp_re.fullmatch(f"{s}.yaml")]
             for pcid, stems in cfgs_to_run.items()
         }
         cfgs_to_run = {k: v for k, v in cfgs_to_run.items() if v}
@@ -555,6 +560,24 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
             )
             cfgs_to_run = filtered
 
+    # Persist missing burst metadata BEFORE data compute so a cancelled or
+    # failed run still saves autofilled deployment params (burst_dt/bursts_t)
+    # and they're visible earlier. Scan (CFG_FROM_ARGS) is read-only.  A failure
+    # here is logged and swallowed — it must never block the required processing.
+    if OmegaConf.select(cfg, "program.return_") != schema.Return.CFG_FROM_ARGS:
+        try:
+            burst_collected = []
+            for stems in cfgs_to_run.values():
+                for stem in stems:
+                    yp = dir_cfgs / f"{stem}.yaml"
+                    try:
+                        burst_collected.append((stem, str(yp), OmegaConf.load(yp)))
+                    except Exception:
+                        continue
+            bursts.fill_missing_bursts(dir_raw, burst_collected)
+        except Exception:
+            lf.exception("Burst WRITE failed")
+
     # Step 3: process each config; early-exit (CFG_FROM_ARGS) returns before data load.
     n_cfgs_total = sum(len(s) for s in cfgs_to_run.values())
     if _rt:
@@ -582,23 +605,6 @@ def run(cfg: DictConfig) -> tuple[list[str], list[str], DictConfig | None, list[
             if sr is not None
             else (processed_pcids, failed_pcids, last_cfg, collected)
         )
-
-    # WRITE missing bursts to info_devices.yaml for actual run (single anchor).
-    try:
-        burst_collected = collected
-        if not burst_collected or all(c is None for _, _, c in burst_collected):
-            burst_collected = []
-            for _pcid, stems in cfgs_to_run.items():
-                for stem in stems:
-                    yp = dir_cfgs / f"{stem}.yaml"
-                    try:
-                        cfg_dc = OmegaConf.load(yp)
-                        burst_collected.append((stem, str(yp), cfg_dc))
-                    except Exception:
-                        continue
-        bursts.fill_missing_bursts(dir_raw, burst_collected)
-    except Exception:
-        lf.exception("Burst WRITE failed")
 
     # Combine distinct probes. Requires HDF5/netCDF4 backend.
     distinct_pcids = list(dict.fromkeys(processed_pcids))
@@ -1035,16 +1041,9 @@ def _process_and_persist(
     if run_params_text is None:
         run_params_text = _build_filter_params_text(cfg_in, cfg_filter, coefs=coefs)
 
-    # Merge calc params into coefs (calc_velocity receives them via **coefs)
-    coefs_for_calc = {**coefs}
-    if cv := cfg_in.get("calc_version"):
-        coefs_for_calc["calc_version"] = cv
-    if mi := cfg_in.get("max_incl_of_fit_deg"):
-        coefs_for_calc["max_incl_of_fit_deg"] = mi
-
     results = physical.process(
         ds_raw,
-        coefs=coefs_for_calc,
+        coefs=coefs,
         coef_zeroing_matrix=coef_zeroing_matrix,
         cfg_filter=cfg_filter,
         dt_bins=dt_bins,

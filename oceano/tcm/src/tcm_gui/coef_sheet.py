@@ -24,7 +24,7 @@ import logging
 import operator
 import re
 from collections.abc import Callable
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from pathlib import Path
 from tkinter import TclError
 from typing import Any, Final
@@ -42,7 +42,7 @@ from ._browse_button import BrowseButtonManager
 from ._i18n import STRINGS as _S
 from ._placeholder import CellPlaceholder
 from ._sheet_metadata_node import MetadataNodeMixin
-from ._sheet_popup import disable_sort_menus, install_menu_patch
+from ._sheet_popup import disable_unsafe_menus, install_menu_patch
 from ._sheet_status import SheetHoverMixin
 from ._sheet_styles import SheetStylesMixin, _path_exists
 from ._sheet_tint import _DATE_COL, _DATE_PH_COL, SheetTintMixin
@@ -418,12 +418,14 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
                 self._metadata_path = metadata_path
 
             self._meta.clear()
+            self._user_rows = set()  # fresh tree — no user-added rows survive reload
+            self._user_col_base = None  # column base re-derives on first append
             self._hide_hover_field()  # rows are about to die
             self._clear_status()
 
             self.sh.del_rows(rows=list(range(self.sh.total_rows())))
             self.sh.enable_bindings(["all"])
-            disable_sort_menus(self.sh)  # enable-all restores sort entries — keep them off
+            disable_unsafe_menus(self.sh)  # enable-all restores entries — keep sort/col-insert off
 
             self._nv = self._calc_nv(cfg, full)
             self.sh.headers([""] * self._nv)
@@ -481,7 +483,10 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
 
             elif t == "scalar":
                 if v := (self.sh.item(iid).get("values") or ("",))[0]:
-                    out[m["key"]] = float(v)
+                    try:
+                        out[m["key"]] = float(v)
+                    except (TypeError, ValueError):
+                        out[m["key"]] = v  # string scalars (e.g. calc_version) pass through
 
         return out
 
@@ -1226,6 +1231,20 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
         # Re-validate the edited cell after commit — red fg if its check fails.
         if m.get("check"):
             self.sh.after_idle(lambda iid=iid: self._apply_validations(iid))
+        # Cross-tab sync: metadata-row edit fans out to same-identity peers; coef
+        # edits reach here too but the hash guard in _notify_metadata_changed leaves
+        # them silent; root-path (browse) edits are skipped (content loads via
+        # _reload_metadata_from, which notifies after the rebuild).
+        if m.get("is_metadata"):
+            raw = self.sh.item(iid).get("values") if iid else None
+            _l.debug(
+                "_on_end_edit_cell: path=%s val=%s is_metadata=%s stem=%s",
+                m.get("path"),
+                raw,
+                m.get("is_metadata"),
+                getattr(self, "_page_stem", "?"),
+            )
+            self._notify_metadata_changed()
 
     def _update_coef_date(self, iid: Any) -> None:
         """Set the date cell of coef parent *iid* to current time rounded to hours.
@@ -1299,7 +1318,14 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
         self._stretch_last_col()
 
     def _insert_col_at_end(self, _event=None) -> None:
-        """Append a column and make it editable for string-list rows (e.g. time_ranges)."""
+        """Append a column and make it editable for string-list rows (e.g. time_ranges).
+
+        Records the appended-column base (``_user_col_base``) once — trailing
+        columns are user space and stay deletable via the row policy.
+        """
+        if getattr(self, "_user_col_base", None) is None:
+            with suppress(Exception):
+                self._user_col_base = int(self.sh.total_columns())
         self.sh.insert_column()
         self._nv += 1
         for m in self._meta.values():
@@ -1310,6 +1336,43 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
         self._apply_placeholders()
         self._apply_default_fg()
         self.sh.redraw()
+
+    def _add_row_child(self, _event=None) -> str | None:
+        """Extras ``Add row`` — parent a child under the selected node (never top-level).
+
+        Denied (``bell()``) with no selection, on metadata-subtree nodes (fixed
+        structure — split is the only way to add there) and in readonly mode.
+        The new iid joins ``_user_rows``: user-added rows are deletable, and
+        native undo covers both directions (the registry prunes via ``exists``).
+        """
+        iid = getattr(self, "_rc_sel_iid", None)
+        m = (getattr(self, "_meta", None) or {}).get(iid) if iid else None
+        allowed = (
+            m is not None
+            and not self._readonly
+            and not any(m.get(k) for k in ("is_metadata", "is_setup", "is_metadata_root"))
+        ) or (m is None and iid in getattr(self, "_user_rows", set()) and not self._readonly)
+        if not allowed:
+            with suppress(Exception):
+                self.sh.bell()
+            return None
+        parent = iid if m is not None else None
+        guard = getattr(self, "_row_guard", None)
+        ctx = guard.suspended() if guard is not None else nullcontext()
+        try:
+            with ctx:  # vetted here — the bare insert must not trip the guard
+                if parent is not None and not self._meta.get(parent, {}).get("open", True):
+                    with suppress(Exception):
+                        self.sh.item(parent, open_=True)
+                new_iid = self.sh.insert(parent=parent or "", text="", values=[""] * self._nv)
+        except Exception:
+            _l.exception("Add row failed")
+            return None
+        self._user_row_set().add(new_iid)
+        self._rebuild_row_caches()
+        with suppress(Exception):
+            self.sh.redraw()
+        return new_iid
 
     def _on_cell_select(self, event) -> None:
         """Deselect non-editable cells — fires inside tksheet's selection pipeline.

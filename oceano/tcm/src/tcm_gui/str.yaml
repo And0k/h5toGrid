@@ -17,7 +17,7 @@ default_page.stem: "Default values"
 path_lbl.text: "Search path"
 # path_field=path_lbl status = doc-driven general (`config_reference.md` `path_field`) + STR suffix.
 path_field.tooltip: "Edit by Enter or double-clicking or select using the browse button"
-path_field.placeholder: "D:/data/_raw"
+path_field.placeholder: "D:/data/_raw/*i*.txt"
 path_field.placeholder_files: "D:/data/_raw/(i*raw_file1[.]txt|i*raw_file2[.]txt)"
 path_field.placeholder_probe: "i_01_measurement.txt"
 path_field.status.dirs: "**(Re)loads configurations into tabs**. The `Browse` button opens a *directory* picker (to search for data with default mask `*i*.txt`): hold `Shift` to select *files*."
@@ -47,7 +47,7 @@ prog_status.status: "Current processing stage and progress"
 log.status: "Processing log — color-coded by severity ({#debug}debug{/}/{#info}info{/}/{#warning}warning{/}/{#error}error{/})"
 prog_stage.status: "Current stage progress within the active configuration"
 tab.status: "Configuration {path}"  # template — _add_page formats {path}; bare (backtick-free) full path auto-links to the file name
-browse_btn.status: "Hold **Shift** to select files instead of directory"
+browse_btn.status: "Hold `Shift` to select files instead of directory"
 browse_btn.status_files: "Browse files"
 empty_area.synced: >-
   Edit the table (changes will be saved on Run).
@@ -95,8 +95,10 @@ browse.dir_label: "…\U0001f4c1"  # …+folder emoji (no-Shift default)
 browse.file_label: "…\U0001f4c4"  # …+page emoji (Shift held)
 
 # ── Sheet context menu ────────────────────────────────────────────────────
-sheet.insert_col: "Insert column"
-sheet.insert_row: "Insert row"
+# Add (not Insert): both extras only append — a column at the end, a row as a
+# child of the selected node; they never splice into the middle of the tree.
+sheet.insert_col: "Add column"
+sheet.insert_row: "Add row"
 # Split labels for the metadata/setup rc entries (``{target}`` = new setup number).
 # Shown instead of tksheet's "Insert rows above/below" when the popup target is
 # the ``metadata`` root or a ``setup`` node (see _sheet_popup.target_label).
@@ -112,6 +114,7 @@ run_btn.disabled_no_pages: "No configurations - please specify the data path fir
 run_btn.disabled_invalid_path: "Run processing (inactive: configurations must not contain {#error}errors{/})"
 
 # ── Status / progress text ────────────────────────────────────────────────
+status.default: "Ready"
 status.ready: "Loaded"
 status.loading: "Loading\u2026"
 status.starting: "Starting\u2026"

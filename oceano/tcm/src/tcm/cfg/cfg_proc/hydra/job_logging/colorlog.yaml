@@ -42,6 +42,7 @@ loggers:
     propagate: true
   flox:
     level: WARNING
+    propagate: true
 root:
   level: DEBUG
   handlers: [console]

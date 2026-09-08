@@ -7,7 +7,9 @@ Mixin for :class:`tcm_gui.coef_sheet.ConfigSheet`.
   date alignment + blue fg, dropdowns/checkboxes from the field's
   :class:`tcm_gui._cell_spec.CellSpec`, column-resize zones.
 * :meth:`SheetStylesMixin._apply_validations` — red fg on ``check: "exists"``
-  rows whose path resolves to nothing; reads via
+  rows whose path resolves to nothing; gray fg when the path matches its
+  config default (coefs/metadata/input path) via
+  :meth:`SheetTintMixin._default_for_cell`; reads via
   :meth:`SheetTintMixin._cell_str` so a ghost placeholder (deleted path) is
   skipped instead of validated.
 """
@@ -39,6 +41,23 @@ from .cli_cfg import NO_DEFAULT
 def _path_exists(path_str: str) -> bool:
     """True iff *path_str* (after ``~`` expansion) exists or matches files via glob."""
     return Path(path_str).expanduser().exists() or bool(_glob_mod.glob(path_str))
+
+
+def _input_path_matches_config(path_str: str, page_stem: str) -> bool:
+    """True iff *path_str* stem matches the config stem per ``format.pcid_key``.
+
+    The input path "belongs" to this config when their canonical identities
+    align (prefix/case/comment separators normalized — see
+    ``docs/reference/io_formats.md``).  Missing/empty stems never match.
+    """
+    if not path_str or not page_stem:
+        return False
+    try:
+        from tcm.format import pcid_key
+
+        return pcid_key(Path(path_str).stem) == pcid_key(page_stem)
+    except Exception:
+        return False
 
 
 class SheetStylesMixin:
@@ -263,11 +282,16 @@ class SheetStylesMixin:
             if _path_exists(path_str):
                 # Restore normal fg: gray if value matches config default, else default fg.
                 dv = self._default_for_cell(iid, m, 0)
-                restore_fg = (
-                    tcm_gui.theme.CELL_DEFAULT_VAL_FG
-                    if dv is not NO_DEFAULT and any2str(path_str) == any2str(dv)
-                    else self._fg_default
-                )
+                if dv is not NO_DEFAULT and any2str(path_str) == any2str(dv):
+                    restore_fg = tcm_gui.theme.CELL_DEFAULT_VAL_FG
+                elif m.get("type") == "input" and _input_path_matches_config(
+                    path_str, getattr(self, "_page_stem", "")
+                ):
+                    # input.path "belongs" to this config — a different but same-probe
+                    # file (stem matches per pcid_key) also reads as default.
+                    restore_fg = tcm_gui.theme.CELL_DEFAULT_VAL_FG
+                else:
+                    restore_fg = self._fg_default
                 sh.highlight_cells(row=r, column=0, fg=restore_fg, redraw=False)
             else:
                 sh.highlight_cells(row=r, column=0, fg=tcm_gui.theme.INVALID_FG, redraw=False)

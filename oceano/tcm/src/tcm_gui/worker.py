@@ -120,7 +120,9 @@ class Worker:
         # No unfiltered rglob; anchor discovery lives in csv_load/search via find_device_dirs.
         try:
             p_probe = Path(str(data_path)).expanduser()
-            p_resolved_probe = p_probe.absolute() if p_probe.is_absolute() else (Path.cwd() / p_probe).absolute()
+            p_resolved_probe = (
+                p_probe.absolute() if p_probe.is_absolute() else (Path.cwd() / p_probe).absolute()
+            )
             # Probe shallow without full processing: csv_load.search_csv_files will do
             # shallow first, then filtered recursive only on miss.
             from tcm import csv_load as _cl
@@ -159,13 +161,22 @@ class Worker:
             # Cruise root shallow miss → anchors are child _raw(s) != input → list (even single).
             is_parent_list = False
             try:
-                if p_resolved_probe.is_dir() and p_resolved_probe.name.lower() != "_raw" and len(anchors) >= 1:
+                if (
+                    p_resolved_probe.is_dir()
+                    and p_resolved_probe.name.lower() != "_raw"
+                    and len(anchors) >= 1
+                ):
                     if len(anchors) > 1 or anchors[0].resolve() != p_resolved_probe.resolve():
                         is_parent_list = True
             except Exception:
                 pass
             if is_parent_list:
-                lf.info("Worker scan input={} → scan_list with {} anchors: {}", data_path, len(anchors), ", ".join(str(a) for a in anchors))
+                lf.info(
+                    "Worker scan input={} → scan_list with {} anchors: {}",
+                    data_path,
+                    len(anchors),
+                    ", ".join(str(a) for a in anchors),
+                )
                 # Pass parent explicitly so App can log it before field replacement
                 self.rt.result_queue.put(("scan_list", (data_path, anchors)))
                 return
@@ -210,6 +221,10 @@ class Worker:
         self.rt.progress_stage.set(0, 0, "")
         # Filter by config stems: construct ``cfg_proc/run/(stems).yaml`` path
         # so processing.run auto-detects the .yaml suffix and filters by stem.
+        # Stems are joined verbatim (no re.escape — backslashes are path
+        # separators on Windows); the matching side in processing.run compares
+        # the composite alternatives literally, so file-name specials
+        # ("(tube)") are safe.
         dir_raw = paths.find_dir_raw_absolute(Path(data_path).absolute())
         stem_path = str(dir_raw / "cfg_proc" / "run" / f"({'|'.join(stems)}).yaml")
         try:

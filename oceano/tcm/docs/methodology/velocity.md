@@ -1,9 +1,5 @@
 # Velocity computation from accelerometer and magnetometer
 
-How the current velocity vector is derived from raw accelerometer and
-magnetometer readings — the basis of the `trigonometric(incl)` calculation
-([`input.calc_version`](../reference/config_reference.md)).
-
 ## Sensor calibration
 
 Raw ADC readings of the accelerometer \(U_{Gx}, U_{Gy}, U_{Gz}\) and of the
@@ -66,7 +62,8 @@ Following the load-function principle,
 $$F_{d,\Theta} \sim V^2 \cdot f(\Theta),$$
 
 where \(f(\Theta)\) is the load function, determined experimentally. For
-cables it is often given as a trigonometric series [Knutson, 1987]:
+cables it is often given as a trigonometric series (used in current version: marked as
+[`input.coefs.calc_version`](../reference/config_reference.md) = `trigonometric(incl)`). [Knutson, 1987]:
 
 $$f(\Theta) = a_0 + \sum_{n=1}^{\infty} \left( a_n \cos n\Theta + b_n \sin n\Theta \right),$$
 
@@ -94,7 +91,7 @@ the curve must not rise steeply).
 Therefore, for speeds near and beyond \(\Theta_{max}\) a compromise is used:
 a linear dependence tangent to the curve at the point \(\Theta_{last}\). This
 value is stored as an additional calculation coefficient —
-[`max_incl_of_fit_deg`](../reference/config_reference.md#input--data-source--parameters).
+[`max_incl_of_fit_deg`](../reference/config_reference.md#inputcoefs--calibration-coefficients).
 It is chosen as the value of \(\Theta\) just before \(\Theta_{max}\), close to
 the mean tilt observed over several experiments with instruments of the same
 type. Note that for \(\Theta > 90^\circ\) the sensitivity of the instrument to

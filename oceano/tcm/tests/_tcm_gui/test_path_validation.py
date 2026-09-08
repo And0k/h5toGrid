@@ -112,6 +112,65 @@ class TestApplyValidations:
         cs._apply_validations()
         assert _red_calls(mock_sh) == []
 
+    def test_input_path_matching_config_stem_tinted_gray(self, tmp_path):
+        """input.path whose stem matches the config stem → gray (belongs to config)."""
+        # Create a file whose stem matches the config stem "i_p05"
+        data_file = tmp_path / "i_p05.TXT"
+        data_file.write_text("dummy")
+        cs, mock_sh = _make_sheet(str(data_file), str(tmp_path))
+        cs._page_stem = "i_p05"  # config stem matches the input file stem
+        in_iid = _iid(cs, type="input")
+        cs._apply_validations(in_iid)
+        gray = [
+            c
+            for c in mock_sh.highlight_cells.call_args_list
+            if c.kwargs.get("fg") == theme.CELL_DEFAULT_VAL_FG
+            and c.kwargs.get("row") == cs._row_map()[in_iid]
+        ]
+        assert len(gray) == 1, (
+            f"matching input.path should be gray, got: {mock_sh.highlight_cells.call_args_list}"
+        )
+
+    def test_input_path_same_identity_different_file_still_gray(self, tmp_path):
+        """A different file with the same canonical pcid (``i_p05`` → ``i_p5``) reads as default.
+
+        ``pcid_key`` normalizes ``i_p05`` ≡ ``i_p5`` (same pcid + no comment) — a
+        renamed/format-different raw file of the SAME probe keeps the gray tint.
+        """
+        cs, mock_sh = _make_sheet(str(tmp_path / "i_p05.TXT"), str(tmp_path))
+        cs._page_stem = "i_p05"
+        in_iid = _iid(cs, type="input")
+        in_row = cs._row_map()[in_iid]
+        data_file = tmp_path / "i_p5.TXT"
+        data_file.write_text("dummy")
+        mock_sh.item.side_effect = lambda iid, **kw: {"values": (str(data_file), "")}
+        cs._apply_validations(in_iid)
+        gray = [
+            c
+            for c in mock_sh.highlight_cells.call_args_list
+            if c.kwargs.get("fg") == theme.CELL_DEFAULT_VAL_FG and c.kwargs.get("row") == in_row
+        ]
+        assert len(gray) == 1, (
+            f"same-identity input.path should still be gray, got: {mock_sh.highlight_cells.call_args_list}"
+        )
+
+    def test_input_path_other_probe_not_gray(self, tmp_path):
+        """A different-probe file (stem does NOT match) → default fg (not gray)."""
+        cs, _ = _make_sheet(str(tmp_path / "i_p05.txt"), str(tmp_path))
+        cs._page_stem = "i_p05"
+        in_iid = _iid(cs, type="input")
+        in_row = cs._row_map()[in_iid]
+        data_file = tmp_path / "i_p07.TXT"
+        data_file.write_text("dummy")
+        cs.sh.item.side_effect = lambda iid, **kw: {"values": (str(data_file), "")}
+        cs._apply_validations(in_iid)
+        gray = [
+            c
+            for c in cs.sh.highlight_cells.call_args_list
+            if c.kwargs.get("fg") == theme.CELL_DEFAULT_VAL_FG and c.kwargs.get("row") == in_row
+        ]
+        assert len(gray) == 0, f"other-probe input.path should NOT be gray, got: {gray}"
+
     def test_target_iid_limits_pass(self, tmp_path):
         """A targeted pass re-validates only the edited row."""
         missing = str(tmp_path / "nope")
@@ -121,6 +180,30 @@ class TestApplyValidations:
         red = _red_calls(mock_sh)
         assert len(red) == 1
         assert red[0].kwargs["row"] == cs._row_map()[in_iid]
+
+    def test_input_path_empty_restores_loaded_default(self, tmp_path):
+        """Entering empty on input.path restores the loaded run-YAML path.
+
+        input.path has no schema default (None); its "default" is the value the
+        config was loaded with.  Clearing the cell must restore that value, not
+        leave it empty.
+        """
+        data_file = tmp_path / "i_p05.TXT"
+        data_file.write_text("dummy")
+        cs, mock_sh = _make_sheet(str(data_file), str(tmp_path))
+        in_iid = _iid(cs, type="input")
+        in_row = cs._row_map()[in_iid]
+
+        mock_sh.reset_mock()
+        cs._apply_edit_value(in_iid, 0, "")
+
+        set_calls = [
+            c for c in mock_sh.set_cell_data.call_args_list if c.args[0] == in_row and c.args[1] == 0
+        ]
+        assert len(set_calls) == 1, f"empty input.path should restore its loaded value, got: {set_calls}"
+        assert set_calls[0].args[2] == str(data_file), (
+            f"expected loaded path restored, got: {set_calls[0].args[2]}"
+        )
 
 
 class TestIsPathValidGating:

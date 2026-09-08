@@ -1,6 +1,6 @@
-<p align="center"><img src="docs/images/logo.png" alt="TCM" width="128"></p>
+<img src="docs/images/logo.png" alt="TCM" align="right" width="256">
 
-[Russian readme](readme.ru)
+[←Russian](readme_Ru.md)
 
 
 # TCM Data Processing

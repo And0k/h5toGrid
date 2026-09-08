@@ -51,6 +51,12 @@ _RENAMED_OR_SKIP = frozenset(
     }
 )
 
+# Scalar coefs live as HDF5 group attrs, never datasets: strings cannot be
+# numeric datasets (fixed-width ``S10`` would truncate ``calc_version``), and
+# 0-d scalars are unreadable to downstream tools — numerics get a dimension
+# (1-elem datasets) via :func:`_coefs_to_h5_dict` instead.
+_SCALAR_COEF_ATTRS = ("calc_version",)
+
 # Reverse of _coefs_to_h5_dict's rename: short coef name → h5copy_coef rel_path.
 # Used to translate prepare_coefs's ``dates`` dict keys so h5copy_coef can
 # match them by rel_path suffix.  Non-renamed keys (Rz, P_t, …) use ``//coef//{k}``.
@@ -58,7 +64,49 @@ _COEF_SHORT_TO_H5 = {
     **{f"{m}{ch}": f"//coef//{ch_u}//{m}" for ch, ch_u in (("h", "H"), ("g", "G")) for m in ("A", "C")},
     "azimuth_shift_deg": "//coef//H//azimuth_shift_deg",
     "kVabs": "//coef//Vabs0",
+    "max_incl_of_fit_deg": "//coef//max_incl_of_fit_deg",
 }
+
+
+def _max_incl_ds(coef: Mapping[str, Any]) -> dict:
+    """1-elem ``//coef//max_incl_of_fit_deg`` dataset — scalars get a dimension, never 0-d."""
+    try:
+        v = float(coef["max_incl_of_fit_deg"])
+    except (KeyError, TypeError, ValueError):
+        return {}
+    return {"//coef//max_incl_of_fit_deg": np.atleast_1d(v)} if v == v else {}
+
+
+def _decode_scalar(v: Any) -> Any:
+    """Decode HDF5 fixed-width bytes to ``str``; pass numerics/arrays through."""
+    if isinstance(v, (bytes, np.bytes_)):
+        return bytes(v).decode()
+    if isinstance(v, np.ndarray) and v.shape == () and v.dtype.kind in ("S", "U"):
+        return str(v.item() if isinstance(v.item(), str) else bytes(v.item()).decode())
+    return str(v) if isinstance(v, np.str_) else v
+
+
+def split_kvabs_threshold(coefs: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Hoist legacy ``kVabs[5]`` → ``max_incl_of_fit_deg`` (io normalization).
+
+    Canonical runtime form: 5 trig coefs + scalar Θ_last. Legacy files/YAML
+    carry 6-elem kVabs (threshold appended). Strip [5] always on io; use it as
+    the max_incl fallback only when unset.
+    """
+    if not coefs:
+        return {}
+    coefs = dict(coefs)
+    kv = coefs.get("kVabs")
+    try:
+        arr = np.asarray(kv, dtype=np.float64).ravel()
+    except (TypeError, ValueError):
+        return coefs
+    if arr.size != 6:
+        return coefs
+    if coefs.get("max_incl_of_fit_deg") in (None, ""):
+        coefs["max_incl_of_fit_deg"] = float(arr[5])
+    coefs["kVabs"] = arr[:5].tolist() if isinstance(kv, list) else arr[:5]
+    return coefs
 
 
 def _coefs_to_h5_dict(coef: Mapping[str, Any], pcid: str | None = None, date: str | None = None) -> dict:
@@ -90,12 +138,11 @@ def _coefs_to_h5_dict(coef: Mapping[str, Any], pcid: str | None = None, date: st
             {"//coef//H//azimuth_shift_deg": coef["azimuth_shift_deg"]} if "azimuth_shift_deg" in coef else {}
         ),
         **({"//coef//Vabs0": coef["kVabs"]} if "kVabs" in coef else {}),
+        **_max_incl_ds(coef),
         **{
             f"//coef//{k}": p
             for k, p in coef.items()
-            if k not in _RENAMED_OR_SKIP
-            and isinstance(p, np.ndarray)
-            and not isinstance(p, (str, Path))
+            if k not in _RENAMED_OR_SKIP and isinstance(p, np.ndarray) and not isinstance(p, (str, Path))
         },
     }
 
@@ -123,10 +170,15 @@ def save_coefs_to_nc(
     :param coefs: Raw coefs dict (output of :func:`get_coefs`).
     :param pcid: Probe Column ID (written as ``//coef//pid`` attribute).
     :param dates: If truthy, numeric datasets get ``timestamp`` attr.
+
+    Legacy 6-elem ``kVabs`` is split to canonical form first
+    (:func:`split_kvabs_threshold`); ``max_incl_of_fit_deg`` persists as a
+    1-elem dataset, ``calc_version`` as a group attribute.
     """
     policy.io().require_nc("saving coefs to NC/HDF5")
     from tcm import h5inclinometer_coef as _h5coef
 
+    coefs = split_kvabs_threshold(coefs)
     h5_dict = _coefs_to_h5_dict(coefs, pcid=pcid, date=None)
     lf.debug("Saving coefs to {}: tbl={}, keys={}", nc_path, tbl, list(h5_dict))
 
@@ -135,9 +187,7 @@ def save_coefs_to_nc(
     # an explicit date default to True (→ current ISO date via h5copy_coef).
     # Exclude path (string attribute) from change tracking.
     if isinstance(dates, dict):
-        dates = {
-            _COEF_SHORT_TO_H5.get(k, f"//coef//{k}"): v for k, v in dates.items() if k != "path"
-        }
+        dates = {_COEF_SHORT_TO_H5.get(k, f"//coef//{k}"): v for k, v in dates.items() if k != "path"}
         dates |= {p: True for p in h5_dict if p not in dates}
 
     with _h5py.File(nc_path, "a") as h5f:
@@ -177,7 +227,9 @@ def _read_coefs_from_coef_group(coef_grp: _h5py.Group) -> dict[str, Any]:
 
     :param coef_grp: h5py Group at ``/{tbl}/coef/``.
     :return: coefs dict with ``dates`` sub-dict but **no** ``date`` key
-        (date resolution differs between NC and HDF5 callers).
+        (date resolution differs between NC and HDF5 callers). Scalar
+        ``calc_version`` is decoded from the group attribute; legacy 6-elem
+        ``kVabs`` is split via :func:`split_kvabs_threshold`.
     """
     coefs_dict: dict[str, Any] = {"dates": {}}
     for name_l1, item_l1 in coef_grp.items():
@@ -186,17 +238,20 @@ def _read_coefs_from_coef_group(coef_grp: _h5py.Group) -> dict[str, Any]:
                 if not isinstance(item_l2, _h5py.Dataset):
                     continue
                 coef_key = f"{name_l2}{name_l1.lower()}" if name_l2[-1:].isupper() else name_l2
-                coefs_dict[coef_key] = item_l2[()]
+                coefs_dict[coef_key] = _decode_scalar(item_l2[()])
                 if "timestamp" in item_l2.attrs:
                     coefs_dict["dates"][coef_key] = str(item_l2.attrs["timestamp"])
         elif isinstance(item_l1, _h5py.Dataset):
             if name_l1 == "pid":
                 continue
             coef_key = "kVabs" if name_l1 == "Vabs0" else name_l1
-            coefs_dict[coef_key] = item_l1[()]
+            coefs_dict[coef_key] = _decode_scalar(item_l1[()])
             if "timestamp" in item_l1.attrs:
                 coefs_dict["dates"][coef_key] = str(item_l1.attrs["timestamp"])
-    return coefs_dict
+    for k in _SCALAR_COEF_ATTRS:  # strings persist as attrs, never datasets
+        if k in coef_grp.attrs:
+            coefs_dict[k] = _decode_scalar(coef_grp.attrs[k])
+    return split_kvabs_threshold(coefs_dict)
 
 
 def load_coefs_from_nc(nc_path: Path, tbl: str) -> dict[str, Any] | None:

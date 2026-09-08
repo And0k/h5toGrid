@@ -111,11 +111,12 @@ pixi run -e noh5-tcm build-tcm-clc-txt --build-root B:\Temp
 `scripts/build/tcm_proc.spec` — конфигурация PyInstaller. Ключевые моменты:
 
 -   **Точка входа:** `scripts/tcm_proc.py`
--   **Явно добавленные DLL** (из `_ENV_LIB_BIN`):
+-   **Явно добавленные DLL** (из `_ENV_LIB_BIN`): `RUNTIME_DLLs` —
     `openblas.dll`, `libcblas.dll`, `libblas.dll`, `liblapack.dll`,
     `libmpdec-4.dll`, `liblzma.dll`, `libexpat.dll`, `ffi-8.dll`,
     `yaml.dll`, `sqlite3.dll`, `libzmq-mt-4_3_5.dll`,
-    `tbb12.dll`, `tbbmalloc.dll`, `tbbmalloc_proxy.dll`.
+    `tbb12.dll`, `tbbmalloc.dll`, `tbbmalloc_proxy.dll` — плюс
+    `LIBARCHIVE_DLLs` (см. [§3.6. Замыкание DLL libarchive](#36-замыкание-dll-libarchive)).
 -   **Фильтрация бинарников** (post-analysis, `_should_keep_binary`):
     из собранного набора удаляются всё, содержащее в имени:
     `mkl_`, `.h5`, `.hdf5`, `pyarrow`, `parquet.dll`, `libzstd.dll`,
@@ -127,7 +128,11 @@ pixi run -e noh5-tcm build-tcm-clc-txt --build-root B:\Temp
 -   **Данные** (дерево зеркалит dev-репозиторий — `_MEIPASS` ≙ корень репо, поэтому
     кросс-ссылки документации `../../…` → проект и `../../../…` → `oceano/` работают
     в заморозке так же, как в dev):
-    - Исходный код `src/tcm/` → `oceano/tcm/src/tcm/`
+    - Исходный код `src/tcm/` и `src/tcm_gui/` → `oceano/tcm/src/tcm/`,
+      `oceano/tcm/src/tcm_gui/` (как в dev: tcm_gui живёт внутри проекта tcm)
+    - Сгенерированный runtime браузера документации: `_build/browser-runtime/`
+      → `oceano/tcm/_build/browser-runtime/` (резолвится через `_VEND_DIR` —
+      та же формула `PROJECT_ROOT.parents[1]`, что у `DOC_DIR`, см. §3.3)
     - Исходники editable-пакетов — repo-относительные пути из
       `spec_common.FIRST_PARTY_PKGS` переносятся как есть (дерево зеркалит dev-репозиторий):
       `shared/utils/src/utils/`, `shared/veusz_helpers/src/veusz_helpers/`,
@@ -345,11 +350,37 @@ pixi run -e bin-optim-tcm build-tcm-gui --build-root B:\Temp
 Общая логика (фильтрация бинарников, сборка данных) вынесена в
 `scripts/build/spec_common.py` и используется обоими spec-файлами.
 
+### 3.6. Замыкание DLL libarchive
+
+`meta_finder.utils_sys` импортирует `libarchive` на уровне модуля (извлечение
+времени/бёрстов из архивов), а `libarchive-c` грузит `archive.dll` через ctypes
+по короткому имени — PyInstaller такой переход не видит, и в заморозке скан
+падал с `PyInstallerImportError: Failed to load dynlib 'archive.dll'`.
+
+`spec_common.py` решает это без ручных списков: `_dll_closure()` на этапе
+сборки разбирает PE-таблицу импортов `archive.dll` из `<env>/Library/bin` и
+рекурсивно собирает замыкание (`LIBARCHIVE_DLLs`): `archive.dll`, `charset.dll`,
+`iconv.dll`, `libbz2.dll`, `liblzma.dll`, `libxml2.dll`, `lz4.dll`, `zlib.dll`,
+`zstd.dll`, `icuuc78.dll`, `icudt78.dll` (~38 МБ — почти всё `icudt78`).
+Исключаются `api-ms-*`/`vcruntime*` (даёт ОС/PyInstaller), `icudt*`
+добавляется явно, если `icuuc*` есть, но `icudt` не виден в импортах (ICU
+грузит данные через LoadLibrary). `KEEP_BINARIES` (то же множество) exempt-ит
+замыкание от `EXCLUDE_BINARIES` — иначе фильтр `libxml2` (добавлен ради
+netCDF4) выкинул бы зависимость libarchive.
+
+Замыкание вычисляется на каждую сборку — при обновлении conda-пакетов
+`libarchive`/`libxml2`/`icu` список обновится сам. Env без пакета `libarchive`
+(например, `noh5-tcm` без фичи `meta_finder`) получают пустой список — сборка
+не падает, но архивы в таком дистрибутиве работать не будут (см. также
+[GUI Key Decisions](GUI/decisions.md)).
+
 Ресурсы браузера документации попадают в дистрибутив так: first-party страница
 (`index.html`/`viewer.js`/`viewer.css`) лежит внутри пакета —
 `src/tcm_gui/browser/web`, поэтому упаковывается вместе с `src/tcm_gui`;
 сгенерированный runtime добавляется отдельным datas-элементом
-`(_build/browser-runtime → "_build/browser-runtime")`. Подкаталоги `todo/`
+`(oceano/tcm/_build/browser-runtime → "oceano/tcm/_build/browser-runtime")`
+и резолвится в рантайме через `_VEND_DIR` (`PROJECT_ROOT.parents[1]/_build` —
+одна формула для dev и заморозки, как `DOC_DIR`). Подкаталоги `todo/`
 документации исключаются из сборки (`spec_common.should_keep_data`).
 
 Зеркальное дерево (§2.3) делает браузер документации консистентным без

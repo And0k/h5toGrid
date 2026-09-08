@@ -1,4 +1,4 @@
-"""Existing-menu patch + group undo — labels, sort removal, native chronology.
+"""Existing-menu patch + group undo + row-mutation authorization.
 
 Style: no-Tk fakes (``FakeMenu``/``FakeMT`` duck-type the tksheet surface the
 patch touches); sketch API ``MetadataTree → GroupUndoBridge → install_menu_patch``.
@@ -13,7 +13,16 @@ import pytest
 import yaml
 
 import tcm_gui._sheet_popup as popup
-from tcm_gui._sheet_popup import SORT_BINDINGS, install_menu_patch, refresh_insert_labels, target_label
+from tcm_gui._sheet_popup import (
+    OFF_BINDINGS,
+    SORT_BINDINGS,
+    RowPolicy,
+    SheetGuard,
+    install_menu_patch,
+    refresh_insert_labels,
+    refresh_menu_state,
+    target_label,
+)
 from tcm_gui._sheet_undo import (
     GROUP_EVENT,
     GroupUndoBridge,
@@ -26,10 +35,11 @@ _STR_DIR = Path(__file__).resolve().parents[2] / "src" / "tcm_gui"
 
 
 class FakeMenu:
-    """Minimal ``tk.Menu`` surface: command entries with get/set label."""
+    """Minimal ``tk.Menu`` surface: command entries with get/set label + state."""
 
     def __init__(self, labels):
         self._labels = list(labels)
+        self._states = ["normal"] * len(self._labels)
 
     def index(self, arg):
         return len(self._labels) - 1 if arg == "end" and self._labels else None
@@ -38,15 +48,21 @@ class FakeMenu:
         return "command"
 
     def entrycget(self, i, opt):
-        assert opt == "label", f"unexpected option {opt}"
-        return self._labels[i]
+        assert opt in ("label", "state"), f"unexpected option {opt}"
+        return self._labels[i] if opt == "label" else self._states[i]
 
     def entryconfig(self, i, **kw):
-        self._labels[i] = kw["label"]
+        if "label" in kw:
+            self._labels[i] = kw["label"]
+        if "state" in kw:
+            self._states[i] = kw["state"]
 
     @property
     def labels(self):
         return list(self._labels)
+
+    def state_of(self, label):
+        return self._states[self._labels.index(label)]
 
 
 class FakeMT:
@@ -56,10 +72,25 @@ class FakeMT:
         self.undo_stack: list = []
         self.redo_stack: list = []
         self.extra_begin_ctrl_z_func = None
+        self.extra_end_insert_rows_rc_func = None
+        self.extra_end_insert_cols_rc_func = None
         self.undo_enabled = True
+        self.popup_menu_loc = None
+        self.selected_cols: list = []
 
     def purge_redo_stack(self):
         self.redo_stack = []
+
+    def get_selected_cols(self):
+        return list(self.selected_cols)
+
+    def datacn(self, c):
+        return int(c)
+
+
+class FakeCH:
+    def __init__(self):
+        self.popup_menu_loc = None
 
 
 class FakeSheet:
@@ -67,12 +98,17 @@ class FakeSheet:
 
     def __init__(self):
         self.MT = FakeMT()
+        self.MT.CH = FakeCH()
         self.RI = FakeMT()  # only needs the extra_rc_func slot
         self.RI.extra_rc_func = None
         self.MT.extra_rc_func = None
         self.disabled: list | None = None
         self.extras: dict = {}
         self.inserted_rows = 0
+        self.selected_rows: list = []
+        self.existing: set = set()
+        self.bells = 0
+        self.n_cols = 6
 
     def disable_bindings(self, bindings):
         self.disabled = list(bindings)
@@ -82,6 +118,18 @@ class FakeSheet:
 
     def insert_row(self):
         self.inserted_rows += 1
+
+    def get_selected_rows(self):
+        return list(self.selected_rows)
+
+    def exists(self, iid):
+        return iid in self.existing
+
+    def bell(self):
+        self.bells += 1
+
+    def total_columns(self):
+        return self.n_cols
 
 
 class FakeHost:
@@ -97,7 +145,20 @@ class FakeHost:
         self._meta = {"iid": self._ref}
         self._rc_sel_iid = "iid"
         self._undo_bridge = None
+        self._row_policy = None
+        self._row_guard = None
+        self._guard_suspended = 0
+        self._user_rows: set = set()
+        self._user_col_base = None
+        self._readonly = False
+        self._loading = False
+        self.vis = ["iid"]
+        self.rebuilt = 0
+        self.cleared = 0
         self.split_calls: list = []
+
+    def _walk(self, parent="", *, visible=False):
+        return iter(list(self.vis)) if visible else iter(())
 
     def _rc_meta_ref(self):
         return self._ref
@@ -108,6 +169,15 @@ class FakeHost:
 
     def _insert_col_at_end(self, _event=None):
         pass
+
+    def _add_row_child(self, _event=None):
+        pass
+
+    def _rebuild_row_caches(self):
+        self.rebuilt += 1
+
+    def _clear_status(self):
+        self.cleared += 1
 
     def _snapshot_group(self):
         import copy
@@ -201,20 +271,21 @@ def test_refresh_relabels_and_restores(test_description="per-popup refresh"):
 
 
 def test_disable_sort_menus_covers_all_sort_bindings(test_description="sort removal"):
-    """Sort entries go off through binding flags (menus are rebuilt per popup)."""
+    """Unsafe entries go off through binding flags (menus are rebuilt per popup)."""
     sheet = FakeSheet()
-    assert popup.disable_sort_menus(sheet) is True, f"{test_description}: expected True"
-    assert sheet.disabled is not None and set(sheet.disabled) == set(SORT_BINDINGS), (
+    assert popup.disable_unsafe_menus(sheet) is True, f"{test_description}: expected True"
+    assert sheet.disabled is not None and set(sheet.disabled) == set(OFF_BINDINGS), (
         f"{test_description}: got {sheet.disabled!r}"
     )
+    assert set(SORT_BINDINGS) <= set(sheet.disabled), f"{test_description}: sort must stay off"
 
 
 def test_install_registers_extras_and_hooks_once(test_description="one-time install"):
     """Extras land in the existing menu dicts; hooks are set once and survive re-install."""
     host = FakeHost()
     assert install_menu_patch(host) is True, f"{test_description}: install must succeed"
-    assert host.sh.disabled is not None and set(host.sh.disabled) == set(SORT_BINDINGS), (
-        f"{test_description}: sort not disabled — {host.sh.disabled!r}"
+    assert host.sh.disabled is not None and set(host.sh.disabled) == set(OFF_BINDINGS), (
+        f"{test_description}: unsafe bindings not disabled — {host.sh.disabled!r}"
     )
     assert len(host.sh.extras) == 2, f"{test_description}: extras missing — {sorted(host.sh.extras)!r}"
     assert host._undo_bridge is not None, f"{test_description}: bridge not linked"
@@ -334,3 +405,258 @@ def test_facade_insert_delegates_split(test_description="facade insert"):
     assert tree.insert(above=False) is True, f"{test_description}: insert must delegate"
     assert tree.host.split_calls == [False], f"{test_description}: got {tree.host.split_calls!r}"
     assert tree.delete_selected_setup() is False, f"{test_description}: no setup deletion exists"
+
+
+# ------------------------------------------------------------- RowPolicy
+def _policy_host(ref=None, **kw):
+    """FakeHost with a ``RowPolicy`` bound (mirrors ``install_menu_patch`` linking)."""
+    host = FakeHost(ref)
+    for k, v in kw.items():
+        setattr(host, k, v)
+    tree = MetadataTree(host)
+    return host, RowPolicy(tree)
+
+
+@pytest.mark.parametrize(
+    ("ref", "expected"),
+    [
+        ({"is_metadata_root": True}, "split"),
+        ({"is_setup": True, "setup_idx": 1}, "split"),
+        ({"is_metadata": True, "setup_idx": 0}, "deny"),
+        ({"parent": "", "key": "input"}, "deny"),
+        ({"parent": "input", "key": "path"}, "native"),
+        ({"parent": "coefs", "key": "Ag"}, "native"),
+        (None, "deny"),
+    ],
+    ids=["meta", "setup", "leaf", "top", "hydra-child", "hydra-leaf", "no-target"],
+)
+def test_insert_permission_matrix(ref, expected, test_description="insert verdicts"):
+    """Split only on meta/setup; leaves + top nodes deny; hydra children go native."""
+    host, pol = _policy_host(ref if ref is not None else {"key": "input"})
+    if ref is None:
+        host._ref, host._meta, host._rc_sel_iid = None, {}, "missing"
+    assert pol.insert_permission(pol.oracle_ref()) == expected, (
+        f"{test_description}: ref={ref!r} — got {pol.insert_permission(pol.oracle_ref())!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("ref", "expected"),
+    [
+        ({"is_metadata_root": True}, False),
+        ({"is_setup": True, "setup_idx": 0}, False),
+        ({"is_metadata": True, "setup_idx": 0}, False),
+        ({"parent": "", "key": "input"}, True),
+        ({"parent": "input", "key": "path"}, True),
+        ({"parent": "coefs", "key": "Ag"}, True),
+    ],
+    ids=["meta", "setup", "leaf", "top", "hydra-child", "hydra-leaf"],
+)
+def test_child_add_only_outside_metadata(ref, expected, test_description="child-add gate"):
+    """Extras ``Add row`` parents under hydra/top/user nodes — never the metadata subtree."""
+    host, pol = _policy_host(ref)
+    assert pol.can_child_add() is expected, f"{test_description}: ref={ref!r}"
+    host._readonly = True
+    assert pol.can_child_add() is False, f"{test_description}: readonly must deny"
+
+
+def test_user_rows_insert_deny_but_deletable(test_description="delete-only-yours"):
+    """Extras-added rows: insert denied, delete allowed iff the selection is all-user."""
+    host, pol = _policy_host({"parent": "input", "key": "path"})
+    host._user_rows = {"u1", "u2"}
+    host.sh.existing = {"u1", "u2", "iid"}
+    host.vis = ["u1", "u2"]
+    host._rc_sel_iid = "u1"
+    assert pol.kind_of("u1") == "user", f"{test_description}: kind must be user"
+    assert pol.insert_permission(("user", None)) == "deny", f"{test_description}: user insert denied"
+    host.sh.selected_rows = [0, 1]
+    assert pol.can_delete_rows() is True, f"{test_description}: all-user selection must delete"
+    host.sh.selected_rows = [1]
+    host.vis = ["u1", "iid"]
+    assert pol.can_delete_rows() is False, f"{test_description}: mixed selection must not delete"
+    host.sh.selected_rows = []
+    assert pol.can_delete_rows() is False, f"{test_description}: empty selection must not delete"
+
+
+def test_delete_columns_only_trailing_appends(test_description="column gate"):
+    """``Delete columns`` passes only for appended trailing columns (``>= base``)."""
+    host, pol = _policy_host({"parent": "", "key": "input"})
+    assert pol.can_delete_columns() is False, f"{test_description}: no base → deny"
+    host._user_col_base = 6
+    host.sh.MT.selected_cols = [6, 7]
+    assert pol.can_delete_columns() is True, f"{test_description}: trailing cols must delete"
+    host.sh.MT.selected_cols = [5, 6]
+    assert pol.can_delete_columns() is False, f"{test_description}: mixed cols must not delete"
+    host.sh.MT.selected_cols = []
+    host.sh.MT.CH.popup_menu_loc = 6
+    assert pol.can_delete_columns() is True, f"{test_description}: popup col counts as target"
+
+
+def test_readonly_denies_everything(test_description="readonly sheet"):
+    """Simplified mode without data — every verdict denies."""
+    host, pol = _policy_host()
+    host._readonly = True
+    assert pol.insert_permission(("setup", 0)) == "deny", f"{test_description}: insert"
+    assert pol.can_delete_rows() is False, f"{test_description}: delete rows"
+    assert pol.can_delete_columns() is False, f"{test_description}: delete cols"
+    assert pol.can_child_add() is False, f"{test_description}: child add"
+
+
+# ------------------------------------------------------------- SheetGuard
+def test_guard_denies_with_bell_and_allows_hydra(test_description="method guard"):
+    """Wrapped mutation methods bell+``None`` on deny, pass through on allow."""
+    host, pol = _policy_host({"parent": "input", "key": "path"})
+    tree = MetadataTree(host)
+    host.sh.real_insert = lambda *a, **k: "inserted"
+    host.sh.real_delete = lambda *a, **k: "deleted"
+    guard = SheetGuard.__new__(SheetGuard)
+    guard._tree, guard._policy, guard._host, guard._patched = tree, pol, host, []
+    guard._wrap(host.sh, "real_insert", pol.can_native_insert)
+    guard._wrap(host.sh, "real_delete", pol.can_delete_rows)
+    assert host.sh.real_insert() == "inserted", f"{test_description}: hydra insert must pass"
+    assert host.sh.real_delete() is None, f"{test_description}: hydra delete must deny"
+    assert host.sh.bells == 1, f"{test_description}: deny must bell"
+    host._loading = True  # internal rebuilds bypass
+    assert host.sh.real_delete() == "deleted", f"{test_description}: loading must bypass"
+    host._loading = False
+    with guard.suspended():
+        assert host.sh.real_delete() == "deleted", f"{test_description}: suspension must bypass"
+
+
+class StubOwner:
+    """tksheet-shaped method surface for guard rule tests."""
+
+    def __init__(self):
+        self.calls: list = []
+
+    def rc_add_columns(self, *a, **k):
+        self.calls.append("cols")
+        return "cols"
+
+    def delete_rows(self, *a, **k):
+        self.calls.append("rows")
+        return "rows"
+
+    def insert_rows(self, *a, **k):
+        self.calls.append("insert")
+        return "insert"
+
+
+def test_guard_leaves_tree_construction_open(test_description="programmatic insert"):
+    """``Sheet.insert_rows`` is never a guard rule — tree building (fixtures included) keeps working."""
+    host, pol = _policy_host({"parent": "input", "key": "path"})
+    guard = SheetGuard(MetadataTree(host), pol)
+    assert guard._rule("del_rows").__func__ is pol.can_delete_rows.__func__, (
+        f"{test_description}: row delete gate"
+    )
+    assert guard._rule("del_columns").__func__ is pol.can_delete_columns.__func__, (
+        f"{test_description}: col delete gate"
+    )
+    assert guard._never() is False, f"{test_description}: native col insert always denied"
+    stub = StubOwner()
+    guard._patch_owner(stub, (("rc_add_columns", guard._never), ("delete_rows", pol.can_delete_rows)))
+    assert stub.rc_add_columns() is None and stub.calls == [], f"{test_description}: col insert denied"
+    assert stub.insert_rows() == "insert", f"{test_description}: bare insert untouched"
+
+
+def test_guard_skips_missing_and_double_wrap(test_description="guard robustness"):
+    """Unknown tksheet versions degrade gracefully; double-wrap is a no-op."""
+    host, pol = _policy_host()
+    guard = SheetGuard(MetadataTree(host), pol)
+    guard._patch_owner(
+        host.sh, (("insert_row", pol.can_native_insert), ("no_such_method", pol.can_delete_rows))
+    )
+    before = list(guard._patched)
+    guard._patch_owner(
+        host.sh, (("insert_row", pol.can_native_insert), ("no_such_method", pol.can_delete_rows))
+    )
+    assert guard._patched == before, f"{test_description}: re-patch must not duplicate"
+
+
+# ------------------------------------------------------------- menu state
+def _menu4(labels=("Cut", "Insert rows above", "Insert rows below", "Delete rows", "Delete columns")):
+    return FakeMenu(list(labels))
+
+
+@pytest.mark.parametrize(
+    ("ref", "above_state", "below_state"),
+    [
+        ({"is_metadata_root": True}, "normal", "normal"),
+        ({"is_setup": True, "setup_idx": 0}, "normal", "normal"),
+        ({"is_metadata": True, "setup_idx": 0}, "disabled", "disabled"),
+        ({"parent": "", "key": "input"}, "disabled", "disabled"),
+        ({"parent": "input", "key": "path"}, "normal", "normal"),
+    ],
+    ids=["meta", "setup", "leaf", "top", "hydra"],
+)
+def test_menu_insert_state_per_kind(ref, above_state, below_state, test_description="menu insert state"):
+    """Above/below enabled only for split targets and hydra children — never leaves/tops."""
+    host, pol = _policy_host(ref)
+    menu = _menu4()
+    assert refresh_menu_state(menu, MetadataTree(host), pol) is True, f"{test_description}: must change"
+    # Above/below sit at fixed indexes (locale-independent); split targets relabel them.
+    assert menu.entrycget(1, "state") == above_state, f"{test_description}: above ({menu.labels[1]!r})"
+    assert menu.entrycget(2, "state") == below_state, f"{test_description}: below ({menu.labels[2]!r})"
+    if ref.get("is_metadata_root") or ref.get("is_setup"):
+        assert menu.labels[1] != "Insert rows above", f"{test_description}: split must relabel"
+        assert menu.labels[2] != "Insert rows below", f"{test_description}: split must relabel"
+    assert menu.state_of("Delete rows") == "disabled", f"{test_description}: delete stays off"
+
+
+def test_menu_delete_rows_enabled_for_user_selection(test_description="menu delete state"):
+    """``Delete rows`` flips on only when the selection is all-user."""
+    host, pol = _policy_host({"parent": "input", "key": "path"})
+    host._user_rows, host.sh.existing = {"u1"}, {"u1"}
+    host.vis, host._rc_sel_iid, host.sh.selected_rows = ["u1"], "u1", [0]
+    menu = _menu4()
+    refresh_menu_state(menu, MetadataTree(host), pol)
+    assert menu.state_of("Delete rows") == "normal", f"{test_description}: user selection must enable"
+    host.sh.selected_rows = []
+    host._rc_sel_iid = "missing"
+    host.vis = []
+    refresh_menu_state(menu, MetadataTree(host), pol)
+    assert menu.state_of("Delete rows") == "disabled", f"{test_description}: empty must disable"
+
+
+def test_menu_fully_disabled_when_readonly(test_description="readonly menu"):
+    """Simplified mode without data — every entry, including navigation-adjacent ones, disabled."""
+    host, pol = _policy_host()
+    host._readonly = True
+    menu = _menu4()
+    refresh_menu_state(menu, MetadataTree(host), pol)
+    for label in menu.labels:
+        assert menu.state_of(label) == "disabled", f"{test_description}: {label!r} must be disabled"
+
+
+def test_menu_native_column_entries_always_disabled(test_description="append-only columns"):
+    """Left/right column inserts never run — the ``Add column`` extra is the only path."""
+    host, pol = _policy_host({"parent": "input", "key": "path"})
+    menu = FakeMenu(["Insert columns left", "Insert columns right", "Delete columns", "Add column"])
+    refresh_menu_state(menu, MetadataTree(host), pol)
+    assert menu.state_of("Insert columns left") == "disabled", f"{test_description}: left"
+    assert menu.state_of("Insert columns right") == "disabled", f"{test_description}: right"
+    assert menu.state_of("Add column") == "normal", f"{test_description}: extra stays"
+
+
+def test_structure_hook_rebuilds_and_clears(test_description="insert follow-up"):
+    """Post-insert hook hides overlays, clears stale status and rebuilds row caches."""
+    host = FakeHost()
+    tree = MetadataTree(host)
+    host._hide_hover_field = lambda: setattr(host, "hidden", True)
+    assert popup._install_structure_hook(tree) is True, f"{test_description}: install"
+    assert popup._install_structure_hook(tree) is True, f"{test_description}: re-install no-op"
+    host.sh.MT.extra_end_insert_rows_rc_func({})
+    assert host.rebuilt >= 1 and host.cleared == 1 and host.hidden is True, (
+        f"{test_description}: rebuilt={host.rebuilt} cleared={host.cleared}"
+    )
+
+
+def test_add_extras_use_add_labels(test_description="extras rename"):
+    """Extras register under Add (append) labels in both chrome string tables."""
+    for fname, col, row in (
+        ("str.yaml", "Add column", "Add row"),
+        ("str_ru.yaml", "Добавить столбец", "Добавить строку"),
+    ):
+        data = yaml.safe_load((_STR_DIR / fname).read_text(encoding="utf-8"))
+        assert data.get("sheet.insert_col") == col, f"{test_description}: {fname} col"
+        assert data.get("sheet.insert_row") == row, f"{test_description}: {fname} row"

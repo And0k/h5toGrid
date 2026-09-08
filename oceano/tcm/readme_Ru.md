@@ -1,8 +1,8 @@
-# Обработка данных инклинометров
+<img src="docs/images/logo.png" alt="TCM" align="right" width="256">
 
-<p align="center">
-  <img src="docs/images/logo.png" alt="TCM" width="128">
-</p>
+[←English](readme.md)
+
+# Обработка данных инклинометров
 
 Преобразование сырых данных, измеренных инклинометрами течений (TCM)
 АО ИО РАН, в текстовые файлы (CSV/TSV) и NetCDF с физическими величинами

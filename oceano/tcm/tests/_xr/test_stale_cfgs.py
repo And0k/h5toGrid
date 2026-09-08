@@ -1,10 +1,12 @@
 """Tests for find_stale_cfgs — stale detection without ProbeFiles."""
+
 from __future__ import annotations
 
 
 import pytest
 
 from tcm.config_yaml import find_stale_cfgs
+from tcm.format import pcid_key
 
 
 @pytest.mark.xr
@@ -59,3 +61,36 @@ class TestFindStaleCfgs:
         (run_dir / "251204_1823@i_67.yaml").write_text(f"input:\n path: {real_file}\n")
         result = find_stale_cfgs({"i67": ["251204_1823@i_067", "251204_1823@i_67"]}, run_dir)
         assert result == {"i67": ["251204_1823@i_067"]}, f"{result=!r}"
+
+
+@pytest.mark.xr
+class TestPcidKey:
+    """format.pcid_key — canonical identity for config stem ↔ input.path matching.
+
+    Regression: raw device file names (``INKL_P05_маг``) were skipped against
+    generated config stems (``i_p05-маг``) — comment separators not normalized.
+    """
+
+    @pytest.mark.parametrize(
+        ("a", "b"),
+        [
+            pytest.param("i_p05-маг", "INKL_P05_маг", id="dash-vs-underscore-comment"),
+            pytest.param("260624_1255@i_p05-маг", "INKL_P05_маг", id="dated-stem-vs-raw-file"),
+            pytest.param("@i_p5-маг", "INKL_P05_маг", id="legacy-stem-vs-raw-file"),
+            pytest.param("i_p5-press", "INKL_P05_Press", id="case-insensitive-comment"),
+            pytest.param("i_90", "i90", id="pcid-formatting"),
+        ],
+    )
+    def test_matching_identities(self, a, b):
+        assert pcid_key(a) == pcid_key(b), f"{pcid_key(a)!r} != {pcid_key(b)!r}"
+
+    @pytest.mark.parametrize(
+        ("a", "b"),
+        [
+            pytest.param("i_90-backup260723", "i_90", id="backup-copy"),
+            pytest.param("i_p05-маг", "INKL_P05_Press", id="different-comments"),
+            pytest.param("i_p05", "i_b05", id="different-models"),
+        ],
+    )
+    def test_distinct_identities(self, a, b):
+        assert pcid_key(a) != pcid_key(b), f"{pcid_key(a)!r} == {pcid_key(b)!r}"

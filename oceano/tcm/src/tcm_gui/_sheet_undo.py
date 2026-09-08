@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 from collections import deque
 from collections.abc import Iterator
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager, nullcontext, suppress
 from typing import Any
 
 lf = logging.getLogger(__name__)
@@ -205,7 +205,6 @@ class GroupUndoBridge:
             mt._group_undo_prev = mt.extra_begin_ctrl_z_func
             mt.extra_begin_ctrl_z_func = self._hook
             mt._group_undo_installed = True
-            lf.debug("group-undo: hooked %r", mt)
         mt._group_undo_bridge = self
 
     @property
@@ -218,7 +217,9 @@ class GroupUndoBridge:
         """Coalesce the wrapped block into a single native-chronology marker."""
         mt = self._mt
         before = _take_snapshot(self._meta)
-        with suspend_native_pushes(mt):
+        guard = getattr(self._meta.host, "_row_guard", None)
+        ctx = guard.suspended() if guard is not None else nullcontext()
+        with suspend_native_pushes(mt), ctx:
             yield self
         after = _take_snapshot(self._meta)
         with suppress(Exception):
@@ -226,7 +227,7 @@ class GroupUndoBridge:
         mt.undo_stack.append(
             {"name": GROUP_EVENT, "data": {"eventname": GROUP_EVENT, "before": before, "after": after}}
         )
-        lf.debug("group-undo: pushed marker (undo depth=%d)", len(mt.undo_stack))
+        # lf.debug("group-undo: pushed marker (undo depth=%d)", len(mt.undo_stack))
 
     def can_undo(self) -> bool:
         """True when the native stack (group markers included) can undo."""
@@ -271,7 +272,12 @@ class GroupUndoBridge:
         except Exception:
             lf.exception("group-undo: hook routing failed; delegating to native")
         if (prev := getattr(mt, "_group_undo_prev", None)) is not None:
-            return prev(event)
+            result = prev(event)
+            # Native undo/redo of a value edit — notify peers (hash guard in
+            # _notify_metadata_changed makes coef-only undos a no-op).
+            with suppress(Exception):
+                mt._notify_metadata_changed()  # type: ignore[attr-defined]
+            return result
         return None
 
     def _undo_group(self, mt: Any) -> None:
@@ -287,7 +293,9 @@ class GroupUndoBridge:
             mt.sheet_modified(marker["data"], purge_redo=False)
         with suppress(Exception):
             mt.PAR.emit_event("<<Undo>>", marker["data"])
-        lf.debug("group-undo: undone marker (redo depth=%d)", len(mt.redo_stack))
+        # Group undo restored the model — notify peers (split structure changed).
+        with suppress(Exception):
+            mt._notify_metadata_changed()  # type: ignore[attr-defined]
 
     def _redo_group(self, mt: Any) -> None:
         """Pop the marker, restore ``after``, carry it back to the undo stack."""
@@ -302,4 +310,6 @@ class GroupUndoBridge:
             mt.sheet_modified(marker["data"], purge_redo=False)
         with suppress(Exception):
             mt.PAR.emit_event("<<Redo>>", marker["data"])
-        lf.debug("group-undo: redone marker (undo depth=%d)", len(mt.undo_stack))
+        # Group redo restored the model — notify peers.
+        with suppress(Exception):
+            mt._notify_metadata_changed()  # type: ignore[attr-defined]

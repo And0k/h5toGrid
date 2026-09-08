@@ -259,6 +259,30 @@ def probe_from_name(name: str) -> tuple[str, int] | None:
     return model, number
 
 
+def pcid_key(core: str) -> tuple[str, str]:
+    """(canonical pcid, normalized comment) compare key for config ↔ input.path matching.
+
+    Permissive on pcid formatting (``i90`` ≡ ``i_90`` ≡ ``i_1`` → ``i01``),
+    strict on the comment suffix so backup copies (``i_90-backup….yaml``)
+    stay distinguishable. Comment separators (``-``/``_``) and case are
+    normalized (``parse_name`` lowercases): ``260624_1255@i_p05-маг`` matches
+    source file ``INKL_P05_маг.TXT``. Unparseable cores compare as-is.
+
+    :param core: config YAML stem or source file stem (any ``{prefix}@`` part is ignored).
+    :return: ``(pcid, comment)`` identity pair.
+    """
+    core = core.rsplit("@", 1)[-1]
+    parts = parse_name(core) or {}
+    return (
+        # probe_from_name idiom: model falls back to type ("w" keeps the
+        # model-less wave-gauge form, "i" collapses to plain inclinometer)
+        pcid_from_parts(model=parts.get("model") or parts.get("type"), number=parts["number"])
+        if parts and parts.get("number")
+        else core,
+        (parts.get("comment") or "").lstrip("-_"),
+    )
+
+
 def stem_to_pcid(stem: str) -> str:
     """Strip non-significant prefix/suffix from a file stem → pcid-only stem.
 

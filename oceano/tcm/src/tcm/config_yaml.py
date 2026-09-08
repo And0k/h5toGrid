@@ -710,18 +710,30 @@ def save_config_to_yaml(
 ) -> dict[str, dict[str, Any]]:
     """Save per-file YAML configs from gen_metadata() to ``cfg_proc/run/``.
 
-    Each source file gets one YAML named ``{yymmdd_hhmm}@{pcid_stem}.yaml``
+    Each source file gets one YAML named ``{yymmdd_hhmm}@{pcid}[-{comment}].yaml``
     when ``input.time_ranges[0]`` is determined from data; otherwise just
-    ``@{pcid_stem}.yaml``.  The ``@`` delimiter isolates the date prefix
-    (metadata) from the pcid stem — see :func:`format.stem_to_pcid`.
+    ``@{pcid}[-{comment}].yaml``.  The ``@`` delimiter isolates the date prefix
+    (metadata) from the pcid stem — see :func:`format.stem_to_pcid`.  The
+    ``comment`` is the source-name part after the pcid with ``-``/``_``
+    separators stripped (``INKL_P05_маг`` → ``-маг``) — multiple files of one
+    probe therefore get distinct, collision-free names.
     Each YAML starts with ``# @package _global_`` so it merges into the
     top-level :class:`Config`.
 
-    **Deduplication**: before writing, checks if any existing YAML for the
-    same normalized pcid already references a valid (existing) ``input.path``
-    file.  If so, the new config is skipped — avoids creating duplicate
-    configs that only differ in pid formatting (e.g. ``i_090`` vs ``i90``)
-    or comment suffix (e.g. ``@i_p5-press`` vs ``@i_p5``).
+    **Deduplication**: before writing, checks if an existing YAML of the same
+    canonical identity (:func:`format.pcid_key` of its stem) already
+    references a valid (existing) ``input.path`` file — if so, the new config
+    is skipped, avoiding duplicates that only differ in pid formatting (e.g.
+    ``i_090`` vs ``i90``) or date prefix.  An existing config of a different
+    identity pointing at the same file (manual copy, comment-less stem after
+    a source rename) does not suppress generation — the correctly-named
+    config is written alongside; the mismatched one is then ignored by the
+    stem validation at processing (matching contract in
+    :doc:`io_formats — Config-file matching </docs/reference/io_formats.md>`).  **Stale configs are never deleted**:
+    a regenerated config overwrites only a file of exactly the same name
+    (``open(mode="w")``); stale YAMLs (``input.path`` missing) of other names
+    stay on disk and are ignored for processing with a warning (orphan check
+    in :func:`tcm.processing.run`).
 
     :param cfg: top-level config dict.
     :param input_paths: resolved list of input paths (from :func:`init_file_names`).
@@ -763,33 +775,31 @@ def save_config_to_yaml(
             except Exception:
                 return False
 
-    existing_valid_paths: set[str] = set()
+    # Valid existing configs by canonical stem identity {(pcid, comment): [paths]}.
+    # Dedup key is the identity, not the path: a config of another identity
+    # pointing at the same file (manual copy, comment-less stem after a source
+    # rename) must not suppress regenerating the correctly-named config.
+    existing_valid_idents: dict[tuple[str, str], list[str]] = {}
     if dir_cfg_proc.is_dir():
         for yaml_file in dir_cfg_proc.glob("*.yaml"):
+            if any(ch.isspace() for ch in yaml_file.stem):
+                continue  # whitespace in name → ignored (io_formats.md#config-file-matching)
             try:
                 with yaml_file.open(encoding="utf-8") as fp:
                     cfg_yaml = ry.load(fp)
                 cfg_path = (cfg_yaml or {}).get("input", {}).get("path")
                 if cfg_path and _is_valid_input_path(str(cfg_path)):
-                    existing_valid_paths.add(str(Path(str(cfg_path)).as_posix()))
+                    existing_valid_idents.setdefault(format.pcid_key(yaml_file.stem), []).append(
+                        str(Path(str(cfg_path)).as_posix())
+                    )
             except Exception:
                 continue
 
     # Iterate per-file metadata (each run YAML is independent) — eager=False defers file reads to row-select
     for cfg1, (probe_continues, pcid, _) in gen_metadata(cfg, input_paths, eager=eager):
         cfg_path_str = str(Path(str(cfg1["input"]["path"])).as_posix())
-        # Per-file dedup: skip only when exact file path already has a valid YAML
-        if cfg_path_str in existing_valid_paths:
-            lf.debug(
-                "{}: skipping config generation — valid config already exists for file {}",
-                pcid,
-                cfg_path_str,
-            )
-            out_dicts[str(cfg1["input"]["path"])] = cfg1
-            continue
-
-        # Date stamp + pcid + preserved -comment (D5: pcid canonical, comment from source stem)
-        # Source stem extraction handles archive composites (inner name) and @ prefix
+        # Comment from the source stem part after the pcid (D5: pcid canonical,
+        # comment normalized) — distinguishes multiple files of one probe
         _src_path = Path(str(cfg1["input"]["path"]))
         try:
             from tcm.search import is_archive_composite as _is_comp
@@ -802,8 +812,21 @@ def save_config_to_yaml(
                 _src_stem = _src_path.stem
         except Exception:
             _src_stem = Path(str(cfg1["input"]["path"])).stem
-        _stem_no_at = _src_stem.lstrip("@")
-        _comment = _stem_no_at.split("-", 1)[1] if "-" in _stem_no_at else ""
+        _comment = ((format.parse_name(_src_stem) or {}).get("comment") or "").lstrip("-_")
+
+        # Per-file dedup: skip only when an existing valid config carries the
+        # same canonical identity (pcid + comment) as this source file —
+        # matching contract in docs/reference/io_formats.md
+        if cfg_path_str in existing_valid_idents.get((pcid, _comment), []):
+            lf.debug(
+                "{}: skipping config generation — valid config already exists for file {}",
+                pcid,
+                cfg_path_str,
+            )
+            out_dicts[str(cfg1["input"]["path"])] = cfg1
+            continue
+
+        # Date stamp + pcid + normalized -comment
         _date_prefix = (
             datetime.fromisoformat(t0).strftime("%y%m%d_%H%M")
             if (time_ranges := cfg1["input"].get("time_ranges")) and (t0 := time_ranges[0])
@@ -929,7 +952,8 @@ def update_run_yaml(yaml_path: Path, patch: dict[str, object]) -> None:
     Single write path for all GUI/pipeline edits: reads the YAML, merges only
     the given keys (other sections preserved), writes back with the
     ``# @package _global_`` header. Creates a timestamped backup
-    (``-backupYYMMDD_HHMMSS``) before modifying an existing file.
+    (`` - backupYYMMDD_HHMMSS`` — whitespace puts it under the ignore rule of
+    the matching contract) before modifying an existing file.
 
     :param yaml_path: Path to existing run YAML (created if missing).
     :param patch: Nested mapping, e.g. ``{"input": {"coefs": {...}}, "out": {...}}``.
@@ -941,7 +965,7 @@ def update_run_yaml(yaml_path: Path, patch: dict[str, object]) -> None:
     if yaml_path.exists():
         # Create timestamped backup before first modification
         ts = datetime.now().strftime("%y%m%d_%H%M%S")
-        backup = yaml_path.with_stem(f"{yaml_path.stem}-backup{ts}")
+        backup = yaml_path.with_stem(f"{yaml_path.stem} - backup{ts}")
         if not backup.exists():
             import shutil
 

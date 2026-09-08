@@ -29,6 +29,7 @@ else:
 sys.path.insert(0, str(SPEC_DIR))
 from spec_common import (
     EXCLUDE_BINARIES,
+    LIBARCHIVE_DLLs,
     RUNTIME_DLLs,
     collect_docs,
     collect_first_party_pkgs,
@@ -52,8 +53,10 @@ _ENV_LIB_BIN = os.path.join(_ENV_PREFIX, "Library", "bin")
 _site_pkgs = os.path.join(_ENV_PREFIX, "Lib", "site-packages")
 SITE_PKGS = Path(_site_pkgs)
 
-# Runtime DLLs — from spec_common (OpenBLAS, stdlib)
-_ALL_DIST_DLLS = RUNTIME_DLLs
+# Runtime DLLs — from spec_common (OpenBLAS, stdlib) + libarchive PE-import
+# closure (meta_finder.utils_sys does `import libarchive` at module level;
+# the DLL is ctypes-loaded by bare name → invisible to PyInstaller's walk)
+_ALL_DIST_DLLS = RUNTIME_DLLs + LIBARCHIVE_DLLs
 
 print(
     f"[spec] DLLs to bundle: {len(_ALL_DIST_DLLS)} "

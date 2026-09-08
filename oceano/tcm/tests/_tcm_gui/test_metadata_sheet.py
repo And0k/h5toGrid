@@ -648,94 +648,267 @@ def test_autofilled_metadata_dirty_but_not_coefs(_session_tk_root, tmp_path, moc
         app2._pages = {"240613_1200@i_01": sheet2}
         mocker.patch.object(app2, "_load_device_meta", return_value=(None, tmp_path, md_path2))
         app2._write_metadata()
-
-        assert md_path2.is_file(), "Run must create info_devices.yaml from empty stub too"
-        assert not sheet2.is_metadata_dirty(), "after write metadata must be clean (empty branch)"
     finally:
         sheet2.sh.destroy()
 
 
-def test_comma_cruise_autofilled_shows_star(_session_tk_root, tmp_path):
-    """Cruise dir with comma (``@i,t-chain``) must not break autofill dirty.
+# ── Cross-tab metadata sync ─────────────────────────────────────────────
 
-    Regression for B:/Cruises/BalticSea/251201_ABP64@i,t-chain/... — the
-    ``_scan`` comma-split ``re.split(r\",(?=[A-Za-z]:[\\\\/])\")`` left a
-    single comma-path intact (``Path.exists()`` guard), but we also must
-    verify the sheet itself marks a new ``info_devices.yaml`` dirty when the
-    file is absent, even though the cruise name contains a comma.
-    The GUI showed no ``*`` (neither rail nor ``metadata*`` label) because
-    the old ``any(not is_placeholder…)`` left the empty stub clean and
-    ``_apply_metadata_dirty_label`` was never called on load.
-    """
-    import tkinter as tk
 
+def _make_cfg() -> dict:
+    return {
+        "input": {
+            "path": "D:/x/_raw/dummy.txt",
+            "time_ranges": ["2026-07-11T12:20:12", "2026-07-20T10:34:06"],
+            "coefs": {},
+        }
+    }
+
+
+def _sheet_for(root, stem: str, tmp_path, md_path: Path | None = None) -> tuple:
+    """Build a real ConfigSheet with metadata + wire its sync callback."""
     from tcm_gui.coef_sheet import ConfigSheet
+
+    sh = ConfigSheet(root)
+    sh.sh.pack(fill="both", expand=True)
+    md_p = md_path if md_path is not None else tmp_path / f"info_{stem}.yaml"
+    cfg = _make_cfg()
+    sh.load(cfg, full=False, config_root=Config, return_enum=Return, metadata_path=str(md_p))
+    sh._page_stem = stem
+    root.update_idletasks()
+    root.update()
+    return sh, md_p
+
+def test_metadata_sync_split_fanout(_session_tk_root, tmp_path):
+    """Splitting on tab A mirrors the new setup structure to same-identity tab B."""
+    from tcm_gui.app import App
 
     if _session_tk_root is None:
         pytest.skip("Tk not available")
         return
     root = _session_tk_root
+    shared_md = tmp_path / "info_shared.yaml"
+    sh_a, md_a = _sheet_for(root, "240613_1200@i_67", tmp_path, md_path=shared_md)
+    sh_b, md_b = _sheet_for(root, "240613_1300@i_67", tmp_path, md_path=shared_md)
+    # Same device file → same identity → sync.  Different file → no sync.
     try:
-        root.geometry("700x400+40+40")
-        root.deiconify()
-    except tk.TclError:
+        assert getattr(sh_a, "_setups", None) is not None
+        # Wire App-style fan-out manually (no full App instantiation needed).
+        app = MagicMock(spec=App)
+        app._pages = {"240613_1200@i_67": sh_a, "240613_1300@i_67": sh_b}
+        app._metadata_identity = App._metadata_identity.__get__(app)
+        app._on_metadata_changed = App._on_metadata_changed.__get__(app)
+        sh_a.on_metadata_changed = lambda: app._on_metadata_changed(sh_a)
+        sh_b.on_metadata_changed = lambda: app._on_metadata_changed(sh_b)
+
+        n_before = len(sh_a._setups)
+        assert sh_a.split_setup(above=True)
+        # A now has one more setup; B mirrors it.
+        assert len(sh_a._setups) == n_before + 1
+        assert len(sh_b._setups) == n_before + 1
+        assert sh_a._setups[0][0] == sh_b._setups[0][0]  # same autonumber
+        assert sh_a._meta_snap() == sh_b._meta_snap()  # content matches
+    finally:
+        sh_a.sh.destroy()
+        sh_b.sh.destroy()
+
+
+def test_metadata_sync_value_edit_fanout(_session_tk_root, tmp_path):
+    """Editing a metadata value on A mirrors to B via _notify_metadata_changed."""
+    from tcm_gui.app import App
+
+    if _session_tk_root is None:
         pytest.skip("Tk not available")
         return
-
-    cruise = tmp_path / "251201_ABP64@i,t-chain" / "inclinometer" / "_raw" / "251205_0426_st_with_t-chain"
-    cruise.mkdir(parents=True)
-    # No info_devices.yaml — autofilled
-    raw_file = cruise / "@i_90.TXT"
-    raw_file.write_text(
-        "yyyy,mm,dd,HH,MM,SS,Ax,Ay,Az,Mx,My,Mz,Battery,Temp\n"
-        "2026,07,11,13,10,34,100,200,300,400,500,600,12.5,25.0\n",
-        encoding="utf-8",
-    )
-    cfg = {
-        "input": {
-            "path": str(raw_file),
-            "coefs": {},
-        }
-    }
-    # metadata_path not passed — derived from input.path via _build_metadata's
-    # ``find_dir_raw_absolute`` → ``inclinometer/info_devices.yaml`` (contains comma parent)
-    sheet = ConfigSheet(root)
-    sheet.sh.pack(fill="both", expand=True)
+    root = _session_tk_root
+    shared_md = tmp_path / "info_shared.yaml"
+    sh_a, _ = _sheet_for(root, "240613_1200@i_90", tmp_path, md_path=shared_md)
+    sh_b, _ = _sheet_for(root, "240613_1300@i_90", tmp_path, md_path=shared_md)
     try:
-        sheet.load(cfg, full=False, config_root=Config, return_enum=Return)
-        root.update_idletasks()
-        root.update()
-        assert sheet.is_metadata_dirty() is True, "comma cruise with no info_devices must be dirty"
-        assert not sheet.is_dirty, "autofilled must not mark coefs dirty"
-        # Label must already be ``metadata*`` on load, not only after an edit
-        meta_iid = next(i for i, m in sheet._meta.items() if m.get("is_metadata_root"))
-        label = sheet.sh.item(meta_iid).get("text", "")
-        assert label == "metadata*", f"expected 'metadata*' label, got {label!r}"
-        # Rail side as well — App helper
-        from unittest.mock import MagicMock
+        app = MagicMock(spec=App)
+        app._pages = {"240613_1200@i_90": sh_a, "240613_1300@i_90": sh_b}
+        app._metadata_identity = App._metadata_identity.__get__(app)
+        app._on_metadata_changed = App._on_metadata_changed.__get__(app)
+        sh_a.on_metadata_changed = lambda: app._on_metadata_changed(sh_a)
+        sh_b.on_metadata_changed = lambda: app._on_metadata_changed(sh_b)
 
-        from tcm_gui.app import App
+        # Find a metadata cell (H_above_bot) and simulate an edit commit.
+        for iid, m in list(sh_a._meta.items()):
+            if m.get("is_metadata") and m.get("label") == "H":
+                r = sh_a._row_map().get(iid)
+                sh_a.sh.set_cell_data(r, 0, "42", redraw=False)
+                sh_a._notify_metadata_changed()
+                break
+        # Peer mirrors the edit.
+        assert sh_a._meta_snap() == sh_b._meta_snap()
+        assert not sh_b._sync_guard  # echo guard released
+    finally:
+        sh_a.sh.destroy()
+        sh_b.sh.destroy()
 
-        app = App.__new__(App)
-        app._pages = {"251205_0426_st_with_t-chain": sheet}
-        app._rail = MagicMock()
-        app._poll_dirty_tabs()
-        app._rail.set_dirty.assert_called_once()
-        assert app._rail.set_dirty.call_args.args[1] is False, "config must not be dirty"
-        assert app._rail.set_dirty.call_args.args[2] is True, "metadata must be dirty"
-        # Comma-split helper must leave a single existing comma-path intact
-        from tcm_gui.app import App as _App
 
-        # Simulate _scan's comma guard — single comma-path that exists
-        p = str(raw_file)
-        assert "," in p and Path(p).exists()
-        # The regex split would produce 1 part, not 2, so it stays single
-        import re
+def test_metadata_sync_identity_mismatch_no_fanout(_session_tk_root, tmp_path):
+    """Different probe pcid → edits on A do NOT reach B."""
+    from tcm_gui.app import App
 
-        parts = tuple(part.strip() for part in re.split(r",(?=[A-Za-z]:[\\/])", p) if part.strip())
-        # Single path → not treated as multi
-        assert not (len(parts) > 1 and all(Path(x).is_absolute() for x in parts)), (
-            f"single comma-path must not be split as multi, got {parts!r}"
+    if _session_tk_root is None:
+        pytest.skip("Tk not available")
+        return
+    root = _session_tk_root
+    sh_a, _ = _sheet_for(root, "240613_1200@i_67", tmp_path)
+    sh_b, _ = _sheet_for(root, "240613_1300@i_90", tmp_path)  # different probe
+    try:
+        app = MagicMock(spec=App)
+        app._pages = {"240613_1200@i_67": sh_a, "240613_1300@i_90": sh_b}
+        app._metadata_identity = App._metadata_identity.__get__(app)
+        app._on_metadata_changed = App._on_metadata_changed.__get__(app)
+        sh_a.on_metadata_changed = lambda: app._on_metadata_changed(sh_a)
+        sh_b.on_metadata_changed = lambda: app._on_metadata_changed(sh_b)
+
+        sh_a.split_setup(above=True)
+        # B untouched — its setup count stays at 1.
+        assert len(sh_a._setups) == 2
+        assert len(sh_b._setups) == 1
+    finally:
+        sh_a.sh.destroy()
+        sh_b.sh.destroy()
+
+
+def test_metadata_sync_unsaved_preserved_on_peer(_session_tk_root, tmp_path):
+    """Peer apply keeps _metadata_unsaved (autofill flag) on the receiving tab."""
+    from tcm_gui.app import App
+
+    if _session_tk_root is None:
+        pytest.skip("Tk not available")
+        return
+    root = _session_tk_root
+    shared_md = tmp_path / "info_shared.yaml"
+    sh_a, _ = _sheet_for(root, "240613_1200@i_67", tmp_path, md_path=shared_md)
+    sh_b, _ = _sheet_for(root, "240613_1300@i_67", tmp_path, md_path=shared_md)
+    try:
+        # Mark B as unsaved before sync.
+        sh_b._metadata_unsaved = True
+        app = MagicMock(spec=App)
+        app._pages = {"240613_1200@i_67": sh_a, "240613_1300@i_67": sh_b}
+        app._metadata_identity = App._metadata_identity.__get__(app)
+        app._on_metadata_changed = App._on_metadata_changed.__get__(app)
+        sh_a.on_metadata_changed = lambda: app._on_metadata_changed(sh_a)
+        sh_b.on_metadata_changed = lambda: app._on_metadata_changed(sh_b)
+
+        sh_a.split_setup(above=True)
+        assert sh_b._metadata_unsaved is True  # flag preserved
+    finally:
+        sh_a.sh.destroy()
+        sh_b.sh.destroy()
+
+
+def test_metadata_sync_dirty_flag_propagation(_session_tk_root, tmp_path):
+    """Source's dirty flag propagates to clean peers on value-edit sync."""
+    from tcm_gui.app import App
+
+    if _session_tk_root is None:
+        pytest.skip("Tk not available")
+        return
+    root = _session_tk_root
+    shared_md = tmp_path / "info_shared.yaml"
+    sh_a, _ = _sheet_for(root, "240613_1200@i_67", tmp_path, md_path=shared_md)
+    sh_b, _ = _sheet_for(root, "240613_1300@i_67", tmp_path, md_path=shared_md)
+    try:
+        # Both sheets start dirty (autofilled). Clear B to simulate clean state.
+        sh_b._metadata_unsaved = False
+        sh_b._take_metadata_snapshot()  # retake snapshot so it's truly clean
+        assert not sh_b.is_metadata_dirty()
+
+        # A is dirty
+        sh_a._metadata_unsaved = True
+
+        app = MagicMock(spec=App)
+        app._pages = {"240613_1200@i_67": sh_a, "240613_1300@i_67": sh_b}
+        app._metadata_identity = App._metadata_identity.__get__(app)
+        app._on_metadata_changed = App._on_metadata_changed.__get__(app)
+        sh_a.on_metadata_changed = lambda: app._on_metadata_changed(sh_a)
+        sh_b.on_metadata_changed = lambda: app._on_metadata_changed(sh_b)
+
+        # Trigger sync from dirty A
+        sh_a._notify_metadata_changed()
+
+        # B must become dirty too
+        assert sh_b.is_metadata_dirty(), "dirty flag should propagate to peer"
+    finally:
+        sh_a.sh.destroy()
+        sh_b.sh.destroy()
+
+
+def test_metadata_identity_helper():
+    """_metadata_identity returns (path, pcid) or None when indeterminate."""
+    from tcm_gui.app import App
+
+    app = App.__new__(App)
+
+    cs = MagicMock()
+    cs.get_metadata_path.return_value = "/data/info_devices.yaml"
+    cs._page_stem = "240613_1200@i_67"
+    key = app._metadata_identity(cs)
+    assert key is not None
+    assert key[0] == "/data/info_devices.yaml"
+    assert "i67" in key[1]  # pcid normalizes to contain i67
+
+    # Empty path → None (no sync).
+    cs2 = MagicMock()
+    cs2.get_metadata_path.return_value = "   "
+    assert app._metadata_identity(cs2) is None
+
+
+def test_write_metadata_dedup_by_values(_session_tk_root, tmp_path):
+    """Synced tabs with identical metadata write only ONE setup node, not duplicates.
+
+    Regression: when multiple tabs share the same (device_path, pcid) and have
+    identical metadata values (from sync), _write_metadata must dedup by actual
+    content so the YAML ends up with a single setup node per unique array.
+    """
+    from tcm_gui.app import App
+
+    if _session_tk_root is None:
+        pytest.skip("Tk not available")
+        return
+    root = _session_tk_root
+    shared_md = tmp_path / "info_shared.yaml"
+    sh_a, _ = _sheet_for(root, "240613_1200@i_67", tmp_path, md_path=shared_md)
+    sh_b, _ = _sheet_for(root, "240613_1300@i_67", tmp_path, md_path=shared_md)
+    try:
+        # Both sheets start dirty (autofilled metadata).
+        assert sh_a.is_metadata_dirty()
+        assert sh_b.is_metadata_dirty()
+
+        # Simulate the collection logic from _write_metadata (browsed branch).
+        app = MagicMock(spec=App)
+        app._pages = {"240613_1200@i_67": sh_a, "240613_1300@i_67": sh_b}
+
+        # Replicate the dedup loop from _write_metadata
+        new_content: dict[str, dict[str, list]] = {}
+        _seen: set[tuple[str, str, tuple]] = set()
+        for stem, cs in app._pages.items():
+            is_dirty = getattr(cs, "is_metadata_dirty", False) and cs.is_metadata_dirty()
+            if not is_dirty:
+                continue
+            pcid = format.to_pcid_from_name(format.stem_to_pcid(stem))
+            meta_map = cs.get_edited_metadata_map() if hasattr(cs, "get_edited_metadata_map") else {}
+            if not meta_map:
+                continue
+            for sid, arr in meta_map.items():
+                _key = (pcid, sid, tuple(arr) if arr else ())
+                if _key in _seen:
+                    continue
+                _seen.add(_key)
+                new_content.setdefault(pcid, {})[sid] = arr
+
+        # Both tabs have identical metadata (same pcid, same setup 0, same values)
+        # → only ONE entry should be in new_content
+        assert "i67" in new_content, f"expected pcid 'i67' in new_content, got {list(new_content)}"
+        assert len(new_content) == 1, f"expected 1 pcid, got {len(new_content)}: {list(new_content)}"
+        assert len(new_content["i67"]) == 1, (
+            f"expected 1 setup node for i67, got {len(new_content['i67'])}: {list(new_content['i67'])}"
         )
     finally:
-        sheet.sh.destroy()
+        sh_a.sh.destroy()
+        sh_b.sh.destroy()

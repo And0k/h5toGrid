@@ -36,6 +36,7 @@ def _reference_velocity_pipeline(
     kVabs,
     azimuth_shift_deg=0.0,
     calc_version="trigonometric(incl)",
+    max_incl_of_fit_deg=None,
 ):
     """Pure-numpy reference — mirrors old pipeline without dask/despike/recovery."""
     Axyz = np.vstack([Ax, Ay, Az]).astype(float)
@@ -44,7 +45,7 @@ def _reference_velocity_pipeline(
     Hxyz = fG(Mxyz, Ah, Ch)
     incl = tilt_from_vertical(Gxyz)
     GsumMinus1 = np.linalg.norm(Gxyz, axis=0) - 1
-    Vabs = v_abs_from_incl(incl, kVabs, calc_version=calc_version)
+    Vabs = v_abs_from_incl(incl, kVabs, calc_version=calc_version, max_incl_of_fit_deg=max_incl_of_fit_deg)
     # Vdir formula from old pipeline (with GsumMinus1+1 correction)
     Vdir = azimuth_shift_deg - np.degrees(
         np.arctan2(
@@ -136,6 +137,40 @@ class TestVelocityComparison:
         assert "Vdir" not in result, "Vdir should not be in calc_velocity output"
         assert "v" in result, "v must be persisted"
         assert "u" in result, "u must be persisted"
+
+    def test_max_incl_of_fit_deg_passthrough(self):
+        """calc_velocity forwards max_incl_of_fit_deg to v_abs_from_incl (50° tilt > 45° tangent point)."""
+        import pandas as pd
+        import xarray as xr
+
+        n, tilt = 10, np.radians(50.0)
+        time = pd.date_range("2024-01-01", periods=n, freq="s")
+        ds = xr.Dataset(
+            {
+                "Ax": ("time", np.full(n, np.sin(tilt))),
+                "Ay": ("time", np.zeros(n)),
+                "Az": ("time", np.full(n, np.cos(tilt))),
+                "Mx": ("time", np.full(n, np.cos(tilt))),
+                "My": ("time", np.zeros(n)),
+                "Mz": ("time", np.full(n, -np.sin(tilt))),
+            },
+            coords={"time": time},
+        )
+        coefs = {
+            "Ag": np.eye(3),
+            "Cg": np.zeros((3, 1)),
+            "Ah": np.eye(3),
+            "Ch": np.zeros((3, 1)),
+            "kVabs": np.array([1.0, 0.5, 0.3, 0.1, 0.05]),
+            "azimuth_shift_deg": 0.0,
+            "max_incl_of_fit_deg": 45.0,
+        }
+        ref = _reference_velocity_pipeline(
+            ds.Ax.values, ds.Ay.values, ds.Az.values, ds.Mx.values, ds.My.values, ds.Mz.values, **coefs
+        )
+        _assert_velocity_matches(calc_velocity(ds, **coefs), ref)
+        defaulted = calc_velocity(ds, **{**coefs, "max_incl_of_fit_deg": 60.0})
+        assert not np.allclose(defaulted["v"].values, ref["v"]), "override must move the tangent point"
 
 
 # --------------------------------------------------------------------------- #

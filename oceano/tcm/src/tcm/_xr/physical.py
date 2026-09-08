@@ -45,6 +45,7 @@ def calc_velocity(
     kVabs: Sequence | None = None,
     azimuth_shift_deg: float = 0,
     calc_version: str = "trigonometric(incl)",
+    max_incl_of_fit_deg: float | None = None,
     filt_max: Mapping[str, float] | None = None,
     **kwargs,
 ) -> xr.Dataset:
@@ -63,6 +64,9 @@ def calc_velocity(
         Azimuth offset in degrees.
     calc_version
         Method passed to ``v_abs_from_incl``.
+    max_incl_of_fit_deg
+        Θ_last override (°) passed to ``v_abs_from_incl``; ``None`` keeps
+        the legacy ``kVabs[-1]`` fallback inside the kernel.
     filt_max
         Process-stage NaN-out thresholds from ``cfg_filter['max']``.
         ``g_minus_1`` → NaN inclination where |‖Gxyz‖ − 1| > threshold.
@@ -108,7 +112,7 @@ def calc_velocity(
         Vabs = xr.apply_ufunc(
             calc.v_abs_from_incl,
             incl,
-            kwargs=dict(coefs=kVabs, calc_version=calc_version),
+            kwargs=dict(coefs=kVabs, calc_version=calc_version, max_incl_of_fit_deg=max_incl_of_fit_deg),
             dask="parallelized",
         )
 
@@ -160,7 +164,7 @@ def add_vabs_vdir(ds: xr.Dataset) -> xr.Dataset:
         return ds
     Vabs = np.hypot(ds["v"], ds["u"])
     Vdir = np.degrees(np.arctan2(ds["u"], ds["v"]))
-    return ds.assign(Vabs=Vabs, Vdir=Vdir)
+    return ds.assign(Vabs=Vabs, Vdir=Vdir % 360)
 
 
 # --------------------------------------------------------------------------- #

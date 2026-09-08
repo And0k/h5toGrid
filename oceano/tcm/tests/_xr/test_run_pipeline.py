@@ -2,6 +2,7 @@
 
 Covers: discover → generate configs → process.
 """
+
 from __future__ import annotations
 
 import sys
@@ -17,6 +18,7 @@ from tcm.schema import Return
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def project_dir(tmp_path):
     """Project directory with _raw/ containing test CSV files."""
@@ -24,8 +26,7 @@ def project_dir(tmp_path):
     raw.mkdir()
     for name in ("i_01.txt", "i_02.txt"):
         (raw / name).write_text(
-            "2024,06,13,12,00,00,100,200,300\n"
-            "2024,06,13,12,00,01,101,201,301\n",
+            "2024,06,13,12,00,00,100,200,300\n2024,06,13,12,00,01,101,201,301\n",
             encoding="utf-8",
         )
     return tmp_path
@@ -37,11 +38,14 @@ def make_cfg():
 
     def _make(project_dir: Path, ids=None):
         raw = project_dir / _constants.RAW_DIR_NAME
-        return DictConfig({
-            "input": {"path": str(raw / "*i*.txt"), "ids": ids},
-            "out": {"dt_bins": [0], "dir": str(project_dir / "out")},
-            "filter": {},
-            "program": {"return_": Return.END, "verbose": "INFO"},        })
+        return DictConfig(
+            {
+                "input": {"path": str(raw / "*i*.txt"), "ids": ids},
+                "out": {"dt_bins": [0], "dir": str(project_dir / "out")},
+                "filter": {},
+                "program": {"return_": Return.END, "verbose": "INFO"},
+            }
+        )
 
     return _make
 
@@ -57,6 +61,7 @@ def _mock_config_yaml(mocker, *, existed=None, stale=None, save_ret=None):
 # ---------------------------------------------------------------------------
 # Error cases
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.xr
 @pytest.mark.parametrize(
@@ -74,12 +79,14 @@ def test_run_errors(path_val, ids_val, existed, exc_type, match, tmp_path, mocke
         p.touch()
         path_val = str(p)
 
-    cfg = DictConfig({
-        "input": {"path": path_val, "ids": ids_val},
-        "out": {},
-        "filter": {},
-        "program": {"return_": Return.END, "verbose": "INFO"},
-    })
+    cfg = DictConfig(
+        {
+            "input": {"path": path_val, "ids": ids_val},
+            "out": {},
+            "filter": {},
+            "program": {"return_": Return.END, "verbose": "INFO"},
+        }
+    )
     _mock_config_yaml(mocker, existed=existed)
     with pytest.raises(exc_type, match=match):
         processing.run(cfg)
@@ -88,6 +95,7 @@ def test_run_errors(path_val, ids_val, existed, exc_type, match, tmp_path, mocke
 # ---------------------------------------------------------------------------
 # Happy paths
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.xr
 class TestRunPipeline:
@@ -110,20 +118,21 @@ class TestRunPipeline:
         def _load_matching_stem(yaml_path):
             """Return config with input.path stem matching the YAML stem."""
             yaml_stem = Path(yaml_path).stem.rsplit("@", 1)[-1]
-            return DictConfig({
-                "input": {"path": str(raw_dir / f"{yaml_stem}.txt")},
-                "out": {"dt_bins": [0]},
-                "filter": {},
-            })
+            return DictConfig(
+                {
+                    "input": {"path": str(raw_dir / f"{yaml_stem}.txt")},
+                    "out": {"dt_bins": [0]},
+                    "filter": {},
+                }
+            )
+
         mocker.patch.object(OmegaConf, "load", side_effect=_load_matching_stem)
         mock_proc = mocker.patch.object(processing, "run_processing")
 
         run_dir.mkdir(parents=True)
         for stem in ("@i_01", "@i_02"):
             yaml_stem = stem.rsplit("@", 1)[-1]
-            (run_dir / f"{stem}.yaml").write_text(
-                f"input:\n  path: {raw_dir / f'{yaml_stem}.txt'}\n"
-            )
+            (run_dir / f"{stem}.yaml").write_text(f"input:\n  path: {raw_dir / f'{yaml_stem}.txt'}\n")
 
         processing.run(cfg)
         assert mock_proc.call_count == 2
@@ -141,18 +150,19 @@ class TestRunPipeline:
         run_dir.mkdir(parents=True)
         for stem in ("@i_01", "@i_02"):
             yaml_stem = stem.rsplit("@", 1)[-1]
-            (run_dir / f"{stem}.yaml").write_text(
-                f"input:\n  path: {raw_dir / f'{yaml_stem}.txt'}\n"
-            )
+            (run_dir / f"{stem}.yaml").write_text(f"input:\n  path: {raw_dir / f'{yaml_stem}.txt'}\n")
         _mock_config_yaml(mocker, existed={"i01": ["@i_01"], "i02": ["@i_02"]})
 
         def _load_matching_stem(yaml_path):
             yaml_stem = Path(yaml_path).stem.rsplit("@", 1)[-1]
-            return DictConfig({
-                "input": {"path": str(raw_dir / f"{yaml_stem}.txt")},
-                "out": {"dt_bins": [0]},
-                "filter": {},
-            })
+            return DictConfig(
+                {
+                    "input": {"path": str(raw_dir / f"{yaml_stem}.txt")},
+                    "out": {"dt_bins": [0]},
+                    "filter": {},
+                }
+            )
+
         mocker.patch.object(OmegaConf, "load", side_effect=_load_matching_stem)
         mock_proc = mocker.patch.object(processing, "run_processing")
 
@@ -186,11 +196,14 @@ class TestRunPipeline:
 
         def _load_matching_stem(yaml_path):
             yaml_stem = Path(yaml_path).stem.rsplit("@", 1)[-1]
-            return DictConfig({
-                "input": {"path": str(raw_dir / f"{yaml_stem}.txt")},
-                "out": {"dt_bins": [0]},
-                "filter": {},
-            })
+            return DictConfig(
+                {
+                    "input": {"path": str(raw_dir / f"{yaml_stem}.txt")},
+                    "out": {"dt_bins": [0]},
+                    "filter": {},
+                }
+            )
+
         mocker.patch.object(OmegaConf, "load", side_effect=_load_matching_stem)
         mocker.patch.object(processing, "run_processing")
 
@@ -204,7 +217,11 @@ class TestRunPipeline:
         assert mock_sync.call_args.args[1] == run_dir
 
     def test_ghost_config_skipped_when_stem_mismatches_input_path(
-        self, project_dir, make_cfg, mocker, caplog,
+        self,
+        project_dir,
+        make_cfg,
+        mocker,
+        caplog,
     ):
         """YAML whose stem ≠ input.path stem is skipped (manual copy/backup)."""
         cfg = make_cfg(project_dir)
@@ -220,29 +237,44 @@ class TestRunPipeline:
         ghost_name = "@i_p1 \u2014 \u043a\u043e\u043f\u0438\u044f.yaml"
         (run_dir / ghost_name).write_text(f"input:\n  path: {real_input}\n")
 
-        _mock_config_yaml(mocker, existed={
-            "i01": ["@i_01", "@i_p1 \u2014 \u043a\u043e\u043f\u0438\u044f"],
-        })
+        _mock_config_yaml(
+            mocker,
+            existed={
+                "i01": ["@i_01", "@i_p1 \u2014 \u043a\u043e\u043f\u0438\u044f"],
+            },
+        )
 
         # Both YAMLs point to the same real_input file (simulates copy scenario)
-        cfg_for_real = DictConfig({
-            "input": {"path": str(real_input)}, "out": {"dt_bins": [0]}, "filter": {},
-        })
-        cfg_for_ghost = DictConfig({
-            "input": {"path": str(real_input)}, "out": {"dt_bins": [0]}, "filter": {},
-        })
+        cfg_for_real = DictConfig(
+            {
+                "input": {"path": str(real_input)},
+                "out": {"dt_bins": [0]},
+                "filter": {},
+            }
+        )
+        cfg_for_ghost = DictConfig(
+            {
+                "input": {"path": str(real_input)},
+                "out": {"dt_bins": [0]},
+                "filter": {},
+            }
+        )
         mocker.patch(
             "tcm.processing.OmegaConf.load",
-            side_effect=[cfg_for_real, cfg_for_ghost],
+            # Loaded once for the pre-compute burst fill and again during
+            # process_loading_yaml — real & ghost cfgs are identical here,
+            # so repeat the sequence to cover both passes.
+            side_effect=[cfg_for_real, cfg_for_ghost] * 2,
         )
         mock_proc = mocker.patch.object(processing, "run_processing")
 
         with caplog.at_level("WARNING", logger="tcm.processing"):
             processing.run(cfg)
 
-        # Only the real config is processed; ghost is skipped
+        # Only the real config is processed; the whitespace-named one is ignored
         assert mock_proc.call_count == 1
-        assert "skipping" in caplog.text.lower()
+        assert "ignoring" in caplog.text.lower()
+        assert "whitespace" in caplog.text.lower()
 
     @pytest.mark.parametrize(
         ("filter_kind", "pattern", "expected"),
@@ -277,9 +309,7 @@ class TestRunPipeline:
         for i in (1, 2, 3):
             stem = f"@i_{i:02d}"
             yaml_stem = stem.split("@", 1)[-1]  # "i_01", "i_02", "i_03"
-            (run_dir / f"{stem}.yaml").write_text(
-                f"input:\n  path: {raw_dir / f'{yaml_stem}.txt'}\n"
-            )
+            (run_dir / f"{stem}.yaml").write_text(f"input:\n  path: {raw_dir / f'{yaml_stem}.txt'}\n")
             existed.setdefault(f"i{i:02d}", []).append(stem)
 
         _mock_config_yaml(mocker, existed=existed)
@@ -291,20 +321,25 @@ class TestRunPipeline:
             # .yaml suffix → processing.run derives yaml_path from path_in.stem
             input_cfg["path"] = str(run_dir / f"{pattern}.yaml")
 
-        cfg = DictConfig({
-            "input": input_cfg,
-            "out": {"dt_bins": [0], "dir": str(project_dir / "out")},
-            "filter": {},
-            "program": {"return_": Return.END, "verbose": "INFO"},
-        })
+        cfg = DictConfig(
+            {
+                "input": input_cfg,
+                "out": {"dt_bins": [0], "dir": str(project_dir / "out")},
+                "filter": {},
+                "program": {"return_": Return.END, "verbose": "INFO"},
+            }
+        )
 
         def _load_stem(yaml_path):
             s = Path(yaml_path).stem.rsplit("@", 1)[-1]
-            return DictConfig({
-                "input": {"path": str(raw_dir / f"{s}.txt")},
-                "out": {"dt_bins": [0]},
-                "filter": {},
-            })
+            return DictConfig(
+                {
+                    "input": {"path": str(raw_dir / f"{s}.txt")},
+                    "out": {"dt_bins": [0]},
+                    "filter": {},
+                }
+            )
+
         mocker.patch.object(OmegaConf, "load", side_effect=_load_stem)
         mock_proc = mocker.patch.object(processing, "run_processing")
 
@@ -313,10 +348,52 @@ class TestRunPipeline:
             f"{filter_kind}={pattern!r}: expected {expected} calls, got {mock_proc.call_count}"
         )
 
+    def test_yaml_path_composite_with_regex_specials(self, project_dir, mocker):
+        """Composite ``(s1|s2).yaml`` keeps stems with literal regex specials.
+
+        tcm_gui.worker._run joins stems verbatim into "(s1|s2).yaml" and
+        processing.run matches the composite alternatives literally — "(tube)"
+        in a file name is a literal, not a regex group (regression: RUN
+        dropped the zeroing config from the alternation).
+        """
+        raw_dir = project_dir / _constants.RAW_DIR_NAME
+        run_dir = raw_dir / "cfg_proc" / "run"
+        run_dir.mkdir(parents=True)
+        stems = ["230811_1622@i_p05-маг", "260625_1708@i_p05-zeroing(tube)"]
+        for stem in stems:
+            (run_dir / f"{stem}.yaml").write_text(f"input:\n  path: {(raw_dir / 'x.txt').as_posix()}\n")
+        _mock_config_yaml(mocker, existed={"i_p05": stems})
+
+        def _load(yp):
+            s = Path(yp).stem  # full stem incl date prefix → identity-checkable input.path
+            return DictConfig(
+                {"input": {"path": str(raw_dir / f"{s}.txt")}, "out": {"dt_bins": [0]}, "filter": {}},
+            )
+
+        mocker.patch.object(OmegaConf, "load", side_effect=_load)
+        mock_proc = mocker.patch.object(processing, "run_processing")
+
+        cfg = DictConfig(
+            {
+                # Built exactly as tcm_gui.worker._run does (plain join)
+                "input": {
+                    "path": str(run_dir / f"({'|'.join(stems)}).yaml"),
+                    "ids": None,
+                },
+                "out": {"dt_bins": [0], "dir": str(project_dir / "out")},
+                "filter": {},
+                "program": {"return_": Return.END, "verbose": "INFO"},
+            }
+        )
+
+        processing.run(cfg)
+        assert mock_proc.call_count == 2, "Stem with '(tube)' dropped from composite filter"
+
 
 # ---------------------------------------------------------------------------
 # Binary inputs (NC/HDF5) — skip text-file probe discovery
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.xr
 class TestBinaryInputSkipsDiscovery:
@@ -330,14 +407,17 @@ class TestBinaryInputSkipsDiscovery:
     def _cfg(self, project_dir, tables):
         raw = project_dir / _constants.RAW_DIR_NAME
         raw.mkdir(exist_ok=True)
-        return DictConfig({
-            "input": {
-                "path": str(raw / "260624.raw.nc"),
-                "tables": list(tables),
-            },
-            "out": {"dt_bins": [0], "dir": str(project_dir / "out")},
-            "filter": {},
-            "program": {"return_": Return.END, "verbose": "INFO"},        })
+        return DictConfig(
+            {
+                "input": {
+                    "path": str(raw / "260624.raw.nc"),
+                    "tables": list(tables),
+                },
+                "out": {"dt_bins": [0], "dir": str(project_dir / "out")},
+                "filter": {},
+                "program": {"return_": Return.END, "verbose": "INFO"},
+            }
+        )
 
     def test_skip_discovery_for_nc(self, tmp_path, mocker):
         """NC path → no ``config_yaml`` calls; one ``run_processing`` per table."""
@@ -361,8 +441,7 @@ class TestBinaryInputSkipsDiscovery:
         cfg = self._cfg(tmp_path, ["incl63"])
         cfg.input.path = cfg.input.path.replace(".nc", ext)
         mocker.patch.object(processing, "run_processing")
-        for name in ("get_existed_cfgs", "save_config_to_yaml",
-                    "sync_yamls_devmeta_and_hydra"):
+        for name in ("get_existed_cfgs", "save_config_to_yaml", "sync_yamls_devmeta_and_hydra"):
             mocker.patch(f"tcm.config_yaml.{name}")
         processing.run(cfg)  # must not raise / not fall through to discovery
 
@@ -384,6 +463,7 @@ class TestBinaryInputSkipsDiscovery:
 # ---------------------------------------------------------------------------
 # main() end-to-end
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def _clear_hydra():

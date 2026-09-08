@@ -24,6 +24,7 @@ else:
 sys.path.insert(0, str(SPEC_DIR))
 from spec_common import (
     EXCLUDE_BINARIES,
+    LIBARCHIVE_DLLs,
     RUNTIME_DLLs,
     collect_docs,
     collect_first_party_pkgs,
@@ -53,15 +54,18 @@ block_cipher = None
 TCM_SRC = "src/tcm"
 TCM_PROJ = "oceano/tcm"  # project dir in the repo-mirrored frozen tree
 TCM_REL = f"{TCM_PROJ}/src/tcm"
-GUI_SRC = "src/tcm_gui"
-GUI_REL = "oceano/tcm_gui/src/tcm_gui"
+GUI_SRC = "src/tcm_gui"  # tcm_gui lives inside the tcm project, as in dev
+GUI_REL = f"{TCM_PROJ}/src/tcm_gui"
 
 _ENV_PREFIX = os.path.dirname(sys.executable)
 _ENV_LIB_BIN = os.path.join(_ENV_PREFIX, "Library", "bin")
 _site_pkgs = os.path.join(_ENV_PREFIX, "Lib", "site-packages")
 SITE_PKGS = Path(_site_pkgs)
 
-_ALL_DIST_DLLS = RUNTIME_DLLs
+# Runtime DLLs — from spec_common (OpenBLAS, stdlib) + libarchive PE-import
+# closure (meta_finder.utils_sys does `import libarchive` at module level;
+# the DLL is ctypes-loaded by bare name → invisible to PyInstaller's walk)
+_ALL_DIST_DLLS = RUNTIME_DLLs + LIBARCHIVE_DLLs
 
 print(
     f"[spec] DLLs to bundle: {len(_ALL_DIST_DLLS)} "
@@ -74,15 +78,16 @@ print(
 # ---------------------------------------------------------------------------
 
 _DOC_EXCLUDE = {"todo.md", "potential_functionality_and_improvement.md"}
-# Generated third-party browser runtime — resolves via resource_root()/_build
-# at runtime (tcm_gui.browser.server._VEND_DIR); first-party web/ ships inside
-# src/tcm_gui and arrives with the GUI_SRC data below.
+# Generated third-party browser runtime — resolves via _VEND_DIR at runtime
+# (tcm_gui.browser.server: PROJECT_ROOT.parents[1]/_build — same formula as
+# DOC_DIR, valid in both layouts); first-party web/ ships inside src/tcm_gui
+# and arrives with the GUI_SRC data below.
 added_files = [
     (str(PROJECT_ROOT / TCM_SRC), TCM_REL),
     (str(PROJECT_ROOT / GUI_SRC), GUI_REL),
     *collect_first_party_pkgs(),
     (str(SPEC_DIR / "version_meta.json"), "."),
-    (str(PROJECT_ROOT / "_build" / "browser-runtime"), "_build/browser-runtime"),
+    (str(PROJECT_ROOT / "_build" / "browser-runtime"), f"{TCM_PROJ}/_build/browser-runtime"),
     *collect_docs(_DOC_EXCLUDE),
     # Entry-point readmes → oceano/tcm/readme*.md next to docs/ (the About
     # header "local" docs link opens readme.md; served like any other markdown).

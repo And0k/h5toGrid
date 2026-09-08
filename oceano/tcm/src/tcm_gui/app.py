@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import copy
 import ctypes
 import logging
+import os
 import re
 import sys
 import traceback
@@ -112,9 +114,9 @@ class App:
         logging.getLogger().setLevel(logging.INFO)
         # Tkinter catches exceptions in callbacks itself and hands them to
         # ``report_callback_exception`` (default: stderr print only — sys.excepthook
-        # never fires).  Route through logging so they reach ``_log``; the full
-        # traceback goes into the message because ``drain`` renders only the
-        # exception line for ``exc_info`` records, and frozen builds have no console.
+        # never fires).  Route through logging so they reach ``_log``; frozen
+        # builds have no console.  Since ``drain`` renders full tracebacks for
+        # ``exc_info`` records, the hook can pass the exception object as exc_info.
         self.root.report_callback_exception = self._report_tk_exception
         self.wk = Worker(self.rt)
         self._tip_active: bool = False  # error detail shown in _status_lbl; suppresses status updates
@@ -1127,10 +1129,59 @@ class App:
             else ("empty_area.unsaved_full" if self._full_mode else "empty_area.unsaved")
         ]
         self._pages[stem] = cs
+        # Cross-tab metadata sync: a metadata mutation on this sheet fans out
+        # to same-identity peers (same device file + pcid).  _metadata_identity
+        # resolves the key; None → no sync (indeterminate).
+        cs.on_metadata_changed = lambda: self._on_metadata_changed(cs)
         # NOTE: no _select_tab here — a page gridded later stacks ABOVE any
         # earlier tkraise()'d one (Tk sibling order), so the visible page would
         # end up the LAST tab while the rail highlights the first.  The first
         # tab is selected once, after ALL pages exist (_on_scan_ok).
+
+    def _metadata_identity(self, cs: ConfigSheet) -> tuple[str, str | None] | None:
+        """Key that decides whether two tabs share one ``info_devices.yaml``.
+
+        ``(device_path, pcid)`` — device path is the *edited* root cell (the
+        user may have browsed a different file on this tab → it detaches);
+        pcid is the canonical probe id.  ``None`` when either is missing
+        (no metadata, indeterminate name) — such a tab neither syncs nor
+        receives.  Different file or different probe ⇒ independent configs.
+        """
+        path = cs.get_metadata_path().strip()
+        if not path:
+            return None
+        stem = getattr(cs, "_page_stem", "") or ""
+        pcid = format.to_pcid_from_name(format.stem_to_pcid(stem)) if stem else None
+        return (path, pcid)
+
+    def _on_metadata_changed(self, src: ConfigSheet) -> None:
+        """Fan out src's metadata model to every same-identity peer.
+
+        Peer's ``apply_metadata_setups`` rebuilds its subtree with programmatic
+        refill semantics (clean, no echo).  Coef-only edits never reach here —
+        ``_notify_metadata_changed``'s hash guard leaves them silent.
+        """
+        key = self._metadata_identity(src)
+        if key is None:
+            return
+        # Fan-out must use edited cell values (from sheet), NOT src._setups —
+        # the internal model is only updated on structural changes (splits),
+        # while cell edits live in the tksheet until the next rebuild.
+        edited = src.get_edited_metadata_setups()
+        nums = [num for num, _ in (getattr(src, "_setups", None) or [])]
+        setups = [[nums[i] if i < len(nums) else i, copy.deepcopy(arr)] for i, arr in enumerate(edited)] if edited else []
+        # Propagate dirty flag: if source metadata is dirty, peers must be dirty too
+        src_dirty = src.is_metadata_dirty()
+        for stem, cs in self._pages.items():
+            cs_key = self._metadata_identity(cs)
+            if cs is src:
+                continue
+            if cs_key != key:
+                continue
+            try:
+                cs.apply_metadata_setups(setups, dirty=src_dirty)
+            except Exception:
+                lf.exception("metadata sync: failed to apply to tab %s", stem)
 
     def _set_coefs_and_reload(self, stem: str, coefs_path: str) -> None:
         """Called from ConfigSheet when ``input.coefs`` path cell changes."""
@@ -1394,9 +1445,12 @@ class App:
             # Collect per-anchor if multiple anchors but browsed is single — treat as single
             if anchors and len(anchors) > 1:
                 lf.debug("Browsed info file overrides multi-anchor parent — single write to {}", info_path)
-            # Collect new_content for single file (as before)
+            # Collect new_content for single file — dedup by actual VALUES so
+            # synced tabs with identical metadata don't write duplicate setups.
+            # Key: (pcid, station_id, tuple(array)) — only first occurrence wins.
             file_absent = not info_path.is_file()
             new_content_single: dict[str, dict[str, list]] = {}
+            _seen: set[tuple[str, str, tuple]] = set()
             for stem, cs in self._pages.items():
                 is_dirty = getattr(cs, "is_metadata_dirty", False) and cs.is_metadata_dirty()
                 if not is_dirty and not file_absent:
@@ -1408,7 +1462,12 @@ class App:
                 meta_map = cs.get_edited_metadata_map() if hasattr(cs, "get_edited_metadata_map") else {}
                 if not meta_map:
                     continue
-                new_content_single.setdefault(pcid, {}).update(meta_map)
+                for sid, arr in meta_map.items():
+                    _key = (pcid, sid, tuple(arr) if arr else ())
+                    if _key in _seen:
+                        continue
+                    _seen.add(_key)
+                    new_content_single.setdefault(pcid, {})[sid] = arr
             if not new_content_single:
                 return
             try:
@@ -1459,8 +1518,10 @@ class App:
         else:
             # No browsed file — parent dir with single or multiple anchors
             # Use per-anchor device_dir derived from each stem's data file
-            # Group new_content by anchor
+            # Group new_content by anchor, dedup by VALUES so synced tabs
+            # with identical metadata write only unique setup nodes.
             anchor_groups: dict[Path, dict[str, dict[str, list]]] = {}
+            _seen: set[tuple[Path, str, str, tuple]] = set()
             for stem, cs in self._pages.items():
                 is_dirty = getattr(cs, "is_metadata_dirty", False) and cs.is_metadata_dirty()
                 # Also write autofilled when file absent
@@ -1503,7 +1564,15 @@ class App:
                 meta_map = cs.get_edited_metadata_map() if hasattr(cs, "get_edited_metadata_map") else {}
                 if not meta_map:
                     continue
-                anchor_groups.setdefault(device_dir, {}).setdefault(pcid, {}).update(meta_map)
+                # Dedup by actual VALUES so synced tabs with identical metadata
+                # don't write duplicate setups. Key: (device_dir, pcid, sid, tuple(arr)).
+                _grp = anchor_groups.setdefault(device_dir, {})
+                for sid, arr in meta_map.items():
+                    _key = (device_dir, pcid, sid, tuple(arr) if arr else ())
+                    if _key in _seen:
+                        continue
+                    _seen.add(_key)
+                    _grp.setdefault(pcid, {})[sid] = arr
             if not anchor_groups:
                 return
             for device_dir, group_content in anchor_groups.items():
@@ -2411,4 +2480,14 @@ if sys.platform == "win32":
 
 
 def main(argv: list[str] | None = None) -> None:
+    # Windowed processes (pythonw / PyInstaller --noconsole) have no console:
+    # sys.stdout/stderr are None and ANY stream write raises
+    # AttributeError: 'NoneType' object has no attribute 'write'.  Worst
+    # offender: hydra's JobReturn.return_value writes to sys.stderr before
+    # re-raising a *failed* job's exception — the AttributeError raised there
+    # replaces the real error, making scan failures unexplainable.  Devnull
+    # sinks keep such writes harmless so real exceptions propagate (rendered
+    # with tracebacks into the GUI log, see log_bridge.drain).
+    sys.stdout = sys.stdout or open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115 — process-lifetime sink
+    sys.stderr = sys.stderr or open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115 — process-lifetime sink
     App(argv).run()

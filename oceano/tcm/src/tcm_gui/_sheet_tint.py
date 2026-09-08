@@ -189,13 +189,21 @@ class SheetTintMixin:
         instantly, re-evaluated on every edit via ``_apply_edit_value``).
         ``None``/empty-list defaults ⇒ every cell defaults to ``""`` — so an
         emptied ``time_ranges_*`` row reads as at-default, not as modified.
+        ``is_metadata_root`` → the computed ``device_dir/info_devices.yaml`` default
+        (``""`` if input path unset — empty cells never tint).
+        ``coefs`` node's path cell → ``input.coefs.path`` dataclass default
+        (``cfg/coef/calibration.h5`` or ``yaml_export`` per ``_constants.H5_AVAILABLE``);
+        ``input`` node's path cell → the loaded run-YAML ``input.path`` (``""`` when unset);
+        containers without a path leaf → :data:`NO_DEFAULT` (state = children).
         """
-        if m.get("key") == "path" and str(m.get("path") or "") == "input.coefs.path":
-            return NO_DEFAULT
         if m.get("key") == "coefs" and col_idx == 0:
-            return NO_DEFAULT
-        if m.get("is_metadata_root"):
-            return NO_DEFAULT
+            return default_for_path("input.coefs.path")
+        if m.get("is_metadata_root") and col_idx == 0:
+            return self._default_metadata_path()
+        if m.get("type") == "input" and m.get("key") == "input" and col_idx == 0:
+            # input.path has no schema default (None) — restore the loaded run-YAML value.
+            stored = (self._cfg.get("input", {}) or {}).get("path")
+            return stored if stored else ""
         if m.get("is_metadata"):
             if m.get("label") == "time_range" and 0 <= col_idx <= 1:
                 return self._metadata_time_range_default(col_idx)
@@ -203,8 +211,6 @@ class SheetTintMixin:
         path = str(m.get("path") or "")
         if not path:
             return NO_DEFAULT
-        if m.get("type") == "input" and col_idx == 0:
-            path += ".path"
         default = default_for_path(path)
         if default is NO_DEFAULT or isinstance(default, dict):
             return NO_DEFAULT
@@ -232,12 +238,13 @@ class SheetTintMixin:
         tint updates.
         """
         m = self._meta.get(iid, {})
-        # Legacy path child (now the coefs node's path cell) is handled via
-        # _default_for_cell → NO_DEFAULT, not a forced True here.
-        if m.get("key") == "path" and str(m.get("path") or "") == "input.coefs.path":
-            return True
+        # Locator cells (coefs path, metadata root path) are skipped for the node
+        # label — own_ok reflects data/children, not the pointer. Cell coloring
+        # still tints them via _default_for_cell above.
         own_ok, has_defined = True, False
         for j in range(self._own_cols(m, with_len=False)):
+            if (m.get("key") == "coefs" or m.get("is_metadata_root")) and j == 0:
+                continue  # skip locator cell — node label reflects data, not the pointer
             if (dv := self._default_for_cell(iid, m, j)) is NO_DEFAULT:
                 continue
             has_defined = True
@@ -284,9 +291,19 @@ class SheetTintMixin:
             return
 
         ph = getattr(self, "_ph", None)
-        if (dv := self._default_for_cell(iid, m, col)) is not NO_DEFAULT and not (
-            ph is not None and ph.has(ri, col)
-        ):
+        dv = self._default_for_cell(iid, m, col)
+        # Empty cell + non-empty default → assign the default (Enter on empty fills default).
+        # Must run even when a ghost placeholder is present (the hover-floater path
+        # restores a ghost on empty commit) — untrack the ghost so the written
+        # default reads as real data, not "".
+        if not value.strip() and dv is not NO_DEFAULT and any2str(dv).strip():
+            if ph is not None and ph.has(ri, col):
+                ph.untrack(self.sh, ri, col)
+            with suppress(Exception):
+                self.sh.set_cell_data(ri, col, dv, redraw=False)
+            value = any2str(dv)
+
+        if dv is not NO_DEFAULT and not (ph is not None and ph.has(ri, col)):
             self.sh.highlight_cells(
                 row=ri,
                 column=col,

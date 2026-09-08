@@ -454,9 +454,7 @@ def _require_nonempty_path(raw: str) -> Path:
     return Path(raw)
 
 
-def call_in_raw_dir(
-    fun, yaml_path: Path | None = None, enable_file_logging: bool = True, **kwargs
-) -> Any:
+def call_in_raw_dir(fun, yaml_path: Path | None = None, enable_file_logging: bool = True, **kwargs) -> Any:
     """Bootstrap CLI → Hydra runtime for a processing entry point.
 
     :param enable_file_logging: when ``False``, suppress creation of
@@ -559,7 +557,7 @@ def call_in_raw_dir(
             if path_in is None:
                 # No positional path and no flags → user error.
                 _print_usage_error(data_dir=None, path_in=None)
-            #if str(path_in) in ("", "."):
+            # if str(path_in) in ("", "."):
             #    # Positional ""/"." — Path("") normalizes to "."; same
             #    # verdict as an empty override (see _require_nonempty_path).
             #    raise FileNotFoundError(
@@ -615,24 +613,6 @@ def call_in_raw_dir(
     return hydra_main(fun, overrides=overrides or None, **hydra_main_kwargs)
 
 
-def _pcid_key(core: str) -> tuple[str, str]:
-    """(canonical pcid, comment) compare key for config ↔ input.path matching.
-
-    Permissive on pcid formatting (``i90`` ≡ ``i_90`` ≡ ``i_1`` → ``i01``),
-    strict on the ``-comment`` suffix so backup copies (``i_90-backup….yaml``)
-    stay distinguishable. Unparseable cores compare as-is.
-    """
-    parts = format.parse_name(core) or {}
-    return (
-        # probe_from_name idiom: model falls back to type ("w" keeps the
-        # model-less wave-gauge form, "i" collapses to plain inclinometer)
-        format.pcid_from_parts(model=parts.get("model") or parts.get("type"), number=parts["number"])
-        if parts
-        else core,
-        parts.get("comment", ""),
-    )
-
-
 def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs_existed):
     """Load per-probe run YAMLs, merge on top of *base_cfg*, call process_fun.
 
@@ -642,9 +622,11 @@ def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs
     in the YAML.
 
     **Pre-filtering**: before processing, all YAML stems are validated against
-    ``input.path`` by comparing canonical pcids (see :func:`_pcid_key`) —
-    permissive across pcid formatting variants, still excluding backup copies
-    (e.g. ``i_90-backup260723.yaml``).
+    ``input.path`` by comparing canonical identities (see :func:`tcm.format.pcid_key`) —
+    permissive across pcid formatting variants and comment separators
+    (``i_p05-маг`` ≡ ``INKL_P05_маг``).  Whitespace anywhere in the YAML stem
+    → the config is ignored.  Full matching contract (what is ignored and
+    why): :doc:`io_formats — Config-file matching </docs/reference/io_formats.md>`.
     One WARNING summarises all skips; the remaining valid configs drive the
     ``[idx/n_cfgs]`` numbering and GUI progress totals.
 
@@ -670,11 +652,16 @@ def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs
     valid_cfgs: dict[str, list[str]] = {}  # pcid → [valid stems]
     loaded_cfgs: dict[str, DictConfig] = {}  # stem → merged DictConfig (cached)
     skipped_cfgs: list[tuple[str, str, str]] = []  # (stem, yaml_core, input_core)
+    copied_cfgs: list[str] = []  # whitespace in stem → ignored
     missing_cfgs: list[tuple[str, str]] = []  # (stem, pcid)
 
     for pcid, stems in cfgs.items():
         valid_stems: list[str] = []
         for stem in stems:
+            # Whitespace in the name → ignored (io_formats.md#config-file-matching)
+            if any(ch.isspace() for ch in stem):
+                copied_cfgs.append(stem)
+                continue
             yaml_path = dir_cfgs / f"{stem}.yaml"
             if not yaml_path.is_file():
                 missing_cfgs.append((stem, pcid))
@@ -684,7 +671,7 @@ def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs
             OmegaConf.update(cfg_dc, "_yaml_path", yaml_path, force_add=True)
             yaml_core = stem.rsplit("@", 1)[-1]
             input_core = Path(cfg_dc.input.path).stem.rsplit("@", 1)[-1]
-            if _pcid_key(yaml_core) != _pcid_key(input_core):
+            if format.pcid_key(yaml_core) != format.pcid_key(input_core):
                 skipped_cfgs.append((stem, yaml_core, input_core))
                 continue
             valid_stems.append(stem)
@@ -700,6 +687,13 @@ def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs
             len(skipped_cfgs),
             "" if len(skipped_cfgs) == 1 else "s",
             details,
+        )
+    if copied_cfgs:
+        lf.warning(
+            "Ignoring {} config{} (whitespace in name): {}",
+            len(copied_cfgs),
+            "" if len(copied_cfgs) == 1 else "s",
+            "; ".join(f'"{s}.yaml"' for s in copied_cfgs),
         )
     for stem, pcid in missing_cfgs:
         lf.warning("Config missing for {}: {}", pcid, dir_cfgs / f"{stem}.yaml")

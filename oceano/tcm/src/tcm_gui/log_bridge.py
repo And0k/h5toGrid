@@ -20,8 +20,9 @@ stdlib ``%``-formatting (e.g. a ``{}``-style string on a plain logger, or a
 stray ``%`` in user content) still reaches the queue with its raw text — a
 logging bug must never crash the GUI callback that produced it (the About
 dialog used to die this way).  ``drain`` additionally renders ``exc_info``
-records' exception line (``format_exception_only``) so worker-side
-``lf.exception(...)`` tracebacks surface their message in the GUI log.
+records' **full traceback** (``traceback.format_exception``) so worker-side
+``lf.exception(...)`` errors surface their exact location (file:line of each
+frame) in the GUI log.
 
 Message and traceback chunks render through :meth:`LogText.insert_linked`
 when the widget provides it — bare filesystem paths under the allowed dir
@@ -130,8 +131,8 @@ def drain(q: Queue, w, root: str = "") -> int:
         w.insert("end", f"{ts}│", tag)
         w.insert("end", f"{rec.funcName}│", "func")
         insert(f"{rec.getMessage()}\n", tag)
-        if rec.exc_info:  # exception records: show the exception line too
-            insert("".join(traceback.format_exception_only(*rec.exc_info[:2])), tag)
+        if rec.exc_info:  # exception records: full traceback — exact error location
+            insert("".join(traceback.format_exception(*rec.exc_info)), tag)
     return n
 
 

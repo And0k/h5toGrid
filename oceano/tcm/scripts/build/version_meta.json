@@ -1,16 +1,16 @@
 {
   "name": "TCM",
-  "product": "tcm_proc",
-  "version": "2026.09+noh5-tcm",
+  "product": "tcm_gui",
+  "version": "2026.09+bin-optim-tcm",
   "filevers": [
     2026,
     9,
     0,
     0
   ],
-  "description": "AB SIO RAS' TCM raw data processing CLI. Exports physical values (e.g. water velocity) to text",
-  "internal_name": "tcm_proc.exe",
-  "original_filename": "tcm\\scripts\\tcm_proc.py",
+  "description": "AB SIO RAS' TCM inclinometer data processor GUI. Configure and run processing with interactive coefficient editor",
+  "internal_name": "tcm_gui.exe",
+  "original_filename": "tcm\\scripts\\tcm_gui.py",
   "company_name": "Atlantic Branch of Shirshov Institute of Oceanology, Russian Academy of Sciences (AB SIO RAS)",
   "legal_copyright": "© Andrey Korzh <\"ao.korzh@gmail.com\">",
   "product_name": "TCM calculations",

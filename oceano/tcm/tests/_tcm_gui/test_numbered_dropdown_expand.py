@@ -471,7 +471,11 @@ def test_overflow_wide_content_widens_narrow_cell(mapped):
         assert win.winfo_width() > cell_w, "list clipped to a narrow cell for wide content"
         assert win.winfo_width() <= mapped.winfo_width(), "list wider than the window (clipped)"
         font = tkfont.Font(root=mapped, font=mt.PAR.ops.table_font)
-        assert win.winfo_width() >= font.measure(long_value), "longest value does not fit the list"
+        # Widens to fit the content, capped at the window (dropdown_popup_geometry):
+        # content wider than the window is capped, so it never exceeds the window.
+        assert win.winfo_width() >= min(font.measure(long_value), mapped.winfo_width()), (
+            "longest value does not fit the list (capped at window)"
+        )
     finally:
         with suppress(Exception):
             mt.close_dropdown_window()

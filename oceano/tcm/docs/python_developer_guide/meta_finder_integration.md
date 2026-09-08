@@ -49,7 +49,9 @@ input.path (cruise root | device dir | _raw | file)
       no temp extraction, no csv edge loading on the metadata path
   → save_config_to_yaml → {yymmdd_hhmm}@pcid[-comment].yaml
   → sync_yamls_devmeta_and_hydra (info_devices time fill)
-  → bursts.fill_missing_bursts on Run (indices 8–9)
+  → bursts.fill_missing_bursts on Run (indices 8–9) — persisted BEFORE
+      data compute so a cancelled/failed run still saves autofilled bursts;
+      failure is logged and never blocks processing (Scan stays read-only)
 ```
 
 ## Contracts reused verbatim

@@ -20,7 +20,6 @@ from tcm_gui.browser.server import (
     _VIEWER_FILES,
     _WEB_DIR,
     _dir_listing,
-    _frozen_variant,
     _kind_of,
 )
 
@@ -227,18 +226,6 @@ def test_open_md_link_empty_noop(monkeypatch):
     monkeypatch.setattr("tcm_gui.browser.browser.get_documentation_browser", lambda: _Fake())
     open_md_link("   ")
     assert calls == []
-
-
-def test_frozen_variant_strips_src_segment():
-    """Frozen app bundles ``src/tcm`` under ``tcm/`` — dev-layout doc links
-    (``../../src/tcm/…``) must lose ``src`` to resolve in ``_MEIPASS``."""
-    # dev layout: .../tcm/src/tcm/format.py → frozen: .../tcm/tcm/format.py
-    dev = resource_root() / "src" / "tcm" / "format.py"
-    frozen = _frozen_variant(dev)
-    assert frozen == resource_root() / "tcm" / "format.py"
-    # src not followed by tcm, or no src at all → not applicable
-    assert _frozen_variant(resource_root() / "docs" / "x.md") is None
-    assert _frozen_variant(resource_root() / "src" / "other" / "y.py") is None
 
 
 def test_dir_listing_immediate_children_md_only(tmp_path: Path):
