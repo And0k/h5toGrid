@@ -7,6 +7,8 @@ whether a cell/node is *at default* and paints it accordingly:
   config dataclass factory default (:func:`tcm_gui.cli_cfg.default_for_path`).
 * **Node label blue** (:meth:`SheetTintMixin._node_at_default`) — every cell in
   the subtree matches its default.
+* **Node label red** (:meth:`SheetTintMixin._node_has_error`) — an incomplete
+  calib trigger in the subtree (partial/non-numeric); error wins over blue.
 * **Ghost placeholders** (:meth:`SheetTintMixin._apply_placeholders`) — dim
   example text in empty cells via :class:`tcm_gui._placeholder.CellPlaceholder`;
   ghost cells always read as ``""`` (:meth:`SheetTintMixin._cell_str`).
@@ -259,6 +261,26 @@ class SheetTintMixin:
             return own_ok and all(self._node_at_default(k) for k in kids)
         return own_ok and (has_defined or self._own_cols(m, with_len=False) == 0)
 
+    def _node_has_error(self, iid: Any) -> bool:
+        """True when an incomplete calib trigger sits at/in *iid*'s subtree.
+
+        Trigger paths map to their group (``coordinates``/``azimuth_add`` share
+        the azimuth group); ``incomplete`` (partial/non-numeric) blocks Run.
+        Children recurse with the same rule — parents (incl. ``input``) redden
+        while anything below is incomplete.
+        """
+        path = str(self._meta.get(iid, {}).get("path") or "")
+        kind = (
+            "g0xyz"
+            if path == "input.calib.g0xyz"
+            else ("azimuth" if path in ("input.calib.coordinates", "input.calib.azimuth_add") else None)
+        )
+        if kind is not None:
+            with suppress(Exception):
+                if str(self.apply_state(kind)) == "incomplete":  # type: ignore[attr-defined]
+                    return True
+        return any(self._node_has_error(k) for k, km in self._meta.items() if km.get("parent") == iid)
+
     # ── tint application ──────────────────────────────────────────────
 
     def _apply_default_fg(self) -> None:
@@ -312,19 +334,24 @@ class SheetTintMixin:
                 overwrite=False,
             )
 
-        # node labels: propagate at-default state up the ancestor chain;
-        # the ``input`` row keeps normal fg — never in the blue/gray toggle
+        # node labels: error red wins; else propagate at-default state up the
+        # ancestor chain; the ``input`` row keeps normal fg unless erroneous —
+        # never in the blue/gray toggle
         node: Any = iid
         while node is not None:
             if (nr := self._row_map().get(node)) is not None:
                 nm = self._meta.get(node, {})
                 node_fg = (
-                    tcm_gui.theme.FG_DEFAULT
-                    if nm.get("type") == "input"
+                    tcm_gui.theme.INVALID_FG
+                    if self._node_has_error(node)
                     else (
-                        tcm_gui.theme.NODE_DEFAULT_VALS_FG
-                        if self._node_at_default(node)
-                        else self._fg_default
+                        tcm_gui.theme.FG_DEFAULT
+                        if nm.get("type") == "input"
+                        else (
+                            tcm_gui.theme.NODE_DEFAULT_VALS_FG
+                            if self._node_at_default(node)
+                            else self._fg_default
+                        )
                     )
                 )
                 self.sh.highlight_cells(

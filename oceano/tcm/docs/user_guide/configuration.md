@@ -124,14 +124,17 @@ Coefficients to find 3D vector of magnetic (h) and gravitation (g) fields in sen
    → yields `Ag, Cg, Ah, Ch`.
 
 2. **Tilt zeroing** (`time_ranges_zeroing`) — instrument hangs plumb, data
-   recorded → computes `Rz` (rotation matrix aligning sensor Z with gravity).
+   recorded → computes `Rz` (rotation matrix aligning sensor Z with gravity —
+   see [§Zeroing rotation](../methodology/velocity.md#zeroing-rotation-rz)).
 
 3. **Velocity calibration** (in tank/flume) — determines `kVabs` (inclination-
    to-velocity polynomial).
 
 4. **Azimuth calibration** (`time_ranges_azimuth`) — instrument tilted in a
    **known direction** (e.g. known to be tilted Northward), data recorded.
-   Pipeline computes azimuth shift and writes `azimuth_shift_deg` to YAML.
+   Pipeline computes azimuth shift and writes `azimuth_shift_deg` to YAML —
+   see [§Azimuth shift](../methodology/velocity.md#azimuth-shift-psi_shift) for
+   how the offset is applied to the sensor-frame azimuth at read time.
 
 ### YAML configuration
 
@@ -158,8 +161,8 @@ Two independent zeroing operations, each with its own time window:
 
 | Parameter | What | How | Writes |
 |---|---|---|---|
-| `input.calib.time_ranges_zeroing` | Tilt rotation | `orientation.zeroing_rotation()` on accelerometer data | `Rz` |
-| `input.calib.time_ranges_azimuth` | Tilt direction azimuth | `orientation.azimuth_shift()` on mag+accel unit vectors | `azimuth_shift_deg` |
+| `input.calib.time_ranges_zeroing` | Tilt rotation | `orientation.zeroing_rotation()` on accelerometer data | `Rz` ([§Zeroing rotation](../methodology/velocity.md#zeroing-rotation-rz)) |
+| `input.calib.time_ranges_azimuth` | Tilt direction azimuth | `orientation.azimuth_shift()` on mag+accel unit vectors | `azimuth_shift_deg` ([§Azimuth shift](../methodology/velocity.md#azimuth-shift-psi_shift)) |
 
 The azimuth computation uses calibrated unit vectors only (no velocity/magnitude
 calculation), so it does not depend on `kVabs` or inclination-to-magnitude
@@ -186,7 +189,16 @@ When `g0xyz` is set, it **overrides** any existing `Rz` in the coefficients.
 
 ### Coefficient persistence
 
-Where updated coefs are persisted depends on the input source and environment:
+`input.calib` triggers are one-shot: after the pipeline (or GUI instant-apply
++ Run) computes `Rz` / `azimuth_shift_deg`, the trigger block is consumed and
+dropped from the run YAML — only `input.coefs` persist. Failed runs keep
+triggers for retry. `azimuth_add` / `coordinates` are consumed too (they would
+otherwise re-add on top of the stored shift every run).
+
+Where updated coefs are persisted depends on the input source and environment. Successful
+pipeline YAML writes also stamp the changed entries in `input.coefs.dates` and set
+`input.coefs.date` to the latest calibration timestamp; unchanged entries keep their existing
+dates.
 
 | Source | h5py available | Updated coefs → |
 |--------|:---:|-----------------|

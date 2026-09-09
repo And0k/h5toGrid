@@ -68,6 +68,14 @@ def _ry(write: bool = True) -> YAML:
         ry.default_flow_style = False
         ry.allow_unicode = True
         ry.preserve_quotes = True
+
+        # Round floats to 8 significant digits for consistent, human-readable output
+        # regardless of source precision (numpy float64 → full 17 digits vs hand-written 6).
+        # Coefs are calibration constants — 8 sig digits preserves float32-equivalent precision.
+        def _represent_float(dumper, data):
+            return dumper.represent_scalar("tag:yaml.org,2002:float", f"{data:.8g}")
+
+        ry.representer.add_representer(float, _represent_float)
     return ry
 
 
@@ -1043,17 +1051,73 @@ def update_run_yaml(yaml_path: Path, patch: dict[str, object]) -> None:
     lf.info("Updated {} in {}", sorted(patch), yaml_path.name)
 
 
-def update_coefs_in_run_yaml(yaml_path: Path, coefs_changed: dict[str, object]) -> None:
-    """Merge changed coefficients into existing run YAML under ``input.coefs``.
+def stamp_coef_dates(dates: Mapping[str, Any] | None, now_iso: str | None = None) -> dict[str, str]:
+    """Convert coefficient date markers to full-second ISO timestamps.
 
-    Thin wrapper over :func:`update_run_yaml` preserving the flat
-    ``{coef_name: values}`` contract used by the pipeline (``processing.py``)
-    and ``tests/_xr/test_coefs.py``. Non-coefs sections
-    (time_ranges, out, filter) are preserved.
-    Used as noh5 fallback when ``h5py`` is unavailable,
-    or to keep the run YAML in sync with computed values (e.g. zeroing Rz).
+    Preserve existing non-empty date strings; replace truthy non-string markers
+    (notably ``prepare_coefs``' ``True`` changed flags) with *now_iso*. Falsy
+    entries are omitted because they carry no calibration timestamp.
+    """
+
+    now_iso = now_iso or datetime.now().replace(microsecond=0).isoformat()
+    return {k: (v if isinstance(v, str) and v else now_iso) for k, v in (dates or {}).items() if v}
+
+
+def update_coefs_in_run_yaml(
+    yaml_path: Path,
+    coefs_changed: dict[str, object],
+    dates: Mapping[str, Any] | None = None,
+    date: str | None = None,
+) -> None:
+    """Merge changed coefficients into run YAML and consume one-shot calib.
+
+    Writes ``input.coefs`` then drops ``input.calib`` entirely. All calib
+    fields are one-shot: ``g0xyz``/``time_ranges_*`` recompute ``Rz``/
+    ``azimuth_shift_deg`` idempotently, while ``azimuth_add``/``coordinates``
+    re-add on top of stored ``azimuth_shift_deg`` every run (accumulation).
+    Clearing the whole block after a successful write prevents both staleness
+    and double-apply. Failed runs (empty *coefs_changed*) keep triggers.
+    Changed coefficients are timestamped through ``input.coefs.dates``, and
+    ``input.coefs.date`` records the latest calibration timestamp.
 
     :param yaml_path: Path to existing run YAML (created if missing).
     :param coefs_changed: Mapping of coef_name → numpy array/scalar values.
+    :param dates: Optional per-coefficient date markers; ``True`` becomes now.
+    :param date: Optional overall calibration timestamp.
     """
-    update_run_yaml(yaml_path, {"input": {"coefs": dict(coefs_changed)}})
+    from tcm.to_omegaconf import to_omegaconf_compatible_types
+
+    if not coefs_changed:
+        return
+    merged_coefs = dict(coefs_changed)
+    if isinstance(merged_coefs.get("dates"), Mapping):
+        # Normalize markers embedded by older callers alongside explicit date arguments.
+        merged_coefs["dates"] = stamp_coef_dates(merged_coefs["dates"])
+    if dates is not None and (stamped_dates := stamp_coef_dates(dates)):
+        old_dates = merged_coefs.get("dates")
+        merged_coefs["dates"] = {**(old_dates if isinstance(old_dates, Mapping) else {}), **stamped_dates}
+    if date:
+        merged_coefs["date"] = date
+    ry = _ry()
+    existing: dict[str, Any] = {}
+    if Path(yaml_path).exists():
+        ts = datetime.now().strftime("%y%m%d_%H%M%S")
+        backup = Path(yaml_path).with_stem(f"{Path(yaml_path).stem} - backup{ts}")
+        if not backup.exists():
+            import shutil
+
+            shutil.copy2(yaml_path, backup)
+            lf.info("Backup created: {}", backup.name)
+        try:
+            with Path(yaml_path).open("r", encoding="utf-8") as f:
+                existing = ry.load(f) or {}
+        except Exception:
+            lf.warning("Could not read {} — creating fresh", Path(yaml_path).name)
+    _deep_merge(existing, to_omegaconf_compatible_types({"input": {"coefs": merged_coefs}}))
+    if isinstance(existing.get("input"), dict) and existing["input"].pop("calib", None) is not None:
+        lf.info("Consumed input.calib in {}", Path(yaml_path).name)
+    Path(yaml_path).parent.mkdir(parents=True, exist_ok=True)
+    with Path(yaml_path).open("w", encoding="utf-8") as f:
+        f.write("# @package _global_\n")
+        ry.dump(existing, f)
+    lf.info("Updated {} in {}", ["input"], Path(yaml_path).name)

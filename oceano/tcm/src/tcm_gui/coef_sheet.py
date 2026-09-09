@@ -248,6 +248,10 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
         self._return_enum: type | None = None
         # Snapshot of all editable cells for dirty tracking — populated at end of load()
         self._snap: tuple = ()
+        # Instant-apply boxes for data-independent calib — {kind: {iid, col, pending}}
+        self._apply_boxes: dict[str, dict] = {}
+        # Fired when an apply checkbox is clicked — App computes + writes back
+        self.on_instant_apply: Callable[[str], None] | None = None
         # Normal (non-default) text color — "clear" side of gray/blue toggles
         self._fg_default: str = tcm_gui.theme.FG_DEFAULT
 
@@ -370,6 +374,7 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
                 self._metadata_path = metadata_path
 
             self._meta.clear()
+            self._apply_boxes = {}
             self._user_rows = set()  # fresh tree — no user-added rows survive reload
             self._user_col_base = None  # column base re-derives on first append
             self._hide_hover_field()  # rows are about to die
@@ -399,6 +404,7 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
         finally:
             self._loading = False
 
+        self._sync_apply_boxes()
         self._take_snapshot()
         # Take metadata snapshot too — without it, edits to metadata loaded from
         # an existing file would never be detected as dirty (snap stays None).
@@ -632,16 +638,17 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
                 self._ins_coef(coefs_iid, name, coefs.get(name), dates.get(name, ""))
 
         # ── process-stage calibration correction ── (DRY: same Annotated shape pattern as coefs)
-        if calib := inp.get("calib"):
-            try:
-                from tcm_gui.cli_cfg import infer_coef_shapes
-                from tcm.schema import ConfigInCalib_InclProc
+        # Always built — trigger rows render empty when calib is absent (e.g.
+        # consumed after a Run), so fresh values stay enterable with checkboxes.
+        try:
+            from tcm_gui.cli_cfg import infer_coef_shapes
+            from tcm.schema import ConfigInCalib_InclProc
 
-                _CALIB_SHAPES_COEFS = infer_coef_shapes(ConfigInCalib_InclProc)
-            except Exception:
-                _CALIB_SHAPES_COEFS = {}
-            calib_iid = self._ins(inp_iid, "calib", [""] * self._nv, "", meta={"path": "input.calib"})
-            self._build_calib_rows(calib_iid, calib, _CALIB_SHAPES_COEFS)
+            _CALIB_SHAPES_COEFS = infer_coef_shapes(ConfigInCalib_InclProc)
+        except Exception:
+            _CALIB_SHAPES_COEFS = {}
+        calib_iid = self._ins(inp_iid, "calib", [""] * self._nv, "", meta={"path": "input.calib"})
+        self._build_calib_rows(calib_iid, inp.get("calib") or {}, _CALIB_SHAPES_COEFS)
 
     def _build_full(self, cfg: dict) -> None:
         ordered = [s for s in _FULL_SECTION_ORDER if s in cfg]
@@ -719,6 +726,17 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
                 self._ins_time_ranges(inp_iid, k, v)
             else:
                 self._ins_generic(inp_iid, k, v)
+        if "calib" not in inp:
+            # Consumed/absent calib still renders trigger rows (enterable + boxes)
+            try:
+                from tcm_gui.cli_cfg import infer_coef_shapes
+                from tcm.schema import ConfigInCalib_InclProc
+
+                _shapes = infer_coef_shapes(ConfigInCalib_InclProc)
+            except Exception:
+                _shapes = {}
+            _iid = self._ins(inp_iid, "calib", [""] * self._nv, "", meta={"path": "input.calib"})
+            self._build_calib_rows(_iid, {}, _shapes)
 
     def _ins_coef(self, par: Any, name: str, value: Any, date: str) -> None:
         shape = COEF_SHAPES.get(name, ())
@@ -869,7 +887,11 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
         Handles: 1-D numeric arrays (g0xyz, coordinates), date lists
         (time_ranges_*), and scalar/generic fallbacks. Shared by
         ``_build_coefs`` (simplified) and ``_build_input`` (full mode).
+        Instant-apply triggers (g0xyz/coordinates/azimuth_add) always render —
+        even when absent from *calib* (e.g. consumed after a Run) — so fresh
+        values stay enterable and their checkboxes visible.
         """
+        calib = {"g0xyz": None, "coordinates": None, "azimuth_add": 0, **(calib or {})}
         for ck, cv in calib.items():
             shape = shapes.get(ck, ())
             if len(shape) == 1 and shape[0] > 0:
@@ -888,6 +910,183 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
                 self._ins_time_ranges(calib_iid, ck, cv)
             else:
                 self._ins_generic(calib_iid, ck, cv)
+
+    # ── instant calib apply boxes (data-independent triggers only) ──
+
+    def _calib_iid(self, path: str) -> Any | None:
+        """Row iid for Hydra *path* (e.g. ``input.calib.g0xyz``), else None."""
+        return next((iid for iid, m in self._meta.items() if m.get("path") == path), None)
+
+    def get_instant_cells(self, kind: str) -> dict[str, list[str] | str]:
+        """Raw trigger strings for *kind* (``g0xyz`` | ``azimuth``)."""
+        from tcm_gui._instant_calib import COORDS_N, G0XYZ_N
+
+        if kind == "g0xyz":
+            iid = self._calib_iid("input.calib.g0xyz")
+            cells = [self._cell_str(iid, j) for j in range(G0XYZ_N)] if iid is not None else [""] * G0XYZ_N
+            return {"g0xyz": cells}
+        cid = self._calib_iid("input.calib.coordinates")
+        aid = self._calib_iid("input.calib.azimuth_add")
+        coords = [self._cell_str(cid, j) for j in range(COORDS_N)] if cid is not None else [""] * COORDS_N
+        add = self._cell_str(aid, 0) if aid is not None else ""
+        return {"coordinates": coords, "azimuth_add": add}
+
+    def apply_pending(self, kind: str) -> bool:
+        """True when trigger *kind* is complete and awaits instant apply."""
+        from tcm_gui import _instant_calib as _ic
+
+        cells = self.get_instant_cells(kind)
+        if kind == "g0xyz":
+            return _ic.is_g0xyz_pending(cells["g0xyz"])  # type: ignore[arg-type]
+        return _ic.is_azimuth_pending(cells["coordinates"], cells["azimuth_add"])  # type: ignore[arg-type]
+
+    def apply_state(self, kind: str) -> str:
+        """Trigger state: ``empty`` (synced) | ``incomplete`` | ``ready``."""
+        from tcm_gui import _instant_calib as _ic
+
+        cells = self.get_instant_cells(kind)
+        if kind == "g0xyz":
+            return _ic.g0xyz_state(cells["g0xyz"])  # type: ignore[arg-type]
+        return _ic.azimuth_state(cells["coordinates"], cells["azimuth_add"])  # type: ignore[arg-type]
+
+    def calib_blocking(self) -> bool:
+        """True when an incomplete trigger blocks Run (precedent: bad input.path)."""
+        return any(self.apply_state(k) == "incomplete" for k in ("g0xyz", "azimuth"))
+
+    def _apply_anchor(self, kind: str) -> tuple[Any, int] | None:
+        """(trigger iid, action col) hosting the checkbox for *kind*.
+
+        Azimuth anchors on the ``coordinates`` row (primary spatial input;
+        ``azimuth_add`` is an auxiliary scalar read by the same action).
+        """
+        from tcm_gui._instant_calib import G0XYZ_N
+
+        if kind == "g0xyz":
+            iid = self._calib_iid("input.calib.g0xyz")
+            return (iid, G0XYZ_N) if iid is not None else None
+        iid = self._calib_iid("input.calib.coordinates") or self._calib_iid("input.calib.azimuth_add")
+        if iid is None:
+            return None
+        max_col = int(self._meta[iid].get("max_col") or 1)
+        return iid, max_col
+
+    def _is_apply_cell(self, iid: Any, col: int) -> bool:
+        """True when (iid, col) is a registered apply checkbox cell."""
+        return any(v["iid"] is iid and v["col"] == col for v in self._apply_boxes.values())
+
+    def _make_apply_cb(self, kind: str) -> Callable:
+        """Checkbox callback — delegates to App via :attr:`on_instant_apply`."""
+
+        def _cb(_event=None) -> None:
+            if callable(getattr(self, "on_instant_apply", None)):
+                self.on_instant_apply(kind)
+
+        return _cb
+
+    def _set_apply_box(self, kind: str, iid: Any, col: int, state: str) -> None:
+        """(Re)create checkbox: ready → enabled ☐, else disabled (☑ if empty).
+
+        *state* is ``empty`` | ``incomplete`` | ``ready``. Only a complete,
+        numeric trigger enables the box — partial input stays disabled instead
+        of erroring on click.
+        """
+        if (r := self._internal_row(iid)) is None:
+            return
+        pending = state == "ready"
+        try:
+            with suppress(Exception):
+                self.sh.delete_checkbox(r, col)
+            self.sh.create_checkbox(
+                r,
+                col,
+                checked=not pending and state == "empty",
+                state="normal" if pending else "disabled",
+                check_function=self._make_apply_cb(kind),
+                redraw=False,
+            )
+        except Exception:
+            _l.debug("apply box create failed", exc_info=True)
+            return
+        self._apply_boxes[kind] = {"iid": iid, "col": col, "pending": pending, "state": state}
+
+    def _sync_apply_boxes(self) -> None:
+        """Reconcile both boxes with current trigger cells (post-load/edit)."""
+        if getattr(self, "_loading", False):
+            return
+        for kind in ("g0xyz", "azimuth"):
+            anchor = self._apply_anchor(kind)
+            if anchor is None:
+                self._apply_boxes.pop(kind, None)
+                continue
+            iid, col = anchor
+            self._set_apply_box(kind, iid, col, self.apply_state(kind))
+        with suppress(Exception):
+            self.sh.redraw()
+        # Trigger rows carry no ``check`` — validations alone would never refresh
+        # Run after a calib edit, so publish validity from here too.
+        if callable(getattr(self, "on_validity_change", None)):
+            with suppress(Exception):
+                self.on_validity_change()
+
+    def clear_instant_trigger(self, kind: str) -> None:
+        """Blank trigger cells for *kind* (in-memory; YAML syncs on Run)."""
+        from tcm_gui._instant_calib import COORDS_N, G0XYZ_N
+
+        if kind == "g0xyz":
+            if (iid := self._calib_iid("input.calib.g0xyz")) is not None and (
+                r := self._internal_row(iid)
+            ) is not None:
+                for j in range(G0XYZ_N):
+                    self.sh.set_cell_data(r, j, "", redraw=False)
+        else:
+            if (cid := self._calib_iid("input.calib.coordinates")) is not None and (
+                r := self._internal_row(cid)
+            ) is not None:
+                for j in range(COORDS_N):
+                    self.sh.set_cell_data(r, j, "", redraw=False)
+            if (aid := self._calib_iid("input.calib.azimuth_add")) is not None and (
+                r := self._internal_row(aid)
+            ) is not None:
+                self.sh.set_cell_data(r, 0, "", redraw=False)
+
+    def write_instant_rz(self, Rz: Any) -> None:
+        """Write 3×3 *Rz* into coefs rows, stamp date, clear g0xyz."""
+        import numpy as _np
+
+        pid = next(
+            (iid for iid, m in self._meta.items() if m.get("key") == "Rz" and m.get("type") == "2d"),
+            None,
+        )
+        if pid is None:
+            raise KeyError("Rz coef row absent — cannot apply g0xyz")
+        arr = _np.asarray(Rz, dtype=float).reshape(3, 3)
+        for i, ch in enumerate((self._meta[pid].get("children") or [])[:3]):
+            if (r := self._internal_row(ch)) is None:
+                continue
+            for j in range(3):
+                self.sh.set_cell_data(r, j, f"{arr[i, j]:.6g}", redraw=False)
+        self._update_coef_date(pid)
+        self.clear_instant_trigger("g0xyz")
+        self._sync_apply_boxes()
+        with suppress(Exception):
+            self.sh.redraw()
+
+    def write_instant_shift(self, value: float) -> None:
+        """Write azimuth shift scalar, clear tuning triggers."""
+        iid = self._calib_iid("input.coefs.azimuth_shift_deg")
+        if iid is None:
+            iid = next(
+                (ii for ii, m in self._meta.items() if m.get("key") == "azimuth_shift_deg"),
+                None,
+            )
+        if iid is None:
+            raise KeyError("azimuth_shift_deg coef row absent")
+        if (r := self._internal_row(iid)) is not None:
+            self.sh.set_cell_data(r, 0, f"{float(value):.6g}", redraw=False)
+        self.clear_instant_trigger("azimuth")
+        self._sync_apply_boxes()
+        with suppress(Exception):
+            self.sh.redraw()
 
     def _item_hook_sh(self, iid=None, *args, **kwargs):
         return self._item_call(self._sh_item_orig, iid, args, kwargs)
@@ -1124,6 +1323,8 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
         iid = self._iid_at_row(event.row)
         m = self._meta.get(iid, {})
         c = event.column
+        if self._is_apply_cell(iid, c):
+            return  # checkbox toggle commits True — no value/style/date side effects
         val = str(event.value) if event.value is not None else ""
         if m.get("browse") and c > 0 and (ri := self._internal_row(iid)) is not None:
             # tksheet committed to the clicked cell — move the value to col 0,
@@ -1174,6 +1375,9 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
             # direct date edit → keep max in coefs node in sync
             self._recompute_coefs_date()
         self._apply_end_edit_style(event, col=c)
+        # Instant-apply boxes track trigger cells — resync after every commit
+        with suppress(Exception):
+            self.sh.after_idle(self._sync_apply_boxes)
         # Re-validate the edited cell after commit — red fg if its check fails.
         if m.get("check"):
             self.sh.after_idle(lambda iid=iid: self._apply_validations(iid))
@@ -1340,6 +1544,8 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
         # rc-menu target oracle — the metadata/setup "Insert rows above/below"
         # interception (_rc_add_rows) keys off the last selected iid.
         self._rc_sel_iid = iid
+        if self._is_apply_cell(iid, c):
+            return  # instant-apply checkbox — keep selection for the toggle
         m = self._meta.get(iid, {})
         raw = m.get("max_col", m.get("len"))
         max_col = int(raw) if raw is not None else (1 if m.get("type") == "scalar" else self._nv)

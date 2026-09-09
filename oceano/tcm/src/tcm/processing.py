@@ -820,6 +820,18 @@ def run_processing(cfg: DictConfig):
     # CSV/HDF5 sources: write all coefs on first creation, or changed coefs on re-run.
     # YAML is ALWAYS updated when yaml_path exists and coefs changed (not just noh5 fallback).
     changed_coefs = {k for k, v in dates.items() if v is True}
+    changed_payload = {k: coefs_merged[k] for k in changed_coefs}
+    changed_dates = (
+        config_yaml.stamp_coef_dates({k: dates[k] for k in changed_coefs}) if changed_coefs else {}
+    )
+    if changed_coefs:
+        # Timestamp the changed entries in place; dates may alias coefs_merged["dates"].
+        # The overall date is the latest ISO timestamp, mirroring GUI manual-edit behavior.
+        dates.update(changed_dates)
+        prior_dates = [str(v) for v in dates.values() if isinstance(v, str) and v]
+        if isinstance(previous_date := coefs_merged.get("date"), str) and previous_date:
+            prior_dates.append(previous_date)
+        coefs_merged["date"] = max(prior_dates) if prior_dates else next(iter(changed_dates.values()))
     yaml_path = cfg.get("_yaml_path")
     coefs_to_write: dict | None = None  # filled only when write is needed
     yaml_written = False  # track whether YAML was the primary write target
@@ -844,7 +856,9 @@ def run_processing(cfg: DictConfig):
         elif changed_coefs and yaml_path:
             config_yaml.update_coefs_in_run_yaml(
                 yaml_path,
-                {k: coefs_merged[k] for k in changed_coefs},
+                changed_payload,
+                dates=changed_dates,
+                date=coefs_merged.get("date"),
             )
             yaml_written = True
         elif changed_coefs:
@@ -870,7 +884,9 @@ def run_processing(cfg: DictConfig):
         # noh5 fallback: write only changed coefs to run YAML
         config_yaml.update_coefs_in_run_yaml(
             yaml_path,
-            {k: coefs_merged[k] for k in changed_coefs},
+            changed_payload,
+            dates=changed_dates,
+            date=coefs_merged.get("date"),
         )
         yaml_written = True
     elif changed_coefs:
@@ -883,7 +899,9 @@ def run_processing(cfg: DictConfig):
     if changed_coefs and yaml_path and not yaml_written:
         config_yaml.update_coefs_in_run_yaml(
             yaml_path,
-            {k: coefs_merged[k] for k in changed_coefs},
+            changed_payload,
+            dates=changed_dates,
+            date=coefs_merged.get("date"),
         )
 
     # ── Phase 4: Save raw data (skip for NC sources — data already there,

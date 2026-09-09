@@ -790,8 +790,10 @@ part of the per-text-file config sweep.
    or run YAML (when h5py is unavailable). NC-source coefs overwrite in-place (bypasses data-skip guard).
    CSV+H5 sources always write coefs (idempotent via `save_coefs_to_nc`) — multiple
    probes may share one `*.raw.nc`, each needing its own `/{tbl}/coef/` group.
-   Changed coefs are **always** mirrored to the run YAML when `yaml_path` exists
-   (not just when h5py is unavailable) — keeps the config readable.  Before first modification,
+    Changed coefs are **always** mirrored to the run YAML when `yaml_path` exists
+    (not just when h5py is unavailable) — keeps the config readable. Changed entries receive
+    full-second ISO timestamps in `dates`, and the merged coefs' `date` becomes the latest
+    timestamp. A successful YAML write consumes `input.calib`.  Before first modification,
    `update_coefs_in_run_yaml` creates a timestamped backup
    (` - backupYYMMDD_HHMMSS.yaml` — whitespace-named, so auto-ignored by the
    matching contract); subsequent updates reuse the same backup.

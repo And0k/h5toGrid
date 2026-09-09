@@ -24,6 +24,7 @@ from tcm.states import ScanStage
 from tcm_gui.cli_cfg import default_cfg, ensure_full_cfg, full_default_cfg
 
 from ._about import AboutDialog, local_readme
+from . import _reload_tabs as reload_tabs
 from ._browse_button import DATA_FILETYPES, SEARCH_FILETYPES, BrowseButtonManager, _is_shift_pressed
 from ._help import doc_path, help_for_path, help_general_for_path
 from ._i18n import STRINGS as _S, resolve_lang  # Chrome with auto-detection of OS locale if LANG=auto
@@ -1134,6 +1135,7 @@ class App:
         # to same-identity peers (same device file + pcid).  _metadata_identity
         # resolves the key; None → no sync (indeterminate).
         cs.on_metadata_changed = lambda: self._on_metadata_changed(cs)
+        cs.on_instant_apply = lambda kind, stem=stem: self._on_instant_apply(stem, kind)
         # NOTE: no _select_tab here — a page gridded later stacks ABOVE any
         # earlier tkraise()'d one (Tk sibling order), so the visible page would
         # end up the LAST tab while the rail highlights the first.  The first
@@ -1209,8 +1211,12 @@ class App:
     # ── §3 Run / Pause / Resume ─────────────────────────────────────
 
     def _update_run_btn_state(self) -> None:
-        """Enable Run iff at least one page exists and ALL have valid input.path."""
-        ok = bool(self._pages) and all(cs.is_path_valid() for cs in self._pages.values())
+        """Enable Run iff pages exist with valid input.path and no blocking calib."""
+        ok = (
+            bool(self._pages)
+            and all(cs.is_path_valid() for cs in self._pages.values())
+            and not any(cs.calib_blocking() for cs in self._pages.values())
+        )
         self._run_btn.config(state="normal" if ok else "disabled")
 
     def _raise_overlays(self) -> None:
@@ -1238,7 +1244,11 @@ class App:
             self._run_btn.config(text=_S["run_btn.resume"] if gate.paused else _S["run_btn.pause"])
             return
         stems = list(self._pages)
-        if not stems or not all(cs.is_path_valid() for cs in self._pages.values()):
+        if (
+            not stems
+            or not all(cs.is_path_valid() for cs in self._pages.values())
+            or any(cs.calib_blocking() for cs in self._pages.values())
+        ):
             return
         try:
             for s, cs in self._pages.items():
@@ -1293,6 +1303,43 @@ class App:
             return
         config_yaml.update_run_yaml(yp, patch)
         cs.mark_clean()
+
+    def _on_instant_apply(self, stem: str, kind: str) -> None:
+        """Apply data-independent calib in-sheet (no YAML write — Run persists).
+
+        *kind* ``g0xyz`` computes ``Rz`` from sheet Ag/Cg/g0xyz;
+        ``azimuth`` shifts ``azimuth_shift_deg`` from sheet shift/add/coords.
+        Triggers are cleared in-sheet; coefs stay dirty for Run pre-write.
+        """
+        from tcm_gui import _instant_calib as _ic
+
+        cs = self._pages.get(stem)
+        if cs is None:
+            return
+        tip = "input.calib.g0xyz" if kind == "g0xyz" else "input.calib.coordinates"
+        try:
+            coefs = cs.get_edited_coefs()
+            if kind == "g0xyz":
+                cells = cs.get_instant_cells("g0xyz")["g0xyz"]
+                g0 = _ic.parse_g0xyz(cells)  # type: ignore[arg-type]
+                if coefs.get("Ag") is None or coefs.get("Cg") is None:
+                    raise KeyError("Ag/Cg coef rows absent")
+                cs.write_instant_rz(_ic.rz_from_g0xyz(g0, coefs["Ag"], coefs["Cg"]))
+                self._set_status(_S.get("instant.ok.rz", "Rz updated from g0xyz — saved on Run"))
+            else:
+                cells = cs.get_instant_cells("azimuth")
+                coords = _ic.parse_coords(cells["coordinates"])  # type: ignore[arg-type]
+                add = _ic.parse_add(cells["azimuth_add"])  # type: ignore[arg-type]
+                base = coefs.get("azimuth_shift_deg", 0) or 0
+                cs.write_instant_shift(_ic.shift_with_tuning(float(base), add, coords))
+                self._set_status(_S.get("instant.ok.azimuth", "azimuth_shift_deg updated — saved on Run"))
+        except Exception as e:
+            lf.exception("Instant apply failed")
+            try:
+                cs._sync_apply_boxes()
+            except Exception:
+                pass
+            self._surface_error(e, _S.get("error.instant", "Instant apply: {p}"), tip_path=tip)
 
     def _device_anchors(self) -> list[Path]:
         """All anchor ``_raw`` dirs for the current path-field value.
@@ -1959,7 +2006,7 @@ class App:
         self._run_btn.config(text=_S["run_btn.text"])
         self._surface_error(exc, _S["error.run"])
 
-    def _surface_error(self, exc: BaseException, log_prefix: str) -> None:
+    def _surface_error(self, exc: BaseException, log_prefix: str, *, tip_path: str = "path_field") -> None:
         """Common error surface: log line, separator, floater text, detail tip.
 
         Sets ``_error_active`` so ``_poll_progress`` keeps the floater on screen
@@ -1967,6 +2014,8 @@ class App:
         (worker's ``lf.exception``) is already in ``_log``; here we add the
         localized prefix line + the markdown detail block rendered in
         ``_status_lbl`` (bottom-left overlay) via :meth:`_show_tip`.
+        *tip_path* selects the dwell tip source (scan/run → ``path_field``;
+        instant-apply → the trigger's own doc path).
         """
         self._error_active = True
         short = f"{type(exc).__name__}: {exc}"
@@ -1978,11 +2027,10 @@ class App:
         error = self._stage_error_text(exc)
         self._prog_stage_text.config(text=f"{current}\n{error}" if current else error)
         self._show_stage_progress()
-        # On field-associated errors (e.g. FileNotFoundError on a failed
-        # data/config search), show the general field description — not the
-        # mode-specific "Detailed" block.
-        if tip := help_general_for_path("path_field"):
-            f1 = e.anchor if (e := help_for_path("path_field")) else None
+        # On field-associated errors show that field's general description —
+        # not a hardcoded path_field block.
+        if tip := help_general_for_path(tip_path):
+            f1 = e.anchor if (e := help_for_path(tip_path)) else None
             self._show_tip(tip, f1)
         else:
             self._hide_tip()
@@ -2238,37 +2286,13 @@ class App:
         self._set_cfg_ui_disabled(False)  # scanned configs exist — active from first paint
         self._current = None
 
-        def _meta_for_stem(stem: str) -> list | None:
-            """Device entry for *stem* — ``[[station_key, 11-array], …]`` groups.
-
-            Every interval of the nested ``info_devices.yaml`` entry is kept so
-            the tab shows the whole device file (``setup`` sublevels appear only
-            when several intervals exist); a flat list entry becomes one group.
-            """
-            if device_meta is None:
-                return None
-            try:
-                pcid = format.to_pcid_from_name(format.stem_to_pcid(stem))
-            except Exception:
-                return None
-            # Try normalized keys (meta_finder stores normalized ids)
-            for cand in (pcid, pcid.replace("_", "")):
-                if cand in device_meta:
-                    ent = device_meta[cand]
-                    if isinstance(ent, dict):
-                        groups = [[k, list(v)] for k, v in ent.items() if isinstance(v, (list, tuple))]
-                        return groups or None
-                    if isinstance(ent, (list, tuple)):
-                        return [[0, list(ent)]]
-            return None
-
         for stem, yp, cfg_dc in result[3]:
             cfg = OmegaConf.to_container(cfg_dc, resolve=True)
             prog = cfg.get("program")
             if prog and prog.get("return_") == schema.Return.CFG_FROM_ARGS:
                 prog["return_"] = str(schema.Return.END)
             self._yaml_paths[stem] = Path(yp)
-            md = _meta_for_stem(stem)
+            md = reload_tabs.meta_for_stem(stem, device_meta)
             # Burst GET autofill for display (scan) — missing metadata only, no file write yet
             burst_filled = False
             if bursts and stem in bursts:
@@ -2346,6 +2370,7 @@ class App:
         self._cfg_detail = _S["overall_lbl.done_detail"].format(pct=pct, ok=len(processed), n=n)
         self._overall_lbl.config(text=f"{self._translate_scan_stage(self._cfg_state)}{self._cfg_detail}")
         self.rt.progress_overall.set(0, 0, "")
+        reload_tabs.reload_tabs_after_run(self, processed or [])
 
     def _clear_log(self) -> None:
         """Flush pending queue records and clear the ScrolledText widget."""

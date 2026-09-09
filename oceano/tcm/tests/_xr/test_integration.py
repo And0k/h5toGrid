@@ -381,7 +381,8 @@ class TestCoefPersistence:
 
         mocker.patch.object(_cli, "main_init", return_value=cfg_t)
         mocker.patch.object(
-            _xr_io, "load_raw",
+            _xr_io,
+            "load_raw",
             return_value=(env.synthetic_ds, None),
         )
         mocker.patch.object(_processing, "get_coefs_from_cfg", return_value=env.coefs)
@@ -413,7 +414,12 @@ class TestCoefPersistence:
         run_dir.mkdir(parents=True, exist_ok=True)
         yaml_path = run_dir / "@i_01.yaml"
         yaml_path.write_text(
-            "# @package _global_\ninput:\n  coefs:\n    Ag: [[0.00173,0,0],[0,0.00173,0],[0,0,0.00173]]\n",
+            "# @package _global_\n"
+            "input:\n"
+            "  coefs:\n"
+            "    Ag: [[0.00173,0,0],[0,0.00173,0],[0,0,0.00173]]\n"
+            "  calib:\n"
+            "    time_ranges_zeroing: ['2024-01-01T00:00:00', '2024-01-01T00:00:05']\n",
             encoding="utf-8",
         )
 
@@ -441,7 +447,7 @@ class TestCoefPersistence:
             },
             "out": {},
             "filter": {},
-            "program": {"return_": Return.END},
+            "program": {"return_": Return.SAVED_COEFS},
             "_yaml_path": yaml_path,
         }
         for k in ("raw_db_path", "not_joined_db_path", "db_path", "text_path"):
@@ -454,7 +460,8 @@ class TestCoefPersistence:
 
         mocker.patch.object(_cli, "main_init", return_value=cfg_t)
         mocker.patch.object(
-            _xr_io, "load_raw",
+            _xr_io,
+            "load_raw",
             return_value=(env.synthetic_ds, None),
         )
         mocker.patch.object(_processing, "get_coefs_from_cfg", return_value=env.coefs)
@@ -474,3 +481,28 @@ class TestCoefPersistence:
         Rz = np.array(coefs["Rz"])
         assert Rz.shape == (3, 3)
         assert not np.allclose(Rz, np.eye(3)), f"Rz still identity in YAML after noh5 zeroing: {Rz}"
+        test_description = "Pipeline YAML write stamps coefs and consumes one-shot calib"
+        assert "T" in coefs["dates"]["Rz"], (
+            f"{test_description}: changed Rz was not timestamped, got {coefs.get('dates')!r}"
+        )
+        assert coefs["date"] == coefs["dates"]["Rz"], (
+            f"{test_description}: overall date mismatch, got {coefs.get('date')!r}"
+        )
+        assert "calib" not in data["input"], (
+            f"{test_description}: one-shot calib was not consumed, got {data['input'].get('calib')!r}"
+        )
+
+        # A rerun with consumed triggers must not touch the stamped YAML.
+        first_text = yaml_path.read_text(encoding="utf-8")
+        first_backups = sorted(run_dir.glob("@i_01 - backup*.yaml"))
+        cfg_t["input"]["calib"] = {}
+        cfg_t["program"]["return_"] = Return.SAVED_COEFS
+        mocker.patch.object(_processing, "get_coefs_from_cfg", return_value=dict(coefs))
+        run_processing(env.cfg)
+
+        assert yaml_path.read_text(encoding="utf-8") == first_text, (
+            f"{test_description}: rerun rewrote stamped YAML without coef changes"
+        )
+        assert sorted(run_dir.glob("@i_01 - backup*.yaml")) == first_backups, (
+            f"{test_description}: rerun created a backup without coef changes"
+        )

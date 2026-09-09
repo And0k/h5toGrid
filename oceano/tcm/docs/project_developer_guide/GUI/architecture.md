@@ -181,7 +181,7 @@ Edit coefs in tabs → tab title gets "*" (dirty indicator, polled 300ms)
   → click Run
     → app._clear_log (flush queue + clear tk.Text log)
     → app._write_coefs per tab (skips tabs where is_dirty == False)
-      → config_yaml.update_coefs_in_run_yaml(yaml_path, patch)
+      → config_yaml.update_run_yaml(yaml_path, patch)
       → cs.mark_clean() → removes "*"
     → worker._run (thread)
       → call_in_raw_dir(processing.run,
@@ -190,8 +190,16 @@ Edit coefs in tabs → tab title gets "*" (dirty indicator, polled 300ms)
           → run_processing: full pipeline (load → coefs → process → persist)
           → return (processed_pcids, failed_pcids, last_cfg, collected)
       → result_queue.put(("run_ok", result))
-    → app._poll_results → _on_run_done → reset bars
+    → app._poll_results → _on_run_done → reset bars → reload processed tabs
 ```
+
+### Post-Run tab reload
+
+`_reload_tabs.reload_tabs_after_run` rebuilds each successfully processed tab from its
+updated run YAML. `compose_reload_cfg` merges the on-disk YAML over the scan-time sheet config
+and drops consumed `input.calib`; tabs with unsaved edits or unprocessed/failed probes are
+skipped. Full mode backfills structured defaults and device metadata is re-resolved, while stale
+`sync_status` is omitted until the next scan.
 
 ### Pause / Resume
 

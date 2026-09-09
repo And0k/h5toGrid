@@ -502,3 +502,128 @@ class TestContainerNotEditable:
             sheet._on_tree_col_click(ev)
         finally:
             sheet.sh.destroy()
+
+
+@pytest.mark.gui
+class TestInstantApplyBoxes:
+    def test_boxes_synced_on_defaults(self, _session_tk_root):
+        """Default calib (no triggers) renders boxes, both synced."""
+        import tkinter as tk
+
+        if _session_tk_root is None:
+            pytest.skip("Tk not available")
+        root = _session_tk_root
+        try:
+            root.deiconify()
+        except tk.TclError:
+            pytest.skip("Tk not available")
+        sheet = _load_full_sheet(root, full_default_cfg())
+        try:
+            boxes = sheet._apply_boxes
+            assert set(boxes) == {"g0xyz", "azimuth"}, f"boxes={sorted(boxes)}"
+            assert boxes["g0xyz"]["pending"] is False, "empty g0xyz must be synced"
+            assert boxes["azimuth"]["pending"] is False, "default tuning must be synced"
+        finally:
+            sheet.sh.destroy()
+
+    def test_boxes_pending_on_trigger_data(self, _session_tk_root):
+        """g0xyz values flip its box to pending; azimuth stays synced."""
+        import tkinter as tk
+
+        if _session_tk_root is None:
+            pytest.skip("Tk not available")
+        root = _session_tk_root
+        try:
+            root.deiconify()
+        except tk.TclError:
+            pytest.skip("Tk not available")
+        cfg = full_default_cfg()
+        cfg["input"]["calib"] = {**cfg["input"]["calib"], "g0xyz": [1.0, 2.0, 3.0]}
+        sheet = _load_full_sheet(root, cfg)
+        try:
+            assert sheet._apply_boxes["g0xyz"]["pending"] is True, "g0xyz data must pend"
+            assert sheet._apply_boxes["azimuth"]["pending"] is False, "azimuth must stay synced"
+        finally:
+            sheet.sh.destroy()
+
+    def test_boxes_render_without_calib_key(self, _session_tk_root):
+        """Consumed YAML (no input.calib) still renders triggers + synced boxes."""
+        import tkinter as tk
+
+        if _session_tk_root is None:
+            pytest.skip("Tk not available")
+        root = _session_tk_root
+        try:
+            root.deiconify()
+        except tk.TclError:
+            pytest.skip("Tk not available")
+        cfg = full_default_cfg()
+        cfg["input"].pop("calib", None)
+        sheet = _load_full_sheet(root, cfg)
+        try:
+            assert sheet._calib_iid("input.calib.g0xyz") is not None, "g0xyz row must render"
+            assert set(sheet._apply_boxes) == {"g0xyz", "azimuth"}, "boxes must exist"
+        finally:
+            sheet.sh.destroy()
+
+    def test_azimuth_box_anchors_on_coordinates(self, _session_tk_root):
+        """Azimuth apply box lives on the coordinates row, not azimuth_add."""
+        import tkinter as tk
+
+        if _session_tk_root is None:
+            pytest.skip("Tk not available")
+        root = _session_tk_root
+        try:
+            root.deiconify()
+        except tk.TclError:
+            pytest.skip("Tk not available")
+        sheet = _load_full_sheet(root, full_default_cfg())
+        try:
+            coords = sheet._calib_iid("input.calib.coordinates")
+            assert coords is not None, "coordinates row must render"
+            assert sheet._apply_boxes["azimuth"]["iid"] == coords, "box must anchor on coordinates"
+        finally:
+            sheet.sh.destroy()
+
+    def test_partial_trigger_stays_disabled(self, _session_tk_root):
+        """Partial g0xyz is incomplete — box disabled, no misleading apply."""
+        import tkinter as tk
+
+        if _session_tk_root is None:
+            pytest.skip("Tk not available")
+        root = _session_tk_root
+        try:
+            root.deiconify()
+        except tk.TclError:
+            pytest.skip("Tk not available")
+        cfg = full_default_cfg()
+        cfg["input"]["calib"] = {**cfg["input"]["calib"], "g0xyz": ["", "", "1"]}
+        sheet = _load_full_sheet(root, cfg)
+        try:
+            box = sheet._apply_boxes["g0xyz"]
+            assert box["state"] == "incomplete", f"partial must be incomplete: {box}"
+            assert box["pending"] is False, "partial must not enable"
+            assert sheet.calib_blocking() is True, "partial must block Run"
+            g0 = sheet._calib_iid("input.calib.g0xyz")
+            assert sheet._node_has_error(g0) is True, "trigger row must flag error"
+            assert sheet._node_has_error(sheet._calib_iid("input.calib")) is True, "error propagates up"
+        finally:
+            sheet.sh.destroy()
+
+    def test_clean_triggers_not_blocking(self, _session_tk_root):
+        """Empty or complete triggers never block Run."""
+        import tkinter as tk
+
+        if _session_tk_root is None:
+            pytest.skip("Tk not available")
+        root = _session_tk_root
+        try:
+            root.deiconify()
+        except tk.TclError:
+            pytest.skip("Tk not available")
+        sheet = _load_full_sheet(root, full_default_cfg())
+        try:
+            assert sheet.calib_blocking() is False, "defaults must not block"
+            assert sheet._node_has_error(sheet._calib_iid("input.calib")) is False
+        finally:
+            sheet.sh.destroy()

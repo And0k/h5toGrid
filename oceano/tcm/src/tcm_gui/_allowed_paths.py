@@ -86,10 +86,13 @@ def path_kind(path: str) -> str:
     A 2–4 alnum extension makes a file; a node without one is a directory —
     but only a real one on disk (guards the spaced-dir false positive
     ``…\\My`` out of ``…\\My Dir\\f.nc``); an odd extension stays plain.
+    ``.`` / ``..`` are not linkable — they are relative path components, not
+    directories to open (fixes the status-bar auto-linking bare "." to the
+    project root).
     """
     if suffix := Path(path).suffix[1:]:
         return "file" if suffix.isalnum() and 2 <= len(suffix) <= 4 else ""
-    return "dir" if _is_dir(path) else ""
+    return "dir" if _is_dir(path) and path not in (".", "..") else ""
 
 
 def to_uri(path: str) -> str:

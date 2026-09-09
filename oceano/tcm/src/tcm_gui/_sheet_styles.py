@@ -158,7 +158,8 @@ class SheetStylesMixin:
             is_meta = iid in meta_descendants
 
             # ── 1) node label — treeview column = "index" canvas ──
-            # Input row: button-face bg + normal black fg; other rows: blue/black fg
+            # Input row: button-face bg + normal black fg; other rows: blue/black fg.
+            # Incomplete calib triggers paint the label red (error wins everywhere).
             # Metadata subtree gets a tinted tree column to visually separate it;
             # non-metadata config nodes get a cooler lavender tint.
             sh.highlight_cells(
@@ -167,10 +168,16 @@ class SheetStylesMixin:
                 canvas="index",
                 bg=meta_bg if is_meta else config_bg,
                 fg=(
-                    tcm_gui.theme.FG_DEFAULT
-                    if is_input
+                    tcm_gui.theme.INVALID_FG
+                    if self._node_has_error(iid)
                     else (
-                        tcm_gui.theme.NODE_DEFAULT_VALS_FG if self._node_at_default(iid) else self._fg_default
+                        tcm_gui.theme.FG_DEFAULT
+                        if is_input
+                        else (
+                            tcm_gui.theme.NODE_DEFAULT_VALS_FG
+                            if self._node_at_default(iid)
+                            else self._fg_default
+                        )
                     )
                 ),
                 redraw=False,

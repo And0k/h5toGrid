@@ -125,6 +125,9 @@ overall_lbl.done_detail: " - Done {pct}% ({ok}/{n} OK)"
 # ── Error prefixes (log queue) ────────────────────────────────────────────
 error.scan: "Scan: {p}"
 error.run: "Run: {p}"
+error.instant: "Instant apply: {p}"
+instant.ok.rz: "Rz updated from g0xyz — saved on Run"
+instant.ok.azimuth: "azimuth_shift_deg updated — saved on Run"
 error.log.scan: "scan failed"
 error.log.run: "run failed"
 # Stage floater short error text — {msg} = "<ExcType>: <exc>"
@@ -165,6 +168,18 @@ time_ranges.hover.written: "filled from info_devices [{s}, {e}]"
 time_ranges.hover.kept: "matches info_devices [{s}, {e}]"
 metadata.status: "Device deployment metadata (info_devices.yaml) — edit before Run"
 metadata.tree_suffix: ", …"
+
+# ── Instant calib apply (data-independent triggers) ──────────────────────
+# Suffix on trigger data cells (pending only) + checkbox hover/dwell.
+input.calib.g0xyz.status.gui: "— tick ☑ right to apply now"
+input.calib.g0xyz.status.incomplete: "— fill all 3 values to enable apply"
+input.calib.g0xyz.apply.status.pending: "Update [`Rz`](config_reference.md#inputcalibg0xyz) now with clearing (else on *`Run`* with backup yaml)"
+input.calib.g0xyz.apply.status.incomplete: "g0xyz incomplete — fill all 3 cells (or clear them)"
+input.calib.g0xyz.apply.detailed: "Updates [`Rz`](config_reference.md#inputcalibg0xyz) from sheet Ag/Cg/g0xyz per [zeroing with g0xyz](../user_guide/configuration.md#zeroing-with-g0xyz). Clears the trigger input."
+input.calib.azimuth.status.gui: "— tick ☑ right to apply tuning now"
+input.calib.azimuth.status.incomplete: "— fill both coordinates (or clear them) to enable apply"
+input.calib.azimuth.apply.status.pending: "Update [`azimuth_shift_deg`](config_reference.md#inputcoefsazimuth_shift_deg) now with clearing (else on *`Run`* with backup yaml)"
+input.calib.azimuth.apply.status.incomplete: "Tuning incomplete — complete or clear coordinates"
 
 # ── Tooltip ───────────────────────────────────────────────────────────────
 prog_status.tooltip: "Current processing stage"

@@ -27,16 +27,21 @@ independent operations:
 
 | Operation | Config field | Output coefficient |
 |-----------|-------------|-------------------|
-| Tilt zeroing | `input.calib.time_ranges_zeroing` | `Rz` (rotation matrix) |
+| Tilt zeroing | `input.calib.time_ranges_zeroing` | `Rz` (rotation matrix — [§Zeroing rotation](../methodology/velocity.md#zeroing-rotation-rz)) |
 | Azimuth calibration | `input.calib.time_ranges_azimuth` | `azimuth_shift_deg` |
 
 **Tilt zeroing**: the instrument hangs plumb in a known orientation. The
 pipeline averages accelerometer data over the specified time window and
-computes a rotation matrix (`Rz`) that aligns the sensor Z-axis with gravity.
+computes a rotation matrix (`Rz`) that aligns the sensor Z-axis with gravity —
+see [§Zeroing rotation](../methodology/velocity.md#zeroing-rotation-rz) for
+the mathematical definition and how `Rz` is applied to `Ag`/`Ah` before
+velocity computation.
 
 **Azimuth calibration**: the instrument is tilted in a **known direction**
 (e.g. facing North). The pipeline computes the azimuth offset from
-magnetometer + accelerometer unit vectors and writes `azimuth_shift_deg`.
+magnetometer + accelerometer unit vectors and writes `azimuth_shift_deg` —
+see [§Azimuth shift](../methodology/velocity.md#azimuth-shift-psi_shift) for
+how the offset is applied to the sensor-frame azimuth \(\psi\) at read time.
 
 **Alternative — `input.calib.g0xyz`**: supply a raw accelerometer vector measured at
 known zero tilt. The pipeline computes the rotation directly, overriding

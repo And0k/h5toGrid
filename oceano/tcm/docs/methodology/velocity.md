@@ -24,6 +24,67 @@ coefficient matrices are determined for the accelerometer and the magnetometer
 of every inclinometer during
 [preliminary calibration](../python_developer_guide/calibration.md).
 
+## Zeroing rotation (\(R_z\))
+
+The sensor's own axes are not necessarily aligned with the instrument's
+vertical. The zeroing rotation \(R_z\) — a \(3\times3\) orthogonal matrix —
+rotates the calibrated sensor frame so that its Z-axis coincides with
+gravity. It is computed once, before velocity calculation, from
+accelerometer samples recorded while the instrument hung plumb:
+
+- **From a data interval** (`input.calib.time_ranges_zeroing`): the pipeline
+  averages the calibrated accelerometer unit vectors over the window and
+  builds the rotation aligning the empirical zenith with \([0, 0, 1]^T\) via
+  Rodrigues' formula — see
+  [Calibration Wiki §8.1](calibration_wiki.md#81-zero-tilt-fold-in).
+- **From a single vector** (`input.calib.g0xyz`): a raw accelerometer vector
+  measured at known zero tilt is converted to a unit vector and rotated to
+  \([0, 0, 1]^T\) the same way; it overrides any \(R_z\) from
+  `time_ranges_zeroing`.
+
+\(R_z\) is applied to **both** the accelerometer (\(\mathbf{A}_g\)) and the
+magnetometer (\(\mathbf{A}_h\)) calibration matrices, because the two sensors
+are rigidly co-mounted and must stay in a consistent frame:
+
+\[
+\mathbf{A}_g' = R_z \cdot \mathbf{A}_g, \qquad
+\mathbf{A}_h' = R_z \cdot \mathbf{A}_h.
+\]
+
+These rotated matrices are then used in the formulas above —
+\(\mathbf{G} = \mathbf{A}_g' \cdot (\mathbf{U}_G - \mathbf{U}_{G0})\) and
+\(\mathbf{B} = \mathbf{A}_h' \cdot (\mathbf{U}_B - \mathbf{U}_{B0})\) — so that
+tilt and azimuth are computed with respect to the instrument's vertical
+rather than the sensor's raw axes. The rotation itself is not stored in the
+output; it is folded into the effective calibration matrices before the
+physical conversion.
+
+## Azimuth shift (\(\psi_{\text{shift}}\))
+
+The tilt azimuth \(\psi\) computed by formula (2) is expressed in the sensor's
+own frame. To obtain the geographic direction of the tilt, a constant offset
+\(\psi_{\text{shift}}\) (coefficient `azimuth_shift_deg`, in degrees) is
+subtracted from the sensor-frame azimuth:
+
+\[
+\psi_{\text{geographic}} = \psi_{\text{shift}} - \psi,
+\]
+
+where \(\psi\) is the value given by formula (2). The sign convention is chosen
+so that the offset compensates the magnetometer sign inversion (the default
+`azimuth_shift_deg = 180^\circ`); the same offset is then used to recalculate
+the Cartesian velocity components \(u, v\) from the corrected direction.
+
+\(\psi_{\text{shift}}\) is **not** folded into a calibration matrix — unlike
+\(R_z\), it cannot be absorbed into a static rotation because the relevant
+horizontal plane changes as the instrument tilts (every reading has a
+different horizontal plane). It is instead computed once from a known-north
+event (`input.calib.time_ranges_azimuth`) and applied at read time as a
+scalar, subtracted from the raw \(\psi\) of each sample. See
+[Calibration Wiki §8.2](calibration_wiki.md#82-heading-offset-why-not-folded-in)
+for the rationale and the circular-mean convention used when averaging the
+offset over several samples.
+
 ## Tilt and azimuth
 
 The tilt angle and its direction are computed after [Marsh, 1982]:

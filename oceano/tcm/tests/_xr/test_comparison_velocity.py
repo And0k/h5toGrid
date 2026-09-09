@@ -65,6 +65,12 @@ def _assert_velocity_matches(result, ref, *, atol=1e-10, cols=_PERSISTED_COLS):
         np.testing.assert_allclose(result[col].values, ref[col], atol=atol, err_msg=f"Mismatch in '{col}'")
 
 
+def _assert_vdir_close(actual, desired, *, atol=1e-10):
+    """Circular-aware Vdir comparison — angles equal modulo 360°."""
+    diff = (actual - desired + 180) % 360 - 180
+    np.testing.assert_allclose(diff, 0, atol=atol, err_msg="Vdir mismatch (circular)")
+
+
 # --------------------------------------------------------------------------- #
 # _xr vs numpy reference
 # --------------------------------------------------------------------------- #
@@ -122,7 +128,8 @@ class TestVelocityComparison:
         )
         assert "Vdir" not in result, "Vabs/Vdir should not be in calc_velocity output"
         result_with_vabs = add_vabs_vdir(result)
-        np.testing.assert_allclose(result_with_vabs.Vdir.values, ref["Vdir"], atol=1e-10)
+        # Vdir is circular: add_vabs_vdir returns [0, 360), reference may be [-180, 180)
+        _assert_vdir_close(result_with_vabs.Vdir.values, ref["Vdir"], atol=1e-10)
 
     def test_zero_kVabs_no_velocity(self, sensor_ds, identity_coefs):
         """kVabs=None → no velocity columns computed at all."""

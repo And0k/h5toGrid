@@ -200,6 +200,12 @@ builds the three-tier chain, driven by
 are gated on `H5_AVAILABLE` — when h5py is not installed the h5 candidate is
 silently skipped.
 
+### YAML float format
+
+All floats in run YAMLs (`cfg_proc/run/*.yaml`) are written with **8 significant digits** (`:.8g`), regardless of source precision. This applies to coefficients, calibration parameters, and threshold values — unifying output from both hand-written configs (typically 6 digits) and numpy float64 arrays loaded from HDF5 (17 digits).
+
+Implementation: [`config_yaml._ry()`](../../src/tcm/config_yaml.py) registers a custom `float` representer on the ruamel.yaml serializer used by every YAML write path (`save_config_to_yaml`, `update_coefs_in_run_yaml`, `sync_yamls_devmeta_and_hydra`).
+
 ### Coefficient NC storage
 
 Coefs are stored in `/{tbl}/coef/` groups within `*.raw.nc` files:

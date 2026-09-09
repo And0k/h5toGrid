@@ -86,6 +86,18 @@ full config tree (all sections: `input`, `out`, `filter`, `program` — missing
 values are filled with defaults). Edits to any section are saved to the run
 YAMLs on Run, same as coefficients.
 
+**Instant apply** (data-independent triggers only): `input.calib.g0xyz` and the
+`coordinates` + `azimuth_add` group carry a ☑ cell right of their values (the
+azimuth box lives on the `coordinates` row — it reads both inputs).
+Empty triggers show a disabled ☑ (in sync); typing data enables it (pending).
+Clicking it computes `Rz` / `azimuth_shift_deg` with the same pipeline calls as
+Run, updates the coefs cells in-sheet and clears the trigger — all in memory,
+YAML syncs on the next Run. `time_ranges_zeroing` / `time_ranges_azimuth` need
+data windows and stay Run-time only. A partial/non-numeric trigger reddens its
+tree label and disables Run until completed or cleared — same precedent as an
+invalid `input.path`. See [Configuration §Updating coefficients
+via zeroing](configuration.md#updating-coefficients-via-zeroing).
+
 Without Shift (simplified mode) the `out` binning is fixed to full resolution —
 `dt_bins = [0]`, `dt_bins_min_save_text = 0` — unless the launch command line
 overrides them (e.g. `out.dt_bins=[0,600]`; see the [CLI guide](cli.md)).

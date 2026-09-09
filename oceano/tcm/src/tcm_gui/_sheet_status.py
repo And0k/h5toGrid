@@ -335,6 +335,22 @@ class SheetHoverMixin:
         m = self._meta.get(iid, {})
         ident = str(m.get("key") or m.get("path") or m.get("label") or "")
 
+        # Instant-apply checkbox cells (outside max_col) — STR-driven.
+        # Ready → pending status; incomplete → fill-in hint; synced → silent.
+        if col is not None and (boxes := getattr(self, "_apply_boxes", None)):
+            for _kind, _box in boxes.items():
+                if _box.get("iid") == iid and _box.get("col") == col:
+                    _pre = "input.calib.g0xyz" if _kind == "g0xyz" else "input.calib.azimuth"
+                    _state = _box.get("state") or ("ready" if _box.get("pending") else "empty")
+                    if _state == "ready":
+                        self._hover_detail = _S.get(f"{_pre}.apply.detailed", "")
+                        self.on_hover_status(_S.get(f"{_pre}.apply.status.pending", ""), True)
+                        return
+                    if _state == "incomplete":
+                        self._hover_detail = _S.get(f"{_pre}.apply.detailed", "")
+                        self.on_hover_status(_S.get(f"{_pre}.apply.status.incomplete", ""), True)
+                        return
+
         # time_ranges: doc short + live sync detail — recomputed, never cached
         if m.get("label") == "time_ranges" or str(m.get("path") or "") == "input.time_ranges":
             sync = self._time_ranges_detail()
@@ -388,6 +404,25 @@ class SheetHoverMixin:
                     if suffix:
                         self.on_hover_status(f"{txt} {suffix}".strip(), True)
                         return
+                # Pending calib triggers hint at the instant-apply checkbox.
+                # Ready → apply suffix; incomplete → fill-in suffix; empty → doc only.
+                _path = str(m.get("path") or "")
+                _kind = (
+                    "g0xyz"
+                    if _path == "input.calib.g0xyz"
+                    else (
+                        "azimuth" if _path in ("input.calib.coordinates", "input.calib.azimuth_add") else None
+                    )
+                )
+                if _kind is not None:
+                    _state = "empty"
+                    with suppress(Exception):
+                        _state = str(self.apply_state(_kind))
+                    if _state in ("ready", "incomplete"):
+                        _pre = "input.calib.g0xyz" if _kind == "g0xyz" else "input.calib.azimuth"
+                        _key = f"{_pre}.status.gui" if _state == "ready" else f"{_pre}.status.incomplete"
+                        if sfx := _S.get(_key, ""):
+                            txt = f"{txt} {sfx}".strip()
                 self.on_hover_status(txt, True)
                 return
 
@@ -826,11 +861,21 @@ class SheetHoverMixin:
         # Re-publish when row, source (tree ↔ data), or (for metadata paired
         # rows) the hovered column changes — each column documents a different
         # field, so col 0 → metadata.point but col 1 → metadata.symbol.
+        # Apply-checkbox cells also force re-publish: stepping onto/off the box
+        # (same row, action col outside max_col) swaps data hint ↔ apply status.
         m = self._meta.get(iid, {})
+        _is_apply = False
+        with suppress(Exception):
+            _is_apply = bool(getattr(self, "_is_apply_cell", lambda *_a: False)(iid, col))
+        _was_apply = False
+        with suppress(Exception):
+            _was_apply = bool(getattr(self, "_is_apply_cell", lambda *_a: False)(iid, self._status_col))
         if (
             iid != self._status_iid
             or self._status_source != "data"
             or (m.get("is_metadata") and m.get("max_col", 1) > 1 and col != self._status_col)
+            or _is_apply
+            or _was_apply
         ):
             self._status_iid = iid
             self._status_source = "data"

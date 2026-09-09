@@ -219,6 +219,11 @@ class TestPathKind:
         (tmp_path / "_raw.zip").mkdir()
         assert path_kind(str(tmp_path / "_raw.zip")) == "file"
 
+    def test_dot_and_dotdot_not_linkable(self):
+        """Bare ``.`` / ``..`` must not link to the project root (status-bar bug)."""
+        assert path_kind(".") == ""
+        assert path_kind("..") == ""
+
 
 # ── restricted detection now covers directories ──────────────────────────────
 

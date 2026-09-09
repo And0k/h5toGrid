@@ -12,7 +12,7 @@ default_page.stem: "Значения по умолчанию"
 
 # ── Chrome widget tooltips / hover status ─────────────────────────────────
 path_lbl.text: "Путь поиска"
-# path_field=path_lbl status = doc-driven general (`config_reference.md` `path_field`) + STR suffix.
+# path_field=path_lbl status = doc-driven general (`config_reference_Ru.md` `path_field`) + STR suffix.
 path_field.tooltip: "Редактируйте по Enter или двойному клику или выберите кнопкой обзора"
 path_field.placeholder: "D:/data/_raw/*i*.txt"
 path_field.placeholder_files: "D:/data/_raw/(i*raw_file1[.]txt|i*raw_file2[.]txt)"
@@ -30,7 +30,7 @@ input.coefs.date.magnetometer: "Дата калибровки магнитоме
 input.coefs.date.alignment: "Дата калибровки совмещения"
 input.coefs.date.pressure: "Дата калибровки давления"
 input.coefs.date.velocity: "Дата калибровки скорости"
-# Поведение GUI для input.coefs.path — добавляется к краткому/детальному из config_reference.md.
+# Поведение GUI для input.coefs.path — добавляется к краткому/детальному из config_reference_Ru.md.
 input.coefs.path.status.gui: "При вводе немедленно **заменит** все показываемые значения коэффициентов"
 input.coefs.path.detailed.gui: " При *`Запуске`* только отсутствующие значения будут загружены из указанного сдесь файла"
 
@@ -122,6 +122,9 @@ overall_lbl.done_detail: " — Обработано {pct}% ({ok}/{n} OK)"
 # ── Error prefixes (log queue) ────────────────────────────────────────────
 error.scan: "Сканирование: {p}"
 error.run: "Запуск: {p}"
+error.instant: "Мгновенное применение: {p}"
+instant.ok.rz: "Rz обновлена из g0xyz — сохранится при Запуске"
+instant.ok.azimuth: "azimuth_shift_deg обновлён — сохранится при Запуске"
 error.log.scan: "сканирование не удалось"
 error.log.run: "обработка не удалась"
 # Stage floater short error text — {msg} = "<ExcType>: <exc>"
@@ -162,6 +165,18 @@ time_ranges.hover.written: "заполнено из info_devices [{s}, {e}]"
 time_ranges.hover.kept: "совпадает с info_devices [{s}, {e}]"
 metadata.status: "(загружены из `info_devices.yaml` при поиске данных) — правьте до Запуска"
 metadata.tree_suffix: ", …"
+
+# ── Мгновенное применение калибровки (триггеры без данных) ───────────────
+input.calib.g0xyz.status.gui: "— нажмите ☑ справа чтобы обновить [Rz](config_reference_Ru.md#inputcalibg0xyz) (с очисткой тут): иначе — при *`Запуске`* с сохранением в резервный yaml"
+input.calib.g0xyz.status.incomplete: "— заполните все 3 значения чтобы включить применение"
+input.calib.g0xyz.apply.status.pending: "Обновить [Rz](config_reference_Ru.md#inputcalibg0xyz) сейчас (с очисткой тут): иначе — при *`Запуске`* с сохранением в резервный yaml"
+input.calib.g0xyz.apply.status.incomplete: "g0xyz неполон — заполните все 3 ячейки (или очистите их)"
+input.calib.g0xyz.apply.detailed: "[Обновляет](../user_guide/configuration.md#zeroing-with-g0xyz) коэффициент [Rz](config_reference_Ru.md#inputcalibg0xyz) по Ag/Cg/g0xyz из таблицы (с очисткой тут): иначе это произойдет при *`Запуске`* с сохранением в резервный yaml"
+input.calib.azimuth.status.gui: "— нажмите ☑ справа чтобы обновить [`azimuth_shift_deg`](config_reference_Ru.md#inputcoefsazimuth_shift_deg) сейчас (с очисткой тут): иначе — при *`Запуске`* с сохранением в резервный yaml"
+input.calib.azimuth.status.incomplete: "— заполните обе координаты (или очистите их) чтобы включить применение"
+input.calib.azimuth.apply.status.pending: "Обновить [`azimuth_shift_deg`](config_reference_Ru.md#inputcoefsazimuth_shift_deg) сейчас (с очисткой тут): иначе — при *`Запуске`* с сохранением в резервный yaml"
+input.calib.azimuth.apply.status.incomplete: "Подстройка неполна — заполните или очистите координаты"
+input.calib.azimuth.apply.detailed: "[Добавляет сдвиг](../user_guide/configuration.md#updating-coefficients-via-zeroing) к текущему коэффициенту [`azimuth_shift_deg`](config_reference_Ru.md#inputcoefsazimuth_shift_deg) (с очисткой тут): иначе это произойдет при *`Запуске`* с сохранением в резервный yaml"
 
 # ── Tooltip ───────────────────────────────────────────────────────────────
 prog_status.tooltip: "Текущий этап обработки"

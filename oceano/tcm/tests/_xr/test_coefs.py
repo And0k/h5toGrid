@@ -24,7 +24,7 @@ from tcm._xr.coefs import (
     save_coefs_to_nc,
 )
 from tcm.schema import ConfigInCoefs_InclProc, ConfigIn_InclProc
-from tcm.config_yaml import prep_cfg_for_probe, update_coefs_in_run_yaml
+from tcm.config_yaml import prep_cfg_for_probe, stamp_coef_dates, update_coefs_in_run_yaml
 from tcm.incl_calc.coefs import get_coefs, load_coefs
 
 
@@ -655,6 +655,81 @@ class TestUpdateCoefsInRunYaml:
         val = data["input"]["coefs"]["azimuth_shift_deg"]
         assert isinstance(val, float), f"Expected float, got {type(val).__name__}: {val!r}"
         assert abs(val - 195.3) < 1e-10
+
+    @pytest.mark.parametrize(
+        ("raw_dates", "checked_key", "test_description"),
+        [
+            pytest.param(
+                {"Rz": True},
+                "Rz",
+                "True changed marker becomes a current ISO timestamp",
+                id="true-marker",
+            ),
+            pytest.param(
+                {"Rz": "2024-06-13T12:00:00"},
+                "Rz",
+                "Existing ISO date string is preserved unchanged",
+                id="existing-date",
+            ),
+        ],
+    )
+    def test_stamp_coef_dates(self, raw_dates, checked_key, test_description):
+        """Date markers normalize to ISO strings without losing existing dates."""
+        stamped = stamp_coef_dates(raw_dates)
+
+        assert stamped[checked_key] == raw_dates[checked_key] or "T" in stamped[checked_key], (
+            f"{test_description}: unexpected stamped date {stamped[checked_key]!r}"
+        )
+        assert isinstance(datetime.fromisoformat(stamped[checked_key]), datetime), (
+            f"{test_description}: stamped date is not ISO {stamped[checked_key]!r}"
+        )
+
+    def test_dates_and_date_written(self, tmp_path):
+        """Explicit dates/date land under input.coefs with True converted to now."""
+        yaml_path = tmp_path / "@i_01.yaml"
+        test_description = "Pipeline run stamps changed coefs and overall calibration date"
+
+        update_coefs_in_run_yaml(
+            yaml_path,
+            {"Rz": np.eye(3)},
+            dates={"Rz": True},
+            date="2024-06-13T12:00:05",
+        )
+
+        data = _read_yaml(yaml_path)
+        coefs = data["input"]["coefs"]
+        assert "T" in coefs["dates"]["Rz"], (
+            f"{test_description}: True marker was not timestamped, got {coefs['dates']!r}"
+        )
+        assert coefs["date"] == "2024-06-13T12:00:05", (
+            f"{test_description}: overall date mismatch, got {coefs.get('date')!r}"
+        )
+
+    def test_omitted_dates_preserve_existing(self, tmp_path):
+        """Two-argument calls retain old dates/date behavior unchanged."""
+        yaml_path = tmp_path / "@i_01.yaml"
+        yaml_path.write_text(
+            "# @package _global_\n"
+            "input:\n"
+            "  coefs:\n"
+            "    Ag: [[1,0,0],[0,1,0],[0,0,1]]\n"
+            "    dates:\n"
+            "      Ag: '2024-06-12T12:00:00'\n"
+            "    date: '2024-06-12T12:00:00'\n",
+            encoding="utf-8",
+        )
+        test_description = "Backward-compatible write preserves existing calibration timestamps"
+
+        update_coefs_in_run_yaml(yaml_path, {"Rz": np.eye(3)})
+
+        data = _read_yaml(yaml_path)
+        coefs = data["input"]["coefs"]
+        assert coefs["dates"] == {"Ag": "2024-06-12T12:00:00"}, (
+            f"{test_description}: existing dates changed, got {coefs.get('dates')!r}"
+        )
+        assert coefs["date"] == "2024-06-12T12:00:00", (
+            f"{test_description}: existing date changed, got {coefs.get('date')!r}"
+        )
 
     def test_backup_created_before_first_modification(self, tmp_path):
         """Timestamped backup ( - backupYYMMDD_HHMMSS) created before first coef write."""
