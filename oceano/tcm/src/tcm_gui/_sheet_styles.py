@@ -6,11 +6,12 @@ Mixin for :class:`tcm_gui.coef_sheet.ConfigSheet`.
   is at default, see :mod:`tcm_gui._sheet_tint`), uniform bg for browse rows,
   date alignment + blue fg, dropdowns/checkboxes from the field's
   :class:`tcm_gui._cell_spec.CellSpec`, column-resize zones.
-* :meth:`SheetStylesMixin._apply_validations` — red fg on ``check: "exists"``
-  rows whose path resolves to nothing; gray fg when the path matches its
-  config default (coefs/metadata/input path) via
+* :meth:`SheetStylesMixin._apply_validations` — red fg on rows failing their
+  ``check``: ``"exists"`` path rows whose path resolves to nothing,
+  ``"sorted"`` date rows (``time_ranges*``) breaking ascending order; gray fg
+  when the value matches its config default via
   :meth:`SheetTintMixin._default_for_cell`; reads via
-  :meth:`SheetTintMixin._cell_str` so a ghost placeholder (deleted path) is
+  :meth:`SheetTintMixin._cell_str` so a ghost placeholder (deleted value) is
   skipped instead of validated.
 """
 
@@ -19,6 +20,7 @@ from __future__ import annotations
 import glob as _glob_mod
 from collections.abc import Mapping
 from contextlib import suppress
+from datetime import datetime
 from pathlib import Path
 from tkinter import TclError
 from typing import Any
@@ -32,6 +34,7 @@ from ._cell_spec import (
     TEXT_SPEC,
     any2str,
     as_bool,
+    as_date,
     enum_values,
     spec_for_path,
 )
@@ -254,48 +257,95 @@ class SheetStylesMixin:
         sh.redraw()
 
     def _apply_validations(self, target_iid: Any = None) -> None:
-        """Red fg on any cell whose ``check`` validation fails (path existence).
+        """Red fg on any cell whose ``check`` validation fails.
 
         Called after every edit commit and at the end of ``load()``.
         ``check: "exists"`` rows (``input.path``, ``input.coefs`` path cell) are
         marked red when the path doesn't exist on disk; glob patterns are red
-        only when zero matches; ``~`` is expanded.  Values are read through
-        :meth:`_cell_str` — a deleted path (ghost placeholder) reads empty
-        and is skipped, never validated against the placeholder text.
-        Sentinels (``<…>``) are never marked invalid.
+        only when zero matches; ``~`` is expanded.  ``check: "sorted"`` rows
+        (``input.time_ranges``, ``metadata.time_range``) — red on any date cell
+        breaking ascending order, see :meth:`_validate_sorted_dates`.  Values
+        are read through :meth:`_cell_str` — a deleted value (ghost
+        placeholder) reads empty and is skipped, never validated against the
+        placeholder text.  Sentinels (``<…>``) are never marked invalid.
         """
         sh = self.sh
         row_of = self._row_map()
 
         for iid, m in self._meta.items():
-            if m.get("check") != "exists":
+            if not (check := m.get("check")):
                 continue
             if target_iid is not None and iid != target_iid:
                 continue
             if (r := row_of.get(iid)) is None:
                 continue
 
-            path_str = self._cell_str(iid, 0)
-            if not path_str or path_str.startswith("<"):
-                continue
+            if check == "exists":
+                path_str = self._cell_str(iid, 0)
+                if not path_str or path_str.startswith("<"):
+                    continue
 
-            if _path_exists(path_str):
-                # Restore normal fg: gray if value matches config default, else default fg.
-                dv = self._default_for_cell(iid, m, 0)
-                if dv is not NO_DEFAULT and any2str(path_str) == any2str(dv):
-                    restore_fg = tcm_gui.theme.CELL_DEFAULT_VAL_FG
-                elif m.get("type") == "input" and _input_path_matches_config(
-                    path_str, getattr(self, "_page_stem", "")
-                ):
-                    # input.path "belongs" to this config — a different but same-probe
-                    # file (stem matches per pcid_key) also reads as default.
-                    restore_fg = tcm_gui.theme.CELL_DEFAULT_VAL_FG
+                if _path_exists(path_str):
+                    # Restore normal fg: gray if value matches config default, else default fg.
+                    dv = self._default_for_cell(iid, m, 0)
+                    if dv is not NO_DEFAULT and any2str(path_str) == any2str(dv):
+                        restore_fg = tcm_gui.theme.CELL_DEFAULT_VAL_FG
+                    elif m.get("type") == "input" and _input_path_matches_config(
+                        path_str, getattr(self, "_page_stem", "")
+                    ):
+                        # input.path "belongs" to this config — a different but same-probe
+                        # file (stem matches per pcid_key) also reads as default.
+                        restore_fg = tcm_gui.theme.CELL_DEFAULT_VAL_FG
+                    else:
+                        restore_fg = self._fg_default
+                    sh.highlight_cells(row=r, column=0, fg=restore_fg, redraw=False)
                 else:
-                    restore_fg = self._fg_default
-                sh.highlight_cells(row=r, column=0, fg=restore_fg, redraw=False)
-            else:
-                sh.highlight_cells(row=r, column=0, fg=tcm_gui.theme.INVALID_FG, redraw=False)
+                    sh.highlight_cells(row=r, column=0, fg=tcm_gui.theme.INVALID_FG, redraw=False)
+            elif check == "sorted":
+                self._validate_sorted_dates(iid, m, r)
 
         sh.redraw()
         if self.on_validity_change:
             self.on_validity_change()
+
+    def _validate_sorted_dates(self, iid: Any, m: Mapping[str, Any], r: int) -> None:
+        """Red fg on date cells of a ``check: "sorted"`` row when not ascending.
+
+        ``input.time_ranges`` / ``metadata.time_range`` hold ordered ISO dates;
+        a cell breaking the sequence against its predecessor or successor gets
+        :data:`~tcm_gui.theme.INVALID_FG`.  Sorted cells restore gray (at
+        default) / warning (broader input window — keeps the tint
+        :meth:`SheetTintMixin._apply_time_ranges_tint` painted before this) /
+        normal fg.  Unparseable cells are skipped — no verdict either way.
+        """
+        sh = self.sh
+        # Collect (col, str, datetime) — non-empty, parseable, non-sentinel cells
+        parsed: list[tuple[int, str, datetime]] = []
+        for c in range(self._own_cols(m)):
+            s = self._cell_str(iid, c)
+            if not s or s.startswith("<") or (dt := as_date(s)) is None:
+                continue
+            parsed.append((c, s, dt))
+        if not parsed:
+            return
+
+        # input.time_ranges — keep the broader-window warning tint on sorted cells
+        broader = (
+            not m.get("is_metadata")
+            and m.get("label") == "time_ranges"
+            and self._time_ranges_relation()[0] == "broader"
+        )
+
+        for i, (c, s, dt) in enumerate(parsed):
+            is_unsorted = (i > 0 and dt < parsed[i - 1][2]) or (i < len(parsed) - 1 and dt > parsed[i + 1][2])
+            if is_unsorted:
+                sh.highlight_cells(row=r, column=c, fg=tcm_gui.theme.INVALID_FG, redraw=False)
+            else:
+                dv = self._default_for_cell(iid, m, c)
+                if dv is not NO_DEFAULT and any2str(s) == any2str(dv):
+                    fg = tcm_gui.theme.CELL_DEFAULT_VAL_FG
+                elif broader:
+                    fg = tcm_gui.theme.TAG_COLORS["warning"]
+                else:
+                    fg = self._fg_default
+                sh.highlight_cells(row=r, column=c, fg=fg, redraw=False)

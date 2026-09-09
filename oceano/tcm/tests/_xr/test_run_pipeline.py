@@ -169,6 +169,30 @@ class TestRunPipeline:
         processing.run(cfg)
         assert mock_proc.call_count == expected_count
 
+    def test_backup_only_dir_regenerates(self, project_dir, make_cfg, mocker):
+        """Lone whitespace-named backup in run dir → excluded from discovery,
+        canonical config regenerated and processed; backup never processed."""
+        cfg = make_cfg(project_dir)
+        raw_dir = project_dir / _constants.RAW_DIR_NAME
+        run_dir = raw_dir / "cfg_proc" / "run"
+        run_dir.mkdir(parents=True)
+        raw_file = raw_dir / "i_01.txt"
+        backup = run_dir / "@i_01 - backup260908_150251.yaml"
+        backup.write_text(f"input:\n  path: {raw_file}\n")
+
+        def _fake_save(_cfg, _dirs):  # generation writes the correctly-named config
+            (run_dir / "@i_01.yaml").write_text(f"input:\n  path: {raw_file}\n")
+
+        mocker.patch.object(config_yaml, "save_config_to_yaml", side_effect=_fake_save)
+        mocker.patch.object(config_yaml, "sync_yamls_devmeta_and_hydra")
+        mock_proc = mocker.patch.object(processing, "run_processing")
+
+        processing.run(cfg)
+
+        assert mock_proc.call_count == 1
+        assert Path(mock_proc.call_args.args[0].input.path).stem == "i_01"
+        assert backup.exists()  # user backup kept on disk, never processed
+
     def test_no_configs_exits_cleanly(self, project_dir, make_cfg, mocker):
         """No configs + no files → no processing, no crash."""
         cfg = make_cfg(project_dir)

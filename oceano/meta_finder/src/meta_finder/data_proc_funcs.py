@@ -1039,6 +1039,54 @@ def parse_datetime_from_row(line: str, is_raw: bool = False, sep="\t") -> Option
                 return None
 
 
+def _full_span_time_minmax(
+    dir_archive: Path,
+    rel_path: PurePosixPath,
+    *,
+    sep: Optional[str] = None,
+    encoding: Optional[str] = None,
+    skip_header: Optional[int] = None,
+) -> Optional[Tuple[datetime, datetime, int, int]]:
+    """``(min, max, min_lineno, max_lineno)`` over timestamp-parseable rows.
+
+    Inversion-triggered fallback for :func:`extract_time_info_from_text_file`:
+    single pass over the whole file via :func:`read_file_lines_universal`
+    (``max_lines=None`` = all lines; split-by-time series yield first-file lines
+    + last-file tail) parsing every row with the same
+    :func:`parse_datetime_from_row` used for edges. Line numbers are 1-based
+    into the read lines (= file lines for the single-file case) so an interior
+    min/max pinpoints the wrap point. Returns None when no row parses.
+    """
+    try:
+        lines, _last_line, _err = read_file_lines_universal(
+            dir_archive,
+            rel_path,
+            max_lines=None,
+            skip_nan_rows=True,
+            encoding=encoding,
+            sep=sep,
+            skip_header=skip_header,
+        )
+    except Exception:
+        logger.exception(f"Full-span scan failed for {dir_archive.name}/{rel_path}")
+        return None
+    if not lines:
+        return None
+    is_raw = _is_raw_format(dir_archive, rel_path)
+    sep = _detect_sep(lines, sep)
+    lo = hi = None
+    lo_n = hi_n = -1
+    for n, line in enumerate(lines, start=1):
+        if (dt := parse_datetime_from_row(line, is_raw=is_raw, sep=sep)) is None:
+            continue
+        dt = to_utc_naive(dt)
+        if lo is None or dt < lo:
+            lo, lo_n = dt, n
+        if hi is None or dt > hi:
+            hi, hi_n = dt, n
+    return (lo, hi, lo_n, hi_n) if lo is not None else None
+
+
 def extract_time_info_from_text_file(
     dir_archive: Path,
     rel_path: PurePosixPath,
@@ -1055,6 +1103,9 @@ def extract_time_info_from_text_file(
     outermost lines of edge-anchored contiguous timestamp-valid runs (top window 50
     scanned in reverse, bottom window 10 scanned forward), so leading garbage and
     trailing NaN/blank rows are skipped by parse-gating, not blank checks.
+    Inverted edges (start > end, i.e. a non-monotonic file) self-repair to min/max
+    over timestamp-parseable rows via a full scan (:func:`_full_span_time_minmax`,
+    rare path only) — a scan-time span, not what Run will load after correction.
 
     Args:
         dir_archive: The path to the text file or archive file with format
@@ -1119,6 +1170,29 @@ def extract_time_info_from_text_file(
         # If start_time is None but end_time is found, use end_time as start_time
         if start_time is None and end_time is not None:
             start_time = end_time
+
+        # Inverted edges (start > end) match nothing downstream: the file is not
+        # time-monotonic, so first/last-row semantics cannot order it — repair to
+        # min/max over timestamp-parseable rows via a full scan (rare path only;
+        # the fast edge path above never pays for a full read). Unparseable file
+        # degrades to None (no time_ranges → full load at Run, never a silent empty).
+        if start_time is not None and end_time is not None and start_time > end_time:
+            bad_s, bad_e = start_time, end_time
+            if repaired := _full_span_time_minmax(
+                dir_archive, rel_path, sep=sep, encoding=encoding, skip_header=skip_header
+            ):
+                start_time, end_time, lo_n, hi_n = repaired
+                logger.warning(
+                    f"Inverted time edges [{bad_s}, {bad_e}] in {dir_archive.name}/{rel_path} — "
+                    f"repaired to parsed-rows span [{start_time}, {end_time}] via full scan "
+                    f"(min at line {lo_n}, max at line {hi_n})"
+                )
+            else:
+                logger.error(
+                    f"Inverted time edges [{bad_s}, {bad_e}] in {dir_archive.name}/{rel_path} "
+                    f"and no parseable rows on full scan — no time range extracted"
+                )
+                return None
 
         # Only extract burst information if we have a valid start time
         if start_time and averaging_interval is not None and len(lines) > 1:

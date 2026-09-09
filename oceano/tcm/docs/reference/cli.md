@@ -126,7 +126,7 @@ The pipeline logs a summary line at INFO:
 | TSV export | Available | Available |
 | Coef persistence | NC file (in-place) | Run YAML |
 | `program.return_=<saved_raw>` | Saves raw data to NC | Saves coefs to YAML only |
-| `dt_bins_min_save_text` default | `1` (no-avg skipped) | `0` (no-avg TSV enabled) |
+| `dt_bins_min_save_text` default | `1` (no-avg skipped) | `0` or `None` (no-avg TSV enabled) |
 | `use_h5` default | `'auto'` (detects libraries) | `'off'` (set by runtime hook) |
 
 Log file location: `cfg_proc/log/{timestamp}/processing.log` (inside the data

@@ -113,7 +113,7 @@ class Test_polar2dekart:
 # v_abs_from_incl
 # --------------------------------------------------------------------------- #
 
-_TRIG_COEFS = np.array([1.0, 0.5, 0.3, 0.1, 0.05, 60.0])  # last = max_incl_of_fit_deg
+_TRIG_COEFS = np.array([1.0, 0.5, 0.3, 0.1, 0.05, 60.0])  # last = kVabs_switch_to_linear
 
 
 class Test_v_abs_from_incl:
@@ -140,20 +140,20 @@ class Test_v_abs_from_incl:
     def test_override_ignores_legacy_kvabs_last(self):
         """Explicit max_incl strips legacy kVabs[5] — never a series coef."""
         incl = np.radians([5.0, 10.0, 20.0, 65.0])
-        with_override = v_abs_from_incl(incl, _TRIG_COEFS, max_incl_of_fit_deg=60.0)
-        canonical = v_abs_from_incl(incl, _TRIG_COEFS[:5], max_incl_of_fit_deg=60.0)
+        with_override = v_abs_from_incl(incl, _TRIG_COEFS, kVabs_switch_to_linear=60.0)
+        canonical = v_abs_from_incl(incl, _TRIG_COEFS[:5], kVabs_switch_to_linear=60.0)
         np.testing.assert_allclose(with_override, canonical, atol=1e-12)
 
     def test_override_moves_linear_tangent_point(self):
         """Smaller max_incl switches to the linear tangent earlier (beyond-fit values differ)."""
         incl = np.radians([50.0, 70.0])
-        early = v_abs_from_incl(incl, _TRIG_COEFS[:5], max_incl_of_fit_deg=30.0)
-        late = v_abs_from_incl(incl, _TRIG_COEFS[:5], max_incl_of_fit_deg=60.0)
+        early = v_abs_from_incl(incl, _TRIG_COEFS[:5], kVabs_switch_to_linear=30.0)
+        late = v_abs_from_incl(incl, _TRIG_COEFS[:5], kVabs_switch_to_linear=60.0)
         assert not np.allclose(early, late)
 
     def test_canonical_five_elem_without_threshold_raises(self):
         """5-elem kVabs carries no Θ_last — silent garbage is worse than an error."""
-        with pytest.raises(ValueError, match="max_incl_of_fit_deg"):
+        with pytest.raises(ValueError, match="kVabs_switch_to_linear"):
             v_abs_from_incl(np.radians([10.0]), _TRIG_COEFS[:5])
 
 

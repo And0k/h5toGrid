@@ -143,6 +143,7 @@ class App:
 
         # watch Shift globally on root (Windows doesn't send Shift to widgets)
         self._full_mode = _is_shift_pressed()
+        self.rt.full_mode = self._full_mode  # worker injects simplified-mode `out` defaults per mode
         self._chrome_hovering: tk.Widget | None = None  # generic chrome hover guard
         self._browse_hovering: bool = False  # browse button Shift-hint hover guard
 
@@ -1169,7 +1170,11 @@ class App:
         # while cell edits live in the tksheet until the next rebuild.
         edited = src.get_edited_metadata_setups()
         nums = [num for num, _ in (getattr(src, "_setups", None) or [])]
-        setups = [[nums[i] if i < len(nums) else i, copy.deepcopy(arr)] for i, arr in enumerate(edited)] if edited else []
+        setups = (
+            [[nums[i] if i < len(nums) else i, copy.deepcopy(arr)] for i, arr in enumerate(edited)]
+            if edited
+            else []
+        )
         # Propagate dirty flag: if source metadata is dirty, peers must be dirty too
         src_dirty = src.is_metadata_dirty()
         for stem, cs in self._pages.items():
@@ -1256,10 +1261,12 @@ class App:
     def _write_coefs(self, stem: str, cs: ConfigSheet) -> None:
         """Write sheet edits back to the run YAML — only if user changed something.
 
-        Simple mode persists ``input.path`` + ``input.coefs`` (flat coefs contract
-        of :func:`config_yaml.update_coefs_in_run_yaml`). Full mode additionally
-        persists edited ``out``/``filter``/``proc``/``program`` leaves via
-        :meth:`ConfigSheet.get_edited_full`, merged by :func:`config_yaml.update_run_yaml`.
+        ``input.path`` + ``input.coefs`` keep their dedicated write path (flat
+        coefs contract of :func:`config_yaml.update_coefs_in_run_yaml`). Every
+        other non-default leaf — ``input.calib``/``input.time_ranges`` (visible
+        in simple mode too) plus ``out``/``filter``/``proc``/``program`` — comes
+        from the generic :meth:`ConfigSheet.get_edited_full` (``sections=None``),
+        merged by :func:`config_yaml.update_run_yaml`.
         """
         if not cs.is_dirty:
             return
@@ -1277,8 +1284,8 @@ class App:
             patch.setdefault("input", {})["path"] = path
         if coefs_node:
             patch.setdefault("input", {})["coefs"] = coefs_node
-        if getattr(self, "_full_mode", False) and callable(get_full := getattr(cs, "get_edited_full", None)):
-            for sec, sub in (get_full() or {}).items():
+        if callable(get_full := getattr(cs, "get_edited_full", None)):
+            for sec, sub in (get_full(None) or {}).items():
                 if sub:
                     patch.setdefault(sec, {}).update(sub)
         if not patch:

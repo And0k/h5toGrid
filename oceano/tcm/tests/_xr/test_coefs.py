@@ -190,7 +190,7 @@ class TestSaveCoefsToNc:
             np.testing.assert_array_equal(coef["H"]["C"], [0.4, 0.5, 0.6])
             np.testing.assert_array_equal(coef["Vabs0"], [1.0, 2.0, 3.0, 4.0, 5.0])
             # Legacy 6th element migrates to a 1-elem max_incl dataset on write
-            np.testing.assert_array_equal(coef["max_incl_of_fit_deg"], [6.0])
+            np.testing.assert_array_equal(coef["kVabs_switch_to_linear"], [6.0])
             assert float(coef["H"]["azimuth_shift_deg"][0]) == pytest.approx(195.0)
 
     def test_writes_date_attr(self, sample_coefs, tmp_path):
@@ -364,7 +364,7 @@ class TestLoadCoefsFromNc:
     def test_legacy_kvabs_last_migrates_to_max_incl(self, nc_with_coefs):
         """Legacy 6-elem kVabs fixture loads as 5 + max_incl fallback."""
         result = load_coefs_from_nc(nc_with_coefs, "incl_01")
-        np.testing.assert_allclose(np.asarray(result["max_incl_of_fit_deg"]).ravel(), [6.0])
+        np.testing.assert_allclose(np.asarray(result["kVabs_switch_to_linear"]).ravel(), [6.0])
 
     def test_reads_azimuth_shift_deg(self, nc_with_coefs):
         """azimuth_shift_deg read back from H group."""
@@ -398,7 +398,7 @@ class TestLoadCoefsFromNc:
 
 @pytest.mark.xr
 class TestVelocityCoefPersistence:
-    """max_incl_of_fit_deg / calc_version roundtrip + legacy kVabs[5] split."""
+    """kVabs_switch_to_linear / calc_version roundtrip + legacy kVabs[5] split."""
 
     @pytest.fixture()
     def velocity_coefs(self):
@@ -410,7 +410,7 @@ class TestVelocityCoefPersistence:
             "kVabs": np.array([1.0, 0.5, 0.3, 0.1, 0.05]),
             "azimuth_shift_deg": 180.0,
             "calc_version": "trigonometric(incl)",
-            "max_incl_of_fit_deg": 45.0,
+            "kVabs_switch_to_linear": 45.0,
             "date": "2024-01-01T00:00:00",
         }
 
@@ -420,7 +420,7 @@ class TestVelocityCoefPersistence:
         save_coefs_to_nc(nc_path, "incl_01", velocity_coefs)
         loaded = load_coefs_from_nc(nc_path, "incl_01")
         assert loaded["calc_version"] == "trigonometric(incl)"
-        assert float(np.asarray(loaded["max_incl_of_fit_deg"]).flat[0]) == pytest.approx(45.0)
+        assert float(np.asarray(loaded["kVabs_switch_to_linear"]).flat[0]) == pytest.approx(45.0)
         np.testing.assert_allclose(loaded["kVabs"], [1.0, 0.5, 0.3, 0.1, 0.05])
 
     def test_max_incl_stored_with_dimension(self, velocity_coefs, tmp_path):
@@ -428,7 +428,7 @@ class TestVelocityCoefPersistence:
         nc_path = tmp_path / "test.raw.nc"
         save_coefs_to_nc(nc_path, "incl_01", velocity_coefs)
         with h5py.File(nc_path, "r") as f:
-            assert f["incl_01"]["coef"]["max_incl_of_fit_deg"].shape == (1,)
+            assert f["incl_01"]["coef"]["kVabs_switch_to_linear"].shape == (1,)
             assert "calc_version" not in f["incl_01"]["coef"]
             assert f["incl_01"]["coef"].attrs["calc_version"] == "trigonometric(incl)"
 
@@ -441,7 +441,7 @@ class TestVelocityCoefPersistence:
             )
         loaded = load_coefs_from_nc(nc_path, "incl_01")
         np.testing.assert_allclose(loaded["kVabs"], [1.0, 0.5, 0.3, 0.1, 0.05])
-        assert float(np.asarray(loaded["max_incl_of_fit_deg"]).flat[0]) == pytest.approx(60.0)
+        assert float(np.asarray(loaded["kVabs_switch_to_linear"]).flat[0]) == pytest.approx(60.0)
 
     def test_explicit_max_wins_over_legacy_kvabs_last(self, tmp_path):
         """Stored max_incl wins; legacy Vabs0[5] is still stripped."""
@@ -449,10 +449,10 @@ class TestVelocityCoefPersistence:
         with h5py.File(nc_path, "w") as f:
             grp = f.require_group("incl_01/coef")
             grp.create_dataset("Vabs0", data=np.array([1.0, 0.5, 0.3, 0.1, 0.05, 60.0]))
-            grp.create_dataset("max_incl_of_fit_deg", data=np.atleast_1d(45.0))
+            grp.create_dataset("kVabs_switch_to_linear", data=np.atleast_1d(45.0))
         loaded = load_coefs_from_nc(nc_path, "incl_01")
         assert len(np.asarray(loaded["kVabs"]).ravel()) == 5
-        assert float(np.asarray(loaded["max_incl_of_fit_deg"]).flat[0]) == pytest.approx(45.0)
+        assert float(np.asarray(loaded["kVabs_switch_to_linear"]).flat[0]) == pytest.approx(45.0)
 
 
 @pytest.mark.xr

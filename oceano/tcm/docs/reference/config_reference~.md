@@ -209,10 +209,22 @@ Intervals where the instrument was tilted in a **known direction** — pipeline
 computes `azimuth_shift_deg` from calibrated mag+accel unit vectors; written
 back to the probe YAML.
 
+
 #### Detailed
+
+**Azimuth calibration**: `input.calib.time_ranges_azimuth` specifies an interval where the
+instrument was tilted in a **known direction** (e.g. known Northward tilt).
+The pipeline computes the azimuth shift from calibrated mag+accel unit vectors
+and writes `azimuth_shift_deg` to the per-probe YAML.
+**Azimuth calibration**:
 The azimuth computation uses calibrated unit vectors only (no velocity/magnitude
 calculation), so it does not depend on `kVabs` or inclination-to-magnitude
 coefficients.
+. converts tilt direction from sensor to geographic coordinates; compensates magnetometer sign inversion at load time. See [Azimuth calibration](config_tuning.md#azimuth-calibration)[↓](#inputcoefsazimuth_shift_deg)
+
+
+`input.calib.azimuth_add` (manual offset, degrees) and `input.calib.coordinates` (magnetic declination, current date)
+are applied **on top of** the data-computed azimuth.
 
 ### `input.calib.coordinates`
 Station `[Lat, Lon]` in decimal degrees — enables magnetic declination

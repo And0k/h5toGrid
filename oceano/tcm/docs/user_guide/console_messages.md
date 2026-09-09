@@ -66,7 +66,7 @@ At INFO level:
 | `{pcid}: info_devices [{start}, {end}]` | Time range from metadata for this probe |
 | `  written to {stem}.yaml` | Time range written from metadata to config |
 | `  already configured but broader than metadata: {stem}.yaml [...]` | **Warning**: config has wider range than metadata |
-| `Ignoring N config(s) (whitespace in name): ...` | **Warning**: YAML name contains whitespace; kept on disk, not processed |
+| `Ignoring N config(s) (whitespace in name): ...` | **Warning**: YAML name contains whitespace (user backup); kept on disk, not processed. Backups are normally excluded from discovery already — a lone backup triggers config regeneration instead of an empty run |
 | `Skipping N config(s) — YAML stem ≠ input.path (manual copy?): ...` | **Warning**: config stem identity ≠ its `input.path` (renamed/manual copy); kept on disk, not processed |
 | `Orphan configs (input.path points to not existing file): ... — ignored!` | **Warning**: stale config — source file missing; kept on disk, not processed (configs are never auto-deleted) |
 
@@ -92,6 +92,10 @@ At WARNING level only when anomalies exceed thresholds:
 | `Ex_nothing_done` exit | No matching configs or all stale | Check `input.path` pattern, verify source files exist |
 | Config has wider range than metadata | YAML `time_ranges` wider than file metadata | Narrow `time_ranges` to actual deployment period |
 | `FileNotFoundError` during processing | Source file deleted, stale config remains | Remove stale YAML from `cfg_proc/run/` |
+| `Inverted time edges [...] — repaired to parsed-rows span [...] (min at line N, max at line M)` | **Warning**: file is non-monotonic (`start > end` from first/last rows) — the extractor scanned all parseable timestamps and YAML stores their min/max (scan-time span, not the corrected Run load); interior line numbers pinpoint the wrap | Verify the source file; processing continues on the scanned span |
+| `Inverted extracted time_ranges [...] — keeping pair ...` | **Error**: inverted pair with no readable file (metadata sync, unreadable file) — kept so `main_init` strips it at Run into a full load | Fix the run YAML `time_ranges` or the source; full file is loaded instead |
+| `Inverted time_ranges {...} ignored for {...} — full-file load to determine min/max` | **Warning**: inverted pair reached load (e.g. hand-edited YAML) — filter dropped | Fix the run YAML `time_ranges`; full file is loaded instead and its range logged |
+| `No data loaded for {pcid} — processing aborted` | **Error**: all rows filtered out (or file empty) — the probe is marked **failed**, never `ok` | Inspect `time_ranges` vs file range, `min`/`max` DROP bounds, and diagnostics |
 
 
 ## meta_finder log origins (tcm-visible)

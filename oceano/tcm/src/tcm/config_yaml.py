@@ -14,8 +14,35 @@ from utils import log_init
 
 from tcm import _constants, csv_load, format, metadata, paths, policy, schema, to_omegaconf
 from tcm.incl_calc.coefs import get_coefs_from_cfg
+from tcm.utils_time_corr import sanitize_time_ranges
 
 lf = log_init.LoggingStyleAdapter(__name__)
+
+
+def extracted_time_ranges(t_st: str | None, t_en: str | None, pcid: str, src: str) -> list[str] | None:
+    """Normalize extractor ``(t_st, t_en)`` to YAML ``time_ranges``.
+
+    The extractor self-repairs inverted edges to min/max over parsed rows, so an
+    inverted pair here only means repair was impossible (unreadable file) — keep
+    it with an error; ``main_init`` strips it at Run so the probe degrades to a
+    full load instead of filtering 100% out.
+    Pure validator is :func:`tcm.utils_time_corr.sanitize_time_ranges`.
+    """
+    if not t_st or not t_en:
+        return None
+    # " "→"T" keeps YAML byte-identical to the old edge path (cosmetic only)
+    norm = [t.replace(" ", "T") if " " in t else t for t in (t_st, t_en)]
+    if sanitize_time_ranges(norm)[1]:
+        lf.error(
+            "Inverted extracted time_ranges [{}, {}] for {} from {} — keeping pair "
+            "(main_init strips it at Run: full load, no silent empty)",
+            norm[0],
+            norm[1],
+            pcid,
+            src,
+        )
+        return norm
+    return norm
 
 
 def has_run_yamls(dir_run: Path) -> bool:
@@ -53,6 +80,10 @@ def get_existed_cfgs(
     Each YAML file's stem is used directly (no timestamp extraction).
     Across different source files for the same probe (pcid), **all** are
     kept — multirun processes each independently.
+    Whitespace-named stems (GUI timestamped backups ``… - backup…``) are
+    excluded — user copies only: not counted as existing, never processed,
+    never deleted (io_formats.md#config-file-matching); a lone backup does
+    not suppress regeneration.
 
     :param dir_cfgs: directory containing YAML config files (``cfg_proc/run/``).
     :param glob: glob pattern for YAML files.
@@ -61,6 +92,8 @@ def get_existed_cfgs(
     result: dict[str, list[str]] = {}
     for f in dir_cfgs.glob(glob):
         stem = f.stem
+        if any(ch.isspace() for ch in stem):
+            continue  # user backup — invisible to matching (io_formats.md#config-file-matching)
         # Derive pcid from stem via probe_from_name (strips @ prefix and -comment suffix)
         identity = format.probe_from_name(format.stem_to_pcid(stem).lower())
         if identity:
@@ -128,6 +161,27 @@ def sync_yamls_devmeta_and_hydra(dev_dir, dir_cfgs, cfgs: dict[str, list[str]]):
             time_ranges_devmeta = [
                 datetime.fromisoformat(t).strftime("%Y-%m-%dT%H:%M:%S") for t in str_time_ranges_devmeta_pcid
             ]
+            valid_meta, dropped_meta = sanitize_time_ranges(time_ranges_devmeta)
+            if dropped_meta:
+                if len(time_ranges_devmeta) == 2:
+                    # Single inverted pair matches nothing downstream and its file
+                    # bounds are unknown here (parsed-rows span needs a file read,
+                    # not an endpoint swap) — keep it with a loud warning; main_init strips
+                    # it at Run so the probe degrades to a full load.
+                    lf.warning(
+                        "Inverted time_ranges [{}, {}] for {} in info_devices metadata — "
+                        "keeping pair (main_init strips it at Run: full load, no silent empty)",
+                        time_ranges_devmeta[0],
+                        time_ranges_devmeta[1],
+                        pcid,
+                    )
+                else:
+                    lf.warning(
+                        "Inverted time_ranges pairs {} for {} in info_devices metadata — dropping them",
+                        dropped_meta,
+                        pcid,
+                    )
+                    time_ranges_devmeta = valid_meta
             updated_stems: list[str] = []
             kept_stems: list[str] = []
             broader_stems: dict[str, list[str]] = {}
@@ -558,11 +612,15 @@ def gen_metadata(
                         )
                         if info is not None:
                             t_st, t_en, burst_dt, bursts_t = info
-                            if t_st and t_en:
-                                # " "→"T" keeps YAML byte-identical to the old edge path (cosmetic only)
-                                cfg1_arc["input"]["time_ranges"] = [
-                                    t.replace(" ", "T") if " " in t else t for t in (t_st, t_en)
-                                ]
+                            if tr := extracted_time_ranges(
+                                t_st,
+                                t_en,
+                                pcid_arc,
+                                path_csv.name
+                                if hasattr(path_csv, "name")
+                                else str(path_csv).rsplit("/", 1)[-1],
+                            ):
+                                cfg1_arc["input"]["time_ranges"] = tr
                             if burst_dt != "-" or bursts_t != "-":
                                 lf.info(
                                     "Burst for {}: burst_dt={} bursts_t={} (from {})",
@@ -662,11 +720,8 @@ def gen_metadata(
                         _info = None
                 if _info is not None:
                     _t_st, _t_en, _bdt, _bst = _info
-                    if _t_st and _t_en:
-                        # " "→"T" keeps YAML byte-identical to the old edge path (cosmetic only)
-                        cfg1["input"]["time_ranges"] = [
-                            t.replace(" ", "T") if " " in t else t for t in (_t_st, _t_en)
-                        ]
+                    if tr := extracted_time_ranges(_t_st, _t_en, pcid, path_csv.name):
+                        cfg1["input"]["time_ranges"] = tr
                     if _bdt != "-" or _bst != "-":
                         lf.info(
                             "Burst for {}: burst_dt={} bursts_t={} (from {})", pcid, _bdt, _bst, path_csv.name

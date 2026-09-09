@@ -11,6 +11,7 @@ from tcm.paths import anchor_for_fs_path
 from tcm.search import is_archive_composite, split_archive_path
 
 from ._i18n import STRINGS as _S
+from .cli_cfg import SIMPLE_OUT_DEFAULTS
 from .progress_bridge import GuiTqdm, set_cfg, set_runtime, set_tqdm_class
 from .runtime import Runtime
 
@@ -31,6 +32,18 @@ class Worker:
         self._spawn(self._run, data_path, stems)
 
     # ── internals ───────────────────────────────────────────────────
+
+    def _out_overrides(self) -> dict:
+        """Simplified-mode ``out`` binning defaults unless the command line overrides them.
+
+        Scan composes run YAMLs from this; Run re-applies it over YAMLs that
+        carry no override.  CLI ``sys.argv`` (still holding the user's overrides
+        after :meth:`_setup`) wins — the guard skips injection then.  Full mode
+        keeps schema defaults untouched.
+        """
+        if self.rt.full_mode or any("dt_bins" in a for a in sys.argv[1:]):
+            return {}
+        return {"out": SIMPLE_OUT_DEFAULTS}
 
     def _spawn(self, target, *args) -> None:
         if self.busy:
@@ -100,6 +113,9 @@ class Worker:
         lf = log_init.LoggingStyleAdapter(__name__)
 
         self._setup(original_argv)
+        # New scan invalidates the last Run's bank — else a re-scan after success
+        # repaints every rail fill to 100% from still-done cells before Run.
+        self.rt.progress_bank.clear()
         # Ensure pre-Hydra probe INFO reaches the queue even if App startup level was reset
         try:
             if logging.getLogger().getEffectiveLevel() > logging.INFO:
@@ -199,6 +215,7 @@ class Worker:
                 program={"return_": "<cfg_from_args>"},
                 exit_on_error=False,
                 enable_file_logging=False,
+                **self._out_overrides(),
             )
             self.rt.result_queue.put(("scan_ok", res))
         except SystemExit as exc:
@@ -214,7 +231,9 @@ class Worker:
         from tcm import cli, paths, processing
 
         # Minimal argv: no original CLI overrides.  YAML files (edited by user)
-        # are the sole config source.  Data path passed via overrides.
+        # are the sole config source, plus simplified-mode ``out`` defaults
+        # (:meth:`_out_overrides`) when the GUI runs in simplified mode.  Data
+        # path passed via overrides.
         self._setup(["__main__"])
         # Show a sliver on overall bar immediately (non-zero total → bar visible)
         self.rt.progress_overall.set(0, 1, _S["status.starting"])
@@ -233,6 +252,7 @@ class Worker:
                 config_name="config",
                 input={"path": stem_path},
                 exit_on_error=False,
+                **self._out_overrides(),
             )
             self.rt.result_queue.put(("run_ok", res))
         except SystemExit as exc:

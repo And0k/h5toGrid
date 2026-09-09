@@ -95,7 +95,7 @@ class ConfigInCoefs_InclProc:
     )
     date: str | None = None
     calc_version: str = "trigonometric(incl)"
-    max_incl_of_fit_deg: float | None = (
+    kVabs_switch_to_linear: float | None = (
         70.0  # Θ_last°: linear-tangent start; legacy kVabs[5] migrates here on load
     )
 

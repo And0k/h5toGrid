@@ -149,15 +149,19 @@ A run YAML is processed only when **both** hold:
 
 Stale configs are **never deleted** — regeneration
 overwrites only same-name files; copies (whitespace in the YAML name) and
-identity-mismatched YAMLs stay on disk, warned and ignored.
+identity-mismatched YAMLs stay on disk, never deleted.
 (pcid + comment via [`format.pcid_key`](../../../src/tcm/format.py)).
+Whitespace-named copies are excluded already at discovery
+([`get_existed_cfgs()`](../../src/tcm/config_yaml.py)) — a lone backup
+counts as *no config*, so the canonical config is regenerated and the
+backup is silently left untouched.
 
 
 Everything else is **ignored with a WARNING and never deleted**:
 
 | Case | Example | Detection | Handling |
 |---|---|---|---|
-| whitespace in YAML stem | `@i_p05 - Copy.yaml` | any whitespace in the stem | skipped before loading (WARNING) |
+| whitespace in YAML stem | `@i_p05 - Copy.yaml` | any whitespace in the stem | excluded from discovery (`get_existed_cfgs`) — user backup: not counted, never processed, never deleted; a lone backup does not suppress regeneration |
 | stem identity ≠ `input.path` | `@i_01_backup.yaml` → `INKL_P01.TXT` | `pcid_key` mismatch | skipped (WARNING "manual copy?") |
 | stale / orphan | `260625_1708@i_p5-0_v_trube.yaml` → missing file | `find_stale_cfgs()` (path missing) | not deleted; excluded from processing, orphan WARNING |
 
@@ -210,7 +214,7 @@ Coefs are stored in `/{tbl}/coef/` groups within `*.raw.nc` files:
 │  └─ azimuth_shift_deg (1 float64) — azimuth correction
 │
 ├─ Vabs0 (5 float64)           — trigonometric-series velocity coefs
-├─ max_incl_of_fit_deg (1 float64) — extreme tilt angle° (Θ_last, linear-tangent start)
+├─ kVabs_switch_to_linear (1 float64) — extreme tilt angle° (Θ_last, linear-tangent start)
 ├─ calc_version (string attr)  — velocity method, e.g. `trigonometric(incl)`
 ├─ P_t   (3×3 float64)         — pressure-temperature polynomial (optional)
 ├─ i     (1 int)               — probe serial number
@@ -220,7 +224,7 @@ Coefs are stored in `/{tbl}/coef/` groups within `*.raw.nc` files:
 Numeric scalars persist as 1-elem datasets (never 0-d); strings persist as
 group attributes (fixed-width string datasets would truncate them).
 Legacy 6-element `Vabs0` files split on load — the last element becomes
-`max_incl_of_fit_deg` when unset — see [§Velocity computation](../methodology/velocity.md).
+`kVabs_switch_to_linear` when unset — see [§Velocity computation](../methodology/velocity.md).
 
 Write: `save_coefs_to_nc()` in [`_xr/coefs.py`](../../src/tcm/_xr/coefs.py) —
 converts raw coefs dict to flat `{h5_path: value}` via `_coefs_to_h5_dict()`,

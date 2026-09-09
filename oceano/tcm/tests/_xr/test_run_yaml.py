@@ -295,6 +295,18 @@ class TestGetExistedCfgs:
         cfgs = get_existed_cfgs(run_dir)
         assert len(cfgs) >= expected_count
 
+    def test_whitespace_stems_excluded(self, tmp_path):
+        """Whitespace-named stems (GUI backups) are invisible to discovery —
+        a lone backup does not count as an existing config."""
+        run_dir = tmp_path / "cfg_proc" / "run"
+        run_dir.mkdir(parents=True)
+        (run_dir / "@i_01.yaml").write_text("input:\n  path: test.txt\n")
+        (run_dir / "@i_01 - backup260908_150251.yaml").write_text("input:\n  path: test.txt\n")
+
+        cfgs = get_existed_cfgs(run_dir)
+        stems = [s for ss in cfgs.values() for s in ss]
+        assert "@i_01" in stems and not any(" " in s for s in stems), f"{cfgs=!r}"
+
     def test_find_stale_cfgs(self, tmp_path):
         run_dir = tmp_path / "cfg_proc" / "run"
         run_dir.mkdir(parents=True)

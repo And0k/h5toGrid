@@ -80,3 +80,7 @@ class Runtime:
     # records from GUI callbacks (main thread) AND worker tasks (background
     # thread) both reach the ScrolledText.  Worker resets dedup state per task.
     queue_handler: QueueHandler | None = field(default=None, repr=False)  # noqa: F821
+    # Simplified (non-full) GUI mode — worker injects ``out`` binning defaults
+    # (:data:`tcm_gui.cli_cfg.SIMPLE_OUT_DEFAULTS`) into scan/run composition
+    # unless the command line overrides them.  Full mode keeps schema defaults.
+    full_mode: bool = False

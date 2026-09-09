@@ -97,7 +97,7 @@ i90: INKL_090.TXT
 14:50:19|process_loading_yaml|[1/3] probe i90 (from "251204_1800@i_90.yaml")
 ```
 
-`cli.process_loading_yaml()` запускает обработку. 2 датчика (i90, i67) из 3 доступных (i64 не в `input.ids`). Формат `[N/M]` показывает прогресс по YAML-конфигам (M = общее число конфигов); для i67 два конфига (`@i_067.yaml` и `@i_67.yaml`), устаревший будет пропущен с предупреждением. Перед запуском конфиги фильтруются (см. [соответствие конфиг-файл](../reference/io_formats.md#config-file-matching)): YAML с пробелом в имени игнорируется (`Ignoring N config(s) (whitespace in name)`); несовпадение имён стема и `input.path` — `Skipping N config(s) — YAML stem ≠ input.path (manual copy?)`. Файлы при этом не удаляются.
+`cli.process_loading_yaml()` запускает обработку. 2 датчика (i90, i67) из 3 доступных (i64 не в `input.ids`). Формат `[N/M]` показывает прогресс по YAML-конфигам (M = общее число конфигов); для i67 два конфига (`@i_067.yaml` и `@i_67.yaml`), устаревший будет пропущен с предупреждением. Перед запуском конфиги фильтруются (см. [соответствие конфиг-файл](../reference/io_formats.md#config-file-matching)): YAML с пробелом в имени (пользовательская резервная копия) исключается ещё на этапе поиска конфигов (`get_existed_cfgs`) — единственная копия не подавляет генерацию конфига; несовпадение имён стема и `input.path` — `Skipping N config(s) — YAML stem ≠ input.path (manual copy?)`. Файлы при этом не удаляются.
 
 ```
 TCM processing started.

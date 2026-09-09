@@ -1,4 +1,5 @@
 """Unified time-range reader: bad-line tolerance, formats, archives without extraction."""
+
 import datetime as dt
 import tempfile
 import zipfile
@@ -38,8 +39,7 @@ def _write(path, lines, encoding="utf-8"):
         ),
         (
             "garbage.tsv",
-            [f"garbage line {i}" for i in range(12)]
-            + ["", "   ", "Time\tAx", *_rows(BASE, 3)],
+            [f"garbage line {i}" for i in range(12)] + ["", "   ", "Time\tAx", *_rows(BASE, 3)],
             {},
             ("2024-03-01 00:00:00", "2024-03-01 00:00:02", "-", "-"),
             "12 leading garbage lines exceed the old single-attempt start search",
@@ -136,6 +136,33 @@ def test_cp1251_header_decodes(tmp_path):
     )
 
 
+def test_inverted_edges_repaired_to_parsed_span(tmp_path):
+    """Non-monotonic file (head rows later than tail rows) repairs to min/max of parsed rows."""
+    description = "inverted first/last-row edges cannot order the file — full scan spans parsed rows"
+    top = [f"{(BASE + dt.timedelta(hours=1, seconds=i)).isoformat()}\t{i}" for i in range(5)]
+    bottom = [f"{(BASE + dt.timedelta(seconds=i)).isoformat()}\t{i}" for i in range(5)]
+    _write(tmp_path / "wrap.tsv", ["Time\tAx", *top, *bottom])
+    actual = extract_time_info_from_text_file(tmp_path, PurePosixPath("wrap.tsv"))
+    assert actual is not None, f"{description}: expected time info, got None"
+    assert (actual[0], actual[1]) == ("2024-03-01 00:00:00", "2024-03-01 01:00:04"), (
+        f"{description}: got {(actual[0], actual[1])!r}"
+    )
+
+
+def test_full_scan_reports_interior_line_numbers(tmp_path):
+    """Min/max line numbers pinpoint the wrap point (header=1, top rows 2-6, bottom 7-11)."""
+    from meta_finder.data_proc_funcs import _full_span_time_minmax
+
+    description = "interior min/max line numbers"
+    top = [f"{(BASE + dt.timedelta(hours=1, seconds=i)).isoformat()}\t{i}" for i in range(5)]
+    bottom = [f"{(BASE + dt.timedelta(seconds=i)).isoformat()}\t{i}" for i in range(5)]
+    _write(tmp_path / "wrap.tsv", ["Time\tAx", *top, *bottom])
+    actual = _full_span_time_minmax(tmp_path, PurePosixPath("wrap.tsv"))
+    assert actual == (dt.datetime(2024, 3, 1, 0, 0, 0), dt.datetime(2024, 3, 1, 1, 0, 4), 7, 6), (
+        f"{description}: got {actual!r}"
+    )
+
+
 def test_no_valid_timestamps_returns_none(tmp_path):
     """Header plus garbage yields None instead of raising."""
     description = "no parseable timestamps in file"
@@ -151,9 +178,7 @@ def test_burst_gaps_detected(tmp_path):
     actual = extract_time_info_from_text_file(tmp_path, PurePosixPath("burst.tsv"), averaging_interval=1)
     assert actual is not None, f"{description}: expected time info, got None"
     end = (BASE + dt.timedelta(seconds=119 + 600 + 119 + 600 + 119)).strftime("%Y-%m-%d %H:%M:%S")
-    assert tuple(actual) == ("2024-03-01 00:00:00", end, 119, 719), (
-        f"{description}: got {tuple(actual)!r}"
-    )
+    assert tuple(actual) == ("2024-03-01 00:00:00", end, 119, 719), f"{description}: got {tuple(actual)!r}"
 
 
 @pytest.mark.skipif(not utils_sys.HAS_LIBARCHIVE, reason="streaming metadata path needs libarchive")

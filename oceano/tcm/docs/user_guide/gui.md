@@ -86,6 +86,10 @@ full config tree (all sections: `input`, `out`, `filter`, `program` — missing
 values are filled with defaults). Edits to any section are saved to the run
 YAMLs on Run, same as coefficients.
 
+Without Shift (simplified mode) the `out` binning is fixed to full resolution —
+`dt_bins = [0]`, `dt_bins_min_save_text = 0` — unless the launch command line
+overrides them (e.g. `out.dt_bins=[0,600]`; see the [CLI guide](cli.md)).
+
 ### 3. Run — process data
 
 Click **Run**. The tool:

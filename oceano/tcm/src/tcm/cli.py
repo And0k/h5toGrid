@@ -22,6 +22,7 @@ from typing import Any, NamedTuple
 from omegaconf import DictConfig, MissingMandatoryValue, OmegaConf
 
 from tcm import format, policy, schema
+from tcm.utils_time_corr import sanitize_time_ranges
 from utils.log_init import LoggingStyleAdapter
 from utils.logging_config import SafeStringFormatter, upgrade_loggers
 
@@ -625,8 +626,11 @@ def process_loading_yaml(process_fun: Callable, base_cfg, dir_cfgs, cfgs, n_cfgs
     ``input.path`` by comparing canonical identities (see :func:`tcm.format.pcid_key`) —
     permissive across pcid formatting variants and comment separators
     (``i_p05-маг`` ≡ ``INKL_P05_маг``).  Whitespace anywhere in the YAML stem
-    → the config is ignored.  Full matching contract (what is ignored and
-    why): :doc:`io_formats — Config-file matching </docs/reference/io_formats.md>`.
+    → the config is ignored (normally excluded upstream in
+    :func:`tcm.config_yaml.get_existed_cfgs` — a lone backup triggers
+    regeneration instead of an empty run).  Full matching contract (what is
+    ignored and why): :doc:`io_formats — Config-file matching
+    </docs/reference/io_formats.md>`.
     One WARNING summarises all skips; the remaining valid configs drive the
     ``[idx/n_cfgs]`` numbering and GUI progress totals.
 
@@ -860,8 +864,11 @@ def main_init(
          - ``min_*`` / ``max_*`` / ``fixed_*`` / ``float_*`` (catch-all) → ``float``
 
       4. Sugar expansion: ``M`` shorthand → ``Mx/My/Mz`` in min/max dicts.
-      5. ``min_date``/``max_date`` → merged into ``time_ranges``.
-      6. ``PathLayout`` resolves output paths (``db_path``, ``not_joined_db_path``,
+       5. ``min_date``/``max_date`` → merged into ``time_ranges``.
+       6. Inverted ``time_ranges`` pairs (``start > end``) → dropped with a
+          warning (full-file load fallback; dropped pairs stashed as
+          ``_dropped_time_ranges`` for post-load min/max reporting).
+       7. ``PathLayout`` resolves output paths (``db_path``, ``not_joined_db_path``,
          ``raw_db_path``, ``text_path``) and writes them into **both** the original
          ``cfg.out`` DictConfig **and** the returned ``cfg_t["out"]`` dict.
 
@@ -919,6 +926,21 @@ def main_init(
 
     sugar_expand_m(cfg_t["input"])
     sugar_condense_lim_date(cfg_t["input"])
+
+    # Drop inverted time_ranges pairs (start > end match nothing downstream —
+    # make_range_mask yields all-False → 100% filtered out). Fall back to
+    # full-file load for their scope and stash the dropped pairs so
+    # run_processing can report file min/max in the warning.
+    if tr := cfg_t["input"].get("time_ranges"):
+        valid_tr, dropped_tr = sanitize_time_ranges(tr)
+        if dropped_tr:
+            lf.warning(
+                "Inverted time_ranges {} ignored for {} — full-file load to determine min/max",
+                dropped_tr,
+                cfg_t["input"].get("path", "?"),
+            )
+            cfg_t["input"]["time_ranges"] = valid_tr
+            cfg_t["_dropped_time_ranges"] = [(str(s), str(e)) for s, e in dropped_tr]
 
     # Resolve output paths: raw_db_path, text_path, not_joined_db_path, db_path.
     # PathLayout operates on the original DictConfig; copy results to cfg_t["out"].

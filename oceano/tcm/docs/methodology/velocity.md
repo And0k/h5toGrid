@@ -91,7 +91,7 @@ the curve must not rise steeply).
 Therefore, for speeds near and beyond \(\Theta_{max}\) a compromise is used:
 a linear dependence tangent to the curve at the point \(\Theta_{last}\). This
 value is stored as an additional calculation coefficient —
-[`max_incl_of_fit_deg`](../reference/config_reference.md#inputcoefs--calibration-coefficients).
+[`kVabs_switch_to_linear`](../reference/config_reference.md#inputcoefs--calibration-coefficients).
 It is chosen as the value of \(\Theta\) just before \(\Theta_{max}\), close to
 the mean tilt observed over several experiments with instruments of the same
 type. Note that for \(\Theta > 90^\circ\) the sensitivity of the instrument to

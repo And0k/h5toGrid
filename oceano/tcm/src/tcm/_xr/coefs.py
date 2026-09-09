@@ -64,17 +64,17 @@ _COEF_SHORT_TO_H5 = {
     **{f"{m}{ch}": f"//coef//{ch_u}//{m}" for ch, ch_u in (("h", "H"), ("g", "G")) for m in ("A", "C")},
     "azimuth_shift_deg": "//coef//H//azimuth_shift_deg",
     "kVabs": "//coef//Vabs0",
-    "max_incl_of_fit_deg": "//coef//max_incl_of_fit_deg",
+    "kVabs_switch_to_linear": "//coef//kVabs_switch_to_linear",
 }
 
 
 def _max_incl_ds(coef: Mapping[str, Any]) -> dict:
-    """1-elem ``//coef//max_incl_of_fit_deg`` dataset — scalars get a dimension, never 0-d."""
+    """1-elem ``//coef//kVabs_switch_to_linear`` dataset — scalars get a dimension, never 0-d."""
     try:
-        v = float(coef["max_incl_of_fit_deg"])
+        v = float(coef["kVabs_switch_to_linear"])
     except (KeyError, TypeError, ValueError):
         return {}
-    return {"//coef//max_incl_of_fit_deg": np.atleast_1d(v)} if v == v else {}
+    return {"//coef//kVabs_switch_to_linear": np.atleast_1d(v)} if v == v else {}
 
 
 def _decode_scalar(v: Any) -> Any:
@@ -87,7 +87,7 @@ def _decode_scalar(v: Any) -> Any:
 
 
 def split_kvabs_threshold(coefs: Mapping[str, Any] | None) -> dict[str, Any]:
-    """Hoist legacy ``kVabs[5]`` → ``max_incl_of_fit_deg`` (io normalization).
+    """Hoist legacy ``kVabs[5]`` → ``kVabs_switch_to_linear`` (io normalization).
 
     Canonical runtime form: 5 trig coefs + scalar Θ_last. Legacy files/YAML
     carry 6-elem kVabs (threshold appended). Strip [5] always on io; use it as
@@ -103,8 +103,8 @@ def split_kvabs_threshold(coefs: Mapping[str, Any] | None) -> dict[str, Any]:
         return coefs
     if arr.size != 6:
         return coefs
-    if coefs.get("max_incl_of_fit_deg") in (None, ""):
-        coefs["max_incl_of_fit_deg"] = float(arr[5])
+    if coefs.get("kVabs_switch_to_linear") in (None, ""):
+        coefs["kVabs_switch_to_linear"] = float(arr[5])
     coefs["kVabs"] = arr[:5].tolist() if isinstance(kv, list) else arr[:5]
     return coefs
 
@@ -172,7 +172,7 @@ def save_coefs_to_nc(
     :param dates: If truthy, numeric datasets get ``timestamp`` attr.
 
     Legacy 6-elem ``kVabs`` is split to canonical form first
-    (:func:`split_kvabs_threshold`); ``max_incl_of_fit_deg`` persists as a
+    (:func:`split_kvabs_threshold`); ``kVabs_switch_to_linear`` persists as a
     1-elem dataset, ``calc_version`` as a group attribute.
     """
     policy.io().require_nc("saving coefs to NC/HDF5")
@@ -485,6 +485,8 @@ def prepare_coefs(
     if g0xyz is not None:  # config-sourced g0xyz wins over file-sourced
         coefs = {**coefs, "g0xyz": g0xyz}
     coef_zeroing_matrix, msg_rotated = get_coef_zeroing_matrix(**coefs)
+    if coef_zeroing_matrix is not None:
+        coefs_new["Rz"] = coef_zeroing_matrix
 
     dates = coefs.get("dates", {})
     for k, v in coefs_new.items():

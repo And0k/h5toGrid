@@ -77,7 +77,7 @@ def cfg_in_minimal() -> Dict[str, Any]:
         "coefs": {
             "path": None,
             "calc_version": "trigonometric(incl)",
-            "max_incl_of_fit_deg": 5.0,
+            "kVabs_switch_to_linear": 5.0,
         },
         "dt_min_binning_proc": pd.Timedelta("2s"),
     }

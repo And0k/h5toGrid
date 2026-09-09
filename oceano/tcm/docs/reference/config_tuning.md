@@ -50,6 +50,24 @@ For example, `program.return_='<saved_raw>'` to verify raw data ingestion.
 See [§Time correction](../project_developer_guide/CLI.md#time-correction) for the correction pipeline internals,
 diagnostics bitmask, and edge-row detection behavior.
 
+## Inverted time_ranges
+
+A `time_ranges` pair with `start > end` matches nothing (`t >= s & t < e` is
+empty), so keeping it would silently filter 100% of the data out. Behavior:
+
+| Condition | Behavior |
+|-----------|----------|
+| Scan finds inverted extraction pair (non-monotonic file) | **Warning** (`Inverted time edges [...] — repaired to parsed-rows span [...] (min at line N, max at line M)`) + YAML stores min/max over timestamp-parseable rows from the extractor's full scan (loose + archive members), not what Run will load after correction |
+| Scan finds inverted pair with no readable file (metadata sync, unreadable file) | **Warning/error**, pair kept verbatim — `main_init` strips it at Run so the probe degrades to a full load |
+| Inverted pair still reaches load (e.g. hand-edited YAML) | **Warning** (`Inverted time_ranges ... ignored ... — full-file load`) + pair dropped; actual file min/max logged after load |
+| Full load still yields no data (`None` or 0 rows) | **Error** (`No data loaded for {pcid} — processing aborted`) → probe marked **failed**, never `ok` |
+
+Open bounds (`None`/`NaT`) are never inverted and pass through unchanged.
+
+> In the GUI, ``input.time_ranges`` / ``metadata.time_range`` date cells that
+> break ascending order are red-flagged (`check: "sorted"`, same error color
+> as a non-existent `input.path`) — fix the order before Run.
+
 ## Config filtering
 
 Two parameters control which run YAMLs are processed, both using the same

@@ -8,10 +8,14 @@ dict carried, leaking internal keys (``_page_stem``) as rows. Edits to
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from tcm import config_yaml, schema
-from tcm_gui.cli_cfg import default_cfg, ensure_full_cfg, full_default_cfg
+from tcm_gui.cli_cfg import SIMPLE_OUT_DEFAULTS, default_cfg, ensure_full_cfg, full_default_cfg
+from tcm_gui.runtime import Runtime
+from tcm_gui.worker import Worker
 
 _ALL_SECTIONS = ("input", "out", "filter", "program")
 
@@ -54,6 +58,38 @@ class TestFullDefaults:
         cfg = {"input": {"path": "p"}, "out": {"text_path": "custom"}}
         out = ensure_full_cfg(cfg)
         assert out["out"]["text_path"] == "custom", f"text_path={out['out']['text_path']!r} overwritten"
+
+
+@pytest.mark.gui
+class TestSimplifiedOutDefaults:
+    """Simplified (Shift-less) mode injects ``out`` binning defaults at composition.
+
+    `Worker._out_overrides` feeds `SIMPLE_OUT_DEFAULTS` into Scan/Run — full
+    resolution only — unless the launch CLI already overrides a `dt_bins` key
+    or the GUI started in full mode.
+    """
+
+    @staticmethod
+    def _overrides(full_mode: bool) -> dict:
+        rt = Runtime()
+        rt.full_mode = full_mode
+        return Worker(rt)._out_overrides()
+
+    def test_defaults_pinned(self):
+        assert SIMPLE_OUT_DEFAULTS == {"dt_bins": [0], "dt_bins_min_save_text": 0}
+
+    def test_injected_when_simplified(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["tcm_gui"])
+        assert self._overrides(False) == {"out": SIMPLE_OUT_DEFAULTS}
+
+    def test_skipped_when_full_mode(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["tcm_gui"])
+        assert self._overrides(True) == {}, "full mode must keep schema defaults"
+
+    @pytest.mark.parametrize("argv", [["out.dt_bins=[0,2,600]"], ["+out.dt_bins_min_save_text=2"]])
+    def test_skipped_when_cli_overrides(self, monkeypatch, argv):
+        monkeypatch.setattr(sys, "argv", ["tcm_gui", *argv])
+        assert self._overrides(False) == {}, f"CLI override must win: {argv}"
 
 
 def _load_full_sheet(root, cfg):
@@ -227,5 +263,242 @@ class TestFullWriteBack:
                 data = config_yaml._ry(write=False).load(f)
             assert data["out"]["text_path"] == "custom_out", f"out edit lost: {data.get('out')}"
             assert not sheet.is_dirty, "sheet must be clean after write"
+        finally:
+            sheet.sh.destroy()
+
+    def test_dt_bins_roundtrip_stays_int(self, _session_tk_root):
+        """``out.dt_bins: list[int]`` sheet edit lands in the patch as ``int`` (not ``float``)."""
+        import tkinter as tk
+
+        if _session_tk_root is None:
+            pytest.skip("Tk not available")
+        root = _session_tk_root
+        try:
+            root.deiconify()
+        except tk.TclError:
+            pytest.skip("Tk not available")
+        sheet = _load_full_sheet(root, full_default_cfg())
+        try:
+            rows = [(i, m) for i, m in sheet._meta.items() if m.get("path") == "out.dt_bins"]
+            assert rows, "out.dt_bins row missing from full tree"
+            iid, m = rows[0]
+            r = sheet._internal_row(iid)
+            for j, v in enumerate(["0", "600"]):
+                sheet.sh.set_cell_data(r, j, v, redraw=False)
+            for j in range(2, int(m.get("max_col") or 6)):
+                sheet.sh.set_cell_data(r, j, "", redraw=False)
+            patch = sheet.get_edited_full()
+            assert patch["out"]["dt_bins"] == [0, 600], f"unexpected patch: {patch}"
+            assert all(type(x) is int for x in patch["out"]["dt_bins"]), f"int lost: {patch}"
+        finally:
+            sheet.sh.destroy()
+
+    def test_calib_roundtrip_via_generic(self, _session_tk_root):
+        """``input.calib.*`` rows go through the generic reader with ``sections=None``."""
+        import tkinter as tk
+
+        if _session_tk_root is None:
+            pytest.skip("Tk not available")
+        root = _session_tk_root
+        try:
+            root.deiconify()
+        except tk.TclError:
+            pytest.skip("Tk not available")
+        cfg = full_default_cfg()
+        cfg["input"]["calib"] = {"g0xyz": [1.0, 2.0, 3.0], "azimuth_add": 1.5}
+        sheet = _load_full_sheet(root, cfg)
+        try:
+            by_path = {m.get("path"): i for i, m in sheet._meta.items() if m.get("path")}
+            assert "input.calib.g0xyz" in by_path, "calib g0xyz row missing"
+            iid = by_path["input.calib.azimuth_add"]
+            sheet.sh.set_cell_data(sheet._internal_row(iid), 0, "5", redraw=False)
+            patch = sheet.get_edited_full(None)
+            assert patch["input"]["calib"]["azimuth_add"] == 5.0, f"unexpected patch: {patch}"
+        finally:
+            sheet.sh.destroy()
+
+
+class TestContainerNotEditable:
+    """Container rows (section roots, dict parents) reject edits at every gate."""
+
+    _ROOTS = ("out", "filter", "program")
+
+    def test_container_meta_max_col_zero(self, _session_tk_root):
+        """Full-mode section roots render as non-editable rows (max_col=0)."""
+        import tkinter as tk
+
+        if _session_tk_root is None:
+            pytest.skip("Tk not available")
+        root = _session_tk_root
+        try:
+            root.deiconify()
+        except tk.TclError:
+            pytest.skip("Tk not available")
+        sheet = _load_full_sheet(root, full_default_cfg())
+        try:
+            for sec in self._ROOTS:
+                iid = next(i for i, m in sheet._meta.items() if m.get("path") == sec)
+                assert sheet._meta[iid]["max_col"] == 0, f"{sec} root must be non-editable"
+        finally:
+            sheet.sh.destroy()
+
+    def test_on_begin_edit_vetoes_container(self, _session_tk_root):
+        """``_on_begin_edit_cell`` refuses to open an editor on a container cell."""
+        import tkinter as tk
+        from types import SimpleNamespace
+
+        if _session_tk_root is None:
+            pytest.skip("Tk not available")
+        root = _session_tk_root
+        try:
+            root.deiconify()
+        except tk.TclError:
+            pytest.skip("Tk not available")
+        sheet = _load_full_sheet(root, full_default_cfg())
+        try:
+            for sec in self._ROOTS:
+                iid = next(i for i, m in sheet._meta.items() if m.get("path") == sec)
+                r = sheet._internal_row(iid)
+                ev = SimpleNamespace(row=r, column=0)
+                assert sheet._on_begin_edit_cell(ev) is None, f"{sec} container editor must not open"
+        finally:
+            sheet.sh.destroy()
+
+    def test_on_edit_rejects_container_value(self, _session_tk_root):
+        """``_on_edit`` rejects a typed value on a container cell (no silent drop)."""
+        import tkinter as tk
+        from types import SimpleNamespace
+
+        if _session_tk_root is None:
+            pytest.skip("Tk not available")
+        root = _session_tk_root
+        try:
+            root.deiconify()
+        except tk.TclError:
+            pytest.skip("Tk not available")
+        sheet = _load_full_sheet(root, full_default_cfg())
+        try:
+            for sec in self._ROOTS:
+                iid = next(i for i, m in sheet._meta.items() if m.get("path") == sec)
+                r = sheet._internal_row(iid)
+                ev = SimpleNamespace(row=r, column=0, value="x", eventname="cell_edited")
+                assert sheet._on_edit(ev) is None, f"{sec} container value must be REJECTED"
+        finally:
+            sheet.sh.destroy()
+
+    def test_container_predicate(self, _session_tk_root):
+        """``_is_container_row`` covers section roots/dict parents, never browse/date rows."""
+        import tkinter as tk
+
+        if _session_tk_root is None:
+            pytest.skip("Tk not available")
+        root = _session_tk_root
+        try:
+            root.deiconify()
+        except tk.TclError:
+            pytest.skip("Tk not available")
+        sheet = _load_full_sheet(root, full_default_cfg())
+        try:
+            by_path = {m.get("path"): i for i, m in sheet._meta.items() if m.get("path")}
+            assert sheet._is_container_row(sheet._meta[by_path["out"]]), "section root is a container"
+            assert sheet._is_container_row(sheet._meta[by_path["filter"]]), "section root is a container"
+            browse = next(m for m in sheet._meta.values() if m.get("browse"))
+            assert not sheet._is_container_row(browse), "browse row edits"
+            ag_parent = next(m for m in sheet._meta.values() if m.get("key") == "Ag")
+            assert not sheet._is_container_row(ag_parent), "2d date parent keeps date routing"
+        finally:
+            sheet.sh.destroy()
+
+    def test_double_click_toggles_container(self, _session_tk_root):
+        """Double-click on a disabled row's cells expands/collapses it (editor stays vetoed)."""
+        import tkinter as tk
+        from types import SimpleNamespace
+
+        if _session_tk_root is None:
+            pytest.skip("Tk not available")
+        root = _session_tk_root
+        try:
+            root.deiconify()
+        except tk.TclError:
+            pytest.skip("Tk not available")
+        sheet = _load_full_sheet(root, full_default_cfg())
+        try:
+            iid = next(i for i, m in sheet._meta.items() if m.get("path") == "out")
+            mt = sheet.sh.MT
+            r = sheet._vis.index(iid)  # row_positions is DISPLAY-row indexed
+            assert not sheet._is_open(iid), "section root starts collapsed"
+            ev = SimpleNamespace(
+                x=int(mt.col_positions[0]) + 2,
+                y=int(mt.row_positions[r]) + 2,
+                state=0,
+            )
+            sheet._redirect_overflow_double(ev)
+            assert sheet._is_open(iid), "double-click must EXPAND the container"
+            assert not getattr(mt.text_editor, "open", False), "editor must stay vetoed"
+            # Top-level row — its own y is stable (children open BELOW it)
+            sheet._redirect_overflow_double(ev)
+            assert not sheet._is_open(iid), "second double-click must COLLAPSE it back"
+        finally:
+            sheet.sh.destroy()
+
+    def test_tree_label_click_toggles_parent(self, _session_tk_root):
+        """Single click on a parent node's tree label (not the arrow) toggles it."""
+        import tkinter as tk
+        from types import SimpleNamespace
+
+        if _session_tk_root is None:
+            pytest.skip("Tk not available")
+        root = _session_tk_root
+        try:
+            root.deiconify()
+        except tk.TclError:
+            pytest.skip("Tk not available")
+        sheet = _load_full_sheet(root, full_default_cfg())
+        try:
+            ri = sheet.sh.RI
+            iid = next(i for i, m in sheet._meta.items() if m.get("path") == "out")
+            assert list(sheet.sh.get_children(iid)), "section root must have children"
+            r = sheet._vis.index(iid)
+            # Click on the label area (right of the arrow glyph) — same y band.
+            ev = SimpleNamespace(
+                x=int(ri.current_width) - 4,
+                y=int(sheet.sh.MT.row_positions[r]) + 2,
+            )
+            assert not sheet._is_open(iid), "section root starts collapsed"
+            sheet._on_tree_col_click(ev)
+            assert sheet._is_open(iid), "tree-label click must EXPAND the parent"
+            sheet._on_tree_col_click(ev)
+            assert not sheet._is_open(iid), "second click must COLLAPSE it back"
+        finally:
+            sheet.sh.destroy()
+
+    def test_tree_label_click_leaf_inert(self, _session_tk_root):
+        """Clicking a leaf's tree label does not toggle (nothing to expand)."""
+        import tkinter as tk
+        from types import SimpleNamespace
+
+        if _session_tk_root is None:
+            pytest.skip("Tk not available")
+        root = _session_tk_root
+        try:
+            root.deiconify()
+        except tk.TclError:
+            pytest.skip("Tk not available")
+        sheet = _load_full_sheet(root, full_default_cfg())
+        try:
+            ri = sheet.sh.RI
+            # Expand `out` first so its leaf children are reachable & visible.
+            parent = next(i for i, m in sheet._meta.items() if m.get("path") == "out")
+            sheet.sh.item(parent, open_=True, undo=False)
+            sheet._rebuild_row_caches()
+            leaf = next(i for i, m in sheet._meta.items() if m.get("path") == "out.text_path")
+            assert not list(sheet.sh.get_children(leaf)), "text_path is a leaf"
+            r = sheet._vis.index(leaf)
+            ev = SimpleNamespace(
+                x=int(ri.current_width) - 4,
+                y=int(sheet.sh.MT.row_positions[r]) + 2,
+            )
+            # Leaf has no children → handler must be a no-op (no exception, no toggle).
+            sheet._on_tree_col_click(ev)
         finally:
             sheet.sh.destroy()

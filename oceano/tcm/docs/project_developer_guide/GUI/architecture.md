@@ -26,7 +26,14 @@ Pure Markdown parser (zero Tk dependency): `parse_inline()`, `parse_markdown()`,
 
 ### `worker.py`
 
-Background thread: `call_in_raw_dir` for Scan and Run
+Background thread: `call_in_raw_dir` for Scan and Run.
+In simplified mode (`Runtime.full_mode`, set from `App._full_mode`) it injects
+`out = SIMPLE_OUT_DEFAULTS` (`cli_cfg.py` — `dt_bins=[0]`,
+`dt_bins_min_save_text=0`) into both compositions, so Scan writes those values
+into the generated run YAMLs and Run re-applies them over YAMLs lacking the
+override.  Skipped when `sys.argv[1:]` (the surviving launch-time overrides,
+see [CLI integration](#cli-integration)) mentions `dt_bins` — CLI args win —
+and in full mode, which keeps the `schema.ConfigOut_InclProc` defaults.
 
 ### `states.py` (tcm)
 
@@ -388,13 +395,36 @@ When `Shift` is held at startup, `App._full_mode = True` and
 Both modes use identical type-aware cell rendering (see above).  The only
 difference is **which rows are built**, not how cells are rendered.
 
-Full-mode edits to `out`/`filter`/`program` persist on Run:
-`ConfigSheet.get_edited_full()` reads generic rows back into a minimal
-changed-vs-defaults patch (empty = at-default, omitted), and
-`App._write_coefs` merges it into the run YAML via
+Full-mode edits to `out`/`filter`/`program` persist on Run — and since the
+generic reader (`tcm_gui/_sheet_patch.py`) covers every non-skipped section,
+`input.calib`/`input.time_ranges` edits persist in simple mode too:
+`ConfigSheet.get_edited_full()` (thin delegate to `build_patch`) reads generic
+rows back into a minimal changed-vs-defaults patch (empty = at-default,
+omitted), and `App._write_coefs` merges it into the run YAML via
 `config_yaml.update_run_yaml` (deep-merge, backup + `# @package _global_`
-header preserved).  `update_coefs_in_run_yaml` keeps its flat
+header preserved).  Typing comes from the Hydra structured-config dataclass
+(`_leaf_kind`/`_elem_kind` via `resolve_dataclass_field`) — `out.dt_bins:
+list[int]` round-trips as `int` (strict `parse_int_strict` drops float
+spellings instead of writing `600.0`); `input.path`/`input.coefs`
+(matrix/date/`dates` machinery), `metadata*` and `has_date` cells keep their
+dedicated write paths (`is_skipped`).  `update_coefs_in_run_yaml` keeps its flat
 `{coef: values}` contract and delegates to the same writer.
+
+Containers are never editable: `_ins` defaults `max_col=0` ("no values on this
+row"), so every edit gate (`_on_edit`, `_on_begin_edit_cell`, `_on_cell_select`)
+rejects cells on section roots, dict parents (`input.calib`, `input.min`) and
+2-D parents; only data rows state their width explicitly.  Before this default,
+a container rendered all 6 columns editable but the generic reader dropped the
+typed values (the old `"["`/`is_string` heuristic) — the cells looked live and
+were silently lost on Run.  Since a disabled row can no longer be edited,
+double-clicking its cells expands/collapses it (`_redirect_overflow_double` →
+`_is_container_row` → `sh.item(iid, open_=…)` with `undo=False`, the same
+mechanism as tksheet's own tree-arrow click); date-only rows keep their
+date-editor routing and `browse` rows their overflow redirect.  For every
+parent node, a single click on its tree-view **label** also toggles
+expand/collapse (`_on_tree_col_click`, bound on the RI canvas after tksheet's
+own `b1_release` so the arrow keeps its native toggle and there is no double
+toggle); clicking a leaf's label is inert.
 
 In readonly mode (`set_readonly(True)`), `_on_begin_edit_cell` vetoes
 editing and `_on_sheet_motion` suppresses hover overlays.  Calling
@@ -630,4 +660,5 @@ the launch-time `key=value` overrides remain in `sys.argv` and survive
 rescans after a GUI browse selection.  Without this, the stale startup
 positional would leak into Hydra's override parser (the `@`-crash guarded by
 `TestGuiAtSignFilename`).  For **Run**, `original_argv` is `["__main__"]`:
-the user-edited YAML files are the sole config source.
+the user-edited YAML files are the sole config source, plus the simplified-mode
+`out` binning defaults ([`worker.py`](#workerpy)).

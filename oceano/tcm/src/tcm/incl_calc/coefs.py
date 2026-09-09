@@ -333,7 +333,7 @@ def get_coefs(coefs_paths: Sequence, tbl: str, coefs_ovr: Mapping[str, Any] | No
         "n_default": max(0, len(defaults) - len(from_file) - len(from_ovr)),
         "paths": list(coefs_paths),
     }
-    # Canonical velocity form: legacy kVabs[5] → max_incl_of_fit_deg (fallback only when unset).
+    # Canonical velocity form: legacy kVabs[5] → kVabs_switch_to_linear (fallback only when unset).
     return _xr_coefs.split_kvabs_threshold(coefs_load)
 
 

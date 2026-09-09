@@ -125,7 +125,7 @@ class TestGetCoefsArrayConversion:
         """6-elem kVabs override → 5 trig coefs + max_incl fallback from [5]."""
         result = get_coefs([], "i01", coefs_ovr={"kVabs": [-11.21, 19.88, 17.39, 6.35, -6.80, 71.45]})
         assert result["kVabs"].shape == (5,)
-        assert float(np.asarray(result["max_incl_of_fit_deg"]).flat[0]) == pytest.approx(71.45)
+        assert float(np.asarray(result["kVabs_switch_to_linear"]).flat[0]) == pytest.approx(71.45)
 
 
 @pytest.mark.xr
@@ -175,7 +175,7 @@ class TestRunProcessingDispatch:
     """run_processing dispatches to the correct code path."""
 
     def test_dispatches_to_batch(self, mocker, tmp_path):
-        """run_processing with cfg.files → _load_batch."""
+        """run_processing with cfg.files → _load_batch; empty batch fails fast (never ok)."""
         from datetime import timedelta
 
         out_dir = str(tmp_path / "out")
@@ -203,7 +203,8 @@ class TestRunProcessingDispatch:
         mocker.patch.object(_format, "to_pcid_from_name", return_value="i_01")
         mocker.patch.object(_processing, "get_coefs_from_cfg", return_value={})
         mock_batch = mocker.patch.object(_processing, "_load_batch", return_value=(None, None))
-        run_processing(cfg)
+        with pytest.raises(FileNotFoundError, match="No data loaded"):
+            run_processing(cfg)
         mock_batch.assert_called_once()
 
 

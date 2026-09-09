@@ -143,6 +143,45 @@ def make_range_mask(
     # return b
 
 
+def sanitize_time_ranges(
+    time_ranges: Sequence[str | pd.Timestamp | None] | None,
+) -> tuple[list, list[tuple[Any, Any]]]:
+    """Drop inverted ``[start, end]`` pairs (`start > end`) from flat *time_ranges*.
+
+    An inverted pair matches nothing in :func:`make_range_mask`
+    (`t >= s & t < e` is empty when `s > e`), so keeping it silently
+    filters 100% of the data out.  Callers must ignore dropped pairs
+    (full-file load for their scope) and warn with file min/max instead.
+
+    Open bounds (`None`/`NaT`) are never inverted and pass through;
+    odd-length input is padded like :func:`make_range_mask`; unparseable
+    pairs pass through untouched (downstream parsing raises with context).
+
+    Return `(valid_flat, dropped_pairs)` — `valid_flat` keeps original
+    objects in order (`[]` = full load), `dropped_pairs` holds original
+    `(start, end)` tuples for the warning message.  Pure — no logging.
+    """
+    if not time_ranges:
+        return [], []
+    flat = list(time_ranges)
+    if len(flat) & 1:
+        flat.append(None)  # mirror make_range_mask odd-length padding (open end)
+    valid: list = []
+    dropped: list[tuple[Any, Any]] = []
+    for s_raw, e_raw in zip(flat[::2], flat[1::2]):
+        try:
+            dti = pd.to_datetime([s_raw, e_raw], utc=True)
+        except (ValueError, TypeError):
+            valid.extend([s_raw, e_raw])
+            continue
+        s_nat, e_nat = pd.isna(dti[0]), pd.isna(dti[1])
+        if not s_nat and not e_nat and dti[0] > dti[1]:
+            dropped.append((s_raw, e_raw))
+            continue
+        valid.extend([s_raw, e_raw])
+    return valid, dropped
+
+
 # =============================================================================
 # Step 1 – UTC conversion
 # =============================================================================

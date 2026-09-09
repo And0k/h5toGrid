@@ -924,12 +924,12 @@ both support `M` as a shorthand for `Mx`, `My`, `Mz`. Expansion runs at compose 
 `_xr/physical.py::process()` applies the following stages in order:
 
 1. **filter_local** — NaN-out on raw columns where `cfg_filter.min`/`max` thresholds exceeded
-2. **calc_velocity** — calibration (`fG`/`fInclination`), `g_minus_1` NaN-out on computed `GsumMinus1`, `v_abs_from_incl(kVabs, calc_version, max_incl_of_fit_deg)`, `h_minus_1` NaN-out on computed `HsumMinus1`, `polar2dekart`
+2. **calc_velocity** — calibration (`fG`/`fInclination`), `g_minus_1` NaN-out on computed `GsumMinus1`, `v_abs_from_incl(kVabs, calc_version)`, `h_minus_1` NaN-out on computed `HsumMinus1`, `polar2dekart`
 3. **calc_pressure** — `polyval2d` + `bad_p_at_bursts_starts_period` (first-2-per-burst NaN-out)
 4. **binning** — `resample(time=dt_bin).mean()` with NaN threshold on valid-sample count.  When data is large (≥ 100 K rows), a persistent `TqdmCallback` is registered in `process()` and passed to each `binning()` call; the dataset is chunked along `time` (1 M rows) and `.compute()` materialises the dask graph so task-level progress is shown in a single bar shared across all bins (`_RESAMPLE_CHUNK_N`, `tqdm_cb` parameter).
 
 Coefficient application order (inside `calc_velocity`):
-`prepare_coefs` (zeroing rotation) → `fG(Ag,Cg)` → `fInclination` → `v_abs_from_incl(kVabs, calc_version, max_incl_of_fit_deg)` → `azimuth_shift_deg` → `polar2dekart`
+`prepare_coefs` (zeroing rotation) → `fG(Ag,Cg)` → `fInclination` → `v_abs_from_incl(kVabs, calc_version)` → `azimuth_shift_deg` → `polar2dekart`
 
 ### Memory management
 

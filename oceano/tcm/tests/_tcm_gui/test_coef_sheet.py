@@ -1454,3 +1454,57 @@ class TestCoefDatePreciseStatus:
         msg = cs.on_hover_status.call_args.args[0]
         # Falls through to the generic input.coefs.dates short (non-breaking hyphen)
         assert msg == "Per\u2011component calibration dates", msg
+
+
+# ── _on_edit: coordinate-less edits (index/header) — undo replay regression ──
+
+
+class TestOnEditCoordinateless:
+    """Index (row-text) and header edits carry only one coordinate — both live
+    and as undo/redo replays (tksheet ``event_dict`` defaults; ``mod_event_val``
+    overwrites only the coordinate it is given).
+
+    Regression: replaying a row-text modification through ``MT.undo`` crashed
+    ``_on_edit`` — ``TypeError: '>=' not supported between instances of
+    'NoneType' and 'int'`` at the ``max_col`` guard (cleared label edits were
+    the only ones that ever reached the undo stack — any later Ctrl+Z exploded).
+    """
+
+    @staticmethod
+    def _sheet():
+        from tcm_gui.coef_sheet import ConfigSheet
+
+        cs = ConfigSheet.__new__(ConfigSheet)
+        cs.sh = MagicMock()
+        cs._meta = {"iid0": {"path": "input.dt_from_utc", "max_col": 1}}
+        cs._vis = ["iid0"]
+        cs._nv = 6
+        return cs
+
+    @staticmethod
+    def _ev(**kw):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(**{"column": None, "row": None, "value": "", **kw})
+
+    def test_undo_index_replay_accepted(self):
+        """Undo replay of a row-text edit (row only, column None) → accepted."""
+        cs = self._sheet()
+        assert cs._on_edit(self._ev(row=0, value="old label")) == "old label"
+
+    def test_header_edit_accepted(self):
+        """Live header edit (column only, row None) → accepted, no TypeError."""
+        cs = self._sheet()
+        assert cs._on_edit(self._ev(column=1, value="header")) == "header"
+
+    def test_empty_value_passthrough(self):
+        """Empty value returns early regardless of coordinates."""
+        cs = self._sheet()
+        assert cs._on_edit(self._ev()) == ""
+        assert cs._on_edit(self._ev(row=0, column=2, value="  ")) == "  "
+
+    def test_table_edit_still_validates(self):
+        """Coordinate-complete table edits keep the numeric validation."""
+        cs = self._sheet()
+        assert cs._on_edit(self._ev(row=0, column=0, value="1.5")) == "1.5"
+        assert cs._on_edit(self._ev(row=0, column=0, value="abc")) is None

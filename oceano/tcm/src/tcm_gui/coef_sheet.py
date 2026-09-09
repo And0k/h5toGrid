@@ -22,10 +22,8 @@ from __future__ import annotations
 import dataclasses
 import logging
 import operator
-import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import nullcontext, suppress
-from pathlib import Path
 from tkinter import TclError
 from typing import Any, Final
 
@@ -35,8 +33,9 @@ from tksheet import Sheet
 import tcm_gui.theme
 from tcm import _meta_pairs
 from tcm_gui import _path_field
-from tcm_gui._cell_spec import any2str, as_bool, as_date, parse_float, spec_for_path
-from tcm_gui.cli_cfg import COEF_SHAPES, COEFS_TYPE, NO_DEFAULT, default_for_path
+from tcm_gui._cell_spec import any2str, as_date, parse_float
+from tcm_gui._sheet_patch import build_patch  # generic patch core (single impl)
+from tcm_gui.cli_cfg import COEF_SHAPES, COEFS_TYPE
 
 from ._browse_button import BrowseButtonManager
 from ._i18n import STRINGS as _S
@@ -65,56 +64,6 @@ def _safe_select(sheet: Any, row: int, col: int) -> None:
     """select_cell that swallows IndexError — row may be stale after tree changes."""
     with suppress(AttributeError, TclError, TypeError, ValueError, IndexError):
         sheet.select_cell(row, col)
-
-
-def _scalar_equal(kind: str, a: Any, b: Any) -> bool:
-    """True when sheet-read *a* matches default *b* (numeric/bool-aware, not string-only)."""
-    if b is None:
-        return False  # non-empty cell vs None default → changed
-    if kind == "number":
-        with suppress(TypeError, ValueError):
-            return float(a) == float(b)
-    if kind == "bool":
-        return bool(a) == bool(b)
-    return str(a) == str(b)
-
-
-def _values_equal(kind: str, conv: list, dflt: Any) -> bool:
-    """True when sheet-read *conv* list matches default *dflt* (shape + value)."""
-    if not isinstance(dflt, (list, tuple)):
-        return len(conv) == 1 and _scalar_equal(kind, conv[0], dflt)
-    return len(conv) == len(dflt) and all(_scalar_equal(kind, a, b) for a, b in zip(conv, dflt))
-
-
-def _assign_dotted(root: dict, path: str, value: Any) -> None:
-    """Assign *value* into nested *root* along dotted *path* with ``[i]`` indices."""
-    node: Any = root
-    parts = path.split(".")
-    for part in parts[:-1]:
-        if "[" in part:
-            name, idx = part[:-1].split("[", 1)
-            lst = node.setdefault(name, [])
-            i = int(idx.rstrip("]"))
-            while len(lst) <= i:
-                lst.append({})
-            node = lst[i]
-        else:
-            nxt = node.get(part)
-            if not isinstance(nxt, dict):
-                nxt = node[part] = {}
-            node = nxt
-    last = parts[-1]
-    if "[" in last:
-        name, idx = last[:-1].split("[", 1)
-        lst = node.setdefault(name, [])
-        if not isinstance(lst, list):
-            lst = node[name] = []
-        i = int(idx.rstrip("]"))
-        while len(lst) <= i:
-            lst.append(None)
-        lst[i] = value
-    else:
-        node[last] = value
 
 
 class CellBoundaryColumnResize:
@@ -378,6 +327,9 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
         if ri is not None:
             ri.bind("<Motion>", self._on_tree_motion, add="+")
             ri.bind("<Leave>", self._on_sheet_leave, add="+")
+            # Single click on a parent node's tree label toggles expand/collapse
+            # (the arrow keeps tksheet's own toggle — see _on_tree_col_click).
+            ri.bind("<ButtonRelease-1>", self._on_tree_col_click, add="+")
         # Open-state oracle: hook both public Sheet.item and internal MT.item.
         self._sh_item_orig = self.sh.item
         self._mt_item_orig: Callable | None = None
@@ -516,49 +468,25 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
                 return self._cell_str(iid, 0)
         return ""
 
-    def get_edited_full(self, sections: tuple[str, ...] = ("out", "filter", "proc", "program")) -> dict:
-        """Read generic full-mode rows → nested patch of leaves changed vs defaults.
+    def get_edited_full(
+        self, sections: tuple[str, ...] | None = ("out", "filter", "proc", "program")
+    ) -> dict:
+        """Read generic rows → nested patch of leaves changed vs defaults.
 
-        Only *sections* are covered (never ``input`` — path/coefs keep their
-        dedicated write path, and other ``input`` leaves keep current behavior).
-        Empty cells read as at-default and are omitted, so the patch stays a
-        minimal override set like the run YAMLs on disk. Container rows (dict
-        nodes, 2-D parents) carry no values themselves — their indexed children
-        (``path`` ending in ``[i]``) rebuild the list via :func:`_assign_dotted`.
+        Thin delegate to :func:`tcm_gui._sheet_patch.build_patch` — typing comes
+        from the Hydra structured-config dataclass, ``input.path``/``input.coefs``
+        /``metadata*`` keep their dedicated write paths. *sections* defaults to
+        the legacy full-mode set for backward compatibility; None covers every
+        non-skipped section (faithful-editor mode incl. ``input.calib``).
         """
-        patch: dict[str, Any] = {}
-        for iid, m in self._meta.items():
-            if (path := m.get("path") or "").split(".", 1)[0] not in sections:
-                continue
-            if m.get("is_metadata") or m.get("is_metadata_root") or m.get("has_date"):
-                continue
-            leaf = path.rsplit(".", 1)[-1]
-            if not m.get("is_string") and "[" not in leaf:
-                continue  # container node — values live on its children
-            base = re.sub(r"\[\d+\]", "", path)
-            vals = [self._cell_str(iid, j) for j in range(int(m.get("max_col") or self._nv))]
-            while vals and not vals[-1]:
-                vals.pop()
-            if not vals:
-                continue
-            kind = spec_for_path(
-                getattr(self, "_config_root", None), base, getattr(self, "_return_enum", None)
-            ).kind
-            conv = []
-            for v in vals:
-                if kind == "number":
-                    conv.append(parse_float(v))
-                elif kind == "bool":
-                    conv.append(as_bool(v))
-                else:
-                    conv.append(v)
-            if any(v is None for v in conv):
-                continue
-            dflt = default_for_path(base)
-            if dflt is not NO_DEFAULT and _values_equal(kind, conv, dflt):
-                continue  # at default — run YAMLs carry overrides only
-            _assign_dotted(patch, path, conv if isinstance(dflt, (list, tuple)) or len(conv) > 1 else conv[0])
-        return patch
+        return build_patch(
+            self._meta,
+            self._cell_str,
+            self._nv,
+            getattr(self, "_config_root", None),
+            getattr(self, "_return_enum", None),
+            sections,
+        )
 
     def is_path_valid(self) -> bool:
         """True iff ``input.path`` is non-empty and resolves to an existing file.
@@ -896,7 +824,7 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
                         f"{key}[{i}]",
                         [any2str(x) for x in row] + [""] * (self._nv - len(row)),
                         "",
-                        meta={"path": f"{sid_path}[{i}]"},
+                        meta={"path": f"{sid_path}[{i}]", "max_col": len(row)},
                     )
             else:
                 self._ins(
@@ -924,13 +852,15 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
         Used for both ``input.time_ranges`` and ``input.calib.time_ranges_*``.
         Path is auto-derived from parent via :meth:`_ins`; ``max_col=self._nv``
         makes every column editable regardless of current value length.
+        ``check: "sorted"`` — :meth:`_apply_validations` red-flags date cells
+        that break the ascending order of the sequence.
         """
         self._ins(
             par,
             key,
             [any2str(x) for x in (value or [])] + [""] * (self._nv - len(value or [])),
             "",
-            meta={"label": key, "is_string": True, "max_col": self._nv},
+            meta={"label": key, "is_string": True, "max_col": self._nv, "check": "sorted"},
         )
 
     def _build_calib_rows(self, calib_iid: Any, calib: dict, shapes: dict) -> None:
@@ -1014,6 +944,8 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
 
         meta.setdefault("label", text)
         meta.setdefault("open", open_)
+        # Containers hold no values — non-editable unless a caller states a width.
+        meta.setdefault("max_col", 0)
 
         # Backlink for ancestor traversal (blue-label propagation in _on_end_edit)
         meta.setdefault("parent", parent_iid or None)
@@ -1046,11 +978,25 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
         """Validate incoming cell edit.
 
         ``event.row`` is a display row, ``event.column`` the 0-based data column.
+        Index (row-text) edits carry no column, header edits no row — both live
+        and as undo/redo replays (tksheet ``event_dict`` defaults; ``mod_event_val``
+        overwrites only the coordinate it is given) — such texts were validated
+        on entry → accepted as-is.
         """
         c = event.column
         val = event.value
 
         if not val or not val.strip():
+            return val
+
+        # Coordinate-less = index (row-text) / header edit → free text; skipped
+        # iid mapping also shields replay events, whose row is internal-space.
+        if c is None or event.row is None:
+            _l.debug(
+                "edit val=%r eventname=%s → accept (coordinate-less)",
+                val,
+                getattr(event, "eventname", "?"),
+            )
             return val
 
         iid = self._iid_at_row(event.row)
@@ -1409,6 +1355,41 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
         """Row whose only editable data cell is the date column (max_col=0, has_date)."""
         return bool(m.get("has_date") and m.get("max_col", self._nv) == 0)
 
+    def _is_container_row(self, m: Mapping[str, Any]) -> bool:
+        """Disabled row — no own value cells (children hold them); double-click toggles open.
+
+        Complement of :meth:`_is_date_only_row` (both are ``max_col=0`` rows):
+        date kinds keep the date-editor routing instead of the toggle.
+        """
+        return int(m.get("max_col") or 0) == 0 and not bool(m.get("has_date")) and not m.get("browse")
+
+    def _on_tree_col_click(self, event) -> None:
+        """Single click on a parent node's tree label toggles expand/collapse.
+
+        Bound on the RI (tree/index) canvas with ``add="+"`` so it runs after
+        tksheet's own ``b1_release``, which already toggles on the arrow click
+        (``row_index.py``). We skip the arrow to avoid a double toggle and only
+        act on nodes that actually have children — leaves just select.
+        """
+        try:
+            ri = self.sh.RI
+            r = self.sh.MT.identify_row(y=event.y)
+        except (AttributeError, TypeError, TclError):
+            return
+        if r is None:
+            return
+        iid = self._iid_at_row(r)
+        if iid is None or not self.sh.get_children(iid):
+            return  # leaf or unknown — nothing to toggle
+        # Skip the arrow: tksheet's b1_release already toggled it.
+        try:
+            if ri.event_over_tree_arrow(r, ri.canvasy(event.y), event.x) is not None:
+                return
+        except (AttributeError, TypeError, TclError):
+            return
+        with suppress(TclError):
+            self.sh.item(iid, open_=not self._is_open(iid), undo=False)
+
     def _redirect_overflow_click(self, event) -> None:
         """Single-click on a path row's overflow cells → selection box follows
         to col 0.  On date-only rows → selection follows to the date cell.
@@ -1432,6 +1413,8 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
     def _redirect_overflow_double(self, event) -> None:
         """Double-click on a path row's overflow cells → editor opens at col 0.
         On date-only rows → editor opens at the date cell.
+        On disabled container rows → toggle expand/collapse (the index-column
+        arrow keeps its own single-click toggle; the data area has none).
         Post-correction replay: a synthetic double-click at the target col's x
         (same y) re-enters tksheet's own still-installed binding."""
         if (hit := self._hover_resolve(event)) is None:
@@ -1447,6 +1430,12 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
             target_col = 0
         elif self._is_date_only_row(m) and c != dc:
             target_col = dc
+        elif self._is_container_row(m):
+            # Same mechanism as tksheet's own tree-arrow click (undo=False —
+            # expand/collapse is view state, not an undoable data edit).
+            with suppress(TclError):
+                self.sh.item(iid, open_=not self._is_open(iid), undo=False)
+            return
         if target_col is not None and (wx := self._col_widget_x(target_col)) is not None:
             with suppress(TclError):
                 self.sh.MT.event_generate("<Double-Button-1>", x=wx, y=event.y, state=event.state)

@@ -132,6 +132,11 @@ def infer_coef_shapes(coefs_type: type = COEFS_TYPE) -> dict[str, tuple[int, ...
 
 COEF_SHAPES: dict[str, tuple[int, ...]] = infer_coef_shapes()
 
+# Simplified-mode (non-full GUI) `out` binning defaults — injected by the worker
+# into scan/run composition unless the command line overrides them; full mode
+# and the CLI keep the schema defaults (``schema.ConfigOut_InclProc``).
+SIMPLE_OUT_DEFAULTS: dict[str, Any] = {"dt_bins": [0], "dt_bins_min_save_text": 0}
+
 NO_DEFAULT = object()
 
 

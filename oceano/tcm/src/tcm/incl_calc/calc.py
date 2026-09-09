@@ -117,22 +117,22 @@ def v_trig(r, coefs):
 
 
 def v_abs_from_incl(
-    incl_rad: np.ndarray, coefs: Sequence, calc_version="trigonometric(incl)", max_incl_of_fit_deg=None
+    incl_rad: np.ndarray, coefs: Sequence, calc_version="trigonometric(incl)", kVabs_switch_to_linear=None
 ) -> np.ndarray:
     if len(coefs) <= 4 or calc_version == "polynom(force)":
         if not len(incl_rad):
             return incl_rad
         return fVabs_from_force(fIncl_rad2force(incl_rad), coefs)
     elif calc_version == "trigonometric(incl)":
-        if max_incl_of_fit_deg is None:
+        if kVabs_switch_to_linear is None:
             if len(coefs) < 6:
                 raise ValueError(
-                    f"trigonometric(incl) needs Θ_last: pass max_incl_of_fit_deg or 6-elem kVabs, got len={len(coefs)}"
+                    f"trigonometric(incl) needs Θ_last: pass kVabs_switch_to_linear or 6-elem kVabs, got len={len(coefs)}"
                 )
             series, threshold = coefs[:-1], coefs[-1]  # legacy: threshold appended as kVabs[-1]
         else:
             series = coefs[:5] if len(coefs) > 5 else coefs  # legacy kVabs[5] never a series coef
-            threshold = max_incl_of_fit_deg
+            threshold = kVabs_switch_to_linear
         with np.errstate(invalid="ignore"):
             return f_linear_end(
                 g=v_trig, x=incl_rad, x0=np.atleast_1d(np.radians(threshold)), g_coefs=np.float64(series)

@@ -633,6 +633,25 @@ class TestProgressBank:
         assert snap["s2"][0] == "running"
         assert 0 < snap["s2"][1] < 1.0
 
+    def test_clear_drops_done_cells_for_rescan(self):
+        """Regression: re-scan after successful Run must not repaint rail to 100%.
+
+        ``run_start → finish(done)`` leaves done/1.0 cells; ``clear`` (new scan)
+        empties the bank so ``snapshot_all`` yields nothing and scan-time
+        ``finish`` on unknown stems stays a no-op instead of reviving fills.
+        """
+        b = ProgressBank()
+        b.run_start(["s1"])
+        b.stage_start("s1", canon_stage("proc"))
+        b.finish("s1", ok=True)
+        assert b.snapshot_all()["s1"][1] == 1.0, "precondition: Run leaves done/1.0"
+
+        b.clear()
+        assert b.snapshot_all() == {}, "clear empties bank for re-scan"
+
+        b.finish("s1", ok=True)  # scan-time finish on unknown stem
+        assert b.snapshot_all() == {}, "scan-time finish must stay a no-op"
+
 
 # --------------------------------------------------------------------------- #
 # set_cfg / get_cfg + stage_desc → ProgressBank integration

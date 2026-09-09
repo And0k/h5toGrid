@@ -3,7 +3,9 @@
 Covers ``check: "exists"`` rows (``input.path``, ``input.coefs.path``): any
 cell whose committed path doesn't exist on disk gets red foreground, while
 the Run button stays gated on ``input.path`` only (``coefs_path`` is
-optional — coefficients may be entered manually).
+optional — coefficients may be entered manually).  ``check: "sorted"``
+rows (``input.time_ranges``, ``metadata.time_range``) get red foreground on
+any date cell breaking the ascending order of the sequence.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ import tcm_gui.coef_sheet as coef_sheet
 import tcm_gui.theme as theme
 
 
-def _make_sheet(path: str, coefs_path: str):
+def _make_sheet(path: str, coefs_path: str, *, time_ranges: list[str] | None = None):
     """ConfigSheet with the given input/coefs_path values (mocked tksheet).
 
     ``insert`` records per-row cell values so ``sh.item(iid).get("values")``
@@ -27,6 +29,7 @@ def _make_sheet(path: str, coefs_path: str):
     cfg = {
         "input": {
             "path": path,
+            "time_ranges": time_ranges,
             "coefs": {"path": coefs_path, "Ag": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]},
         }
     }
@@ -219,3 +222,67 @@ class TestIsPathValidGating:
     def test_empty_input_path_gates_run(self, tmp_path):
         cs, _ = _make_sheet("", str(tmp_path))
         assert cs.is_path_valid() is False
+
+
+class TestSortedCheck:
+    def test_sorted_marker_on_time_ranges_row(self, tmp_path):
+        """``check: "sorted"`` lands on the input.time_ranges row."""
+        cs, _ = _make_sheet(str(tmp_path), str(tmp_path))
+        assert cs._meta[_iid(cs, label="time_ranges")].get("check") == "sorted"
+
+    def test_unsorted_pair_red(self, tmp_path):
+        """start > end → both date cells of the pair painted with error fg."""
+        cs, mock_sh = _make_sheet(
+            str(tmp_path), str(tmp_path), time_ranges=["2024-01-02T00:00:00", "2024-01-01T00:00:00"]
+        )
+        tr = _iid(cs, label="time_ranges")
+        cs._apply_validations(tr)
+        cells = {(c.kwargs["row"], c.kwargs["column"]) for c in _red_calls(mock_sh)}
+        row = cs._row_map()[tr]
+        assert cells == {(row, 0), (row, 1)}, f"expected both cells red, got: {cells}"
+
+    def test_sorted_pair_restored(self, tmp_path):
+        """Ascending dates → no red; both cells restored to normal fg."""
+        cs, mock_sh = _make_sheet(
+            str(tmp_path), str(tmp_path), time_ranges=["2024-01-01T00:00:00", "2024-01-02T00:00:00"]
+        )
+        tr = _iid(cs, label="time_ranges")
+        cs._apply_validations(tr)
+        assert _red_calls(mock_sh) == []
+        row = cs._row_map()[tr]
+        restored = [
+            c
+            for c in mock_sh.highlight_cells.call_args_list
+            if c.kwargs.get("row") == row and c.kwargs.get("fg") == cs._fg_default
+        ]
+        assert len(restored) == 2, f"expected 2 restored cells, got: {restored}"
+
+    def test_single_and_empty_never_flagged(self, tmp_path):
+        """One date (or none) — nothing to compare → no red either way."""
+        cs, mock_sh = _make_sheet(str(tmp_path), str(tmp_path), time_ranges=["2024-01-01T00:00:00"])
+        cs._apply_validations(_iid(cs, label="time_ranges"))
+        assert _red_calls(mock_sh) == []
+
+    def test_metadata_time_range_swapped_red(self, tmp_path):
+        """metadata.time_range pair with start > end → both cells red."""
+        cs, mock_sh = _make_sheet(str(tmp_path), str(tmp_path))
+        tr = cs.sh.insert(values=("2024-01-02T00:00:00", "2024-01-01T00:00:00"))
+        cs._meta[tr] = {"label": "time_range", "is_metadata": True, "max_col": 2, "check": "sorted"}
+        cs._apply_validations(tr)
+        cells = {(c.kwargs["row"], c.kwargs["column"]) for c in _red_calls(mock_sh)}
+        row = cs._row_map()[tr]
+        assert cells == {(row, 0), (row, 1)}, f"expected both cells red, got: {cells}"
+
+    def test_target_iid_limits_sorted_pass(self, tmp_path):
+        """A targeted pass re-validates only the edited (time_ranges) row."""
+        cs, mock_sh = _make_sheet(
+            str(tmp_path), str(tmp_path), time_ranges=["2024-01-02T00:00:00", "2024-01-01T00:00:00"]
+        )
+        other = _iid(cs, label="time_ranges")
+        # A second sorted row — must stay untouched by the targeted pass
+        tr2 = cs.sh.insert(values=("2024-01-03T00:00:00", "2024-01-01T00:00:00"))
+        cs._meta[tr2] = {"label": "time_range", "is_metadata": True, "max_col": 2, "check": "sorted"}
+        mock_sh.reset_mock()
+        cs._apply_validations(other)
+        rows = {c.kwargs["row"] for c in _red_calls(mock_sh)}
+        assert rows == {cs._row_map()[other]}, f"targeted pass leaked to other rows: {rows}"

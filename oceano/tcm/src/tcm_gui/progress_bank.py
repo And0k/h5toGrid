@@ -51,6 +51,18 @@ class ProgressBank:
         with self._lock:
             self._st = {c: {"state": "pending", "stage": "", "inner": 0.0, "lvl": 20} for c in cfgs}
 
+    def clear(self) -> None:
+        """Drop all per-config state — a new scan invalidates the last Run's bank.
+
+        Without this, re-selecting the same input path after a successful Run
+        repaints every rail fill to 100% from the still-done bank cells before
+        the user clicks Run again (the scan worker's ``finish`` calls are
+        no-ops on already-done cells, and ``_poll_progress`` reads the stale
+        ``done``/1.0 snapshots while ``wk.busy`` is True).
+        """
+        with self._lock:
+            self._st.clear()
+
     def stage_start(self, cfg: str | None, stage: str) -> None:
         if not cfg or stage not in _ORDER:
             return

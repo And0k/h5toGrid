@@ -1,6 +1,6 @@
 
 
-0.# Configuration 54822ё20ё3 ё    ё ё ё ё ё ё ё ё ё ё ё ё ё ё ё ё ё ё ё ё ё ё ё ёGuide
+# Configuration Guide
 
 The pipeline is configured through a layered YAML system built on
 [Hydra](https://hydra.cc/) and OmegaConf. This guide covers the practical
@@ -107,16 +107,15 @@ filter:
 
 This avoids repeating the same threshold for all three magnetometer axes.
 
-## Azimuth calibration
+## Calibration coefficients
 
-`azimuth_shift_deg` corrects the **tilt direction** (azimuth of the inclinometer's
+### `coef.azimuth_shift_deg`
+Corrects the **tilt direction** (azimuth of the inclinometer's
 lean) from sensor coordinates to geographic coordinates. Default is `180°` to
-compensate the magnetometer sign inversion applied at load time.
+compensate the magnetometer sign inversion which program always applied at load time.
 
-Physical meaning: an inclinometer measures the **azimuth of tilt direction**
-(where the current comes from), not the instrument's compass heading. The
-magnetometer determines North direction, the accelerometer defines the tilt
-plane.
+### coef.Ag, Cg, Ah, Ch
+Coefficients to find 3D vector of magnetic (h) and gravitation (g) fields in sensor coordinates: the magnetometer determines North direction, the accelerometer defines the tilt plane.
 
 ### Calibration procedure
 

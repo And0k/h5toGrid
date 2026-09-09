@@ -231,6 +231,13 @@ def test_overflow_height_fits_all_items(mapped):
     try:
         mt = ns.mt
         ns.dd.set_paths([f"C:/data/anchor-{i:02d}" for i in range(8)])
+        # 8 rows need 5 + 8*min_row_height px below the field — the fixture's
+        # default 300 px window leaves less than that, so the list legitimately
+        # hits the window-bottom cap (it scrolls internally).  Tall enough here
+        # that all 8 rows are shown whole, which is what this test pins.
+        mapped.geometry("400x400+0+0")
+        mapped.update_idletasks()
+        mapped.update()
         ns.field.expand_dropdown()
         assert mt.dropdown.open is True, "list did not open"
         win = mt.dropdown.window

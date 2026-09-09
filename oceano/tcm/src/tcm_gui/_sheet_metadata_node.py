@@ -403,6 +403,7 @@ class MetadataNodeMixin:
                     "has_date": is_time,
                     "setup_idx": setup_idx,
                     "_ghost_cols": ghost_cols,
+                    **({"check": "sorted"} if is_time else {}),
                 },
             )
             # Remember ghosts for placeholder pass — _ph.show needs row index later

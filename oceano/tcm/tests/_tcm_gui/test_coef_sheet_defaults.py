@@ -641,3 +641,61 @@ class TestNodeAtDefault:
             "kVabs 1D-with-dates parent must be at-default when its child row "
             "holds the dataclass default array"
         )
+
+
+class TestContainerEditability:
+    """Containers (dict/2-D parents, section roots) must NOT be editable.
+
+    ``_ins`` defaults ``max_col=0`` — every edit gate (``_on_edit``,
+    ``_on_begin_edit_cell``, ``_on_cell_select``) rejects cells on rows without
+    an explicit value width.  Only data rows state their width, so a container
+    cell can never be typed into — value edits on a parent "do nothing" in the
+    YAML patch and must not be offered in the first place.
+    """
+
+    @staticmethod
+    def _make_loaded_sheet():
+        """Harness clone: ``_make_loaded_sheet`` from :class:`TestNodeAtDefault`."""
+        return TestNodeAtDefault._make_loaded_sheet()
+
+    def test_calib_container_max_col_zero(self):
+        """``input.calib`` (simple mode) is a non-editable container row."""
+        cs, _ = self._make_loaded_sheet()
+        cfg = {
+            "input": {
+                "path": "/data",
+                "calib": {"g0xyz": [1.0, 2.0, 3.0], "azimuth_add": 1.5, "time_ranges_zeroing": None},
+            }
+        }
+        cs._cfg = cfg
+        cs._build_coefs(cfg)
+        iid = next(i for i, m in cs._meta.items() if m.get("path") == "input.calib")
+        assert cs._meta[iid]["max_col"] == 0, f"calib parent must be non-editable: {cs._meta[iid]}"
+
+    def test_ins_generic_dict_container_max_col_zero(self):
+        """``_ins_generic`` dict parents (``input.min``, ``filter.max``…) are containers."""
+        cs, _ = self._make_loaded_sheet()
+        par = next(i for i, m in cs._meta.items() if m.get("path") == "input")
+        cs._ins_generic(par, "min", {"Mx": -100, "My": -100})
+        sid = next(i for i, m in cs._meta.items() if m.get("path") == "input.min")
+        assert cs._meta[sid]["max_col"] == 0, f"dict parent must be non-editable: {cs._meta[sid]}"
+        child = next(i for i, m in cs._meta.items() if m.get("path") == "input.min.Mx")
+        assert cs._meta[child]["max_col"] == 1, f"dict leaf must stay editable: {cs._meta[child]}"
+
+    def test_ins_generic_2d_children_carry_width(self):
+        """2-D parents are containers; their ``[i]`` rows state their row width."""
+        cs, _ = self._make_loaded_sheet()
+        par = next(i for i, m in cs._meta.items() if m.get("path") == "input")
+        cs._ins_generic(par, "mat", [[1, 2, 3], [4, 5, 6]])
+        sid = next(i for i, m in cs._meta.items() if m.get("path") == "input.mat")
+        assert cs._meta[sid]["max_col"] == 0, f"2-D parent must be non-editable: {cs._meta[sid]}"
+        for i in range(2):
+            child = next(x for x, m in cs._meta.items() if m.get("path") == f"input.mat[{i}]")
+            assert cs._meta[child]["max_col"] == 3, f"{i}-th row width: {cs._meta[child]}"
+
+    def test_bare_list_node_defaults_to_zero(self):
+        """A container created without stating a width is non-editable by default."""
+        cs, _ = self._make_loaded_sheet()
+        par = next(i for i, m in cs._meta.items() if m.get("path") == "input")
+        iid = cs._ins(par, "empty_cont", [""] * cs._nv, "")
+        assert cs._meta[iid]["max_col"] == 0, f"unspecified-width row must default to 0: {cs._meta[iid]}"

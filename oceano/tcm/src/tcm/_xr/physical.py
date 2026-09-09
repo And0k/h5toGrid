@@ -45,7 +45,7 @@ def calc_velocity(
     kVabs: Sequence | None = None,
     azimuth_shift_deg: float = 0,
     calc_version: str = "trigonometric(incl)",
-    max_incl_of_fit_deg: float | None = None,
+    kVabs_switch_to_linear: float | None = None,
     filt_max: Mapping[str, float] | None = None,
     **kwargs,
 ) -> xr.Dataset:
@@ -64,7 +64,7 @@ def calc_velocity(
         Azimuth offset in degrees.
     calc_version
         Method passed to ``v_abs_from_incl``.
-    max_incl_of_fit_deg
+    kVabs_switch_to_linear
         Θ_last override (°) passed to ``v_abs_from_incl``; ``None`` keeps
         the legacy ``kVabs[-1]`` fallback inside the kernel.
     filt_max
@@ -112,7 +112,7 @@ def calc_velocity(
         Vabs = xr.apply_ufunc(
             calc.v_abs_from_incl,
             incl,
-            kwargs=dict(coefs=kVabs, calc_version=calc_version, max_incl_of_fit_deg=max_incl_of_fit_deg),
+            kwargs=dict(coefs=kVabs, calc_version=calc_version, kVabs_switch_to_linear=kVabs_switch_to_linear),
             dask="parallelized",
         )
 

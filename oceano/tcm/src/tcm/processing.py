@@ -83,7 +83,7 @@ def _dt_min_save(cfg_out) -> timedelta:
     handles both ``timedelta`` and raw ``int`` inputs.
     """
     val = cfg_out.get("dt_bins_min_save_text")
-    return val if isinstance(val, timedelta) else timedelta(seconds=int(val or 1))
+    return val if isinstance(val, timedelta) else timedelta(seconds=int(val or 0))
 
 
 def _output_nc_paths(cfg_out) -> tuple[Path | None, Path | None, Path | None]:
@@ -757,6 +757,24 @@ def run_processing(cfg: DictConfig):
             )
     stage_ctx.tick()  # load done
 
+    # Inverted-ranges fallback report: main_init dropped start > end pairs and
+    # loaded the full file — surface actual data bounds next to the bad filter.
+    if (dropped := cfg.get("_dropped_time_ranges")) and ds_raw is not None and ds_raw.sizes.get("time", 0):
+        if "time" in ds_raw:
+            t_vals = ds_raw["time"].values
+            lf.warning(
+                "Inverted time_ranges {} ignored for {} — full-file data range {} → {}",
+                dropped,
+                pcid,
+                t_vals.min(),
+                t_vals.max(),
+            )
+
+    # Fail fast if no data was loaded (e.g., all filtered out by time_ranges)
+    if ds_raw is None or ds_raw.sizes.get("time", 0) == 0:
+        lf.error("No data loaded for {} — processing aborted", pcid)
+        raise FileNotFoundError(f"No data loaded for {pcid} (all filtered out or file empty)")
+
     # Coefs: input.coefs.path (file) → input.coefs (run YAML override wins)
     stage_ctx.set_stage(2, Stage.COEFS)
     coefs = get_coefs_from_cfg(cfg_in, pcid)
@@ -954,7 +972,7 @@ def run_processing(cfg: DictConfig):
 
     # Processing begins — start decoration at DEBUG (result INFO from _process_and_persist follows)
     stage_ctx.set_stage(3, Stage.PROC)
-    lf.debug("Processing %s (%d bins)...", pcid, _n_bins)
+    lf.debug("Processing {:s} ({:d} bins)...", pcid, _n_bins)
     _process_and_persist(
         ds_raw,
         coefs_merged,
