@@ -277,6 +277,7 @@ class TestApplyStyles:
         cs._vis = ()
         cs._col_resize = MagicMock()
         cs.on_edit_begin = None
+        cs._apply_boxes = {}  # instant-calib registry lives in __init__ (read by _is_apply_cell)
 
         cs._build_coefs(cfg)
         # Open every constructed node so all rows receive styling.
@@ -421,6 +422,7 @@ class TestCoefsPathChildRow:
         cs._iid_of_row = {}
         cs.on_hover_status = None
         cs.on_edit_begin = None
+        cs._apply_boxes = {}  # instant-calib registry lives in __init__ (read by _is_apply_cell)
         # (hover_status removed — live detail via _time_ranges_detail)
         cs._status_iid = None
         cs._status_hint = ""

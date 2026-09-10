@@ -103,3 +103,32 @@ class TestSheetPatch:
         dflt_cells = {"tp": ["text_output"]}
         rd = lambda iid, j: dflt_cells.get(iid, [""])[j] if j < len(dflt_cells.get(iid, [])) else ""
         assert sp.build_patch({"tp": _META["tp"]}, rd, 6, schema.Config, None, None) == {}
+
+
+class TestDateRows:
+    """``check: "sorted"`` rows validate format + write canonical ISO-T (``iso_secs``)."""
+
+    def test_canonical_iso_t_written(self):
+        """Space / dd.mm.yyyy spellings normalize to ISO-T; empty mid-row stays an open bound."""
+        cells = {
+            "tr": ["2026-01-02 03:04:05", "02.01.2026"],
+            "tr2": ["2026-01-01T00:00:00", "", "2026-01-03T00:00:00"],
+        }
+        meta = {
+            "tr": {"path": "input.time_ranges", "max_col": 6, "check": "sorted"},
+            "tr2": {"path": "input.calib.time_ranges_azimuth", "max_col": 6, "check": "sorted"},
+        }
+        rd = lambda iid, j: cells.get(iid, [""])[j] if j < len(cells.get(iid, [])) else ""
+        patch = sp.build_patch(meta, rd, 6, schema.Config, None, None)
+        assert patch == {
+            "input": {
+                "time_ranges": ["2026-01-02T03:04:05", "2026-01-02T00:00:00"],
+                "calib": {"time_ranges_azimuth": ["2026-01-01T00:00:00", "", "2026-01-03T00:00:00"]},
+            }
+        }, patch
+
+    def test_unparseable_row_skipped(self):
+        """A row holding an unparseable cell is dropped — the stored YAML value survives."""
+        meta = {"tr": {"path": "input.time_ranges", "max_col": 6, "check": "sorted"}}
+        rd = lambda iid, j: ["2026-01-02T00:00:00", "oops"][j] if j < 2 else ""
+        assert sp.build_patch(meta, rd, 6, schema.Config, None, None) == {}

@@ -38,11 +38,14 @@ def get_coef_azimuth_shift(
         ]
         if azimuth_add:
             msgs.append(f"(azimuth_shift_deg {azimuth_add:g})")
-            azimuth_shift_deg += azimuth_add
+            # Rebind (never +=): the input may alias the caller's coefs dict —
+            # in-place mutation would make prepare_coefs' change detector see
+            # no difference and skip YAML persistence (lost calib consumption).
+            azimuth_shift_deg = azimuth_shift_deg + azimuth_add
         if coordinates:
             mag_decl = mag_dec(*coordinates, data_date, depth=-1)
             msgs.append(f"(magnetic declination {mag_decl:g})")
-            azimuth_shift_deg += mag_decl
+            azimuth_shift_deg = azimuth_shift_deg + mag_decl
         lf.warning(
             "Azimuth correction updated to {:g} = {}°",
             azimuth_shift_deg.item() if isinstance(azimuth_shift_deg, np.ndarray) else azimuth_shift_deg,

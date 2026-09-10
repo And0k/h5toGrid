@@ -152,7 +152,7 @@ input:
 ```
 
 **Layering**: `azimuth_add` (manual offset, degrees) and `coordinates` + `data_date`
-(magnetic declination via `pygeomag`) are applied **on top of**
+(magnetic declination via [pygeomag](https://pygeomag.readthedocs.io/en/latest/)) are applied **on top of**
 the data-computed azimuth.
 
 ## Updating coefficients via zeroing
@@ -210,6 +210,23 @@ When coefs are written to NC, the log shows how many datasets were overwritten:
 ```
 Coefs saved to ...//incl01: 12 datasets (2 overwritten)
 ```
+
+A successful YAML write logs a timestamped backup, trigger consumption, and the
+update itself:
+```
+Backup created: @i_01 - backup260909_012101.yaml
+Consumed input.calib in @i_01.yaml
+Updated ['input'] in @i_01.yaml
+```
+The `Coefs prepared for …` status also names one-shot work (e.g. `with manual
+azimuth adjustment (azimuth_add/coordinates)`), so `azimuth_add` no longer hides
+behind `no zeroing/azimuth adjustments`.
+
+If `input.calib` is still in the YAML after a run, check: (1) the inspected file
+is the processed stem (the log names it: `probe … (from "….yaml")`); (2) a
+` - backup…` sibling exists next to it; (3) the log has the three lines above.
+A leftover trigger re-applies on the next run — `azimuth_add` / `coordinates`
+accumulate on top of the stored shift every run they survive.
 
 ### Typical zeroing workflow
 

@@ -785,7 +785,7 @@ part of the per-text-file config sweep.
 4. **Phase 2 — Calc/update coefs**: `prepare_coefs()` — zeroing rotation from
    `time_ranges_zeroing`, azimuth correction from `time_ranges_azimuth` (data-driven
    tilt direction) and/or `azimuth_add`/`coordinates` (manual/declination via WMM
-   (`pygeomag`) at the station location for the current date)
+   ([pygeomag](https://pygeomag.readthedocs.io/en/latest/)) at the station location for the current date)
 5. **Phase 3 — Save coefs**: write changed coefs to NC file (NC source or raw_db_path)
    or run YAML (when h5py is unavailable). NC-source coefs overwrite in-place (bypasses data-skip guard).
    CSV+H5 sources always write coefs (idempotent via `save_coefs_to_nc`) — multiple

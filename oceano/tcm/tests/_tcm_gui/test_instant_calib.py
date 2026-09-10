@@ -1,8 +1,9 @@
 """Headless regression for :mod:`tcm_gui._instant_calib` — no Tk.
 
 Pins parity with the pipeline (same wrapped entry points) plus the
-pending/clear contract the sheet checkboxes rely on: ``g0xyz`` pending on
-any value, azimuth pending on coords or non-zero add, strict parses.
+pending/clear contract the sheet checkboxes rely on: each trigger
+(``g0xyz`` / ``coordinates`` / ``azimuth_add``) enables its own box only
+when complete, strict parses.
 """
 
 from __future__ import annotations
@@ -28,19 +29,24 @@ def test_state_g0xyz():
     assert ic.is_g0xyz_pending(["1", "2", "3"])
 
 
-def test_state_azimuth():
-    assert ic.azimuth_state(["", ""], "") == "empty"
-    assert ic.azimuth_state(["", ""], "0") == "empty"
-    assert ic.azimuth_state(["", ""], "0.0") == "empty"
-    assert ic.azimuth_state(["", ""], "2.5") == "ready", "lone add applies"
-    assert ic.azimuth_state(["54.7", "20.5"], "") == "ready", "lone coords apply"
-    assert ic.azimuth_state(["54.7", "20.5"], "1") == "ready"
-    assert ic.azimuth_state(["", "1"], "") == "incomplete", "partial coords must not enable"
-    assert ic.azimuth_state(["", "1"], "2.5") == "incomplete", "partial coords poison group"
-    assert ic.azimuth_state(["", ""], "abc") == "incomplete", "bad add must not enable"
-    assert ic.azimuth_state(["54.7", "abc"], "") == "incomplete"
-    assert not ic.is_azimuth_pending(["", "1"], "")
-    assert ic.is_azimuth_pending(["", ""], "2.5")
+def test_state_coords():
+    assert ic.coords_state(["", ""]) == "empty"
+    assert ic.coords_state(["  ", ""]) == "empty"
+    assert ic.coords_state(["54.7", "20.5"]) == "ready", "pair applies on its own"
+    assert ic.coords_state(["", "1"]) == "incomplete", "partial pair must not enable"
+    assert ic.coords_state(["54.7", "abc"]) == "incomplete", "non-numeric must not enable"
+    assert not ic.is_coords_pending(["", "1"])
+    assert ic.is_coords_pending(["54.7", "20.5"])
+
+
+def test_state_add():
+    assert ic.add_state("") == "empty"
+    assert ic.add_state("0") == "empty", "schema default counts as empty"
+    assert ic.add_state("0.0") == "empty"
+    assert ic.add_state("2.5") == "ready", "offset applies on its own"
+    assert ic.add_state("abc") == "incomplete", "bad add must not enable"
+    assert not ic.is_add_pending("")
+    assert ic.is_add_pending("2.5")
 
 
 def test_parse_strict():

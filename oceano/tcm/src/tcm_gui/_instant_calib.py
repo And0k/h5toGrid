@@ -13,15 +13,17 @@ and Run-time calibration cannot diverge:
 ``time_ranges_zeroing`` / ``time_ranges_azimuth`` are deliberately absent —
 they need ``ds_raw`` windows and stay Run-time only.
 
-Pending semantics mirror the sheet. Three states per trigger group:
+Pending semantics mirror the sheet. Three states per trigger:
 
 * ``empty`` — no data (box disabled ☑, synced);
 * ``ready`` — complete + numeric (box enabled ☐, click applies);
 * ``incomplete`` — partial or non-numeric (box disabled ☐, no misleading
   error — fill or clear to proceed).
 
-``g0xyz`` is ready with 3 numerics. Azimuth is ready with both coords
-numeric (add optional) or a numeric non-zero add with coords empty.
+``g0xyz`` is ready with 3 numerics, ``coordinates`` with 2 numerics,
+``azimuth_add`` with a numeric non-zero value (schema default 0 counts as
+empty). Each trigger applies and clears fully on its own: the pipeline
+layering is additive, so split application commutes with the combined one.
 """
 
 from __future__ import annotations
@@ -53,26 +55,26 @@ def g0xyz_state(cells: Sequence[str]) -> State:
     return "ready"
 
 
-def azimuth_state(coords_cells: Sequence[str], add_str: str | None) -> State:
-    """Completeness of the coordinates + azimuth_add group."""
-    coords = [(c or "").strip() for c in list(coords_cells)[:COORDS_N]]
-    add = (add_str or "").strip()
-    if add and (add_v := parse_float(add)) is not None and add_v == 0:
-        add = ""  # schema default — equivalent to blank
-    if not any(coords) and not add:
+def coords_state(cells: Sequence[str]) -> State:
+    """Completeness of the coordinates pair."""
+    strs = [(c or "").strip() for c in list(cells)[:COORDS_N]]
+    if not any(strs):
         return "empty"
-    add_v = parse_float(add) if add else None
-    if add and add_v is None:
-        return "incomplete"  # non-numeric add never applies
-    if any(coords):
-        cvals = [parse_float(c) for c in coords]
-        if len(cvals) < COORDS_N or any(v is None for v in cvals):
-            return "incomplete"  # partial/non-numeric coords block the group
-        return "ready"
-    # Coords empty: ready only with a real (non-zero numeric) add
-    if add_v is None or add_v == 0:
-        return "incomplete"
+    vals = [parse_float(c) for c in strs]
+    if len(vals) < COORDS_N or any(v is None for v in vals):
+        return "incomplete"  # partial/non-numeric pair never applies
     return "ready"
+
+
+def add_state(s: str | None) -> State:
+    """Completeness of the azimuth_add scalar (default 0 counts as empty)."""
+    t = (s or "").strip()
+    if not t:
+        return "empty"
+    v = parse_float(t)
+    if v is None:
+        return "incomplete"  # non-numeric add never applies
+    return "empty" if v == 0 else "ready"
 
 
 def is_g0xyz_pending(cells: Sequence[str]) -> bool:
@@ -80,9 +82,14 @@ def is_g0xyz_pending(cells: Sequence[str]) -> bool:
     return g0xyz_state(cells) == "ready"
 
 
-def is_azimuth_pending(coords_cells: Sequence[str], add_str: str | None) -> bool:
-    """True when tuning input is complete and awaits apply."""
-    return azimuth_state(coords_cells, add_str) == "ready"
+def is_coords_pending(cells: Sequence[str]) -> bool:
+    """True when coordinates are complete and await apply."""
+    return coords_state(cells) == "ready"
+
+
+def is_add_pending(s: str | None) -> bool:
+    """True when azimuth_add is set and awaits apply."""
+    return add_state(s) == "ready"
 
 
 def parse_g0xyz(cells: Sequence[str]) -> list[float]:

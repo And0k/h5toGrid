@@ -37,7 +37,7 @@ from tkinter import ttk
 from tcm._constants import DOC_DIR, H5_AVAILABLE, version_meta
 
 from . import theme
-from ._i18n import STRINGS as _S
+from ._i18n import STRINGS as _S, fmt_status
 from ._i18n import resolve_lang
 from ._rtf_clipboard import copy_rich
 from .browser import link_display, open_md_link
@@ -322,7 +322,7 @@ class AboutDialog(tk.Toplevel):
         # System title carries the two dynamic runtime statuses
         mode = _S["about.mode_full"] if full_mode else _S["about.mode_simple"]
         h5 = _S["about.h5_available"] if H5_AVAILABLE else _S["about.h5_missing"]
-        self.title(_S["about.title"].format(name=self._meta.get("name", "TCM"), mode=mode, h5=h5))
+        self.title(fmt_status(_S["about.title"], name=self._meta.get("name", "TCM"), mode=mode, h5=h5))
 
         bg = theme.FRAME_BG_FALLBACK
         self.configure(bg=bg)

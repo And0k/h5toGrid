@@ -507,7 +507,7 @@ class TestContainerNotEditable:
 @pytest.mark.gui
 class TestInstantApplyBoxes:
     def test_boxes_synced_on_defaults(self, _session_tk_root):
-        """Default calib (no triggers) renders boxes, both synced."""
+        """Default calib (no triggers) renders boxes, all synced."""
         import tkinter as tk
 
         if _session_tk_root is None:
@@ -520,14 +520,15 @@ class TestInstantApplyBoxes:
         sheet = _load_full_sheet(root, full_default_cfg())
         try:
             boxes = sheet._apply_boxes
-            assert set(boxes) == {"g0xyz", "azimuth"}, f"boxes={sorted(boxes)}"
+            assert set(boxes) == {"g0xyz", "coordinates", "azimuth_add"}, f"boxes={sorted(boxes)}"
             assert boxes["g0xyz"]["pending"] is False, "empty g0xyz must be synced"
-            assert boxes["azimuth"]["pending"] is False, "default tuning must be synced"
+            assert boxes["coordinates"]["pending"] is False, "empty coords must be synced"
+            assert boxes["azimuth_add"]["pending"] is False, "default add must be synced"
         finally:
             sheet.sh.destroy()
 
     def test_boxes_pending_on_trigger_data(self, _session_tk_root):
-        """g0xyz values flip its box to pending; azimuth stays synced."""
+        """g0xyz values flip only its own box to pending; others stay synced."""
         import tkinter as tk
 
         if _session_tk_root is None:
@@ -542,7 +543,29 @@ class TestInstantApplyBoxes:
         sheet = _load_full_sheet(root, cfg)
         try:
             assert sheet._apply_boxes["g0xyz"]["pending"] is True, "g0xyz data must pend"
-            assert sheet._apply_boxes["azimuth"]["pending"] is False, "azimuth must stay synced"
+            assert sheet._apply_boxes["coordinates"]["pending"] is False, "coords must stay synced"
+            assert sheet._apply_boxes["azimuth_add"]["pending"] is False, "add must stay synced"
+        finally:
+            sheet.sh.destroy()
+
+    def test_add_box_independent_of_coordinates(self, _session_tk_root):
+        """azimuth_add flips only its own box; coordinates stay synced."""
+        import tkinter as tk
+
+        if _session_tk_root is None:
+            pytest.skip("Tk not available")
+        root = _session_tk_root
+        try:
+            root.deiconify()
+        except tk.TclError:
+            pytest.skip("Tk not available")
+        cfg = full_default_cfg()
+        cfg["input"]["calib"] = {**cfg["input"]["calib"], "azimuth_add": 2.5}
+        sheet = _load_full_sheet(root, cfg)
+        try:
+            assert sheet._apply_boxes["azimuth_add"]["pending"] is True, "add data must pend"
+            assert sheet._apply_boxes["coordinates"]["pending"] is False, "coords must stay synced"
+            assert sheet._apply_boxes["g0xyz"]["pending"] is False, "g0xyz must stay synced"
         finally:
             sheet.sh.destroy()
 
@@ -562,12 +585,12 @@ class TestInstantApplyBoxes:
         sheet = _load_full_sheet(root, cfg)
         try:
             assert sheet._calib_iid("input.calib.g0xyz") is not None, "g0xyz row must render"
-            assert set(sheet._apply_boxes) == {"g0xyz", "azimuth"}, "boxes must exist"
+            assert set(sheet._apply_boxes) == {"g0xyz", "coordinates", "azimuth_add"}, "boxes must exist"
         finally:
             sheet.sh.destroy()
 
-    def test_azimuth_box_anchors_on_coordinates(self, _session_tk_root):
-        """Azimuth apply box lives on the coordinates row, not azimuth_add."""
+    def test_each_box_anchors_on_own_row(self, _session_tk_root):
+        """Every apply box lives on its own trigger row."""
         import tkinter as tk
 
         if _session_tk_root is None:
@@ -579,9 +602,14 @@ class TestInstantApplyBoxes:
             pytest.skip("Tk not available")
         sheet = _load_full_sheet(root, full_default_cfg())
         try:
-            coords = sheet._calib_iid("input.calib.coordinates")
-            assert coords is not None, "coordinates row must render"
-            assert sheet._apply_boxes["azimuth"]["iid"] == coords, "box must anchor on coordinates"
+            for kind, path in (
+                ("g0xyz", "input.calib.g0xyz"),
+                ("coordinates", "input.calib.coordinates"),
+                ("azimuth_add", "input.calib.azimuth_add"),
+            ):
+                iid = sheet._calib_iid(path)
+                assert iid is not None, f"{path} row must render"
+                assert sheet._apply_boxes[kind]["iid"] == iid, f"{kind} box must anchor on own row"
         finally:
             sheet.sh.destroy()
 

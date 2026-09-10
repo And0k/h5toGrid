@@ -73,7 +73,9 @@ def _ry(write: bool = True) -> YAML:
         # regardless of source precision (numpy float64 → full 17 digits vs hand-written 6).
         # Coefs are calibration constants — 8 sig digits preserves float32-equivalent precision.
         def _represent_float(dumper, data):
-            return dumper.represent_scalar("tag:yaml.org,2002:float", f"{data:.8g}")
+            # round-trip through ruamel's own represent_float: keeps its int-like/
+            # 1e-08 normalization (→ `180.0`, `1.0e-08`, never `!!float '…'`)
+            return dumper.represent_float(float(f"{data:.8g}"))
 
         ry.representer.add_representer(float, _represent_float)
     return ry

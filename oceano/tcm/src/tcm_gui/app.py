@@ -27,7 +27,11 @@ from ._about import AboutDialog, local_readme
 from . import _reload_tabs as reload_tabs
 from ._browse_button import DATA_FILETYPES, SEARCH_FILETYPES, BrowseButtonManager, _is_shift_pressed
 from ._help import doc_path, help_for_path, help_general_for_path
-from ._i18n import STRINGS as _S, resolve_lang  # Chrome with auto-detection of OS locale if LANG=auto
+from ._i18n import (
+    STRINGS as _S,
+    fmt_status,
+    resolve_lang,
+)  # Chrome with auto-detection of OS locale if LANG=auto
 from ._numbered_dropdown import NumberedPathDropdown
 from ._path_field import PathField
 from ._rtf_clipboard import copy_rich
@@ -1084,7 +1088,7 @@ class App:
         frame.grid(row=0, column=0, sticky="nsew")  # all pages share cell (0,0)
         self._tab_of[stem] = frame
         # Status for rail hover — full yaml path, stem when no file backs the page.
-        status_text = _S["tab.status"].format(path=yaml_path if yaml_path else stem)
+        status_text = fmt_status(_S["tab.status"], path=yaml_path if yaml_path else stem)
         set_widget_meta(frame, status=status_text)
         self._rail.add_tab(stem)
 
@@ -1211,10 +1215,10 @@ class App:
     # ── §3 Run / Pause / Resume ─────────────────────────────────────
 
     def _update_run_btn_state(self) -> None:
-        """Enable Run iff pages exist with valid input.path and no blocking calib."""
+        """Enable Run iff pages exist with valid input.path + date rows and no blocking calib."""
         ok = (
             bool(self._pages)
-            and all(cs.is_path_valid() for cs in self._pages.values())
+            and all(cs.is_path_valid() and cs.is_dates_valid() for cs in self._pages.values())
             and not any(cs.calib_blocking() for cs in self._pages.values())
         )
         self._run_btn.config(state="normal" if ok else "disabled")
@@ -1246,7 +1250,7 @@ class App:
         stems = list(self._pages)
         if (
             not stems
-            or not all(cs.is_path_valid() for cs in self._pages.values())
+            or not all(cs.is_path_valid() and cs.is_dates_valid() for cs in self._pages.values())
             or any(cs.calib_blocking() for cs in self._pages.values())
         ):
             return
@@ -1307,18 +1311,20 @@ class App:
     def _on_instant_apply(self, stem: str, kind: str) -> None:
         """Apply data-independent calib in-sheet (no YAML write — Run persists).
 
-        *kind* ``g0xyz`` computes ``Rz`` from sheet Ag/Cg/g0xyz;
-        ``azimuth`` shifts ``azimuth_shift_deg`` from sheet shift/add/coords.
-        Triggers are cleared in-sheet; coefs stay dirty for Run pre-write.
+        Each trigger applies fully on its own and clears only its own cells:
+        ``g0xyz`` computes ``Rz`` from sheet Ag/Cg/g0xyz; ``coordinates``
+        shifts ``azimuth_shift_deg`` by magnetic declination; ``azimuth_add``
+        adds its manual offset. Coefs stay dirty for Run pre-write.
         """
         from tcm_gui import _instant_calib as _ic
 
         cs = self._pages.get(stem)
         if cs is None:
             return
-        tip = "input.calib.g0xyz" if kind == "g0xyz" else "input.calib.coordinates"
+        tip = f"input.calib.{kind}"
         try:
             coefs = cs.get_edited_coefs()
+            base = coefs.get("azimuth_shift_deg", 0) or 0
             if kind == "g0xyz":
                 cells = cs.get_instant_cells("g0xyz")["g0xyz"]
                 g0 = _ic.parse_g0xyz(cells)  # type: ignore[arg-type]
@@ -1326,13 +1332,15 @@ class App:
                     raise KeyError("Ag/Cg coef rows absent")
                 cs.write_instant_rz(_ic.rz_from_g0xyz(g0, coefs["Ag"], coefs["Cg"]))
                 self._set_status(_S.get("instant.ok.rz", "Rz updated from g0xyz — saved on Run"))
+            elif kind == "coordinates":
+                cells = cs.get_instant_cells("coordinates")["coordinates"]
+                coords = _ic.parse_coords(cells)  # type: ignore[arg-type]
+                cs.write_instant_shift(_ic.shift_with_tuning(float(base), None, coords), kind)
+                self._set_status(_S.get("instant.ok.coords", "azimuth_shift_deg updated — saved on Run"))
             else:
-                cells = cs.get_instant_cells("azimuth")
-                coords = _ic.parse_coords(cells["coordinates"])  # type: ignore[arg-type]
-                add = _ic.parse_add(cells["azimuth_add"])  # type: ignore[arg-type]
-                base = coefs.get("azimuth_shift_deg", 0) or 0
-                cs.write_instant_shift(_ic.shift_with_tuning(float(base), add, coords))
-                self._set_status(_S.get("instant.ok.azimuth", "azimuth_shift_deg updated — saved on Run"))
+                add = _ic.parse_add(cs.get_instant_cells("azimuth_add")["azimuth_add"])  # type: ignore[arg-type]
+                cs.write_instant_shift(_ic.shift_with_tuning(float(base), add, None), kind)
+                self._set_status(_S.get("instant.ok.add", "azimuth_shift_deg updated — saved on Run"))
         except Exception as e:
             lf.exception("Instant apply failed")
             try:
@@ -1793,7 +1801,7 @@ class App:
             return desc
         if desc.startswith("composing:"):
             stem = desc.split(":", 1)[1]
-            return _S.get("stage.composing_stem", "Composing {stem}\u2026").format(stem=stem)
+            return fmt_status(_S.get("stage.composing_stem", "Composing {stem}\u2026"), stem=stem)
         return _S.get(desc, desc)
 
     @staticmethod
@@ -1979,7 +1987,7 @@ class App:
 
     def _on_scan_error(self, exc: BaseException) -> None:
         self._path_field.set_error(True)  # failed search — red fg on the search path
-        self._surface_error(exc, _S["error.scan"])
+        self._surface_error(exc, _S["error.scan"], tip_path="path_field")
         # Reset state to DEFAULT and clear progress so _poll_progress shows default text.
         self._cfg_state = ScanStage.DEFAULT
         self._cfg_detail = ""
@@ -2006,7 +2014,7 @@ class App:
         self._run_btn.config(text=_S["run_btn.text"])
         self._surface_error(exc, _S["error.run"])
 
-    def _surface_error(self, exc: BaseException, log_prefix: str, *, tip_path: str = "path_field") -> None:
+    def _surface_error(self, exc: BaseException, log_prefix: str, *, tip_path: str | None = None) -> None:
         """Common error surface: log line, separator, floater text, detail tip.
 
         Sets ``_error_active`` so ``_poll_progress`` keeps the floater on screen
@@ -2014,12 +2022,13 @@ class App:
         (worker's ``lf.exception``) is already in ``_log``; here we add the
         localized prefix line + the markdown detail block rendered in
         ``_status_lbl`` (bottom-left overlay) via :meth:`_show_tip`.
-        *tip_path* selects the dwell tip source (scan/run → ``path_field``;
-        instant-apply → the trigger's own doc path).
+        The dwell tip shows only for an explicit *tip_path* (scan → ``path_field``;
+        instant-apply → the trigger's own doc path) or else file errors (``OSError`` →
+        ``path_field`` help)
         """
         self._error_active = True
         short = f"{type(exc).__name__}: {exc}"
-        self._log_err(log_prefix.format(p=short))
+        self._log_err(fmt_status(log_prefix, p=short))
         # Append the error to the current stage text (e.g. "Генерация конфигураций"
         # → "Генерация конфигураций\nError \"FileNotFoundError: …\".") so the
         # user sees both the stage that failed and the error details.
@@ -2027,10 +2036,9 @@ class App:
         error = self._stage_error_text(exc)
         self._prog_stage_text.config(text=f"{current}\n{error}" if current else error)
         self._show_stage_progress()
-        # On field-associated errors show that field's general description —
-        # not a hardcoded path_field block.
-        if tip := help_general_for_path(tip_path):
-            f1 = e.anchor if (e := help_for_path(tip_path)) else None
+        tip_src = tip_path or ("path_field" if isinstance(exc, OSError) else None)
+        if tip_src and (tip := help_general_for_path(tip_src)):
+            f1 = e.anchor if (e := help_for_path(tip_src)) else None
             self._show_tip(tip, f1)
         else:
             self._hide_tip()
@@ -2038,7 +2046,7 @@ class App:
     @staticmethod
     def _stage_error_text(exc: BaseException) -> str:
         short = f"{type(exc).__name__}: {exc}"
-        return _S.get("stage.error", 'Error "{msg}".').format(msg=short)
+        return fmt_status(_S.get("stage.error", 'Error "{msg}".'), msg=short)
 
     def _set_status(self, text: str, anchor: str | None = None, *, raw: bool = False) -> None:
         """Debounced status switch/close — applied by :meth:`_apply_status` after
@@ -2367,7 +2375,7 @@ class App:
         self._hide_stage_progress()
         self.rt.progress_stage.set(0, 0, "")
         self._cfg_state = ScanStage.DONE
-        self._cfg_detail = _S["overall_lbl.done_detail"].format(pct=pct, ok=len(processed), n=n)
+        self._cfg_detail = fmt_status(_S["overall_lbl.done_detail"], pct=pct, ok=len(processed), n=n)
         self._overall_lbl.config(text=f"{self._translate_scan_stage(self._cfg_state)}{self._cfg_detail}")
         self.rt.progress_overall.set(0, 0, "")
         reload_tabs.reload_tabs_after_run(self, processed or [])

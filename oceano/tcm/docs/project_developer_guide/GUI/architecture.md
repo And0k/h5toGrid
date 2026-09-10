@@ -22,7 +22,7 @@ Tk root, layout §1–6, 300 ms polling, argv prefill, startup placement via `Ap
 
 ### `_md_parse.py`
 
-Pure Markdown parser (zero Tk dependency): `parse_inline()`, `parse_markdown()`, `split_table_row()`; AST types `Heading`/`Paragraph`/`CodeBlock`/`Table`/`Inline`.  Inline ``[text](url)`` links parse to a span whose **tag is the target URL** — ``(text, url)`` exactly like ``(text, "bold")`` — so the renderer tells styles apart (their own font variants) from links (any other tag), and URLs are never measured as text.
+Pure Markdown parser (zero Tk dependency): `parse_inline()`, `parse_markdown()`, `split_table_row()`; AST types `Heading`/`Paragraph`/`CodeBlock`/`Table`/`Inline`.  Inline ``[text](url)`` links parse recursively — the **URL tag unions onto every nested span** of the link text (``[`code`](url)`` → ``(code, {code, url})``: code font under one clickable link) — so the renderer tells styles apart (their own font variants) from links (any other tag), and URLs are never measured as text.
 
 ### `worker.py`
 
@@ -53,9 +53,9 @@ Wires the tksheet widget, builds the tree from a config dict and owns row-space 
 
 `SheetHoverMixin`: status publication (`_publish_status`/`_clear_status`, tree vs data `_help_candidates`/`_resolve_detail`/`_coefs_status_hint`/Shift), F1 anchor resolution (`_f1_anchor` — selected row via `sh.tree_selected`, or if nothing selected the mouse inside the dwell tooltip widget via `_pointer_in_field`; `_f1_anchor_for_iid` shared resolution for status-label hover; `_help_candidates` fan-out + `meta["parent"]` walk, dispatched by `App._on_f1_help`), floated browse-row overlay (`_ensure_hover_field`/`_show_hover_field`/`_field_place_kw`/`_btn_place_kw`/`_pointer_in_field`/`_hover_read`/`_hover_write`/`_hover_btn_status`/`_restore_hover_placement`/schedule/hide) — `PathField` empty commits propagate to `_hover_write` which writes `""` + ghost, motion branch refreshes `f.set(_hover_read())`.
 
-### `_sheet_styles.py` — alignment/widgets, node fg, path validation
+### `_sheet_styles.py` — alignment/widgets, node fg, cell validation
 
-`SheetStylesMixin`: `_apply_open`, `_cell_spec_for` (numeric metadata via `_meta_pairs.NUMERIC_IDXS`), `_apply_styles` (tree fg blue/black, browse bg, date align), `_apply_validations` (red `check:"exists"` via `_cell_str` — ghost skipped, sentinel-aware), `_path_exists` (``~`` + glob).
+`SheetStylesMixin`: `_apply_open`, `_cell_spec_for` (numeric metadata via `_meta_pairs.NUMERIC_IDXS`), `_apply_styles` (tree fg blue/black, browse bg, date align), `_apply_validations` (red `check:"exists"` via `_cell_str` — ghost skipped, sentinel-aware; `check:"sorted"` date rows via `_validate_dates` — red on unparseable (`_cell_spec.as_date`) or order-breaking cells, valid cells restore gray/warning/normal), `_path_exists` (``~`` + glob).
 
 ### `_path_field.py`
 
@@ -413,7 +413,12 @@ omitted), and `App._write_coefs` merges it into the run YAML via
 header preserved).  Typing comes from the Hydra structured-config dataclass
 (`_leaf_kind`/`_elem_kind` via `resolve_dataclass_field`) — `out.dt_bins:
 list[int]` round-trips as `int` (strict `parse_int_strict` drops float
-spellings instead of writing `600.0`); `input.path`/`input.coefs`
+spellings instead of writing `600.0`); `check:"sorted"` date rows are
+validated + canonicalized before writing (`iso_secs` — ISO `T`-separated
+seconds; a row with an unparseable cell is skipped with a warning, and
+`ConfigSheet.is_dates_valid` gates the Run button — see
+[config_tuning §Inverted time_ranges](../../reference/config_tuning.md#inverted-time_ranges));
+`input.path`/`input.coefs`
 (matrix/date/`dates` machinery), `metadata*` and `has_date` cells keep their
 dedicated write paths (`is_skipped`).  `update_coefs_in_run_yaml` keeps its flat
 `{coef: values}` contract and delegates to the same writer.

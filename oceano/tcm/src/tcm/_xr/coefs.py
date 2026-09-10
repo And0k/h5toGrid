@@ -442,6 +442,7 @@ def prepare_coefs(
     from tcm.incl_calc.coefs import get_coef_azimuth_shift
 
     coefs_new: dict = {}
+    msg_oneshot = ""
     if "azimuth_shift_deg" in coefs:
         coefs_new["azimuth_shift_deg"] = get_coef_azimuth_shift(
             azimuth_add,
@@ -449,6 +450,8 @@ def prepare_coefs(
             coefs.get("azimuth_shift_deg", 0),
             data_date,
         )
+        if (azimuth_add or coordinates) and not time_ranges_azimuth:
+            msg_oneshot = "with manual azimuth adjustment (azimuth_add/coordinates) "
 
     msg_zeroed = ""
     if time_ranges_zeroing:
@@ -500,4 +503,4 @@ def prepare_coefs(
             pass
         dates[k] = True
 
-    return {**coefs, **coefs_new}, coef_zeroing_matrix, dates, msg_zeroed + msg_rotated
+    return {**coefs, **coefs_new}, coef_zeroing_matrix, dates, msg_zeroed + msg_rotated + msg_oneshot

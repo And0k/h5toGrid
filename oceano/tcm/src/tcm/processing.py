@@ -824,6 +824,16 @@ def run_processing(cfg: DictConfig):
     changed_dates = (
         config_yaml.stamp_coef_dates({k: dates[k] for k in changed_coefs}) if changed_coefs else {}
     )
+    yaml_path = cfg.get("_yaml_path")
+    lf.debug(
+        "Coef write decision for {}: changed={} yaml_path={} binary_src={} has_raw_db={} from_raw_nc={}",
+        pcid,
+        sorted(changed_coefs),
+        yaml_path,
+        src_path.suffix.lower() in _EXT_BINARY,
+        bool(cfg["out"].get("raw_db_path")),
+        _loaded_from_raw_nc,
+    )
     if changed_coefs:
         # Timestamp the changed entries in place; dates may alias coefs_merged["dates"].
         # The overall date is the latest ISO timestamp, mirroring GUI manual-edit behavior.
@@ -832,7 +842,6 @@ def run_processing(cfg: DictConfig):
         if isinstance(previous_date := coefs_merged.get("date"), str) and previous_date:
             prior_dates.append(previous_date)
         coefs_merged["date"] = max(prior_dates) if prior_dates else next(iter(changed_dates.values()))
-    yaml_path = cfg.get("_yaml_path")
     coefs_to_write: dict | None = None  # filled only when write is needed
     yaml_written = False  # track whether YAML was the primary write target
 

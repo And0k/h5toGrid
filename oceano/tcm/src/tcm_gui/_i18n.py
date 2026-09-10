@@ -64,3 +64,26 @@ def load_str() -> Mapping[str, str]:
 
 
 STRINGS: Mapping[str, str] = load_str()
+
+_TAG_RE = re.compile(r"\{#(?P<name>[^{}]+)\}|\{/\}")
+
+
+def fmt_status(template: str, **kw) -> str:
+    """``str.format`` that shields ``{#color}``/``{/}`` markup spans.
+
+    Color tags share ``{``/``}`` with format fields — a template combining
+    both (e.g. ``"[{s}, {e}] — {#warning}x{/}"``) crashes plain ``.format``
+    with ``KeyError: '#warning'``. Shielded spans bypass formatting and are
+    restored verbatim for the Markdown color map. Genuine field typos still
+    raise :exc:`KeyError` as before.
+    """
+    spans: list[str] = []
+
+    def _shield(m: re.Match) -> str:
+        spans.append(m.group(0))
+        return f"\x00{len(spans) - 1}\x00"
+
+    out = _TAG_RE.sub(_shield, template).format(**kw)
+    for i, s in enumerate(spans):
+        out = out.replace(f"\x00{i}\x00", s)
+    return out

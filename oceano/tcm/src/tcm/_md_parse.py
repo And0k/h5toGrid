@@ -12,8 +12,9 @@ splitting).  Supported constructs:
 * Markdown tables (pipe-delimited)
 * ``- `` unordered list items (flat; indented continuation lines fold into
   the preceding item — nested lists are not supported)
-* ``[text](url)`` links → span ``(text, url)`` (the URL is the span tag;
-  click handling lives in the renderer)
+* ``[text](url)`` links → the URL tag unions onto every nested span of the
+  link text (recursively parsed, so ``[`code`](url)`` renders ``code`` in the
+  code font while staying clickable)
 
 No HTML, no images, no blockquotes, no ordered (``1.``) lists.
 """
@@ -147,7 +148,8 @@ def parse_inline(text: str) -> Inline:
     """Parse inline Markdown spans into ``(text, tags)`` tuples.
 
     Bold/italic content is recursively parsed, so nested markup like
-    ``**`.yaml``` yields a span tagged *both* ``bold`` and ``code``.  Each
+    ``**`.yaml`**`` yields a span tagged *both* ``bold`` and ``code``; link
+    text parses the same way with the URL tag unioned onto each span.  Each
     span carries a frozenset of tags (style name / color name / link URL);
     plain text has the empty set.  Adjacent spans with identical tag sets
     are coalesced by :func:`_merge_spans`.
@@ -169,7 +171,12 @@ def parse_inline(text: str) -> Inline:
             out.append((code[1:-1], frozenset({"code"})))
 
         elif m.group("link"):
-            out.append((m.group("link_text") or "", frozenset({m.group("link_url")})))
+            url = m.group("link_url")
+            # Link text parses recursively (``[`code`](url)`` → code font under
+            # one link); the URL tag unions onto every nested span's tags.
+            out.extend(
+                (txt, tags | frozenset({url})) for txt, tags in parse_inline(m.group("link_text") or "")
+            )
 
         elif m.group("bold"):
             out.extend(_nest("bold", m.group("bold_ast") or m.group("bold_und") or ""))

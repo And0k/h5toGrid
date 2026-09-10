@@ -188,3 +188,16 @@ def as_date(s: str) -> datetime | None:
                 return datetime.strptime(s, "%d.%m.%Y")
             except ValueError:
                 return None
+
+
+def iso_secs(s: str) -> str | None:
+    """Canonical YAML timestamp: *s* via :func:`as_date` → ISO ``T``-separated seconds.
+
+    Single format contract for every date write-back (``input.time_ranges``,
+    ``input.calib.time_ranges_*``, ``metadata.time_range``): cells display
+    ``str(datetime)`` (space-separated), while a space/``T`` mix inside one
+    stored list makes ``pd.to_datetime`` fail wholesale (pandas 2 format
+    inference) — so stored values normalize here.  ``None`` = unparseable;
+    empties pass through via ``iso_secs(s) or s``.
+    """
+    return d.isoformat(sep="T", timespec="seconds") if (d := as_date(s)) else None

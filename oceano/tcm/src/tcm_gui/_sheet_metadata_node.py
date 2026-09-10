@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any
 
 from tcm import _constants, _meta_pairs
+from tcm_gui._cell_spec import iso_secs
 
 lf = logging.getLogger(__name__)
 
@@ -445,6 +446,10 @@ class MetadataNodeMixin:
                         raw = self.sh.item(iid).get("values") or ()
                         vals.append(str(raw[j]) if j < len(raw) else "")
                 paired[m["label"]] = vals
+            # Canonical ISO-T dates before storage (write-back + peer sync read here) —
+            # unparseable cells stay raw (red-flagged; see _sheet_patch.build_patch)
+            if "time_range" in paired:
+                paired["time_range"] = [iso_secs(v) or v for v in paired["time_range"]]
             out.append(_meta_pairs.to_storage(paired, base=list(base)) if paired else list(base))
         return out
 

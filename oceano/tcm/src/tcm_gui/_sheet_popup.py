@@ -34,7 +34,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from typing import Any
 
-from ._i18n import STRINGS as _S
+from ._i18n import STRINGS as _S, fmt_status
 from ._sheet_undo import GroupUndoBridge, MetadataTree, suspend_native_pushes
 
 lf = logging.getLogger(__name__)
@@ -98,7 +98,7 @@ def target_label(meta: Any, ref: tuple | None = None) -> str:
 def _fmt(key: str, fallback: str, target: str) -> str:
     """STR template formatted with *target* — English fallback on missing key/shape."""
     with suppress(Exception):
-        return str(_S.get(key, fallback)).format(target=target)
+        return fmt_status(str(_S.get(key, fallback)), target=target)
     return fallback.format(target=target)
 
 

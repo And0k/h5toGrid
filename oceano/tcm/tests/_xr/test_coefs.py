@@ -877,3 +877,26 @@ class TestGetCoefAzimuthShift:
             data_date=datetime(2025, 6, 15),
         )
         assert float(result) == pytest.approx(10.0 + 5.0 + dec, rel=1e-3)
+
+    def test_ndarray_input_not_mutated(self):
+        """Array coef must not be mutated in place (aliasing breaks change detection)."""
+        test_description = "In-place += would hide the change from prepare_coefs date markers"
+        shift = np.array([180.0])
+        result = get_coef_azimuth_shift(100.0, None, shift)
+        assert shift == pytest.approx([180.0]), f"{test_description}: caller array mutated to {shift!r}"
+        assert result is not shift, f"{test_description}: returned object aliases the input"
+        assert np.asarray(result).ravel()[0] == pytest.approx(280.0)
+
+    def test_ndarray_azimuth_marks_changed_in_prepare(self):
+        """prepare_coefs flags azimuth_shift_deg changed for array coefs (file-sourced)."""
+        test_description = "Array coef from data file + azimuth_add must persist to YAML"
+        merged, _, dates, msg = _coefs_mod.prepare_coefs(
+            {"azimuth_shift_deg": np.array([180.0]), "dates": {}},
+            None,
+            azimuth_add=100.0,
+        )
+        assert [k for k, v in dates.items() if v is True] == ["azimuth_shift_deg"], (
+            f"{test_description}: change marker missing, got {dates!r}"
+        )
+        assert "manual azimuth" in msg, f"{test_description}: status hides one-shot work: {msg!r}"
+        assert np.asarray(merged["azimuth_shift_deg"]).ravel()[0] == pytest.approx(280.0)

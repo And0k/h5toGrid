@@ -33,7 +33,7 @@ from ._browse_button import (
     _is_shift_pressed,
     _pointer_inside,
 )
-from ._i18n import STRINGS as _S
+from ._i18n import STRINGS as _S, fmt_status
 
 _INTENT_MS: Final[int] = 120  # hover-intent delay for the floated PathField (ms)
 
@@ -335,12 +335,12 @@ class SheetHoverMixin:
         m = self._meta.get(iid, {})
         ident = str(m.get("key") or m.get("path") or m.get("label") or "")
 
-        # Instant-apply checkbox cells (outside max_col) — STR-driven.
+        # Instant-apply checkbox cells (outside max_col) — STR-driven, one box per row.
         # Ready → pending status; incomplete → fill-in hint; synced → silent.
         if col is not None and (boxes := getattr(self, "_apply_boxes", None)):
             for _kind, _box in boxes.items():
                 if _box.get("iid") == iid and _box.get("col") == col:
-                    _pre = "input.calib.g0xyz" if _kind == "g0xyz" else "input.calib.azimuth"
+                    _pre = f"input.calib.{_kind}"
                     _state = _box.get("state") or ("ready" if _box.get("pending") else "empty")
                     if _state == "ready":
                         self._hover_detail = _S.get(f"{_pre}.apply.detailed", "")
@@ -378,7 +378,7 @@ class SheetHoverMixin:
             if gui_status := _S.get("input.coefs.path.status.gui", ""):
                 txt = f"{txt} {gui_status}".strip()
             if ident == "coefs" and (coefs_date := m.get("_coefs_date")):
-                if suffix := _S.get("input.coefs.date.status", "").format(date=coefs_date):
+                if suffix := fmt_status(_S.get("input.coefs.date.status", ""), date=coefs_date):
                     txt = f"{txt} {suffix}".strip()
             self.on_hover_status(txt, True)
             return
@@ -400,26 +400,22 @@ class SheetHoverMixin:
                     return
                 # Append coefs date suffix when hovering the coefs node
                 if m.get("key") == "coefs" and (coefs_date := m.get("_coefs_date")):
-                    suffix = _S.get("input.coefs.date.status", "").format(date=coefs_date)
+                    suffix = fmt_status(_S.get("input.coefs.date.status", ""), date=coefs_date)
                     if suffix:
                         self.on_hover_status(f"{txt} {suffix}".strip(), True)
                         return
                 # Pending calib triggers hint at the instant-apply checkbox.
                 # Ready → apply suffix; incomplete → fill-in suffix; empty → doc only.
                 _path = str(m.get("path") or "")
-                _kind = (
-                    "g0xyz"
-                    if _path == "input.calib.g0xyz"
-                    else (
-                        "azimuth" if _path in ("input.calib.coordinates", "input.calib.azimuth_add") else None
-                    )
-                )
+                _kind = _path.rsplit(".", 1)[-1] if _path.startswith("input.calib.") else None
+                if _kind not in ("g0xyz", "coordinates", "azimuth_add"):
+                    _kind = None
                 if _kind is not None:
                     _state = "empty"
                     with suppress(Exception):
                         _state = str(self.apply_state(_kind))
                     if _state in ("ready", "incomplete"):
-                        _pre = "input.calib.g0xyz" if _kind == "g0xyz" else "input.calib.azimuth"
+                        _pre = f"input.calib.{_kind}"
                         _key = f"{_pre}.status.gui" if _state == "ready" else f"{_pre}.status.incomplete"
                         if sfx := _S.get(_key, ""):
                             txt = f"{txt} {sfx}".strip()

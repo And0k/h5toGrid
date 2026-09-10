@@ -18,7 +18,7 @@ from typing import Final
 
 from tcm.journal import ProbeState, parse_prefix
 
-from ._i18n import STRINGS as _S
+from ._i18n import STRINGS as _S, fmt_status
 from .const import CELL_DEFAULT_VAL_FG, FG_DEFAULT, TAG_COLORS, set_widget_meta
 
 _FIXED: Final = ((1, "load"), (2, "coefs"), (3, "proc"))
@@ -60,14 +60,22 @@ class StageTree(ttk.Treeview):
         self.bind("<<TreeviewOpen>>", lambda _: self._own(True))
         self.bind("<<TreeviewClose>>", lambda _: self._own(False))
         self.bind("<<TreeviewSelect>>", self._select)
-        set_widget_meta(self, status=_S.get("stage_tree.status", "Stage journal: {pcid}").format(pcid=pcid))
+        set_widget_meta(
+            self, status=fmt_status(_S.get("stage_tree.status", "Stage journal: {pcid}"), pcid=pcid)
+        )
 
     # ── nodes ──────────────────────────────────────────────────────
     def _ensure(self, num: int, name: str) -> str:
         iid = f"s{num}"
         if iid not in self._tag:
-            self.insert("", "end", iid=iid, text=f"{num} {name}",
-                         values=(_S.get("stage_tree.pending", "\u2014"),), tags=("pending",))
+            self.insert(
+                "",
+                "end",
+                iid=iid,
+                text=f"{num} {name}",
+                values=(_S.get("stage_tree.pending", "\u2014"),),
+                tags=("pending",),
+            )
             self._tag[iid] = self._state[iid] = "pending"
         return iid
 

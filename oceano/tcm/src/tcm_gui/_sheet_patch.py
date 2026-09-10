@@ -7,7 +7,13 @@ a ``cell_str(iid, col)`` reader, so the builder is unit-testable headless.
 
 Type source is the Hydra structured-config dataclass (``_config_root``),
 resolved via :func:`tcm_gui._cell_spec.resolve_dataclass_field` — never the
-``is_string`` / ``max_col`` / ``"["`` display heuristics. Special subtrees
+``is_string`` / ``max_col`` / ``"["`` display heuristics.  Date rows
+(``check: "sorted"`` — ``input.time_ranges``, ``input.calib.time_ranges_*``)
+are validated before writing: every value is canonicalized through
+:func:`tcm_gui._cell_spec.iso_secs` (ISO ``T``-separated seconds) and a row
+holding an unparseable cell is **skipped** with a warning — the stored YAML
+value survives instead of a mixed-format list that ``pd.to_datetime`` would
+reject at load (see :func:`tcm_gui._cell_spec.iso_secs`).  Special subtrees
 keep their dedicated write paths and are skipped here:
 
 * ``input.path`` + ``input.coefs`` (matrix/date/``dates`` machinery);
@@ -33,10 +39,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Final, get_args, get_origin
 
-from tcm_gui._cell_spec import _unwrap, as_bool, parse_float, resolve_dataclass_field
+from tcm_gui._cell_spec import _unwrap, as_bool, iso_secs, parse_float, resolve_dataclass_field
 from tcm_gui.cli_cfg import NO_DEFAULT, default_for_path
 
-_l = logging.getLogger(__name__)
+lf = logging.getLogger(__name__)
 
 _LEAF_RE: Final = re.compile(r"\[\d+\]")
 _SKIP_TOP: Final = frozenset({"defaults", "hydra", "metadata"})
@@ -232,7 +238,20 @@ def build_patch(
             continue
         if kind == "list":
             kind = _elem_kind(config_root, base)
-        vals_conv = list(vals) if kind in ("text", "date", "enum") else [convert_cell(kind, v) for v in vals]
+        if m.get("check") == "sorted":
+            # Date rows: validate format + write canonical ISO-T (see iso_secs) —
+            # verbatim cell strings carry the space-separated display form, and a
+            # mixed space/T list crashes pd.to_datetime at load.
+            if any(v and iso_secs(v) is None for v in vals):
+                lf.warning(
+                    "Unparseable date cell(s) %s in %s — row write skipped, stored value kept", vals, path
+                )
+                continue
+            vals_conv = [iso_secs(v) or v for v in vals]
+        else:
+            vals_conv = (
+                list(vals) if kind in ("text", "date", "enum") else [convert_cell(kind, v) for v in vals]
+            )
         if any(v is None for v in vals_conv):
             continue
         dflt = default_for_path(base)

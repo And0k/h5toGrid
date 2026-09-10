@@ -578,6 +578,69 @@ class TestGuiFullCycle:
         assert len(run_result) == 4
         mock_proc.assert_called_once()
 
+    def test_run_consumes_azimuth_add_e2e(self, gui_project, monkeypatch):
+        """Real Run with ``input.calib.azimuth_add`` consumes calib into coefs.
+
+        No mocks on the processing path: real Hydra compose, real
+        ``main_init``, real ``run_processing``. The YAML must gain the updated
+        ``azimuth_shift_deg`` (+100 over the pre-run value) with stamped dates
+        and lose ``input.calib``; a timestamped backup must exist.
+        """
+        import pytest as _pytest
+
+        tmp_path, raw_dir, csv_file, run_dir = gui_project
+        rows = [
+            "yyyy,mm,dd,HH,MM,SS,Ax,Ay,Az,Mx,My,Mz,Battery,Temp",
+            *(
+                f"2024,06,13,12,{i // 60:02d},{i % 60:02d},"
+                f"{100.0 + i},{200.0 + i},{300.0 + i},"
+                f"{400.0 + i},{500.0 + i},{600.0 + i},12.5,25.0"
+                for i in range(120)
+            ),
+        ]
+        csv_file.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        yp = run_dir / "@i_01.yaml"
+        yp.write_text(
+            f"# @package _global_\ninput:\n  path: '{csv_file}'\n"
+            "  coefs:\n"
+            "    Ag: [[0.00173, 0, 0], [0, 0.00173, 0], [0, 0, 0.00173]]\n"
+            "    Cg: [10, 10, 10]\n"
+            "    Ah: [[1, 0, 0], [0, 1, 0], [0, 0, 1]]\n"
+            "    Ch: [10, 10, 10]\n"
+            "    kVabs: [1.0, 0.0, 0.5]\n"
+            "    azimuth_shift_deg: 180.0\n"
+            "  calib:\n    azimuth_add: 100.0\nout:\n  dt_bins: [0]\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys, "argv", ["prog"])
+        result = cli.call_in_raw_dir(
+            processing.run,
+            overrides={"input": {"path": str(run_dir / "(@i_01).yaml")}},
+            exit_on_error=False,
+        )
+        assert result is not None
+        processed, failed, _, _ = result
+        test_description = "Real pipeline run applies azimuth_add and consumes one-shot calib"
+        assert failed == [], f"{test_description}: run failed: {failed}"
+        assert processed, f"{test_description}: nothing processed"
+        ry = config_yaml._ry(write=False)
+        with yp.open(encoding="utf-8") as f:
+            data = ry.load(f) or {}
+        coefs = (data.get("input") or {}).get("coefs") or {}
+        assert coefs.get("azimuth_shift_deg") == _pytest.approx(280.0), (
+            f"{test_description}: azimuth not shifted 180→280, got {coefs.get('azimuth_shift_deg')!r}"
+        )
+        assert "T" in (coefs.get("dates") or {}).get("azimuth_shift_deg", ""), (
+            f"{test_description}: azimuth change not timestamped, got {coefs.get('dates')!r}"
+        )
+        assert "calib" not in (data.get("input") or {}), (
+            f"{test_description}: one-shot calib not consumed, got {(data.get('input') or {}).get('calib')!r}"
+        )
+        assert list(run_dir.glob("@i_01 - backup*.yaml")), (
+            f"{test_description}: no timestamped backup created"
+        )
+
 
 # --------------------------------------------------------------------------- #
 # Edge cases: real-world GUI failure modes

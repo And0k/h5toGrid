@@ -8,7 +8,8 @@ Mixin for :class:`tcm_gui.coef_sheet.ConfigSheet`.
   :class:`tcm_gui._cell_spec.CellSpec`, column-resize zones.
 * :meth:`SheetStylesMixin._apply_validations` — red fg on rows failing their
   ``check``: ``"exists"`` path rows whose path resolves to nothing,
-  ``"sorted"`` date rows (``time_ranges*``) breaking ascending order; gray fg
+  ``"sorted"`` date rows (``time_ranges*``) that are unparseable or break
+  ascending order; gray fg
   when the value matches its config default via
   :meth:`SheetTintMixin._default_for_cell`; reads via
   :meth:`SheetTintMixin._cell_str` so a ghost placeholder (deleted value) is
@@ -36,6 +37,7 @@ from ._cell_spec import (
     as_bool,
     as_date,
     enum_values,
+    iso_secs,
     spec_for_path,
 )
 from .cli_cfg import NO_DEFAULT
@@ -271,7 +273,7 @@ class SheetStylesMixin:
         marked red when the path doesn't exist on disk; glob patterns are red
         only when zero matches; ``~`` is expanded.  ``check: "sorted"`` rows
         (``input.time_ranges``, ``metadata.time_range``) — red on any date cell
-        breaking ascending order, see :meth:`_validate_sorted_dates`.  Values
+        that is unparseable or breaks ascending order, see :meth:`_validate_dates`.  Values
         are read through :meth:`_cell_str` — a deleted value (ghost
         placeholder) reads empty and is skipped, never validated against the
         placeholder text.  Sentinels (``<…>``) are never marked invalid.
@@ -309,28 +311,36 @@ class SheetStylesMixin:
                 else:
                     sh.highlight_cells(row=r, column=0, fg=tcm_gui.theme.INVALID_FG, redraw=False)
             elif check == "sorted":
-                self._validate_sorted_dates(iid, m, r)
+                self._validate_dates(iid, m, r)
 
         sh.redraw()
         if self.on_validity_change:
             self.on_validity_change()
 
-    def _validate_sorted_dates(self, iid: Any, m: Mapping[str, Any], r: int) -> None:
-        """Red fg on date cells of a ``check: "sorted"`` row when not ascending.
+    def _validate_dates(self, iid: Any, m: Mapping[str, Any], r: int) -> None:
+        """Red fg on date cells of a ``check: "sorted"`` row failing format or order.
 
-        ``input.time_ranges`` / ``metadata.time_range`` hold ordered ISO dates;
-        a cell breaking the sequence against its predecessor or successor gets
-        :data:`~tcm_gui.theme.INVALID_FG`.  Sorted cells restore gray (at
-        default) / warning (broader input window — keeps the tint
+        ``input.time_ranges`` / ``metadata.time_range`` hold ordered ISO dates.
+        A non-empty cell unparseable by :func:`as_date` (ISO or dd.mm.yyyy)
+        gets :data:`~tcm_gui.theme.INVALID_FG` — the same format error that
+        makes the write path skip the row (see ``_sheet_patch.build_patch``).
+        A parseable cell breaking the sequence against its parseable neighbors
+        gets the same error fg.  Valid cells restore gray (at default,
+        compared via :func:`~tcm_gui._cell_spec.iso_secs` so display spelling
+        never masks equality) / warning (broader input window — keeps the tint
         :meth:`SheetTintMixin._apply_time_ranges_tint` painted before this) /
-        normal fg.  Unparseable cells are skipped — no verdict either way.
+        normal fg.
         """
         sh = self.sh
         # Collect (col, str, datetime) — non-empty, parseable, non-sentinel cells
         parsed: list[tuple[int, str, datetime]] = []
         for c in range(self._own_cols(m)):
             s = self._cell_str(iid, c)
-            if not s or s.startswith("<") or (dt := as_date(s)) is None:
+            if not s or s.startswith("<"):
+                continue
+            if (dt := as_date(s)) is None:
+                # Format error — red now; the row stays out of the YAML write.
+                sh.highlight_cells(row=r, column=c, fg=tcm_gui.theme.INVALID_FG, redraw=False)
                 continue
             parsed.append((c, s, dt))
         if not parsed:
@@ -349,7 +359,7 @@ class SheetStylesMixin:
                 sh.highlight_cells(row=r, column=c, fg=tcm_gui.theme.INVALID_FG, redraw=False)
             else:
                 dv = self._default_for_cell(iid, m, c)
-                if dv is not NO_DEFAULT and any2str(s) == any2str(dv):
+                if dv is not NO_DEFAULT and (iso_secs(s) or s) == (iso_secs(str(dv)) or str(dv)):
                     fg = tcm_gui.theme.CELL_DEFAULT_VAL_FG
                 elif broader:
                     fg = tcm_gui.theme.TAG_COLORS["warning"]

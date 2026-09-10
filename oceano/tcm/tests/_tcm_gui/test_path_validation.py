@@ -5,7 +5,10 @@ cell whose committed path doesn't exist on disk gets red foreground, while
 the Run button stays gated on ``input.path`` only (``coefs_path`` is
 optional — coefficients may be entered manually).  ``check: "sorted"``
 rows (``input.time_ranges``, ``metadata.time_range``) get red foreground on
-any date cell breaking the ascending order of the sequence.
+any date cell that is unparseable or breaks the ascending order of the
+sequence; the Run button additionally gates on ``ConfigSheet.is_dates_valid``
+(unparseable ``input.time_ranges`` cells would skip the YAML row write and
+silently keep the stored window — see ``_sheet_patch.build_patch``).
 """
 
 from __future__ import annotations
@@ -224,7 +227,9 @@ class TestIsPathValidGating:
         assert cs.is_path_valid() is False
 
 
-class TestSortedCheck:
+class TestDateChecks:
+    """``check: "sorted"`` — format (parseable) + ascending order, same error fg."""
+
     def test_sorted_marker_on_time_ranges_row(self, tmp_path):
         """``check: "sorted"`` lands on the input.time_ranges row."""
         cs, _ = _make_sheet(str(tmp_path), str(tmp_path))
@@ -286,3 +291,33 @@ class TestSortedCheck:
         cs._apply_validations(other)
         rows = {c.kwargs["row"] for c in _red_calls(mock_sh)}
         assert rows == {cs._row_map()[other]}, f"targeted pass leaked to other rows: {rows}"
+
+    def test_unparseable_cell_red(self, tmp_path):
+        """Non-empty cell ``as_date`` can't parse → error fg on that cell only."""
+        cs, mock_sh = _make_sheet(
+            str(tmp_path), str(tmp_path), time_ranges=["2024-01-01T00:00:00", "not a date"]
+        )
+        tr = _iid(cs, label="time_ranges")
+        cs._apply_validations(tr)
+        cells = {(c.kwargs["row"], c.kwargs["column"]) for c in _red_calls(mock_sh)}
+        row = cs._row_map()[tr]
+        assert cells == {(row, 1)}, f"expected the unparseable cell red, got: {cells}"
+
+    def test_ddmm_yyyy_accepted(self, tmp_path):
+        """``as_date``'s dd.mm.yyyy spelling parses (canonicalized at write) → no red."""
+        cs, mock_sh = _make_sheet(
+            str(tmp_path), str(tmp_path), time_ranges=["05.01.2024", "2024-01-06T00:00:00"]
+        )
+        cs._apply_validations(_iid(cs, label="time_ranges"))
+        assert _red_calls(mock_sh) == []
+
+    def test_is_dates_valid_gates_unparseable_window(self, tmp_path):
+        """Run gate: unparseable input.time_ranges cell → False; metadata stays visual-only."""
+        cs, _ = _make_sheet(str(tmp_path), str(tmp_path), time_ranges=["2024-01-01T00:00:00", "oops"])
+        assert cs.is_dates_valid() is False
+
+        # A garbage metadata.time_range cell never blocks Run (optional field)
+        cs2, _ = _make_sheet(str(tmp_path), str(tmp_path), time_ranges=["2024-01-01T00:00:00"])
+        md = cs2.sh.insert(values=("2024-01-02", "oops"))
+        cs2._meta[md] = {"label": "time_range", "is_metadata": True, "max_col": 2, "check": "sorted"}
+        assert cs2.is_dates_valid() is True

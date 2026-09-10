@@ -62,8 +62,24 @@ Each tab shows a treeview with the config's parameters:
 - **`input.time_ranges`** — time window for this deployment
 - **`input.coefs`** — calibration coefficients (Ag, Cg, Ah, Ch, Rz, kVabs, P, etc.)
 
+#### Insert rows
+
+The sheet's *Insert rows above/below* (`right-click`) splits an interval into a copy pinned to the shared boundary — **above** sets the copy's `time_range[1] = time_range[0]`, **below** sets `time_range[0] = time_range[1]` — and numbers the new `setup` with the next free integer (`1` when splitting a flat single interval; existing flat rows first move into node `0`).
+On a `metadata`/`setup` target the entries read *Insert setup N above/below* (`N` = the number the copy will take; sorting entries are removed from the sheet menus. Each split is a single native *Undo* step (no second undo system — other edits undo through tksheet as before). Paired rows are fixed (insert denied there and on top-level nodes — no insertion ever creates a top-level node); *Delete* applies only to self-added rows/columns (`Add row` parents a child under the selection, `Add column` appends at the end); a read-only sheet disables the whole context menu.
+
+
 Click a cell to edit. Date fields are validated (`YYYY-MM-DD` format).
 Numeric fields reject non-numeric input.
+
+**Date validation**: date cells of `input.time_ranges`, `metadata.time_range`
+and `input.calib.time_ranges_*` turn **red** when the value cannot be parsed
+(ISO `2024-01-15T10:30:00` / `2024-01-15 10:30:00` or `15.01.2024` are
+accepted) or breaks the ascending order of the sequence.  Run stays disabled
+until `input.time_ranges` cells parse again, and Run writes every date cell in
+the canonical ISO `T`-form regardless of the spelling you typed; a row with a
+red (unparseable) cell keeps its stored YAML value instead — see
+[Config Tuning §Inverted time_ranges](../reference/config_tuning.md#inverted-time_ranges).
+
 
 **Path validation**: the `input.path` cell turns **red** when the path does
 not exist on disk (and the Run button is disabled).  `input.coefs.path` is
@@ -86,11 +102,13 @@ full config tree (all sections: `input`, `out`, `filter`, `program` — missing
 values are filled with defaults). Edits to any section are saved to the run
 YAMLs on Run, same as coefficients.
 
-**Instant apply** (data-independent triggers only): `input.calib.g0xyz` and the
-`coordinates` + `azimuth_add` group carry a ☑ cell right of their values (the
-azimuth box lives on the `coordinates` row — it reads both inputs).
-Empty triggers show a disabled ☑ (in sync); typing data enables it (pending).
-Clicking it computes `Rz` / `azimuth_shift_deg` with the same pipeline calls as
+**Instant apply** (data-independent triggers only): `input.calib.g0xyz`,
+`input.calib.coordinates` and `input.calib.azimuth_add` each carry a ☑ cell
+right of their values. Each trigger applies fully on its own — `g0xyz`
+computes `Rz`, `coordinates` shifts `azimuth_shift_deg` by declination,
+`azimuth_add` adds its offset — and clears only its own cells.
+Empty triggers show a disabled ☑ (in sync); complete input enables it (pending).
+Clicking it computes with the same pipeline calls as
 Run, updates the coefs cells in-sheet and clears the trigger — all in memory,
 YAML syncs on the next Run. `time_ranges_zeroing` / `time_ranges_azimuth` need
 data windows and stay Run-time only. A partial/non-numeric trigger reddens its

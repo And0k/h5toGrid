@@ -21,6 +21,7 @@ from tcm_gui._cell_spec import (
     as_bool,
     classify_type,
     enum_values,
+    iso_secs,
     resolve_dataclass_field,
 )
 
@@ -201,3 +202,21 @@ class TestEnumValues:
     def test_plain_enum_names(self):
         """Regular Enum also uses .value."""
         assert enum_values(Color) == ["red", "green"]
+
+
+# ── iso_secs ────────────────────────────────────────────────────────────────
+
+
+class TestIsoSecs:
+    def test_canonical_iso_t(self):
+        """Every accepted spelling → ISO ``T``-separated seconds."""
+        assert iso_secs("2024-01-15 10:30:00") == "2024-01-15T10:30:00"
+        assert iso_secs("2024-01-15T10:30:00") == "2024-01-15T10:30:00"
+        assert iso_secs("15.01.2024") == "2024-01-15T00:00:00"
+        assert iso_secs("2024-01-15") == "2024-01-15T00:00:00"
+
+    def test_unparseable_and_empty(self):
+        """Unparseable → None; empties fall back via ``iso_secs(s) or s``."""
+        assert iso_secs("not a date") is None
+        assert iso_secs("") is None
+        assert (iso_secs("") or "") == ""

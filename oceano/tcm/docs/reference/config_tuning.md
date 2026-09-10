@@ -64,9 +64,16 @@ empty), so keeping it would silently filter 100% of the data out. Behavior:
 
 Open bounds (`None`/`NaT`) are never inverted and pass through unchanged.
 
-> In the GUI, ``input.time_ranges`` / ``metadata.time_range`` date cells that
-> break ascending order are red-flagged (`check: "sorted"`, same error color
-> as a non-existent `input.path`) — fix the order before Run.
+> In the GUI, ``input.time_ranges`` / ``metadata.time_range`` date cells are
+> validated live (``check: "sorted"``, same error color as a non-existent
+> ``input.path``): a cell that is **unparseable** (not ISO / dd.mm.yyyy) or
+> breaks ascending order is red-flagged — fix it before Run.  Run is gated on
+> parseable ``input.time_ranges*`` rows (`ConfigSheet.is_dates_valid`): the
+> GUI writes every date cell in canonical ISO ``T``-form
+> (``2024-01-15T10:30:00``, see `_sheet_patch.build_patch` / `iso_secs`), and
+> a row holding an unparseable cell is skipped with a warning (stored YAML
+> value kept) — a mixed space/`T` list would otherwise crash
+> `pd.to_datetime` at load.
 
 ## Config filtering
 

@@ -124,8 +124,10 @@ def bind_link_hover(widget, show: Callable[[str], None], *, clear_on_off_link: b
 class MarkdownLabel(tk.Text):
     """Read-only label-like Tk Text widget rendering a Markdown subset.
 
-    Inline ``[text](url)`` links parse to a span whose tag IS the target URL
-    (:mod:`tcm._md_parse`); this renderer styles them (``link`` tag: link
+    Inline ``[text](url)`` links parse recursively: the URL tag unions onto
+    every nested span's tags (:mod:`tcm._md_parse`), so ``[`code`](url)``
+    renders ``code`` in the code font while the whole text stays clickable.
+    This renderer styles such spans (``link`` tag: link
     color + underline), switches the cursor to ``hand2`` on hover, and
     forwards clicks to the ``on_link`` callback with the URL and the ``base``
     set via :meth:`set_text` (for relative-link resolution).

@@ -120,6 +120,10 @@ General rules:
   goes into `###`/`####` bodies. Put formulas on a methodology page and link,
   e.g. `[§Pressure computation](../methodology/pressure.md)`; the link opens
   the doc browser where MathJax typesets it.
+- Child `###`/`####` bodies stay lean: never repeat the parent `##` section's
+  shared description (e.g. one-shot trigger consumption stated once under
+  `## input.calib`) — state only what is specific to the field, and link the
+  parent section when the shared context matters.
 
 ## Structure
 

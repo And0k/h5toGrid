@@ -37,8 +37,8 @@ from typing import Any
 import tcm_gui.theme
 from tcm import _meta_pairs
 
-from ._cell_spec import any2str
-from ._i18n import STRINGS as _S
+from ._cell_spec import any2str, iso_secs
+from ._i18n import STRINGS as _S, fmt_status
 from .cli_cfg import NO_DEFAULT, default_for_path
 
 _l = logging.getLogger(__name__)
@@ -138,7 +138,9 @@ class SheetTintMixin:
             meta_tr = [str(t) for t in (md[6], md[7]) if not _meta_pairs.is_placeholder(t)]
         if len(meta_tr) < 2 or len(cur := self._sheet_time_ranges()) < 2:
             return "", meta_tr
-        s, e, ms, me = cur[0], cur[-1], meta_tr[0], meta_tr[-1]
+        # Canonical compare — cells display str(datetime) (space form), stored YAML is ISO-T;
+        # mixed spellings would compare lexicographically and misreport equal windows.
+        s, e, ms, me = (iso_secs(x) or x for x in (cur[0], cur[-1], meta_tr[0], meta_tr[-1]))
         if (s, e) == (ms, me):
             return "equal", meta_tr
         return ("broader" if s < ms or e > me else "differs"), meta_tr
@@ -153,7 +155,7 @@ class SheetTintMixin:
         if not st:
             return ""
         key = {"equal": "kept"}.get(st, st)
-        return _S.get(f"time_ranges.hover.{key}", "{s} — {e}").format(s=meta_tr[0], e=meta_tr[-1])
+        return fmt_status(_S.get(f"time_ranges.hover.{key}", "{s} — {e}"), s=meta_tr[0], e=meta_tr[-1])
 
     def apply_time_ranges_sync_status(self, status: dict | None) -> None:
         """Store the info_devices window; tint the live ``time_ranges`` row.
@@ -264,18 +266,14 @@ class SheetTintMixin:
     def _node_has_error(self, iid: Any) -> bool:
         """True when an incomplete calib trigger sits at/in *iid*'s subtree.
 
-        Trigger paths map to their group (``coordinates``/``azimuth_add`` share
-        the azimuth group); ``incomplete`` (partial/non-numeric) blocks Run.
-        Children recurse with the same rule — parents (incl. ``input``) redden
-        while anything below is incomplete.
+        Each trigger row maps to its own kind; ``incomplete``
+        (partial/non-numeric) blocks Run. Children recurse with the same
+        rule — parents (incl. ``input``) redden while anything below is
+        incomplete.
         """
         path = str(self._meta.get(iid, {}).get("path") or "")
-        kind = (
-            "g0xyz"
-            if path == "input.calib.g0xyz"
-            else ("azimuth" if path in ("input.calib.coordinates", "input.calib.azimuth_add") else None)
-        )
-        if kind is not None:
+        kind = path.rsplit(".", 1)[-1] if path.startswith("input.calib.") else None
+        if kind in ("g0xyz", "coordinates", "azimuth_add"):
             with suppress(Exception):
                 if str(self.apply_state(kind)) == "incomplete":  # type: ignore[attr-defined]
                     return True

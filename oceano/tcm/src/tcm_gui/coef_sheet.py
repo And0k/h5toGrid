@@ -44,7 +44,7 @@ from ._sheet_metadata_node import MetadataNodeMixin
 from ._sheet_popup import disable_unsafe_menus, install_menu_patch
 from ._sheet_status import SheetHoverMixin
 from ._sheet_styles import SheetStylesMixin, _path_exists
-from ._sheet_tint import _DATE_COL, _DATE_PH_COL, SheetTintMixin
+from ._sheet_tint import _DATE_COL, _DATE_FMT, _DATE_PH_COL, SheetTintMixin
 
 _l = logging.getLogger(__name__)
 
@@ -58,6 +58,7 @@ _COMMON_DATE_FOR: dict[str, str] = {"Cg": "Ag", "Ch": "Ah"}  # 1d_flat bias shar
 _DATE_COL = _DATE_COL  # meta col: 1=₁ 2=₂/date 3=₃… (tksheet col = meta_col − DATA_COL_BASE)
 _RESIZE_ZONE: Final[int] = 8  # px from cell boundary to activate resize cursor
 _RESIZE_CURSOR: Final[str] = "sb_h_double_arrow"
+_INSTANT_KINDS: Final[tuple[str, ...]] = ("g0xyz", "coordinates", "azimuth_add")  # one box per trigger row
 
 
 def _safe_select(sheet: Any, row: int, col: int) -> None:
@@ -401,6 +402,7 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
 
             # Geometry sync after redraw: row_positions may change.
             self._rebuild_row_caches()
+            self._fit_date_cols()  # first two editable cols must fit the ISO ghost
         finally:
             self._loading = False
 
@@ -508,6 +510,20 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
                 return False
             return _path_exists(s)
         return False
+
+    def is_dates_valid(self) -> bool:
+        """True when every filled date cell of non-metadata ``check: "sorted"`` rows parses.
+
+        Run gate next to :meth:`is_path_valid` — an unparseable cell must not
+        reach Run, where ``build_patch`` skips the row write (stored window
+        would silently apply).  Metadata ``time_range`` stays visual-only.
+        """
+        return all(
+            not (s := self._cell_str(iid, j)) or s.startswith("<") or as_date(s) is not None
+            for iid, m in self._meta.items()
+            if m.get("check") == "sorted" and not m.get("is_metadata")
+            for j in range(self._own_cols(m))
+        )
 
     def _current_state(self) -> tuple[dict, dict, str]:
         """Return coefs/dates/path state for YAML write-back."""
@@ -918,18 +934,19 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
         return next((iid for iid, m in self._meta.items() if m.get("path") == path), None)
 
     def get_instant_cells(self, kind: str) -> dict[str, list[str] | str]:
-        """Raw trigger strings for *kind* (``g0xyz`` | ``azimuth``)."""
+        """Raw trigger strings for *kind* (``g0xyz`` | ``coordinates`` | ``azimuth_add``)."""
         from tcm_gui._instant_calib import COORDS_N, G0XYZ_N
 
         if kind == "g0xyz":
             iid = self._calib_iid("input.calib.g0xyz")
             cells = [self._cell_str(iid, j) for j in range(G0XYZ_N)] if iid is not None else [""] * G0XYZ_N
             return {"g0xyz": cells}
-        cid = self._calib_iid("input.calib.coordinates")
+        if kind == "coordinates":
+            cid = self._calib_iid("input.calib.coordinates")
+            coords = [self._cell_str(cid, j) for j in range(COORDS_N)] if cid is not None else [""] * COORDS_N
+            return {"coordinates": coords}
         aid = self._calib_iid("input.calib.azimuth_add")
-        coords = [self._cell_str(cid, j) for j in range(COORDS_N)] if cid is not None else [""] * COORDS_N
-        add = self._cell_str(aid, 0) if aid is not None else ""
-        return {"coordinates": coords, "azimuth_add": add}
+        return {"azimuth_add": self._cell_str(aid, 0) if aid is not None else ""}
 
     def apply_pending(self, kind: str) -> bool:
         """True when trigger *kind* is complete and awaits instant apply."""
@@ -938,7 +955,9 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
         cells = self.get_instant_cells(kind)
         if kind == "g0xyz":
             return _ic.is_g0xyz_pending(cells["g0xyz"])  # type: ignore[arg-type]
-        return _ic.is_azimuth_pending(cells["coordinates"], cells["azimuth_add"])  # type: ignore[arg-type]
+        if kind == "coordinates":
+            return _ic.is_coords_pending(cells["coordinates"])  # type: ignore[arg-type]
+        return _ic.is_add_pending(cells["azimuth_add"])  # type: ignore[arg-type]
 
     def apply_state(self, kind: str) -> str:
         """Trigger state: ``empty`` (synced) | ``incomplete`` | ``ready``."""
@@ -947,24 +966,25 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
         cells = self.get_instant_cells(kind)
         if kind == "g0xyz":
             return _ic.g0xyz_state(cells["g0xyz"])  # type: ignore[arg-type]
-        return _ic.azimuth_state(cells["coordinates"], cells["azimuth_add"])  # type: ignore[arg-type]
+        if kind == "coordinates":
+            return _ic.coords_state(cells["coordinates"])  # type: ignore[arg-type]
+        return _ic.add_state(cells["azimuth_add"])  # type: ignore[arg-type]
 
     def calib_blocking(self) -> bool:
         """True when an incomplete trigger blocks Run (precedent: bad input.path)."""
-        return any(self.apply_state(k) == "incomplete" for k in ("g0xyz", "azimuth"))
+        return any(self.apply_state(k) == "incomplete" for k in _INSTANT_KINDS)
 
     def _apply_anchor(self, kind: str) -> tuple[Any, int] | None:
-        """(trigger iid, action col) hosting the checkbox for *kind*.
-
-        Azimuth anchors on the ``coordinates`` row (primary spatial input;
-        ``azimuth_add`` is an auxiliary scalar read by the same action).
-        """
+        """(trigger iid, action col) hosting the checkbox for *kind* — one box per row."""
         from tcm_gui._instant_calib import G0XYZ_N
 
         if kind == "g0xyz":
             iid = self._calib_iid("input.calib.g0xyz")
             return (iid, G0XYZ_N) if iid is not None else None
-        iid = self._calib_iid("input.calib.coordinates") or self._calib_iid("input.calib.azimuth_add")
+        if kind == "coordinates":
+            iid = self._calib_iid("input.calib.coordinates")
+        else:
+            iid = self._calib_iid("input.calib.azimuth_add")
         if iid is None:
             return None
         max_col = int(self._meta[iid].get("max_col") or 1)
@@ -1010,10 +1030,10 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
         self._apply_boxes[kind] = {"iid": iid, "col": col, "pending": pending, "state": state}
 
     def _sync_apply_boxes(self) -> None:
-        """Reconcile both boxes with current trigger cells (post-load/edit)."""
+        """Reconcile all boxes with current trigger cells (post-load/edit)."""
         if getattr(self, "_loading", False):
             return
-        for kind in ("g0xyz", "azimuth"):
+        for kind in _INSTANT_KINDS:
             anchor = self._apply_anchor(kind)
             if anchor is None:
                 self._apply_boxes.pop(kind, None)
@@ -1029,7 +1049,7 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
                 self.on_validity_change()
 
     def clear_instant_trigger(self, kind: str) -> None:
-        """Blank trigger cells for *kind* (in-memory; YAML syncs on Run)."""
+        """Blank trigger cells for *kind* only (in-memory; YAML syncs on Run)."""
         from tcm_gui._instant_calib import COORDS_N, G0XYZ_N
 
         if kind == "g0xyz":
@@ -1038,16 +1058,16 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
             ) is not None:
                 for j in range(G0XYZ_N):
                     self.sh.set_cell_data(r, j, "", redraw=False)
-        else:
+        elif kind == "coordinates":
             if (cid := self._calib_iid("input.calib.coordinates")) is not None and (
                 r := self._internal_row(cid)
             ) is not None:
                 for j in range(COORDS_N):
                     self.sh.set_cell_data(r, j, "", redraw=False)
-            if (aid := self._calib_iid("input.calib.azimuth_add")) is not None and (
-                r := self._internal_row(aid)
-            ) is not None:
-                self.sh.set_cell_data(r, 0, "", redraw=False)
+        elif (aid := self._calib_iid("input.calib.azimuth_add")) is not None and (
+            r := self._internal_row(aid)
+        ) is not None:
+            self.sh.set_cell_data(r, 0, "", redraw=False)
 
     def write_instant_rz(self, Rz: Any) -> None:
         """Write 3×3 *Rz* into coefs rows, stamp date, clear g0xyz."""
@@ -1071,8 +1091,8 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
         with suppress(Exception):
             self.sh.redraw()
 
-    def write_instant_shift(self, value: float) -> None:
-        """Write azimuth shift scalar, clear tuning triggers."""
+    def write_instant_shift(self, value: float, kind: str) -> None:
+        """Write azimuth shift scalar, clear only the applied trigger (*kind*)."""
         iid = self._calib_iid("input.coefs.azimuth_shift_deg")
         if iid is None:
             iid = next(
@@ -1083,7 +1103,7 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
             raise KeyError("azimuth_shift_deg coef row absent")
         if (r := self._internal_row(iid)) is not None:
             self.sh.set_cell_data(r, 0, f"{float(value):.6g}", redraw=False)
-        self.clear_instant_trigger("azimuth")
+        self.clear_instant_trigger(kind)
         self._sync_apply_boxes()
         with suppress(Exception):
             self.sh.redraw()
@@ -1289,6 +1309,11 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
         is_date = event.column == _DATE_COL - self.DATA_COL_BASE and m.get("has_date")
         if not is_date and event.column >= max_col:
             return None
+        # Typing over selection: tksheet's replace-on-type passes the char as key —
+        # returning it keeps the 1st keystroke (any cell-data return would swallow it;
+        # 2nd+ keys insert through the open editor natively).
+        if (k := event.key) and len(k) == 1:
+            return k
         # Clear ghost/placeholder so the user starts empty; _on_editor_closed restores via _placeholder_for.
         _ph = getattr(self, "_ph", None)
         if _ph is not None and (int_row := self._internal_row(iid)) is not None:
@@ -1657,6 +1682,21 @@ class ConfigSheet(SheetTintMixin, SheetStylesMixin, SheetHoverMixin, MetadataNod
     def _col0_widget_x(self) -> int | None:
         """Shortcut for :meth:`_col_widget_x` at data col 0."""
         return self._col_widget_x(0)
+
+    def _fit_date_cols(self) -> None:
+        """Widen the first two editable data cols so the ISO ghost never overflows.
+
+        Col 0 (path/value) and col 1 (date, ``_DATE_PH_COL``) both take
+        ``_DATE_FMT`` ghosts (date rows + ``time_ranges*``).  Width is measured
+        from the live table font via ``MT.get_txt_w`` + tksheet's own +7 cell
+        padding — never shrinks, so user drag-resizes on reload survive.
+        """
+        with suppress(AttributeError, IndexError, TypeError):
+            w = self.sh.MT.get_txt_w(_DATE_FMT) + 7
+            for c in range(_DATE_PH_COL + 1):
+                cur = int(self.sh.MT.col_positions[c + 1] - self.sh.MT.col_positions[c])
+                if cur < w:
+                    self.sh.column_width(c, width=w, redraw=False)
 
     def _stretch_last_col(self, _event=None) -> None:
         """Stretch the last column to fill the sheet's visible width.

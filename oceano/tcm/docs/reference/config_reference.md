@@ -141,9 +141,6 @@ Resolution priority (own config > `input.coefs.path` file > bundled `yaml_export
 dataclass defaults): see [§Coefficient source priority](io_formats.md#coefficient-source-priority).
 
 ### `input.coefs.azimuth_shift_deg`
-Azimuth° correction — converts tilt direction from sensor to geographic coordinates.
-See [azimuth_shift_deg](../methodology/velocity.md#azimuth-shift-psi_shift) for
-the mathematical definition and how the offset is applied at read time.
 
 #### Detailed
 The azimuth offset can also be redefined based on tilt data in a known direction during `input.calib.time_ranges_azimuth` — see [the configuration guide](../user_guide/configuration.md).
@@ -175,70 +172,23 @@ Path to the configuration file. Must contain `input.coefs` coefficients. Possibl
 
 ## `input.calib` — Process-stage calibration correction
 
-It is saved to the processing configuration and subsequently applied during the processing based on that configuration. Successful runs consume `input.calib` and timestamp the changed coefficients in `input.coefs.dates`/`date`.
+Recalibration: updates the current coefficients in `input.coef`, after which the values in `calib` are cleared.
 
+### Detailed
+Calibration adjustments can be made during the processing stage — either based on data or, if loading data is not required (for `g0xyz`, `coordinates`, `azimuth_add`), prior to that stage — via the GUI by using the toggles located
+to the right of the values.
+Applying these changes also removes the `input.calib` values ​​and the date of the modified `input.coefs` coefficients will be updated to the current date.
+### Table: Re-calibration methods
 
 | Field = Default | Description |
 |-----------------|------------------|
-| `g0xyz` = `None` | User-defined gravity reference vector. When set, overrides `Rz` with a computed rotation[↓](#inputcalibg0xyz) |
-| `time_ranges_zeroing` = `[]` | Intervals where the instrument hung level. Updates the coefficient [Rz](../methodology/velocity.md#zeroing-rotation-rz), aligning the sensor Z-axis with gravity [↓](#inputcalibtime_ranges_zeroing) |
+| `g0xyz` = `None` | Accelerometer vector `[Ax, Ay, Az]` when the device was hanging vertically. Set to compute and override `Rz`[↓](#inputcalibg0xyz) |
+| `time_ranges_zeroing` = `[]` | Intervals the instrument hangs plumb. Updates the coefficient [Rz](../methodology/velocity.md#zeroing-rotation-rz), aligning the sensor Z-axis with gravity [↓](#inputcalibtime_ranges_zeroing) |
 | `time_ranges_azimuth` = `[]` | Intervals where the instrument was tilted in a known direction. Pipeline calibrates the azimuth shift ([azimuth_shift_deg](../methodology/velocity.md#azimuth-shift-psi_shift)) from mag+accel unit vectors[↓](#inputcalibtime_ranges_azimuth) |
 | `coordinates` = `None` | Station `[Lat, Lon]` — enables magnetic declination correction (true-north velocity directions)[↓](#inputcalibcoordinates) |
-| `azimuth_add` = `0` | Manual azimuth° fine-tuning, added on top of the data-calibrated shift[↓](#inputcalibazimuth_add) |
-Field types: [`ConfigInCalib_InclProc` dataclass](../../src/tcm/schema.py).
-Applied by :func:`tcm._xr.coefs.prepare_coefs`.
+| `azimuth_add` = `0` | Add to the **azimuth offset** (calibration coefficient [azimuth_shift_deg](../methodology/velocity.md#azimuth-shift-psi_shift), °)[↓](#inputcalibazimuth_add) |
 
-
-### `input.calib.g0xyz`
-
-#### Detailed
-Raw accelerometer vector `[Ax, Ay, Az]` measured at known zero tilt. When set,
-it **overrides** any existing `Rz` — computes rotation to align sensor Z with
-gravity directly, bypassing `time_ranges_zeroing`. The computed rotation is
-written to the [Rz](../methodology/velocity.md#zeroing-rotation-rz) coefficient.
-
-### `input.calib.time_ranges_zeroing`
-Intervals where the instrument hung level — pipeline computes the `Rz` rotation
-aligning the sensor Z-axis with gravity; written back to the probe YAML.
-See [Rz](../methodology/velocity.md#zeroing-rotation-rz) for the mathematical
-definition and how `Rz` is applied to `Ag`/`Ah`.
-
-#### Detailed
-The instrument hangs plumb. The pipeline averages accelerometer data over the
-window and computes the rotation matrix `Rz`. Alternative:
-[`input.calib.g0xyz`](#inputcalibg0xyz) (raw accel vector at known zero tilt)
-overrides any data-computed `Rz`.
-
-### `input.calib.time_ranges_azimuth`
-Intervals where the instrument was tilted in a **known direction** — pipeline
-computes `azimuth_shift_deg` from calibrated mag+accel unit vectors; written
-back to the probe YAML. See
-[azimuth_shift_deg](../methodology/velocity.md#azimuth-shift-psi_shift) for how
-the offset is applied to \(\psi\) at read time.
-
-#### Detailed
-The azimuth computation uses calibrated unit vectors only (no velocity/magnitude
-calculation), so it does not depend on `kVabs` or inclination-to-magnitude
-coefficients.
-
-### `input.calib.coordinates`
-Station `[Lat, Lon]` in decimal degrees — enables magnetic declination
-correction, converting velocity directions from magnetic to true north.
-Declination is evaluated for the current date at the station location.
-
-#### Detailed
-Applied on top of the data-computed azimuth shift together with
-`input.calib.azimuth_add` — see
-[`input.coefs.azimuth_shift_deg`](#inputcoefsazimuth_shift_deg) for the layering
-order.
-
-### `input.calib.azimuth_add`
-
-#### Detailed
-Layering: `azimuth_add` (manual offset, degrees) and `coordinates` (magnetic
-declination via `pygeomag`) are applied **after** the data-computed azimuth
-shift, before velocity direction is resolved — see
-[`input.coefs.azimuth_shift_deg`](#inputcoefsazimuth_shift_deg).
+### Configuration example
 
 ```yaml
 input:
@@ -249,7 +199,42 @@ input:
     azimuth_add: 2.5              # manual fine-tune
 ```
 
+Field types: [`ConfigInCalib_InclProc` dataclass](../../src/tcm/schema.py).
+Applied by :func:`tcm._xr.coefs.prepare_coefs`.
 
+
+### `input.calib.g0xyz`
+
+#### Detailed
+Accelerometer vector `[Ax, Ay, Az]` (raw or normalized). Specify this to recalculate and replace [Rz](../methodology/velocity.md#zeroing-rotation-rz), which will substitute the coefficient (`input.coefs.Rz`). If provided, `time_ranges_zeroing` will be ignored.
+
+
+### `input.calib.time_ranges_zeroing`
+
+#### Detailed
+Specify the interval(s) when the device is vertical. The accelerometer vector averaged over these intervals (alternatively, [`input.calib.g0xyz`](#inputcalibg0xyz)) will be used to calculate the rotation matrix `Rz`, which will be used for calculations instead of
+
+### `input.calib.time_ranges_azimuth`
+Intervals where the instrument was tilted in a **known direction** — pipeline
+computes [azimuth_shift_deg](../methodology/velocity.md#azimuth-shift-psi_shift), °
+
+#### Detailed
+`time_ranges_azimuth` specifies the time intervals during which the device was **tilted in a known direction** (e.g., a known northward tilt) for **azimuth calibration**. The [azimuth shift \(\psi\)](../methodology/velocity.md#azimuth-shift-psi_shift) is calculated based on the average tilt direction during these intervals (using the existing `azimuth_shift_deg` value). Then, by adding `azimuth_add` (manual offset) and magnetic declination (derived from `calib.coordinates`, if specified), the `azimuth_shift_deg` coefficient is updated [Azimuth calibration](config_tuning.md#azimuth-calibration). Subsequently, all data within the specified `input.time_ranges` intervals are processed using the new `azimuth_shift_deg` coefficient.
+
+### `input.calib.coordinates`
+Station `[Lat, Lon]` in decimal degrees — enables magnetic declination
+correction, converting velocity directions from magnetic to true north.
+Declination is evaluated for the current date at the station location.
+
+#### Detailed
+Magnetic declination° is calculated for the station location at the current date
+(via [pygeomag](https://pygeomag.readthedocs.io/en/latest/)). Will be added (along with `input.calib.azimuth_add`) to the [`input.coefs.azimuth_shift_deg`](#inputcoefsazimuth_shift_deg) (and updates the current configuration) before data processing.
+
+
+### `input.calib.azimuth_add`
+
+#### Detailed
+`azimuth_add` — manual offset°, is added to the **azimuth offset** (calibration coefficient [azimuth_shift_deg](../methodology/velocity.md#azimuth-shift-psi_shift) (along with `input.calib.coordinates` — see order in [`input.coefs.azimuth_shift_deg`](#inputcoefsazimuth_shift_deg)).
 
 
 ## `out` — Output configuration
@@ -384,7 +369,7 @@ raw data directory — the journal accompanying the data.
 
 > In the GUI the rows are paired: `point, symbol | sea depth, h_above | lat, lon | time_range | burst_dt/t | comment`. You can specify your own save path, not the one from which metadata is loaded when searching for data. `time_range` ↔ `input.time_ranges[[0,-1]]` are bidirectionally synced where unset, on scan.
 >
-> **Several deployment intervals** (nested `info_devices.yaml` entry — *Multiple intervals* in the [meta_finder I/O formats](../../../meta_finder/docs/reference/io_formats.md)) render the paired rows under autonumbered **`setup`** sublevels (`0`, `1`, …), each labelled by its station key; a single interval stays flat (no `setup` level is shown). The sheet's *Insert rows above/below* (`right-click`) splits an interval into a copy pinned to the shared boundary — **above** sets the copy's `time_range[1] = time_range[0]`, **below** sets `time_range[0] = time_range[1]` — and numbers the new `setup` with the next free integer (`1` when splitting a flat single interval; existing flat rows first move into node `0`). On a `metadata`/`setup` target the entries read *Insert setup N above/below* (`N` = the number the copy will take; localized via `sheet.insert_setup_above/below` in `str.yaml / str_ru.yaml`); sorting entries are removed from the sheet menus. Each split is a single native *Undo* step (no second undo system — other edits undo through tksheet as before). Paired rows are fixed (insert denied there and on top-level nodes — no insertion ever creates a top-level node); *Delete* applies only to self-added rows/columns (`Add row` parents a child under the selection, `Add column` appends at the end); a read-only sheet disables the whole context menu.
+> **Several deployment intervals** (nested `info_devices.yaml` entry — *Multiple intervals* in the [meta_finder I/O formats](../../../meta_finder/docs/reference/io_formats.md)) render the paired rows under autonumbered **`setup`** sublevels (`0`, `1`, …), each labelled by its station key; a single interval stays flat (no `setup` level is shown).
 
 
 

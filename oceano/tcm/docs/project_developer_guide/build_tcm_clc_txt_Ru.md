@@ -29,7 +29,7 @@
 | Feature | Ключевые пакеты | Назначение |
 |---------|----------------|------------|
 | `noh5` | `libblas`/`libcblas`/`liblapack` (build=`*openblas*`), `pyinstaller`, `pyinstaller-hooks-contrib` | BLAS без MKL, инструмент сборки |
-| `tcm` | `python>=3.11`, `dask-core>=2024.4`, `xarray>=2026.7`, `absioras-tcm` (editable), `pygeomag>=1.1.0` | Вычислительное ядро |
+| `tcm` | `python>=3.11`, `dask-core>=2024.4`, `xarray>=2026.7`, `absioras-tcm` (editable), `[pygeomag](https://pygeomag.readthedocs.io/en/latest/)>=1.1.0` | Вычислительное ядро |
 
 Ключевые пакеты окружения:
 
@@ -42,7 +42,7 @@
 | `dask-core`        | Параллельные вычисления (только ядро, без `dask.dataframe`) |
 | `hydra-core`       | Конфигурация CLI                     |
 | `hydra-colorlog`   | Цветной лог                          |
-| `pygeomag`         | Геомагнитные модели (IGRF)           |
+| [pygeomag](https://pygeomag.readthedocs.io/en/latest/)         | Геомагнитные модели (IGRF)           |
 | `libblas`/`libcblas`/`liblapack` | OpenBLAS-вариа                      |
 | `numba`            | JIT-оптимизации                      |
 
@@ -144,7 +144,7 @@ pixi run -e noh5-tcm build-tcm-clc-txt --build-root B:\Temp
       `potential_functionality_and_improvement.md`)
     - Конфиги Hydra: `collect_data_files("hydra", subdir="conf")` +
       `collect_data_files("hydra_plugins.hydra_colorlog")`
-    - Данные `pygeomag` (через `collect_data_files`)
+    - Данные [pygeomag](https://pygeomag.readthedocs.io/en/latest/) (через `collect_data_files`)
     - `__init__.py` в `hydra/conf/` и `hydra_plugins/hydra_colorlog/conf/`
       для корректной работы `importlib.resources`
     - METADATA пакетов `pandas` и `numpy`
@@ -275,7 +275,7 @@ cs.store(
 | ------------ | ----------------------------------------- | ----------------------------- |
 | `noh5`       | OpenBLAS, `pyinstaller`                   | BLAS без MKL, инструмент сборки |
 | `bin-optim`  | `h5py`, `scipy`, `matplotlib`, `numba`, `xarray`, `netcdf4` | Полный вычислительный стек    |
-| `tcm`        | `dask-core`, `absioras-tcm`, `pygeomag`   | Ядро обработки TCM            |
+| `tcm`        | `dask-core`, `absioras-tcm`, [pygeomag](https://pygeomag.readthedocs.io/en/latest/)   | Ядро обработки TCM            |
 | `test`       | `pytest`, `pytest-mock`                   | Тестирование                  |
 | `browser`    | `nodejs >=20`                             | Генерация runtime браузера документации |
 

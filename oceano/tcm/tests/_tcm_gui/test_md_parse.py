@@ -124,6 +124,20 @@ class TestParseInline:
         result = parse_inline("[](https://example.com)")
         assert result == (), f"empty link text dropped: {result!r}"
 
+    def test_link_text_with_code(self):
+        """Backticks inside link text nest under the link — code font + clickable."""
+        result = parse_inline("[`io.md`](io.md#anchor)")
+        assert result == (_s("io.md", "code", "io.md#anchor"),), f"code in link: {result!r}"
+
+    def test_link_mixed_text_and_code(self):
+        """Plain and code parts of one link text share the link URL tag."""
+        result = parse_inline("[see `io.md` now](url)")
+        assert result == (
+            _s("see ", "url"),
+            _s("io.md", "code", "url"),
+            _s(" now", "url"),
+        ), f"mixed link: {result!r}"
+
     def test_escape_sequence(self):
         result = parse_inline(r"\*not italic\*")
         assert result == (_s("*not italic*"),), f"escape: {result!r}"
@@ -470,6 +484,19 @@ class TestMarkdownLabelRendering:
         start, end, url = lbl._links[0]
         assert url == "io_formats.md#directory-layout", f"recorded url: {url!r}"
         assert lbl.get(start, end) == "click here", f"range text: {lbl.get(start, end)!r}"
+
+    def test_link_with_code_text_tags(self):
+        """Backticks inside link text apply the code font AND stay clickable."""
+        lbl = self._make_label()
+        lbl.set_text("[see `io.md` now](io.md#anchor)")
+        content = lbl.get("1.0", "end-1c")
+        assert content == "see io.md now", f"backticks must not render: {content!r}"
+        pos = content.index("io.md")
+        names = lbl.tag_names(f"1.{pos}")
+        assert "code" in names, f"code font tag missing: {names!r}"
+        assert "link" in names, f"link tag missing on code part: {names!r}"
+        assert "link" in lbl.tag_names("1.0"), f"link tag missing on plain part: {lbl.tag_names('1.0')!r}"
+        assert lbl.link_url_at(f"1.{pos}") == "io.md#anchor", "code part not clickable"
 
     def test_link_at_returns_url(self):
         """``link_at`` resolves the URL under widget coordinates."""
