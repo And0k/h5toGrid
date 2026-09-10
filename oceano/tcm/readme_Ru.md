@@ -31,6 +31,7 @@
 
 - [Getting Started](docs/user_guide/getting_started.md)
 - [GUI Guide](docs/user_guide/gui.md)
+- [Пошаговый пример работы в программе `tcm_gui`](docs/user_guide/tcm_gui_walkthrough_Ru.md)
 - [CLI Guide](docs/user_guide/cli.md)
 - [Input / Output Guide](docs/user_guide/input_output.md)
 - [Configuration Guide](docs/user_guide/configuration.md)

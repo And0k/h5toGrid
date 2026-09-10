@@ -154,7 +154,7 @@ python scripts/tcm_proc.py "_raw/*i*.txt"
 
 # Override any config field
 python scripts/tcm_proc.py "_raw/*i*.txt" 'input.ids=[i01,i_p02]'
-python scripts/tcm_proc.py "_raw/*i*.txt" out.text_path=./results filter.corr_time_mode=false
+python scripts/tcm_proc.py "_raw/*i*.txt" out.text_path=./results input.corr_time_mode=false
 
 # Filter by data file (non-directory input.path → matches YAML's input.path)
 python scripts/tcm_proc.py "_raw/@i01.TXT"
@@ -853,7 +853,7 @@ The correction pipeline (`_correct_time`):
 5. `_find_hole_edges` — segment boundaries on clean subset
 6. `_snap_to_grid` — `g(k) = origin + k·dt_step` per segment
 
-Three modes are available via `filter.corr_time_mode` — see `config_tuning.md`
+Three modes are available via `input.corr_time_mode` — see `config_tuning.md`
 (§Time correction modes) for the mode decision table and config fields.
 
 **Diagnostics bitmask** — `save_time_corr_diagnostics()` and

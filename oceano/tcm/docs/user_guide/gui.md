@@ -17,7 +17,10 @@ python -m tcm_gui "D:/data/_raw"
 tcm_gui.exe "D:/data/_raw/@i_p1.TXT" "input.ids=[i90, i67]"
 ```
 
-The GUI requires the full distribution (h5py, scipy, matplotlib, numba).
+The GUI runs in both distribution variants. In the noh5 (text-only) build it
+works identically — template hints and tooltips describing HDF5/NetCDF fields
+are filtered out, and no NC/HDF5 output is produced
+(see [Getting Started — Distribution types](getting_started.md)).
 
 ## Workflow
 
@@ -71,13 +74,14 @@ On a `metadata`/`setup` target the entries read *Insert setup N above/below* (`N
 Click a cell to edit. Date fields are validated (`YYYY-MM-DD` format).
 Numeric fields reject non-numeric input.
 
-**Date validation**: date cells of `input.time_ranges`, `metadata.time_range`
-and `input.calib.time_ranges_*` turn **red** when the value cannot be parsed
+**Date validation**: date cells of `input.time_ranges` and
+`input.calib.time_ranges_*` turn **red** when the value cannot be parsed
 (ISO `2024-01-15T10:30:00` / `2024-01-15 10:30:00` or `15.01.2024` are
 accepted) or breaks the ascending order of the sequence.  Run stays disabled
 until `input.time_ranges` cells parse again, and Run writes every date cell in
 the canonical ISO `T`-form regardless of the spelling you typed; a row with a
-red (unparseable) cell keeps its stored YAML value instead — see
+red (unparsable) cell keeps its stored YAML value instead. `metadata.time_range`
+is journal-only and never gates Run — see
 [Config Tuning §Inverted time_ranges](../reference/config_tuning.md#inverted-time_ranges).
 
 
@@ -125,12 +129,16 @@ overrides them (e.g. `out.dt_bins=[0,600]`; see the [CLI guide](cli.md)).
 Click **Run**. The tool:
 1. Saves edited coefficients to YAML files (timestamped backup created)
 2. Processes all configs with edited YAMLs
-3. Shows progress in the upper bar (per-config stages) and lower bar (dask tasks)
+3. Shows progress live: the **left rail** attaches a vertical progress fill to
+   each tab (config-level stage weights → overall fraction), and the **status
+   row** shows the current stage bar + description
 
 ### 4. Monitor
 
-- **Upper bar**: config-level progress — load → coefs → process → NC write → TSV write
-- **Lower bar**: stage-level dask task progress
+- **Left rail (progress column)**: per-config fill, aligned with each tab —
+  stages load → coefs → process → NC write → TSV write
+- **Status row**: current stage progress (bar + description) — the same stage
+  the pipeline is on (load / coefs / process / save…)
 - **Log panel**: all pipeline log messages with color-coded severity. File
   paths in log lines render as links — files show their file name, directories
   the full path; hovering a link shows the full path in the status bar, and
@@ -145,7 +153,7 @@ Click **Run**. The tool:
 ### 5. Pause / Resume
 
 Click **Run** again while processing to **Pause**. Click again to **Resume**.
-Pause freezes both logging and dask task progress at the next checkpoint.
+Pause freezes both logging and progress updates at the next checkpoint.
 
 ## Browse modes
 

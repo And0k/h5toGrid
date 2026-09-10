@@ -22,6 +22,7 @@ from tcm._md_parse import (
     Table,
     parse_inline,
     parse_markdown,
+    plain_text,
     split_table_row,
 )
 
@@ -200,6 +201,27 @@ class TestParseInline:
         a = parse_inline("hello **world**")
         b = parse_inline("hello **world**")
         assert a is b, "parse_inline should be cached (lru_cache)"
+
+
+class TestPlainText:
+    """Inline Markdown → single-font display text (About treeview titles)."""
+
+    @pytest.mark.parametrize(
+        ("src", "expected"),
+        [
+            (
+                "Pressure computation from the `P_t` polynomial",
+                "Pressure computation from the P_t polynomial",
+            ),
+            ("Algorithm `a` and **b**", "Algorithm a and b"),
+            ("[see `io.md` now](url)", "see io.md now"),
+            ("{#error}err{/}", "err"),
+            (r"\*literal\*", "*literal*"),
+            ("plain", "plain"),
+        ],
+    )
+    def test_strips_markup(self, src: str, expected: str) -> None:
+        assert plain_text(src) == expected, f"plain_text({src!r}): expected {expected!r}"
 
 
 class TestNestedFormatting:

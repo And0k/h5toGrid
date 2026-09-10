@@ -11,11 +11,12 @@ internals are in [CLI Internals](../project_developer_guide/CLI.md).
 | Value | Stops after | Output produced |
 |-------|-------------|-----------------|
 | `'<end>'` (default) | Full processing | All NC + TSV |
+| `'<gen_names_and_log>'` | Config generation | YAML files written |
+| `'<saved_coefs>'` | Coef persistence only | Zeroing/azimuth → save coefs, stop before processing |
 | `'<saved_raw>'` | Coef persistence + raw NC save | `*.raw.nc` with coefs + log |
 | `'<saved_noavg>'` | noAvg NC write | `*.proc_noAvg.nc` with per-probe groups |
-| `'<saved_all>'` | All NC writes | `*.proc_noAvg.nc` + `*.proc.nc` (no combined output) |
+| `'<saved_all>'` | All binned NC writes | Per-probe groups written; combined output skipped |
 | `'<cfg_from_args>'` | Config composition | Config dict returned |
-| `'<gen_names_and_log>'` | Config generation | YAML files written |
 
 **Typical use**: debug partial output without waiting for full processing.
 For example, `program.return_='<saved_raw>'` to verify raw data ingestion.
@@ -64,8 +65,8 @@ empty), so keeping it would silently filter 100% of the data out. Behavior:
 
 Open bounds (`None`/`NaT`) are never inverted and pass through unchanged.
 
-> In the GUI, ``input.time_ranges`` / ``metadata.time_range`` date cells are
-> validated live (``check: "sorted"``, same error color as a non-existent
+> In the GUI, ``input.time_ranges`` / ``input.calib.time_ranges_*`` date cells
+> are validated live (``check: "sorted"``, same error color as a non-existent
 > ``input.path``): a cell that is **unparseable** (not ISO / dd.mm.yyyy) or
 > breaks ascending order is red-flagged — fix it before Run.  Run is gated on
 > parseable ``input.time_ranges*`` rows (`ConfigSheet.is_dates_valid`): the

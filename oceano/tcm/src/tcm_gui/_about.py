@@ -12,7 +12,9 @@ meta values (description, company) are i18n via :data:`STRINGS`
 (:func:`_lang_filter`).
 
 Doc titles are extracted from the first ``# `` heading of each file and
-listed in a directory-nested ``ttk.Treeview`` (only the first level expanded;
+stripped of inline Markdown (:func:`tcm._md_parse.plain_text`) — ``ttk.Treeview``
+rows are single-font, so backticks in a heading must not display literally —
+then listed in a directory-nested ``ttk.Treeview`` (only the first level expanded;
 a folder holding ``_index.md`` links its parent row to that file with no
 separate ``_index.md`` leaf); clicking a title opens the document in the OS
 browser via :func:`~tcm_gui.browser.open_md_link` — a localhost server serves
@@ -33,8 +35,10 @@ from collections.abc import Callable
 from pathlib import Path
 from tkinter import font as tkfont
 from tkinter import ttk
+from urllib.parse import quote
 
 from tcm._constants import DOC_DIR, H5_AVAILABLE, version_meta
+from tcm._md_parse import plain_text
 
 from . import theme
 from ._i18n import STRINGS as _S, fmt_status
@@ -48,6 +52,20 @@ from .theme import _opt_into_dark_titlebar, mix_hex
 _l = logging.getLogger(__name__)
 
 _RE_HEADING = re.compile(r"^#\s+(.+?)\s*$")
+
+# ``<email>`` in a metadata value → clickable mailto link (brackets dropped,
+# the display name preserved as the RFC 5322 mailbox in the encoded target).
+_EMAIL_LINK = re.compile(r"(?P<name>[^<>\n]+?)\s*<(?P<email>[^<>\s]+@[^<>\s]+)>")
+
+
+def _mailto_link(m: re.Match[str]) -> str:
+    """Link text = ``<email>``; target = percent-encoded RFC 5322 mailbox
+    ``Display Name <email>`` so the mail client shows the name, not the bare
+    address.  The visible prefix (e.g. ``© Andrey Korzh``) stays outside."""
+    name, email = m.group("name").strip(), m.group("email")
+    addr = quote(f"{name.removeprefix('©').strip()} <{email}>", safe="")
+    return f"{name} [{email}](mailto:{addr})"
+
 
 # Language suffix on doc stems: ``config_reference_ru`` → ("config_reference", "ru").
 _RE_LANG_SUFFIX = re.compile(r"_(?P<lang>[a-z]{2})$", re.IGNORECASE)
@@ -78,7 +96,8 @@ _ICON_PX, _INDENT_PX = 24, 24
 def discover_docs(root: Path | None = None, lang: str | None = None) -> list[tuple[str, str, Path]]:
     """Walk ``docs/`` for ``*.md`` files; return ``(folder, title, path)`` sorted by path.
 
-    Title = first ``# `` heading; fallback = filename stem.
+    Title = first ``# `` heading, inline Markdown stripped via
+    :func:`plain_text` (single-font treeview rows); fallback = filename stem.
     Folder = parent dir name relative to docs root (``""`` for top-level files).
     Excludes ``todo/`` and other internal dirs, then filters by *lang*
     (default: :func:`resolve_lang`) — see :func:`_lang_filter`.
@@ -94,7 +113,7 @@ def discover_docs(root: Path | None = None, lang: str | None = None) -> list[tup
         rel = md.relative_to(docs_root)
         if any(part in _EXCLUDE_DIRS for part in rel.parts[:-1]):
             continue
-        title = _extract_title(md) or md.stem
+        title = plain_text(_extract_title(md) or md.stem)
         results.append((rel.parts[0] if len(rel.parts) > 1 else "", title, md))
     return _lang_filter(results, lang or resolve_lang())
 
@@ -458,12 +477,13 @@ class AboutDialog(tk.Toplevel):
 
         items = []  # metadata list — full width below the logo row
         items += [f"**{_S['about.version']}:** `{version}`"]
-        if meta.get("product_name"):
-            items.append(f"**{_S['about.product']}:** {meta['product_name']}")
         if company := _S.get("about.meta.company") or meta.get("company_name"):
             items.append(f"**{_S['about.company']}:** {company}")
         if cp := meta.get("legal_copyright"):
-            # © sign is self-labeling → bare value, no "Copyright:" prefix
+            # © sign is self-labeling → bare value, no "Copyright:" prefix; the
+            # ``<email>`` wrapper becomes a clickable mailto link (brackets off,
+            # display name carried in the recipient — see _mailto_link).
+            cp = _EMAIL_LINK.sub(_mailto_link, cp)
             items.append(cp if "©" in cp else f"**{_S['about.copyright']}:** {cp}")
         if repo := meta.get("repo_url"):
             items.append(f"**{_S['about.repository']}:** [{repo}]({repo})")

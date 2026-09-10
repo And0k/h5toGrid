@@ -94,7 +94,9 @@ Pairwise list `[start, end]`: (`[n1, k1, n2, k2, ...]`) of disjoint intervals in
 - The interval end is processed inclusively. If the end of the pair is not specified, everything up to the end is taken.
 
 - When working with NetCDF, when there is already data (re-run), only new data will be appended:
-Old data will only be overwritten if you changed the coefficients or parameters and explicitly indicated the need for overwriting using `out.overwrite_db`; otherwise, the program will stop. [Re-run behavior](config_tuning.md#re-run-behavior).
+a changed processing parameter inside an already-written window raises unless you
+explicitly reprocess with `out.overwrite_db=splice`; extending the window appends
+with a warning. [Re-run behavior](config_tuning.md#re-run-behavior).
 
 ### `input.min` {#input-min-max}
 Hard lower bound on raw sensor values — load-stage **DROP**: entire rows outside
@@ -172,12 +174,24 @@ Path to the configuration file. Must contain `input.coefs` coefficients. Possibl
 
 ## `input.calib` — Process-stage calibration correction
 
-Recalibration: updates the current coefficients in `input.coef`, after which the values in `calib` are cleared.
-
+Recalibration: updates the current coefficients in `input.coefs`, after which
+the values in `calib` are cleared.
 ### Detailed
-Calibration adjustments can be made during the processing stage — either based on data or, if loading data is not required (for `g0xyz`, `coordinates`, `azimuth_add`), prior to that stage — via the GUI by using the toggles located
-to the right of the values.
-Applying these changes also removes the `input.calib` values ​​and the date of the modified `input.coefs` coefficients will be updated to the current date.
+Calibration adjustments can be made during the processing stage — either
+based on data or, if loading data is not required (for `g0xyz`,
+`coordinates`, `azimuth_add`), before that stage — via the GUI by using the
+toggles located to the right of the values.
+Applying these changes also removes the `input.calib` values and updates the
+dates of the modified `input.coefs` coefficients to the current date.
+
+
+> The `input.calib` block is a one-shot
+> trigger: it is consumed only when the changed coefficients are successfully
+> persisted (to the NC source, `raw_db_path`, or the run YAML). Failed runs keep
+> the trigger for retry; Where the updated coefficients are written depends on the input source
+> and h5py availability — see the [persistence matrix](../user_guide/configuration.md#coefficient-persistence).
+
+
 ### Table: Re-calibration methods
 
 | Field = Default | Description |
@@ -212,14 +226,14 @@ Accelerometer vector `[Ax, Ay, Az]` (raw or normalized). Specify this to recalcu
 ### `input.calib.time_ranges_zeroing`
 
 #### Detailed
-Specify the interval(s) when the device is vertical. The accelerometer vector averaged over these intervals (alternatively, [`input.calib.g0xyz`](#inputcalibg0xyz)) will be used to calculate the rotation matrix `Rz`, which will be used for calculations instead of
+Specify the interval(s) when the device is vertical. The accelerometer vector averaged over these intervals (alternatively, [`input.calib.g0xyz`](#inputcalibg0xyz)) will be used to calculate the rotation matrix `Rz`, which will be used for calculations instead of current one
 
 ### `input.calib.time_ranges_azimuth`
 Intervals where the instrument was tilted in a **known direction** — pipeline
 computes [azimuth_shift_deg](../methodology/velocity.md#azimuth-shift-psi_shift), °
 
 #### Detailed
-`time_ranges_azimuth` specifies the time intervals during which the device was **tilted in a known direction** (e.g., a known northward tilt) for **azimuth calibration**. The [azimuth shift \(\psi\)](../methodology/velocity.md#azimuth-shift-psi_shift) is calculated based on the average tilt direction during these intervals (using the existing `azimuth_shift_deg` value). Then, by adding `azimuth_add` (manual offset) and magnetic declination (derived from `calib.coordinates`, if specified), the `azimuth_shift_deg` coefficient is updated [Azimuth calibration](config_tuning.md#azimuth-calibration). Subsequently, all data within the specified `input.time_ranges` intervals are processed using the new `azimuth_shift_deg` coefficient.
+`time_ranges_azimuth` specifies the time intervals during which the device was **tilted in a known direction** (e.g., a known northward tilt) for **azimuth calibration**. The [azimuth shift \(\psi\)](../methodology/velocity.md#azimuth-shift-psi_shift) is calculated based on the average tilt direction during these intervals (using the existing `azimuth_shift_deg` value). Then, by adding `azimuth_add` (manual offset) and magnetic declination (derived from `calib.coordinates`, if specified), the `azimuth_shift_deg` coefficient is updated ([Updating coefficients via zeroing](../user_guide/configuration.md#updating-coefficients-via-zeroing)). Subsequently, all data within the specified `input.time_ranges` intervals are processed using the new `azimuth_shift_deg` coefficient.
 
 ### `input.calib.coordinates`
 Station `[Lat, Lon]` in decimal degrees — enables magnetic declination

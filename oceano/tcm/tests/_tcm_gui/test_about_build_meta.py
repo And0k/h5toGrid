@@ -29,7 +29,7 @@ class TestVersionMeta:
                 original_filename="tcm\\scripts\\tcm_gui.py",
                 company_name="AB SIO RAS",
                 legal_copyright="© Test",
-                product_name="TCM calculations",
+                product_name="TCM",
                 suffixes=["test-env"],
                 project_root=tmp_path,
                 out_dir=tmp_path,
@@ -42,7 +42,7 @@ class TestVersionMeta:
             assert meta["description"] == "Test description"
             assert meta["company_name"] == "AB SIO RAS"
             assert meta["legal_copyright"] == "© Test"
-            assert meta["product_name"] == "TCM calculations"
+            assert meta["product_name"] == "TCM"
             assert meta["internal_name"] == "tcm_gui.exe"
 
             # JSON was written to out_dir (never the real scripts/build dir)
@@ -227,6 +227,41 @@ class TestDocDiscovery:
 
             docs = discover_docs(tmp_path, lang="en")
             assert [(folder, title) for folder, title, _ in docs] == [("python_developer_guide", "CLI Docs")]
+        finally:
+            sys.path.pop(0)
+
+    def test_discover_docs_strips_markdown_titles(self, tmp_path: Path) -> None:
+        """Backticks in doc headings don't leak into the single-font treeview."""
+        md = tmp_path / "pressure.md"
+        md.write_text("# Pressure computation from the `P_t` polynomial\n\nBody.", encoding="utf-8")
+
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        try:
+            from tcm_gui._about import discover_docs
+
+            docs = discover_docs(tmp_path, lang="en")
+            assert docs and docs[0][1] == "Pressure computation from the P_t polynomial"
+        finally:
+            sys.path.pop(0)
+
+    def test_copyright_email_becomes_mailto(self) -> None:
+        """``<email>`` in legal_copyright → mailto carrying the display name."""
+        import sys
+        from urllib.parse import unquote
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        try:
+            from tcm_gui._about import _EMAIL_LINK, _mailto_link
+
+            cp = _EMAIL_LINK.sub(_mailto_link, "© Andrey Korzh <ao.korzh@gmail.com>")
+            assert cp == (
+                "© Andrey Korzh [ao.korzh@gmail.com](mailto:Andrey%20Korzh%20%3Cao.korzh%40gmail.com%3E)"
+            )
+            # Mail client receives the RFC 5322 mailbox — decoding restores the name.
+            target = cp.rsplit("](mailto:", 1)[1].rstrip(")")
+            assert unquote(target) == "Andrey Korzh <ao.korzh@gmail.com>"
         finally:
             sys.path.pop(0)
 
