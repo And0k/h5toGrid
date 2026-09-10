@@ -17,7 +17,10 @@ python -m tcm_gui "D:/data/_raw"
 tcm_gui.exe "D:/data/_raw/@i_p1.TXT" "input.ids=[i90, i67]"
 ```
 
-The GUI requires the full distribution (h5py, scipy, matplotlib, numba).
+The GUI runs in both distribution variants. In the noh5 (text-only) build it
+works identically — template hints and tooltips describing HDF5/NetCDF fields
+are filtered out, and no NC/HDF5 output is produced
+(see [Getting Started — Distribution types](getting_started.md)).
 
 ## Workflow
 
@@ -36,6 +39,14 @@ probe sorted alphabetically by file name; probe groups in scan order) — Run
 processes configs in exactly the same top-to-bottom order.  The first (top)
 tab is selected after every scan, and the shown tree always corresponds to
 the selected tab.
+
+Right-click a tab for its context menu: **Remove** drops the tab instantly
+(session-only — the YAML stays on disk and reappears on the next Scan);
+**Disable** keeps the tab visible but dimmed (✕) and skips it on Run
+(reopen the menu for **Enable**). Removed and disabled configs are never
+saved nor processed on Run — Run covers only the enabled tabs, and the Run
+button goes disabled when no enabled tab is left. The menu is unavailable
+while processing is running; a fresh Scan clears all disables.
 
 If the search fails (the path cannot be resolved), the top search field turns
 **red**; a new search or a successful scan restores the normal color.
@@ -58,7 +69,8 @@ rescans that single `_raw`. Folder rules, exclusions, and burst/time sourcing:
 Each tab shows a treeview with the config's parameters:
 - **`metadata`** — device deployment file path (`info_devices.yaml` parent of `_raw`) — always editable with browse; children are `point, symbol | sea depth, h_above | lat, lon | time_range | burst_dt/t | comment` per probe deployment, with gray example hints (`P3`, `7.5`, `↟`, `60`, `600`, `2026-07-11T12:20:12`, `deployment note`) that vanish on edit; `metadata*` (asterisk) marks unsaved edits to the device file — see [Config Reference](../reference/config_reference.md#metadata--device-deployment-metadata-per-probe-infodevicesyaml)
 - **`input.path`** — data file path
-- **`input.coefs.path`** — calibration coefficients source file (HDF5 or YAML) — row `path` under `input.coefs` (hidden when `coefs` collapsed)
+- **`input.coefs`** — calibration coefficients (Ag, Cg, Ah, Ch, Rz, kVabs, P, etc.);
+  coef source `input.coefs.path` shown inline in the `coefs` row
 - **`input.time_ranges`** — time window for this deployment
 - **`input.coefs`** — calibration coefficients (Ag, Cg, Ah, Ch, Rz, kVabs, P, etc.)
 
@@ -71,13 +83,14 @@ On a `metadata`/`setup` target the entries read *Insert setup N above/below* (`N
 Click a cell to edit. Date fields are validated (`YYYY-MM-DD` format).
 Numeric fields reject non-numeric input.
 
-**Date validation**: date cells of `input.time_ranges`, `metadata.time_range`
-and `input.calib.time_ranges_*` turn **red** when the value cannot be parsed
+**Date validation**: date cells of `input.time_ranges` and
+`input.calib.time_ranges_*` turn **red** when the value cannot be parsed
 (ISO `2024-01-15T10:30:00` / `2024-01-15 10:30:00` or `15.01.2024` are
 accepted) or breaks the ascending order of the sequence.  Run stays disabled
 until `input.time_ranges` cells parse again, and Run writes every date cell in
 the canonical ISO `T`-form regardless of the spelling you typed; a row with a
-red (unparseable) cell keeps its stored YAML value instead — see
+red (unparsable) cell keeps its stored YAML value instead. `metadata.time_range`
+is journal-only and never gates Run — see
 [Config Tuning §Inverted time_ranges](../reference/config_tuning.md#inverted-time_ranges).
 
 
@@ -123,14 +136,23 @@ overrides them (e.g. `out.dt_bins=[0,600]`; see the [CLI guide](cli.md)).
 ### 3. Run — process data
 
 Click **Run**. The tool:
-1. Saves edited coefficients to YAML files (timestamped backup created)
-2. Processes all configs with edited YAMLs
-3. Shows progress in the upper bar (per-config stages) and lower bar (dask tasks)
+1. Saves edited coefficients of the **enabled tabs only** to YAML files (timestamped backup created)
+2. Processes the enabled configs with edited YAMLs (removed and [disabled](#1-scan--discover-configs) configs are skipped)
+3. Shows progress live: the **left rail** attaches a vertical progress fill to
+   each tab (config-level stage weights → overall fraction), and the **status
+   row** shows the current stage bar + description
+
+The Run button is disabled while no enabled tab is left (all removed or
+disabled) and during an unsuccessful scan; it also stays action-gated on
+invalid `input.path`/dates or blocking calibration — same checks as the
+processed set.
 
 ### 4. Monitor
 
-- **Upper bar**: config-level progress — load → coefs → process → NC write → TSV write
-- **Lower bar**: stage-level dask task progress
+- **Left rail (progress column)**: per-config fill, aligned with each tab —
+  stages load → coefs → process → NC write → TSV write
+- **Status row**: current stage progress (bar + description) — the same stage
+  the pipeline is on (load / coefs / process / save…)
 - **Log panel**: all pipeline log messages with color-coded severity. File
   paths in log lines render as links — files show their file name, directories
   the full path; hovering a link shows the full path in the status bar, and
@@ -145,7 +167,7 @@ Click **Run**. The tool:
 ### 5. Pause / Resume
 
 Click **Run** again while processing to **Pause**. Click again to **Resume**.
-Pause freezes both logging and dask task progress at the next checkpoint.
+Pause freezes both logging and progress updates at the next checkpoint.
 
 ## Browse modes
 
@@ -156,8 +178,9 @@ Pause freezes both logging and dask task progress at the next checkpoint.
 
 ## Coefficient reload
 
-Edit the **`path`** row under `input.coefs` to load coefficients from a
-different file (HDF5 or YAML) — hidden when the `coefs` section is collapsed. Press Enter or click Browse to reload.
+Edit the **`path`** row under `input.coefs` (coef source `input.coefs.path`,
+shown inline in the `coefs` row) to load coefficients from a different file
+(HDF5 or YAML). Press Enter or click Browse to reload.
 You can also leave `path` empty or pointing to a missing file and type
 coefficients manually in the `input.coefs` section — the Run button stays
 available (only `input.path` gates it).

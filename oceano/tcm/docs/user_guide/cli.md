@@ -13,7 +13,7 @@ tcm_proc.exe "D:/data/_raw"
 tcm_proc.exe "_raw/*i*.txt" 'input.ids=[i01,i_p02]'
 
 # Override any config field
-tcm_proc.exe "_raw/*i*.txt" filter.corr_time_mode=false out.text_path=./results
+tcm_proc.exe "_raw/*i*.txt" input.corr_time_mode=false out.text_path=./results
 ```
 
 The first positional argument is a **path to scan**: directory, glob, or regex.
@@ -33,30 +33,18 @@ tcm_proc.exe "_raw/i*.txt"
 
 ## Phased processing (`return_`)
 
-The `program.return_` field controls how far the pipeline runs before stopping:
-
-| `return_` value | Stops after | Typical use |
-|:---|---|---|
-| `<cfg_from_args>` | Config composition (no I/O) | Scan input, generate missing configs, stop |
-| `<gen_names_and_log>` | Config generation | Write YAML files, stop |
-| `<saved_coefs>` | Coef persistence only | Zeroing/azimuth → save coefs, stop before processing |
-| `<saved_raw>` | Coef persistence + raw NC save | Verify raw ingestion, or zeroing-only |
-| `<saved_noavg>` | No-avg processed output | Diagnostic without full binning |
-| `<saved_all>` | All binned NC writes | Skip combined output |
-| `<end>` (default) | Full pipeline | Normal processing |
+`program.return_` stops the pipeline at a checkpoint — from config composition
+(`<cfg_from_args>`) through coef persistence (`<saved_coefs>`) to the full run
+(`<end>`, default). Full value table and phase order:
+[Config Tuning §Phase-stopping](../reference/config_tuning.md#phase-stopping).
 
 **Discover-only** (generate configs, don't process):
 ```bash
 tcm_proc.exe "_raw/i*.txt" 'program.return_="<cfg_from_args>"'
 ```
 
-**Zeroing-only** (compute Rz, persist coefs, stop — no data processing):
-```bash
-tcm_proc.exe "_raw/*i*.txt" \
-  'input.calib.time_ranges_zeroing=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
-  'input.time_ranges=["2026-06-25T17:23:30","2026-06-25T17:25:00"]' \
-  'program.return_="<saved_coefs>"'
-```
+**Zeroing-only** (compute Rz, persist coefs, stop):
+[Configuration §Typical zeroing workflow](configuration.md#typical-zeroing-workflow).
 
 ## Coefficient editing workflow
 
@@ -72,38 +60,24 @@ detected and skipped.
 
 ## Re-run behavior
 
-The pipeline handles idempotency automatically:
-
-| Output | Re-run behavior |
-|--------|----------------|
-| `*.raw.nc` | **SKIP** — same fileName + mtime detected via log table |
-| `*.proc_Avg.nc` | **SKIP** — new time range ⊂ existing range |
-| `*.proc_noAvg.nc` | **SKIP** — new time range ⊂ existing range |
-| Combined groups | **Overwrite** — always rewrites from per-probe groups |
-
-If processing parameters changed (coefs, filter thresholds), the pipeline
-raises `ValueError` with a unified diff showing what changed. Pass
-`out.overwrite_db=splice` to force reprocessing.
-
-See [Config Tuning](../reference/config_tuning.md) for the full decision tables.
+Re-runs are idempotent: `*.raw.nc` skips on same fileName+mtime; binned NCs
+skip when the new range is contained in the existing one; combined groups
+always overwrite. A `ValueError` with a unified diff is raised when the new
+range is contained but processing parameters changed — pass
+`out.overwrite_db=splice` to force reprocessing. Full rules:
+[Config Tuning §Re-run behavior](../reference/config_tuning.md#re-run-behavior).
 
 ## `overwrite_db` modes
 
 Controls how the pipeline handles existing output when re-running:
-
-| Mode | Description |
-|:---:|---|
-| `None` (default) | **Extend-only** — append new data; never reprocess or trim |
-| `"splice"` | **Always reprocess** — keep data outside `time_ranges`, replace inside |
-| `"trim"` | **Trim-only** — delete data outside `time_ranges`, no reprocessing |
-| `"export"` | **Export-only** — block NC writes, export TSV only |
+`None` extends (default), `"splice"` reprocesses inside `time_ranges`,
+`"trim"` deletes outside without reprocessing, `"export"` blocks NC writes.
 
 ```bash
 tcm_proc.exe "_raw/i*.txt" out.overwrite_db=splice
 ```
 
-See [Config Reference §overwrite_db](../reference/config_reference.md#outoverwrite_db)
-for the full decision matrix.
+Decision matrix: [Config Tuning §overwrite_db behavior](../reference/config_tuning.md#overwrite_db-behavior).
 
 ## See also
 

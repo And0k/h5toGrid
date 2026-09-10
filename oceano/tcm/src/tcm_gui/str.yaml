@@ -68,7 +68,6 @@ about.mode_simple: "simple editing mode"
 about.h5_available: "available"
 about.h5_missing: "not available"
 about.version: "Version"
-about.product: "Product"
 about.company: "Company"
 about.copyright: "Copyright"
 about.repository: "Repository"
@@ -190,3 +189,7 @@ input.calib.azimuth_add.apply.detailed: "Adds the sheet offset to [`azimuth_shif
 
 # ── Tooltip ───────────────────────────────────────────────────────────────
 prog_status.tooltip: "Current processing stage"
+# ── Tab rail context menu ────────────────────────────────────────────────
+rail_ctx.remove: "Remove"
+rail_ctx.disable: "Disable"
+rail_ctx.enable: "Enable"

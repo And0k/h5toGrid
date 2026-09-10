@@ -12,7 +12,8 @@
   "internal_name": "tcm_gui.exe",
   "original_filename": "tcm\\scripts\\tcm_gui.py",
   "company_name": "Atlantic Branch of Shirshov Institute of Oceanology, Russian Academy of Sciences (AB SIO RAS)",
-  "legal_copyright": "© Andrey Korzh <\"ao.korzh@gmail.com\">",
+  "company_url": "https://atlantic.ocean.ru/",
+  "legal_copyright": "© Andrey Korzh <ao.korzh@gmail.com>",
   "product_name": "TCM calculations",
   "repo_url": "https://github.com/And0k/h5toGrid",
   "docs_url": "https://github.com/And0k/h5toGrid/tree/master/oceano/tcm/docs"

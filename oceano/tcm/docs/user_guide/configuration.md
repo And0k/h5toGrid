@@ -205,6 +205,12 @@ dates.
 | CSV/TXT | Yes | `*.raw.nc` file (`/{tbl}/coef/` group) |
 | NC/HDF5 | Yes | Source NC file (overwritten in-place) |
 | Any | No | Run YAML (`cfg_proc/run/@i_01.yaml` under `input.coefs`) |
+| Any | Yes | Run YAML is **mirrored** whenever one exists (keeps the config readable) |
+
+When no write target exists the pipeline logs a warning and keeps the change
+in memory only; `input.calib` is then **not** consumed. `out.overwrite_db`
+controls processed-output regeneration — it does **not** affect coefficient
+persistence.
 
 When coefs are written to NC, the log shows how many datasets were overwritten:
 ```

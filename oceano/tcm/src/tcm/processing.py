@@ -1114,9 +1114,7 @@ def _process_and_persist(
     for _bin_i, (ds_out, dt_bin) in enumerate(zip(results, dt_bins)):
         if ds_out is None:
             continue
-        # Battery only meaningful in raw.nc — drop from all processed outputs
-        if "Battery" in ds_out.data_vars:
-            ds_out = ds_out.drop_vars("Battery")
+        ds_out = storage._drop_aux(ds_out)  # Battery/TempP live in raw.nc only
         bin_s = int(dt_bin.total_seconds())
 
         # --- netCDF: shared files with per-probe groups ---
@@ -1454,9 +1452,7 @@ def process_inmemory(
     for ds_out, dt_bin in zip(results, dt_bins):
         if ds_out is None:
             continue
-        # Battery only meaningful in raw.nc — drop from all processed outputs
-        if "Battery" in ds_out.data_vars:
-            ds_out = ds_out.drop_vars("Battery")
+        ds_out = storage._drop_aux(ds_out)  # Battery/TempP live in raw.nc only
         bin_s = int(dt_bin.total_seconds())
         lf.info(
             "Bin {}s: {} time steps, {} vars",

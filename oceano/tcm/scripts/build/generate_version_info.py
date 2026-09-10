@@ -81,6 +81,7 @@ def write_meta(
     internal_name: str,
     original_filename: str,
     company_name: str,
+    company_url: str,
     legal_copyright: str,
     product_name: str,
     suffixes: list[str] = _SUFFIXES,
@@ -96,6 +97,7 @@ def write_meta(
         internal_name: Windows ``InternalName`` (e.g. ``"tcm_gui.exe"``).
         original_filename: Windows ``OriginalFilename``.
         company_name: Windows ``CompanyName``.
+        company_url: Company website URL (clickable in the About dialog).
         legal_copyright: Windows ``LegalCopyright``.
         product_name: Windows ``ProductName``.
         suffixes: Env suffix list appended to version (e.g. ``["bin-optim-tcm"]``).
@@ -121,6 +123,7 @@ def write_meta(
         "internal_name": internal_name,
         "original_filename": original_filename,
         "company_name": company_name,
+        "company_url": company_url,
         "legal_copyright": legal_copyright,
         "product_name": product_name,
         "repo_url": repo,

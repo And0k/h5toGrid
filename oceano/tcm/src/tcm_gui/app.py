@@ -136,6 +136,7 @@ class App:
         self._status_hovering: bool = False  # pointer on _status_lbl — hold the dwell tip
         self._pages: dict[str, ConfigSheet] = {}
         self._yaml_paths: dict[str, Path] = {}
+        self._disabled_tabs: set[str] = set()  # muted stems — visible, skipped on Run
         self._tab_of: dict[str, ttk.Frame] = {}  # stem → notebook tab frame
         self._run_forced_during_scan: bool = False
         # Store original argv — Worker passes it to call_in_raw_dir which
@@ -296,7 +297,12 @@ class App:
         self._main.grid(row=2, column=0, sticky="nsew", padx=4, pady=(0, 2))
         self._main.columnconfigure(1, weight=1)
         self._main.rowconfigure(0, weight=1)
-        self._rail = TabRail(self._main, on_select=self._select_tab, on_hover=self._on_rail_hover)
+        self._rail = TabRail(
+            self._main,
+            on_select=self._select_tab,
+            on_hover=self._on_rail_hover,
+            on_context=self._on_rail_context,
+        )
         self._rail.grid(row=0, column=0, sticky="ns")
         self._stack = ttk.Frame(self._main)
         self._stack.grid(row=0, column=1, sticky="nsew")
@@ -804,6 +810,58 @@ class App:
         except Exception:
             pass
 
+    def _on_rail_context(self, stem: str, x_root: int, y_root: int) -> None:
+        """Right-click menu on rail tab: Remove (drop now) / Disable↔Enable (mute)."""
+        if stem not in self._tab_of or self.wk.busy:
+            return
+        menu = tk.Menu(self.root, tearoff=0)
+        muted = stem in self._disabled_tabs
+        menu.add_command(
+            label=str(_S.get("rail_ctx.remove", "Remove")), command=lambda: self._remove_tab(stem)
+        )
+        menu.add_command(
+            label=str(
+                _S.get("rail_ctx.enable", "Enable") if muted else _S.get("rail_ctx.disable", "Disable")
+            ),
+            command=lambda: self._set_tab_muted(stem, not muted),
+        )
+        try:
+            menu.tk_popup(x_root, y_root)
+        finally:
+            menu.grab_release()
+
+    def _remove_tab(self, stem: str) -> None:
+        """Instant session-only drop: page + rail + progress + yaml-path state gone.
+
+        YAML file stays on disk (next Scan re-discovers it); Run stems derive
+        from ``_tab_of`` so the stem is excluded automatically.
+        """
+        if stem not in self._tab_of or self.wk.busy:
+            return
+        if (page := self._tab_of.pop(stem)) is not None:
+            try:
+                page.destroy()
+            except Exception:
+                pass
+        self._pages.pop(stem, None)
+        self._yaml_paths.pop(stem, None)
+        self._disabled_tabs.discard(stem)
+        lf.info("Tab removed (session-only, yaml kept on disk): %s", stem)
+        if nxt := self._rail.remove_tab(stem):
+            self._select_tab(nxt)
+        else:
+            self._current = None
+        self._update_run_btn_state()  # last tab gone → Run off (also polled, but instant)
+
+    def _set_tab_muted(self, stem: str, muted: bool) -> None:
+        """Mute toggle: dim rail cell (✕), keep page; muted stems skip save+Run."""
+        if stem not in self._tab_of:
+            return
+        (self._disabled_tabs.add if muted else self._disabled_tabs.discard)(stem)
+        self._rail.set_tab_disabled(stem, muted)
+        self._update_run_btn_state()  # all-muted ≡ no runnable tabs → Run off
+        lf.info("Tab %s: %s", stem, "disabled — skipped on Run" if muted else "enabled")
+
     def _on_rail_hover(self, name: str | None) -> None:
         """Rail hover callback — show yaml path in status bar; cancel dwell."""
         self._cancel_dwell()
@@ -1215,11 +1273,12 @@ class App:
     # ── §3 Run / Pause / Resume ─────────────────────────────────────
 
     def _update_run_btn_state(self) -> None:
-        """Enable Run iff pages exist with valid input.path + date rows and no blocking calib."""
+        """Enable Run iff runnable pages exist (muted tabs excluded like on Run)."""
+        runnable = [cs for s, cs in self._pages.items() if s not in self._disabled_tabs]
         ok = (
-            bool(self._pages)
-            and all(cs.is_path_valid() and cs.is_dates_valid() for cs in self._pages.values())
-            and not any(cs.calib_blocking() for cs in self._pages.values())
+            bool(runnable)
+            and all(cs.is_path_valid() and cs.is_dates_valid() for cs in runnable)
+            and not any(cs.calib_blocking() for cs in runnable)
         )
         self._run_btn.config(state="normal" if ok else "disabled")
 
@@ -1247,16 +1306,17 @@ class App:
             (gate.resume if gate.paused else gate.pause)()
             self._run_btn.config(text=_S["run_btn.resume"] if gate.paused else _S["run_btn.pause"])
             return
-        stems = list(self._pages)
+        # Removed/muted tabs never run: removed left _pages, muted stay visible but skip save+stems.
+        stems = [s for s in self._pages if s not in self._disabled_tabs]
         if (
             not stems
-            or not all(cs.is_path_valid() and cs.is_dates_valid() for cs in self._pages.values())
-            or any(cs.calib_blocking() for cs in self._pages.values())
+            or not all((cs := self._pages[s]).is_path_valid() and cs.is_dates_valid() for s in stems)
+            or any(self._pages[s].calib_blocking() for s in stems)
         ):
             return
         try:
-            for s, cs in self._pages.items():
-                self._write_coefs(s, cs)
+            for s in stems:
+                self._write_coefs(s, self._pages[s])
             self._write_metadata()
         except Exception:
             lf.exception("Run pre-write failed")
@@ -2289,6 +2349,7 @@ class App:
             frame.destroy()
         self._pages.clear()
         self._yaml_paths.clear()
+        self._disabled_tabs.clear()  # fresh scan — old mutes/removes don't carry over
         self._tab_of.clear()
         self._rail.clear()
         self._set_cfg_ui_disabled(False)  # scanned configs exist — active from first paint

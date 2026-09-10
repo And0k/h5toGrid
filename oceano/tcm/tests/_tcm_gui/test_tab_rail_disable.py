@@ -5,6 +5,11 @@ must read as awaiting a data path, mirroring the readonly tksheet pages —
 dim text, no selection accent, no hand cursor, clicks ignored.  Re-enabled
 by a new search (``_on_path_changed``) or a successful scan.
 
+Tab context ops (``TabRail.remove_tab`` / ``set_tab_disabled`` + App
+``_remove_tab`` / ``_set_tab_muted`` / ``_on_rail_context``): right-click menu
+with Remove (instant session-only drop) and Disable↔Enable (mute — dim ✕
+label, kept page, skipped on Run); menu hidden while busy.
+
 Note: root is withdrawn (headless Tk) — the canvas never maps, so the rail
 fixture fakes ``winfo_height`` and click/motion handlers are driven with
 synthetic events carrying bare ``x``/``y``.
@@ -110,6 +115,144 @@ class TestTabRailDisabled:
         rail.add_tab("gamma")
         assert rail._disabled is True
         assert _text_fill(rail, "gamma") == rail._pal["dim"]
+
+
+class TestTabContextOps:
+    """Rail context ops: remove_tab neighbour + per-tab mute rendering."""
+
+    def test_remove_middle_selects_next(self, rail):
+        rail.add_tab("gamma")
+        assert rail.remove_tab("beta") == "gamma"
+        assert rail._names == ["alpha", "gamma"]
+
+    def test_remove_last_falls_back_to_previous(self, rail):
+        assert rail.remove_tab("beta") == "alpha"
+
+    def test_remove_unknown_returns_none(self, rail):
+        assert rail.remove_tab("nope") is None
+        assert rail._names == ["alpha", "beta"]
+
+    def test_mute_dims_and_hides_accent(self, rail):
+        rail.set_tab_disabled("alpha", True)
+        assert _text_fill(rail, "alpha") == rail._pal["dim"]
+        assert _accent_state(rail, "alpha") == "hidden"
+
+    def test_unmute_restores_accent(self, rail):
+        rail.set_tab_disabled("alpha", True)
+        rail.set_tab_disabled("alpha", False)
+        assert _text_fill(rail, "alpha") == rail._pal["text"]
+        assert _accent_state(rail, "alpha") == "normal"
+
+    def test_mute_prefixes_cross_label(self, rail):
+        rail.set_tab_disabled("beta", True)
+        assert rail._full_label("beta").startswith("✕ ")
+
+    def test_mute_does_not_block_click(self, rail):
+        rail.set_tab_disabled("beta", True)
+        _click_tab(rail, "beta")
+        assert rail._calls == ["beta"]  # App filters Run, rail stays clickable
+
+
+class TestAppTabContextMenu:
+    """App._on_rail_context/_remove_tab/_set_tab_muted — menu + state sync."""
+
+    def _app_ns(self):
+        from tcm_gui.app import App
+
+        ns = type("NS", (), {})()
+        ns._tab_of = {"a": object(), "b": object()}
+        ok_sheet = lambda: type(  # noqa: E731 — tiny test double
+            "CS",
+            (),
+            {
+                "is_path_valid": lambda self: True,
+                "is_dates_valid": lambda self: True,
+                "calib_blocking": lambda self: False,
+            },
+        )()
+        ns._pages = {"a": ok_sheet(), "b": ok_sheet()}
+        ns._yaml_paths = {"a": object(), "b": object()}
+        ns._disabled_tabs = set()
+        ns._current = "a"
+        rail_calls: list = []
+        ns._rail = type(
+            "R",
+            (),
+            {
+                "remove_tab": lambda self, n: rail_calls.append(("remove", n)) or "b",
+                "set_tab_disabled": lambda self, n, d: rail_calls.append(("mute", n, d)),
+            },
+        )()
+        ns.wk = type("W", (), {"busy": False})()
+        ns.root = None
+        ns._select_tab = lambda stem: setattr(ns, "_current", stem)
+        ns._run_btn = type("B", (), {"config": lambda self, **k: rail_calls.append(("run_btn", k))})()
+        ns._update_run_btn_state = App._update_run_btn_state.__get__(ns)
+        ns._remove_tab = App._remove_tab.__get__(ns)
+        ns._set_tab_muted = App._set_tab_muted.__get__(ns)
+        ns._on_rail_context = App._on_rail_context.__get__(ns)
+        return ns, rail_calls
+
+    def _cap_menu(self, monkeypatch, captured):
+        import tcm_gui.app as app_mod
+
+        class CapMenu:
+            def __init__(self, *a, **k):
+                pass
+
+            def add_command(self, label="", command=None):
+                captured.append((label, command))
+
+            def tk_popup(self, *a):
+                pass
+
+            def grab_release(self):
+                pass
+
+        monkeypatch.setattr(app_mod.tk, "Menu", CapMenu)
+        return app_mod
+
+    def test_menu_labels_remove_disable(self, monkeypatch):
+        ns, _ = self._app_ns()
+        captured: list = []
+        app_mod = self._cap_menu(monkeypatch, captured)
+        ns._on_rail_context("a", 0, 0)
+        assert captured[0][0] == str(app_mod._S.get("rail_ctx.remove", "Remove"))
+        assert captured[1][0] == str(app_mod._S.get("rail_ctx.disable", "Disable"))
+        captured[0][1]()  # Remove → drops instantly
+        assert "a" not in ns._tab_of
+
+    def test_menu_label_flips_to_enable_when_muted(self, monkeypatch):
+        ns, _ = self._app_ns()
+        ns._disabled_tabs.add("a")
+        captured: list = []
+        app_mod = self._cap_menu(monkeypatch, captured)
+        ns._on_rail_context("a", 0, 0)
+        assert captured[0][0] == str(app_mod._S.get("rail_ctx.remove", "Remove"))
+        assert captured[1][0] == str(app_mod._S.get("rail_ctx.enable", "Enable"))
+        captured[1][1]()  # Enable → unmutes
+        assert "a" not in ns._disabled_tabs
+
+    def test_menu_suppressed_when_busy(self, monkeypatch):
+        import tcm_gui.app as app_mod
+
+        ns, _ = self._app_ns()
+        ns.wk = type("W", (), {"busy": True})()
+        called: list = []
+        monkeypatch.setattr(app_mod.tk, "Menu", lambda *a, **k: called.append(1))
+        ns._on_rail_context("a", 0, 0)
+        assert not called
+
+    def test_mute_skips_run_stems(self):
+        ns, rail_calls = self._app_ns()
+        ns._set_tab_muted("a", True)
+        assert "a" in ns._disabled_tabs and ("mute", "a", True) in rail_calls
+        assert [s for s in ns._pages if s not in ns._disabled_tabs] == ["b"]
+        assert ("run_btn", {"state": "normal"}) in rail_calls  # one runnable left → Run on
+        ns._set_tab_muted("b", True)
+        assert ("run_btn", {"state": "disabled"}) in rail_calls  # all muted → Run off
+        ns._set_tab_muted("a", False)
+        assert [s for s in ns._pages if s not in ns._disabled_tabs] == ["a"]
 
 
 class TestAppCfgUiDisabled:

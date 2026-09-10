@@ -316,6 +316,11 @@ Minimum bin size for TSV export: `out.dt_bins_min_save_text` (default 1 s).
 outputs and TSV exports**.  They live in ``*.raw.nc`` for completeness, but are dropped just
 before every processed NC write and TSV export.
 
+Raw CSV therefore reads:
+
+- inclinometer ``i``/``b``: ``[Ax, Ay, Az, Mx, My, Mz, Battery, Temp]``
+- pressure ``p``/``d``: ``[Ax, Ay, Az, Mx, My, Mz, P_counts, Temp, TempP, Battery]``
+
 Alias resolution (``TemprPress``, ``TP``) maps straight to ``TempP`` so carriage is transparent
 for files that report that column.
 

@@ -43,10 +43,11 @@ class TabRail(tk.Canvas):
     LERP = 0.25  # fill easing factor per tick
     ANGLE = 90  # CCW → reads bottom→up; flip to 270 if upside down
 
-    def __init__(self, parent: tk.Widget, on_select, on_hover=None) -> None:
+    def __init__(self, parent: tk.Widget, on_select, on_hover=None, on_context=None) -> None:
         super().__init__(parent, highlightthickness=0, takefocus=False)
         self._on_select = on_select
         self._on_hover = on_hover  # (name | None) → status bar update
+        self._on_context = on_context  # (name, x_root, y_root) → App context menu
         self._pal = strip_palette(self)
         self.configure(bg=self._pal["base"])
         _base = tkfont.nametofont("TkDefaultFont")
@@ -73,6 +74,7 @@ class TabRail(tk.Canvas):
         self._after_id: str | None = None  # animation loop handle
         self.bind("<Configure>", lambda _e: self._layout())
         self.bind("<Button-1>", self._click)
+        self.bind("<Button-3>", self._context)
         self.bind("<Motion>", self._motion)
         self.bind("<Leave>", self._leave)
         set_widget_meta(
@@ -83,7 +85,41 @@ class TabRail(tk.Canvas):
     # ── membership ────────────────────────────────────────────────────
     @staticmethod
     def _new_st() -> dict:
-        return {"state": "pending", "frac": 0.0, "shown": 0.0, "dirty_config": False, "dirty_meta": False}
+        return {
+            "state": "pending",
+            "frac": 0.0,
+            "shown": 0.0,
+            "dirty_config": False,
+            "dirty_meta": False,
+            "tab_disabled": False,  # per-tab mute — kept visible, skipped on Run
+        }
+
+    def remove_tab(self, name: str) -> str | None:
+        """Drop *name* cell; return neighbour to select (same index else previous)."""
+        if name not in self._names:
+            return None
+        idx = self._names.index(name)
+        self._names.remove(name)
+        self._st.pop(name, None)
+        self._cells.pop(name, None)
+        if self._hovered == name:
+            self._hovered = None
+        nxt = next(
+            (n for n in self._names[idx : idx + 1] + self._names[:idx][::-1] if n in self._names), None
+        )
+        if self._selected == name:
+            self._selected = None
+        self._layout()
+        return nxt
+
+    def set_tab_disabled(self, name: str, disabled: bool) -> None:
+        """Mute one tab — dim label, no accent; selection/click stay (App filters Run)."""
+        if (st := self._st.get(name)) is None or bool(st.get("tab_disabled")) == disabled:
+            return
+        st["tab_disabled"] = disabled
+        if name in self._cells:
+            self._refresh(name)  # paint: dim + accent off (geometry: ✕ prefix)
+            self._layout()  # ✕ prefix changes ideal height
 
     def add_tab(self, name: str) -> None:
         self._names.append(name)
@@ -378,8 +414,8 @@ class TabRail(tk.Canvas):
         self.itemconfigure(c["face"], fill=pal["hover"] if self._hovered == name else pal["track"])
         if fill_clr := {"running": pal["run"], "done": pal["done"], "error": pal["error"]}.get(st["state"]):
             self.itemconfigure(c["fill"], fill=fill_clr)
-        sel = self._selected == name and not self._disabled
-        dim = not sel  # unselected (or whole rail disabled) → slightly dimmer, no blue
+        sel = self._selected == name and not self._disabled and not st.get("tab_disabled")
+        dim = not sel  # unselected / muted / rail-disabled → slightly dimmer, no blue
         self.itemconfigure(c["acc"], state="normal" if sel else "hidden")
         # Available vertical length — remove 8px margins when tab <~4 chars (more room for text)
         _min_h = self._min_selected_h()
@@ -422,8 +458,10 @@ class TabRail(tk.Canvas):
     def _full_label(self, name: str) -> str:
         """Untruncated label — length measurement source for _heights."""
         st = self._st[name]
-        pref = {"running": "▸ ", "done": "✔ "}.get(st["state"], "")
-        return pref + name
+        pref = {("running", False): "▸ ", ("done", False): "✔ "}.get(
+            (st["state"], st.get("tab_disabled")), ""
+        )
+        return ("✕ " if st.get("tab_disabled") else "") + pref + name
 
     def _font_at(self, pt: int) -> tkfont.Font:
         """Bold font at *pt* — cached per size (shared across tabs)."""
@@ -612,6 +650,18 @@ class TabRail(tk.Canvas):
         # Tab column is the button; progress column stays display-only.
         if e.x >= scaled(self.PROG_W) and (name := self._at(e.y)) is not None:
             self._on_select(name)
+
+    def _context(self, e: tk.Event) -> None:
+        """Right-click → App menu for *name* (left-click still selects)."""
+        if self._disabled or e.x < scaled(self.PROG_W) or self._on_context is None:
+            return
+        if (name := self._at(e.y)) is not None:
+            try:
+                self._on_context(name, e.x_root, e.y_root)
+            except Exception:  # menu build must never break the rail
+                import logging
+
+                logging.getLogger(__name__).exception("tab context menu failed for %s", name)
 
     def _motion(self, e: tk.Event) -> None:
         name = self._at(e.y)  # hover over both columns

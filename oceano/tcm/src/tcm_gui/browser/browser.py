@@ -170,8 +170,11 @@ def _file_uri_path(uri: str) -> str:
 
 
 def link_display(url: str) -> str:
-    """Human-readable link target for hover/status display: ``file:`` URI → path."""
-    return _file_uri_path(url) if url.lower().startswith("file:") else url
+    """Human-readable link target for hover/status display: ``file:`` URI → path,
+    other URIs percent-decoded (mailto mailboxes keep their display name)."""
+    if url.lower().startswith("file:"):
+        return _file_uri_path(url)
+    return urllib.parse.unquote(url)
 
 
 def open_os_target(target: str) -> None:

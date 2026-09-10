@@ -78,7 +78,7 @@ Any config field can be overridden on the CLI:
 tcm_proc.exe "_raw/*i*.txt" 'input.ids=[i01,i_p02]'
 
 # Override filter and output settings
-tcm_proc.exe "_raw/*i*.txt" filter.corr_time_mode=false out.text_path=./results
+tcm_proc.exe "_raw/*i*.txt" input.corr_time_mode=false out.text_path=./results
 
 # Restrict time window
 tcm_proc.exe "_raw" \

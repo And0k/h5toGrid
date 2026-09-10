@@ -12,7 +12,9 @@ meta values (description, company) are i18n via :data:`STRINGS`
 (:func:`_lang_filter`).
 
 Doc titles are extracted from the first ``# `` heading of each file and
-listed in a directory-nested ``ttk.Treeview`` (only the first level expanded;
+stripped of inline Markdown (:func:`tcm._md_parse.plain_text`) — ``ttk.Treeview``
+rows are single-font, so backticks in a heading must not display literally —
+then listed in a directory-nested ``ttk.Treeview`` (only the first level expanded;
 a folder holding ``_index.md`` links its parent row to that file with no
 separate ``_index.md`` leaf); clicking a title opens the document in the OS
 browser via :func:`~tcm_gui.browser.open_md_link` — a localhost server serves
@@ -33,8 +35,10 @@ from collections.abc import Callable
 from pathlib import Path
 from tkinter import font as tkfont
 from tkinter import ttk
+from urllib.parse import quote
 
 from tcm._constants import DOC_DIR, H5_AVAILABLE, version_meta
+from tcm._md_parse import plain_text
 
 from . import theme
 from ._i18n import STRINGS as _S, fmt_status
@@ -48,6 +52,20 @@ from .theme import _opt_into_dark_titlebar, mix_hex
 _l = logging.getLogger(__name__)
 
 _RE_HEADING = re.compile(r"^#\s+(.+?)\s*$")
+
+# ``<email>`` in a metadata value → clickable mailto link (brackets dropped,
+# the display name preserved as the RFC 5322 mailbox in the encoded target).
+_EMAIL_LINK = re.compile(r"(?P<name>[^<>\n]+?)\s*<(?P<email>[^<>\s]+@[^<>\s]+)>")
+
+
+def _mailto_link(m: re.Match[str]) -> str:
+    """Link text = ``<email>``; target = percent-encoded RFC 5322 mailbox
+    ``Display Name <email>`` so the mail client shows the name, not the bare
+    address.  The visible prefix (e.g. ``© Andrey Korzh``) stays outside."""
+    name, email = m.group("name").strip(), m.group("email")
+    addr = quote(f"{name.removeprefix('©').strip()} <{email}>", safe="")
+    return f"{name} [{email}](mailto:{addr})"
+
 
 # Language suffix on doc stems: ``config_reference_ru`` → ("config_reference", "ru").
 _RE_LANG_SUFFIX = re.compile(r"_(?P<lang>[a-z]{2})$", re.IGNORECASE)
@@ -78,7 +96,8 @@ _ICON_PX, _INDENT_PX = 24, 24
 def discover_docs(root: Path | None = None, lang: str | None = None) -> list[tuple[str, str, Path]]:
     """Walk ``docs/`` for ``*.md`` files; return ``(folder, title, path)`` sorted by path.
 
-    Title = first ``# `` heading; fallback = filename stem.
+    Title = first ``# `` heading, inline Markdown stripped via
+    :func:`plain_text` (single-font treeview rows); fallback = filename stem.
     Folder = parent dir name relative to docs root (``""`` for top-level files).
     Excludes ``todo/`` and other internal dirs, then filters by *lang*
     (default: :func:`resolve_lang`) — see :func:`_lang_filter`.
@@ -94,7 +113,7 @@ def discover_docs(root: Path | None = None, lang: str | None = None) -> list[tup
         rel = md.relative_to(docs_root)
         if any(part in _EXCLUDE_DIRS for part in rel.parts[:-1]):
             continue
-        title = _extract_title(md) or md.stem
+        title = plain_text(_extract_title(md) or md.stem)
         results.append((rel.parts[0] if len(rel.parts) > 1 else "", title, md))
     return _lang_filter(results, lang or resolve_lang())
 
@@ -112,9 +131,7 @@ def local_readme() -> Path:
     Uses the same :func:`_lang_parts` matching as doc discovery so any
     future ``readme_<lang>.md`` is picked up without further changes.
     """
-    lang = resolve_lang()
-    candidates = [p for p in DOC_DIR.parent.glob("readme*.md") if _lang_parts(p.stem)[1] == lang]
-    return candidates[0] if candidates else DOC_DIR.parent / "readme.md"
+    return _readmes(DOC_DIR, resolve_lang())[1]
 
 
 def _lang_filter(docs: list[tuple[str, str, Path]], lang: str) -> list[tuple[str, str, Path]]:
@@ -139,7 +156,9 @@ def _lang_filter(docs: list[tuple[str, str, Path]], lang: str) -> list[tuple[str
     return sorted(out, key=lambda d: d[2])
 
 
-def _docs_tree(docs: list[tuple[str, str, Path]], docs_root: Path = DOC_DIR) -> dict[str, object]:
+def _docs_tree(
+    docs: list[tuple[str, str, Path]], docs_root: Path = DOC_DIR, lang: str | None = None
+) -> dict[str, object]:
     """Build directory-nested docs hierarchy for treeview display.
 
     Content comes solely from the actual ``folder/*.md`` structure (titles are
@@ -149,8 +168,9 @@ def _docs_tree(docs: list[tuple[str, str, Path]], docs_root: Path = DOC_DIR) -> 
 
     Returns the root node ``{"index": None, "files": [...], "sub": {...}}`` where
     each sub node has the same shape.  Top-level and nested siblings sort by
-    first-appearance order of their ``docs/...`` hrefs in ``readme.md``; paths
-    absent there sort alphabetically after.
+    first-appearance order of their ``docs/...`` hrefs in the readme matching
+    the UI language (falling back to English ``readme.md``); paths absent
+    there sort alphabetically after.
     """
     root: dict[str, object] = {"index": None, "files": [], "sub": {}}
     for _folder, title, path in docs:
@@ -168,7 +188,7 @@ def _docs_tree(docs: list[tuple[str, str, Path]], docs_root: Path = DOC_DIR) -> 
             node["index"] = (title, path)  # type: ignore[index]
         else:
             node["files"].append((title, path))  # type: ignore[index]
-    order = _readme_doc_order(docs_root)
+    order = _readme_doc_order(docs_root, lang=lang)
     inf = len(order)
 
     def _rel(p: Path) -> str:
@@ -205,15 +225,17 @@ def _docs_tree(docs: list[tuple[str, str, Path]], docs_root: Path = DOC_DIR) -> 
     return root
 
 
-def _readme_doc_order(docs_root: Path) -> dict[str, int]:
-    """``{rel_path: index}`` of ``docs/...`` hrefs in ``readme.md`` appearance order.
+def _readme_doc_order(docs_root: Path, lang: str | None = None) -> dict[str, int]:
+    """``{rel_path: index}`` of ``docs/...`` hrefs in readme appearance order.
 
     Covers file hrefs (``docs/a/b.md``) and folder hrefs (``docs/a/`` → ``a``);
-    ``{#anchor}`` fragments stripped, images (``![...]``) excluded.  Readme is
-    order-only — treeview content still comes from the filesystem walk.
+    ``{#anchor}`` fragments stripped, images (``![...]``) excluded.  The readme
+    matching *lang* (falling back to English ``readme.md``) supplies the order
+    so localized-only docs keep the subsection position of their own readme.
+    Order-only — treeview content still comes from the filesystem walk.
     """
     try:
-        text = (docs_root.parent / "readme.md").read_text(encoding="utf-8")
+        text = _readmes(docs_root, lang)[1].read_text(encoding="utf-8")
     except OSError:
         return {}
     order: dict[str, int] = {}
@@ -224,9 +246,28 @@ def _readme_doc_order(docs_root: Path) -> dict[str, int]:
     return order
 
 
+def _readmes(docs_root: Path, lang: str | None) -> tuple[str, Path]:
+    """``(lang, readme)``: the ``readme*`` matching *lang*; the English base
+    wins ties (sorted first), missing matches raise → caller falls back."""
+    plain = docs_root.parent / "readme.md"
+    try:
+        return next(
+            (hit_lang, p)
+            for p in sorted(docs_root.parent.glob("readme*.md"))
+            if (hit_lang := _lang_parts(p.stem)[1] or "en") == (lang or "en")
+        )
+    except StopIteration:
+        return lang or "en", plain
+
+
 def _folder_label(folder: str) -> str:
     """Humanized node label: ``tcm_cli`` → ``Tcm cli`` (doc-stem fallback too)."""
     return folder.replace("_", " ").capitalize()
+
+
+def _company_label(name: str, url: str | None) -> str:
+    """Company display text — a markdown link when *url* is present."""
+    return f"[{name}]({url})" if url else name
 
 
 def _wrap_px(text: str, measure: Callable[[str], int], max_px: int) -> list[str]:
@@ -312,7 +353,7 @@ class AboutDialog(tk.Toplevel):
         self._ui = ui
         self._meta = version_meta()
         self._docs = discover_docs()
-        self._docs_hierarchy = _docs_tree(self._docs)
+        self._docs_hierarchy = _docs_tree(self._docs, lang=resolve_lang())
         self._fit_width = 0  # last width the labels were fitted to
         self._on_status = on_status or (lambda _msg: None)  # main status bar
         self._hover_msg = ""  # dedup across motion storms
@@ -458,12 +499,13 @@ class AboutDialog(tk.Toplevel):
 
         items = []  # metadata list — full width below the logo row
         items += [f"**{_S['about.version']}:** `{version}`"]
-        if meta.get("product_name"):
-            items.append(f"**{_S['about.product']}:** {meta['product_name']}")
         if company := _S.get("about.meta.company") or meta.get("company_name"):
-            items.append(f"**{_S['about.company']}:** {company}")
+            items.append(f"**{_S['about.company']}:** {_company_label(company, meta.get('company_url'))}")
         if cp := meta.get("legal_copyright"):
-            # © sign is self-labeling → bare value, no "Copyright:" prefix
+            # © sign is self-labeling → bare value, no "Copyright:" prefix; the
+            # ``<email>`` wrapper becomes a clickable mailto link (brackets off,
+            # display name carried in the recipient — see _mailto_link).
+            cp = _EMAIL_LINK.sub(_mailto_link, cp)
             items.append(cp if "©" in cp else f"**{_S['about.copyright']}:** {cp}")
         if repo := meta.get("repo_url"):
             items.append(f"**{_S['about.repository']}:** [{repo}]({repo})")
@@ -729,7 +771,7 @@ class AboutDialog(tk.Toplevel):
                 self._iid_path[cont] = iid
 
         def _insert_node(node: dict[str, object], parent: str, depth: int) -> None:
-            link_order = _readme_doc_order(DOC_DIR)
+            link_order = _readme_doc_order(DOC_DIR, lang=resolve_lang())
             inf = len(link_order)
 
             def _rel(p: Path) -> str:

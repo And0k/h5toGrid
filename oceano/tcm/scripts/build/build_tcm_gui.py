@@ -50,8 +50,9 @@ write_meta(
     company_name=(
         "Atlantic Branch of Shirshov Institute of Oceanology, Russian Academy of Sciences (AB SIO RAS)"
     ),
-    legal_copyright='© Andrey Korzh <"ao.korzh@gmail.com">',
-    product_name="TCM calculations",
+    company_url="https://atlantic.ocean.ru/",
+    legal_copyright='© Andrey Korzh <ao.korzh@gmail.com>',
+    product_name="TCM",
     project_root=PROJECT_ROOT,
 )
 generate_version_info(SPEC_DIR)

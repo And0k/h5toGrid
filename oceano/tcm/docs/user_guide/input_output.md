@@ -86,6 +86,11 @@ Per-probe binned data → `*.proc_Avg.nc` (one group per pcid per bin interval).
 When multiple probes are processed in one run, combined groups (with a `probe`
 dimension) → `*.proc.nc`. Non-averaged (`dt_bin=0`) data is never combined.
 
+Auxiliary channels ``Battery`` and ``TempP`` (pressure-sensor temperature-compensation,
+legacy header ``TP``/``TemprPress``) are loaded from raw CSV/TXT but **excluded from all
+processed/binned outputs and TSV exports** — they live in ``*.raw.nc`` only.  See
+[Auxiliary columns handling](../reference/io_formats.md#auxiliary-columns-handling).
+
 ## See also
 
 - [Input / Output Format Specification](../reference/io_formats.md) — full format contracts

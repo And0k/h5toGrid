@@ -213,14 +213,14 @@ def delete_h5py_group(nc_path: str | Path, tbl: str) -> bool:
         return False
 
 
-def _drop_battery(ds: xr.Dataset) -> xr.Dataset:
-    """Drop ``Battery`` variable from Dataset (non-raw outputs only).
+def _drop_aux(ds: xr.Dataset) -> xr.Dataset:
+    """Drop aux ``Battery``/``TempP`` vars from Dataset (non-raw outputs only).
 
-    Battery is retained in ``*.raw.nc`` for completeness but excluded
+    Both retained in ``*.raw.nc`` for completeness but excluded
     from all processed/binned outputs and TSV exports.
     """
-    if "Battery" in ds.data_vars:
-        ds = ds.drop_vars("Battery")
+    if (aux := [v for v in ("Battery", "TempP") if v in ds.data_vars]):
+        ds = ds.drop_vars(aux)
     return ds
 
 
@@ -259,7 +259,7 @@ def store_processed(
     if not policy.io().allow_nc("NC processed write"):
         return path
     path.parent.mkdir(parents=True, exist_ok=True)
-    ds = _drop_battery(ds)
+    ds = _drop_aux(ds)
     ds = strip_tz_datetime(ds)
     ds = downcast_float32(ds)
     enc = {**force_epoch(ds), **compression_encoding(ds)}

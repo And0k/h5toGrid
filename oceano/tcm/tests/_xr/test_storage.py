@@ -103,6 +103,37 @@ class TestStoreProcessed:
         with xr.open_dataset(path, group="i_p05") as loaded:
             assert loaded.sizes["time"] == 30  # 10 + 20 concatenated along time
 
+    def test_aux_vars_dropped(self, tmp_path):
+        """Battery/TempP live in raw.nc only — excluded from processed NC.
+
+        Synthetic inclinometer/pressure probe dataset has aux fields present in
+        the in-memory Dataset; processed output must drop them before persist.
+        """
+        time = pd.date_range("2024-01-01", periods=5, freq="s")
+        ds = xr.Dataset(
+            {"v": ("time", np.arange(5.0)),
+             "TempP": ("time", np.full(5, 25.0)),
+             "Battery": ("time", np.full(5, 9.0)),
+             "Temp": ("time", np.full(5, 20.0)),
+             "P_counts": ("time", np.arange(5.0)),
+             "Pressure": ("time", np.full(5, 10.0)),
+             "inclination": ("time", np.full(5, 12.0))},
+            coords={"time": time},
+        )
+        raw_path = tmp_path / "probe.raw.nc"
+        proc_path = tmp_path / "probe.proc.nc"
+
+        store_raw(ds, raw_path)
+        store_processed(ds, proc_path, group="i01", mode="w")
+
+        with xr.open_dataset(raw_path) as raw:
+            assert "TempP" in raw.data_vars
+            assert "Battery" in raw.data_vars
+        with xr.open_dataset(proc_path, group="i01") as proc:
+            assert "TempP" not in proc.data_vars
+            assert "Battery" not in proc.data_vars
+            assert "v" in proc.data_vars
+
 
 @pytest.mark.xr
 class TestStoreProcessedH5pyFallback:

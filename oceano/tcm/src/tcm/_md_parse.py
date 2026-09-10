@@ -192,6 +192,18 @@ def parse_inline(text: str) -> Inline:
     return _merge_spans(out)
 
 
+@lru_cache(maxsize=512)
+def plain_text(text: str) -> str:
+    """Inline Markdown → display text without the markup (single-font rows).
+
+    ``ttk.Treeview`` items (About doc titles) and other one-font surfaces
+    can't render the code/bold variants, so `` `backtick` `` must not show
+    its ticks literally: joining ``parse_inline`` span text keeps the SAME
+    tokenizer as the rich renderer — one source of truth for markup vs literal.
+    """
+    return "".join(t for t, _ in parse_inline(text))
+
+
 # ── block parsing ────────────────────────────────────────────────────────────
 
 

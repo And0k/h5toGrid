@@ -28,8 +28,9 @@ class TestVersionMeta:
                 internal_name="tcm_gui.exe",
                 original_filename="tcm\\scripts\\tcm_gui.py",
                 company_name="AB SIO RAS",
+                company_url="https://atlantic.ocean.ru/",
                 legal_copyright="© Test",
-                product_name="TCM calculations",
+                product_name="TCM",
                 suffixes=["test-env"],
                 project_root=tmp_path,
                 out_dir=tmp_path,
@@ -41,8 +42,9 @@ class TestVersionMeta:
             assert meta["filevers"] == [2026, 8, 0, 0]
             assert meta["description"] == "Test description"
             assert meta["company_name"] == "AB SIO RAS"
+            assert meta["company_url"] == "https://atlantic.ocean.ru/"
             assert meta["legal_copyright"] == "© Test"
-            assert meta["product_name"] == "TCM calculations"
+            assert meta["product_name"] == "TCM"
             assert meta["internal_name"] == "tcm_gui.exe"
 
             # JSON was written to out_dir (never the real scripts/build dir)
@@ -230,6 +232,41 @@ class TestDocDiscovery:
         finally:
             sys.path.pop(0)
 
+    def test_discover_docs_strips_markdown_titles(self, tmp_path: Path) -> None:
+        """Backticks in doc headings don't leak into the single-font treeview."""
+        md = tmp_path / "pressure.md"
+        md.write_text("# Pressure computation from the `P_t` polynomial\n\nBody.", encoding="utf-8")
+
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        try:
+            from tcm_gui._about import discover_docs
+
+            docs = discover_docs(tmp_path, lang="en")
+            assert docs and docs[0][1] == "Pressure computation from the P_t polynomial"
+        finally:
+            sys.path.pop(0)
+
+    def test_copyright_email_becomes_mailto(self) -> None:
+        """``<email>`` in legal_copyright → mailto carrying the display name."""
+        import sys
+        from urllib.parse import unquote
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        try:
+            from tcm_gui._about import _EMAIL_LINK, _mailto_link
+
+            cp = _EMAIL_LINK.sub(_mailto_link, "© Andrey Korzh <ao.korzh@gmail.com>")
+            assert cp == (
+                "© Andrey Korzh [ao.korzh@gmail.com](mailto:Andrey%20Korzh%20%3Cao.korzh%40gmail.com%3E)"
+            )
+            # Mail client receives the RFC 5322 mailbox — decoding restores the name.
+            target = cp.rsplit("](mailto:", 1)[1].rstrip(")")
+            assert unquote(target) == "Andrey Korzh <ao.korzh@gmail.com>"
+        finally:
+            sys.path.pop(0)
+
     def test_discover_docs_sorted(self, tmp_path: Path) -> None:
         """discover_docs returns sorted results; top-level files have empty folder."""
         (tmp_path / "b.md").write_text("# Beta", encoding="utf-8")
@@ -291,6 +328,51 @@ class TestDocDiscovery:
             tree = _docs_tree(discover_docs(tmp_path / "docs", lang="en"), tmp_path / "docs")
             # image src must not count as a folder; link order wins
             assert list(tree["sub"]) == ["user_guide", "reference"], "readme order mismatch"
+        finally:
+            sys.path.pop(0)
+
+    def test_docs_tree_localized_order(self, tmp_path: Path) -> None:
+        """A translation-only file keeps its localized readme subsection position.
+
+        Regression: ``user_guide/tcm_gui_walkthrough_Ru.md`` (listed 3rd in
+        ``readme_Ru.md`` but absent from English ``readme.md``) fell to the
+        tree tail even with the RU UI — the order source must follow the UI
+        language, falling back to English only when the translation is missing.
+        """
+        (tmp_path / "docs" / "user_guide").mkdir(parents=True)
+        for stem in ("getting_started", "gui", "cli", "tcm_gui_walkthrough_Ru"):
+            (tmp_path / "docs" / "user_guide" / f"{stem}.md").write_text(f"# {stem}\n", encoding="utf-8")
+        (tmp_path / "readme.md").write_text(
+            "- [GS](docs/user_guide/getting_started.md)\n"
+            "- [GUI](docs/user_guide/gui.md)\n"
+            "- [CLI](docs/user_guide/cli.md)\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "readme_Ru.md").write_text(
+            "- [GS](docs/user_guide/getting_started.md)\n"
+            "- [GUI](docs/user_guide/gui.md)\n"
+            "- [Пошаговый пример](docs/user_guide/tcm_gui_walkthrough_Ru.md)\n"
+            "- [CLI](docs/user_guide/cli.md)\n",
+            encoding="utf-8",
+        )
+
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        try:
+            from tcm_gui._about import _docs_tree, _readme_doc_order, discover_docs
+
+            order_ru = _readme_doc_order(tmp_path / "docs", lang="ru")
+            assert order_ru["user_guide/tcm_gui_walkthrough_Ru.md"] == 2, order_ru
+            tree = _docs_tree(discover_docs(tmp_path / "docs", lang="ru"), tmp_path / "docs", lang="ru")
+            assert [t for t, _ in tree["sub"]["user_guide"]["files"]] == [
+                "getting_started",
+                "gui",
+                "tcm_gui_walkthrough_Ru",
+                "cli",
+            ]
+            order_en = _readme_doc_order(tmp_path / "docs", lang="en")
+            assert "user_guide/tcm_gui_walkthrough_Ru.md" not in order_en, order_en
         finally:
             sys.path.pop(0)
 
@@ -494,6 +576,21 @@ class TestLocalReadme:
             assert about.local_readme() == readmes / "readme.md"
             monkeypatch.setattr(about, "resolve_lang", lambda: "fr")  # no _fr file → base
             assert about.local_readme() == readmes / "readme.md"
+        finally:
+            sys.path.pop(0)
+
+    def test_company_label_links_when_url(self) -> None:
+        """Company name renders as a markdown link when a URL is present."""
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        try:
+            from tcm_gui._about import _company_label
+
+            assert _company_label("AB SIO RAS", "https://atlantic.ocean.ru/") == (
+                "[AB SIO RAS](https://atlantic.ocean.ru/)"
+            )
+            assert _company_label("AB SIO RAS", None) == "AB SIO RAS"
         finally:
             sys.path.pop(0)
 
