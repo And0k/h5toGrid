@@ -10,14 +10,14 @@ $$P(u, t) = c_{00} + c_{10}\,u + c_{01}\,t + c_{20}\,u^2 + c_{11}\,u\,t + c_{02}
 
 where
 
-- \(u\) — raw pressure counts (`P` / `P_counts` channel);
-- \(t\) — temperature (`Temp` channel);
-- each `P_t[i][j]` multiplies \(u^i\, t^j\); only the six coefficients of
-  total degree \(\le 2\) are used — the remaining cells of the 3×3 matrix are
+- $u$ — raw pressure counts (`P` / `P_counts` channel);
+- $t$ — temperature (`Temp` channel);
+- each `P_t[i][j]` multiplies $u^{i}\, t^{j}$; only the six coefficients of
+  total degree $\le 2$ are used — the remaining cells of the 3×3 matrix are
   zero.
 
 The computed pressure is as calibrated — referenced to standard atmospheric
-pressure \(P_0 = 10.1325\) dbar.
+pressure $P_{0} = 10.1325$ dbar.
 
 ## Provenance
 

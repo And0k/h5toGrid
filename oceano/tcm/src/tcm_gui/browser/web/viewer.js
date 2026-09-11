@@ -74,20 +74,10 @@ function resolveDirHref(href) {
     return winPath(new URL(href, "file:///" + base).pathname);
 }
 
-function preprocessMdLinks(md, baseFile) {
-    /* Rewrite relative .md links to absolute file:// URLs BEFORE marked.js
-       resolves them against the HTTP document origin — which knows only the
-       server root, not the markdown file's directory. */
-    const baseDir = baseFile.replace(/\\/g, "/").replace(/\/[^/]*$/, "");
-    return md.replace(/\[([^\]]*)\]\(([^)]+\.md(?:#[^)]*)?)\)/g, (_m, text, url) => {
-        if (/^[A-Za-z]+:/i.test(url) || url.startsWith("//")) return _m;
-        return `[${text}](${new URL(url, "file:///" + baseDir + "/").href})`;
-    });
-}
-
 function fixRenderedLinks(baseFile) {
-    /* Safety net: rewrite scheme-less .md hrefs marked emitted verbatim
-       (e.g. reference-style links that bypass preprocessMdLinks). */
+    /* Rewrite scheme-less .md hrefs marked emitted verbatim against the
+       document's dir (the HTTP origin knows only the server root) — covers
+       inline, reference-style and autolink-embedded links alike. */
     const baseDir = baseFile.replace(/\\/g, "/").replace(/\/[^/]*$/, "");
     content.querySelectorAll("a[href]").forEach(a => {
         const href = a.getAttribute("href");
@@ -145,30 +135,51 @@ function wrapTables() {
     });
 }
 
-/* TeX shielding — CommonMark lets a backslash escape ASCII punctuation, so
-   marked strips the delimiter from \( \) / \[ \] before MathJax ever sees
-   it ($$...$$ survives: no backslashes).  Stash the spans behind
-   placeholders before parsing, restore into the HTML after.  Code fences /
-   inline code match FIRST, so TeX-looking text inside code stays literal. */
-const mathStore = [];
-const _MATH_RE = new RegExp(
-    ["(```[^\\n]*\\n[\\s\\S]*?```|`[^`\\n]+`)",
-     "(\\$\\$[\\s\\S]+?\\$\\$)",
-     "(" + bs + bs + "\\[[\\s\\S]+?" + bs + bs + "\\])",
-     "(" + bs + bs + "\\([^\\n]+?" + bs + bs + "\\))"].join("|"),
-    "g");
+/*MATH-EXT-START — marked extensions tokenizing GitHub math ($…$ / $$…$$ /
+   $`…`$) before CommonMark runs: the TeX interior (_, *, [], {}, `) is
+   consumed raw by the tokenizer, so Markdown can never reinterpret it, and
+   the renderer emits literal-TeX spans MathJax later typesets from the DOM.
+   Inline extensions run before built-in inline tokenizers (codespan etc.) at
+   every position, and code spans/fences consume their own text first —
+   TeX-looking text inside code stays literal.  $-inline contract (GitHub
+   spacing rules, single line): opening $ followed by non-whitespace (skips
+   currency), closing $ preceded by non-whitespace, content without bare $
+   (escape pairs \$ allowed). */
+const escapeHtml = (value) => value
+    .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
-function protectMath(md) {
-    mathStore.length = 0;
-    return md.replace(_MATH_RE, (m, code) => code ? m
-        : (mathStore.push(m), `%%MATH${mathStore.length - 1}%%`));
-}
+const MATH_INLINE = {
+    name: "mathInline",
+    level: "inline",
+    start(src) { const i = src.indexOf("$"); return i < 0 ? undefined : i; },
+    tokenizer(src) {
+        const bt = src.startsWith("$`") ? src.indexOf("`$", 2) : -1;   // $`…`$ —
+        if (bt >= 0)                                                   // wrapper stripped
+            return {type: "mathInline", raw: src.slice(0, bt + 2), text: src.slice(2, bt), display: false};
+        if (!src.startsWith("$") || src.startsWith("$$")) return;
+        let end = 1;                       // first unescaped closing $ on the line
+        while ((end = src.indexOf("$", end)) >= 0 && src[end - 1] === "\\") end++;
+        if (end < 0) return;
+        const text = src.slice(1, end);
+        if (!text || /\n/.test(text) || /\s/.test(text[0]) || /\s$/.test(text)) return;
+        return {type: "mathInline", raw: src.slice(0, end + 1), text, display: false};
+    },
+    renderer(token) { return `<span class="math-inline">$${escapeHtml(token.text)}$</span>`; },
+};
 
-function restoreMath(html) {
-    /* &<> escaped — TeX may contain raw < or &, and this goes to innerHTML */
-    return html.replace(/%%MATH(\d+)%%/g, (_m, i) => mathStore[+i]
-        .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"));
-}
+const MATH_BLOCK = {
+    name: "mathBlock",
+    level: "block",
+    start(src) { const m = src.match(/^\$\$/m); return m ? m.index : undefined; },
+    tokenizer(src) {
+        const m = src.match(/^\$\$[^\S\n]*\n?([\s\S]*?)\n?\$\$(?:\n+|$)/);
+        return m ? {type: "mathBlock", raw: m[0], text: m[1], display: true} : undefined;
+    },
+    renderer(token) { return `<div class="math-block">$$\n${escapeHtml(token.text)}\n$$</div>`; },
+};
+
+marked.use({gfm: true, breaks: false, extensions: [MATH_INLINE, MATH_BLOCK]});
+/*MATH-EXT-END*/
 
 function scrollToAnchor(anchor) {
     /* after typesetting — layout may have shifted; getElementById avoids
@@ -287,8 +298,9 @@ ${await r.text()}`);
 async function renderMarkdown(md, file, anchor = "") {
     /* MathJax must forget the previous page before its DOM is replaced. */
     window.MathJax?.typesetClear?.([content]);
-    content.innerHTML = restoreMath(marked.parse(
-        preprocessMdLinks(protectMath(md), file), {gfm: true, breaks: false}));
+    /* marked math extensions (MATH-EXT block) keep the TeX interior raw —
+       MathJax finds the literal $…$ / $$…$$ delimiters in the emitted spans. */
+    content.innerHTML = marked.parse(md);
     fixRenderedLinks(file);
     rewriteLocalImages(file);
     addHeadingIds();

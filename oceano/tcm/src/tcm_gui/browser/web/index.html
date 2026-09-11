@@ -6,16 +6,19 @@
 <title>Documentation</title>
 <link rel="stylesheet" href="/assets/highlight/default.min.css" media="(prefers-color-scheme: light)">
 <link rel="stylesheet" href="/assets/highlight/github-dark.min.css" media="(prefers-color-scheme: dark)">
-<!-- MathJax config must precede its script; standard delimiters only
-     ($...$ deliberately off — dollar signs are common in plain text).
+<!-- MathJax config must precede its script.  GitHub-compatible delimiters:
+     $...$ inline, $$...$$ display — matching GitHub's math notation
+     (https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/writing-mathematical-expressions).
+     processEscapes: \$ inside math renders a literal dollar sign.
      typeset:false — content is fetched dynamically, render typesets per page.
      loader.paths pins the newcm font package to the vendored copy — without
      it the loader falls back to the jsdelivr CDN default for the package. -->
 <script>
 window.MathJax = {
     tex: {
-        inlineMath: [["\\(", "\\)"]],
-        displayMath: [["$$", "$$"], ["\\[", "\\]"]]
+        inlineMath: [["$", "$"]],
+        displayMath: [["$$", "$$"]],
+        processEscapes: true
     },
     loader: { paths: { "mathjax-newcm": "/assets/mathjax/output/fonts/mathjax-newcm" } },
     startup: { typeset: false }

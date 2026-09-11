@@ -1,26 +1,40 @@
 # Documentation Authoring Contract
 
 Requirements for Markdown documents so they render identically in the built-in
-documentation viewer you can start through links in "?"-button → About window (implemented in `tcm_gui/browser/`) and on
-GitHub. The viewer is fully offline: marked (GFM CommonMark) + MathJax 4 +
-highlight.js are vendored (generated into `_build/browser-runtime` by
-`browser/vendor.mjs`); nothing is fetched from the Internet.
+documentation viewer you can start through links in "?"-button → About window (implemented in
+[`tcm_gui/browser/`](../../src/tcm_gui/browser/)) and on GitHub. The viewer is fully offline:
+marked (GFM CommonMark) + MathJax 4 + highlight.js are vendored (generated into
+[`_build/browser-runtime/`](../../_build/browser-runtime/) by
+[`browser/vendor.mjs`](../../browser/vendor.mjs)); nothing is fetched from the Internet.
 
 ## Math
 
+Same syntax as GitHub (https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/writing-mathematical-expressions):
+
 | Form | Delimiters | Use |
 |---|---|---|
-| Inline | `\( ... \)` | math inside prose: `\(E = mc^2\)` |
-| Display | `$$ ... $$` or `\[ ... \]` | standalone equation blocks (blank line before/after) |
+| Inline | `$ ... $` | math inside prose: `$E = mc^{2}$` — no space right after/before the dollars |
+| Display | `$$ ... $$` | standalone equation blocks (blank line before/after) |
+| Inline with Markdown-conflicting syntax | `` $` ... `$ `` | GitHub's math-code-span: use when the TeX contains backticks, `\{`, `|`, or other CommonMark-active characters: `` $`\mathbf{U}_{G0}`$ `` |
 
-- Single dollar `$...$` is **deliberately disabled** (dollar signs are common in
-  plain text) — it renders literally.
-- **Never** leave ASCII math in prose: `h = A^-1 (F u) + b`, `S^2`, `sum_i`
-  render verbatim. Convert to TeX: `\(h = A^{-1} (F u) + b\)`.
 - TeX inside code spans/fences stays literal (the viewer shields code first) —
   use a code span when the literal characters are the point.
-- `\(...\)` and `\[...\]` are safe in prose: the viewer shields math spans from
-  CommonMark's backslash-escape stripping before parsing.
+- GitHub renders math through its own macro allow-list, not the full MathJax
+  set — it rejects e.g. `\operatorname` ("macros are not allowed"). Use the
+  portable spelling: `\mathrm{atan2}` instead of `\operatorname{atan2}`.
+- In inline LaTeX, use explicit braces for all subscripts and superscripts,
+  even when the index consists of a single character:
+  - write `$\mathbf{U}_{G}$`, not `$\mathbf{U}_G$`;
+  - write `$x^{T}$`, not `$x^T$`.
+  This avoids ambiguity and prevents GitHub Markdown rendering from
+  interpreting `_` or `*` as Markdown formatting when an inline mathematical
+  expression is not recognized as such.
+- `$...$` is not recognized when the opening `$` is followed by whitespace
+  (currency amounts like `$ 100` stay literal). Inside math `\$` gives a
+  literal dollar; in plain text an unpaired `$` stays literal, but two `$` in
+  one paragraph can pair accidentally — prefer a code span or a word instead.
+- **Never** leave ASCII math in prose: `h = A^-1 (F u) + b`, `S^2`, `sum_i`
+  render verbatim. Convert to TeX: `$h = A^{-1} (F u) + b$`.
 - Prefer `\text{}` for words inside formulas; `\mathbb{R}`, `\lfloor\rfloor`,
   `\begin{cases}` are supported (full TeX via MathJax).
 
@@ -56,9 +70,9 @@ highlight.js are vendored (generated into `_build/browser-runtime` by
   | build scripts | `../../scripts/tcm_proc.py` |
   | sibling project | `../../../meta_finder/docs/reference/io_formats.md` |
 
-  Source lives under `src/tcm/` — `../../tcm/x.py` does not exist (a historical
+  Source lives under [`src/tcm/`](../../src/tcm/) — `../../tcm/x.py` does not exist (a historical
   batch of such links 400'd in the viewer).  Sibling-project links (e.g.
-  `meta_finder/`) traverse up to `REPO_ROOT` — allowed because
+  [`meta_finder/`](../../../meta_finder/)) traverse up to `REPO_ROOT` — allowed because
   `DocumentationBrowser` includes both `resource_root()` and `REPO_ROOT` in
   its default `allowed_roots`.
 - **Heading anchors**: GitHub slugs — lowercase, punctuation dropped, each space
@@ -72,8 +86,8 @@ highlight.js are vendored (generated into `_build/browser-runtime` by
     otherwise absorb the description into the target's H1 and leave the link
     bare (`[GUI Key Decisions with Rationale and Regression Notes](GUI/decisions.md)`).
   - File name as text is discouraged — acceptable only when the name is itself
-    the identifier the reader meets in code (e.g. `config_reference.md`, parsed
-    by `_help.py`).
+    the identifier the reader meets in code (e.g. [`config_reference.md`](../reference/config_reference.md), parsed
+    by [`_help.py`](../../src/tcm_gui/_help.py)).
   - Elsewhere: text clarifies what the reader finds in the target in the
     context of the link — free wording, no requirement to match any existing
     text exactly.
@@ -103,7 +117,7 @@ Anything else is not served — link only to these classes.
 ## Self-check
 
 Open the document through the viewer (About → Documentation tree, or any doc
-link in it) and verify: every formula is typeset (no literal `\(` / `^` in
+link in it) and verify: every formula is typeset (no literal `$` / `^` in
 prose), every code block highlighted, every local link navigates without a
 400/404, back button returns.
 
@@ -186,7 +200,7 @@ General rules:
   mode-neutral and only the **GUI action** differs (e.g. "browse directory"
   vs "browse file" — same field, same meaning, just a different dialog on
   click), the mode-specific verb is an interface concern that belongs in
-  ``str.yaml``: write a single modeless ``### `` section for the field, then
+  `[`str.yaml`](../../src/tcm_gui/str.yaml): write a single modeless ``### `` section for the field, then
   augment it at runtime with ``STR["{field}.status.{mode}"]`` (e.g.
   ``path_field.status.dirs``, ``input.coefs.path.status.dir``).  The doc stays
   clean; the GUI action hint is localized like any other chrome string.  The

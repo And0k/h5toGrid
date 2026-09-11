@@ -26,13 +26,13 @@ Enter the absolute path to the:
 Expected [input data layout](io_formats.md#directory-layout):
 ```text
 ├── _raw\            ← raw data (`.txt`/`.csv`/`.h5`/`.nc`) — REQUIRED
-├── cfg_proc\
-│   └── run\         ← per-probe YAML configs (auto-generated on first scan)
+│   └── cfg_proc\
+│       └── run\     ← per-probe YAML configs (auto-generated on first scan)
 ```
 
 ## YAML file and command-line configuration fields (typed configuration via Hydra/OmegaConf)
 
-All fields are defined in `tcm/schema.py` via the `Config` dataclass and registered groups
+All fields are defined in [`tcm/schema.py`](../../src/tcm/schema.py) via the `Config` dataclass and registered groups
 (`input`, `out`, `filter`, `program`).
 
 ## `input` — Data source & its initial processing parameters
@@ -69,7 +69,7 @@ This fields can be passed through CLI directly or through YAML configs, that liv
 - `-comment` — the source-name part after the pcid (case and `-`/`_` separators normalized:
   `INKL_P05_маг.TXT` → `-маг`) — multiple files of one probe get distinct, collision-free names.
 To be applied YAML name should match raw data file name (stem). Full rules:
-[Config-file matching](io_formats.md#config-file-matching).
+[Config-file matching](io_formats.md#config-file-matching-to-the-normalized-raw-data-file-name).
 
 
 Every run configuration YAML starts with `# @package _global_` so Hydra merges it into the top-level Config.
@@ -125,13 +125,13 @@ When generating the configuration, they are copied to it from the coefficients f
 | `Cg` = `[10, 10, 10]` | Accelerometer bias vector |
 | `Ah` = Identity | Magnetometer scale matrix: `H = Ah @ (Mxyz − Ch)` |
 | `Ch` = `[10, 10, 10]` | Magnetometer bias vector |
-| `Rz` = Identity | Sensor-to-instrument alignment rotation matrix for aligning the sensor's Z-axis with the vertical. See [Rz](../methodology/velocity.md#zeroing-rotation-rz) for the mathematical definition. |
+| `Rz` = Identity | Sensor-to-instrument alignment rotation matrix for aligning the sensor's Z-axis with the vertical. See [Rz](../methodology/velocity.md#zeroing-rotation-r_z) for the mathematical definition. |
 | `kVabs` = `[10, −10, −10, −3, 3]` | Trigonometric-series coefs of `Vabs(inclination)`, formula (3) — see [§Velocity computation](../methodology/velocity.md) |
 | `P_t` = `None` | Pressure–temperature 2‑D polynomial for `p`‑type probes; when set it supersedes `P`/`PBattery`/`PTemp`[↓](#inputcoefsp_t) |
 | `P` = `[0, 1]` | Auxiliary sensor #1 linear correction: `y = P[0] + P[1]·x` |
 | `PBattery` = `[0, 1]` | Battery voltage linear correction |
 | `PTemp` = `[0, 1]` | Temperature linear correction |
-| `azimuth_shift_deg` = `180` | Azimuth° correction: will be added to the resulting direction, and u and v are recalculated based on it [↓](#inputcoefsazimuth_shift_deg) — see [azimuth_shift_deg](../methodology/velocity.md#azimuth-shift-psi_shift) |
+| `azimuth_shift_deg` = `180` | Azimuth° correction: will be added to the resulting direction, and u and v are recalculated based on it [↓](#inputcoefsazimuth_shift_deg) — see [azimuth_shift_deg](../methodology/velocity.md#azimuth-shift-psi_textshift) |
 | `dates` = `{}` | Per‑component calibration dates |
 | `date` = `None` | Overall calibration date |
 | `path` = `tcm/cfg/coef/calibration.h5` | Coefficient source — a directory of per-probe YAMLs or a single HDF5/NC/YAML file[↓](#inputcoefs_path) |
@@ -197,10 +197,10 @@ dates of the modified `input.coefs` coefficients to the current date.
 | Field = Default | Description |
 |-----------------|------------------|
 | `g0xyz` = `None` | Accelerometer vector `[Ax, Ay, Az]` when the device was hanging vertically. Set to compute and override `Rz`[↓](#inputcalibg0xyz) |
-| `time_ranges_zeroing` = `[]` | Intervals the instrument hangs plumb. Updates the coefficient [Rz](../methodology/velocity.md#zeroing-rotation-rz), aligning the sensor Z-axis with gravity [↓](#inputcalibtime_ranges_zeroing) |
-| `time_ranges_azimuth` = `[]` | Intervals where the instrument was tilted in a known direction. Pipeline calibrates the azimuth shift ([azimuth_shift_deg](../methodology/velocity.md#azimuth-shift-psi_shift)) from mag+accel unit vectors[↓](#inputcalibtime_ranges_azimuth) |
+| `time_ranges_zeroing` = `[]` | Intervals the instrument hangs plumb. Updates the coefficient [Rz](../methodology/velocity.md#zeroing-rotation-r_z), aligning the sensor Z-axis with gravity [↓](#inputcalibtime_ranges_zeroing) |
+| `time_ranges_azimuth` = `[]` | Intervals where the instrument was tilted in a known direction. Pipeline calibrates the azimuth shift ([azimuth_shift_deg](../methodology/velocity.md#azimuth-shift-psi_textshift)) from mag+accel unit vectors[↓](#inputcalibtime_ranges_azimuth) |
 | `coordinates` = `None` | Station `[Lat, Lon]` — enables magnetic declination correction (true-north velocity directions)[↓](#inputcalibcoordinates) |
-| `azimuth_add` = `0` | Add to the **azimuth offset** (calibration coefficient [azimuth_shift_deg](../methodology/velocity.md#azimuth-shift-psi_shift), °)[↓](#inputcalibazimuth_add) |
+| `azimuth_add` = `0` | Add to the **azimuth offset** (calibration coefficient [azimuth_shift_deg](../methodology/velocity.md#azimuth-shift-psi_textshift), °)[↓](#inputcalibazimuth_add) |
 
 ### Configuration example
 
@@ -220,7 +220,7 @@ Applied by :func:`tcm._xr.coefs.prepare_coefs`.
 ### `input.calib.g0xyz`
 
 #### Detailed
-Accelerometer vector `[Ax, Ay, Az]` (raw or normalized). Specify this to recalculate and replace [Rz](../methodology/velocity.md#zeroing-rotation-rz), which will substitute the coefficient (`input.coefs.Rz`). If provided, `time_ranges_zeroing` will be ignored.
+Accelerometer vector `[Ax, Ay, Az]` (raw or normalized). Specify this to recalculate and replace [Rz](../methodology/velocity.md#zeroing-rotation-r_z), which will substitute the coefficient (`input.coefs.Rz`). If provided, `time_ranges_zeroing` will be ignored.
 
 
 ### `input.calib.time_ranges_zeroing`
@@ -230,10 +230,10 @@ Specify the interval(s) when the device is vertical. The accelerometer vector av
 
 ### `input.calib.time_ranges_azimuth`
 Intervals where the instrument was tilted in a **known direction** — pipeline
-computes [azimuth_shift_deg](../methodology/velocity.md#azimuth-shift-psi_shift), °
+computes [azimuth_shift_deg](../methodology/velocity.md#azimuth-shift-psi_textshift), °
 
 #### Detailed
-`time_ranges_azimuth` specifies the time intervals during which the device was **tilted in a known direction** (e.g., a known northward tilt) for **azimuth calibration**. The [azimuth shift \(\psi\)](../methodology/velocity.md#azimuth-shift-psi_shift) is calculated based on the average tilt direction during these intervals (using the existing `azimuth_shift_deg` value). Then, by adding `azimuth_add` (manual offset) and magnetic declination (derived from `calib.coordinates`, if specified), the `azimuth_shift_deg` coefficient is updated ([Updating coefficients via zeroing](../user_guide/configuration.md#updating-coefficients-via-zeroing)). Subsequently, all data within the specified `input.time_ranges` intervals are processed using the new `azimuth_shift_deg` coefficient.
+`time_ranges_azimuth` specifies the time intervals during which the device was **tilted in a known direction** (e.g., a known northward tilt) for **azimuth calibration**. The [azimuth shift $\psi$](../methodology/velocity.md#azimuth-shift-psi_textshift) is calculated based on the average tilt direction during these intervals (using the existing `azimuth_shift_deg` value). Then, by adding `azimuth_add` (manual offset) and magnetic declination (derived from `calib.coordinates`, if specified), the `azimuth_shift_deg` coefficient is updated ([Updating coefficients via zeroing](../user_guide/configuration.md#updating-coefficients-via-zeroing)). Subsequently, all data within the specified `input.time_ranges` intervals are processed using the new `azimuth_shift_deg` coefficient.
 
 ### `input.calib.coordinates`
 Station `[Lat, Lon]` in decimal degrees — enables magnetic declination
@@ -248,7 +248,7 @@ Magnetic declination° is calculated for the station location at the current dat
 ### `input.calib.azimuth_add`
 
 #### Detailed
-`azimuth_add` — manual offset°, is added to the **azimuth offset** (calibration coefficient [azimuth_shift_deg](../methodology/velocity.md#azimuth-shift-psi_shift) (along with `input.calib.coordinates` — see order in [`input.coefs.azimuth_shift_deg`](#inputcoefsazimuth_shift_deg)).
+`azimuth_add` — manual offset°, is added to the **azimuth offset** (calibration coefficient [azimuth_shift_deg](../methodology/velocity.md#azimuth-shift-psi_textshift) (along with `input.calib.coordinates` — see order in [`input.coefs.azimuth_shift_deg`](#inputcoefsazimuth_shift_deg)).
 
 
 ## `out` — Output configuration
