@@ -26,9 +26,18 @@ Same syntax as GitHub (https://docs.github.com/en/get-started/writing-on-github/
   even when the index consists of a single character:
   - write `$\mathbf{U}_{G}$`, not `$\mathbf{U}_G$`;
   - write `$x^{T}$`, not `$x^T$`.
-  This avoids ambiguity and prevents GitHub Markdown rendering from
-  interpreting `_` or `*` as Markdown formatting when an inline mathematical
-  expression is not recognized as such.
+  This is standard TeX grouping hygiene; Markdown reinterpretation is
+  prevented by the `$`…`$` form below, not by braces.
+- Use GitHub's `$...$` syntax for simple inline mathematical expressions.
+- Use GitHub's `$`...`$` syntax for inline expressions containing characters
+  that may overlap with Markdown syntax, such as `_`, `*`, `[`, `]`, `|`
+  (and TeX `{...}` groups, e.g. `\mathbf{U}_{G0}`, or letters past the first
+  character of a sub/superscript) — e.g.
+  `$`\mathbf{U}_{G} = [U_{Gx}, U_{Gy}, U_{Gz}]^{T}`$`.
+  For consistency, the `$`...`$` form may be used for all inline LaTeX.
+- Display equations use `$$...$$`, with the opening and closing `$$` on separate
+  lines (no fenced `math` block — neither GitHub nor the local viewer supports
+  it as a math environment).
 - `$...$` is not recognized when the opening `$` is followed by whitespace
   (currency amounts like `$ 100` stay literal). Inside math `\$` gives a
   literal dollar; in plain text an unpaired `$` stays literal, but two `$` in

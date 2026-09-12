@@ -55,7 +55,7 @@ Theory behind the algorithms, not usage.
 
 - [Calibration Wiki: Theory and Method](docs/methodology/calibration_wiki.md)
 - [Algorithm of frequency estimation `utils_time_corr._estimate_freq_np`](docs/methodology/estimate_freq_logic.md)
-- [Velocity computation from accelerometer and magnetometer](docs/methodology/velocity.md)
+- [Flow velocity computation from accelerometer and magnetometer data](docs/methodology/velocity.md)
 - [Pressure computation from the `P_t` polynomial](docs/methodology/pressure.md)
 
 ### [Python developer guide](docs/python_developer_guide/)

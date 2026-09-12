@@ -153,9 +153,11 @@ const MATH_INLINE = {
     level: "inline",
     start(src) { const i = src.indexOf("$"); return i < 0 ? undefined : i; },
     tokenizer(src) {
-        const bt = src.startsWith("$`") ? src.indexOf("`$", 2) : -1;   // $`…`$ —
-        if (bt >= 0)                                                   // wrapper stripped
-            return {type: "mathInline", raw: src.slice(0, bt + 2), text: src.slice(2, bt), display: false};
+        if (src.startsWith("$`")) {                       // GitHub $`…`$ math-code-span —
+            const bt = src.indexOf("`$", 2);              // backtick wrapper is stripped
+            if (bt >= 0)
+                return {type: "mathInline", raw: src.slice(0, bt + 2), text: src.slice(2, bt), display: false};
+        }
         if (!src.startsWith("$") || src.startsWith("$$")) return;
         let end = 1;                       // first unescaped closing $ on the line
         while ((end = src.indexOf("$", end)) >= 0 && src[end - 1] === "\\") end++;

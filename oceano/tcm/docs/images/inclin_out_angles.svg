@@ -1,0 +1,72 @@
+<!--?xml version="1.0" encoding="UTF-8"?-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="16 67 86 72" version="1.1">
+
+  <defs>
+    <linearGradient id="gradient" x1="-61.446602" y1="199.4183" x2="-58.873248" y2="199.4183" gradientUnits="userSpaceOnUse" gradientTransform="rotate(-0.5729863)">
+      <stop offset="0" stop-color="#000000" stop-opacity="1"></stop>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"></stop>
+    </linearGradient>
+
+    <marker id="arrow-end-1" refX="0" refY="0" orient="auto" overflow="visible">
+      <path d="M 0,0 L 5,-5 L -12.5,0 L 5,5 L 0,0 Z" transform="scale(0.8) rotate(180) translate(12.5,0)" fill="#000000" fill-rule="evenodd" stroke="#000000" stroke-width="1pt"></path>
+    </marker>
+
+    <marker id="arrow-start" refX="0" refY="0" orient="auto" overflow="visible">
+      <path d="M 0,0 L 5,-5 L -12.5,0 L 5,5 L 0,0 Z" transform="scale(0.8) translate(12.5,0)" fill="#000000" fill-rule="evenodd" stroke="#000000" stroke-width="1pt"></path>
+    </marker>
+
+    <marker id="arrow-end-2" refX="0" refY="0" orient="auto" overflow="visible">
+      <path d="M 0,0 L 5,-5 L -12.5,0 L 5,5 L 0,0 Z" transform="scale(0.8) rotate(180) translate(12.5,0)" fill="#000000" fill-rule="evenodd" stroke="#000000" stroke-width="1pt"></path>
+    </marker>
+  </defs>
+
+  <g transform="translate(0,-87)">
+
+    <!-- z axis -->
+    <path d="M 21.715649,156.88395 V 209.80332" fill="none" stroke="#000000" stroke-width="0.26458332" marker-end="url(#arrow-end-1)"></path>
+
+    <!-- tilted gravity/vector axis -->
+    <path d="M 21.715649,156.88395
+             L 48.977141,201.78523
+             L 58.731493,218.68026" fill="none" stroke="#000000" stroke-width="0.26458332" marker-end="url(#arrow-end-1)"></path>
+
+    <!-- x/y auxiliary vectors -->
+    <path d="M 49.177593,202.11932 L 43.564933,219.22457" fill="none" stroke="#000000" stroke-width="0.26458332" marker-end="url(#arrow-end-1)"></path>
+
+    <path d="M 49.177593,202.11932 L 63.395382,198.58277" fill="none" stroke="#000000" stroke-width="0.26458332" marker-end="url(#arrow-end-1)"></path>
+
+    <!-- horizontal/azimuth arc -->
+    <path d="M 82.309517,177.52118
+             A 60.745926,38.117672 0 0 1 56.878277,208.69693" fill="none" stroke="#000000" stroke-width="0.265" marker-end="url(#arrow-end-1)"></path>
+
+    <text x="82.103516" y="175.95145" font-family="Times New Roman" font-size="10.58333302px">N</text>
+
+    <!-- Ψ -->
+    <text x="-195.92986" y="173.22092" font-family="Times New Roman" font-size="11.26551533px" transform="matrix(0.65972264,-0.65532574,1.1397908,0.38359417,0,0)">Ψ</text>
+
+    <!-- θ -->
+    <text x="18.629017" y="172.1653" font-family="Times New Roman" font-size="13.54166794px" transform="matrix(1.0920618,0.71193778,0,0.9156991,0,0)">θ</text>
+
+    <!-- inclination arc -->
+    <path d="M 29.655428,170.18374
+             A 10.356695,20.71339 0 0 1 21.648762,177.59692" fill="none" stroke="#000000" stroke-width="0.26499999" marker-start="url(#arrow-start)"></path>
+
+    <!-- dashed projection -->
+    <path d="M 21.648762,177.59692 L 70.153096,221.02984" fill="none" stroke="#000000" stroke-width="0.26458332" stroke-dasharray="2.11666654,2.11666654"></path>
+
+    <!-- horizontal axis -->
+    <path d="M 21.648762,177.59691 H 90.122009" fill="none" stroke="#000000" stroke-width="0.26458332" marker-end="url(#arrow-end-1)"></path>
+
+    <text x="22.410276" y="205.3391" font-family="Times New Roman" font-size="10.58333302px">G</text>
+
+    <text x="50.687618" y="218.90067" font-family="Times New Roman" font-size="10.58333302px">z</text>
+
+    <text x="53.380699" y="198.99113" font-family="Times New Roman" font-size="10.58333302px">x</text>
+
+    <text x="42.127472" y="210.34053" font-family="Times New Roman" font-size="10.58333302px">y</text>
+
+    <!-- original auxiliary rectangle/gradient -->
+    <rect x="-59.316845" y="195.15279" width="2.3083546" height="9.714325" transform="rotate(-29.925049)" fill="url(#gradient)" stroke="#000000" stroke-width="0.26499999"></rect>
+
+  </g>
+</svg>

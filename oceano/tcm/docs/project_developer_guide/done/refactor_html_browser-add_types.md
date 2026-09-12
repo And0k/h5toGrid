@@ -273,7 +273,9 @@ contains ordinary $ characters, shell variables, prices, etc. Use:
 for inline mathematics and:
 
     \\[ ... \\]
-    $$ ... $$
+$$
+...
+$$
 
 for display mathematics.
 -->

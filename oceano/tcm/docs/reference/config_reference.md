@@ -125,7 +125,7 @@ When generating the configuration, they are copied to it from the coefficients f
 | `Cg` = `[10, 10, 10]` | Accelerometer bias vector |
 | `Ah` = Identity | Magnetometer scale matrix: `H = Ah @ (Mxyz − Ch)` |
 | `Ch` = `[10, 10, 10]` | Magnetometer bias vector |
-| `Rz` = Identity | Sensor-to-instrument alignment rotation matrix for aligning the sensor's Z-axis with the vertical. See [Rz](../methodology/velocity.md#zeroing-rotation-r_z) for the mathematical definition. |
+| `Rz` = Identity | Sensor-to-instrument alignment rotation matrix for aligning the sensor's Z-axis with the vertical. See [Rz](../methodology/velocity.md#vertical-alignment-r_z) for the mathematical definition. |
 | `kVabs` = `[10, −10, −10, −3, 3]` | Trigonometric-series coefs of `Vabs(inclination)`, formula (3) — see [§Velocity computation](../methodology/velocity.md) |
 | `P_t` = `None` | Pressure–temperature 2‑D polynomial for `p`‑type probes; when set it supersedes `P`/`PBattery`/`PTemp`[↓](#inputcoefsp_t) |
 | `P` = `[0, 1]` | Auxiliary sensor #1 linear correction: `y = P[0] + P[1]·x` |
@@ -197,7 +197,7 @@ dates of the modified `input.coefs` coefficients to the current date.
 | Field = Default | Description |
 |-----------------|------------------|
 | `g0xyz` = `None` | Accelerometer vector `[Ax, Ay, Az]` when the device was hanging vertically. Set to compute and override `Rz`[↓](#inputcalibg0xyz) |
-| `time_ranges_zeroing` = `[]` | Intervals the instrument hangs plumb. Updates the coefficient [Rz](../methodology/velocity.md#zeroing-rotation-r_z), aligning the sensor Z-axis with gravity [↓](#inputcalibtime_ranges_zeroing) |
+| `time_ranges_zeroing` = `[]` | Intervals the instrument hangs plumb. Updates the coefficient [Rz](../methodology/velocity.md#vertical-alignment-r_z), aligning the sensor Z-axis with gravity [↓](#inputcalibtime_ranges_zeroing) |
 | `time_ranges_azimuth` = `[]` | Intervals where the instrument was tilted in a known direction. Pipeline calibrates the azimuth shift ([azimuth_shift_deg](../methodology/velocity.md#azimuth-shift-psi_textshift)) from mag+accel unit vectors[↓](#inputcalibtime_ranges_azimuth) |
 | `coordinates` = `None` | Station `[Lat, Lon]` — enables magnetic declination correction (true-north velocity directions)[↓](#inputcalibcoordinates) |
 | `azimuth_add` = `0` | Add to the **azimuth offset** (calibration coefficient [azimuth_shift_deg](../methodology/velocity.md#azimuth-shift-psi_textshift), °)[↓](#inputcalibazimuth_add) |
@@ -220,7 +220,7 @@ Applied by :func:`tcm._xr.coefs.prepare_coefs`.
 ### `input.calib.g0xyz`
 
 #### Detailed
-Accelerometer vector `[Ax, Ay, Az]` (raw or normalized). Specify this to recalculate and replace [Rz](../methodology/velocity.md#zeroing-rotation-r_z), which will substitute the coefficient (`input.coefs.Rz`). If provided, `time_ranges_zeroing` will be ignored.
+Accelerometer vector `[Ax, Ay, Az]` (raw or normalized). Specify this to recalculate and replace [Rz](../methodology/velocity.md#vertical-alignment-r_z), which will substitute the coefficient (`input.coefs.Rz`). If provided, `time_ranges_zeroing` will be ignored.
 
 
 ### `input.calib.time_ranges_zeroing`

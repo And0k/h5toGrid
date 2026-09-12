@@ -125,7 +125,7 @@ Coefficients to find 3D vector of magnetic (h) and gravitation (g) fields in sen
 
 2. **Tilt zeroing** (`time_ranges_zeroing`) — instrument hangs plumb, data
    recorded → computes `Rz` (rotation matrix aligning sensor Z with gravity —
-   see [§Zeroing rotation](../methodology/velocity.md#zeroing-rotation-rz)).
+   see [§Vertical alignment](../methodology/velocity.md#vertical-alignment-r_z)).
 
 3. **Velocity calibration** (in tank/flume) — determines `kVabs` (inclination-
    to-velocity polynomial).
@@ -161,7 +161,7 @@ Two independent zeroing operations, each with its own time window:
 
 | Parameter | What | How | Writes |
 |---|---|---|---|
-| `input.calib.time_ranges_zeroing` | Tilt rotation | `orientation.zeroing_rotation()` on accelerometer data | `Rz` ([§Zeroing rotation](../methodology/velocity.md#zeroing-rotation-rz)) |
+| `input.calib.time_ranges_zeroing` | Tilt rotation | `orientation.zeroing_rotation()` on accelerometer data | `Rz` ([§Vertical alignment](../methodology/velocity.md#vertical-alignment-r_z)) |
 | `input.calib.time_ranges_azimuth` | Tilt direction azimuth | `orientation.azimuth_shift()` on mag+accel unit vectors | `azimuth_shift_deg` ([§Azimuth shift](../methodology/velocity.md#azimuth-shift-psi_shift)) |
 
 The azimuth computation uses calibrated unit vectors only (no velocity/magnitude
